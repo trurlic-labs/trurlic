@@ -141,11 +141,11 @@ pub fn run(cli: Cli) -> Result<()> {
             AddCommand::Connection { from, to } => commands::add_connection(&cwd, &from, &to),
         },
         Command::Rename(sub) => match sub {
-            RenameCommand::Component { .. } => not_implemented("rename component"),
+            RenameCommand::Component { old, new } => commands::rename_component(&cwd, &old, &new),
         },
         Command::Remove(sub) => match sub {
-            RemoveCommand::Component { .. } => not_implemented("remove component"),
-            RemoveCommand::Decision { .. } => not_implemented("remove decision"),
+            RemoveCommand::Component { name } => commands::remove_component(&cwd, &name),
+            RemoveCommand::Decision { name } => commands::remove_decision(&cwd, &name),
         },
         Command::Design { .. } => not_implemented("design"),
         Command::Decide {
