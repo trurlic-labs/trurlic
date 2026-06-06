@@ -49,4 +49,15 @@ pub enum Error {
     /// Store integrity or constraint violation.
     #[error("{0}")]
     Validation(String),
+
+    /// LLM provider configuration error (API key resolution, config file).
+    #[error("{0}")]
+    ProviderConfig(String),
+
+    /// LLM API request or response error.
+    ///
+    /// `status` is the HTTP status code, or `0` for connection-level
+    /// failures (timeout, DNS, TLS, stream stall).
+    #[error("API error ({status}): {detail}")]
+    Api { status: u16, detail: String },
 }

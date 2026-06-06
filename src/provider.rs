@@ -63,7 +63,7 @@ impl LlmClient {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(30))
             .build()
-            .map_err(|e| Error::Validation(format!("failed to create HTTP client: {e}")))?;
+            .map_err(|e| Error::ProviderConfig(format!("failed to create HTTP client: {e}")))?;
 
         Ok(match config.provider {
             Provider::Anthropic => Self::Anthropic(AnthropicClient {
@@ -253,7 +253,13 @@ impl OpenAiClient {
 
 // ── Shared SSE streaming ─────────────────────────────────────────────────────
 
+/// Maximum time to wait for the next chunk before treating the stream as stalled.
+const STREAM_STALL_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Stream SSE events from a response, extracting text with the given function.
+///
+/// Times out if no data arrives within [`STREAM_STALL_TIMEOUT`], preventing
+/// a stalled connection from hanging the terminal indefinitely.
 async fn stream_sse(
     mut response: reqwest::Response,
     extract: fn(&str) -> Option<String>,
@@ -262,11 +268,27 @@ async fn stream_sse(
     let mut full = String::new();
     let mut buffer = String::new();
 
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| Error::Validation(format!("stream interrupted: {e}")))?
-    {
+    loop {
+        let chunk = match tokio::time::timeout(STREAM_STALL_TIMEOUT, response.chunk()).await {
+            Ok(Ok(Some(chunk))) => chunk,
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => {
+                return Err(Error::Api {
+                    status: 0,
+                    detail: format!("stream interrupted: {e}"),
+                });
+            }
+            Err(_) => {
+                return Err(Error::Api {
+                    status: 0,
+                    detail: format!(
+                        "stream stalled: no data received for {}s",
+                        STREAM_STALL_TIMEOUT.as_secs()
+                    ),
+                });
+            }
+        };
+
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
         for text in drain_sse_text(&mut buffer, extract) {
@@ -367,17 +389,23 @@ async fn check_status(response: reqwest::Response) -> Result<reqwest::Response> 
         .unwrap_or_else(|| truncate(&body, 200));
 
     Err(match status {
-        401 => Error::Validation(format!(
-            "authentication failed — check your API key ({detail})"
-        )),
-        403 => Error::Validation(format!(
-            "access denied — API key may lack permissions ({detail})"
-        )),
-        429 => Error::Validation(format!(
-            "rate limited — wait a moment and try again ({detail})"
-        )),
-        500..=599 => Error::Validation(format!("provider server error ({status}): {detail}")),
-        _ => Error::Validation(format!("API error ({status}): {detail}")),
+        401 => Error::Api {
+            status,
+            detail: format!("authentication failed — check your API key ({detail})"),
+        },
+        403 => Error::Api {
+            status,
+            detail: format!("access denied — API key may lack permissions ({detail})"),
+        },
+        429 => Error::Api {
+            status,
+            detail: format!("rate limited — wait a moment and try again ({detail})"),
+        },
+        500..=599 => Error::Api {
+            status,
+            detail: format!("provider server error: {detail}"),
+        },
+        _ => Error::Api { status, detail },
     })
 }
 
@@ -399,13 +427,20 @@ fn truncate(s: &str, max: usize) -> String {
 /// Build a user-friendly error from a connection/request failure.
 fn connection_error(err: &reqwest::Error) -> Error {
     if err.is_connect() {
-        Error::Validation(format!(
-            "could not connect to API — check your internet connection ({err})"
-        ))
+        Error::Api {
+            status: 0,
+            detail: format!("could not connect to API — check your internet connection ({err})"),
+        }
     } else if err.is_timeout() {
-        Error::Validation("connection timed out — the API may be overloaded".into())
+        Error::Api {
+            status: 0,
+            detail: "connection timed out — the API may be overloaded".into(),
+        }
     } else {
-        Error::Validation(format!("API request failed: {err}"))
+        Error::Api {
+            status: 0,
+            detail: format!("API request failed: {err}"),
+        }
     }
 }
 

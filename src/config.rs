@@ -69,7 +69,7 @@ fn parse_provider(name: &str) -> Result<Provider> {
         "anthropic" | "claude" => Ok(Provider::Anthropic),
         "openai" | "gpt" => Ok(Provider::OpenAi),
         "openrouter" => Ok(Provider::OpenRouter),
-        _ => Err(Error::Validation(format!(
+        _ => Err(Error::ProviderConfig(format!(
             "unknown provider `{name}` — expected: anthropic, openai, openrouter"
         ))),
     }
@@ -284,7 +284,7 @@ fn auto_detect_provider(config: &Option<ConfigFile>, env_keys: &EnvKeys) -> Resu
             let path_hint = config_file_path()
                 .map(|p| format!(" or add keys to {}", p.display()))
                 .unwrap_or_default();
-            Err(Error::Validation(format!(
+            Err(Error::ProviderConfig(format!(
                 "no API key found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, \
                  or OPENROUTER_API_KEY{path_hint}"
             )))
@@ -292,7 +292,7 @@ fn auto_detect_provider(config: &Option<ConfigFile>, env_keys: &EnvKeys) -> Resu
         1 => Ok(found[0]),
         _ => {
             let names: Vec<&str> = found.iter().map(|p| p.name()).collect();
-            Err(Error::Validation(format!(
+            Err(Error::ProviderConfig(format!(
                 "multiple API keys found ({}) — specify provider with --provider",
                 names.join(", ")
             )))
@@ -320,7 +320,7 @@ fn resolve_key(
         .map(|p| format!(" or add `{}_api_key` to {}", provider.name(), p.display()))
         .unwrap_or_default();
 
-    Err(Error::Validation(format!(
+    Err(Error::ProviderConfig(format!(
         "no API key for {}. Set {}{path_hint}",
         provider.name(),
         provider.env_var(),
@@ -346,7 +346,7 @@ fn load_config_file() -> Result<Option<ConfigFile>> {
     check_config_permissions(&path)?;
 
     let mut content = fs::read_to_string(&path).map_err(|e| {
-        Error::Validation(format!("cannot read config file {}: {e}", path.display()))
+        Error::ProviderConfig(format!("cannot read config file {}: {e}", path.display()))
     })?;
 
     let result = toml::from_str::<ConfigFile>(&content);
@@ -354,7 +354,7 @@ fn load_config_file() -> Result<Option<ConfigFile>> {
 
     result
         .map(Some)
-        .map_err(|e| Error::Validation(format!("invalid config file {}: {e}", path.display())))
+        .map_err(|e| Error::ProviderConfig(format!("invalid config file {}: {e}", path.display())))
 }
 
 // ── Platform-specific helpers ────────────────────────────────────────────────
@@ -385,13 +385,13 @@ fn check_config_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let mode = fs::metadata(path)
-        .map_err(|e| Error::Validation(format!("cannot stat {}: {e}", path.display())))?
+        .map_err(|e| Error::ProviderConfig(format!("cannot stat {}: {e}", path.display())))?
         .permissions()
         .mode()
         & 0o777;
 
     if mode & 0o077 != 0 {
-        return Err(Error::Validation(format!(
+        return Err(Error::ProviderConfig(format!(
             "config file {} has mode {:04o} — must not be readable by group/world. \
              Fix with: chmod 600 {}",
             path.display(),
@@ -475,7 +475,7 @@ mod tests {
     fn parse_provider_rejects_unknown() {
         let err = parse_provider("gemini").unwrap_err();
         match err {
-            Error::Validation(msg) => assert!(msg.contains("gemini")),
+            Error::ProviderConfig(msg) => assert!(msg.contains("gemini")),
             other => panic!("expected Validation, got: {other}"),
         }
     }
@@ -601,7 +601,7 @@ mod tests {
         let env = env_with(None, None, None);
         let err = resolve_from_sources(None, None, &None, &env).unwrap_err();
         match err {
-            Error::Validation(msg) => assert!(msg.contains("no API key found")),
+            Error::ProviderConfig(msg) => assert!(msg.contains("no API key found")),
             other => panic!("expected Validation, got: {other}"),
         }
     }
@@ -611,7 +611,7 @@ mod tests {
         let env = env_with(Some("key-a"), Some("key-b"), None);
         let err = resolve_from_sources(None, None, &None, &env).unwrap_err();
         match err {
-            Error::Validation(msg) => {
+            Error::ProviderConfig(msg) => {
                 assert!(msg.contains("multiple API keys"), "{msg}");
                 assert!(msg.contains("--provider"), "{msg}");
             }
@@ -632,7 +632,7 @@ mod tests {
         let env = env_anthropic();
         let err = resolve_from_sources(Some("openai"), None, &None, &env).unwrap_err();
         match err {
-            Error::Validation(msg) => {
+            Error::ProviderConfig(msg) => {
                 assert!(msg.contains("openai"), "{msg}");
                 assert!(msg.contains("OPENAI_API_KEY"), "{msg}");
             }
@@ -690,7 +690,7 @@ openrouter_api_key = "sk-or-test"
         fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o640)).unwrap();
         let err = check_config_permissions(tmp.path()).unwrap_err();
         match err {
-            Error::Validation(msg) => {
+            Error::ProviderConfig(msg) => {
                 assert!(msg.contains("0640"), "should show actual mode: {msg}");
                 assert!(msg.contains("chmod 600"), "should suggest fix: {msg}");
             }

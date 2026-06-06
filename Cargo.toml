@@ -37,7 +37,7 @@ fs2 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 # Async runtime (used only by `trurl design`)
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "time"] }
 
 # Security: zero API keys from memory on drop
 zeroize = { version = "1", features = ["derive"] }

@@ -178,6 +178,10 @@ impl Store {
     }
 
     /// Read a component by name. Returns a clear error if it doesn't exist.
+    ///
+    /// Not called from current commands (they use [`load_state`](Self::load_state)),
+    /// but part of the designed API for `serve` and `map`.
+    #[allow(dead_code)]
     pub fn read_component(&self, name: &str) -> Result<ComponentFile> {
         let path = self.component_path(name);
         match self.read_toml(&path) {
@@ -190,6 +194,9 @@ impl Store {
     }
 
     /// Read a decision by name. Returns a clear error if it doesn't exist.
+    ///
+    /// See [`read_component`](Self::read_component) for usage note.
+    #[allow(dead_code)]
     pub fn read_decision(&self, name: &str) -> Result<DecisionFile> {
         let path = self.decision_path(name);
         match self.read_toml(&path) {

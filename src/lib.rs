@@ -6,12 +6,13 @@
 //! for visual exploration.
 
 pub mod cli;
-pub mod commands;
-pub mod config;
-pub mod conversation;
-pub mod error;
-pub mod provider;
-pub mod schema;
-pub mod store;
+
+pub(crate) mod commands;
+pub(crate) mod config;
+pub(crate) mod conversation;
+pub(crate) mod error;
+pub(crate) mod provider;
+pub(crate) mod schema;
+pub(crate) mod store;
 
 pub use error::{Error, Result};
