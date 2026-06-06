@@ -117,21 +117,26 @@ pub(crate) fn slugify(input: &str) -> String {
     slug
 }
 
+/// Upper bound for deduplication suffixes (`-2`, `-3`, …).
+const MAX_DEDUP_SUFFIX: u32 = 10_000;
+
 /// Find a unique decision filename stem, appending `-2`, `-3`, … on collision.
 pub(crate) fn unique_decision_stem(
     decisions: &std::collections::BTreeMap<String, DecisionFile>,
     base: &str,
-) -> String {
+) -> Result<String> {
     if !decisions.contains_key(base) {
-        return base.to_string();
+        return Ok(base.to_string());
     }
-    for n in 2u32.. {
+    for n in 2..=MAX_DEDUP_SUFFIX {
         let candidate = format!("{base}-{n}");
         if !decisions.contains_key(&candidate) {
-            return candidate;
+            return Ok(candidate);
         }
     }
-    unreachable!()
+    Err(Error::Validation(format!(
+        "too many decisions with stem `{base}` (limit: {MAX_DEDUP_SUFFIX})"
+    )))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -174,5 +179,42 @@ mod tests {
     fn slugify_empty_input() {
         assert_eq!(slugify(""), "decision");
         assert_eq!(slugify("!!!"), "decision");
+    }
+
+    #[test]
+    fn unique_stem_no_collision() {
+        let decisions = std::collections::BTreeMap::new();
+        assert_eq!(
+            unique_decision_stem(&decisions, "use-redis").unwrap(),
+            "use-redis"
+        );
+    }
+
+    #[test]
+    fn unique_stem_appends_suffix_on_collision() {
+        let mut decisions = std::collections::BTreeMap::new();
+        decisions.insert(
+            "use-redis".into(),
+            crate::store::testing::sample_decision("use-redis", "project"),
+        );
+        assert_eq!(
+            unique_decision_stem(&decisions, "use-redis").unwrap(),
+            "use-redis-2"
+        );
+    }
+
+    #[test]
+    fn unique_stem_skips_taken_suffixes() {
+        let mut decisions = std::collections::BTreeMap::new();
+        for name in &["use-redis", "use-redis-2", "use-redis-3"] {
+            decisions.insert(
+                name.to_string(),
+                crate::store::testing::sample_decision(name, "project"),
+            );
+        }
+        assert_eq!(
+            unique_decision_stem(&decisions, "use-redis").unwrap(),
+            "use-redis-4"
+        );
     }
 }

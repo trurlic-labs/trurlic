@@ -1,7 +1,7 @@
 //! REST API handlers for the map server.
 //!
 //! All write operations follow the same pattern as CLI commands:
-//! lock → load → mutate → validate → write atomically → release.
+//! lock → load → mutate in memory → validate → write atomically → release.
 
 use std::sync::Arc;
 
@@ -43,8 +43,16 @@ impl From<crate::Error> for ApiError {
         match e {
             crate::Error::Validation(m) => Self::BadRequest(m),
             crate::Error::InvalidName(n) => Self::BadRequest(format!("invalid name: {n}")),
-            crate::Error::LockTimeout { .. } => Self::Internal(e.to_string()),
-            other => Self::Internal(other.to_string()),
+            crate::Error::LockTimeout { timeout_secs, .. } => {
+                Self::Internal(format!("could not acquire lock within {timeout_secs}s"))
+            }
+            other => {
+                // Log full detail to stderr for the operator; return
+                // a generic message to the client to avoid leaking
+                // internal paths or implementation details.
+                eprintln!("trurl map: internal error: {other}");
+                Self::Internal("internal server error".into())
+            }
         }
     }
 }
@@ -54,43 +62,7 @@ impl From<crate::Error> for ApiError {
 pub(super) async fn get_state(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiError> {
     let store = Store::at(state.store_root.to_path_buf());
     let project = store.load_state().map_err(ApiError::from)?;
-
-    let components: Vec<Value> = project
-        .components
-        .iter()
-        .map(|(name, c)| {
-            serde_json::json!({
-                "name": name,
-                "description": c.component.description,
-                "connects_to": c.component.connects_to,
-            })
-        })
-        .collect();
-
-    let decisions: Vec<Value> = project
-        .decisions
-        .iter()
-        .map(|(name, d)| {
-            serde_json::json!({
-                "name": name,
-                "component": d.decision.component,
-                "choice": d.decision.choice,
-                "reason": d.decision.reason,
-                "alternatives": d.decision.alternatives,
-                "created": d.decision.created.to_rfc3339(),
-                "supersedes": d.decision.supersedes,
-            })
-        })
-        .collect();
-
-    Ok(Json(serde_json::json!({
-        "project": {
-            "name": project.project.project.name,
-            "description": project.project.project.description,
-        },
-        "components": components,
-        "decisions": decisions,
-    })))
+    Ok(Json(super::serialize_state(&project)))
 }
 
 // ── POST /api/components ──────────────────────────────────────────────────
@@ -152,7 +124,7 @@ pub(super) async fn remove_component(
 ) -> Result<StatusCode, ApiError> {
     let store = Store::at(state.store_root.to_path_buf());
     let lock = store.lock().map_err(ApiError::from)?;
-    let project = store.load_state().map_err(ApiError::from)?;
+    let mut project = store.load_state().map_err(ApiError::from)?;
 
     if !project.components.contains_key(&name) {
         return Err(ApiError::NotFound(format!(
@@ -175,20 +147,44 @@ pub(super) async fn remove_component(
         )));
     }
 
-    store
-        .remove_file(&lock, &store.component_path(&name))
-        .map_err(ApiError::from)?;
+    // Collect components that connect TO the removed component.
+    let affected: Vec<String> = project
+        .components
+        .iter()
+        .filter(|(comp_name, comp)| {
+            *comp_name != &name && comp.component.connects_to.iter().any(|t| t == &name)
+        })
+        .map(|(comp_name, _)| comp_name.clone())
+        .collect();
 
-    // Also clean up incoming connections from other components.
-    for (other_name, other_comp) in &project.components {
-        if other_comp.component.connects_to.contains(&name) {
-            let mut updated = other_comp.clone();
-            updated.component.connects_to.retain(|t| t != &name);
-            store
-                .write_atomic(&lock, &store.component_path(other_name), &updated)
-                .map_err(ApiError::from)?;
-        }
+    // Mutate state in memory.
+    project.components.remove(&name);
+    for comp in project.components.values_mut() {
+        comp.component.connects_to.retain(|t| t != &name);
     }
+
+    // Validate mutated state.
+    let issues = project.validate();
+    if !issues.is_empty() {
+        return Err(ApiError::BadRequest(issues.join("; ")));
+    }
+
+    // Atomic batch commit: write updated connection files + remove component.
+    let mut writes = Vec::new();
+    for comp_name in &affected {
+        writes.push(
+            store
+                .prepare_write(
+                    &store.component_path(comp_name),
+                    &project.components[comp_name.as_str()],
+                )
+                .map_err(ApiError::from)?,
+        );
+    }
+    let removes = vec![store.component_path(&name)];
+    store
+        .commit_batch(&lock, writes, removes)
+        .map_err(ApiError::from)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -211,29 +207,46 @@ pub(super) async fn add_connection(
 
     let store = Store::at(state.store_root.to_path_buf());
     let lock = store.lock().map_err(ApiError::from)?;
-    let project = store.load_state().map_err(ApiError::from)?;
+    let mut project = store.load_state().map_err(ApiError::from)?;
 
-    let comp = project
-        .components
-        .get(&req.from)
-        .ok_or_else(|| ApiError::NotFound(format!("component `{}` does not exist", req.from)))?;
-
+    if !project.components.contains_key(&req.from) {
+        return Err(ApiError::NotFound(format!(
+            "component `{}` does not exist",
+            req.from
+        )));
+    }
     if !project.components.contains_key(&req.to) {
         return Err(ApiError::NotFound(format!(
             "component `{}` does not exist",
             req.to
         )));
     }
-
-    if comp.component.connects_to.contains(&req.to) {
+    if project.components[&req.from]
+        .component
+        .connects_to
+        .contains(&req.to)
+    {
         return Err(ApiError::Conflict("connection already exists".into()));
     }
 
-    let mut updated = comp.clone();
-    updated.component.connects_to.push(req.to.clone());
+    // Mutate in memory, validate full state, then write.
+    let comp = project
+        .components
+        .get_mut(&req.from)
+        .ok_or_else(|| ApiError::NotFound(format!("component `{}` does not exist", req.from)))?;
+    comp.component.connects_to.push(req.to.clone());
+
+    let issues = project.validate();
+    if !issues.is_empty() {
+        return Err(ApiError::BadRequest(issues.join("; ")));
+    }
 
     store
-        .write_atomic(&lock, &store.component_path(&req.from), &updated)
+        .write_atomic(
+            &lock,
+            &store.component_path(&req.from),
+            &project.components[&req.from],
+        )
         .map_err(ApiError::from)?;
 
     Ok(StatusCode::CREATED)
@@ -247,11 +260,11 @@ pub(super) async fn remove_connection(
 ) -> Result<StatusCode, ApiError> {
     let store = Store::at(state.store_root.to_path_buf());
     let lock = store.lock().map_err(ApiError::from)?;
-    let project = store.load_state().map_err(ApiError::from)?;
+    let mut project = store.load_state().map_err(ApiError::from)?;
 
     let comp = project
         .components
-        .get(&from)
+        .get_mut(&from)
         .ok_or_else(|| ApiError::NotFound(format!("component `{from}` does not exist")))?;
 
     if !comp.component.connects_to.contains(&to) {
@@ -260,11 +273,19 @@ pub(super) async fn remove_connection(
         )));
     }
 
-    let mut updated = comp.clone();
-    updated.component.connects_to.retain(|t| t != &to);
+    comp.component.connects_to.retain(|t| t != &to);
+
+    let issues = project.validate();
+    if !issues.is_empty() {
+        return Err(ApiError::BadRequest(issues.join("; ")));
+    }
 
     store
-        .write_atomic(&lock, &store.component_path(&from), &updated)
+        .write_atomic(
+            &lock,
+            &store.component_path(&from),
+            &project.components[&from],
+        )
         .map_err(ApiError::from)?;
 
     Ok(StatusCode::NO_CONTENT)

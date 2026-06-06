@@ -39,7 +39,7 @@ pub fn decide(
         }
     }
 
-    let stem = unique_decision_stem(&state.decisions, &slugify(choice));
+    let stem = unique_decision_stem(&state.decisions, &slugify(choice))?;
 
     let decision = DecisionFile {
         decision: Decision {

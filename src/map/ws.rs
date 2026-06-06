@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
-use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::store::Store;
@@ -64,43 +63,5 @@ pub(super) async fn handle(
 fn state_json(store_root: &Path) -> Option<String> {
     let store = Store::at(store_root.to_path_buf());
     let state = store.load_state().ok()?;
-
-    let components: Vec<Value> = state
-        .components
-        .iter()
-        .map(|(name, c)| {
-            serde_json::json!({
-                "name": name,
-                "description": c.component.description,
-                "connects_to": c.component.connects_to,
-            })
-        })
-        .collect();
-
-    let decisions: Vec<Value> = state
-        .decisions
-        .iter()
-        .map(|(name, d)| {
-            serde_json::json!({
-                "name": name,
-                "component": d.decision.component,
-                "choice": d.decision.choice,
-                "reason": d.decision.reason,
-                "alternatives": d.decision.alternatives,
-                "created": d.decision.created.to_rfc3339(),
-                "supersedes": d.decision.supersedes,
-            })
-        })
-        .collect();
-
-    let payload = serde_json::json!({
-        "project": {
-            "name": state.project.project.name,
-            "description": state.project.project.description,
-        },
-        "components": components,
-        "decisions": decisions,
-    });
-
-    serde_json::to_string(&payload).ok()
+    serde_json::to_string(&super::serialize_state(&state)).ok()
 }

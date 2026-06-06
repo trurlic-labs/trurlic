@@ -78,6 +78,10 @@ pub(crate) const PARSE_ERROR: i32 = -32700;
 pub(crate) const METHOD_NOT_FOUND: i32 = -32601;
 pub(crate) const INVALID_PARAMS: i32 = -32602;
 
+/// Maximum message size (10 MiB). Prevents memory exhaustion from
+/// unbounded input on the stdio transport.
+const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
+
 // ── Constructors ──────────────────────────────────────────────────────────
 
 impl Response {
@@ -108,14 +112,13 @@ impl Response {
 /// Read one JSON-RPC message from a buffered reader.
 ///
 /// Skips blank lines. Returns `Ok(None)` on EOF (clean shutdown).
-/// Returns `Err` on malformed JSON so the caller can send a parse-error
-/// response.
+/// Returns `Err` on malformed JSON or messages exceeding the size limit.
 pub(crate) fn read_message(reader: &mut impl BufRead) -> std::io::Result<Option<Request>> {
     loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
-            return Ok(None); // EOF
-        }
+        let line = match read_line_bounded(reader, MAX_MESSAGE_BYTES)? {
+            Some(line) => line,
+            None => return Ok(None), // EOF
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue; // skip blank lines between messages
@@ -123,6 +126,54 @@ pub(crate) fn read_message(reader: &mut impl BufRead) -> std::io::Result<Option<
         return serde_json::from_str(trimmed)
             .map(Some)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e));
+    }
+}
+
+/// Read a single newline-terminated line with bounded memory usage.
+///
+/// Reads incrementally from the buffered reader, returning `Err` if the
+/// accumulated line exceeds `limit` bytes before a newline is found.
+/// Returns `Ok(None)` on EOF with no data read.
+fn read_line_bounded(reader: &mut impl BufRead, limit: usize) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return if line.is_empty() {
+                Ok(None)
+            } else {
+                String::from_utf8(line)
+                    .map(Some)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            };
+        }
+        match available.iter().position(|&b| b == b'\n') {
+            Some(pos) => {
+                line.extend_from_slice(&available[..=pos]);
+                let consumed = pos + 1;
+                reader.consume(consumed);
+                if line.len() > limit {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("message exceeds {limit} byte limit"),
+                    ));
+                }
+                return String::from_utf8(line)
+                    .map(Some)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e));
+            }
+            None => {
+                let len = available.len();
+                line.extend_from_slice(available);
+                reader.consume(len);
+                if line.len() > limit {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("message exceeds {limit} byte limit"),
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -244,5 +295,47 @@ mod tests {
         assert!(output.ends_with('\n'));
         let v: Value = serde_json::from_str(output.trim()).unwrap();
         assert_eq!(v["id"], 1);
+    }
+
+    // ── read_line_bounded ───────────────────────────────────────────────
+
+    #[test]
+    fn bounded_read_normal_line() {
+        let input = b"hello world\n";
+        let mut reader = Cursor::new(input.as_slice());
+        let line = read_line_bounded(&mut reader, 1024).unwrap().unwrap();
+        assert_eq!(line.trim(), "hello world");
+    }
+
+    #[test]
+    fn bounded_read_eof_no_data() {
+        let mut reader = Cursor::new(b"".as_slice());
+        assert!(read_line_bounded(&mut reader, 1024).unwrap().is_none());
+    }
+
+    #[test]
+    fn bounded_read_eof_with_partial_data() {
+        let input = b"no newline";
+        let mut reader = Cursor::new(input.as_slice());
+        let line = read_line_bounded(&mut reader, 1024).unwrap().unwrap();
+        assert_eq!(line, "no newline");
+    }
+
+    #[test]
+    fn bounded_read_rejects_oversized_line() {
+        let input = b"this line is way too long\n";
+        let mut reader = Cursor::new(input.as_slice());
+        let err = read_line_bounded(&mut reader, 10).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("byte limit"));
+    }
+
+    #[test]
+    fn bounded_read_rejects_oversized_without_newline() {
+        // Simulates a stream that keeps sending without a newline.
+        let input = vec![b'x'; 2048];
+        let mut reader = Cursor::new(input.as_slice());
+        let err = read_line_bounded(&mut reader, 1024).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }

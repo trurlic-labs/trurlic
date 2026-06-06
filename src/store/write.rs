@@ -69,7 +69,10 @@ impl Store {
         }
 
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
+            if let Err(e) = fs::create_dir_all(parent) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(Error::Io(e));
+            }
         }
 
         if let Err(e) = fs::rename(&tmp_path, target) {
@@ -106,7 +109,7 @@ impl Store {
     /// Phase 1: write all content to `.state/tmp/`.
     /// Phase 2: verify each temp file (byte-compare; type-safe check was in `prepare_write`).
     /// Phase 3: rename all temp files to final paths (each atomic on POSIX).
-    /// Phase 4: remove old files.
+    /// Phase 4: remove old files (best-effort — renames already committed).
     ///
     /// Caller **must** hold a [`StoreLock`].
     pub fn commit_batch(
@@ -159,10 +162,13 @@ impl Store {
             }
         }
 
-        // Ensure parent directories exist before renaming
+        // Ensure parent directories exist before renaming.
         for (_, target) in &staged {
             if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
+                if let Err(e) = fs::create_dir_all(parent) {
+                    cleanup_tmp_files(&staged);
+                    return Err(Error::Io(e));
+                }
             }
         }
 
@@ -176,9 +182,18 @@ impl Store {
             }
         }
 
-        // Phase 4: Remove old files
+        // Phase 4: Remove old files.
+        //
+        // Best-effort: renames (Phase 3) already committed the new state.
+        // A remove failure here leaves an orphan file but does NOT roll back
+        // the successful writes. Crash recovery and `trurl check` will
+        // surface any resulting inconsistency.
         for path in &removes {
-            fs::remove_file(path)?;
+            if let Err(e) = fs::remove_file(path) {
+                if e.kind() != ErrorKind::NotFound {
+                    eprintln!("warning: failed to remove {}: {e}", path.display());
+                }
+            }
         }
 
         Ok(())
@@ -368,6 +383,17 @@ mod tests {
             let count: usize = fs::read_dir(&tmp_dir).unwrap().count();
             assert_eq!(count, 0, "temp files should be cleaned after batch commit");
         }
+    }
+
+    #[test]
+    fn commit_batch_tolerates_already_removed_file() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // Ask to remove a file that doesn't exist — should not fail
+        let removes = vec![store.component_path("nonexistent")];
+        store.commit_batch(&lock, vec![], removes).unwrap();
     }
 
     // ── remove_file ──────────────────────────────────────────────────────

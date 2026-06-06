@@ -79,6 +79,9 @@ pub(crate) fn is_design_complete(response: &str) -> bool {
 
 /// Write a single decision to the store, with full validation.
 ///
+/// Acquires the store lock **before** deriving the filename stem and
+/// validating, closing the TOCTOU window between validation and write.
+///
 /// Uses the caller's cached [`ProjectState`] — no re-load from disk.
 /// On success, `state` is updated in-place so subsequent calls see
 /// the new decision. On failure, `state` is rolled back.
@@ -95,6 +98,10 @@ pub(crate) fn record_decision(
     alternatives: &[String],
     supersedes: Option<&str>,
 ) -> Result<String> {
+    // Acquire lock FIRST — prevents concurrent writes between stem
+    // derivation / validation and the actual disk write.
+    let lock = store.lock()?;
+
     // Validate supersedes target — warn and drop if the LLM hallucinated
     let validated_supersedes = match supersedes {
         Some(target) if state.decisions.contains_key(target) => Some(target.to_string()),
@@ -105,7 +112,7 @@ pub(crate) fn record_decision(
         None => None,
     };
 
-    let stem = commands::unique_decision_stem(&state.decisions, &commands::slugify(choice));
+    let stem = commands::unique_decision_stem(&state.decisions, &commands::slugify(choice))?;
 
     let decision = DecisionFile {
         decision: Decision {
@@ -126,8 +133,6 @@ pub(crate) fn record_decision(
         return Err(e);
     }
 
-    // Acquire lock only for the write, release immediately after
-    let lock = store.lock()?;
     if let Err(e) = store.write_atomic(&lock, &store.decision_path(&stem), &decision) {
         state.decisions.remove(&stem);
         return Err(e);

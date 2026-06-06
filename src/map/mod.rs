@@ -17,15 +17,62 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
+use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::Result;
+use crate::store::ProjectState;
 
 // ── Shared state ──────────────────────────────────────────────────────────
 
 pub(super) struct AppState {
     pub store_root: PathBuf,
     pub broadcast_tx: broadcast::Sender<()>,
+}
+
+// ── State serialization ──────────────────────────────────────────────────
+
+/// Serialize project state to the JSON shape consumed by the map frontend.
+///
+/// Shared between the REST API (`GET /api/state`) and the WebSocket handler
+/// to keep the two surfaces in sync.
+pub(super) fn serialize_state(state: &ProjectState) -> Value {
+    let components: Vec<Value> = state
+        .components
+        .iter()
+        .map(|(name, c)| {
+            serde_json::json!({
+                "name": name,
+                "description": c.component.description,
+                "connects_to": c.component.connects_to,
+            })
+        })
+        .collect();
+
+    let decisions: Vec<Value> = state
+        .decisions
+        .iter()
+        .map(|(name, d)| {
+            serde_json::json!({
+                "name": name,
+                "component": d.decision.component,
+                "choice": d.decision.choice,
+                "reason": d.decision.reason,
+                "alternatives": d.decision.alternatives,
+                "created": d.decision.created.to_rfc3339(),
+                "supersedes": d.decision.supersedes,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "project": {
+            "name": state.project.project.name,
+            "description": state.project.project.description,
+        },
+        "components": components,
+        "decisions": decisions,
+    })
 }
 
 // ── Server ────────────────────────────────────────────────────────────────
@@ -113,7 +160,12 @@ fn open_browser(url: &str) {
     );
 
     match result {
-        Ok(_) => {}
+        Ok(mut child) => {
+            // Reap the child process in a background thread to prevent zombies.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
         Err(e) => eprintln!("trurl: could not open browser ({e}), visit {url} manually"),
     }
 }
