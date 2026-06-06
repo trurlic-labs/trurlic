@@ -18,7 +18,13 @@ use crate::{Error, Result};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Open an existing store with version check and crash recovery.
+/// Open an existing store with version check, crash recovery, and startup
+/// validation.
+///
+/// On startup of any command that reads `.trurl/`:
+/// 1. Check for stale temp files from interrupted writes (clean + warn).
+/// 2. Verify format version compatibility.
+/// 3. Run full validation — warn on inconsistency, direct to `trurl check`.
 fn open_store(cwd: &Path) -> Result<Store> {
     let store = Store::discover(cwd)?;
     store.check_version()?;
@@ -26,7 +32,33 @@ fn open_store(cwd: &Path) -> Result<Store> {
     if stale > 0 {
         eprintln!("warning: cleaned {stale} stale temp file(s) from interrupted write");
     }
+    // Startup validation: detect inconsistent state from crashes or hand edits
+    let state = store.load_state()?;
+    let issues = state.validate();
+    if !issues.is_empty() {
+        eprintln!(
+            "warning: .trurl/ has {} consistency issue(s) — run `trurl check` for details",
+            issues.len()
+        );
+    }
     Ok(store)
+}
+
+/// Validate that a mutated project state is internally consistent.
+///
+/// Called after applying a mutation in memory and before writing to disk.
+/// Defense-in-depth: individual command checks catch most issues, but this
+/// ensures no mutation ever produces an inconsistent store.
+fn validate_mutation(state: &store::ProjectState) -> Result<()> {
+    let issues = state.validate();
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Validation(format!(
+            "operation would create inconsistent state: {}",
+            issues.join("; ")
+        )))
+    }
 }
 
 /// Maximum slug length (well under filesystem limits, readable in listings).
@@ -153,7 +185,7 @@ pub fn add_component(cwd: &Path, name: &str) -> Result<()> {
 
     let store = open_store(cwd)?;
     let lock = store.lock()?;
-    let state = store.load_state()?;
+    let mut state = store.load_state()?;
 
     if state.components.contains_key(name) {
         return Err(Error::Validation(format!(
@@ -169,6 +201,10 @@ pub fn add_component(cwd: &Path, name: &str) -> Result<()> {
         },
     };
 
+    // Validate full mutated state before writing
+    state.components.insert(name.into(), comp.clone());
+    validate_mutation(&state)?;
+
     store.write_atomic(&lock, &store.component_path(name), &comp)?;
     println!("Added component `{name}`");
     Ok(())
@@ -180,7 +216,7 @@ pub fn add_component(cwd: &Path, name: &str) -> Result<()> {
 pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
     let store = open_store(cwd)?;
     let lock = store.lock()?;
-    let state = store.load_state()?;
+    let mut state = store.load_state()?;
 
     if !state.components.contains_key(from) {
         return Err(Error::Validation(format!(
@@ -198,15 +234,25 @@ pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
         )));
     }
 
-    let mut comp = state.components[from].clone();
-    if comp.component.connects_to.iter().any(|t| t == to) {
+    if state.components[from]
+        .component
+        .connects_to
+        .iter()
+        .any(|t| t == to)
+    {
         return Err(Error::Validation(format!(
             "connection `{from}` → `{to}` already exists"
         )));
     }
 
-    comp.component.connects_to.push(to.into());
-    store.write_atomic(&lock, &store.component_path(from), &comp)?;
+    let mut updated = state.components[from].clone();
+    updated.component.connects_to.push(to.into());
+
+    // Validate full mutated state before writing
+    state.components.insert(from.into(), updated.clone());
+    validate_mutation(&state)?;
+
+    store.write_atomic(&lock, &store.component_path(from), &updated)?;
     println!("Connected `{from}` → `{to}`");
     Ok(())
 }
@@ -214,6 +260,9 @@ pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
 // ── remove decision ──────────────────────────────────────────────────────────
 
 /// Remove a decision. Warns if other decisions supersede it (broken chain).
+///
+/// The spec explicitly permits broken supersede chains on removal
+/// ("warn but allow"), so post-mutation validation is skipped.
 pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
     let store = open_store(cwd)?;
     let lock = store.lock()?;
@@ -247,11 +296,11 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
 // ── remove component ─────────────────────────────────────────────────────────
 
 /// Remove a component. Refuses if any decisions reference it.
-/// Cleans up incoming connections from other components.
+/// Cleans up incoming connections from other components via batch commit.
 pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
     let store = open_store(cwd)?;
     let lock = store.lock()?;
-    let state = store.load_state()?;
+    let mut state = store.load_state()?;
 
     if !state.components.contains_key(name) {
         return Err(Error::Validation(format!(
@@ -274,30 +323,47 @@ pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
         )));
     }
 
-    // Remove from other components' connects_to
-    for (comp_name, comp) in &state.components {
-        if comp_name == name {
-            continue;
-        }
-        if comp.component.connects_to.iter().any(|t| t == name) {
-            let mut updated = comp.clone();
-            updated.component.connects_to.retain(|t| t != name);
-            store.write_atomic(&lock, &store.component_path(comp_name), &updated)?;
-        }
+    // Identify components whose connects_to must be cleaned
+    let affected: Vec<String> = state
+        .components
+        .iter()
+        .filter(|(comp_name, comp)| {
+            *comp_name != name && comp.component.connects_to.iter().any(|t| t == name)
+        })
+        .map(|(comp_name, _)| comp_name.clone())
+        .collect();
+
+    // Apply mutation in memory
+    state.components.remove(name);
+    for comp in state.components.values_mut() {
+        comp.component.connects_to.retain(|t| t != name);
     }
 
-    store.remove_file(&lock, &store.component_path(name))?;
+    // Validate full mutated state
+    validate_mutation(&state)?;
+
+    // Batch commit: updated components + remove the component file
+    let mut writes = Vec::new();
+    for comp_name in &affected {
+        writes.push(store.prepare_write(
+            &store.component_path(comp_name),
+            &state.components[comp_name.as_str()],
+        )?);
+    }
+    let removes = vec![store.component_path(name)];
+
+    store.commit_batch(&lock, writes, removes)?;
     println!("Removed component `{name}`");
     Ok(())
 }
 
 // ── rename component ─────────────────────────────────────────────────────────
 
-/// Rename a component, updating all references atomically.
+/// Rename a component, updating all references via batch commit.
 ///
-/// Multi-file transaction: writes all updated files, then removes the old
-/// component file. On crash mid-operation, `trurl check` detects and reports
-/// the inconsistency.
+/// All temp files are written first, then renamed to final paths, then
+/// the old component file is removed. On crash mid-operation, `trurl check`
+/// detects and reports the inconsistency.
 pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
     if !store::is_valid_kebab_case(new) {
         return Err(Error::InvalidName(new.into()));
@@ -305,7 +371,7 @@ pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
 
     let store = open_store(cwd)?;
     let lock = store.lock()?;
-    let state = store.load_state()?;
+    let mut state = store.load_state()?;
 
     if !state.components.contains_key(old) {
         return Err(Error::Validation(format!(
@@ -318,39 +384,72 @@ pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
         )));
     }
 
-    // Write new component file with updated name
-    let old_comp = &state.components[old];
-    let mut renamed = old_comp.clone();
+    // Identify affected files before mutation
+    let affected_components: Vec<String> = state
+        .components
+        .iter()
+        .filter(|(cname, comp)| {
+            *cname != old && comp.component.connects_to.iter().any(|t| t == old)
+        })
+        .map(|(cname, _)| cname.clone())
+        .collect();
+
+    let affected_decisions: Vec<String> = state
+        .decisions
+        .iter()
+        .filter(|(_, dec)| dec.decision.component == old)
+        .map(|(dname, _)| dname.clone())
+        .collect();
+
+    // Apply mutation in memory
+    let mut renamed = state
+        .components
+        .remove(old)
+        .ok_or_else(|| Error::Validation(format!("component `{old}` does not exist")))?;
     renamed.component.name = new.into();
-    store.write_atomic(&lock, &store.component_path(new), &renamed)?;
+    state.components.insert(new.into(), renamed);
 
-    // Update connects_to references in all other components
-    for (comp_name, comp) in &state.components {
-        if comp_name == old {
-            continue;
-        }
-        if comp.component.connects_to.iter().any(|t| t == old) {
-            let mut updated = comp.clone();
-            for target in &mut updated.component.connects_to {
-                if target == old {
-                    *target = new.into();
-                }
+    for comp in state.components.values_mut() {
+        for target in &mut comp.component.connects_to {
+            if target == old {
+                *target = new.into();
             }
-            store.write_atomic(&lock, &store.component_path(comp_name), &updated)?;
         }
     }
 
-    // Update decision component references
-    for (dec_name, dec) in &state.decisions {
+    for dec in state.decisions.values_mut() {
         if dec.decision.component == old {
-            let mut updated = dec.clone();
-            updated.decision.component = new.into();
-            store.write_atomic(&lock, &store.decision_path(dec_name), &updated)?;
+            dec.decision.component = new.into();
         }
     }
 
-    // Remove old component file last (all references already point to new)
-    store.remove_file(&lock, &store.component_path(old))?;
+    // Validate full mutated state
+    validate_mutation(&state)?;
+
+    // Batch commit: all changed files staged to tmp, then renamed
+    let mut writes = Vec::new();
+
+    // The renamed component (new file)
+    writes.push(store.prepare_write(&store.component_path(new), &state.components[new])?);
+
+    // Other components whose connects_to changed
+    for cname in &affected_components {
+        writes.push(store.prepare_write(
+            &store.component_path(cname),
+            &state.components[cname.as_str()],
+        )?);
+    }
+
+    // Decisions whose component reference changed
+    for dname in &affected_decisions {
+        writes.push(store.prepare_write(
+            &store.decision_path(dname),
+            &state.decisions[dname.as_str()],
+        )?);
+    }
+
+    let removes = vec![store.component_path(old)];
+    store.commit_batch(&lock, writes, removes)?;
     println!("Renamed component `{old}` → `{new}`");
     Ok(())
 }
@@ -367,7 +466,7 @@ pub fn decide(
 ) -> Result<()> {
     let store = open_store(cwd)?;
     let lock = store.lock()?;
-    let state = store.load_state()?;
+    let mut state = store.load_state()?;
 
     if component != "project" && !state.components.contains_key(component) {
         return Err(Error::Validation(format!(
@@ -395,6 +494,10 @@ pub fn decide(
             supersedes: supersedes.unwrap_or_default().into(),
         },
     };
+
+    // Validate full mutated state before writing
+    state.decisions.insert(stem.clone(), decision.clone());
+    validate_mutation(&state)?;
 
     store.write_atomic(&lock, &store.decision_path(&stem), &decision)?;
     println!("Recorded decision `{stem}`");

@@ -36,8 +36,8 @@ pub enum Error {
     StoreExists(PathBuf),
 
     /// Could not acquire the store lock within the timeout.
-    #[error("could not acquire lock within {0}s — another trurl process may be running")]
-    LockTimeout(u64),
+    #[error("could not acquire lock within {timeout_secs}s — {detail}")]
+    LockTimeout { timeout_secs: u64, detail: String },
 
     /// Name failed kebab-case validation.
     #[error(

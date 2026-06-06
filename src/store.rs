@@ -10,8 +10,10 @@
 //! - **Writes require a [`StoreLock`].** Passed as proof parameter — the type
 //!   system enforces that callers hold the lock before mutating state.
 //! - **Atomic writes** go through `.state/tmp/` then `rename(2)`.
+//! - **Batch writes** stage all temp files first, then rename all in sequence.
 //! - **Crash recovery** cleans stale temp files on the next invocation.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::ErrorKind;
@@ -112,10 +114,15 @@ impl Store {
     ///
     /// Times out after 5 seconds. The lock is released when the returned
     /// [`StoreLock`] is dropped.
+    ///
+    /// Writes the current PID to the lock file for diagnostics. On timeout,
+    /// reports the PID of the holder (if readable).
     pub fn lock(&self) -> Result<StoreLock> {
+        use std::io::{Read, Seek, SeekFrom, Write};
+
         fs::create_dir_all(self.state_dir())?;
 
-        let file = File::options()
+        let mut file = File::options()
             .read(true)
             .write(true)
             .create(true)
@@ -126,10 +133,29 @@ impl Store {
 
         loop {
             match file.try_lock_exclusive() {
-                Ok(()) => return Ok(StoreLock { _file: file }),
+                Ok(()) => {
+                    // Record our PID for diagnostics on contention
+                    let _ = file.set_len(0);
+                    let _ = file.seek(SeekFrom::Start(0));
+                    let _ = write!(file, "{}", std::process::id());
+                    return Ok(StoreLock { _file: file });
+                }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
-                        return Err(Error::LockTimeout(LOCK_TIMEOUT.as_secs()));
+                        // Best-effort: read holder PID from lock file
+                        let mut contents = String::new();
+                        let _ = file.seek(SeekFrom::Start(0));
+                        let _ = file.read_to_string(&mut contents);
+                        let holder_pid = contents.trim().parse::<u32>().ok();
+
+                        let detail = match holder_pid {
+                            Some(pid) => format!("possibly held by PID {pid}"),
+                            None => "another trurl process may be running".into(),
+                        };
+                        return Err(Error::LockTimeout {
+                            timeout_secs: LOCK_TIMEOUT.as_secs(),
+                            detail,
+                        });
                     }
                     std::thread::sleep(LOCK_POLL_INTERVAL);
                 }
@@ -212,20 +238,28 @@ impl Store {
 
     /// Verify the store's format version is compatible with this CLI.
     ///
-    /// Refuses on any mismatch — never silently misinterprets.
+    /// Newer format → refuse with upgrade message.
+    /// Older format → refuse with migration message.
+    /// Never silently misinterprets.
     pub fn check_version(&self) -> Result<()> {
         let project = self.read_project()?;
-        let v = &project.trurl_version;
-        if v == FORMAT_VERSION {
+        let stored = &project.trurl_version;
+        if stored == FORMAT_VERSION {
             return Ok(());
         }
-        Err(Error::Validation(format!(
-            ".trurl/ format version `{v}` is not compatible with this CLI \
-             (expected `{FORMAT_VERSION}`)"
-        )))
+        match compare_versions(stored, FORMAT_VERSION) {
+            Ordering::Greater => Err(Error::Validation(format!(
+                ".trurl/ format version `{stored}` is newer than this CLI \
+                 (expected `{FORMAT_VERSION}`). Please upgrade trurl."
+            ))),
+            _ => Err(Error::Validation(format!(
+                ".trurl/ format version `{stored}` is older than this CLI \
+                 (expected `{FORMAT_VERSION}`). A format migration may be needed."
+            ))),
+        }
     }
 
-    // ── Atomic writing ───────────────────────────────────────────────────
+    // ── Atomic writing (single file) ─────────────────────────────────────
 
     /// Write `value` to `target` atomically via `.state/tmp/`.
     ///
@@ -279,6 +313,108 @@ impl Store {
         Ok(())
     }
 
+    // ── Batch writing (multi-file transactions) ──────────────────────────
+
+    /// Serialize a value to TOML without touching disk.
+    ///
+    /// Returns a [`PendingWrite`] for use with [`commit_batch`](Self::commit_batch).
+    pub fn prepare_write<T: Serialize>(&self, target: &Path, value: &T) -> Result<PendingWrite> {
+        Ok(PendingWrite {
+            target: target.to_path_buf(),
+            content: toml::to_string_pretty(value)?,
+        })
+    }
+
+    /// Execute a batch of writes and removes as a two-phase commit.
+    ///
+    /// Phase 1: write all content to `.state/tmp/`.
+    /// Phase 2: validate each temp file by re-reading as TOML.
+    /// Phase 3: rename all temp files to final paths (each atomic on POSIX).
+    /// Phase 4: remove old files.
+    ///
+    /// On failure in phases 1-2, all temp files are cleaned and no changes
+    /// reach disk. A crash between renames in phase 3 produces partial state
+    /// that `trurl check` will detect and report on next invocation.
+    ///
+    /// Caller **must** hold a [`StoreLock`].
+    pub fn commit_batch(
+        &self,
+        _lock: &StoreLock,
+        writes: Vec<PendingWrite>,
+        removes: Vec<PathBuf>,
+    ) -> Result<()> {
+        if writes.is_empty() && removes.is_empty() {
+            return Ok(());
+        }
+
+        let tmp_dir = self.tmp_dir();
+        fs::create_dir_all(&tmp_dir)?;
+
+        // Phase 1: Write all to tmp
+        // Each entry: (tmp_path, final_target_path)
+        let mut staged: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(writes.len());
+
+        for (i, write) in writes.iter().enumerate() {
+            let filename = write
+                .target
+                .file_name()
+                .ok_or_else(|| Error::Validation("target path has no filename".into()))?;
+            // Index prefix prevents collisions when a rename produces a new
+            // file whose name matches another write in the same batch.
+            let tmp_name = format!("{i}_{}", filename.to_string_lossy());
+            let tmp_path = tmp_dir.join(tmp_name);
+
+            if let Err(e) = fs::write(&tmp_path, &write.content) {
+                cleanup_tmp_files(&staged);
+                return Err(Error::Io(e));
+            }
+            staged.push((tmp_path, write.target.clone()));
+        }
+
+        // Phase 2: Validate by re-reading (defense-in-depth against fs corruption)
+        for (tmp_path, _) in &staged {
+            let readback = match fs::read_to_string(tmp_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    cleanup_tmp_files(&staged);
+                    return Err(Error::Io(e));
+                }
+            };
+            if let Err(e) = toml::from_str::<toml::Value>(&readback) {
+                cleanup_tmp_files(&staged);
+                return Err(Error::Validation(format!(
+                    "batch readback validation failed: {e}"
+                )));
+            }
+        }
+
+        // Ensure parent directories exist before renaming
+        for (_, target) in &staged {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        // Phase 3: Rename all to final paths (each rename is atomic on POSIX)
+        for (i, (tmp_path, target)) in staged.iter().enumerate() {
+            if let Err(e) = fs::rename(tmp_path, target) {
+                // Partial rename — clean remaining tmp files.
+                // `trurl check` will detect the inconsistency on next run.
+                for (remaining, _) in staged.iter().skip(i + 1) {
+                    let _ = fs::remove_file(remaining);
+                }
+                return Err(Error::Io(e));
+            }
+        }
+
+        // Phase 4: Remove old files
+        for path in &removes {
+            fs::remove_file(path)?;
+        }
+
+        Ok(())
+    }
+
     /// Remove a file from the store. Caller **must** hold a [`StoreLock`].
     pub fn remove_file(&self, _lock: &StoreLock, target: &Path) -> Result<()> {
         Ok(fs::remove_file(target)?)
@@ -324,6 +460,17 @@ impl Store {
 #[derive(Debug)]
 pub struct StoreLock {
     _file: File,
+}
+
+// ── PendingWrite ─────────────────────────────────────────────────────────────
+
+/// A file write staged for batch commit.
+///
+/// Created via [`Store::prepare_write`], executed via [`Store::commit_batch`].
+/// Content is serialized TOML; target is the final path.
+pub struct PendingWrite {
+    target: PathBuf,
+    content: String,
 }
 
 // ── ProjectState ─────────────────────────────────────────────────────────────
@@ -401,6 +548,22 @@ impl ProjectState {
     }
 }
 
+// ── Version comparison ──────────────────────────────────────────────────────
+
+/// Compare two semver version strings (major.minor.patch).
+///
+/// Non-numeric segments default to 0. Missing segments default to 0.
+fn compare_versions(a: &str, b: &str) -> Ordering {
+    let parse = |v: &str| -> (u32, u32, u32) {
+        let mut parts = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+        let major = parts.next().unwrap_or(0);
+        let minor = parts.next().unwrap_or(0);
+        let patch = parts.next().unwrap_or(0);
+        (major, minor, patch)
+    };
+    parse(a).cmp(&parse(b))
+}
+
 // ── Validation helpers ───────────────────────────────────────────────────────
 
 /// Check whether a name is valid kebab-case.
@@ -441,6 +604,13 @@ fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
+/// Best-effort cleanup of staged temp files on batch failure.
+fn cleanup_tmp_files(staged: &[(PathBuf, PathBuf)]) {
+    for (tmp_path, _) in staged {
+        let _ = fs::remove_file(tmp_path);
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -461,6 +631,28 @@ mod tests {
 
         let project = ProjectFile {
             trurl_version: FORMAT_VERSION.into(),
+            project: Project {
+                name: "test-project".into(),
+                description: "A test project".into(),
+            },
+        };
+        fs::write(
+            root.join("project.toml"),
+            toml::to_string_pretty(&project).unwrap(),
+        )
+        .unwrap();
+
+        Store::at(root)
+    }
+
+    fn setup_store_with_version(dir: &Path, version: &str) -> Store {
+        let root = dir.join(STORE_DIR);
+        fs::create_dir_all(root.join(COMPONENTS_DIR)).unwrap();
+        fs::create_dir_all(root.join(DECISIONS_DIR)).unwrap();
+        fs::create_dir_all(root.join(STATE_DIR)).unwrap();
+
+        let project = ProjectFile {
+            trurl_version: version.into(),
             project: Project {
                 name: "test-project".into(),
                 description: "A test project".into(),
@@ -568,6 +760,21 @@ mod tests {
         // Lock released on drop — lock file remains but is unlocked.
     }
 
+    #[test]
+    fn lock_writes_pid_to_lock_file() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+
+        let _lock = store.lock().unwrap();
+
+        let content = fs::read_to_string(store.lock_path()).unwrap();
+        let pid: u32 = content
+            .trim()
+            .parse()
+            .expect("lock file should contain PID");
+        assert_eq!(pid, std::process::id());
+    }
+
     // ── read / write round-trip ──────────────────────────────────────────
 
     #[test]
@@ -618,7 +825,7 @@ mod tests {
         let err = store.read_decision("nonexistent").unwrap_err();
         match err {
             Error::Validation(msg) => assert!(msg.contains("nonexistent")),
-            other => panic!("expected Validation error, got: {other}"),
+            other => panic!("expected Validation, got: {other}"),
         }
     }
 
@@ -683,35 +890,154 @@ mod tests {
     }
 
     #[test]
-    fn check_version_rejects_mismatch() {
+    fn check_version_rejects_newer_format() {
         let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join(STORE_DIR);
-        fs::create_dir_all(root.join(COMPONENTS_DIR)).unwrap();
-        fs::create_dir_all(root.join(DECISIONS_DIR)).unwrap();
-        fs::create_dir_all(root.join(STATE_DIR)).unwrap();
+        let store = setup_store_with_version(tmp.path(), "99.0.0");
 
-        let project = ProjectFile {
-            trurl_version: "99.0.0".into(),
-            project: Project {
-                name: "future".into(),
-                description: "From the future".into(),
-            },
-        };
-        fs::write(
-            root.join("project.toml"),
-            toml::to_string_pretty(&project).unwrap(),
-        )
-        .unwrap();
-
-        let store = Store::at(root);
         let err = store.check_version().unwrap_err();
         match err {
             Error::Validation(msg) => {
                 assert!(msg.contains("99.0.0"));
-                assert!(msg.contains(FORMAT_VERSION));
+                assert!(msg.contains("newer"), "should mention 'newer': {msg}");
+                assert!(msg.contains("upgrade"), "should suggest upgrade: {msg}");
             }
             other => panic!("expected Validation, got: {other}"),
         }
+    }
+
+    #[test]
+    fn check_version_rejects_older_format() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store_with_version(tmp.path(), "0.0.1");
+
+        let err = store.check_version().unwrap_err();
+        match err {
+            Error::Validation(msg) => {
+                assert!(msg.contains("0.0.1"));
+                assert!(msg.contains("older"), "should mention 'older': {msg}");
+                assert!(msg.contains("migration"), "should mention migration: {msg}");
+            }
+            other => panic!("expected Validation, got: {other}"),
+        }
+    }
+
+    // ── compare_versions ─────────────────────────────────────────────────
+
+    #[test]
+    fn compare_versions_equal() {
+        assert_eq!(compare_versions("0.1.0", "0.1.0"), Ordering::Equal);
+        assert_eq!(compare_versions("1.2.3", "1.2.3"), Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_versions_major_dominates() {
+        assert_eq!(compare_versions("2.0.0", "1.9.9"), Ordering::Greater);
+        assert_eq!(compare_versions("0.9.9", "1.0.0"), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_versions_minor() {
+        assert_eq!(compare_versions("0.2.0", "0.1.9"), Ordering::Greater);
+        assert_eq!(compare_versions("0.0.9", "0.1.0"), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_versions_patch() {
+        assert_eq!(compare_versions("0.1.1", "0.1.0"), Ordering::Greater);
+        assert_eq!(compare_versions("0.1.0", "0.1.1"), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_versions_malformed_defaults_to_zero() {
+        assert_eq!(compare_versions("abc", "0.0.0"), Ordering::Equal);
+        assert_eq!(compare_versions("1", "1.0.0"), Ordering::Equal);
+        assert_eq!(compare_versions("1.2", "1.2.0"), Ordering::Equal);
+    }
+
+    // ── commit_batch ─────────────────────────────────────────────────────
+
+    #[test]
+    fn commit_batch_writes_multiple_files() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let comp1 = sample_component("auth");
+        let comp2 = sample_component("database");
+
+        let writes = vec![
+            store
+                .prepare_write(&store.component_path("auth"), &comp1)
+                .unwrap(),
+            store
+                .prepare_write(&store.component_path("database"), &comp2)
+                .unwrap(),
+        ];
+
+        store.commit_batch(&lock, writes, vec![]).unwrap();
+
+        let read1 = store.read_component("auth").unwrap();
+        assert_eq!(read1, comp1);
+        let read2 = store.read_component("database").unwrap();
+        assert_eq!(read2, comp2);
+    }
+
+    #[test]
+    fn commit_batch_writes_and_removes() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // Create a file that will be removed
+        let old = sample_component("old-name");
+        store
+            .write_atomic(&lock, &store.component_path("old-name"), &old)
+            .unwrap();
+        assert!(store.component_path("old-name").exists());
+
+        let new = sample_component("new-name");
+        let writes = vec![
+            store
+                .prepare_write(&store.component_path("new-name"), &new)
+                .unwrap(),
+        ];
+        let removes = vec![store.component_path("old-name")];
+
+        store.commit_batch(&lock, writes, removes).unwrap();
+
+        assert!(store.component_path("new-name").exists());
+        assert!(!store.component_path("old-name").exists());
+    }
+
+    #[test]
+    fn commit_batch_leaves_no_tmp_files() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let comp = sample_component("auth");
+        let writes = vec![
+            store
+                .prepare_write(&store.component_path("auth"), &comp)
+                .unwrap(),
+        ];
+
+        store.commit_batch(&lock, writes, vec![]).unwrap();
+
+        let tmp_dir = store.root().join(STATE_DIR).join("tmp");
+        if tmp_dir.exists() {
+            let count: usize = fs::read_dir(&tmp_dir).unwrap().count();
+            assert_eq!(count, 0, "temp files should be cleaned after batch commit");
+        }
+    }
+
+    #[test]
+    fn commit_batch_empty_is_noop() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        store.commit_batch(&lock, vec![], vec![]).unwrap();
     }
 
     // ── ProjectState::validate ───────────────────────────────────────────
