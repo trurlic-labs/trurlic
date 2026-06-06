@@ -1,6 +1,7 @@
 //! In-memory project state and validation.
 
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -21,7 +22,8 @@ pub struct ProjectState {
 }
 
 impl ProjectState {
-    /// Validate referential integrity. Returns a list of issues (empty = clean).
+    /// Validate referential integrity and schema constraints.
+    /// Returns a list of issues (empty = clean).
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
 
@@ -34,7 +36,13 @@ impl ProjectState {
                 ));
             }
 
-            let mut seen = std::collections::HashSet::new();
+            if !is_valid_kebab_case(name) {
+                issues.push(format!(
+                    "component `{filename}` has invalid name `{name}` (must be kebab-case)"
+                ));
+            }
+
+            let mut seen = HashSet::new();
             for target in &comp.component.connects_to {
                 if !self.components.contains_key(target) {
                     issues.push(format!(
@@ -60,8 +68,24 @@ impl ProjectState {
                 ));
             }
 
+            if comp != "project" && !is_valid_kebab_case(comp) {
+                issues.push(format!(
+                    "decision `{filename}` has invalid component `{comp}` (must be kebab-case or \"project\")"
+                ));
+            }
+
+            if dec.decision.choice.trim().is_empty() {
+                issues.push(format!("decision `{filename}` has empty choice"));
+            }
+
+            if dec.decision.reason.trim().is_empty() {
+                issues.push(format!("decision `{filename}` has empty reason"));
+            }
+
             if let Some(ref sup) = dec.decision.supersedes {
-                if !self.decisions.contains_key(sup.as_str()) {
+                if sup == filename {
+                    issues.push(format!("decision `{filename}` supersedes itself"));
+                } else if !self.decisions.contains_key(sup.as_str()) {
                     issues.push(format!(
                         "decision `{filename}` supersedes `{sup}` which does not exist"
                     ));
@@ -301,5 +325,93 @@ mod tests {
                 .iter()
                 .any(|i| i.contains("actual-file") && i.contains("wrong-name"))
         );
+    }
+
+    // ── new validation checks ────────────────────────────────────────────
+
+    #[test]
+    fn validate_catches_non_kebab_component_name() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // Hand-edit: a component file with an invalid internal name
+        let mut comp = sample_component("Bad_Name");
+        comp.component.name = "Bad_Name".into();
+        store
+            .write_atomic(&lock, &store.component_path("Bad_Name"), &comp)
+            .unwrap();
+
+        let state = store.load_state().unwrap();
+        let issues = state.validate();
+        assert!(issues.iter().any(|i| i.contains("kebab-case")));
+    }
+
+    #[test]
+    fn validate_catches_empty_decision_choice() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let mut dec = sample_decision("bad-decision", "project");
+        dec.decision.choice = String::new();
+        store
+            .write_atomic(&lock, &store.decision_path("bad-decision"), &dec)
+            .unwrap();
+
+        let state = store.load_state().unwrap();
+        let issues = state.validate();
+        assert!(issues.iter().any(|i| i.contains("empty choice")));
+    }
+
+    #[test]
+    fn validate_catches_whitespace_only_reason() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let mut dec = sample_decision("bad-decision", "project");
+        dec.decision.reason = "   ".into();
+        store
+            .write_atomic(&lock, &store.decision_path("bad-decision"), &dec)
+            .unwrap();
+
+        let state = store.load_state().unwrap();
+        let issues = state.validate();
+        assert!(issues.iter().any(|i| i.contains("empty reason")));
+    }
+
+    #[test]
+    fn validate_catches_non_kebab_decision_component() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let mut dec = sample_decision("bad-ref", "project");
+        dec.decision.component = "Not Kebab".into();
+        store
+            .write_atomic(&lock, &store.decision_path("bad-ref"), &dec)
+            .unwrap();
+
+        let state = store.load_state().unwrap();
+        let issues = state.validate();
+        assert!(issues.iter().any(|i| i.contains("invalid component")));
+    }
+
+    #[test]
+    fn validate_catches_self_supersede() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let mut dec = sample_decision("loopy", "project");
+        dec.decision.supersedes = Some("loopy".into());
+        store
+            .write_atomic(&lock, &store.decision_path("loopy"), &dec)
+            .unwrap();
+
+        let state = store.load_state().unwrap();
+        let issues = state.validate();
+        assert!(issues.iter().any(|i| i.contains("supersedes itself")));
     }
 }

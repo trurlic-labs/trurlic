@@ -1,15 +1,16 @@
 //! File watcher for `.trurl/` live updates.
 //!
-//! Watches `components/` and `decisions/` directories plus `project.toml`.
-//! On any change, fires a unit signal through the broadcast channel.
-//! Consumers (WebSocket handlers) debounce and reload state.
+//! Watches the store root recursively so that atomic renames of
+//! `project.toml` (write-to-tmp then rename) are correctly detected on
+//! all platforms.  Events inside `.state/` (lock, sessions, temp files)
+//! are filtered out — only content-bearing changes trigger a broadcast.
 
 use std::path::Path;
 
 use notify::{RecursiveMode, Watcher};
 use tokio::sync::broadcast;
 
-use crate::store::schema::{COMPONENTS_DIR, DECISIONS_DIR};
+use crate::store::schema::STATE_DIR;
 
 /// Start watching `.trurl/` for content changes.
 ///
@@ -19,25 +20,20 @@ pub(super) fn start(
     store_root: &Path,
     tx: broadcast::Sender<()>,
 ) -> notify::Result<notify::RecommendedWatcher> {
+    let state_dir = store_root.join(STATE_DIR);
+
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if res.is_ok() {
-            let _ = tx.send(());
+        if let Ok(event) = res {
+            // Only signal for content-bearing changes — ignore .state/
+            // (lock file, sessions, temp files from atomic writes).
+            let relevant = event.paths.iter().any(|p| !p.starts_with(&state_dir));
+            if relevant {
+                let _ = tx.send(());
+            }
         }
     })?;
 
-    let components = store_root.join(COMPONENTS_DIR);
-    let decisions = store_root.join(DECISIONS_DIR);
-    let project = store_root.join("project.toml");
-
-    if components.is_dir() {
-        watcher.watch(&components, RecursiveMode::NonRecursive)?;
-    }
-    if decisions.is_dir() {
-        watcher.watch(&decisions, RecursiveMode::NonRecursive)?;
-    }
-    if project.is_file() {
-        watcher.watch(&project, RecursiveMode::NonRecursive)?;
-    }
+    watcher.watch(store_root, RecursiveMode::Recursive)?;
 
     Ok(watcher)
 }

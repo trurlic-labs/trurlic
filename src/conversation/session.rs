@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::provider::{Message, Role};
-use crate::store::{STATE_DIR, Store};
+use crate::store::{STATE_DIR, Store, is_valid_kebab_case};
 use crate::{Error, Result};
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -60,16 +60,21 @@ impl Session {
 
 // ── Persistence ──────────────────────────────────────────────────────────────
 
-fn session_path(store: &Store, component: &str) -> PathBuf {
-    store
+/// Build the session file path, validating the component name to prevent
+/// path traversal.
+fn session_path(store: &Store, component: &str) -> Result<PathBuf> {
+    if component != "project" && !is_valid_kebab_case(component) {
+        return Err(Error::InvalidName(component.into()));
+    }
+    Ok(store
         .root()
         .join(STATE_DIR)
         .join("sessions")
-        .join(format!("{component}.json"))
+        .join(format!("{component}.json")))
 }
 
 pub(crate) fn save(store: &Store, session: &Session) -> Result<()> {
-    let path = session_path(store, &session.component);
+    let path = session_path(store, &session.component)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -87,7 +92,7 @@ pub(crate) fn save(store: &Store, session: &Session) -> Result<()> {
 }
 
 pub(crate) fn load(store: &Store, component: &str) -> Result<Session> {
-    let path = session_path(store, component);
+    let path = session_path(store, component)?;
     if !path.exists() {
         return Err(Error::Validation(format!(
             "no session for `{component}` — run without --continue to start fresh"
@@ -99,8 +104,9 @@ pub(crate) fn load(store: &Store, component: &str) -> Result<Session> {
 }
 
 pub(crate) fn cleanup(store: &Store, component: &str) {
-    let path = session_path(store, component);
-    let _ = std::fs::remove_file(path);
+    if let Ok(path) = session_path(store, component) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -135,5 +141,29 @@ mod tests {
         assert_eq!(messages[0].role, Role::Assistant);
         assert_eq!(messages[1].role, Role::User);
         assert_eq!(messages[1].content, "A.");
+    }
+
+    #[test]
+    fn session_path_rejects_traversal() {
+        use crate::store::Store;
+        let store = Store::at("/tmp/fake/.trurl".into());
+        let err = session_path(&store, "../escape").unwrap_err();
+        assert!(matches!(err, Error::InvalidName(_)));
+    }
+
+    #[test]
+    fn session_path_accepts_project() {
+        use crate::store::Store;
+        let store = Store::at("/tmp/fake/.trurl".into());
+        let path = session_path(&store, "project").unwrap();
+        assert!(path.to_string_lossy().contains("project.json"));
+    }
+
+    #[test]
+    fn session_path_accepts_kebab_case() {
+        use crate::store::Store;
+        let store = Store::at("/tmp/fake/.trurl".into());
+        let path = session_path(&store, "rate-limiter").unwrap();
+        assert!(path.to_string_lossy().contains("rate-limiter.json"));
     }
 }

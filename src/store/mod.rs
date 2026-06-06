@@ -101,6 +101,24 @@ impl Store {
         self.decisions_dir().join(format!("{name}.toml"))
     }
 
+    // ── Path safety ─────────────────────────────────────────────────────
+
+    /// Verify that `path` is inside the store root directory.
+    ///
+    /// Defense-in-depth: all store paths are derived from `self.root`, so
+    /// this check should never fire in correct code. It guards against
+    /// programming errors that would write or delete files outside `.trurl/`.
+    fn verify_path(&self, path: &Path) -> Result<()> {
+        if path.starts_with(&self.root) {
+            Ok(())
+        } else {
+            Err(Error::Validation(format!(
+                "path escapes store root: {}",
+                path.display()
+            )))
+        }
+    }
+
     // ── Locking ──────────────────────────────────────────────────────────
 
     /// Acquire an exclusive advisory lock on `.trurl/`.
@@ -555,6 +573,24 @@ mod tests {
             }
             other => panic!("expected Validation, got: {other}"),
         }
+    }
+
+    // ── verify_path ──────────────────────────────────────────────────────
+
+    #[test]
+    fn verify_path_accepts_child() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        store.verify_path(&store.component_path("auth")).unwrap();
+    }
+
+    #[test]
+    fn verify_path_rejects_outside() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let outside = tmp.path().join("outside.toml");
+        let err = store.verify_path(&outside).unwrap_err();
+        assert!(matches!(err, Error::Validation(_)));
     }
 
     // ── compare_versions ─────────────────────────────────────────────────

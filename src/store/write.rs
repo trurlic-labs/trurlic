@@ -38,6 +38,8 @@ impl Store {
         target: &Path,
         value: &T,
     ) -> Result<()> {
+        self.verify_path(target)?;
+
         let tmp_dir = self.tmp_dir();
         fs::create_dir_all(&tmp_dir)?;
 
@@ -94,6 +96,8 @@ impl Store {
         target: &Path,
         value: &T,
     ) -> Result<PendingWrite> {
+        self.verify_path(target)?;
+
         let content = toml::to_string_pretty(value)?;
         toml::from_str::<T>(&content).map_err(|e| {
             Error::Validation(format!("serialization round-trip verification failed: {e}"))
@@ -120,6 +124,14 @@ impl Store {
     ) -> Result<()> {
         if writes.is_empty() && removes.is_empty() {
             return Ok(());
+        }
+
+        // Verify all target paths up-front before touching the filesystem.
+        for write in &writes {
+            self.verify_path(&write.target)?;
+        }
+        for path in &removes {
+            self.verify_path(path)?;
         }
 
         let tmp_dir = self.tmp_dir();
@@ -201,6 +213,7 @@ impl Store {
 
     /// Remove a file from the store. Caller **must** hold a [`StoreLock`].
     pub fn remove_file(&self, _lock: &StoreLock, target: &Path) -> Result<()> {
+        self.verify_path(target)?;
         Ok(fs::remove_file(target)?)
     }
 
@@ -310,6 +323,18 @@ mod tests {
         assert!(store.component_path("auth").exists());
     }
 
+    #[test]
+    fn atomic_write_rejects_path_outside_root() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let comp = sample_component("auth");
+        let outside = tmp.path().join("outside.toml");
+        let err = store.write_atomic(&lock, &outside, &comp).unwrap_err();
+        assert!(matches!(err, Error::Validation(_)));
+    }
+
     // ── commit_batch ─────────────────────────────────────────────────────
 
     #[test]
@@ -391,7 +416,6 @@ mod tests {
         let store = setup_store(tmp.path());
         let lock = store.lock().unwrap();
 
-        // Ask to remove a file that doesn't exist — should not fail
         let removes = vec![store.component_path("nonexistent")];
         store.commit_batch(&lock, vec![], removes).unwrap();
     }
@@ -411,5 +435,19 @@ mod tests {
 
         store.remove_file(&lock, &path).unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn remove_file_rejects_path_outside_root() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let outside = tmp.path().join("important-file");
+        fs::write(&outside, "do not delete").unwrap();
+
+        let err = store.remove_file(&lock, &outside).unwrap_err();
+        assert!(matches!(err, Error::Validation(_)));
+        assert!(outside.exists(), "file outside root must not be deleted");
     }
 }
