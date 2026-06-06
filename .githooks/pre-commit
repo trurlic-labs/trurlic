@@ -1,0 +1,3 @@
+#!/bin/sh
+# Pre-commit hook: runs format check and clippy
+exec make check

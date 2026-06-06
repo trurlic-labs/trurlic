@@ -1,15 +1,12 @@
-.PHONY: fmt check test audit ci build build-release clean
+.PHONY: fmt check test ci setup clean build build-release
 
-fmt:
-	cargo fmt
-	cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+# ── Setup ─────────────────────────────────────────────────────────────────────
 
-check:
-	cargo fmt -- --check
-	cargo clippy --locked --all-targets -- -D warnings
+setup:
+	git config core.hooksPath .githooks
+	@echo "  ✓ Git hooks installed"
 
-test:
-	cargo test --locked
+# ── Build ─────────────────────────────────────────────────────────────────────
 
 build:
 	cargo build --locked
@@ -17,11 +14,27 @@ build:
 build-release:
 	cargo build --locked --release
 
-audit:
-	cargo deny check
+# ── Format & Lint ─────────────────────────────────────────────────────────────
 
-ci:
-	RUSTFLAGS="-Dwarnings" $(MAKE) --no-print-directory check test
+fmt:
+	cargo fmt --all
+	cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+
+check:
+	cargo fmt --all -- --check
+	cargo clippy --locked --workspace --all-targets -- -D warnings
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+
+test:
+	cargo test --workspace --locked
+
+# ── CI gate (run before pushing) ──────────────────────────────────────────────
+
+ci: check test
+	@echo "  ✓ All checks passed"
+
+# ── Clean ─────────────────────────────────────────────────────────────────────
 
 clean:
 	cargo clean
