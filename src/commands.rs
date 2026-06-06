@@ -147,7 +147,12 @@ pub fn init(cwd: &Path) -> Result<()> {
         },
     };
 
-    fs::write(root.join("project.toml"), toml::to_string_pretty(&project)?)?;
+    // Atomic write even for init — every mutation follows the same path.
+    // Directory structure is already in place, so .state/tmp/ exists.
+    let store = Store::at(root);
+    let lock = store.lock()?;
+    store.write_atomic(&lock, &store.root().join("project.toml"), &project)?;
+    drop(lock);
 
     append_gitignore(cwd)?;
     println!("Initialized .trurl/");
