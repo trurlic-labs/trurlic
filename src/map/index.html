@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trurl map</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+  --text: #e2e4e9; --text-dim: #8b8fa3; --accent: #6c8cff;
+  --accent-dim: #3a4a7a; --green: #4ade80; --red: #f87171;
+  --node-w: 160; --node-h: 56; --radius: 10;
+}
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+#app { display: flex; flex-direction: column; height: 100vh; }
+header { padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+header h1 { font-size: 15px; font-weight: 600; }
+header h1 span { color: var(--accent); }
+header .stats { font-size: 12px; color: var(--text-dim); margin-left: auto; }
+header .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+header .dot.on { background: var(--green); } header .dot.off { background: var(--red); }
+main { display: flex; flex: 1; overflow: hidden; }
+#graph-container { flex: 1; position: relative; overflow: hidden; cursor: grab; }
+#graph-container.grabbing { cursor: grabbing; }
+svg { width: 100%; height: 100%; }
+svg text { user-select: none; -webkit-user-select: none; }
+
+/* Side panel */
+#panel { width: 0; overflow-y: auto; border-left: 1px solid var(--border); background: var(--surface); transition: width .2s; flex-shrink: 0; }
+#panel.open { width: 320px; }
+#panel-inner { padding: 16px; width: 320px; }
+#panel h2 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+#panel .desc { font-size: 12px; color: var(--text-dim); margin-bottom: 16px; }
+#panel .section { margin-bottom: 16px; }
+#panel .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); margin-bottom: 8px; }
+.decision-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+.decision-card .choice { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+.decision-card .reason { font-size: 12px; color: var(--text-dim); }
+.connections-list { font-size: 12px; color: var(--text-dim); }
+.connections-list span { color: var(--accent); cursor: pointer; }
+.close-btn { float: right; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 18px; line-height: 1; }
+.close-btn:hover { color: var(--text); }
+
+/* Empty state */
+.empty { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+.empty h2 { font-size: 16px; margin-bottom: 8px; color: var(--text); }
+.empty p { font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>trurl map — <span id="proj-name">…</span></h1>
+    <span class="stats" id="stats"></span>
+    <span class="dot" id="ws-dot" title="WebSocket"></span>
+  </header>
+  <main>
+    <div id="graph-container">
+      <svg id="graph" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <div id="panel"><div id="panel-inner"></div></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+// ── State ─────────────────────────────────────────────────────────────────
+let state = null;        // latest server state
+let positions = {};      // {name: {x, y}} — session-only layout
+let selected = null;     // currently selected component name
+let dragTarget = null;   // component being dragged
+let dragOffset = {x:0, y:0};
+let panOffset = {x:0, y:0};
+let isPanning = false;
+let panStart = {x:0, y:0};
+
+const NW = 160, NH = 56, R = 10;  // node size, corner radius
+
+// ── WebSocket ─────────────────────────────────────────────────────────────
+let ws;
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen  = () => { document.getElementById("ws-dot").className = "dot on"; };
+  ws.onclose = () => { document.getElementById("ws-dot").className = "dot off"; setTimeout(connect, 2000); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (e) => {
+    try { state = JSON.parse(e.data); render(); } catch(_) {}
+  };
+}
+connect();
+
+// ── Layout ────────────────────────────────────────────────────────────────
+function layout(components) {
+  const n = components.length;
+  if (n === 0) return;
+  const svg = document.getElementById("graph");
+  const W = svg.clientWidth || 900;
+  const H = svg.clientHeight || 600;
+  const cx = W / 2 + panOffset.x;
+  const cy = H / 2 + panOffset.y;
+
+  // Place new components on a circle; keep existing positions.
+  const unplaced = components.filter(c => !positions[c.name]);
+  if (unplaced.length > 0) {
+    const total = components.length;
+    const radius = Math.max(120, Math.min(W, H) * 0.3);
+    unplaced.forEach((c, i) => {
+      // Find index among all components for even spacing
+      const idx = components.indexOf(c);
+      const angle = (2 * Math.PI * idx / total) - Math.PI / 2;
+      positions[c.name] = {
+        x: cx + radius * Math.cos(angle) - NW / 2,
+        y: cy + radius * Math.sin(angle) - NH / 2,
+      };
+    });
+  }
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render() {
+  if (!state) return;
+  document.getElementById("proj-name").textContent = state.project.name;
+  document.getElementById("stats").textContent =
+    `${state.components.length} components · ${state.decisions.length} decisions`;
+
+  const svg = document.getElementById("graph");
+  layout(state.components);
+
+  // Build SVG content
+  let html = '<defs><marker id="arrow" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,3 L0,6z" fill="#3a4a7a"/></marker></defs>';
+
+  // Connections (edges)
+  const compMap = {};
+  state.components.forEach(c => { compMap[c.name] = c; });
+
+  state.components.forEach(c => {
+    const from = positions[c.name];
+    if (!from) return;
+    (c.connects_to || []).forEach(target => {
+      const to = positions[target];
+      if (!to) return;
+      const x1 = from.x + NW / 2, y1 = from.y + NH / 2;
+      const x2 = to.x + NW / 2, y2 = to.y + NH / 2;
+      // Shorten line to stop at node edge
+      const dx = x2 - x1, dy = y2 - y1;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const sx = x1 + dx * 20 / len, sy = y1 + dy * 20 / len;
+      const ex = x2 - dx * 28 / len, ey = y2 - dy * 28 / len;
+      html += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="#3a4a7a" stroke-width="1.5" marker-end="url(#arrow)"/>`;
+    });
+  });
+
+  // Nodes
+  state.components.forEach(c => {
+    const p = positions[c.name];
+    if (!p) return;
+    const isSel = c.name === selected;
+    const decCount = state.decisions.filter(d => d.component === c.name).length;
+    const stroke = isSel ? "#6c8cff" : "#2a2d3a";
+    const fill = isSel ? "#1e2540" : "#1a1d27";
+    html += `<g class="node" data-name="${c.name}" style="cursor:grab">`;
+    html += `<rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="${R}" fill="${fill}" stroke="${stroke}" stroke-width="${isSel ? 2 : 1}"/>`;
+    html += `<text x="${p.x + NW/2}" y="${p.y + 22}" text-anchor="middle" fill="#e2e4e9" font-size="13" font-weight="500">${esc(c.name)}</text>`;
+    if (decCount > 0) {
+      html += `<text x="${p.x + NW/2}" y="${p.y + 40}" text-anchor="middle" fill="#8b8fa3" font-size="11">${decCount} decision${decCount>1?'s':''}</text>`;
+    } else {
+      html += `<text x="${p.x + NW/2}" y="${p.y + 40}" text-anchor="middle" fill="#555" font-size="11">no decisions</text>`;
+    }
+    html += `</g>`;
+  });
+
+  if (state.components.length === 0) {
+    const W = svg.clientWidth || 900, H = svg.clientHeight || 600;
+    html += `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#555" font-size="14">No components yet — run trurl add component &lt;name&gt;</text>`;
+  }
+
+  svg.innerHTML = html;
+
+  // Attach drag handlers to nodes
+  svg.querySelectorAll(".node").forEach(g => {
+    g.addEventListener("mousedown", onNodeMouseDown);
+  });
+
+  if (selected) renderPanel();
+}
+
+function esc(s) { return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+// ── Decision panel ────────────────────────────────────────────────────────
+function renderPanel() {
+  const panel = document.getElementById("panel");
+  const inner = document.getElementById("panel-inner");
+  if (!selected || !state) { panel.classList.remove("open"); return; }
+
+  const comp = state.components.find(c => c.name === selected);
+  if (!comp) { panel.classList.remove("open"); selected = null; return; }
+
+  const decisions = state.decisions.filter(d => d.component === selected);
+  const connectsFrom = state.components.filter(c => (c.connects_to||[]).includes(selected)).map(c => c.name);
+
+  let h = `<button class="close-btn" onclick="selected=null;renderPanel();render();">&times;</button>`;
+  h += `<h2>${esc(comp.name)}</h2>`;
+  h += `<p class="desc">${esc(comp.description || '(no description)')}</p>`;
+
+  // Connections
+  const allConn = [...(comp.connects_to||[]).map(t=>`→ ${t}`), ...connectsFrom.map(f=>`← ${f}`)];
+  if (allConn.length) {
+    h += `<div class="section"><div class="section-title">Connections</div>`;
+    h += `<div class="connections-list">${allConn.map(c => {
+      const name = c.substring(2);
+      return `<span onclick="selected='${name}';render();">${esc(c)}</span>`;
+    }).join(' · ')}</div></div>`;
+  }
+
+  // Decisions
+  h += `<div class="section"><div class="section-title">Decisions (${decisions.length})</div>`;
+  if (decisions.length === 0) {
+    h += `<p style="font-size:12px;color:#555">No decisions. Run<br><code>trurl design ${esc(selected)}</code></p>`;
+  }
+  decisions.forEach(d => {
+    h += `<div class="decision-card">`;
+    h += `<div class="choice">${esc(d.choice)}</div>`;
+    h += `<div class="reason">${esc(d.reason)}</div>`;
+    if (d.alternatives && d.alternatives.length) {
+      h += `<div style="margin-top:6px;font-size:11px;color:#666">Alternatives rejected: ${d.alternatives.map(a => esc(a)).join('; ')}</div>`;
+    }
+    h += `</div>`;
+  });
+  h += `</div>`;
+
+  // Project-wide rules
+  const projectRules = state.decisions.filter(d => d.component === "project");
+  if (projectRules.length) {
+    h += `<div class="section"><div class="section-title">Project-wide rules</div>`;
+    projectRules.forEach(d => {
+      h += `<div class="decision-card"><div class="choice">${esc(d.choice)}</div><div class="reason">${esc(d.reason)}</div></div>`;
+    });
+    h += `</div>`;
+  }
+
+  inner.innerHTML = h;
+  panel.classList.add("open");
+}
+
+// ── Drag ──────────────────────────────────────────────────────────────────
+function svgPoint(e) {
+  const svg = document.getElementById("graph");
+  const r = svg.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+function onNodeMouseDown(e) {
+  e.stopPropagation();
+  const name = e.currentTarget.getAttribute("data-name");
+  const p = svgPoint(e);
+  const pos = positions[name];
+  if (!pos) return;
+  dragTarget = name;
+  dragOffset = { x: p.x - pos.x, y: p.y - pos.y };
+  document.getElementById("graph-container").classList.add("grabbing");
+}
+
+document.addEventListener("mousemove", (e) => {
+  if (dragTarget) {
+    const p = svgPoint(e);
+    positions[dragTarget] = { x: p.x - dragOffset.x, y: p.y - dragOffset.y };
+    render();
+  } else if (isPanning) {
+    panOffset.x += e.clientX - panStart.x;
+    panOffset.y += e.clientY - panStart.y;
+    panStart = { x: e.clientX, y: e.clientY };
+    // Shift all positions
+    // Actually we don't shift — panOffset is used only for new layout
+    // For now, just re-render
+  }
+});
+
+document.addEventListener("mouseup", (e) => {
+  if (dragTarget) {
+    // Click detection: if barely moved, treat as click
+    selected = dragTarget;
+    renderPanel();
+    render();
+    dragTarget = null;
+    document.getElementById("graph-container").classList.remove("grabbing");
+  }
+  isPanning = false;
+});
+
+// ── Initial render ────────────────────────────────────────────────────────
+window.addEventListener("resize", () => { if (state) render(); });
+</script>
+</body>
+</html>

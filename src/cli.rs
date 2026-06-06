@@ -5,7 +5,7 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::{Error, Result, commands};
+use crate::{Result, commands};
 
 /// Trurl — structured architectural decisions that constrain AI code generation.
 #[derive(Parser, Debug)]
@@ -194,14 +194,8 @@ pub fn run(cli: Cli) -> Result<()> {
             &alternatives,
         ),
         Command::Serve => commands::serve(&cwd),
-        Command::Map => not_implemented("map"),
+        Command::Map => commands::map(&cwd),
         Command::Status => commands::status(&cwd),
         Command::Check => commands::check(&cwd),
     }
-}
-
-fn not_implemented(command: &str) -> Result<()> {
-    Err(Error::NotImplemented(format!(
-        "`trurl {command}` is not yet implemented"
-    )))
 }
