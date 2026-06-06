@@ -155,7 +155,20 @@ pub fn run(cli: Cli) -> Result<()> {
             RemoveCommand::Component { name } => commands::remove_component(&cwd, &name),
             RemoveCommand::Decision { name } => commands::remove_decision(&cwd, &name),
         },
-        Command::Design { .. } => not_implemented("design"),
+        Command::Design {
+            component,
+            continue_session,
+            revisit,
+            provider,
+            model,
+        } => commands::design(
+            &cwd,
+            &component,
+            continue_session,
+            revisit,
+            provider.as_deref(),
+            model.as_deref(),
+        ),
         Command::Decide {
             component,
             choice,

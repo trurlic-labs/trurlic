@@ -49,7 +49,7 @@ fn open_store(cwd: &Path) -> Result<Store> {
 /// Called after applying a mutation in memory and before writing to disk.
 /// Defense-in-depth: individual command checks catch most issues, but this
 /// ensures no mutation ever produces an inconsistent store.
-fn validate_mutation(state: &store::ProjectState) -> Result<()> {
+pub(crate) fn validate_mutation(state: &store::ProjectState) -> Result<()> {
     let issues = state.validate();
     if issues.is_empty() {
         Ok(())
@@ -68,7 +68,7 @@ const MAX_SLUG_LEN: usize = 60;
 ///
 /// Lowercase, replace non-alphanumeric runs with single hyphens,
 /// trim edges, truncate at a word boundary.
-fn slugify(input: &str) -> String {
+pub(crate) fn slugify(input: &str) -> String {
     let mut slug = String::with_capacity(input.len());
     let mut prev_hyphen = true; // suppress leading hyphen
 
@@ -106,7 +106,7 @@ fn slugify(input: &str) -> String {
 }
 
 /// Find a unique decision filename stem, appending `-2`, `-3`, ... on collision.
-fn unique_decision_stem(store: &Store, base: &str) -> String {
+pub(crate) fn unique_decision_stem(store: &Store, base: &str) -> String {
     if !store.decision_path(base).exists() {
         return base.to_string();
     }
@@ -502,6 +502,40 @@ pub fn decide(
     store.write_atomic(&lock, &store.decision_path(&stem), &decision)?;
     println!("Recorded decision `{stem}`");
     Ok(())
+}
+
+// ── design ────────────────────────────────────────────────────────────────────
+
+/// Start a Socratic design conversation for a component.
+///
+/// Creates a single-threaded async runtime for the LLM streaming conversation.
+/// All other store operations remain synchronous.
+pub fn design(
+    cwd: &Path,
+    component: &str,
+    continue_session: bool,
+    revisit: bool,
+    provider_flag: Option<&str>,
+    model_flag: Option<&str>,
+) -> Result<()> {
+    let store = open_store(cwd)?;
+
+    let config = crate::config::resolve_provider(provider_flag, model_flag)?;
+    eprintln!("Using {} ({})", config.provider.name(), config.model);
+    let client = crate::provider::LlmClient::from_config(config)?;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Io(std::io::Error::other(e)))?;
+
+    rt.block_on(crate::conversation::run_design(
+        &store,
+        &client,
+        component,
+        continue_session,
+        revisit,
+    ))
 }
 
 // ── status ───────────────────────────────────────────────────────────────────
