@@ -8,5 +8,6 @@
 pub mod cli;
 pub mod error;
 pub mod schema;
+pub mod store;
 
 pub use error::{Error, Result};

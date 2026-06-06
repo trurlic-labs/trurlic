@@ -29,6 +29,9 @@ thiserror = "2"
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 
+# File locking (cross-platform flock)
+fs2 = "0.4"
+
 [dev-dependencies]
 tempfile = "3"
 

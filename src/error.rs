@@ -3,13 +3,12 @@
 //! All operations return [`Result<T>`] with structured [`Error`] variants.
 //! Fail-closed on writes, warn on reads.
 
+use std::path::PathBuf;
+
 /// Alias used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Every failure mode Trurl can encounter.
-///
-/// Variants are added as features land. Phase 0 carries only the
-/// scaffolding variants; real I/O and validation errors arrive in Phase 1.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Command is defined but not yet implemented.
@@ -27,4 +26,27 @@ pub enum Error {
     /// TOML serialization failure.
     #[error("TOML serialization error: {0}")]
     TomlWrite(#[from] toml::ser::Error),
+
+    /// No `.trurl/` directory found in path or any parent.
+    #[error("not a trurl project (no .trurl/ found in {0} or any parent directory)")]
+    StoreNotFound(PathBuf),
+
+    /// `.trurl/` already exists (e.g. double `init`).
+    #[error(".trurl/ already exists at {0}")]
+    StoreExists(PathBuf),
+
+    /// Could not acquire the store lock within the timeout.
+    #[error("could not acquire lock within {0}s — another trurl process may be running")]
+    LockTimeout(u64),
+
+    /// Name failed kebab-case validation.
+    #[error(
+        "invalid name `{0}`: must be kebab-case (lowercase ASCII, digits, hyphens; \
+             no leading/trailing/consecutive hyphens)"
+    )]
+    InvalidName(String),
+
+    /// Store integrity or constraint violation.
+    #[error("{0}")]
+    Validation(String),
 }
