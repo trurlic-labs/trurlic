@@ -6,6 +6,7 @@
 //! for visual exploration.
 
 pub mod cli;
+pub mod commands;
 pub mod error;
 pub mod schema;
 pub mod store;

@@ -5,7 +5,7 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::{Error, Result};
+use crate::{Error, Result, commands};
 
 /// Trurl — structured architectural decisions that constrain AI code generation.
 #[derive(Parser, Debug)]
@@ -132,15 +132,13 @@ pub enum RemoveCommand {
 }
 
 /// Dispatch a parsed CLI invocation to the appropriate handler.
-///
-/// Returns `Ok(())` on success. All subcommands currently return
-/// [`Error::NotImplemented`] — real handlers land in Phase 1.
 pub fn run(cli: Cli) -> Result<()> {
+    let cwd = std::env::current_dir()?;
     match cli.command {
-        Command::Init => not_implemented("init"),
+        Command::Init => commands::init(&cwd),
         Command::Add(sub) => match sub {
-            AddCommand::Component { .. } => not_implemented("add component"),
-            AddCommand::Connection { .. } => not_implemented("add connection"),
+            AddCommand::Component { name } => commands::add_component(&cwd, &name),
+            AddCommand::Connection { from, to } => commands::add_connection(&cwd, &from, &to),
         },
         Command::Rename(sub) => match sub {
             RenameCommand::Component { .. } => not_implemented("rename component"),
@@ -153,8 +151,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Decide { .. } => not_implemented("decide"),
         Command::Serve => not_implemented("serve"),
         Command::Map => not_implemented("map"),
-        Command::Status => not_implemented("status"),
-        Command::Check => not_implemented("check"),
+        Command::Status => commands::status(&cwd),
+        Command::Check => commands::check(&cwd),
     }
 }
 
