@@ -18,22 +18,22 @@ use crate::{Error, Result};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Open an existing store with version check, crash recovery, and startup
-/// validation.
+/// Discover and prepare a store: version check and crash recovery.
 ///
-/// On startup of any command that reads `.trurl/`:
-/// 1. Check for stale temp files from interrupted writes (clean + warn).
-/// 2. Verify format version compatibility.
-/// 3. Run full validation — warn on inconsistency, direct to `trurl check`.
-fn open_store(cwd: &Path) -> Result<Store> {
+/// Does **not** load state — callers decide whether to load read-only
+/// or under a lock for mutation.
+fn discover_store(cwd: &Path) -> Result<Store> {
     let store = Store::discover(cwd)?;
     store.check_version()?;
     let stale = store.clean_stale_tmp()?;
     if stale > 0 {
         eprintln!("warning: cleaned {stale} stale temp file(s) from interrupted write");
     }
-    // Startup validation: detect inconsistent state from crashes or hand edits
-    let state = store.load_state()?;
+    Ok(store)
+}
+
+/// Warn on integrity issues without failing (startup courtesy diagnostic).
+fn warn_on_issues(state: &store::ProjectState) {
     let issues = state.validate();
     if !issues.is_empty() {
         eprintln!(
@@ -41,7 +41,28 @@ fn open_store(cwd: &Path) -> Result<Store> {
             issues.len()
         );
     }
-    Ok(store)
+}
+
+/// Open an existing store for **read-only** access.
+///
+/// Loads and validates state once. No lock is acquired.
+fn open_store(cwd: &Path) -> Result<(Store, store::ProjectState)> {
+    let store = discover_store(cwd)?;
+    let state = store.load_state()?;
+    warn_on_issues(&state);
+    Ok((store, state))
+}
+
+/// Open an existing store for **mutation**.
+///
+/// Acquires an exclusive lock, then loads and validates state under the
+/// lock so the returned state is authoritative for the write.
+fn open_store_mut(cwd: &Path) -> Result<(Store, store::StoreLock, store::ProjectState)> {
+    let store = discover_store(cwd)?;
+    let lock = store.lock()?;
+    let state = store.load_state()?;
+    warn_on_issues(&state);
+    Ok((store, lock, state))
 }
 
 /// Validate that a mutated project state is internally consistent.
@@ -106,13 +127,18 @@ pub(crate) fn slugify(input: &str) -> String {
 }
 
 /// Find a unique decision filename stem, appending `-2`, `-3`, ... on collision.
-pub(crate) fn unique_decision_stem(store: &Store, base: &str) -> String {
-    if !store.decision_path(base).exists() {
+///
+/// Checks against the in-memory decision map (no filesystem I/O).
+pub(crate) fn unique_decision_stem(
+    decisions: &std::collections::BTreeMap<String, DecisionFile>,
+    base: &str,
+) -> String {
+    if !decisions.contains_key(base) {
         return base.to_string();
     }
     for n in 2u32.. {
         let candidate = format!("{base}-{n}");
-        if !store.decision_path(&candidate).exists() {
+        if !decisions.contains_key(&candidate) {
             return candidate;
         }
     }
@@ -188,9 +214,7 @@ pub fn add_component(cwd: &Path, name: &str, description: Option<&str>) -> Resul
         return Err(Error::InvalidName(name.into()));
     }
 
-    let store = open_store(cwd)?;
-    let lock = store.lock()?;
-    let mut state = store.load_state()?;
+    let (store, lock, mut state) = open_store_mut(cwd)?;
 
     if state.components.contains_key(name) {
         return Err(Error::Validation(format!(
@@ -219,9 +243,7 @@ pub fn add_component(cwd: &Path, name: &str, description: Option<&str>) -> Resul
 
 /// Connect two existing components (directional: from → to).
 pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
-    let store = open_store(cwd)?;
-    let lock = store.lock()?;
-    let mut state = store.load_state()?;
+    let (store, lock, mut state) = open_store_mut(cwd)?;
 
     if !state.components.contains_key(from) {
         return Err(Error::Validation(format!(
@@ -269,9 +291,7 @@ pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
 /// The spec explicitly permits broken supersede chains on removal
 /// ("warn but allow"), so post-mutation validation is skipped.
 pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
-    let store = open_store(cwd)?;
-    let lock = store.lock()?;
-    let state = store.load_state()?;
+    let (store, lock, state) = open_store_mut(cwd)?;
 
     if !state.decisions.contains_key(name) {
         return Err(Error::Validation(format!(
@@ -282,7 +302,7 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
     let dependents: Vec<&str> = state
         .decisions
         .iter()
-        .filter(|(_, d)| d.decision.supersedes == name)
+        .filter(|(_, d)| d.decision.supersedes.as_deref() == Some(name))
         .map(|(n, _)| n.as_str())
         .collect();
 
@@ -303,9 +323,7 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
 /// Remove a component. Refuses if any decisions reference it.
 /// Cleans up incoming connections from other components via batch commit.
 pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
-    let store = open_store(cwd)?;
-    let lock = store.lock()?;
-    let mut state = store.load_state()?;
+    let (store, lock, mut state) = open_store_mut(cwd)?;
 
     if !state.components.contains_key(name) {
         return Err(Error::Validation(format!(
@@ -374,9 +392,7 @@ pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
         return Err(Error::InvalidName(new.into()));
     }
 
-    let store = open_store(cwd)?;
-    let lock = store.lock()?;
-    let mut state = store.load_state()?;
+    let (store, lock, mut state) = open_store_mut(cwd)?;
 
     if !state.components.contains_key(old) {
         return Err(Error::Validation(format!(
@@ -470,9 +486,11 @@ pub fn decide(
     supersedes: Option<&str>,
     alternatives: &[String],
 ) -> Result<()> {
-    let store = open_store(cwd)?;
-    let lock = store.lock()?;
-    let mut state = store.load_state()?;
+    if component != "project" && !store::is_valid_kebab_case(component) {
+        return Err(Error::InvalidName(component.into()));
+    }
+
+    let (store, lock, mut state) = open_store_mut(cwd)?;
 
     if component != "project" && !state.components.contains_key(component) {
         return Err(Error::Validation(format!(
@@ -488,7 +506,7 @@ pub fn decide(
         }
     }
 
-    let stem = unique_decision_stem(&store, &slugify(choice));
+    let stem = unique_decision_stem(&state.decisions, &slugify(choice));
 
     let decision = DecisionFile {
         decision: Decision {
@@ -497,7 +515,7 @@ pub fn decide(
             reason: reason.into(),
             alternatives: alternatives.to_vec(),
             created: Utc::now(),
-            supersedes: supersedes.unwrap_or_default().into(),
+            supersedes: supersedes.map(String::from),
         },
     };
 
@@ -524,7 +542,12 @@ pub fn design(
     provider_flag: Option<&str>,
     model_flag: Option<&str>,
 ) -> Result<()> {
-    let store = open_store(cwd)?;
+    // Validate early — before any session or filesystem I/O keyed on this name.
+    if component != "project" && !store::is_valid_kebab_case(component) {
+        return Err(Error::InvalidName(component.into()));
+    }
+
+    let store = discover_store(cwd)?;
 
     let config = crate::config::resolve_provider(provider_flag, model_flag)?;
     eprintln!("Using {} ({})", config.provider.name(), config.model);
@@ -549,8 +572,7 @@ pub fn design(
 
 /// Print project summary: component count, decision count, any issues.
 pub fn status(cwd: &Path) -> Result<()> {
-    let store = open_store(cwd)?;
-    let state = store.load_state()?;
+    let (_store, state) = open_store(cwd)?;
 
     let project_wide = state
         .decisions
@@ -578,7 +600,9 @@ pub fn status(cwd: &Path) -> Result<()> {
 
 /// Validate `.trurl/` internal consistency.
 pub fn check(cwd: &Path) -> Result<()> {
-    let store = open_store(cwd)?;
+    // Use discover_store — check IS the validation command, so the
+    // startup warning from open_store would be redundant.
+    let store = discover_store(cwd)?;
     let state = store.load_state()?;
     let issues = state.validate();
 
@@ -914,7 +938,7 @@ mod tests {
         // The superseding decision still exists with a dangling reference
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-tokens").unwrap();
-        assert_eq!(dec.decision.supersedes, "session-cookies");
+        assert_eq!(dec.decision.supersedes.as_deref(), Some("session-cookies"));
     }
 
     // ── remove component ─────────────────────────────────────────────────
@@ -1155,7 +1179,7 @@ mod tests {
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-tokens").unwrap();
-        assert_eq!(dec.decision.supersedes, "session-cookies");
+        assert_eq!(dec.decision.supersedes.as_deref(), Some("session-cookies"));
     }
 
     #[test]
@@ -1221,6 +1245,56 @@ mod tests {
         let dec = store.read_decision("jwt").unwrap();
         assert!(dec.decision.created >= before);
         assert!(dec.decision.created <= after);
+    }
+
+    #[test]
+    fn decide_rejects_invalid_component_name() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+
+        // Path traversal attempt
+        let err = decide(tmp.path(), "../escape", "x", "y", None, &[]).unwrap_err();
+        assert!(matches!(err, Error::InvalidName(_)));
+
+        // Uppercase
+        let err = decide(tmp.path(), "NotKebab", "x", "y", None, &[]).unwrap_err();
+        assert!(matches!(err, Error::InvalidName(_)));
+    }
+
+    #[test]
+    fn decide_allows_project_component() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+
+        // "project" is a special value, not subject to kebab-case validation
+        decide(tmp.path(), "project", "Test decision", "Testing", None, &[]).unwrap();
+    }
+
+    #[test]
+    fn decide_supersedes_is_none_when_omitted() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let dec = store.read_decision("use-jwt").unwrap();
+        assert!(dec.decision.supersedes.is_none());
+    }
+
+    #[test]
+    fn design_rejects_invalid_component_name() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+
+        // Path traversal attempt — rejected before any I/O
+        let err = design(tmp.path(), "../escape", false, false, None, None).unwrap_err();
+        assert!(matches!(err, Error::InvalidName(_)));
+
+        // Empty name
+        let err = design(tmp.path(), "", false, false, None, None).unwrap_err();
+        assert!(matches!(err, Error::InvalidName(_)));
     }
 
     // ── status ───────────────────────────────────────────────────────────

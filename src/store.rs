@@ -536,11 +536,12 @@ impl ProjectState {
                 ));
             }
 
-            let sup = &dec.decision.supersedes;
-            if !sup.is_empty() && !self.decisions.contains_key(sup) {
-                issues.push(format!(
-                    "decision `{filename}` supersedes `{sup}` which does not exist"
-                ));
+            if let Some(ref sup) = dec.decision.supersedes {
+                if !self.decisions.contains_key(sup.as_str()) {
+                    issues.push(format!(
+                        "decision `{filename}` supersedes `{sup}` which does not exist"
+                    ));
+                }
             }
         }
 
@@ -685,7 +686,7 @@ mod tests {
                 reason: format!("Reason for {name}"),
                 alternatives: vec![],
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
-                supersedes: String::new(),
+                supersedes: None,
             },
         }
     }
@@ -1167,7 +1168,7 @@ mod tests {
         let lock = store.lock().unwrap();
 
         let mut dec = sample_decision("new-choice", "project");
-        dec.decision.supersedes = "ghost".into();
+        dec.decision.supersedes = Some("ghost".into());
         store
             .write_atomic(&lock, &store.decision_path("new-choice"), &dec)
             .unwrap();

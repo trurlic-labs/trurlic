@@ -87,6 +87,12 @@ pub async fn run_design(
     continue_session: bool,
     revisit: bool,
 ) -> Result<()> {
+    // Defense-in-depth: validate before any session I/O keyed on this name.
+    // The caller (commands::design) validates too, but this function is pub.
+    if component != "project" && !store::is_valid_kebab_case(component) {
+        return Err(Error::InvalidName(component.into()));
+    }
+
     // Load or create session
     let mut session = if continue_session {
         let s = load_session(store, component)?;
@@ -100,8 +106,19 @@ pub async fn run_design(
         Session::new(component)
     };
 
+    // Load state once — reused across the entire conversation.
+    let mut state = store.load_state()?;
+
+    // Startup courtesy diagnostic (same as other commands).
+    let issues = state.validate();
+    if !issues.is_empty() {
+        eprintln!(
+            "warning: .trurl/ has {} consistency issue(s) — run `trurl check` for details",
+            issues.len()
+        );
+    }
+
     // Build system prompt from current project state
-    let state = store.load_state()?;
     if component != "project" && !state.components.contains_key(component) {
         return Err(Error::Validation(format!(
             "component `{component}` does not exist"
@@ -112,7 +129,8 @@ pub async fn run_design(
     eprintln!("(Ctrl+D or empty line to save and exit)\n");
 
     // Run conversation — save session on any error
-    let result = conversation_loop(store, client, component, &system, &mut session).await;
+    let result =
+        conversation_loop(store, client, component, &system, &mut session, &mut state).await;
     if result.is_err() {
         let _ = save_session(store, &session);
         eprintln!("Session saved. Resume with: trurl design {component} --continue");
@@ -128,6 +146,7 @@ async fn conversation_loop(
     component: &str,
     system: &str,
     session: &mut Session,
+    state: &mut store::ProjectState,
 ) -> Result<()> {
     let mut messages = session.to_provider_messages();
 
@@ -148,6 +167,7 @@ async fn conversation_loop(
         for dec in extract_decisions(&response) {
             let stem = record_decision(
                 store,
+                state,
                 component,
                 &dec.choice,
                 &dec.reason,
@@ -362,31 +382,33 @@ fn is_design_complete(response: &str) -> bool {
 
 /// Write a single decision to the store, with full validation.
 ///
+/// Uses the caller's cached [`ProjectState`] — no re-load from disk.
+/// On success, `state` is updated in-place so subsequent calls see
+/// the new decision. On failure, `state` is rolled back.
+///
 /// If `supersedes` names a decision that doesn't exist (LLM hallucination),
 /// it is dropped with a warning rather than failing the entire write —
 /// the choice and reason are still valuable.
 fn record_decision(
     store: &Store,
+    state: &mut store::ProjectState,
     component: &str,
     choice: &str,
     reason: &str,
     alternatives: &[String],
     supersedes: Option<&str>,
 ) -> Result<String> {
-    let lock = store.lock()?;
-    let mut state = store.load_state()?;
-
     // Validate supersedes target — warn and drop if the LLM hallucinated
     let validated_supersedes = match supersedes {
-        Some(target) if state.decisions.contains_key(target) => target,
+        Some(target) if state.decisions.contains_key(target) => Some(target.to_string()),
         Some(target) => {
             eprintln!("  ⚠ ignoring supersedes `{target}` — decision not found");
-            ""
+            None
         }
-        None => "",
+        None => None,
     };
 
-    let stem = commands::unique_decision_stem(store, &commands::slugify(choice));
+    let stem = commands::unique_decision_stem(&state.decisions, &commands::slugify(choice));
 
     let decision = DecisionFile {
         decision: Decision {
@@ -395,14 +417,25 @@ fn record_decision(
             reason: reason.into(),
             alternatives: alternatives.to_vec(),
             created: Utc::now(),
-            supersedes: validated_supersedes.into(),
+            supersedes: validated_supersedes,
         },
     };
 
+    // Insert into in-memory state for validation
     state.decisions.insert(stem.clone(), decision.clone());
-    commands::validate_mutation(&state)?;
 
-    store.write_atomic(&lock, &store.decision_path(&stem), &decision)?;
+    if let Err(e) = commands::validate_mutation(state) {
+        state.decisions.remove(&stem);
+        return Err(e);
+    }
+
+    // Acquire lock only for the write, release immediately after
+    let lock = store.lock()?;
+    if let Err(e) = store.write_atomic(&lock, &store.decision_path(&stem), &decision) {
+        state.decisions.remove(&stem);
+        return Err(e);
+    }
+
     Ok(stem)
 }
 
@@ -442,7 +475,14 @@ fn save_session(store: &Store, session: &Session) -> Result<()> {
     }
     let content = serde_json::to_string_pretty(session)
         .map_err(|e| Error::Validation(format!("session serialization failed: {e}")))?;
-    std::fs::write(&path, content)?;
+
+    // Atomic write: tmp file then rename, so a crash never truncates the session.
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, content)?;
+    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(Error::Io(e));
+    }
     Ok(())
 }
 

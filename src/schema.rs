@@ -88,9 +88,9 @@ pub struct Decision {
     /// When this decision was recorded (UTC, ISO 8601 / RFC 3339).
     pub created: DateTime<Utc>,
 
-    /// Filename (without `.toml`) of the decision this supersedes, or empty.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub supersedes: String,
+    /// Filename (without `.toml`) of the decision this supersedes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<String>,
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ mod tests {
                 reason: "Stateless, no session store needed".into(),
                 alternatives: vec!["Session cookies — rejected: requires server-side state".into()],
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
-                supersedes: String::new(),
+                supersedes: None,
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -186,7 +186,7 @@ mod tests {
                 reason: "Fast".into(),
                 alternatives: vec![],
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
-                supersedes: String::new(),
+                supersedes: None,
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -205,7 +205,7 @@ mod tests {
                 reason: "Stateless".into(),
                 alternatives: vec![],
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
-                supersedes: String::new(),
+                supersedes: None,
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -234,7 +234,7 @@ created = "2025-06-01T10:30:00Z"
             file.decision.created,
             Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap()
         );
-        assert!(file.decision.supersedes.is_empty());
+        assert!(file.decision.supersedes.is_none());
     }
 
     #[test]
