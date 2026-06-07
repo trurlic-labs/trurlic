@@ -63,7 +63,6 @@ impl ProjectState {
     }
 
     /// Refresh the cached graph to match the current field values.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn rebuild_graph(&mut self) {
         self.graph = Self::build_graph_from(
             &self.graph_index,

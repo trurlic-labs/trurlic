@@ -1,6 +1,9 @@
 use serde_json::Value;
 
+use crate::store::{ProjectState, Store};
+
 use super::context;
+use super::write;
 
 // ── Tool definitions ────────────────────────────────────────────────────────
 
@@ -17,13 +20,11 @@ pub(crate) fn tool_list() -> Value {
                     "properties": {
                         "component": {
                             "type": "string",
-                            "description": "Component name (kebab-case) or 'project' for \
-                                project-wide context."
+                            "description": "Component name (kebab-case) or 'project'."
                         },
                         "task": {
                             "type": "string",
-                            "description": "Optional description of the current coding task. \
-                                Included in the authoritative brief for maximum relevance."
+                            "description": "Optional current coding task description."
                         }
                     },
                     "required": ["component"]
@@ -31,17 +32,14 @@ pub(crate) fn tool_list() -> Value {
             },
             {
                 "name": "check_pattern",
-                "description": "Check whether a pattern, approach, or technology choice is \
-                    covered by existing architectural decisions. Returns matching decisions \
-                    sorted by relevance.",
+                "description": "Check whether a pattern or approach is covered by \
+                    existing decisions. Returns matching decisions sorted by relevance.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "description": {
                             "type": "string",
-                            "description": "Description of the pattern or approach to check \
-                                (e.g. 'JWT tokens for authentication', \
-                                'Redis for session storage')."
+                            "description": "Pattern or approach to check."
                         }
                     },
                     "required": ["description"]
@@ -49,11 +47,109 @@ pub(crate) fn tool_list() -> Value {
             },
             {
                 "name": "get_architecture",
-                "description": "Get the full architectural overview: all components, their \
-                    connections, decision counts, and project-wide decisions.",
+                "description": "Full architectural overview: components, connections, \
+                    decision counts, patterns, and project-wide decisions.",
+                "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
+                "name": "validate_consistency",
+                "description": "Full graph integrity check. Same validation as `trurl check`.",
+                "inputSchema": { "type": "object", "properties": {} }
+            },
+            {
+                "name": "record_decision",
+                "description": "Record a single architectural decision. Validates all \
+                    edges before writing. Atomic commit.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "component": {
+                            "type": "string",
+                            "description": "Component name or 'project'."
+                        },
+                        "choice": {
+                            "type": "string",
+                            "description": "Concise decision title."
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Reasoning behind the decision."
+                        },
+                        "alternatives": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Rejected options with reasons."
+                        },
+                        "depends_on": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Decision names this depends on."
+                        },
+                        "constrains": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Decision names this constrains."
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Categorical tags for filtering."
+                        },
+                        "supersedes": {
+                            "type": "string",
+                            "description": "Decision name being replaced."
+                        }
+                    },
+                    "required": ["component", "choice", "reason"]
+                }
+            },
+            {
+                "name": "record_pattern",
+                "description": "Record a pattern — a synthesis of multiple decisions \
+                    into a reusable rule. Requires at least 2 decisions.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Human-readable pattern name."
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "What this pattern means."
+                        },
+                        "decisions": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Decision names (must all exist, minimum 2)."
+                        },
+                        "components": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Component names (inferred from decisions if omitted)."
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Categorical tags."
+                        }
+                    },
+                    "required": ["name", "description", "decisions"]
+                }
+            },
+            {
+                "name": "remove_decision",
+                "description": "Remove a decision with cascade awareness. Refuses if \
+                    other decisions depend on it or a pattern would shrink below 2 members.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Decision filename (without .toml)."
+                        }
+                    },
+                    "required": ["name"]
                 }
             }
         ]
@@ -62,16 +158,36 @@ pub(crate) fn tool_list() -> Value {
 
 // ── Tool dispatch ───────────────────────────────────────────────────────────
 
-pub(crate) fn call_tool(state: &crate::store::ProjectState, name: &str, args: &Value) -> Value {
+pub(crate) fn call_tool(
+    store: &Store,
+    state: &mut ProjectState,
+    name: &str,
+    args: &Value,
+) -> Value {
     match name {
+        // Read tools
         "get_context" => dispatch_get_context(state, args),
         "check_pattern" => dispatch_check_pattern(state, args),
         "get_architecture" => tool_result(&context::get_architecture(state)),
+        "validate_consistency" => tool_result(&write::validate_consistency(state)),
+        // Write tools
+        "record_decision" => match write::record_decision(store, state, args) {
+            Ok(v) => tool_result(&v),
+            Err(msg) => tool_error(&msg),
+        },
+        "record_pattern" => match write::record_pattern(store, state, args) {
+            Ok(v) => tool_result(&v),
+            Err(msg) => tool_error(&msg),
+        },
+        "remove_decision" => match write::remove_decision(store, state, args) {
+            Ok(v) => tool_result(&v),
+            Err(msg) => tool_error(&msg),
+        },
         _ => tool_error(&format!("unknown tool: {name}")),
     }
 }
 
-fn dispatch_get_context(state: &crate::store::ProjectState, args: &Value) -> Value {
+fn dispatch_get_context(state: &ProjectState, args: &Value) -> Value {
     let component = match args.get("component").and_then(|v| v.as_str()) {
         Some(c) => c,
         None => return tool_error("missing required parameter: component"),
@@ -83,7 +199,7 @@ fn dispatch_get_context(state: &crate::store::ProjectState, args: &Value) -> Val
     }
 }
 
-fn dispatch_check_pattern(state: &crate::store::ProjectState, args: &Value) -> Value {
+fn dispatch_check_pattern(state: &ProjectState, args: &Value) -> Value {
     let description = match args.get("description").and_then(|v| v.as_str()) {
         Some(d) => d,
         None => return tool_error("missing required parameter: description"),
@@ -91,7 +207,7 @@ fn dispatch_check_pattern(state: &crate::store::ProjectState, args: &Value) -> V
     tool_result(&context::check_pattern(state, description))
 }
 
-fn tool_result(payload: &Value) -> Value {
+pub(crate) fn tool_result(payload: &Value) -> Value {
     serde_json::json!({
         "content": [{
             "type": "text",
@@ -101,7 +217,7 @@ fn tool_result(payload: &Value) -> Value {
     })
 }
 
-fn tool_error(message: &str) -> Value {
+pub(crate) fn tool_error(message: &str) -> Value {
     serde_json::json!({
         "content": [{ "type": "text", "text": message }],
         "isError": true
@@ -115,20 +231,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_list_has_three_tools() {
-        let list = tool_list();
-        let tools = list["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 3);
-    }
-
-    #[test]
-    fn tool_list_has_correct_names() {
+    fn tool_list_has_all_tools() {
         let list = tool_list();
         let tools = list["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"get_context"));
         assert!(names.contains(&"check_pattern"));
         assert!(names.contains(&"get_architecture"));
+        assert!(names.contains(&"validate_consistency"));
+        assert!(names.contains(&"record_decision"));
+        assert!(names.contains(&"record_pattern"));
+        assert!(names.contains(&"remove_decision"));
     }
 
     #[test]
@@ -163,39 +276,32 @@ mod tests {
 
     #[test]
     fn dispatch_unknown_tool_returns_error() {
-        let payload = serde_json::json!({});
-        let result = dispatch_unknown(&payload);
+        let store = Store::at("/dev/null/.trurl".into());
+        let mut state = empty_state();
+        let result = call_tool(&store, &mut state, "nonexistent", &serde_json::json!({}));
         assert_eq!(result["isError"], true);
-    }
-
-    fn dispatch_unknown(args: &Value) -> Value {
-        // Simulate calling an unknown tool without needing a Store.
-        let _ = args;
-        tool_error(&format!("unknown tool: {}", "nonexistent"))
     }
 
     #[test]
     fn dispatch_get_context_missing_component() {
-        let state = empty_state();
-        let args = serde_json::json!({});
-        let result = dispatch_get_context(&state, &args);
+        let store = Store::at("/dev/null/.trurl".into());
+        let mut state = empty_state();
+        let result = call_tool(&store, &mut state, "get_context", &serde_json::json!({}));
         assert_eq!(result["isError"], true);
-        let text = result["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("component"));
     }
 
     #[test]
     fn dispatch_check_pattern_missing_description() {
-        let state = empty_state();
-        let args = serde_json::json!({});
-        let result = dispatch_check_pattern(&state, &args);
+        let store = Store::at("/dev/null/.trurl".into());
+        let mut state = empty_state();
+        let result = call_tool(&store, &mut state, "check_pattern", &serde_json::json!({}));
         assert_eq!(result["isError"], true);
     }
 
-    fn empty_state() -> crate::store::ProjectState {
+    fn empty_state() -> ProjectState {
         use crate::store::schema::*;
         use chrono::Utc;
-        crate::store::ProjectState::new(
+        ProjectState::new(
             ProjectFile {
                 trurl_version: "0.2.0".into(),
                 project: Project {

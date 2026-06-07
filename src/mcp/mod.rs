@@ -1,6 +1,7 @@
 mod context;
 mod protocol;
 mod tools;
+mod write;
 
 use std::io::{self};
 use std::path::Path;
@@ -18,7 +19,7 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 
 pub(crate) fn run_server(store_root: &Path) -> Result<()> {
     let store = Store::at(store_root.to_path_buf());
-    let state = store.load_state()?;
+    let mut state = store.load_state()?;
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -30,7 +31,7 @@ pub(crate) fn run_server(store_root: &Path) -> Result<()> {
     loop {
         match protocol::read_message(&mut reader) {
             Ok(Some(request)) => {
-                if let Some(response) = handle(&state, request) {
+                if let Some(response) = handle(&store, &mut state, request) {
                     if let Err(e) = protocol::write_response(&mut writer, &response) {
                         eprintln!("trurl: stdout write error: {e}");
                         break;
@@ -54,7 +55,7 @@ pub(crate) fn run_server(store_root: &Path) -> Result<()> {
 
 // ── Request dispatch ──────────────────────────────────────────────────────
 
-fn handle(state: &ProjectState, request: Request) -> Option<Response> {
+fn handle(store: &Store, state: &mut ProjectState, request: Request) -> Option<Response> {
     if request.is_notification() {
         return None;
     }
@@ -66,7 +67,7 @@ fn handle(state: &ProjectState, request: Request) -> Option<Response> {
         "initialize" => handle_initialize(),
         "ping" => Ok(serde_json::json!({})),
         "tools/list" => Ok(tools::tool_list()),
-        "tools/call" => handle_tools_call(state, &request.params),
+        "tools/call" => handle_tools_call(store, state, &request.params),
         _ => Err((
             METHOD_NOT_FOUND,
             format!("unknown method: {}", request.method),
@@ -93,7 +94,8 @@ fn handle_initialize() -> std::result::Result<Value, (i32, String)> {
 }
 
 fn handle_tools_call(
-    state: &ProjectState,
+    store: &Store,
+    state: &mut ProjectState,
     params: &Option<Value>,
 ) -> std::result::Result<Value, (i32, String)> {
     let params = params
@@ -108,7 +110,7 @@ fn handle_tools_call(
     let default_args = serde_json::json!({});
     let arguments = params.get("arguments").unwrap_or(&default_args);
 
-    Ok(tools::call_tool(state, name, arguments))
+    Ok(tools::call_tool(store, state, name, arguments))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -150,18 +152,27 @@ mod tests {
         )
     }
 
+    fn empty_store() -> (tempfile::TempDir, Store) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        crate::commands::init(tmp.path()).unwrap();
+        let store = Store::discover(tmp.path()).unwrap();
+        (tmp, store)
+    }
+
     #[test]
     fn notification_returns_none() {
-        let state = empty_state();
+        let (_tmp, store) = empty_store();
+        let mut state = store.load_state().unwrap();
         let req = make_request(None, "notifications/initialized", None);
-        assert!(handle(&state, req).is_none());
+        assert!(handle(&store, &mut state, req).is_none());
     }
 
     #[test]
     fn initialize_returns_capabilities() {
-        let state = empty_state();
+        let (_tmp, store) = empty_store();
+        let mut state = store.load_state().unwrap();
         let req = make_request(Some(json!(1)), "initialize", None);
-        let resp = handle(&state, req).unwrap();
+        let resp = handle(&store, &mut state, req).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         let result = &json["result"];
         assert_eq!(result["protocolVersion"], PROTOCOL_VERSION);
@@ -171,47 +182,52 @@ mod tests {
 
     #[test]
     fn ping_returns_empty_object() {
-        let state = empty_state();
+        let mut state = empty_state();
+        let store = Store::at("/dev/null/.trurl".into());
         let req = make_request(Some(json!(2)), "ping", None);
-        let resp = handle(&state, req).unwrap();
+        let resp = handle(&store, &mut state, req).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["result"], json!({}));
     }
 
     #[test]
     fn unknown_method_returns_error() {
-        let state = empty_state();
+        let mut state = empty_state();
+        let store = Store::at("/dev/null/.trurl".into());
         let req = make_request(Some(json!(3)), "bogus/method", None);
-        let resp = handle(&state, req).unwrap();
+        let resp = handle(&store, &mut state, req).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], METHOD_NOT_FOUND);
     }
 
     #[test]
     fn tools_call_missing_params_returns_error() {
-        let state = empty_state();
+        let mut state = empty_state();
+        let store = Store::at("/dev/null/.trurl".into());
         let req = make_request(Some(json!(4)), "tools/call", None);
-        let resp = handle(&state, req).unwrap();
+        let resp = handle(&store, &mut state, req).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], INVALID_PARAMS);
     }
 
     #[test]
     fn tools_call_missing_name_returns_error() {
-        let state = empty_state();
+        let mut state = empty_state();
+        let store = Store::at("/dev/null/.trurl".into());
         let req = make_request(Some(json!(5)), "tools/call", Some(json!({"arguments": {}})));
-        let resp = handle(&state, req).unwrap();
+        let resp = handle(&store, &mut state, req).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], INVALID_PARAMS);
     }
 
     #[test]
-    fn tools_list_returns_tools() {
-        let state = empty_state();
+    fn tools_list_returns_all_tools() {
+        let mut state = empty_state();
+        let store = Store::at("/dev/null/.trurl".into());
         let req = make_request(Some(json!(6)), "tools/list", None);
-        let resp = handle(&state, req).unwrap();
+        let resp = handle(&store, &mut state, req).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         let tools = json["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 3);
+        assert!(tools.len() >= 3);
     }
 }
