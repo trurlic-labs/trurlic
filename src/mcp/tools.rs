@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use serde_json::Value;
 
 use crate::store::{ProjectState, Store};
@@ -8,7 +10,10 @@ use super::write;
 
 // ── Tool definitions ────────────────────────────────────────────────────────
 
-pub(crate) fn tool_list() -> Value {
+/// Static tool catalogue. Built once on first access, returned by reference
+/// thereafter. Each `tools/list` response clones from this cache instead of
+/// rebuilding the 9-tool schema tree from scratch.
+static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
     serde_json::json!({
         "tools": [
             {
@@ -210,43 +215,63 @@ pub(crate) fn tool_list() -> Value {
             }
         ]
     })
+});
+
+pub(crate) fn tool_list() -> Value {
+    TOOL_DEFINITIONS.clone()
 }
 
-// ── Tool dispatch ───────────────────────────────────────────────────────────
+// ── Tool classification ─────────────────────────────────────────────────────
 
-pub(crate) fn call_tool(
+/// Returns `true` for tools that mutate `ProjectState` and the on-disk store.
+/// Used by the MCP dispatch to choose between a read lock (cheap, concurrent)
+/// and a write lock (exclusive).
+pub(crate) fn is_write_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "record_decision" | "record_pattern" | "remove_decision" | "update_decision"
+    )
+}
+
+// ── Read tool dispatch ──────────────────────────────────────────────────────
+
+/// Dispatch a read-only tool call. Requires only `&ProjectState`.
+/// Unknown tool names are handled here (they are not write tools).
+pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> Value {
+    match name {
+        "get_context" => dispatch_get_context(state, args),
+        "check_pattern" => dispatch_check_pattern(state, args),
+        "get_architecture" => tool_result(&context::get_architecture(state)),
+        "validate_consistency" => tool_result(&write::validate_consistency(state)),
+        "get_design_prompt" => dispatch_get_design_prompt(state, args),
+        _ => tool_error(&format!("unknown tool: {name}")),
+    }
+}
+
+// ── Write tool dispatch ─────────────────────────────────────────────────────
+
+/// Dispatch a mutating tool call. Requires `&mut ProjectState` and `&Store`.
+/// Only called for tools where [`is_write_tool`] returns `true`.
+pub(crate) fn call_write_tool(
     store: &Store,
     state: &mut ProjectState,
     name: &str,
     args: &Value,
 ) -> Value {
-    match name {
-        // Read tools
-        "get_context" => dispatch_get_context(state, args),
-        "check_pattern" => dispatch_check_pattern(state, args),
-        "get_architecture" => tool_result(&context::get_architecture(state)),
-        "validate_consistency" => tool_result(&write::validate_consistency(state)),
-        // Write tools
-        "record_decision" => match write::record_decision(store, state, args) {
-            Ok(v) => tool_result(&v),
-            Err(msg) => tool_error(&msg),
-        },
-        "record_pattern" => match write::record_pattern(store, state, args) {
-            Ok(v) => tool_result(&v),
-            Err(msg) => tool_error(&msg),
-        },
-        "remove_decision" => match write::remove_decision(store, state, args) {
-            Ok(v) => tool_result(&v),
-            Err(msg) => tool_error(&msg),
-        },
-        "update_decision" => match write::update_decision(store, state, args) {
-            Ok(v) => tool_result(&v),
-            Err(msg) => tool_error(&msg),
-        },
-        "get_design_prompt" => dispatch_get_design_prompt(state, args),
-        _ => tool_error(&format!("unknown tool: {name}")),
+    let result = match name {
+        "record_decision" => write::record_decision(store, state, args),
+        "record_pattern" => write::record_pattern(store, state, args),
+        "remove_decision" => write::remove_decision(store, state, args),
+        "update_decision" => write::update_decision(store, state, args),
+        _ => unreachable!("is_write_tool gate prevents unknown tools here"),
+    };
+    match result {
+        Ok(v) => tool_result(&v),
+        Err(msg) => tool_error(&msg),
     }
 }
+
+// ── Argument dispatch helpers ───────────────────────────────────────────────
 
 fn dispatch_get_context(state: &ProjectState, args: &Value) -> Value {
     let component = match args.get("component").and_then(|v| v.as_str()) {
@@ -341,6 +366,13 @@ mod tests {
     }
 
     #[test]
+    fn tool_list_is_stable_across_calls() {
+        let a = tool_list();
+        let b = tool_list();
+        assert_eq!(a, b);
+    }
+
+    #[test]
     fn tool_result_wraps_in_content_block() {
         let payload = serde_json::json!({"status": "covered"});
         let result = tool_result(&payload);
@@ -359,26 +391,42 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_unknown_tool_returns_error() {
-        let store = Store::at("/dev/null/.trurl".into());
-        let mut state = empty_state();
-        let result = call_tool(&store, &mut state, "nonexistent", &serde_json::json!({}));
+    fn is_write_tool_classification() {
+        // Write tools.
+        assert!(is_write_tool("record_decision"));
+        assert!(is_write_tool("record_pattern"));
+        assert!(is_write_tool("remove_decision"));
+        assert!(is_write_tool("update_decision"));
+
+        // Read tools.
+        assert!(!is_write_tool("get_context"));
+        assert!(!is_write_tool("check_pattern"));
+        assert!(!is_write_tool("get_architecture"));
+        assert!(!is_write_tool("validate_consistency"));
+        assert!(!is_write_tool("get_design_prompt"));
+
+        // Unknown.
+        assert!(!is_write_tool("nonexistent"));
+    }
+
+    #[test]
+    fn dispatch_unknown_read_tool_returns_error() {
+        let state = empty_state();
+        let result = call_read_tool(&state, "nonexistent", &serde_json::json!({}));
         assert_eq!(result["isError"], true);
     }
 
     #[test]
     fn dispatch_get_context_missing_component() {
-        let store = Store::at("/dev/null/.trurl".into());
-        let mut state = empty_state();
-        let result = call_tool(&store, &mut state, "get_context", &serde_json::json!({}));
+        let state = empty_state();
+        let result = call_read_tool(&state, "get_context", &serde_json::json!({}));
         assert_eq!(result["isError"], true);
     }
 
     #[test]
     fn dispatch_check_pattern_missing_description() {
-        let store = Store::at("/dev/null/.trurl".into());
-        let mut state = empty_state();
-        let result = call_tool(&store, &mut state, "check_pattern", &serde_json::json!({}));
+        let state = empty_state();
+        let result = call_read_tool(&state, "check_pattern", &serde_json::json!({}));
         assert_eq!(result["isError"], true);
     }
 

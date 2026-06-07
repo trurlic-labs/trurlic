@@ -74,10 +74,11 @@ impl Store {
         }
 
         if let Some(parent) = target.parent()
-            && let Err(e) = fs::create_dir_all(parent) {
-                let _ = fs::remove_file(&tmp_path);
-                return Err(Error::Io(e));
-            }
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(Error::Io(e));
+        }
 
         if let Err(e) = fs::rename(&tmp_path, target) {
             let _ = fs::remove_file(&tmp_path);
@@ -199,10 +200,11 @@ impl Store {
         // Ensure parent directories exist before renaming.
         for (_, target) in &staged {
             if let Some(parent) = target.parent()
-                && let Err(e) = fs::create_dir_all(parent) {
-                    cleanup_tmp_files(&staged);
-                    return Err(Error::Io(e));
-                }
+                && let Err(e) = fs::create_dir_all(parent)
+            {
+                cleanup_tmp_files(&staged);
+                return Err(Error::Io(e));
+            }
         }
 
         // Phase 3: Rename all to final paths.
@@ -226,9 +228,10 @@ impl Store {
         // surface any resulting inconsistency.
         for path in &removes {
             if let Err(e) = fs::remove_file(path)
-                && e.kind() != ErrorKind::NotFound {
-                    eprintln!("warning: failed to remove {}: {e}", path.display());
-                }
+                && e.kind() != ErrorKind::NotFound
+            {
+                eprintln!("warning: failed to remove {}: {e}", path.display());
+            }
         }
 
         Ok(())

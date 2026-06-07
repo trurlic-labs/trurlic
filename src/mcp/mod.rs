@@ -25,7 +25,8 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 /// background file watcher thread. The watcher detects external changes
 /// to `.trurl/` (CLI writes, manual edits, git checkout) and reloads
 /// state from disk. The write lock is held only for pointer swaps
-/// (microseconds) — MCP queries are never blocked for more than a swap.
+/// (microseconds) — MCP read queries acquire only a read lock and never
+/// block the watcher or other reads.
 pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()> {
     let state = Arc::new(RwLock::new(initial_state));
 
@@ -53,10 +54,11 @@ pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()
         match protocol::read_message(&mut reader) {
             Ok(Some(request)) => {
                 if let Some(response) = handle(&store, &state, request, &mut initialized)
-                    && let Err(e) = protocol::write_response(&mut writer, &response) {
-                        eprintln!("trurl: stdout write error: {e}");
-                        break;
-                    }
+                    && let Err(e) = protocol::write_response(&mut writer, &response)
+                {
+                    eprintln!("trurl: stdout write error: {e}");
+                    break;
+                }
             }
             Ok(None) => break, // EOF — clean shutdown
             Err(e) => {
@@ -155,14 +157,23 @@ fn handle_tools_call(
     let default_args = serde_json::json!({});
     let arguments = params.get("arguments").unwrap_or(&default_args);
 
-    // Write lock for the tool call — read tools only need &ProjectState but
-    // write tools need &mut. Single lock simplifies the dispatch; the watcher
-    // thread only contends briefly for pointer swaps.
-    let mut guard = state.write().unwrap_or_else(|poisoned| {
-        eprintln!("trurl: recovered from poisoned state lock");
-        poisoned.into_inner()
-    });
-    Ok(tools::call_tool(store, &mut guard, name, arguments))
+    // Write tools need &mut ProjectState; read tools (and unknown names)
+    // only need &ProjectState. Acquiring only a read lock for reads avoids
+    // blocking the file watcher's state swap and (if the transport ever
+    // supports concurrency) other read requests.
+    if tools::is_write_tool(name) {
+        let mut guard = state.write().unwrap_or_else(|poisoned| {
+            eprintln!("trurl: recovered from poisoned state lock");
+            poisoned.into_inner()
+        });
+        Ok(tools::call_write_tool(store, &mut guard, name, arguments))
+    } else {
+        let guard = state.read().unwrap_or_else(|poisoned| {
+            eprintln!("trurl: recovered from poisoned state lock");
+            poisoned.into_inner()
+        });
+        Ok(tools::call_read_tool(&guard, name, arguments))
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -348,5 +359,27 @@ mod tests {
         let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["result"], json!({}));
+    }
+
+    #[test]
+    fn read_tool_does_not_acquire_write_lock() {
+        let (_tmp, store) = empty_store();
+        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
+        let mut initialized = true;
+
+        // Hold a read lock — if handle_tools_call tried to write-lock
+        // this would deadlock (single-threaded test) or panic.
+        let _read_guard = state.read().unwrap();
+
+        // get_architecture is a read tool — must succeed with the read
+        // lock already held by us (RwLock allows multiple readers).
+        let req = make_request(
+            Some(json!(11)),
+            "tools/call",
+            Some(json!({"name": "get_architecture", "arguments": {}})),
+        );
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json.get("result").is_some(), "read tool should succeed");
     }
 }

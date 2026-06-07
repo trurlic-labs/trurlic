@@ -27,25 +27,27 @@ pub(crate) fn extract_decisions(response: &str) -> Vec<ExtractedDecision> {
                 json.get("choice").and_then(|v| v.as_str()),
                 json.get("reason").and_then(|v| v.as_str()),
             )
-                && !choice.is_empty() && !reason.is_empty() {
-                    let alternatives = json
-                        .get("alternatives")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str())
-                                .filter(|s| !s.is_empty())
-                                .map(String::from)
-                                .collect()
-                        })
-                        .unwrap_or_default();
+            && !choice.is_empty()
+            && !reason.is_empty()
+        {
+            let alternatives = json
+                .get("alternatives")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
 
-                    decisions.push(ExtractedDecision {
-                        choice: choice.to_string(),
-                        reason: reason.to_string(),
-                        alternatives,
-                    });
-                }
+            decisions.push(ExtractedDecision {
+                choice: choice.to_string(),
+                reason: reason.to_string(),
+                alternatives,
+            });
+        }
     }
 
     decisions

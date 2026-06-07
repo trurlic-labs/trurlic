@@ -129,10 +129,9 @@ pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
     for entry in entries {
         let path = entry?.path();
         let is_toml = path.extension().is_some_and(|ext| ext == "toml");
-        if is_toml
-            && let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                names.push(stem.to_string());
-            }
+        if is_toml && let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            names.push(stem.to_string());
+        }
     }
     names.sort_unstable();
     Ok(names)

@@ -110,9 +110,10 @@ pub(crate) fn record_decision(
         }
     }
     if let Some(sup) = supersedes
-        && !state.decisions.contains_key(sup) {
-            return Err(format!("supersedes target `{sup}` does not exist"));
-        }
+        && !state.decisions.contains_key(sup)
+    {
+        return Err(format!("supersedes target `{sup}` does not exist"));
+    }
 
     let lock = store.lock().map_err(|e| e.to_string())?;
     let stem =
