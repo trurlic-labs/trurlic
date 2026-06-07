@@ -2,10 +2,11 @@ mod context;
 mod prompts;
 mod protocol;
 mod tools;
+mod watcher;
 mod write;
 
-use std::io::{self};
-use std::path::Path;
+use std::io;
+use std::sync::{Arc, RwLock};
 
 use serde_json::Value;
 
@@ -18,9 +19,27 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 
 // ── Public entry point ────────────────────────────────────────────────────
 
-pub(crate) fn run_server(store_root: &Path) -> Result<()> {
-    let store = Store::at(store_root.to_path_buf());
-    let mut state = store.load_state()?;
+/// Run the MCP server on stdio.
+///
+/// `state` is wrapped in `Arc<RwLock<_>>` and shared with a background
+/// file watcher thread. The watcher detects external changes to `.trurl/`
+/// (CLI writes, manual edits, git checkout) and reloads state from disk.
+/// The write lock is held only for pointer swaps (microseconds) — MCP
+/// queries are never blocked for more than a single swap.
+pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()> {
+    let state = Arc::new(RwLock::new(initial_state));
+
+    // Spawn file watcher. Non-fatal if unavailable (e.g. inotify limit).
+    let _watcher = match watcher::spawn(store.root(), state.clone()) {
+        Ok(guard) => {
+            eprintln!("trurl: file watcher active");
+            Some(guard)
+        }
+        Err(e) => {
+            eprintln!("trurl: file watcher unavailable: {e}");
+            None
+        }
+    };
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -33,7 +52,7 @@ pub(crate) fn run_server(store_root: &Path) -> Result<()> {
     loop {
         match protocol::read_message(&mut reader) {
             Ok(Some(request)) => {
-                if let Some(response) = handle(&store, &mut state, request, &mut initialized) {
+                if let Some(response) = handle(&store, &state, request, &mut initialized) {
                     if let Err(e) = protocol::write_response(&mut writer, &response) {
                         eprintln!("trurl: stdout write error: {e}");
                         break;
@@ -59,14 +78,12 @@ pub(crate) fn run_server(store_root: &Path) -> Result<()> {
 
 fn handle(
     store: &Store,
-    state: &mut ProjectState,
+    state: &Arc<RwLock<ProjectState>>,
     request: Request,
     initialized: &mut bool,
 ) -> Option<Response> {
     // Notifications never receive a response.
     if request.is_notification() {
-        // notifications/initialized: acknowledged, no state change needed
-        // (initialized flag was set when we responded to the initialize request).
         return None;
     }
 
@@ -124,7 +141,7 @@ fn handle_initialize() -> std::result::Result<Value, (i32, String)> {
 
 fn handle_tools_call(
     store: &Store,
-    state: &mut ProjectState,
+    state: &Arc<RwLock<ProjectState>>,
     params: &Option<Value>,
 ) -> std::result::Result<Value, (i32, String)> {
     let params = params
@@ -139,7 +156,11 @@ fn handle_tools_call(
     let default_args = serde_json::json!({});
     let arguments = params.get("arguments").unwrap_or(&default_args);
 
-    Ok(tools::call_tool(store, state, name, arguments))
+    // Write lock for the tool call — read tools only need &ProjectState but
+    // write tools need &mut. Single lock simplifies the dispatch; the watcher
+    // thread only contends briefly for pointer swaps.
+    let mut guard = state.write().unwrap_or_else(|e| e.into_inner());
+    Ok(tools::call_tool(store, &mut guard, name, arguments))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -158,10 +179,10 @@ mod tests {
         }
     }
 
-    fn empty_state() -> ProjectState {
+    fn empty_state() -> Arc<RwLock<ProjectState>> {
         use crate::store::schema::*;
         use chrono::Utc;
-        ProjectState::new(
+        Arc::new(RwLock::new(ProjectState::new(
             ProjectFile {
                 trurl_version: "0.2.0".into(),
                 project: Project {
@@ -178,7 +199,7 @@ mod tests {
                 nodes: vec![],
                 edges: vec![],
             },
-        )
+        )))
     }
 
     fn empty_store() -> (tempfile::TempDir, Store) {
@@ -191,19 +212,19 @@ mod tests {
     #[test]
     fn notification_returns_none() {
         let (_tmp, store) = empty_store();
-        let mut state = store.load_state().unwrap();
+        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
         let mut initialized = true;
         let req = make_request(None, "notifications/initialized", None);
-        assert!(handle(&store, &mut state, req, &mut initialized).is_none());
+        assert!(handle(&store, &state, req, &mut initialized).is_none());
     }
 
     #[test]
     fn initialize_returns_capabilities() {
         let (_tmp, store) = empty_store();
-        let mut state = store.load_state().unwrap();
+        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
         let mut initialized = false;
         let req = make_request(Some(json!(1)), "initialize", None);
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         assert!(initialized);
         let json = serde_json::to_value(&resp).unwrap();
         let result = &json["result"];
@@ -214,55 +235,55 @@ mod tests {
 
     #[test]
     fn ping_returns_empty_object() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = true;
         let req = make_request(Some(json!(2)), "ping", None);
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["result"], json!({}));
     }
 
     #[test]
     fn unknown_method_returns_error() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = true;
         let req = make_request(Some(json!(3)), "bogus/method", None);
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], METHOD_NOT_FOUND);
     }
 
     #[test]
     fn tools_call_missing_params_returns_error() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = true;
         let req = make_request(Some(json!(4)), "tools/call", None);
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], INVALID_PARAMS);
     }
 
     #[test]
     fn tools_call_missing_name_returns_error() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = true;
         let req = make_request(Some(json!(5)), "tools/call", Some(json!({"arguments": {}})));
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], INVALID_PARAMS);
     }
 
     #[test]
     fn tools_list_returns_all_tools() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = true;
         let req = make_request(Some(json!(6)), "tools/list", None);
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         let tools = json["result"]["tools"].as_array().unwrap();
         assert!(tools.len() >= 3);
@@ -270,7 +291,7 @@ mod tests {
 
     #[test]
     fn tools_call_before_initialize_rejected() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = false;
         let req = make_request(
@@ -278,7 +299,7 @@ mod tests {
             "tools/call",
             Some(json!({"name": "get_architecture", "arguments": {}})),
         );
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], INVALID_REQUEST);
         assert!(
@@ -291,18 +312,18 @@ mod tests {
 
     #[test]
     fn tools_list_before_initialize_rejected() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = false;
         let req = make_request(Some(json!(8)), "tools/list", None);
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], INVALID_REQUEST);
     }
 
     #[test]
     fn invalid_jsonrpc_version_rejected() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = true;
         let req = Request {
@@ -311,18 +332,18 @@ mod tests {
             method: "ping".into(),
             params: None,
         };
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["error"]["code"], INVALID_REQUEST);
     }
 
     #[test]
     fn ping_allowed_before_initialize() {
-        let mut state = empty_state();
+        let state = empty_state();
         let store = Store::at("/dev/null/.trurl".into());
         let mut initialized = false;
         let req = make_request(Some(json!(10)), "ping", None);
-        let resp = handle(&store, &mut state, req, &mut initialized).unwrap();
+        let resp = handle(&store, &state, req, &mut initialized).unwrap();
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["result"], json!({}));
     }

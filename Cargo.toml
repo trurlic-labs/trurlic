@@ -36,6 +36,9 @@ blake3 = "1"
 # File locking (cross-platform flock)
 fs2 = "0.4"
 
+# File system watcher for live reload
+notify = "6"
+
 # HTTP client for LLM API calls (rustls = pure-Rust TLS, no OpenSSL dep)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 

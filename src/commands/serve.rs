@@ -25,5 +25,5 @@ pub fn serve(cwd: &Path) -> Result<()> {
         state.patterns.len(),
     );
 
-    crate::mcp::run_server(store.root())
+    crate::mcp::run_server(store, state)
 }
