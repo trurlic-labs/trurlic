@@ -104,7 +104,7 @@ fn project_context(
         }
     }
     brief.push_str("\nWHEN UNCERTAIN:\n");
-    brief.push_str("STOP. Run `trurl design project` first.\n");
+    brief.push_str("STOP. Ask the user to design project-wide rules first.\n");
 
     let status = if project_decisions.is_empty() {
         "not_covered"
@@ -185,9 +185,7 @@ fn build_brief(
     }
 
     brief.push_str("WHEN UNCERTAIN:\n");
-    brief.push_str(&format!(
-        "STOP. This introduces a new pattern. Run `trurl design {component}` first.\n"
-    ));
+    brief.push_str("STOP. This introduces a new pattern. Ask the user to design it first.\n");
 
     brief
 }
@@ -206,6 +204,7 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
             "message": "Description too short or vague. Provide more detail \
                         about the pattern to check.",
             "decisions": [],
+            "patterns": [],
         });
     }
 
@@ -286,9 +285,8 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
     if matches.is_empty() {
         serde_json::json!({
             "status": "not_covered",
-            "message": "No existing decisions cover this pattern. Suggest the \
-                        developer run `trurl design <component>` to make \
-                        architectural decisions before proceeding.",
+            "message": "No existing decisions cover this pattern. \
+                        A design session is needed before proceeding.",
             "decisions": [],
             "patterns": [],
         })
@@ -338,9 +336,21 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
         .patterns
         .iter()
         .map(|(name, pat)| {
+            let edges = graph.edges_involving(name);
+            let decision_count = edges
+                .iter()
+                .filter(|(_, e, d)| e.kind == EdgeKind::MemberOf && *d == Direction::Forward)
+                .count();
+            let component_count = edges
+                .iter()
+                .filter(|(_, e, d)| e.kind == EdgeKind::AppliesTo && *d == Direction::Forward)
+                .count();
+
             serde_json::json!({
                 "name": name,
                 "description": pat.pattern.description,
+                "decision_count": decision_count,
+                "component_count": component_count,
             })
         })
         .collect();
@@ -768,7 +778,7 @@ mod tests {
 
         assert!(brief.contains("WHEN UNCERTAIN:"));
         assert!(brief.contains("STOP"));
-        assert!(brief.contains("trurl design auth"));
+        assert!(brief.contains("Ask the user to design it first"));
     }
 
     #[test]
@@ -811,9 +821,12 @@ mod tests {
         let state = test_state();
         let result = check_pattern(&state, "");
         assert_eq!(result["status"], "not_covered");
+        assert!(result["decisions"].as_array().unwrap().is_empty());
+        assert!(result["patterns"].as_array().unwrap().is_empty());
 
         let result = check_pattern(&state, "a b");
         assert_eq!(result["status"], "not_covered");
+        assert!(result["patterns"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -891,6 +904,51 @@ mod tests {
         assert_eq!(auth["decision_count"], 1);
         let auth_connects = auth["connects_to"].as_array().unwrap();
         assert!(auth_connects.iter().any(|v| v == "database"));
+    }
+
+    #[test]
+    fn get_architecture_includes_pattern_member_counts() {
+        let mut state = test_state();
+
+        state.patterns.insert(
+            "state-in-redis".into(),
+            PatternFile {
+                pattern: Pattern {
+                    name: "state-in-redis".into(),
+                    description: "All state uses Redis".into(),
+                },
+            },
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "state-in-redis".into(),
+            kind: NodeKind::Pattern,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "state-in-redis".into(),
+            to: "use-jwt".into(),
+            kind: EdgeKind::MemberOf,
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "state-in-redis".into(),
+            to: "db-pool".into(),
+            kind: EdgeKind::MemberOf,
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "state-in-redis".into(),
+            to: "auth".into(),
+            kind: EdgeKind::AppliesTo,
+        });
+
+        let result = get_architecture(&state);
+        assert_eq!(result["total_patterns"], 1);
+
+        let patterns = result["patterns"].as_array().unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0]["name"], "state-in-redis");
+        assert_eq!(patterns[0]["decision_count"], 2);
+        assert_eq!(patterns[0]["component_count"], 1);
     }
 
     // ── extract_words ───────────────────────────────────────────────────

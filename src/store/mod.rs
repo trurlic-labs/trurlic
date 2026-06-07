@@ -1,4 +1,4 @@
-#[allow(dead_code)] // consumed in Phase 5 (MCP integration)
+#[allow(dead_code)] // query + cycle methods consumed incrementally through Phases 5-7
 pub mod graph;
 pub mod schema;
 
