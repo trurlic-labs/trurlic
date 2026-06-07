@@ -2,6 +2,7 @@ use std::path::Path;
 
 use chrono::Utc;
 
+use crate::store::graph::Direction;
 use crate::store::schema::{Decision, DecisionFile, EdgeEntry, EdgeKind, NodeEntry, NodeKind};
 use crate::store::{self};
 use crate::{Error, Result};
@@ -92,26 +93,56 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
         )));
     }
 
-    // Warn about broken supersede chains via graph edges.
-    let dependents: Vec<String> = state
-        .graph_index
-        .edges
-        .iter()
-        .filter(|e| e.to == name && e.kind == EdgeKind::Supersedes)
-        .map(|e| e.from.clone())
-        .collect();
+    // Build graph for cascade analysis.
+    let graph = state.build_graph();
+    let involved = graph.edges_involving(name);
 
+    // Block: other decisions depend on this one via DependsOn.
+    let dependents: Vec<String> = involved
+        .iter()
+        .filter(|(_, e, d)| e.kind == EdgeKind::DependsOn && *d == Direction::Reverse)
+        .map(|(other, _, _)| other.to_string())
+        .collect();
     if !dependents.is_empty() {
+        return Err(Error::CascadeBlocked(format!(
+            "decision `{name}` is depended on by: {}. \
+             Remove or update them first.",
+            dependents.join(", ")
+        )));
+    }
+
+    // Block: pattern would have <2 members after removal.
+    for (other, edge, dir) in &involved {
+        if edge.kind == EdgeKind::MemberOf && *dir == Direction::Reverse {
+            let member_count = graph
+                .edges_involving(other)
+                .iter()
+                .filter(|(_, e, d)| e.kind == EdgeKind::MemberOf && *d == Direction::Forward)
+                .count();
+            if member_count <= 2 {
+                return Err(Error::CascadeBlocked(format!(
+                    "removing `{name}` would leave pattern `{other}` with \
+                     fewer than 2 members. Remove or update the pattern first."
+                )));
+            }
+        }
+    }
+
+    // Warn: broken supersede chains.
+    let supersede_refs: Vec<String> = involved
+        .iter()
+        .filter(|(_, e, d)| e.kind == EdgeKind::Supersedes && *d == Direction::Reverse)
+        .map(|(other, _, _)| other.to_string())
+        .collect();
+    if !supersede_refs.is_empty() {
         eprintln!(
             "warning: supersede chain broken — these decisions reference `{name}`: {}",
-            dependents.join(", ")
+            supersede_refs.join(", ")
         );
     }
 
-    // Remove from state.
+    // Apply removal.
     state.decisions.remove(name);
-
-    // Remove node and all edges involving this decision from graph index.
     state.graph_index.nodes.retain(|n| n.name != name);
     state
         .graph_index
@@ -401,5 +432,104 @@ mod tests {
                 .iter()
                 .any(|e| e.to == "session-cookies")
         );
+    }
+
+    #[test]
+    fn remove_decision_blocks_when_depended_on() {
+        use crate::store::schema::EdgeEntry;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Token expiry", "15 min", None, &[]).unwrap();
+
+        // Manually add DependsOn edge: token-expiry depends on use-jwt.
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        state.graph_index.edges.push(EdgeEntry {
+            from: "token-expiry".into(),
+            to: "use-jwt".into(),
+            kind: EdgeKind::DependsOn,
+        });
+        store
+            .commit_batch(&lock, vec![], vec![], Some(&state.graph_index))
+            .unwrap();
+        drop(lock);
+
+        let err = remove_decision(tmp.path(), "use-jwt").unwrap_err();
+        match err {
+            Error::CascadeBlocked(msg) => {
+                assert!(
+                    msg.contains("token-expiry"),
+                    "should name the dependent: {msg}"
+                );
+            }
+            other => panic!("expected CascadeBlocked, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn remove_decision_blocks_when_pattern_would_shrink() {
+        use crate::store::schema::{EdgeEntry, NodeEntry, NodeKind, Pattern, PatternFile};
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Token refresh", "Rotate", None, &[]).unwrap();
+
+        // Create a pattern with exactly 2 member decisions.
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+
+        let pat = PatternFile {
+            pattern: Pattern {
+                name: "auth-tokens".into(),
+                description: "Token handling pattern".into(),
+            },
+        };
+        let write = store
+            .prepare_write(&store.pattern_path("auth-tokens"), &pat)
+            .unwrap();
+        let hash = write.content_hash();
+
+        let mut state = store.load_state().unwrap();
+        state.graph_index.nodes.push(NodeEntry {
+            name: "auth-tokens".into(),
+            kind: NodeKind::Pattern,
+            tags: vec![],
+            hash,
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "auth-tokens".into(),
+            to: "use-jwt".into(),
+            kind: EdgeKind::MemberOf,
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "auth-tokens".into(),
+            to: "token-refresh".into(),
+            kind: EdgeKind::MemberOf,
+        });
+        store
+            .commit_batch(&lock, vec![write], vec![], Some(&state.graph_index))
+            .unwrap();
+        drop(lock);
+
+        let err = remove_decision(tmp.path(), "use-jwt").unwrap_err();
+        match err {
+            Error::CascadeBlocked(msg) => {
+                assert!(
+                    msg.contains("auth-tokens"),
+                    "should name the pattern: {msg}"
+                );
+                assert!(
+                    msg.contains("fewer than 2"),
+                    "should explain the constraint: {msg}"
+                );
+            }
+            other => panic!("expected CascadeBlocked, got: {other}"),
+        }
     }
 }

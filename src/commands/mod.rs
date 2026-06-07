@@ -31,10 +31,13 @@ pub(crate) fn discover_store(cwd: &Path) -> Result<Store> {
 
 pub(crate) fn warn_on_issues(state: &ProjectState) {
     let issues = state.validate();
-    if !issues.is_empty() {
+    let errors = issues
+        .iter()
+        .filter(|i| i.severity == crate::store::graph::Severity::Error)
+        .count();
+    if errors > 0 {
         eprintln!(
-            "warning: .trurl/ has {} consistency issue(s) — run `trurl check` for details",
-            issues.len()
+            "warning: .trurl/ has {errors} consistency issue(s) — run `trurl check` for details"
         );
     }
 }
@@ -56,13 +59,15 @@ pub(crate) fn open_store_mut(cwd: &Path) -> Result<(Store, store::StoreLock, Pro
 
 pub(crate) fn validate_mutation(state: &ProjectState) -> Result<()> {
     let issues = state.validate();
-    if issues.is_empty() {
+    let errors: Vec<&str> = issues
+        .iter()
+        .filter(|i| i.severity == crate::store::graph::Severity::Error)
+        .map(|i| i.message.as_str())
+        .collect();
+    if errors.is_empty() {
         Ok(())
     } else {
-        Err(Error::Validation(format!(
-            "operation would create inconsistent state: {}",
-            issues.join("; ")
-        )))
+        Err(Error::GraphIntegrity(errors.join("; ")))
     }
 }
 

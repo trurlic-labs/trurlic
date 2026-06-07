@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::{Error, Result};
 
+use super::graph::{InMemoryGraph, Issue};
 use super::schema::{ComponentFile, DecisionFile, GraphIndex, PatternFile, ProjectFile};
 
 // ── ProjectState ─────────────────────────────────────────────────────────────
@@ -20,84 +21,31 @@ pub struct ProjectState {
 }
 
 impl ProjectState {
-    /// Validate node-file content and basic graph index consistency.
-    /// Returns an empty vec when everything is valid.
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
+    /// Full graph integrity validation via [`InMemoryGraph`].
+    ///
+    /// Builds a temporary in-memory graph from the current state, runs all
+    /// validation checks, and returns any issues found.
+    pub fn validate(&self) -> Vec<Issue> {
+        self.build_graph().validate()
+    }
 
-        for (filename, comp) in &self.components {
-            let name = &comp.component.name;
-
-            if filename != name {
-                issues.push(format!(
-                    "component file `{filename}.toml` has internal name `{name}`"
-                ));
-            }
-
-            if !is_valid_kebab_case(name) {
-                issues.push(format!(
-                    "component `{filename}` has invalid name `{name}` (must be kebab-case)"
-                ));
-            }
-        }
-
-        for (filename, dec) in &self.decisions {
-            let comp = &dec.decision.component;
-            if comp != "project" && !self.components.contains_key(comp) {
-                issues.push(format!(
-                    "decision `{filename}` references component `{comp}` which does not exist"
-                ));
-            }
-
-            if comp != "project" && !is_valid_kebab_case(comp) {
-                issues.push(format!(
-                    "decision `{filename}` has invalid component `{comp}` \
-                     (must be kebab-case or \"project\")"
-                ));
-            }
-
-            if dec.decision.choice.trim().is_empty() {
-                issues.push(format!("decision `{filename}` has empty choice"));
-            }
-
-            if dec.decision.reason.trim().is_empty() {
-                issues.push(format!("decision `{filename}` has empty reason"));
-            }
-        }
-
-        for (filename, pat) in &self.patterns {
-            if pat.pattern.description.trim().is_empty() {
-                issues.push(format!("pattern `{filename}` has empty description"));
-            }
-        }
-
-        // Basic graph index edge validation (full graph validation in Phase 2)
-        let node_names: std::collections::HashSet<&str> = self
-            .graph_index
-            .nodes
-            .iter()
-            .map(|n| n.name.as_str())
-            .collect();
-
-        for edge in &self.graph_index.edges {
-            if !node_names.contains(edge.from.as_str()) {
-                issues.push(format!(
-                    "edge {:?} from `{}` → `{}`: source node missing from index",
-                    edge.kind, edge.from, edge.to
-                ));
-            }
-            if !node_names.contains(edge.to.as_str()) {
-                issues.push(format!(
-                    "edge {:?} from `{}` → `{}`: target node missing from index",
-                    edge.kind, edge.from, edge.to
-                ));
-            }
-            if edge.from == edge.to {
-                issues.push(format!("self-edge on `{}` ({:?})", edge.from, edge.kind));
-            }
-        }
-
-        issues
+    /// Build an [`InMemoryGraph`] from this state snapshot.
+    pub fn build_graph(&self) -> InMemoryGraph {
+        InMemoryGraph::build(
+            &self.graph_index,
+            self.components
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            self.decisions
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            self.patterns
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        )
     }
 }
 
@@ -142,6 +90,7 @@ pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::graph::Severity;
     use crate::store::testing::*;
 
     use tempfile::TempDir;
@@ -211,11 +160,9 @@ mod tests {
 
         let state = store.load_state().unwrap();
         let issues = state.validate();
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.contains("deleted-component") && i.contains("does not exist"))
-        );
+        assert!(issues.iter().any(
+            |i| i.message.contains("deleted-component") && i.message.contains("does not exist")
+        ));
     }
 
     #[test]
@@ -249,7 +196,7 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|i| i.contains("actual-file") && i.contains("wrong-name"))
+                .any(|i| i.message.contains("actual-file") && i.message.contains("wrong-name"))
         );
     }
 
@@ -267,7 +214,7 @@ mod tests {
 
         let state = store.load_state().unwrap();
         let issues = state.validate();
-        assert!(issues.iter().any(|i| i.contains("kebab-case")));
+        assert!(issues.iter().any(|i| i.message.contains("kebab-case")));
     }
 
     #[test]
@@ -284,7 +231,7 @@ mod tests {
 
         let state = store.load_state().unwrap();
         let issues = state.validate();
-        assert!(issues.iter().any(|i| i.contains("empty choice")));
+        assert!(issues.iter().any(|i| i.message.contains("empty choice")));
     }
 
     #[test]
@@ -301,7 +248,7 @@ mod tests {
 
         let state = store.load_state().unwrap();
         let issues = state.validate();
-        assert!(issues.iter().any(|i| i.contains("empty reason")));
+        assert!(issues.iter().any(|i| i.message.contains("empty reason")));
     }
 
     #[test]
@@ -318,7 +265,11 @@ mod tests {
 
         let state = store.load_state().unwrap();
         let issues = state.validate();
-        assert!(issues.iter().any(|i| i.contains("invalid component")));
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.message.contains("invalid component"))
+        );
     }
 
     #[test]
@@ -339,6 +290,45 @@ mod tests {
 
         let state = store.load_state().unwrap();
         let issues = state.validate();
-        assert!(issues.iter().any(|i| i.contains("empty description")));
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.message.contains("empty description"))
+        );
+    }
+
+    #[test]
+    fn validate_reports_severity() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // Empty description is a Warning; empty choice is an Error.
+        let pat = crate::store::schema::PatternFile {
+            pattern: crate::store::schema::Pattern {
+                name: "test-pat".into(),
+                description: "   ".into(),
+            },
+        };
+        store
+            .write_atomic(&lock, &store.pattern_path("test-pat"), &pat)
+            .unwrap();
+
+        let mut dec = sample_decision("bad-dec", "project");
+        dec.decision.choice = String::new();
+        store
+            .write_atomic(&lock, &store.decision_path("bad-dec"), &dec)
+            .unwrap();
+
+        let state = store.load_state().unwrap();
+        let issues = state.validate();
+        assert!(issues
+            .iter()
+            .any(|i| i.severity == Severity::Warning && i.message.contains("empty description")));
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.severity == Severity::Error && i.message.contains("empty choice"))
+        );
     }
 }

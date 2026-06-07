@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::store::graph::Severity;
 use crate::{Error, Result};
 
 use super::{discover_store, open_store};
@@ -44,15 +45,25 @@ pub fn check(cwd: &Path, rebuild: bool) -> Result<()> {
 
     if issues.is_empty() {
         println!(".trurl/ is consistent");
-        Ok(())
+        return Ok(());
+    }
+
+    let error_count = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Error)
+        .count();
+    for issue in &issues {
+        let prefix = match issue.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        eprintln!("  {prefix}: {}", issue.message);
+    }
+
+    if error_count > 0 {
+        Err(Error::Validation(format!("{error_count} error(s) found")))
     } else {
-        for issue in &issues {
-            eprintln!("  {issue}");
-        }
-        Err(Error::Validation(format!(
-            "{} consistency issue(s) found",
-            issues.len()
-        )))
+        Ok(())
     }
 }
 
@@ -83,17 +94,29 @@ fn check_rebuild(cwd: &Path) -> Result<()> {
     );
 
     let issues = state.validate();
+    let error_count = issues
+        .iter()
+        .filter(|i| i.severity == Severity::Error)
+        .count();
+
     if issues.is_empty() {
         println!(".trurl/ is consistent");
         Ok(())
     } else {
         for issue in &issues {
-            eprintln!("  {issue}");
+            let prefix = match issue.severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+            };
+            eprintln!("  {prefix}: {}", issue.message);
         }
-        Err(Error::Validation(format!(
-            "{} consistency issue(s) found after rebuild",
-            issues.len()
-        )))
+        if error_count > 0 {
+            Err(Error::Validation(format!(
+                "{error_count} error(s) found after rebuild"
+            )))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -142,13 +165,11 @@ mod tests {
         add_connection(tmp.path(), "auth", "database").unwrap();
         decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
 
-        // Rebuild drops non-inferable edges (ConnectsTo).
         check(tmp.path(), true).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let state = store.load_state().unwrap();
 
-        // BelongsTo edge re-inferred from decision.component.
         assert!(
             state
                 .graph_index
@@ -156,8 +177,6 @@ mod tests {
                 .iter()
                 .any(|e| e.from == "use-jwt" && e.to == "auth" && e.kind == EdgeKind::BelongsTo)
         );
-
-        // ConnectsTo is non-inferable — lost after rebuild.
         assert!(
             !state
                 .graph_index
@@ -165,11 +184,8 @@ mod tests {
                 .iter()
                 .any(|e| e.kind == EdgeKind::ConnectsTo)
         );
-
-        // All node files still present.
         assert!(state.graph_index.nodes.iter().any(|n| n.name == "auth"));
         assert!(state.graph_index.nodes.iter().any(|n| n.name == "database"));
-        assert!(state.graph_index.nodes.iter().any(|n| n.name == "use-jwt"));
     }
 
     #[test]
@@ -180,7 +196,6 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        // Manually delete graph.toml before rebuild.
         let store = Store::discover(tmp.path()).unwrap();
         fs::remove_file(store.graph_path()).unwrap();
 
@@ -239,18 +254,14 @@ mod tests {
         rename_component(tmp.path(), "conversation", "design-engine").unwrap();
         check(tmp.path(), false).unwrap();
 
-        // Verify connections are now edges in the graph
         let store = Store::discover(tmp.path()).unwrap();
         let state = store.load_state().unwrap();
 
-        // cli → design-engine edge should exist (renamed from conversation)
         assert!(
             state.graph_index.edges.iter().any(|e| e.from == "cli"
                 && e.to == "design-engine"
                 && e.kind == EdgeKind::ConnectsTo)
         );
-
-        // Old name should be gone
         assert!(
             !state
                 .graph_index

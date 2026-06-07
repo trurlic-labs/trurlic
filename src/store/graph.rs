@@ -564,6 +564,35 @@ impl InMemoryGraph {
                     node: Some(name.to_string()),
                 });
             }
+            let comp = &dec.decision.component;
+            if comp != "project" && !self.components.contains_key(comp.as_str()) {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    message: format!(
+                        "decision `{name}` references component `{comp}` which does not exist"
+                    ),
+                    node: Some(name.to_string()),
+                });
+            }
+            if comp != "project" && !is_valid_kebab_case(comp) {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    message: format!(
+                        "decision `{name}` has invalid component `{comp}` \
+                         (must be kebab-case or \"project\")"
+                    ),
+                    node: Some(name.to_string()),
+                });
+            }
+        }
+        for (name, pat) in &self.patterns {
+            if pat.pattern.description.trim().is_empty() {
+                issues.push(Issue {
+                    severity: Severity::Warning,
+                    message: format!("pattern `{name}` has empty description"),
+                    node: Some(name.to_string()),
+                });
+            }
         }
     }
 

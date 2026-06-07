@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::store::graph::Direction;
 use crate::store::schema::{Component, ComponentFile, EdgeEntry, EdgeKind, NodeEntry, NodeKind};
 use crate::store::{self};
 use crate::{Error, Result};
@@ -189,24 +190,51 @@ pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
         )));
     }
 
-    let referencing: Vec<&str> = state
-        .decisions
-        .iter()
-        .filter(|(_, d)| d.decision.component == name)
-        .map(|(n, _)| n.as_str())
-        .collect();
+    // Build graph for cascade analysis.
+    let graph = state.build_graph();
+    let involved = graph.edges_involving(name);
 
-    if !referencing.is_empty() {
+    // Block: decisions belong to this component.
+    let decisions: Vec<String> = involved
+        .iter()
+        .filter(|(_, e, d)| e.kind == EdgeKind::BelongsTo && *d == Direction::Reverse)
+        .map(|(other, _, _)| other.to_string())
+        .collect();
+    if !decisions.is_empty() {
         return Err(Error::CascadeBlocked(format!(
             "component `{name}` is referenced by decisions: {}. \
              Remove or reassign them first.",
-            referencing.join(", ")
+            decisions.join(", ")
         )));
     }
 
-    state.components.remove(name);
+    // Warn: patterns that apply to this component.
+    let patterns: Vec<String> = involved
+        .iter()
+        .filter(|(_, e, d)| e.kind == EdgeKind::AppliesTo && *d == Direction::Reverse)
+        .map(|(other, _, _)| other.to_string())
+        .collect();
+    if !patterns.is_empty() {
+        eprintln!(
+            "warning: removing pattern associations: {}",
+            patterns.join(", ")
+        );
+    }
 
-    // Remove node and all edges involving this component from graph index.
+    // Warn: incoming connections from other components.
+    let incoming: Vec<String> = involved
+        .iter()
+        .filter(|(_, e, d)| e.kind == EdgeKind::ConnectsTo && *d == Direction::Reverse)
+        .map(|(other, _, _)| other.to_string())
+        .collect();
+    if !incoming.is_empty() {
+        eprintln!(
+            "warning: removing incoming connections from: {}",
+            incoming.join(", ")
+        );
+    }
+
+    state.components.remove(name);
     state.graph_index.nodes.retain(|n| n.name != name);
     state
         .graph_index
