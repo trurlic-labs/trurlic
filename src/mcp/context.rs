@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::store::graph::{Direction, InMemoryGraph};
+use crate::store::graph::InMemoryGraph;
 use crate::store::schema::EdgeKind;
 use crate::store::{DecisionFile, PatternFile, ProjectState};
 
@@ -17,10 +17,10 @@ pub(crate) fn get_context(
     component: &str,
     task_description: Option<&str>,
 ) -> Result<Value, String> {
-    let graph = state.build_graph();
+    let graph = &state.graph;
 
     if component == "project" {
-        return Ok(project_context(state, &graph, task_description));
+        return Ok(project_context(state, graph, task_description));
     }
 
     let comp = state
@@ -208,7 +208,7 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
         });
     }
 
-    let graph = state.build_graph();
+    let graph = &state.graph;
 
     struct Match<'a> {
         score: usize,
@@ -247,10 +247,7 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
             continue;
         }
 
-        let in_pattern = graph
-            .edges_involving(name)
-            .iter()
-            .any(|(_, e, d)| e.kind == EdgeKind::MemberOf && *d == Direction::Reverse);
+        let in_pattern = graph.is_pattern_member(name);
 
         matches.push(Match {
             score,
@@ -263,21 +260,16 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
     // Pattern members first, then by score descending.
     matches.sort_by(|a, b| b.in_pattern.cmp(&a.in_pattern).then(b.score.cmp(&a.score)));
 
-    // Collect patterns from matched decisions via MemberOf reverse edges.
+    // Collect patterns from matched decisions via targeted reverse-MemberOf lookup.
     let mut matched_patterns: Vec<Value> = Vec::new();
-    let mut seen_patterns: HashSet<String> = HashSet::new();
+    let mut seen_patterns: HashSet<&str> = HashSet::new();
     for m in &matches {
-        for (other, edge, dir) in graph.edges_involving(m.name) {
-            if edge.kind == EdgeKind::MemberOf && dir == Direction::Reverse {
-                let pat_name = other.to_string();
-                if seen_patterns.insert(pat_name.clone()) {
-                    if let Some(pat) = state.patterns.get(&pat_name) {
-                        matched_patterns.push(serde_json::json!({
-                            "name": pat_name,
-                            "description": pat.pattern.description,
-                        }));
-                    }
-                }
+        for (pat_name, pat) in graph.patterns_containing(m.name) {
+            if seen_patterns.insert(pat_name) {
+                matched_patterns.push(serde_json::json!({
+                    "name": pat_name.as_ref(),
+                    "description": pat.pattern.description,
+                }));
             }
         }
     }
@@ -310,7 +302,7 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
 // ── get_architecture ─────────────────────────────────────────────────────
 
 pub(crate) fn get_architecture(state: &ProjectState) -> Value {
-    let graph = state.build_graph();
+    let graph = &state.graph;
 
     let components: Vec<Value> = state
         .components
@@ -336,15 +328,8 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
         .patterns
         .iter()
         .map(|(name, pat)| {
-            let edges = graph.edges_involving(name);
-            let decision_count = edges
-                .iter()
-                .filter(|(_, e, d)| e.kind == EdgeKind::MemberOf && *d == Direction::Forward)
-                .count();
-            let component_count = edges
-                .iter()
-                .filter(|(_, e, d)| e.kind == EdgeKind::AppliesTo && *d == Direction::Forward)
-                .count();
+            let decision_count = graph.forward_edge_count(name, EdgeKind::MemberOf);
+            let component_count = graph.forward_edge_count(name, EdgeKind::AppliesTo);
 
             serde_json::json!({
                 "name": name,
@@ -647,8 +632,8 @@ mod tests {
             ],
         };
 
-        ProjectState {
-            project: ProjectFile {
+        ProjectState::new(
+            ProjectFile {
                 trurl_version: "0.2.0".into(),
                 project: Project {
                     name: "test-project".into(),
@@ -657,9 +642,9 @@ mod tests {
             },
             components,
             decisions,
-            patterns: BTreeMap::new(),
+            BTreeMap::new(),
             graph_index,
-        }
+        )
     }
 
     // ── get_context ─────────────────────────────────────────────────────
@@ -729,6 +714,7 @@ mod tests {
             .graph_index
             .nodes
             .retain(|n| n.kind == NodeKind::Component);
+        state.rebuild_graph();
         let result = get_context(&state, "auth", None).unwrap();
         assert_eq!(result["status"], "not_covered");
     }
@@ -877,6 +863,8 @@ mod tests {
             kind: EdgeKind::MemberOf,
         });
 
+        state.rebuild_graph();
+
         let result = check_pattern(&state, "JWT authentication tokens");
         assert_eq!(result["status"], "covered");
         let patterns = result["patterns"].as_array().unwrap();
@@ -940,6 +928,8 @@ mod tests {
             to: "auth".into(),
             kind: EdgeKind::AppliesTo,
         });
+
+        state.rebuild_graph();
 
         let result = get_architecture(&state);
         assert_eq!(result["total_patterns"], 1);

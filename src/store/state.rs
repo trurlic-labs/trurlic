@@ -18,30 +18,78 @@ pub struct ProjectState {
     pub decisions: BTreeMap<String, DecisionFile>,
     pub patterns: BTreeMap<String, PatternFile>,
     pub graph_index: GraphIndex,
+    /// Cached in-memory graph, built at construction. Reflects the state
+    /// of the other fields at that point. Call [`rebuild_graph`] after
+    /// mutating `graph_index`, `components`, `decisions`, or `patterns`.
+    pub graph: InMemoryGraph,
 }
 
 impl ProjectState {
-    /// Full graph integrity validation via [`InMemoryGraph`].
-    ///
-    /// Builds a temporary in-memory graph from the current state, runs all
-    /// validation checks, and returns any issues found.
-    pub fn validate(&self) -> Vec<Issue> {
-        self.build_graph().validate()
+    /// Construct with a pre-built graph cache.
+    pub fn new(
+        project: ProjectFile,
+        components: BTreeMap<String, ComponentFile>,
+        decisions: BTreeMap<String, DecisionFile>,
+        patterns: BTreeMap<String, PatternFile>,
+        graph_index: GraphIndex,
+    ) -> Self {
+        let graph = Self::build_graph_from(&graph_index, &components, &decisions, &patterns);
+        Self {
+            project,
+            components,
+            decisions,
+            patterns,
+            graph_index,
+            graph,
+        }
     }
 
-    /// Build an [`InMemoryGraph`] from this state snapshot.
+    /// Validate against the cached graph. Only valid on freshly-loaded state;
+    /// write paths use [`build_graph`] for post-mutation validation.
+    pub fn validate(&self) -> Vec<Issue> {
+        self.graph.validate()
+    }
+
+    /// Build a fresh [`InMemoryGraph`] from the current (potentially mutated)
+    /// state. Used by write paths that need validation after in-memory
+    /// mutations — the cached `graph` field may be stale at that point.
     pub fn build_graph(&self) -> InMemoryGraph {
-        InMemoryGraph::build(
+        Self::build_graph_from(
             &self.graph_index,
-            self.components
+            &self.components,
+            &self.decisions,
+            &self.patterns,
+        )
+    }
+
+    /// Refresh the cached graph to match the current field values.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn rebuild_graph(&mut self) {
+        self.graph = Self::build_graph_from(
+            &self.graph_index,
+            &self.components,
+            &self.decisions,
+            &self.patterns,
+        );
+    }
+
+    fn build_graph_from(
+        graph_index: &GraphIndex,
+        components: &BTreeMap<String, ComponentFile>,
+        decisions: &BTreeMap<String, DecisionFile>,
+        patterns: &BTreeMap<String, PatternFile>,
+    ) -> InMemoryGraph {
+        InMemoryGraph::build(
+            graph_index,
+            components
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
-            self.decisions
+            decisions
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
-            self.patterns
+            patterns
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),

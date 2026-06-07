@@ -195,23 +195,23 @@ mod tests {
     fn empty_state() -> crate::store::ProjectState {
         use crate::store::schema::*;
         use chrono::Utc;
-        crate::store::ProjectState {
-            project: ProjectFile {
+        crate::store::ProjectState::new(
+            ProjectFile {
                 trurl_version: "0.2.0".into(),
                 project: Project {
                     name: "test".into(),
                     description: String::new(),
                 },
             },
-            components: std::collections::BTreeMap::new(),
-            decisions: std::collections::BTreeMap::new(),
-            patterns: std::collections::BTreeMap::new(),
-            graph_index: GraphIndex {
+            std::collections::BTreeMap::new(),
+            std::collections::BTreeMap::new(),
+            std::collections::BTreeMap::new(),
+            GraphIndex {
                 version: 1,
                 rebuilt: Utc::now(),
                 nodes: vec![],
                 edges: vec![],
             },
-        }
+        )
     }
 }

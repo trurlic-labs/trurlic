@@ -281,13 +281,13 @@ impl Store {
 
         let graph_index = self.load_graph_index(&components, &decisions, &patterns)?;
 
-        Ok(ProjectState {
+        Ok(ProjectState::new(
             project,
             components,
             decisions,
             patterns,
             graph_index,
-        })
+        ))
     }
 
     /// Reconcile the on-disk graph index with actual node files.

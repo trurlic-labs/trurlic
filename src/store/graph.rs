@@ -205,6 +205,28 @@ impl InMemoryGraph {
         })
     }
 
+    /// Whether this decision is a member of any pattern (has incoming `MemberOf` edge).
+    pub fn is_pattern_member(&self, decision: &str) -> bool {
+        self.reverse
+            .get(decision)
+            .is_some_and(|edges| edges.iter().any(|e| e.kind == EdgeKind::MemberOf))
+    }
+
+    /// Patterns that include this decision (reverse `MemberOf` edges).
+    pub fn patterns_containing(&self, decision: &str) -> Vec<(&Arc<str>, &PatternFile)> {
+        self.reverse_targets(decision, EdgeKind::MemberOf, |name| {
+            self.patterns.get(name).map(|p| (name, p))
+        })
+    }
+
+    /// Count forward edges of a specific kind from a node.
+    pub fn forward_edge_count(&self, node: &str, kind: EdgeKind) -> usize {
+        self.forward
+            .get(node)
+            .map(|edges| edges.iter().filter(|e| e.kind == kind).count())
+            .unwrap_or(0)
+    }
+
     /// All edges involving a node (both directions). For cascade checks.
     ///
     /// Returns `(other_node, edge, direction)` tuples.

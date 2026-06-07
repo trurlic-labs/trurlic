@@ -10,7 +10,7 @@ pub(crate) fn build_system_prompt(
     state: &store::ProjectState,
     revisit: bool,
 ) -> String {
-    let graph = state.build_graph();
+    let graph = &state.graph;
     let mut p = String::with_capacity(2048);
 
     p.push_str(
@@ -186,13 +186,13 @@ mod tests {
             ],
         };
 
-        store::ProjectState {
+        store::ProjectState::new(
             project,
             components,
-            decisions: BTreeMap::new(),
-            patterns: BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
             graph_index,
-        }
+        )
     }
 
     #[test]
@@ -266,6 +266,8 @@ mod tests {
             kind: EdgeKind::AppliesTo,
         });
 
+        state.rebuild_graph();
+
         let prompt = build_system_prompt("auth", &state, false);
         assert!(prompt.contains("## Applicable patterns"));
         assert!(prompt.contains("stateless-auth"));
@@ -300,6 +302,8 @@ mod tests {
             kind: EdgeKind::BelongsTo,
         });
 
+        state.rebuild_graph();
+
         let prompt = build_system_prompt("auth", &state, false);
         assert!(prompt.contains("## Existing decisions"));
         assert!(prompt.contains("JWT with DPoP"));
@@ -333,6 +337,8 @@ mod tests {
             to: "project".into(),
             kind: EdgeKind::BelongsTo,
         });
+
+        state.rebuild_graph();
 
         let prompt = build_system_prompt("auth", &state, false);
         assert!(prompt.contains("## Project-wide decisions"));
