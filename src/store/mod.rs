@@ -399,6 +399,7 @@ impl Store {
 
         // Sort for deterministic output.
         nodes.sort_by(|a, b| a.name.cmp(&b.name));
+        edges.sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
 
         Ok(GraphIndex {
             version: 1,
@@ -878,5 +879,86 @@ mod tests {
         let file_hash = hash_file(&path).unwrap();
         let bytes_hash = hash_bytes(content);
         assert_eq!(file_hash, bytes_hash);
+    }
+
+    #[test]
+    fn load_state_sorts_edges() {
+        use crate::store::schema::*;
+
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let auth = sample_component("auth");
+        store
+            .write_atomic(&lock, &store.component_path("auth"), &auth)
+            .unwrap();
+        let db = sample_component("database");
+        store
+            .write_atomic(&lock, &store.component_path("database"), &db)
+            .unwrap();
+
+        // Write graph.toml with deliberately unsorted edges.
+        let auth_hash = hash_file(&store.component_path("auth")).unwrap();
+        let db_hash = hash_file(&store.component_path("database")).unwrap();
+        let project_hash = hash_file(&store.root().join("project.toml")).unwrap();
+
+        let index = GraphIndex {
+            version: 1,
+            rebuilt: Utc::now(),
+            nodes: vec![
+                NodeEntry {
+                    name: "database".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: db_hash,
+                },
+                NodeEntry {
+                    name: "project".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: project_hash,
+                },
+                NodeEntry {
+                    name: "auth".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: auth_hash,
+                },
+            ],
+            edges: vec![
+                EdgeEntry {
+                    from: "database".into(),
+                    to: "auth".into(),
+                    kind: EdgeKind::ConnectsTo,
+                },
+                EdgeEntry {
+                    from: "auth".into(),
+                    to: "database".into(),
+                    kind: EdgeKind::ConnectsTo,
+                },
+            ],
+        };
+        fs::write(store.graph_path(), toml::to_string_pretty(&index).unwrap()).unwrap();
+
+        let state = store.load_state().unwrap();
+
+        // Nodes sorted by name.
+        let node_names: Vec<&str> = state
+            .graph_index
+            .nodes
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
+        assert_eq!(node_names, vec!["auth", "database", "project"]);
+
+        // Edges sorted by (from, to, kind).
+        let edge_froms: Vec<&str> = state
+            .graph_index
+            .edges
+            .iter()
+            .map(|e| e.from.as_str())
+            .collect();
+        assert_eq!(edge_froms, vec!["auth", "database"]);
     }
 }

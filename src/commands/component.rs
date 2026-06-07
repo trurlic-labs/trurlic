@@ -197,8 +197,9 @@ pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
         .collect();
 
     if !referencing.is_empty() {
-        return Err(Error::Validation(format!(
-            "cannot remove component `{name}`: referenced by decisions: {}",
+        return Err(Error::CascadeBlocked(format!(
+            "component `{name}` is referenced by decisions: {}. \
+             Remove or reassign them first.",
             referencing.join(", ")
         )));
     }
@@ -486,7 +487,7 @@ mod tests {
                 .any(|e| e.from == "auth" || e.to == "auth")
         );
 
-        check(tmp.path()).unwrap();
+        check(tmp.path(), false).unwrap();
     }
 
     #[test]
@@ -504,7 +505,7 @@ mod tests {
             let dec = store.read_decision(&name).unwrap();
             assert_eq!(dec.decision.component, "authentication");
         }
-        check(tmp.path()).unwrap();
+        check(tmp.path(), false).unwrap();
     }
 
     // ── remove component ─────────────────────────────────────────────────
@@ -542,11 +543,14 @@ mod tests {
 
         let err = remove_component(tmp.path(), "auth").unwrap_err();
         match err {
-            Error::Validation(msg) => {
-                assert!(msg.contains("cannot remove"));
-                assert!(msg.contains("use-jwt"));
+            Error::CascadeBlocked(msg) => {
+                assert!(msg.contains("auth"), "should mention the component: {msg}");
+                assert!(
+                    msg.contains("use-jwt"),
+                    "should list the blocking decision: {msg}"
+                );
             }
-            other => panic!("expected Validation, got: {other}"),
+            other => panic!("expected CascadeBlocked, got: {other}"),
         }
     }
 
@@ -574,6 +578,6 @@ mod tests {
                 .any(|e| e.from == "database" || e.to == "database")
         );
 
-        check(tmp.path()).unwrap();
+        check(tmp.path(), false).unwrap();
     }
 }

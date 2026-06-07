@@ -133,7 +133,12 @@ impl Store {
         let mut all_writes = writes;
 
         if let Some(index) = graph_update {
-            let content = toml::to_string_pretty(index)?;
+            let mut sorted = index.clone();
+            sorted.nodes.sort_by(|a, b| a.name.cmp(&b.name));
+            sorted
+                .edges
+                .sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
+            let content = toml::to_string_pretty(&sorted)?;
             toml::from_str::<GraphIndex>(&content).map_err(|e| {
                 Error::Validation(format!("graph index round-trip verification failed: {e}"))
             })?;
@@ -228,7 +233,6 @@ impl Store {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn remove_file(&self, _lock: &StoreLock, target: &Path) -> Result<()> {
         self.verify_path(target)?;
         Ok(fs::remove_file(target)?)
@@ -462,6 +466,59 @@ mod tests {
             toml::from_str(&fs::read_to_string(store.graph_path()).unwrap()).unwrap();
         assert_eq!(read_back.nodes.len(), 1);
         assert_eq!(read_back.nodes[0].name, "test");
+    }
+
+    #[test]
+    fn commit_batch_sorts_graph_index() {
+        use crate::store::schema::*;
+        use chrono::Utc;
+
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // Deliberately unsorted nodes and edges.
+        let index = GraphIndex {
+            version: 1,
+            rebuilt: Utc::now(),
+            nodes: vec![
+                NodeEntry {
+                    name: "z-node".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "z".into(),
+                },
+                NodeEntry {
+                    name: "a-node".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "a".into(),
+                },
+            ],
+            edges: vec![
+                EdgeEntry {
+                    from: "z-node".into(),
+                    to: "a-node".into(),
+                    kind: EdgeKind::ConnectsTo,
+                },
+                EdgeEntry {
+                    from: "a-node".into(),
+                    to: "z-node".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+            ],
+        };
+
+        store
+            .commit_batch(&lock, vec![], vec![], Some(&index))
+            .unwrap();
+
+        let read_back: GraphIndex =
+            toml::from_str(&fs::read_to_string(store.graph_path()).unwrap()).unwrap();
+        assert_eq!(read_back.nodes[0].name, "a-node");
+        assert_eq!(read_back.nodes[1].name, "z-node");
+        assert_eq!(read_back.edges[0].from, "a-node");
+        assert_eq!(read_back.edges[1].from, "z-node");
     }
 
     #[test]

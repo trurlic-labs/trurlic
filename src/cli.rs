@@ -86,7 +86,12 @@ pub enum Command {
     Status,
 
     /// Validate `.trurl/` internal consistency.
-    Check,
+    Check {
+        /// Force-rebuild graph.toml from node files (nuclear recovery).
+        /// Non-inferable edges (ConnectsTo, DependsOn, etc.) will be lost.
+        #[arg(long)]
+        rebuild: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -185,6 +190,6 @@ pub fn run(cli: Cli) -> Result<()> {
         ),
         Command::Serve => commands::serve(&cwd),
         Command::Status => commands::status(&cwd),
-        Command::Check => commands::check(&cwd),
+        Command::Check { rebuild } => commands::check(&cwd, rebuild),
     }
 }

@@ -291,6 +291,17 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
         })
         .collect();
 
+    let patterns: Vec<Value> = state
+        .patterns
+        .iter()
+        .map(|(name, pat)| {
+            serde_json::json!({
+                "name": name,
+                "description": pat.pattern.description,
+            })
+        })
+        .collect();
+
     let project_decisions: Vec<Value> = state
         .decisions
         .iter()
@@ -310,9 +321,11 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
             "description": state.project.project.description,
         },
         "components": components,
+        "patterns": patterns,
         "project_decisions": project_decisions,
         "total_components": state.components.len(),
         "total_decisions": state.decisions.len(),
+        "total_patterns": state.patterns.len(),
     })
 }
 
@@ -743,6 +756,7 @@ mod tests {
         assert_eq!(result["project"]["name"], "test-project");
         assert_eq!(result["total_components"], 3);
         assert_eq!(result["total_decisions"], 3);
+        assert_eq!(result["total_patterns"], 0);
 
         let components = result["components"].as_array().unwrap();
         assert_eq!(components.len(), 3);
