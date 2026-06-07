@@ -127,6 +127,19 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
         }
     }
 
+    // Warn: incoming constrains edges (constraint source is being removed).
+    let constrainers: Vec<String> = involved
+        .iter()
+        .filter(|(_, e, d)| e.kind == EdgeKind::Constrains && *d == Direction::Reverse)
+        .map(|(other, _, _)| other.to_string())
+        .collect();
+    if !constrainers.is_empty() {
+        eprintln!(
+            "warning: removing constraint edges from: {}",
+            constrainers.join(", ")
+        );
+    }
+
     // Warn: broken supersede chains.
     let supersede_refs: Vec<String> = involved
         .iter()
@@ -528,5 +541,56 @@ mod tests {
             }
             other => panic!("expected CascadeBlocked, got: {other}"),
         }
+    }
+
+    #[test]
+    fn remove_decision_allows_with_constrains_edge() {
+        use crate::store::schema::EdgeEntry;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Short lived tokens",
+            "15 min",
+            None,
+            &[],
+        )
+        .unwrap();
+
+        // Manually add Constrains edge: short-lived-tokens constrains use-jwt.
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        state.graph_index.edges.push(EdgeEntry {
+            from: "short-lived-tokens".into(),
+            to: "use-jwt".into(),
+            kind: EdgeKind::Constrains,
+        });
+        store
+            .commit_batch(&lock, vec![], vec![], Some(&state.graph_index))
+            .unwrap();
+        drop(lock);
+
+        // Removing the constrained decision should succeed (warn, allow).
+        remove_decision(tmp.path(), "use-jwt").unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let state = store.load_state().unwrap();
+
+        // Constrains edge must be cleaned up.
+        assert!(
+            !state
+                .graph_index
+                .edges
+                .iter()
+                .any(|e| e.kind == EdgeKind::Constrains),
+            "Constrains edge should be removed"
+        );
+        // The constraining decision itself is unaffected.
+        assert!(state.decisions.contains_key("short-lived-tokens"));
     }
 }

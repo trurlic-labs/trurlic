@@ -119,6 +119,11 @@ pub(crate) fn record_decision(
         return Err(e);
     }
 
+    // Refresh the cached InMemoryGraph so subsequent calls within the
+    // same session see the decision we just committed. Without this,
+    // multi-decision design sessions validate against a stale graph.
+    state.rebuild_graph();
+
     Ok(stem)
 }
 
@@ -200,5 +205,83 @@ mod tests {
     fn no_false_completion() {
         assert!(!is_design_complete("the DESIGN_COMPLETE flag"));
         assert!(!is_design_complete("almost done"));
+    }
+
+    // ── record_decision ─────────────────────────────────────────────────
+
+    #[test]
+    fn record_decision_refreshes_graph_cache() {
+        use crate::commands;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        commands::init(tmp.path()).unwrap();
+        commands::add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = store::Store::discover(tmp.path()).unwrap();
+        let mut state = store.load_state().unwrap();
+
+        // Record first decision.
+        let stem1 =
+            record_decision(&store, &mut state, "auth", "Use JWT", "Stateless", &[]).unwrap();
+        assert_eq!(stem1, "use-jwt");
+
+        // The cached graph must reflect the new decision — otherwise the
+        // second call would validate against a stale graph.
+        assert!(state.graph.decision(&stem1).is_some());
+        assert_eq!(state.graph.decisions_for("auth").len(), 1);
+
+        // Record second decision in the same session.
+        let stem2 = record_decision(
+            &store,
+            &mut state,
+            "auth",
+            "Token expiry 15min",
+            "Short-lived tokens reduce theft window",
+            &[],
+        )
+        .unwrap();
+
+        assert!(state.graph.decision(&stem2).is_some());
+        assert_eq!(state.graph.decisions_for("auth").len(), 2);
+
+        // Both decisions and their BelongsTo edges must be present.
+        let edge_count = state
+            .graph_index
+            .edges
+            .iter()
+            .filter(|e| e.to == "auth" && e.kind == EdgeKind::BelongsTo)
+            .count();
+        assert_eq!(edge_count, 2);
+    }
+
+    #[test]
+    fn record_decision_rolls_back_on_invalid_component() {
+        use crate::commands;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        commands::init(tmp.path()).unwrap();
+
+        let store = store::Store::discover(tmp.path()).unwrap();
+        let mut state = store.load_state().unwrap();
+
+        let node_count_before = state.graph_index.nodes.len();
+        let edge_count_before = state.graph_index.edges.len();
+
+        // Component "ghost" doesn't exist — commit_with_graph will reject.
+        let result = record_decision(
+            &store,
+            &mut state,
+            "ghost",
+            "Bad decision",
+            "Should fail",
+            &[],
+        );
+
+        assert!(result.is_err());
+        assert_eq!(state.graph_index.nodes.len(), node_count_before);
+        assert_eq!(state.graph_index.edges.len(), edge_count_before);
+        assert!(state.decisions.is_empty());
     }
 }
