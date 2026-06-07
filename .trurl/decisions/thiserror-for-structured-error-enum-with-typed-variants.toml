@@ -1,5 +1,0 @@
-[decision]
-component = "cli"
-choice = "thiserror for structured error enum with typed variants"
-reason = "One variant per failure mode, Display auto-derived, pattern-matchable"
-created = "2026-06-06T10:12:15.050380681Z"

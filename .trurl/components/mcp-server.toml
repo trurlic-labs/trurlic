@@ -1,4 +1,0 @@
-[component]
-name = "mcp-server"
-description = "MCP server exposing decisions as authoritative constraints to AI coding agents"
-connects_to = ["decision-store"]

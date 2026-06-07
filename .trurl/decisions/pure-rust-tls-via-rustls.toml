@@ -1,5 +1,0 @@
-[decision]
-component = "conversation"
-choice = "Pure-Rust TLS via rustls"
-reason = "No OpenSSL system dependency. reqwest with rustls-tls feature, default-features disabled. Single binary stays self-contained."
-created = "2026-06-06T13:41:21.136318832Z"

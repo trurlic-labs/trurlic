@@ -1,5 +1,0 @@
-[decision]
-component = "decision-store"
-choice = "TOML files with serde Serialize/Deserialize derives"
-reason = "Human-readable, git-diffable, hand-editable, portable"
-created = "2026-06-06T10:12:08.075940013Z"

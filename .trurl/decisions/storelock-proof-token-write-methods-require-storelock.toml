@@ -1,5 +1,0 @@
-[decision]
-component = "cli"
-choice = "StoreLock proof-token: write methods require &StoreLock parameter"
-reason = "Compile-time enforcement that the advisory lock is held before any mutation"
-created = "2026-06-06T10:12:15.055187639Z"

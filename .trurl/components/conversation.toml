@@ -1,4 +1,0 @@
-[component]
-name = "conversation"
-description = "Guided design conversation via LLM API - question generation, decision capture, session persistence"
-connects_to = ["decision-store"]

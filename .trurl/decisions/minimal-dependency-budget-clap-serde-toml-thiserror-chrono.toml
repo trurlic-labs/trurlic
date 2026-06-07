@@ -1,5 +1,0 @@
-[decision]
-component = "project"
-choice = "Minimal dependency budget: clap, serde, toml, thiserror, chrono, fs2"
-reason = "Each irreplaceable, small attack surface, fast compile. Every addition requires a recorded decision"
-created = "2026-06-06T10:11:30.485553578Z"

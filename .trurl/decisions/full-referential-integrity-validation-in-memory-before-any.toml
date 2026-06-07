@@ -1,5 +1,0 @@
-[decision]
-component = "decision-store"
-choice = "Full referential integrity validation in memory before any write"
-reason = "All component refs, connection targets, supersedes chains verified — refuse on any violation"
-created = "2026-06-06T10:12:08.087068114Z"

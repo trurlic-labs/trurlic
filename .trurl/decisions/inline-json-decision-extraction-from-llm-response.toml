@@ -1,5 +1,0 @@
-[decision]
-component = "conversation"
-choice = "Inline JSON decision extraction from LLM response"
-reason = "LLM outputs {choice, reason} JSON on its own line mid-response. Parsed after each turn, written to .trurl/decisions/ immediately. No second LLM call."
-created = "2026-06-06T13:41:21.132800597Z"

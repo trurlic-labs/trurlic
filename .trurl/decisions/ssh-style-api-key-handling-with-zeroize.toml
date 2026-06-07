@@ -1,5 +1,0 @@
-[decision]
-component = "conversation"
-choice = "SSH-style API key handling with zeroize"
-reason = "Priority: env vars > ~/.config/trurl/config.toml > auto-detect. Config must be 0600. All key material zeroed on drop. Display/Debug redacted to last 4 chars."
-created = "2026-06-06T13:41:21.135040719Z"

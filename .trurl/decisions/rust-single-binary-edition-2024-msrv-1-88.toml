@@ -1,5 +1,0 @@
-[decision]
-component = "project"
-choice = "Rust single binary, edition 2024, MSRV 1.88"
-reason = "CLI + MCP + map server in one artifact, no runtime dependencies"
-created = "2026-06-06T10:11:14.929432332Z"

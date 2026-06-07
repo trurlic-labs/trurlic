@@ -1,5 +1,0 @@
-[decision]
-component = "conversation"
-choice = "Session persistence in .state/sessions/ as JSON"
-reason = "Full message history saved after every turn. --continue resumes from file. Cleaned up on DESIGN_COMPLETE."
-created = "2026-06-06T13:41:21.133952944Z"

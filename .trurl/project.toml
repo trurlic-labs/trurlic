@@ -1,5 +1,0 @@
-trurl_version = "0.1.0"
-
-[project]
-name = "trurl"
-description = "Structured architectural decisions that constrain AI code generation - CLI, MCP server, and interactive map"

@@ -1,5 +1,0 @@
-[decision]
-component = "cli"
-choice = "kebab-case enforced for component names, auto-slugified decision filenames"
-reason = "Filesystem-safe, URL-safe, deterministic naming with -2/-3 dedup on collision"
-created = "2026-06-06T10:12:15.057250372Z"

@@ -1,5 +1,0 @@
-[decision]
-component = "project"
-choice = "Fail-closed on writes, warn on reads"
-reason = "Never silently succeed with wrong data, never lose user decisions"
-created = "2026-06-06T10:11:19.903373598Z"

@@ -1,5 +1,0 @@
-[decision]
-component = "decision-store"
-choice = "Two-phase batch commit for multi-file mutations"
-reason = "rename-component and remove-component stage all files to .state/tmp/ first, then rename all. Crash between renames detected by startup validation."
-created = "2026-06-06T13:41:05.080282338Z"

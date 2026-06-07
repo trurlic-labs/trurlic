@@ -1,5 +1,0 @@
-[decision]
-component = "decision-store"
-choice = "chrono::DateTime<Utc> for timestamps, not raw String"
-reason = "Compile-time ISO 8601 enforcement, invalid values rejected on deserialize"
-created = "2026-06-06T10:12:08.083029882Z"

@@ -1,4 +1,0 @@
-[component]
-name = "map-server"
-description = "Axum web server with embedded HTML/JS - interactive component graph, decision explorer, live file-watcher updates"
-connects_to = ["decision-store"]

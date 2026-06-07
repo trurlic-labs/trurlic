@@ -1,5 +1,0 @@
-[decision]
-component = "project"
-choice = "release profile: LTO fat, codegen-units 1, panic abort, strip"
-reason = "Single optimized binary, smallest size, no unwinding overhead"
-created = "2026-06-06T10:11:25.091372908Z"

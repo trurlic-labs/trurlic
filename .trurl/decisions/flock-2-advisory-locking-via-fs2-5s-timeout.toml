@@ -1,5 +1,0 @@
-[decision]
-component = "decision-store"
-choice = "flock(2) advisory locking via fs2, 5s timeout"
-reason = "Cross-platform, single lock file at .state/lock, clear timeout error"
-created = "2026-06-06T10:12:08.080724189Z"

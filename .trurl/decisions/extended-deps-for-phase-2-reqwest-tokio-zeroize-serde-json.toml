@@ -1,6 +1,0 @@
-[decision]
-component = "project"
-choice = "Extended deps for Phase 2: reqwest, tokio, zeroize, serde_json"
-reason = "reqwest (rustls, json) for LLM API. tokio (rt) for async runtime. zeroize for key security. serde_json for SSE and session parsing."
-created = "2026-06-06T13:41:37.519791071Z"
-supersedes = "minimal-dependency-budget-clap-serde-toml-thiserror-chrono"

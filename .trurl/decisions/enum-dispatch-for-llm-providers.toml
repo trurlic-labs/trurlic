@@ -1,5 +1,0 @@
-[decision]
-component = "conversation"
-choice = "Enum dispatch for LLM providers"
-reason = "Anthropic, OpenAI, OpenRouter as enum variants. No dyn trait, no vtable, no async trait object-safety issues. Closed set."
-created = "2026-06-06T13:41:21.128065446Z"

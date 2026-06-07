@@ -1,5 +1,0 @@
-[decision]
-component = "cli"
-choice = "All command handlers take &Path, never use process-global cwd"
-reason = "Testable with tempdir isolation, no cross-test contamination"
-created = "2026-06-06T10:12:15.053027436Z"

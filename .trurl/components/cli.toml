@@ -1,9 +1,0 @@
-[component]
-name = "cli"
-description = "clap-based CLI entry point - subcommand parsing, dispatch to handlers, error formatting"
-connects_to = [
-    "decision-store",
-    "mcp-server",
-    "conversation",
-    "map-server",
-]

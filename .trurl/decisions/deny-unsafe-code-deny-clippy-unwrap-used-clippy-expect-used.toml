@@ -1,5 +1,0 @@
-[decision]
-component = "project"
-choice = "deny(unsafe_code), deny(clippy::unwrap_used, clippy::expect_used) in non-test"
-reason = "No unsafe, no panics in production paths"
-created = "2026-06-06T10:11:56.562640409Z"

@@ -1,5 +1,0 @@
-[decision]
-component = "decision-store"
-choice = ".state/ is gitignored, everything else git-tracked"
-reason = "Lock, tmp, sessions are machine-local; schemas and decisions are the source of truth"
-created = "2026-06-06T10:12:08.085138672Z"

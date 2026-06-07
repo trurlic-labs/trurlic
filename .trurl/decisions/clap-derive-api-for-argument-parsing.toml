@@ -1,5 +1,0 @@
-[decision]
-component = "cli"
-choice = "clap derive API for argument parsing"
-reason = "Type-safe subcommands, auto-generated help, zero boilerplate"
-created = "2026-06-06T10:12:15.047762502Z"

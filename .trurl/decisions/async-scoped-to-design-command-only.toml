@@ -1,5 +1,0 @@
-[decision]
-component = "cli"
-choice = "Async scoped to design command only"
-reason = "All store operations are sync file I/O. Only trurl design needs async for LLM streaming. Tokio current-thread runtime created per-invocation, not globally."
-created = "2026-06-06T13:41:29.115834059Z"

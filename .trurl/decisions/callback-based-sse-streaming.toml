@@ -1,5 +1,0 @@
-[decision]
-component = "conversation"
-choice = "Callback-based SSE streaming"
-reason = "on_text closure called per chunk. No Stream trait, no futures crate. Shared SSE line parser drains buffer, skips comments and DONE markers."
-created = "2026-06-06T13:41:21.131567057Z"
