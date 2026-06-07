@@ -21,11 +21,11 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// Run the MCP server on stdio.
 ///
-/// `state` is wrapped in `Arc<RwLock<_>>` and shared with a background
-/// file watcher thread. The watcher detects external changes to `.trurl/`
-/// (CLI writes, manual edits, git checkout) and reloads state from disk.
-/// The write lock is held only for pointer swaps (microseconds) — MCP
-/// queries are never blocked for more than a single swap.
+/// `initial_state` is wrapped in `Arc<RwLock<_>>` and shared with a
+/// background file watcher thread. The watcher detects external changes
+/// to `.trurl/` (CLI writes, manual edits, git checkout) and reloads
+/// state from disk. The write lock is held only for pointer swaps
+/// (microseconds) — MCP queries are never blocked for more than a swap.
 pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()> {
     let state = Arc::new(RwLock::new(initial_state));
 
@@ -159,7 +159,10 @@ fn handle_tools_call(
     // Write lock for the tool call — read tools only need &ProjectState but
     // write tools need &mut. Single lock simplifies the dispatch; the watcher
     // thread only contends briefly for pointer swaps.
-    let mut guard = state.write().unwrap_or_else(|e| e.into_inner());
+    let mut guard = state.write().unwrap_or_else(|poisoned| {
+        eprintln!("trurl: recovered from poisoned state lock");
+        poisoned.into_inner()
+    });
     Ok(tools::call_tool(store, &mut guard, name, arguments))
 }
 

@@ -9,7 +9,7 @@
 //! Events inside `.state/` (tmp files, lock, sessions) are ignored —
 //! they are transient and never affect the graph.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
+use crate::store::graph::Severity;
 use crate::store::{ProjectState, STATE_DIR, Store};
 
 /// Debounce window: collect events for this long before reloading.
@@ -74,11 +75,11 @@ pub(crate) fn spawn(
 
 // ── Internals ──────────────────────────────────────────────────────────────
 
-/// Event loop: block → filter → debounce → reload → repeat.
+/// Event loop: block → filter → debounce → reload → drain → repeat.
 fn watcher_loop(
     store: &Store,
     state: &Arc<RwLock<ProjectState>>,
-    state_dir: &PathBuf,
+    state_dir: &Path,
     rx: mpsc::Receiver<notify::Event>,
 ) {
     loop {
@@ -94,22 +95,38 @@ fn watcher_loop(
         }
 
         // Debounce: drain all events that arrive within the window.
-        let deadline = Instant::now() + DEBOUNCE;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            match rx.recv_timeout(remaining) {
-                Ok(_) => continue,
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
-            }
-        }
+        debounce(&rx);
 
         // Full reload: parse all files with no locks held, then swap.
         reload(store, state);
+
+        // Drain events that arrived during reload — they reflect the state
+        // we just loaded. Without this, a single CLI write triggers two
+        // reloads: one from the debounced events, one from events that
+        // arrived during the ~150ms load_state.
+        drain_pending(&rx);
     }
+}
+
+/// Wait for the debounce window, consuming all events that arrive.
+fn debounce(rx: &mpsc::Receiver<notify::Event>) {
+    let deadline = Instant::now() + DEBOUNCE;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        match rx.recv_timeout(remaining) {
+            Ok(_) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => return,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+/// Consume all events currently queued without blocking.
+fn drain_pending(rx: &mpsc::Receiver<notify::Event>) {
+    while rx.try_recv().is_ok() {}
 }
 
 /// Build a fresh [`ProjectState`] from disk and swap it in.
@@ -117,9 +134,21 @@ fn watcher_loop(
 fn reload(store: &Store, state: &Arc<RwLock<ProjectState>>) {
     match store.load_state() {
         Ok(new_state) => {
-            let mut guard = state.write().unwrap_or_else(|e| e.into_inner());
+            let errors = new_state
+                .validate()
+                .iter()
+                .filter(|i| i.severity == Severity::Error)
+                .count();
+
+            let mut guard = state.write().unwrap_or_else(|poisoned| {
+                eprintln!("trurl: recovered from poisoned state lock");
+                poisoned.into_inner()
+            });
             *guard = new_state;
-            eprintln!("trurl: reloaded state from disk");
+
+            if errors > 0 {
+                eprintln!("trurl: reloaded state ({errors} consistency issue(s))");
+            }
         }
         Err(e) => {
             eprintln!("trurl: watcher reload failed: {e}");
@@ -139,58 +168,82 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn event_with_paths(paths: Vec<PathBuf>) -> notify::Event {
-        notify::Event {
-            kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
-                notify::event::DataChange::Any,
-            )),
-            paths,
-            attrs: Default::default(),
-        }
+    fn event_at(paths: &[&str]) -> notify::Event {
+        let mut e = notify::Event::new(notify::EventKind::Any);
+        e.paths = paths.iter().map(PathBuf::from).collect();
+        e
     }
 
     #[test]
     fn relevant_for_component_file() {
-        let state_dir = PathBuf::from("/repo/.trurl/.state");
-        let event = event_with_paths(vec![PathBuf::from("/repo/.trurl/components/auth.toml")]);
-        assert!(is_relevant(&event, &state_dir));
+        let sd = PathBuf::from("/repo/.trurl/.state");
+        assert!(is_relevant(
+            &event_at(&["/repo/.trurl/components/auth.toml"]),
+            &sd,
+        ));
     }
 
     #[test]
     fn relevant_for_graph_toml() {
-        let state_dir = PathBuf::from("/repo/.trurl/.state");
-        let event = event_with_paths(vec![PathBuf::from("/repo/.trurl/graph.toml")]);
-        assert!(is_relevant(&event, &state_dir));
+        let sd = PathBuf::from("/repo/.trurl/.state");
+        assert!(is_relevant(&event_at(&["/repo/.trurl/graph.toml"]), &sd));
+    }
+
+    #[test]
+    fn relevant_for_project_toml() {
+        let sd = PathBuf::from("/repo/.trurl/.state");
+        assert!(is_relevant(&event_at(&["/repo/.trurl/project.toml"]), &sd));
     }
 
     #[test]
     fn irrelevant_for_lock_file() {
-        let state_dir = PathBuf::from("/repo/.trurl/.state");
-        let event = event_with_paths(vec![PathBuf::from("/repo/.trurl/.state/lock")]);
-        assert!(!is_relevant(&event, &state_dir));
+        let sd = PathBuf::from("/repo/.trurl/.state");
+        assert!(!is_relevant(&event_at(&["/repo/.trurl/.state/lock"]), &sd));
     }
 
     #[test]
     fn irrelevant_for_tmp_file() {
-        let state_dir = PathBuf::from("/repo/.trurl/.state");
-        let event = event_with_paths(vec![PathBuf::from("/repo/.trurl/.state/tmp/0_auth.toml")]);
-        assert!(!is_relevant(&event, &state_dir));
+        let sd = PathBuf::from("/repo/.trurl/.state");
+        assert!(!is_relevant(
+            &event_at(&["/repo/.trurl/.state/tmp/0_auth.toml"]),
+            &sd,
+        ));
     }
 
     #[test]
-    fn relevant_if_mixed_paths() {
-        let state_dir = PathBuf::from("/repo/.trurl/.state");
-        let event = event_with_paths(vec![
-            PathBuf::from("/repo/.trurl/.state/lock"),
-            PathBuf::from("/repo/.trurl/decisions/use-jwt.toml"),
-        ]);
-        assert!(is_relevant(&event, &state_dir));
+    fn irrelevant_for_session_file() {
+        let sd = PathBuf::from("/repo/.trurl/.state");
+        assert!(!is_relevant(
+            &event_at(&["/repo/.trurl/.state/sessions/auth.json"]),
+            &sd,
+        ));
+    }
+
+    #[test]
+    fn relevant_if_any_path_outside_state() {
+        let sd = PathBuf::from("/repo/.trurl/.state");
+        assert!(is_relevant(
+            &event_at(&[
+                "/repo/.trurl/.state/lock",
+                "/repo/.trurl/decisions/use-jwt.toml",
+            ]),
+            &sd,
+        ));
     }
 
     #[test]
     fn irrelevant_for_empty_paths() {
-        let state_dir = PathBuf::from("/repo/.trurl/.state");
-        let event = event_with_paths(vec![]);
-        assert!(!is_relevant(&event, &state_dir));
+        let sd = PathBuf::from("/repo/.trurl/.state");
+        assert!(!is_relevant(&event_at(&[]), &sd));
+    }
+
+    #[test]
+    fn drain_pending_empties_channel() {
+        let (tx, rx) = mpsc::channel();
+        for _ in 0..5 {
+            tx.send(notify::Event::new(notify::EventKind::Any)).ok();
+        }
+        drain_pending(&rx);
+        assert!(rx.try_recv().is_err());
     }
 }
