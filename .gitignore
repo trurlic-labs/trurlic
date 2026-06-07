@@ -14,3 +14,6 @@ Thumbs.db
 
 # Trurl machine-local state (in any .trurl/ directory)
 .trurl/.state/
+
+# Frontend
+src/map/frontend/node_modules/

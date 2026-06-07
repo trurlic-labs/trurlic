@@ -1,7 +1,8 @@
-.PHONY: fmt check test audit ci setup clean build build-release \
+.PHONY: fmt check test audit audit-js ci setup clean build build-release \
        install-frontend build-frontend fmt-frontend check-frontend test-frontend
 
 FRONTEND_DIR = src/map/frontend
+NODE_STAMP   = $(FRONTEND_DIR)/node_modules/.install-stamp
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -11,21 +12,24 @@ setup: install-frontend
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
 
-install-frontend:
+# Stamp-file pattern: npm ci only re-runs when package-lock.json changes.
+$(NODE_STAMP): $(FRONTEND_DIR)/package-lock.json
 	cd $(FRONTEND_DIR) && npm ci
+	@touch $@
 
-build-frontend:
-	cd $(FRONTEND_DIR) && npx esbuild src/main.ts \
-		--bundle --outfile=dist/app.js --format=iife --target=es2020 --minify
+install-frontend: $(NODE_STAMP)
+
+build-frontend: $(NODE_STAMP)
+	cd $(FRONTEND_DIR) && npm run build
 	cp $(FRONTEND_DIR)/src/index.html $(FRONTEND_DIR)/dist/
 	cp $(FRONTEND_DIR)/src/style.css $(FRONTEND_DIR)/dist/
 
-fmt-frontend:
-	cd $(FRONTEND_DIR) && npx prettier --write 'src/**/*.{ts,css,html}'
+fmt-frontend: $(NODE_STAMP)
+	cd $(FRONTEND_DIR) && npm run fmt
 
-check-frontend:
-	cd $(FRONTEND_DIR) && npx prettier --check 'src/**/*.{ts,css,html}'
-	cd $(FRONTEND_DIR) && npx tsc --noEmit
+check-frontend: $(NODE_STAMP)
+	cd $(FRONTEND_DIR) && npm run fmt:check
+	cd $(FRONTEND_DIR) && npm run typecheck
 
 test-frontend: check-frontend
 
@@ -52,10 +56,16 @@ check: check-frontend
 test: test-frontend
 	cargo test --workspace --locked
 
-# ── Audit (requires: cargo install cargo-deny) ───────────────────────────────
+# ── Audit ─────────────────────────────────────────────────────────────────────
+# Rust:       requires `cargo install cargo-deny`
+# TypeScript: npm audit (configured via .npmrc audit-level=high)
 
-audit:
+audit: audit-js
 	cargo deny check
+
+audit-js: $(NODE_STAMP)
+	@echo "── TypeScript dependency audit ──────────────────────────────────────"
+	cd $(FRONTEND_DIR) && npm audit
 
 # ── CI gate (run before pushing) ──────────────────────────────────────────────
 
@@ -66,4 +76,4 @@ ci: check test audit
 
 clean:
 	cargo clean
-	rm -f $(FRONTEND_DIR)/dist/app.js
+	rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/dist/app.js

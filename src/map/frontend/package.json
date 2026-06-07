@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "esbuild src/main.ts --bundle --outfile=dist/app.js --format=iife --target=es2020 --minify",
+    "typecheck": "tsc --noEmit",
+    "fmt": "prettier --write 'src/**/*.{ts,css,html}'",
+    "fmt:check": "prettier --check 'src/**/*.{ts,css,html}'"
   },
   "keywords": [],
   "author": "",

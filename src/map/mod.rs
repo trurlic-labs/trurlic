@@ -143,10 +143,9 @@ pub(crate) async fn start(
     let _watcher_guard = spawn_watcher(map_state.clone());
 
     // Open browser.
-    if !no_open
-        && let Err(e) = opener::open(&url) {
-            eprintln!("trurl: failed to open browser: {e}");
-        }
+    if !no_open && let Err(e) = opener::open(&url) {
+        eprintln!("trurl: failed to open browser: {e}");
+    }
 
     // Run until Ctrl+C.
     axum::serve(listener, app)
