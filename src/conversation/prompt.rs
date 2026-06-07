@@ -24,19 +24,11 @@ pub(crate) fn build_system_prompt(
         if !comp.component.description.is_empty() {
             p.push_str(&format!("Description: {}\n", comp.component.description));
         }
-        let connects_to: Vec<String> = graph
-            .connects_to(component)
-            .iter()
-            .map(|a| a.to_string())
-            .collect();
+        let connects_to = graph.connects_to(component);
         if !connects_to.is_empty() {
             p.push_str(&format!("Connects to: {}\n", connects_to.join(", ")));
         }
-        let connects_from: Vec<String> = graph
-            .connects_from(component)
-            .iter()
-            .map(|a| a.to_string())
-            .collect();
+        let connects_from = graph.connects_from(component);
         if !connects_from.is_empty() {
             p.push_str(&format!("Connects from: {}\n", connects_from.join(", ")));
         }

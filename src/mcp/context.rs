@@ -28,16 +28,8 @@ pub(crate) fn get_context(
         .get(component)
         .ok_or_else(|| format!("component `{component}` does not exist"))?;
 
-    let connects_to: Vec<String> = graph
-        .connects_to(component)
-        .iter()
-        .map(|a| a.to_string())
-        .collect();
-    let connects_from: Vec<String> = graph
-        .connects_from(component)
-        .iter()
-        .map(|a| a.to_string())
-        .collect();
+    let connects_to = graph.connects_to(component);
+    let connects_from = graph.connects_from(component);
 
     let component_decisions = graph.decisions_for(component);
     let project_decisions = graph.project_decisions();
@@ -309,11 +301,7 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
         .iter()
         .map(|(name, comp)| {
             let decision_count = graph.decisions_for(name).len();
-            let connects_to: Vec<String> = graph
-                .connects_to(name)
-                .iter()
-                .map(|a| a.to_string())
-                .collect();
+            let connects_to = graph.connects_to(name);
 
             serde_json::json!({
                 "name": name,

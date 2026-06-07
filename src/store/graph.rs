@@ -144,13 +144,22 @@ impl InMemoryGraph {
     }
 
     /// Components this component connects to (forward `ConnectsTo`).
-    pub fn connects_to(&self, component: &str) -> Vec<&Arc<str>> {
+    pub fn connects_to(&self, component: &str) -> Vec<&str> {
         self.forward_targets(component, EdgeKind::ConnectsTo)
     }
 
     /// Components that connect to this one (reverse `ConnectsTo`).
-    pub fn connects_from(&self, component: &str) -> Vec<&Arc<str>> {
-        self.reverse_targets(component, EdgeKind::ConnectsTo, Some)
+    pub fn connects_from(&self, component: &str) -> Vec<&str> {
+        self.reverse
+            .get(component)
+            .map(|edges| {
+                edges
+                    .iter()
+                    .filter(|e| e.kind == EdgeKind::ConnectsTo)
+                    .map(|e| e.target.as_ref())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Decisions from directly connected components (both directions, depth 1).
@@ -177,7 +186,7 @@ impl InMemoryGraph {
 
     /// Transitive dependencies via `DependsOn` edges. BFS, max depth 3.
     #[allow(dead_code)] // planned for Phase 6 (MCP design-prompt enrichment)
-    pub fn transitive_deps(&self, decision: &str) -> Vec<&Arc<str>> {
+    pub fn transitive_deps(&self, decision: &str) -> Vec<&str> {
         let mut result = Vec::new();
         let mut visited: HashSet<&str> = HashSet::new();
         visited.insert(decision);
@@ -190,7 +199,7 @@ impl InMemoryGraph {
                     for edge in edges {
                         if edge.kind == EdgeKind::DependsOn && visited.insert(&edge.target) {
                             next.push(edge.target.as_ref());
-                            result.push(&edge.target);
+                            result.push(edge.target.as_ref());
                         }
                     }
                 }
@@ -235,16 +244,16 @@ impl InMemoryGraph {
     /// All edges involving a node (both directions). For cascade checks.
     ///
     /// Returns `(other_node, edge, direction)` tuples.
-    pub fn edges_involving(&self, node: &str) -> Vec<(Arc<str>, &Edge, Direction)> {
+    pub fn edges_involving(&self, node: &str) -> Vec<(&str, &Edge, Direction)> {
         let mut result = Vec::new();
         if let Some(edges) = self.forward.get(node) {
             for edge in edges {
-                result.push((edge.target.clone(), edge, Direction::Forward));
+                result.push((edge.target.as_ref(), edge, Direction::Forward));
             }
         }
         if let Some(edges) = self.reverse.get(node) {
             for edge in edges {
-                result.push((edge.target.clone(), edge, Direction::Reverse));
+                result.push((edge.target.as_ref(), edge, Direction::Reverse));
             }
         }
         result
@@ -379,15 +388,14 @@ impl InMemoryGraph {
 // ── Private helpers ─────────────────────────────────────────────────────────
 
 impl InMemoryGraph {
-    /// Collect forward edge targets of a specific kind.
-    fn forward_targets(&self, node: &str, kind: EdgeKind) -> Vec<&Arc<str>> {
+    fn forward_targets(&self, node: &str, kind: EdgeKind) -> Vec<&str> {
         self.forward
             .get(node)
             .map(|edges| {
                 edges
                     .iter()
                     .filter(|e| e.kind == kind)
-                    .map(|e| &e.target)
+                    .map(|e| e.target.as_ref())
                     .collect()
             })
             .unwrap_or_default()
@@ -1086,7 +1094,7 @@ mod tests {
         let g = test_graph();
         let targets = g.connects_to("auth");
         assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].as_ref(), "database");
+        assert_eq!(targets[0], "database");
     }
 
     #[test]
@@ -1094,7 +1102,7 @@ mod tests {
         let g = test_graph();
         let sources = g.connects_from("database");
         assert_eq!(sources.len(), 2);
-        let names: HashSet<&str> = sources.iter().map(|a| a.as_ref()).collect();
+        let names: HashSet<&str> = sources.iter().copied().collect();
         assert!(names.contains("auth"));
         assert!(names.contains("rate-limiter"));
     }
@@ -1131,7 +1139,7 @@ mod tests {
     fn transitive_deps_follows_chain() {
         let g = dep_chain_graph();
         let deps = g.transitive_deps("d-a");
-        let names: Vec<&str> = deps.iter().map(|a| a.as_ref()).collect();
+        let names: Vec<&str> = deps.to_vec();
         assert!(names.contains(&"d-b"));
         assert!(names.contains(&"d-c"));
         assert!(names.contains(&"d-d"));
@@ -1273,7 +1281,7 @@ mod tests {
         let deps = g.transitive_deps("d-a");
         // Depth 1: d-b, depth 2: d-c, depth 3: d-d. d-e is depth 4 → excluded.
         assert_eq!(deps.len(), 3);
-        let names: Vec<&str> = deps.iter().map(|a| a.as_ref()).collect();
+        let names: Vec<&str> = deps.to_vec();
         assert!(names.contains(&"d-b"));
         assert!(names.contains(&"d-c"));
         assert!(names.contains(&"d-d"));
@@ -1410,14 +1418,14 @@ mod tests {
             .filter(|(_, _, d)| *d == Direction::Forward)
             .collect();
         assert_eq!(forward.len(), 1);
-        assert_eq!(forward[0].0.as_ref(), "database");
+        assert_eq!(forward[0].0, "database");
 
         let reverse: Vec<_> = edges
             .iter()
             .filter(|(_, _, d)| *d == Direction::Reverse)
             .collect();
         assert_eq!(reverse.len(), 1);
-        assert_eq!(reverse[0].0.as_ref(), "use-jwt");
+        assert_eq!(reverse[0].0, "use-jwt");
     }
 
     #[test]
