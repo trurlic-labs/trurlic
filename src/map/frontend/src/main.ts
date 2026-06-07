@@ -37,16 +37,19 @@ class App {
     window.addEventListener('resize', () => this.handleResize());
 
     // Load graph then start render loop.
-    this.api.fetchGraph().then(snap => {
-      this.graph.loadSnapshot(snap);
-      this.layout.run(this.graph.nodes, this.graph.edges, 200);
-      this.fitView();
-      this.panel.showProject(this.graph);
-      this.needsRender = true;
-    }).catch(e => {
-      console.error('Failed to load graph:', e);
-      this.panel.showEmpty();
-    });
+    this.api
+      .fetchGraph()
+      .then((snap) => {
+        this.graph.loadSnapshot(snap);
+        this.layout.run(this.graph.nodes, this.graph.edges, 200);
+        this.fitView();
+        this.panel.showProject(this.graph);
+        this.needsRender = true;
+      })
+      .catch((e) => {
+        console.error('Failed to load graph:', e);
+        this.panel.showEmpty();
+      });
 
     // WebSocket for live updates.
     new WsConnection(token, (event) => this.handleWsEvent(event));
@@ -136,20 +139,26 @@ class App {
 
   private handleWsEvent(event: { type: string; [k: string]: unknown }): void {
     if (event.type === 'full_reload') {
-      this.api.fetchGraph().then(snap => {
-        this.graph.loadSnapshot(snap);
-        this.layout.run(this.graph.nodes, this.graph.edges, 50);
-        this.needsRender = true;
-        if (this.selected) this.refreshPanel();
-      }).catch(e => console.error('Reload failed:', e));
+      this.api
+        .fetchGraph()
+        .then((snap) => {
+          this.graph.loadSnapshot(snap);
+          this.layout.run(this.graph.nodes, this.graph.edges, 50);
+          this.needsRender = true;
+          if (this.selected) this.refreshPanel();
+        })
+        .catch((e) => console.error('Reload failed:', e));
     } else {
       // For granular events, just do a full refresh for now.
       // Granular client-side patching is a future optimization.
-      this.api.fetchGraph().then(snap => {
-        this.graph.loadSnapshot(snap);
-        this.needsRender = true;
-        if (this.selected) this.refreshPanel();
-      }).catch(() => {});
+      this.api
+        .fetchGraph()
+        .then((snap) => {
+          this.graph.loadSnapshot(snap);
+          this.needsRender = true;
+          if (this.selected) this.refreshPanel();
+        })
+        .catch(() => {});
     }
   }
 
@@ -181,9 +190,12 @@ class App {
         positions[name] = { x: n.x, y: n.y, pinned: true };
       }
     }
-    this.api.saveLayout(positions, this.graph.layoutVersion)
-      .then(v => { this.graph.layoutVersion = v; })
-      .catch(e => console.error('Layout save failed:', e));
+    this.api
+      .saveLayout(positions, this.graph.layoutVersion)
+      .then((v) => {
+        this.graph.layoutVersion = v;
+      })
+      .catch((e) => console.error('Layout save failed:', e));
   }
 
   // ── Render loop ────────────────────────────────────────────────────────
@@ -198,7 +210,10 @@ class App {
   };
 
   private fitView(): void {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
     for (const n of this.graph.nodes.values()) {
       minX = Math.min(minX, n.x - n.w / 2);
       minY = Math.min(minY, n.y - n.h / 2);

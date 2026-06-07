@@ -1,6 +1,10 @@
 import type {
-  GraphSnapshot, DecisionNode, PatternNode,
-  RenderNode, RenderEdge, WsEvent,
+  GraphSnapshot,
+  DecisionNode,
+  PatternNode,
+  RenderNode,
+  RenderEdge,
+  WsEvent,
 } from './types';
 
 // ── Graph model ────────────────────────────────────────────────────────────
@@ -76,8 +80,12 @@ export class Graph {
     // Iterate in reverse so top-drawn nodes are hit first.
     const arr = [...this.nodes.values()].reverse();
     for (const n of arr) {
-      if (wx >= n.x - n.w / 2 && wx <= n.x + n.w / 2 &&
-          wy >= n.y - n.h / 2 && wy <= n.y + n.h / 2) {
+      if (
+        wx >= n.x - n.w / 2 &&
+        wx <= n.x + n.w / 2 &&
+        wy >= n.y - n.h / 2 &&
+        wy <= n.y + n.h / 2
+      ) {
         return n;
       }
     }
@@ -85,7 +93,7 @@ export class Graph {
   }
 
   decisionsFor(component: string): DecisionNode[] {
-    return [...this.decisions.values()].filter(d => d.component === component);
+    return [...this.decisions.values()].filter((d) => d.component === component);
   }
 }
 
@@ -102,17 +110,20 @@ export class ApiClient {
 
   async fetchGraph(): Promise<GraphSnapshot> {
     const res = await fetch(`${this.baseUrl}/api/graph`, {
-      headers: { 'Authorization': `Bearer ${this.token}` },
+      headers: { Authorization: `Bearer ${this.token}` },
     });
     if (!res.ok) throw new Error(`GET /api/graph: ${res.status}`);
     return res.json();
   }
 
-  async saveLayout(positions: Record<string, { x: number; y: number; pinned: boolean }>, version: number): Promise<number> {
+  async saveLayout(
+    positions: Record<string, { x: number; y: number; pinned: boolean }>,
+    version: number,
+  ): Promise<number> {
     const res = await fetch(`${this.baseUrl}/api/layout`, {
       method: 'PUT',
       headers: {
-        'Authorization': `Bearer ${this.token}`,
+        Authorization: `Bearer ${this.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ positions, layout_version: version }),
@@ -151,7 +162,9 @@ export class WsConnection {
       try {
         const event: WsEvent = JSON.parse(e.data);
         this.onEvent(event);
-      } catch { /* ignore malformed messages */ }
+      } catch {
+        /* ignore malformed messages */
+      }
     };
 
     this.ws.onclose = () => {

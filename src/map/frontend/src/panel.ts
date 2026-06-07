@@ -33,17 +33,21 @@ export class Panel {
   showComponent(node: RenderNode, graph: Graph): void {
     const decs = graph.decisionsFor(node.name);
     const connections = graph.edges
-      .filter(e => e.from === node.name || e.to === node.name)
-      .map(e => e.from === node.name ? e.to : e.from);
+      .filter((e) => e.from === node.name || e.to === node.name)
+      .map((e) => (e.from === node.name ? e.to : e.from));
 
     this.el.innerHTML = `
       <div class="panel-kind">component</div>
       <h2>${esc(node.name)}</h2>
       ${node.description ? `<p class="dim">${esc(node.description)}</p>` : ''}
-      ${connections.length > 0 ? `
+      ${
+        connections.length > 0
+          ? `
         <h3>Connections</h3>
-        <div class="chip-list">${connections.map(c => `<span class="chip">${esc(c)}</span>`).join('')}</div>
-      ` : ''}
+        <div class="chip-list">${connections.map((c) => `<span class="chip">${esc(c)}</span>`).join('')}</div>
+      `
+          : ''
+      }
       <h3>Decisions <span class="dim">(${decs.length})</span></h3>
       ${decs.length === 0 ? '<p class="dim">None yet</p>' : decs.map(decisionCard).join('')}
     `;
@@ -59,8 +63,8 @@ function decisionCard(d: DecisionNode): string {
     <div class="dec-card">
       <div class="dec-choice">${esc(d.choice)}</div>
       <div class="dec-reason dim">${esc(d.reason)}</div>
-      ${d.tags.length > 0 ? `<div class="chip-list">${d.tags.map(t => `<span class="chip tag">${esc(t)}</span>`).join('')}</div>` : ''}
-      ${d.alternatives.length > 0 ? `<details><summary class="dim">Alternatives</summary><ul>${d.alternatives.map(a => `<li class="dim">${esc(a)}</li>`).join('')}</ul></details>` : ''}
+      ${d.tags.length > 0 ? `<div class="chip-list">${d.tags.map((t) => `<span class="chip tag">${esc(t)}</span>`).join('')}</div>` : ''}
+      ${d.alternatives.length > 0 ? `<details><summary class="dim">Alternatives</summary><ul>${d.alternatives.map((a) => `<li class="dim">${esc(a)}</li>`).join('')}</ul></details>` : ''}
     </div>
   `;
 }
@@ -70,12 +74,16 @@ function recentDecisions(graph: Graph): string {
     .sort((a, b) => b.created.localeCompare(a.created))
     .slice(0, 5);
   if (sorted.length === 0) return '<p class="dim">None yet</p>';
-  return sorted.map(d => `
+  return sorted
+    .map(
+      (d) => `
     <div class="dec-card">
       <div class="dec-choice">${esc(d.choice)}</div>
       <div class="dim" style="font-size:12px">${esc(d.component)} · ${new Date(d.created).toLocaleDateString()}</div>
     </div>
-  `).join('');
+  `,
+    )
+    .join('');
 }
 
 function esc(s: string): string {

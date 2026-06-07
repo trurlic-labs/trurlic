@@ -4,19 +4,19 @@ import type { Graph } from './graph';
 // ── Colors (CSS variable-aware) ────────────────────────────────────────────
 
 const C = {
-  bg:         () => css('--bg',         '#0f1117'),
-  surface:    () => css('--surface',    '#1a1d27'),
-  surfaceHi:  () => css('--surface-hi', '#252836'),
-  border:     () => css('--border',     '#2e3244'),
-  text:       () => css('--text',       '#e1e4ed'),
-  textDim:    () => css('--text-dim',   '#8b90a0'),
-  accent:     () => css('--accent',     '#6c8cff'),
-  accentDim:  () => css('--accent-dim', '#3a4f8f'),
-  edge:       () => css('--edge',       '#3a3f52'),
-  selectRing: () => css('--select',     '#6c8cff'),
-  badge:      () => css('--badge',      '#4a5068'),
-  minimap:    () => css('--minimap-bg', '#13151d'),
-  minimapVp:  () => css('--minimap-vp', 'rgba(108,140,255,0.25)'),
+  bg: () => css('--bg', '#0f1117'),
+  surface: () => css('--surface', '#1a1d27'),
+  surfaceHi: () => css('--surface-hi', '#252836'),
+  border: () => css('--border', '#2e3244'),
+  text: () => css('--text', '#e1e4ed'),
+  textDim: () => css('--text-dim', '#8b90a0'),
+  accent: () => css('--accent', '#6c8cff'),
+  accentDim: () => css('--accent-dim', '#3a4f8f'),
+  edge: () => css('--edge', '#3a3f52'),
+  selectRing: () => css('--select', '#6c8cff'),
+  badge: () => css('--badge', '#4a5068'),
+  minimap: () => css('--minimap-bg', '#13151d'),
+  minimapVp: () => css('--minimap-vp', 'rgba(108,140,255,0.25)'),
 };
 
 function css(prop: string, fallback: string): string {
@@ -105,10 +105,14 @@ export class Renderer {
       const tipY = b.y - uy * (b.h / 2 + 2);
       ctx.beginPath();
       ctx.moveTo(tipX, tipY);
-      ctx.lineTo(tipX - ux * headLen - uy * headLen * 0.4,
-                 tipY - uy * headLen + ux * headLen * 0.4);
-      ctx.lineTo(tipX - ux * headLen + uy * headLen * 0.4,
-                 tipY - uy * headLen - ux * headLen * 0.4);
+      ctx.lineTo(
+        tipX - ux * headLen - uy * headLen * 0.4,
+        tipY - uy * headLen + ux * headLen * 0.4,
+      );
+      ctx.lineTo(
+        tipX - ux * headLen + uy * headLen * 0.4,
+        tipY - uy * headLen - ux * headLen * 0.4,
+      );
       ctx.fill();
     }
   }
@@ -126,8 +130,13 @@ export class Renderer {
       if (isSelected) {
         ctx.strokeStyle = C.selectRing();
         ctx.lineWidth = 3 / cam.zoom;
-        this.roundRect(node.x - node.w / 2 - 4, node.y - node.h / 2 - 4,
-                       node.w + 8, node.h + 8, 12);
+        this.roundRect(
+          node.x - node.w / 2 - 4,
+          node.y - node.h / 2 - 4,
+          node.w + 8,
+          node.h + 8,
+          12,
+        );
         ctx.stroke();
       }
 
@@ -167,9 +176,8 @@ export class Renderer {
           const descFontSize = fontSize * 0.75;
           ctx.font = `400 ${descFontSize}px system-ui, sans-serif`;
           ctx.fillStyle = C.textDim();
-          const desc = node.description.length > 40
-            ? node.description.slice(0, 37) + '…'
-            : node.description;
+          const desc =
+            node.description.length > 40 ? node.description.slice(0, 37) + '…' : node.description;
           ctx.fillText(desc, node.x, node.y, node.w - 16);
         }
       }
@@ -187,7 +195,10 @@ export class Renderer {
     if (graph.nodes.size === 0) return;
 
     // Compute bounds.
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
     for (const n of graph.nodes.values()) {
       minX = Math.min(minX, n.x - n.w / 2);
       minY = Math.min(minY, n.y - n.h / 2);
@@ -195,7 +206,10 @@ export class Renderer {
       maxY = Math.max(maxY, n.y + n.h / 2);
     }
     const pad = 40;
-    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    minX -= pad;
+    minY -= pad;
+    maxX += pad;
+    maxY += pad;
     const bw = maxX - minX;
     const bh = maxY - minY;
     const scale = Math.min(mw / bw, mh / bh);
