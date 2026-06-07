@@ -11,21 +11,47 @@ use crate::store::{self, Store, slugify, unique_decision_stem};
 
 // ── Argument helpers ────────────────────────────────────────────────────────
 
+/// Maximum byte length for any single text argument to a write tool.
+/// Prevents unbounded disk writes from malicious or buggy MCP clients.
+/// Design conversations are typically 10-50 KB total; a single argument
+/// should never approach that.
+const MAX_TEXT_ARG_BYTES: usize = 50_000;
+
+/// Maximum number of elements in any array argument.
+const MAX_ARRAY_ARG_LEN: usize = 100;
+
 fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
-    args.get(key)
+    let val = args
+        .get(key)
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("missing required parameter: {key}"))
+        .ok_or_else(|| format!("missing required parameter: {key}"))?;
+    if val.len() > MAX_TEXT_ARG_BYTES {
+        return Err(format!(
+            "`{key}` exceeds {MAX_TEXT_ARG_BYTES} byte limit ({} bytes)",
+            val.len()
+        ));
+    }
+    Ok(val)
 }
 
-fn opt_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
-    args.get(key)
+fn opt_str<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
+    match args
+        .get(key)
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
+    {
+        Some(val) if val.len() > MAX_TEXT_ARG_BYTES => Err(format!(
+            "`{key}` exceeds {MAX_TEXT_ARG_BYTES} byte limit ({} bytes)",
+            val.len()
+        )),
+        other => Ok(other),
+    }
 }
 
-fn opt_str_array(args: &Value, key: &str) -> Vec<String> {
-    args.get(key)
+fn opt_str_array(args: &Value, key: &str) -> Result<Vec<String>, String> {
+    let items: Vec<String> = args
+        .get(key)
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -34,7 +60,21 @@ fn opt_str_array(args: &Value, key: &str) -> Vec<String> {
                 .map(String::from)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if items.len() > MAX_ARRAY_ARG_LEN {
+        return Err(format!(
+            "`{key}` has too many items ({}, max {MAX_ARRAY_ARG_LEN})",
+            items.len()
+        ));
+    }
+    for s in &items {
+        if s.len() > MAX_TEXT_ARG_BYTES {
+            return Err(format!(
+                "`{key}` item exceeds {MAX_TEXT_ARG_BYTES} byte limit"
+            ));
+        }
+    }
+    Ok(items)
 }
 
 fn require_str_array(args: &Value, key: &str) -> Result<Vec<String>, String> {
@@ -42,6 +82,12 @@ fn require_str_array(args: &Value, key: &str) -> Result<Vec<String>, String> {
         .get(key)
         .and_then(|v| v.as_array())
         .ok_or_else(|| format!("missing required parameter: {key}"))?;
+    if arr.len() > MAX_ARRAY_ARG_LEN {
+        return Err(format!(
+            "`{key}` has too many items ({}, max {MAX_ARRAY_ARG_LEN})",
+            arr.len()
+        ));
+    }
     let strings: Vec<String> = arr
         .iter()
         .filter_map(|v| v.as_str())
@@ -50,6 +96,13 @@ fn require_str_array(args: &Value, key: &str) -> Result<Vec<String>, String> {
         .collect();
     if strings.is_empty() {
         return Err(format!("{key} must contain at least one non-empty string"));
+    }
+    for s in &strings {
+        if s.len() > MAX_TEXT_ARG_BYTES {
+            return Err(format!(
+                "`{key}` item exceeds {MAX_TEXT_ARG_BYTES} byte limit"
+            ));
+        }
     }
     Ok(strings)
 }
@@ -83,11 +136,11 @@ pub(crate) fn record_decision(
     let component = require_str(args, "component")?;
     let choice = require_str(args, "choice")?;
     let reason = require_str(args, "reason")?;
-    let alternatives = opt_str_array(args, "alternatives");
-    let depends_on = opt_str_array(args, "depends_on");
-    let constrains = opt_str_array(args, "constrains");
-    let tags = opt_str_array(args, "tags");
-    let supersedes = opt_str(args, "supersedes");
+    let alternatives = opt_str_array(args, "alternatives")?;
+    let depends_on = opt_str_array(args, "depends_on")?;
+    let constrains = opt_str_array(args, "constrains")?;
+    let tags = opt_str_array(args, "tags")?;
+    let supersedes = opt_str(args, "supersedes")?;
 
     // Validate component.
     if component != "project" && !store::is_valid_kebab_case(component) {
@@ -216,8 +269,8 @@ pub(crate) fn record_pattern(
     let name = require_str(args, "name")?;
     let description = require_str(args, "description")?;
     let decision_names = require_str_array(args, "decisions")?;
-    let component_names = opt_str_array(args, "components");
-    let tags = opt_str_array(args, "tags");
+    let component_names = opt_str_array(args, "components")?;
+    let tags = opt_str_array(args, "tags")?;
 
     if decision_names.len() < 2 {
         return Err("a pattern must reference at least 2 decisions".into());
@@ -469,8 +522,8 @@ fn amend_decision(
     name: &str,
     args: &Value,
 ) -> Result<Value, String> {
-    let new_choice = opt_str(args, "choice");
-    let new_reason = opt_str(args, "reason");
+    let new_choice = opt_str(args, "choice")?;
+    let new_reason = opt_str(args, "reason")?;
 
     if new_choice.is_none() && new_reason.is_none() {
         return Err("amend requires at least one of `choice` or `reason`".into());
@@ -537,12 +590,15 @@ fn supersede_decision(
         .get(old_name)
         .ok_or_else(|| format!("decision `{old_name}` does not exist"))?;
 
-    let choice = opt_str(args, "choice").unwrap_or(&old_dec.decision.choice);
-    let reason = opt_str(args, "reason").unwrap_or(&old_dec.decision.reason);
+    let new_choice = opt_str(args, "choice")?;
+    let new_reason = opt_str(args, "reason")?;
 
-    if opt_str(args, "choice").is_none() && opt_str(args, "reason").is_none() {
+    if new_choice.is_none() && new_reason.is_none() {
         return Err("supersede requires at least one of `choice` or `reason`".into());
     }
+
+    let choice = new_choice.unwrap_or(&old_dec.decision.choice);
+    let reason = new_reason.unwrap_or(&old_dec.decision.reason);
 
     let component = old_dec.decision.component.clone();
 

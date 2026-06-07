@@ -43,6 +43,12 @@ impl Provider {
 
 const ALL_PROVIDERS: [Provider; 3] = [Provider::Anthropic, Provider::OpenAi, Provider::OpenRouter];
 
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 fn parse_provider(name: &str) -> Result<Provider> {
     match name {
         "anthropic" | "claude" => Ok(Provider::Anthropic),

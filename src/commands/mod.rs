@@ -14,8 +14,8 @@ pub use serve::serve;
 
 use std::path::Path;
 
-use crate::store::{self, ProjectState, Store};
 use crate::Result;
+use crate::store::{self, ProjectState, Store};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
