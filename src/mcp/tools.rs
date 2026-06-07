@@ -6,7 +6,7 @@ use crate::store::{ProjectState, Store};
 
 use super::context;
 use super::prompts;
-use super::write;
+use super::{update, write};
 
 // ── Tool definitions ────────────────────────────────────────────────────────
 
@@ -261,8 +261,8 @@ pub(crate) fn call_write_tool(
     let result = match name {
         "record_decision" => write::record_decision(store, state, args),
         "record_pattern" => write::record_pattern(store, state, args),
-        "remove_decision" => write::remove_decision(store, state, args),
-        "update_decision" => write::update_decision(store, state, args),
+        "remove_decision" => update::remove_decision(store, state, args),
+        "update_decision" => update::update_decision(store, state, args),
         _ => unreachable!("is_write_tool gate prevents unknown tools here"),
     };
     match result {

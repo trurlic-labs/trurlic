@@ -2,6 +2,7 @@ mod context;
 mod prompts;
 mod protocol;
 mod tools;
+mod update;
 mod watcher;
 mod write;
 
