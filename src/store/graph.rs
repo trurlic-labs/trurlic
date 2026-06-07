@@ -508,14 +508,16 @@ impl InMemoryGraph {
         let mut in_stack: HashSet<&str> = HashSet::new();
 
         for (name, meta) in &self.nodes {
-            if meta.kind == NodeKind::Decision && !visited.contains(name.as_ref())
-                && self.dfs_has_cycle(name, &mut visited, &mut in_stack) {
-                    issues.push(Issue {
-                        severity: Severity::Error,
-                        message: format!("cycle in depends_on chain involving `{name}`"),
-                        node: Some(name.to_string()),
-                    });
-                }
+            if meta.kind == NodeKind::Decision
+                && !visited.contains(name.as_ref())
+                && self.dfs_has_cycle(name, &mut visited, &mut in_stack)
+            {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    message: format!("cycle in depends_on chain involving `{name}`"),
+                    node: Some(name.to_string()),
+                });
+            }
         }
     }
 

@@ -1,22 +1,25 @@
-use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::store::graph::{Direction, InMemoryGraph};
 use crate::store::schema::EdgeKind;
-use crate::store::{DecisionFile, ProjectState};
+use crate::store::{DecisionFile, PatternFile, ProjectState};
 
 // ── get_context ──────────────────────────────────────────────────────────
 
 /// Assemble a tailored spec for a component: its decisions, project-wide
-/// rules, related decisions from connected components, and a pre-assembled
-/// authoritative brief.
+/// rules, related decisions from connected components, applicable patterns,
+/// and a pre-assembled authoritative brief.
 pub(crate) fn get_context(
     state: &ProjectState,
     component: &str,
     task_description: Option<&str>,
 ) -> Result<Value, String> {
+    let graph = state.build_graph();
+
     if component == "project" {
-        return Ok(project_context(state, task_description));
+        return Ok(project_context(state, &graph, task_description));
     }
 
     let comp = state
@@ -24,48 +27,21 @@ pub(crate) fn get_context(
         .get(component)
         .ok_or_else(|| format!("component `{component}` does not exist"))?;
 
-    // Forward connections: this component connects to...
-    let connects_to: Vec<&str> = state
-        .graph_index
-        .edges
+    let connects_to: Vec<String> = graph
+        .connects_to(component)
         .iter()
-        .filter(|e| e.from == component && e.kind == EdgeKind::ConnectsTo)
-        .map(|e| e.to.as_str())
+        .map(|a| a.to_string())
+        .collect();
+    let connects_from: Vec<String> = graph
+        .connects_from(component)
+        .iter()
+        .map(|a| a.to_string())
         .collect();
 
-    // Reverse connections: who connects TO this component.
-    let connects_from: Vec<&str> = state
-        .graph_index
-        .edges
-        .iter()
-        .filter(|e| e.to == component && e.kind == EdgeKind::ConnectsTo)
-        .map(|e| e.from.as_str())
-        .collect();
-
-    let component_decisions: Vec<(&String, &DecisionFile)> = state
-        .decisions
-        .iter()
-        .filter(|(_, d)| d.decision.component == component)
-        .collect();
-
-    let project_decisions: Vec<(&String, &DecisionFile)> = state
-        .decisions
-        .iter()
-        .filter(|(_, d)| d.decision.component == "project")
-        .collect();
-
-    // Related: decisions from directly connected components (both directions).
-    let connected: BTreeSet<&str> = connects_to
-        .iter()
-        .chain(connects_from.iter())
-        .copied()
-        .collect();
-
-    let related_decisions: Vec<(&String, &DecisionFile)> = state
-        .decisions
-        .iter()
-        .filter(|(_, d)| connected.contains(d.decision.component.as_str()))
-        .collect();
+    let component_decisions = graph.decisions_for(component);
+    let project_decisions = graph.project_decisions();
+    let related_decisions = graph.related_decisions(component);
+    let patterns = graph.patterns_for(component);
 
     let brief = build_brief(
         component,
@@ -73,6 +49,7 @@ pub(crate) fn get_context(
         &component_decisions,
         &project_decisions,
         &related_decisions,
+        &patterns,
     );
 
     let status = if component_decisions.is_empty() && project_decisions.is_empty() {
@@ -88,10 +65,11 @@ pub(crate) fn get_context(
             "connects_to": connects_to,
             "connects_from": connects_from,
         },
-        "decisions": decision_list(&component_decisions),
+        "decisions": format_decisions(&component_decisions),
         "project_rules": project_decisions.iter()
             .map(|(_, d)| &d.decision.choice)
             .collect::<Vec<_>>(),
+        "patterns": format_patterns(&patterns),
         "related_decisions": related_decisions.iter()
             .map(|(_, d)| format!(
                 "{}: {} ({})",
@@ -103,12 +81,12 @@ pub(crate) fn get_context(
     }))
 }
 
-fn project_context(state: &ProjectState, task_description: Option<&str>) -> Value {
-    let project_decisions: Vec<(&String, &DecisionFile)> = state
-        .decisions
-        .iter()
-        .filter(|(_, d)| d.decision.component == "project")
-        .collect();
+fn project_context(
+    state: &ProjectState,
+    graph: &InMemoryGraph,
+    task_description: Option<&str>,
+) -> Value {
+    let project_decisions = graph.project_decisions();
 
     let mut brief = String::with_capacity(256);
     if let Some(task) = task_description {
@@ -136,9 +114,10 @@ fn project_context(state: &ProjectState, task_description: Option<&str>) -> Valu
             "name": "project",
             "description": state.project.project.description,
         },
-        "decisions": decision_list(&project_decisions),
+        "decisions": format_decisions(&project_decisions),
         "project_rules": project_decisions.iter()
             .map(|(_, d)| &d.decision.choice).collect::<Vec<_>>(),
+        "patterns": [],
         "related_decisions": [],
         "brief": brief,
         "status": status,
@@ -151,9 +130,10 @@ fn project_context(state: &ProjectState, task_description: Option<&str>) -> Valu
 fn build_brief(
     component: &str,
     task_description: Option<&str>,
-    component_decisions: &[(&String, &DecisionFile)],
-    project_decisions: &[(&String, &DecisionFile)],
-    related_decisions: &[(&String, &DecisionFile)],
+    component_decisions: &[(&Arc<str>, &DecisionFile)],
+    project_decisions: &[(&Arc<str>, &DecisionFile)],
+    related_decisions: &[(&Arc<str>, &DecisionFile)],
+    patterns: &[(&Arc<str>, &PatternFile)],
 ) -> String {
     let mut brief = String::with_capacity(512);
 
@@ -165,6 +145,14 @@ fn build_brief(
         brief.push_str("RULES:\n");
         for (_, d) in project_decisions {
             brief.push_str(&format!("- {}\n", d.decision.choice));
+        }
+        brief.push('\n');
+    }
+
+    if !patterns.is_empty() {
+        brief.push_str("PATTERNS:\n");
+        for (name, p) in patterns {
+            brief.push_str(&format!("- {}: {}\n", name.as_ref(), p.pattern.description));
         }
         brief.push('\n');
     }
@@ -204,6 +192,9 @@ fn build_brief(
 // ── check_pattern ────────────────────────────────────────────────────────
 
 /// Check whether a pattern or approach is covered by existing decisions.
+///
+/// Enhanced matching: keywords against decision content + node tags.
+/// Pattern membership (via MemberOf edges) boosts ranking.
 pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
     let query_words = extract_words(description);
     if query_words.is_empty() {
@@ -215,7 +206,16 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
         });
     }
 
-    let mut matches: Vec<(usize, &str, &DecisionFile)> = Vec::new();
+    let graph = state.build_graph();
+
+    struct Match<'a> {
+        score: usize,
+        in_pattern: bool,
+        name: &'a str,
+        dec: &'a DecisionFile,
+    }
+
+    let mut matches: Vec<Match<'_>> = Vec::new();
 
     for (name, dec) in &state.decisions {
         let haystack = format!(
@@ -224,18 +224,42 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
         );
         let decision_words = extract_words(&haystack);
 
-        let overlap = query_words
+        let keyword_hits = query_words
             .iter()
             .filter(|qw| decision_words.iter().any(|dw| dw == *qw))
             .count();
 
-        if overlap > 0 {
-            matches.push((overlap, name.as_str(), dec));
+        // Tag hits (weighted 2×) from graph node metadata.
+        let tag_hits = graph
+            .node_meta(name)
+            .map(|m| {
+                query_words
+                    .iter()
+                    .filter(|qw| m.tags.iter().any(|t| t.as_ref() == qw.as_str()))
+                    .count()
+            })
+            .unwrap_or(0);
+
+        let score = keyword_hits + tag_hits * 2;
+        if score == 0 {
+            continue;
         }
+
+        let in_pattern = graph
+            .edges_involving(name)
+            .iter()
+            .any(|(_, e, d)| e.kind == EdgeKind::MemberOf && *d == Direction::Reverse);
+
+        matches.push(Match {
+            score,
+            in_pattern,
+            name,
+            dec,
+        });
     }
 
-    // Most relevant first.
-    matches.sort_by(|a, b| b.0.cmp(&a.0));
+    // Pattern members first, then by score descending.
+    matches.sort_by(|a, b| b.in_pattern.cmp(&a.in_pattern).then(b.score.cmp(&a.score)));
 
     if matches.is_empty() {
         serde_json::json!({
@@ -249,12 +273,12 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
         serde_json::json!({
             "status": "covered",
             "message": "This pattern is addressed by existing decisions.",
-            "decisions": matches.iter().map(|(_, name, d)| {
+            "decisions": matches.iter().map(|m| {
                 serde_json::json!({
-                    "name": name,
-                    "component": d.decision.component,
-                    "choice": d.decision.choice,
-                    "reason": d.decision.reason,
+                    "name": m.name,
+                    "component": m.dec.decision.component,
+                    "choice": m.dec.decision.choice,
+                    "reason": m.dec.decision.reason,
                 })
             }).collect::<Vec<_>>(),
         })
@@ -264,22 +288,17 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
 // ── get_architecture ─────────────────────────────────────────────────────
 
 pub(crate) fn get_architecture(state: &ProjectState) -> Value {
+    let graph = state.build_graph();
+
     let components: Vec<Value> = state
         .components
         .iter()
         .map(|(name, comp)| {
-            let decision_count = state
-                .decisions
-                .values()
-                .filter(|d| d.decision.component == *name)
-                .count();
-
-            let connects_to: Vec<&str> = state
-                .graph_index
-                .edges
+            let decision_count = graph.decisions_for(name).len();
+            let connects_to: Vec<String> = graph
+                .connects_to(name)
                 .iter()
-                .filter(|e| e.from == *name && e.kind == EdgeKind::ConnectsTo)
-                .map(|e| e.to.as_str())
+                .map(|a| a.to_string())
                 .collect();
 
             serde_json::json!({
@@ -302,13 +321,12 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
         })
         .collect();
 
-    let project_decisions: Vec<Value> = state
-        .decisions
+    let project_decisions: Vec<Value> = graph
+        .project_decisions()
         .iter()
-        .filter(|(_, d)| d.decision.component == "project")
         .map(|(name, d)| {
             serde_json::json!({
-                "name": name,
+                "name": name.as_ref(),
                 "choice": d.decision.choice,
                 "reason": d.decision.reason,
             })
@@ -331,14 +349,26 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-fn decision_list(decisions: &[(&String, &DecisionFile)]) -> Vec<Value> {
+fn format_decisions(decisions: &[(&Arc<str>, &DecisionFile)]) -> Vec<Value> {
     decisions
         .iter()
         .map(|(name, d)| {
             serde_json::json!({
-                "name": name,
+                "name": name.as_ref(),
                 "choice": d.decision.choice,
                 "reason": d.decision.reason,
+            })
+        })
+        .collect()
+}
+
+fn format_patterns(patterns: &[(&Arc<str>, &PatternFile)]) -> Vec<Value> {
+    patterns
+        .iter()
+        .map(|(name, p)| {
+            serde_json::json!({
+                "name": name.as_ref(),
+                "description": p.pattern.description,
             })
         })
         .collect()
@@ -507,7 +537,6 @@ mod tests {
             },
         );
 
-        // Build graph index with nodes and edges.
         let graph_index = GraphIndex {
             version: 1,
             rebuilt: ts,
@@ -539,7 +568,7 @@ mod tests {
                 NodeEntry {
                     name: "use-jwt".into(),
                     kind: NodeKind::Decision,
-                    tags: vec![],
+                    tags: vec!["auth".into(), "security".into()],
                     hash: String::new(),
                 },
                 NodeEntry {
@@ -551,12 +580,11 @@ mod tests {
                 NodeEntry {
                     name: "db-pool".into(),
                     kind: NodeKind::Decision,
-                    tags: vec![],
+                    tags: vec!["storage".into()],
                     hash: String::new(),
                 },
             ],
             edges: vec![
-                // ConnectsTo edges (previously in component.connects_to)
                 EdgeEntry {
                     from: "auth".into(),
                     to: "database".into(),
@@ -567,7 +595,6 @@ mod tests {
                     to: "database".into(),
                     kind: EdgeKind::ConnectsTo,
                 },
-                // BelongsTo edges
                 EdgeEntry {
                     from: "use-jwt".into(),
                     to: "auth".into(),
@@ -637,7 +664,6 @@ mod tests {
     #[test]
     fn get_context_includes_related_decisions() {
         let state = test_state();
-        // auth connects_to database → database decisions are related.
         let result = get_context(&state, "auth", None).unwrap();
 
         let related = result["related_decisions"].as_array().unwrap();
@@ -648,11 +674,28 @@ mod tests {
     }
 
     #[test]
+    fn get_context_includes_patterns_field() {
+        let state = test_state();
+        let result = get_context(&state, "auth", None).unwrap();
+        // Empty patterns for this fixture, but field must exist.
+        let patterns = result["patterns"].as_array().unwrap();
+        assert!(patterns.is_empty());
+    }
+
+    #[test]
     fn get_context_not_covered_when_no_decisions() {
         let mut state = test_state();
         state.decisions.clear();
+        // Clear edges that reference decisions
+        state
+            .graph_index
+            .edges
+            .retain(|e| e.kind == EdgeKind::ConnectsTo);
+        state
+            .graph_index
+            .nodes
+            .retain(|n| n.kind == NodeKind::Component);
         let result = get_context(&state, "auth", None).unwrap();
-
         assert_eq!(result["status"], "not_covered");
     }
 
@@ -744,6 +787,16 @@ mod tests {
         let state = test_state();
         let result = check_pattern(&state, "REDIS CONNECTION POOL");
         assert_eq!(result["status"], "covered");
+    }
+
+    #[test]
+    fn check_pattern_boosts_tag_matches() {
+        let state = test_state();
+        // "security" is a tag on use-jwt. Should boost its ranking.
+        let result = check_pattern(&state, "security authentication tokens");
+        assert_eq!(result["status"], "covered");
+        let decisions = result["decisions"].as_array().unwrap();
+        assert_eq!(decisions[0]["name"], "use-jwt");
     }
 
     // ── get_architecture ────────────────────────────────────────────────
