@@ -233,6 +233,7 @@ fn supersede_decision(
     let reason = new_reason.unwrap_or(&old_dec.decision.reason);
 
     let component = old_dec.decision.component.clone();
+    let tags = old_dec.decision.tags.clone();
 
     // Delegate to record_decision with supersedes set.
     let record_args = serde_json::json!({
@@ -240,6 +241,7 @@ fn supersede_decision(
         "choice": choice,
         "reason": reason,
         "supersedes": old_name,
+        "tags": tags,
     });
 
     let result = record_decision(store, state, &record_args)?;
@@ -467,6 +469,37 @@ mod tests {
         let new_name = result["name"].as_str().unwrap();
         let new_dec = state.decisions.get(new_name).unwrap();
         assert_eq!(new_dec.decision.component, "auth");
+    }
+
+    #[test]
+    fn update_decision_supersede_carries_tags() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({
+            "component": "auth",
+            "choice": "Use JWT",
+            "reason": "Stateless",
+            "tags": ["security", "auth"],
+        });
+        record_decision(&store, &mut state, &d).unwrap();
+        assert_eq!(
+            state.decisions["use-jwt"].decision.tags,
+            vec!["security", "auth"]
+        );
+
+        let args = json!({
+            "name": "use-jwt",
+            "mode": "supersede",
+            "choice": "Use PASETO",
+            "reason": "Better defaults",
+        });
+        let result = update_decision(&store, &mut state, &args).unwrap();
+        let new_name = result["name"].as_str().unwrap();
+        let new_dec = state.decisions.get(new_name).unwrap();
+        assert_eq!(
+            new_dec.decision.tags,
+            vec!["security", "auth"],
+            "supersede must carry tags forward"
+        );
     }
 
     #[test]

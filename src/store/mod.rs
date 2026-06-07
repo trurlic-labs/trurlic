@@ -382,12 +382,10 @@ impl Store {
             });
         }
 
-        for name in decisions.keys() {
+        for (name, dec) in decisions {
             let hash = hashes.get(name.as_str()).cloned().unwrap_or_default();
-            let tags = existing_tags
-                .get(name.as_str())
-                .map(|t| t.to_vec())
-                .unwrap_or_default();
+            // Decision file tags are the source of truth — they survive --rebuild.
+            let tags = dec.decision.tags.clone();
             nodes.push(NodeEntry {
                 name: name.clone(),
                 kind: NodeKind::Decision,
@@ -562,6 +560,7 @@ pub(crate) mod testing {
                 choice: format!("Choice for {name}"),
                 reason: format!("Reason for {name}"),
                 alternatives: vec![],
+                tags: vec![],
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
             },
         }

@@ -204,6 +204,56 @@ mod tests {
         assert!(state.graph_index.nodes.iter().any(|n| n.name == "project"));
     }
 
+    #[test]
+    fn check_rebuild_preserves_decision_tags() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        // Record a decision with tags via MCP write path.
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        store
+            .record_decision(
+                &lock,
+                &mut state,
+                crate::store::RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless",
+                    alternatives: &[],
+                    supersedes: None,
+                    depends_on: &[],
+                    constrains: &[],
+                    tags: &["security".into(), "auth".into()],
+                },
+            )
+            .unwrap();
+        drop(lock);
+
+        // Verify tags are in the decision file.
+        let dec = store.read_decision("use-jwt").unwrap();
+        assert_eq!(dec.decision.tags, vec!["security", "auth"]);
+
+        // Rebuild graph.toml from scratch.
+        check(tmp.path(), true).unwrap();
+
+        // Tags must survive the rebuild because they live in the decision file.
+        let state = store.load_state().unwrap();
+        let node = state
+            .graph_index
+            .nodes
+            .iter()
+            .find(|n| n.name == "use-jwt")
+            .expect("decision node must exist after rebuild");
+        assert_eq!(
+            node.tags,
+            vec!["security", "auth"],
+            "tags must survive --rebuild"
+        );
+    }
+
     // ── full lifecycle ───────────────────────────────────────────────────
 
     #[test]

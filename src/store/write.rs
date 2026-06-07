@@ -338,6 +338,7 @@ impl Store {
                 choice: params.choice.into(),
                 reason: params.reason.into(),
                 alternatives: params.alternatives.to_vec(),
+                tags: params.tags.to_vec(),
                 created: Utc::now(),
             },
         };

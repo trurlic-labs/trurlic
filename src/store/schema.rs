@@ -51,6 +51,11 @@ pub struct Decision {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alternatives: Vec<String>,
 
+    /// Categorical tags for filtering and search.
+    /// Source of truth: stored here in the node file, mirrored to graph index.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+
     /// When this decision was recorded (UTC, ISO 8601 / RFC 3339).
     pub created: DateTime<Utc>,
 }
@@ -173,12 +178,63 @@ mod tests {
                 choice: "JWT with DPoP binding".into(),
                 reason: "Stateless, no session store needed".into(),
                 alternatives: vec!["Session cookies — rejected: requires server-side state".into()],
+                tags: vec!["security".into(), "auth".into()],
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
         let deserialized: DecisionFile = toml::from_str(&serialized).expect("deserialize");
         assert_eq!(file, deserialized);
+    }
+
+    #[test]
+    fn decision_without_tags_deserializes() {
+        let toml_str = r#"
+[decision]
+component = "auth"
+choice = "JWT"
+reason = "Stateless"
+created = "2025-06-01T10:30:00Z"
+"#;
+        let file: DecisionFile = toml::from_str(toml_str).expect("deserialize");
+        assert!(file.decision.tags.is_empty());
+    }
+
+    #[test]
+    fn decision_tags_round_trip() {
+        let file = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT".into(),
+                reason: "Stateless".into(),
+                alternatives: vec![],
+                tags: vec!["security".into(), "auth".into()],
+                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+            },
+        };
+        let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(serialized.contains("tags = ["));
+        let deserialized: DecisionFile = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(file.decision.tags, deserialized.decision.tags);
+    }
+
+    #[test]
+    fn decision_empty_tags_omitted_in_toml() {
+        let file = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT".into(),
+                reason: "Stateless".into(),
+                alternatives: vec![],
+                tags: vec![],
+                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+            },
+        };
+        let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(
+            !serialized.contains("tags"),
+            "empty tags should not appear in TOML"
+        );
     }
 
     #[test]
@@ -298,6 +354,7 @@ mod tests {
                 choice: "JWT".into(),
                 reason: "Stateless".into(),
                 alternatives: vec![],
+                tags: vec![],
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
             },
         };
@@ -319,10 +376,12 @@ alternatives = [
     "Session cookies — rejected: requires server-side state",
     "Opaque tokens — rejected: requires token introspection endpoint",
 ]
+tags = ["security", "auth"]
 created = "2025-06-01T10:30:00Z"
 "#;
         let file: DecisionFile = toml::from_str(toml_str).expect("deserialize spec format");
         assert_eq!(file.decision.component, "auth");
+        assert_eq!(file.decision.tags, vec!["security", "auth"]);
         assert_eq!(
             file.decision.created,
             Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap()
