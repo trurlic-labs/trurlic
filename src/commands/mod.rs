@@ -2,7 +2,6 @@ mod component;
 mod decision;
 mod design;
 mod init;
-mod map;
 mod query;
 mod serve;
 
@@ -10,7 +9,6 @@ pub use component::{add_component, add_connection, remove_component, rename_comp
 pub use decision::{decide, remove_decision};
 pub use design::design;
 pub use init::init;
-pub use map::map;
 pub use query::{check, status};
 pub use serve::serve;
 

@@ -6,7 +6,6 @@ pub(crate) mod commands;
 pub(crate) mod config;
 pub(crate) mod conversation;
 pub(crate) mod error;
-pub(crate) mod map;
 pub(crate) mod mcp;
 pub(crate) mod provider;
 pub(crate) mod store;

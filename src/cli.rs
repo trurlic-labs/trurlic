@@ -9,8 +9,8 @@ use crate::{Result, commands};
     propagate_version = true,
     disable_help_subcommand = true,
     about = "Structured architectural decisions that constrain AI code generation.",
-    long_about = "Trurl captures architectural decisions, serves them to AI coding agents\n\
-                  via MCP, and provides an interactive map for visual exploration.\n\n\
+    long_about = "Trurl captures architectural decisions and serves them to AI coding agents\n\
+                  via MCP.\n\n\
                   Start with `trurl init`, then `trurl add component <name>`."
 )]
 pub struct Cli {
@@ -82,9 +82,6 @@ pub enum Command {
     /// Start the MCP server for AI coding agent integration.
     Serve,
 
-    /// Open the interactive architecture map in your browser.
-    Map,
-
     /// Show project status: component count, decision count, issues.
     Status,
 
@@ -141,7 +138,6 @@ pub enum RemoveCommand {
     },
 }
 
-/// Dispatch a parsed CLI invocation to the appropriate handler.
 pub fn run(cli: Cli) -> Result<()> {
     let cwd = std::env::current_dir()?;
     match cli.command {
@@ -188,7 +184,6 @@ pub fn run(cli: Cli) -> Result<()> {
             &alternatives,
         ),
         Command::Serve => commands::serve(&cwd),
-        Command::Map => commands::map(&cwd),
         Command::Status => commands::status(&cwd),
         Command::Check => commands::check(&cwd),
     }
