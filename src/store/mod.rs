@@ -1,3 +1,5 @@
+#[allow(dead_code)] // consumed in Phase 5 (MCP integration)
+pub mod graph;
 pub mod schema;
 
 mod state;
