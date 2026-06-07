@@ -11,12 +11,6 @@ Structured architectural decisions that constrain AI code generation.
 
 ## The Problem
 
-AI coding tools write clean code line by line, but make inconsistent architectural decisions across your project. Error handling in file A doesn't match file B. The cache strategy changes between modules. Every generation is locally correct but globally incoherent — and nobody notices because the programmer didn't make the decisions. The AI made them silently, differently each time.
-
-The result: codebases that work but that nobody truly owns or understands.
-
-## The Problem
-
 AI engineering is real leverage - with a real cost.
 
 You're shipping faster than ever, but you've stopped making the decisions that define your architecture - the AI makes them for you, silently, differently each time, and you approve because each diff looks reasonable in isolation. The speed is real. So is the cost: you're losing ownership of your own codebase, trading deep understanding for throughput, and accumulating technical debt that no linter will ever catch.
