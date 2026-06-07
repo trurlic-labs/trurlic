@@ -7,6 +7,19 @@ use crate::{Error, Result};
 /// Maximum time to wait for the next chunk before treating the stream as stalled.
 const STREAM_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Maximum accumulated response size (2 MB). Design conversations are typically
+/// 10-50 KB; this guards against runaway streams exhausting memory.
+const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Maximum size for the SSE line buffer before a newline is found (1 MB).
+/// A legitimate SSE line is rarely over a few KB; a buffer this large without
+/// a newline indicates a corrupt or malicious stream.
+const MAX_SSE_BUFFER_BYTES: usize = 1024 * 1024;
+
+/// Timeout for reading a non-streaming error body. Prevents hanging on a
+/// server that sends headers but stalls the error payload.
+const ERROR_BODY_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub(crate) async fn stream_sse(
     mut response: reqwest::Response,
     extract: fn(&str) -> Option<String>,
@@ -38,9 +51,25 @@ pub(crate) async fn stream_sse(
 
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
+        if buffer.len() > MAX_SSE_BUFFER_BYTES {
+            return Err(Error::Api {
+                status: 0,
+                detail: format!(
+                    "SSE buffer exceeded {MAX_SSE_BUFFER_BYTES} bytes without a newline — stream may be corrupt"
+                ),
+            });
+        }
+
         for text in drain_sse_text(&mut buffer, extract) {
             on_text(&text);
             full.push_str(&text);
+        }
+
+        if full.len() > MAX_RESPONSE_BYTES {
+            return Err(Error::Api {
+                status: 0,
+                detail: format!("response exceeded {MAX_RESPONSE_BYTES} byte limit"),
+            });
         }
     }
 
@@ -107,7 +136,13 @@ pub(crate) async fn check_status(response: reqwest::Response) -> Result<reqwest:
     }
 
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+
+    // Bounded read: prevent hanging on a server that stalls the error body.
+    let body = match tokio::time::timeout(ERROR_BODY_TIMEOUT, response.text()).await {
+        Ok(Ok(text)) => text,
+        Ok(Err(_)) => String::new(),
+        Err(_) => String::new(),
+    };
 
     let detail = serde_json::from_str::<Value>(&body)
         .ok()
