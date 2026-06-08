@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn remove_decision_basic() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({ "name": "use-jwt" });
@@ -319,11 +319,11 @@ mod tests {
     fn remove_decision_blocked_by_dependent() {
         let (_tmp, store, mut state) = setup();
 
-        let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d1).unwrap();
 
         let d2 = json!({
-            "component": "auth", "choice": "Token expiry", "reason": "15 min",
+            "component": "auth", "choice": "Token expiry", "reason": "Fifteen-minute expiry window",
             "depends_on": ["use-jwt"],
         });
         record_decision(&store, &mut state, &d2).unwrap();
@@ -345,8 +345,8 @@ mod tests {
     fn remove_decision_blocked_by_pattern() {
         let (_tmp, store, mut state) = setup();
 
-        let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
-        let d2 = json!({ "component": "auth", "choice": "Token refresh", "reason": "Rotate" });
+        let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
+        let d2 = json!({ "component": "auth", "choice": "Token refresh", "reason": "Token rotation for security" });
         record_decision(&store, &mut state, &d1).unwrap();
         record_decision(&store, &mut state, &d2).unwrap();
 
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn update_decision_amend_choice() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "Use JWT v2" });
@@ -392,13 +392,13 @@ mod tests {
 
         let dec = state.decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.choice, "Use JWT v2");
-        assert_eq!(dec.decision.reason, "Stateless"); // unchanged
+        assert_eq!(dec.decision.reason, "Stateless, no server session"); // unchanged
     }
 
     #[test]
     fn update_decision_amend_reason() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "amend", "reason": "Better reason" });
@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn update_decision_amend_preserves_timestamp() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
         let original_ts = state.decisions["use-jwt"].decision.created;
 
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn update_decision_amend_rejects_no_changes() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "amend" });
@@ -437,14 +437,14 @@ mod tests {
     #[test]
     fn update_decision_supersede_creates_new() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Session cookies", "reason": "Simple" });
+        let d = json!({ "component": "auth", "choice": "Session cookies", "reason": "Simple session-based model" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({
             "name": "session-cookies",
             "mode": "supersede",
             "choice": "JWT tokens",
-            "reason": "Stateless",
+            "reason": "Stateless, no server session",
         });
         let result = update_decision(&store, &mut state, &args).unwrap();
         let new_name = result["name"].as_str().unwrap();
@@ -463,7 +463,7 @@ mod tests {
     #[test]
     fn update_decision_supersede_inherits_component() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({
@@ -484,7 +484,7 @@ mod tests {
         let d = json!({
             "component": "auth",
             "choice": "Use JWT",
-            "reason": "Stateless",
+            "reason": "Stateless, no server session",
             "tags": ["security", "auth"],
         });
         record_decision(&store, &mut state, &d).unwrap();
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn update_decision_rejects_invalid_mode() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "X", "reason": "Y" });
+        let d = json!({ "component": "auth", "choice": "X", "reason": "test reason placeholder" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({ "name": "x", "mode": "delete" });
@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn remove_decision_workflow_suggests_validate() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let result = remove_decision(&store, &mut state, &json!({ "name": "use-jwt" })).unwrap();
@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn amend_workflow_has_comprehension_gate() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "Use JWT v2" });
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn supersede_workflow_has_comprehension_gate() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless" });
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({

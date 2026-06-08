@@ -81,6 +81,15 @@ pub(crate) fn get_context(
         "not_covered"
     };
 
+    // Concern coverage: project rules + component decisions.
+    let coverage_decisions: Vec<&crate::store::DecisionFile> = project_decisions
+        .iter()
+        .chain(component_decisions.iter())
+        .map(|(_, d)| *d)
+        .collect();
+    let (covered_concerns, uncovered_concerns) =
+        super::prompts::compute_concern_coverage(&coverage_decisions);
+
     let workflow = match status {
         "covered" => serde_json::json!({
             "hint": "ready_to_implement",
@@ -121,6 +130,10 @@ pub(crate) fn get_context(
             .collect::<Vec<_>>(),
         "patterns": format_patterns(&patterns),
         "related_decisions": combined_related,
+        "concern_coverage": {
+            "covered": covered_concerns,
+            "uncovered": uncovered_concerns,
+        },
         "brief": brief,
         "status": status,
         "workflow": workflow,
@@ -394,18 +407,36 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
 pub(crate) fn get_architecture(state: &ProjectState) -> Value {
     let graph = &state.graph;
 
+    // Pre-compute project rules (shared across all components for coverage).
+    let project_rules = graph.project_decisions();
+    let project_rule_refs: Vec<&DecisionFile> = project_rules.iter().map(|(_, d)| *d).collect();
+
     let components: Vec<Value> = state
         .components
         .iter()
         .map(|(name, comp)| {
-            let decision_count = graph.decisions_for(name).len();
+            let comp_decisions = graph.decisions_for(name);
+            let decision_count = comp_decisions.len();
             let connects_to = graph.connects_to(name);
+
+            // Concern coverage: project rules + this component's decisions.
+            let all_decs: Vec<&DecisionFile> = project_rule_refs
+                .iter()
+                .copied()
+                .chain(comp_decisions.iter().map(|(_, d)| *d))
+                .collect();
+            let (covered, uncovered) = super::prompts::compute_concern_coverage(&all_decs);
 
             serde_json::json!({
                 "name": name,
                 "description": comp.component.description,
                 "connects_to": connects_to,
                 "decision_count": decision_count,
+                "concern_coverage": {
+                    "covered": covered.len(),
+                    "uncovered": uncovered.len(),
+                    "uncovered_concerns": uncovered,
+                },
             })
         })
         .collect();
@@ -1063,5 +1094,38 @@ mod tests {
         let result = get_context(&state, "project", None).unwrap();
         assert_eq!(result["workflow"]["hint"], "design_needed");
         assert_eq!(result["workflow"]["next"], "get_design_prompt");
+    }
+
+    // ── concern coverage ──────────────────────────────────────────────
+
+    #[test]
+    fn get_context_includes_concern_coverage() {
+        let state = test_state();
+        let result = get_context(&state, "auth", None).unwrap();
+        let coverage = &result["concern_coverage"];
+        assert!(coverage["covered"].is_array());
+        assert!(coverage["uncovered"].is_array());
+        // Project-wide "Result<T, AppError>" covers Error handling.
+        let covered = coverage["covered"].as_array().unwrap();
+        assert!(
+            covered
+                .iter()
+                .any(|c| c.as_str().unwrap().contains("Error handling")),
+            "project rule should cover Error handling: {covered:?}"
+        );
+        // Most concerns remain uncovered.
+        let uncovered = coverage["uncovered"].as_array().unwrap();
+        assert!(uncovered.len() > covered.len());
+    }
+
+    #[test]
+    fn get_architecture_includes_per_component_coverage() {
+        let state = test_state();
+        let result = get_architecture(&state);
+        let components = result["components"].as_array().unwrap();
+        let auth = components.iter().find(|c| c["name"] == "auth").unwrap();
+        assert!(auth["concern_coverage"]["covered"].is_number());
+        assert!(auth["concern_coverage"]["uncovered"].is_number());
+        assert!(auth["concern_coverage"]["uncovered_concerns"].is_array());
     }
 }

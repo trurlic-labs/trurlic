@@ -17,6 +17,14 @@ pub(super) const MAX_TEXT_ARG_BYTES: usize = 50_000;
 /// Maximum number of elements in any array argument.
 pub(super) const MAX_ARRAY_ARG_LEN: usize = 100;
 
+/// Minimum byte length for a decision's `reason` field.
+/// Forces actual reasoning instead of rubber-stamp approvals.
+const MIN_REASON_BYTES: usize = 10;
+
+/// Maximum byte length for a decision's `choice` field.
+/// A choice is a concise title, not a paragraph.
+const MAX_CHOICE_BYTES: usize = 200;
+
 pub(super) fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     let val = args
         .get(key)
@@ -147,6 +155,22 @@ pub(crate) fn record_decision(
         return Err(format!("component `{component}` does not exist"));
     }
 
+    // Decision quality floor — reject vague or malformed decisions.
+    if reason.len() < MIN_REASON_BYTES {
+        return Err(format!(
+            "reason must be at least {MIN_REASON_BYTES} characters — \
+             a real decision needs actual reasoning ({} given)",
+            reason.len(),
+        ));
+    }
+    if choice.len() > MAX_CHOICE_BYTES {
+        return Err(format!(
+            "choice must be ≤{MAX_CHOICE_BYTES} characters — \
+             use a concise title, not a paragraph ({} given)",
+            choice.len(),
+        ));
+    }
+
     // Validate edge targets exist.
     for dep in &depends_on {
         if !state.decisions.contains_key(dep.as_str()) {
@@ -185,6 +209,13 @@ pub(crate) fn record_decision(
 
     // Collect warnings for the caller.
     let mut warnings: Vec<String> = Vec::new();
+    if alternatives.is_empty() {
+        warnings.push(
+            "no alternatives provided — a meaningful decision should \
+             have at least one rejected option"
+                .into(),
+        );
+    }
     if let Some(sup) = supersedes {
         for (pat_name, _) in state.graph.patterns_containing(sup) {
             warnings.push(format!(
@@ -193,10 +224,14 @@ pub(crate) fn record_decision(
         }
     }
 
+    // Server-side pattern detection: scan for tag overlaps across components.
+    let pattern_opportunity = detect_pattern_opportunity(state, &stem);
+
     Ok(serde_json::json!({
         "name": stem,
         "path": store.decision_path(&stem).display().to_string(),
         "warnings": warnings,
+        "pattern_opportunity": pattern_opportunity,
         "workflow": {
             "hint": "comprehension_gate",
             "decision": { "choice": choice, "reason": reason },
@@ -464,6 +499,86 @@ pub(crate) fn add_connection(
     }))
 }
 
+// ── Pattern opportunity detection ──────────────────────────────────────────
+
+/// Scan the graph for tag overlaps between the newly recorded decision and
+/// existing decisions in *other* components that are not already co-members
+/// of a pattern. Returns `Value::Null` if no opportunity is found, or a
+/// JSON object describing the strongest candidate group.
+///
+/// Complexity: O(D × T) where D = total decisions, T = new decision's tag
+/// count. Both are small — a mature project has ~100 decisions and ~5 tags
+/// per decision.
+fn detect_pattern_opportunity(state: &store::ProjectState, new_stem: &str) -> Value {
+    let new_dec = match state.decisions.get(new_stem) {
+        Some(d) => d,
+        None => return Value::Null,
+    };
+    let new_tags = &new_dec.decision.tags;
+    if new_tags.is_empty() {
+        return Value::Null;
+    }
+
+    // Collect decisions already in a pattern with the new decision.
+    let mut co_patterned: HashSet<&str> = HashSet::new();
+    for (pat_name, _) in state.graph.patterns_containing(new_stem) {
+        for (member, _) in state.graph.decisions_for_pattern(pat_name) {
+            co_patterned.insert(member);
+        }
+    }
+
+    // For each tag, find decisions sharing it across different components.
+    let new_component = &new_dec.decision.component;
+    let mut best_tag: Option<&str> = None;
+    let mut best_decisions: Vec<&str> = Vec::new();
+    let mut best_components: HashSet<&str> = HashSet::new();
+
+    for tag in new_tags {
+        let mut decisions = vec![new_stem];
+        let mut components: HashSet<&str> = HashSet::new();
+        components.insert(new_component);
+
+        for (name, dec) in &state.decisions {
+            if name.as_str() == new_stem {
+                continue;
+            }
+            if co_patterned.contains(name.as_str()) {
+                continue;
+            }
+            if dec.decision.tags.iter().any(|t| t == tag) {
+                decisions.push(name);
+                components.insert(&dec.decision.component);
+            }
+        }
+
+        // A pattern opportunity needs 2+ decisions across 2+ components.
+        if decisions.len() >= 2 && components.len() >= 2 && decisions.len() > best_decisions.len() {
+            best_tag = Some(tag);
+            best_decisions = decisions;
+            best_components = components;
+        }
+    }
+
+    match best_tag {
+        Some(tag) => {
+            let n_decisions = best_decisions.len();
+            let components: Vec<&str> = best_components.into_iter().collect();
+            let n_components = components.len();
+            serde_json::json!({
+                "shared_tag": tag,
+                "decisions": best_decisions,
+                "components": components,
+                "message": format!(
+                    "{n_decisions} decisions across {n_components} components \
+                     share the tag \"{tag}\". \
+                     Consider recording a pattern with record_pattern.",
+                ),
+            })
+        }
+        None => Value::Null,
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -515,7 +630,7 @@ mod tests {
         let base = json!({
             "component": "auth",
             "choice": "Use tokens",
-            "reason": "Stateless",
+            "reason": "Stateless, no server session",
         });
         record_decision(&store, &mut state, &base).unwrap();
 
@@ -577,7 +692,7 @@ mod tests {
         let args = json!({
             "component": "ghost",
             "choice": "x",
-            "reason": "y",
+            "reason": "test validation target",
         });
         let err = record_decision(&store, &mut state, &args).unwrap_err();
         assert!(err.contains("ghost"));
@@ -589,7 +704,7 @@ mod tests {
         let args = json!({
             "component": "auth",
             "choice": "x",
-            "reason": "y",
+            "reason": "test validation target",
             "depends_on": ["ghost"],
         });
         let err = record_decision(&store, &mut state, &args).unwrap_err();
@@ -600,11 +715,11 @@ mod tests {
     fn record_decision_rejects_cycle() {
         let (_tmp, store, mut state) = setup();
 
-        let a = json!({ "component": "auth", "choice": "A", "reason": "r" });
+        let a = json!({ "component": "auth", "choice": "A", "reason": "cycle dependency test" });
         record_decision(&store, &mut state, &a).unwrap();
 
         let b = json!({
-            "component": "auth", "choice": "B", "reason": "r",
+            "component": "auth", "choice": "B", "reason": "cycle dependency test",
             "depends_on": ["a"],
         });
         record_decision(&store, &mut state, &b).unwrap();
@@ -627,8 +742,9 @@ mod tests {
         let (_tmp, store, mut state) = setup();
 
         // Record two decisions first.
-        let d1 = json!({ "component": "auth", "choice": "Use Redis", "reason": "Fast" });
-        let d2 = json!({ "component": "database", "choice": "Redis pool", "reason": "Shared" });
+        let d1 =
+            json!({ "component": "auth", "choice": "Use Redis", "reason": "Fast in-memory reads" });
+        let d2 = json!({ "component": "database", "choice": "Redis pool", "reason": "Shared pool reduces overhead" });
         record_decision(&store, &mut state, &d1).unwrap();
         record_decision(&store, &mut state, &d2).unwrap();
 
@@ -666,7 +782,7 @@ mod tests {
     #[test]
     fn record_pattern_rejects_single_decision() {
         let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "X", "reason": "Y" });
+        let d = json!({ "component": "auth", "choice": "X", "reason": "test reason placeholder" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let args = json!({
@@ -813,13 +929,13 @@ mod tests {
         let args = json!({
             "component": "auth",
             "choice": "Use JWT",
-            "reason": "Stateless auth",
+            "reason": "Stateless auth, no session store",
         });
         let result = record_decision(&store, &mut state, &args).unwrap();
         let wf = &result["workflow"];
         assert_eq!(wf["hint"], "comprehension_gate");
         assert_eq!(wf["decision"]["choice"], "Use JWT");
-        assert_eq!(wf["decision"]["reason"], "Stateless auth");
+        assert_eq!(wf["decision"]["reason"], "Stateless auth, no session store");
         assert!(
             wf["message"]
                 .as_str()
@@ -831,8 +947,9 @@ mod tests {
     #[test]
     fn record_pattern_returns_name_not_slug() {
         let (_tmp, store, mut state) = setup();
-        let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Fast" });
-        let d2 = json!({ "component": "database", "choice": "JWT verify", "reason": "Auth" });
+        let d1 =
+            json!({ "component": "auth", "choice": "Use JWT", "reason": "Fast in-memory reads" });
+        let d2 = json!({ "component": "database", "choice": "JWT verify", "reason": "Authentication verification" });
         record_decision(&store, &mut state, &d1).unwrap();
         record_decision(&store, &mut state, &d2).unwrap();
 
@@ -859,5 +976,144 @@ mod tests {
         let args = json!({ "from": "auth", "to": "database" });
         let result = add_connection(&store, &mut state, &args).unwrap();
         assert_eq!(result["workflow"]["hint"], "topology_updated");
+    }
+
+    // ── decision quality floor ────────────────────────────────────────
+
+    #[test]
+    fn record_decision_rejects_short_reason() {
+        let (_tmp, store, mut state) = setup();
+        let args = json!({
+            "component": "auth",
+            "choice": "Use JWT",
+            "reason": "ok",
+        });
+        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        assert!(
+            err.contains("at least") && err.contains("characters"),
+            "should reject short reason: {err}"
+        );
+    }
+
+    #[test]
+    fn record_decision_rejects_long_choice() {
+        let (_tmp, store, mut state) = setup();
+        let long_choice = "x".repeat(MAX_CHOICE_BYTES + 1);
+        let args = json!({
+            "component": "auth",
+            "choice": long_choice,
+            "reason": "This is a valid reason",
+        });
+        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        assert!(err.contains("200"), "should reject long choice: {err}");
+    }
+
+    #[test]
+    fn record_decision_warns_no_alternatives() {
+        let (_tmp, store, mut state) = setup();
+        let args = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Stateless authentication model",
+        });
+        let result = record_decision(&store, &mut state, &args).unwrap();
+        let warnings = result["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("alternatives")),
+            "should warn about missing alternatives: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn record_decision_no_warning_with_alternatives() {
+        let (_tmp, store, mut state) = setup();
+        let args = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Stateless authentication model",
+            "alternatives": ["Session cookies — server-side state"],
+        });
+        let result = record_decision(&store, &mut state, &args).unwrap();
+        let warnings = result["warnings"].as_array().unwrap();
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("alternatives")),
+            "should not warn when alternatives provided"
+        );
+    }
+
+    // ── pattern detection ──────────────────────────────────────────────
+
+    #[test]
+    fn record_decision_detects_pattern_opportunity() {
+        let (_tmp, store, mut state) = setup();
+
+        // Record a tagged decision in auth.
+        let d1 = json!({
+            "component": "auth",
+            "choice": "Redis for session tokens",
+            "reason": "Fast in-memory lookups for token validation",
+            "tags": ["redis"],
+        });
+        record_decision(&store, &mut state, &d1).unwrap();
+
+        // Record a tagged decision in database with overlapping tag.
+        let d2 = json!({
+            "component": "database",
+            "choice": "Redis for query cache",
+            "reason": "Avoid repeated expensive queries with caching",
+            "tags": ["redis"],
+        });
+        let result = record_decision(&store, &mut state, &d2).unwrap();
+
+        let opp = &result["pattern_opportunity"];
+        assert!(!opp.is_null(), "should detect pattern opportunity");
+        assert_eq!(opp["shared_tag"], "redis");
+        let decisions = opp["decisions"].as_array().unwrap();
+        assert!(decisions.len() >= 2);
+    }
+
+    #[test]
+    fn record_decision_no_pattern_without_tags() {
+        let (_tmp, store, mut state) = setup();
+        let args = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Stateless authentication model",
+        });
+        let result = record_decision(&store, &mut state, &args).unwrap();
+        assert!(
+            result["pattern_opportunity"].is_null(),
+            "should not suggest patterns when decision has no tags"
+        );
+    }
+
+    #[test]
+    fn record_decision_no_pattern_for_same_component() {
+        let (_tmp, store, mut state) = setup();
+
+        // Two tagged decisions in the SAME component — not a cross-component pattern.
+        let d1 = json!({
+            "component": "auth",
+            "choice": "Redis for session tokens",
+            "reason": "Fast in-memory lookups for tokens",
+            "tags": ["redis"],
+        });
+        record_decision(&store, &mut state, &d1).unwrap();
+
+        let d2 = json!({
+            "component": "auth",
+            "choice": "Redis for rate limit counters",
+            "reason": "Per-key counters need fast increment",
+            "tags": ["redis"],
+        });
+        let result = record_decision(&store, &mut state, &d2).unwrap();
+        assert!(
+            result["pattern_opportunity"].is_null(),
+            "same-component tag overlap is not a cross-component pattern"
+        );
     }
 }

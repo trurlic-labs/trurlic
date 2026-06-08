@@ -11,7 +11,10 @@ use super::context;
 /// Architectural concern areas and keywords for matching against decision
 /// content. Used to track design session progress: decisions matching a
 /// concern's keywords mark it as covered, so the agent focuses on gaps.
-const CONCERNS: &[(&str, &[&str])] = &[
+///
+/// Also used by `get_context` and `get_architecture` to report per-component
+/// coverage so the agent can identify under-designed areas.
+pub(super) const CONCERNS: &[(&str, &[&str])] = &[
     (
         "Data format & serialization",
         &[
@@ -169,7 +172,7 @@ const CONCERNS: &[(&str, &[&str])] = &[
 
 /// Check if a decision's content matches any keyword for a concern area.
 /// Uses word-boundary matching to avoid substring false positives.
-fn decision_covers_concern(dec: &DecisionFile, keywords: &[&str]) -> bool {
+pub(super) fn decision_covers_concern(dec: &DecisionFile, keywords: &[&str]) -> bool {
     let text = format!(
         "{} {} {}",
         dec.decision.choice,
@@ -224,6 +227,31 @@ fn concern_status(decisions: &[&DecisionFile]) -> String {
     }
 
     out
+}
+
+/// Structured concern coverage for a set of decisions.
+///
+/// Returns `(covered, uncovered)` concern names. Used by `get_context`
+/// and `get_architecture` to surface per-component design gaps without
+/// requiring a design session.
+pub(super) fn compute_concern_coverage(
+    decisions: &[&DecisionFile],
+) -> (Vec<&'static str>, Vec<&'static str>) {
+    let mut covered = Vec::new();
+    let mut uncovered = Vec::new();
+
+    for &(name, keywords) in CONCERNS {
+        if decisions
+            .iter()
+            .any(|d| decision_covers_concern(d, keywords))
+        {
+            covered.push(name);
+        } else {
+            uncovered.push(name);
+        }
+    }
+
+    (covered, uncovered)
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -990,5 +1018,34 @@ mod tests {
             output.contains("Concurrency"),
             "Concurrency should be uncovered"
         );
+    }
+
+    #[test]
+    fn compute_concern_coverage_structured() {
+        let security_dec = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT with DPoP binding".into(),
+                reason: "Token security via proof-of-possession".into(),
+                alternatives: vec![],
+                tags: vec!["security".into()],
+                created: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            },
+        };
+        let error_dec = DecisionFile {
+            decision: Decision {
+                component: "project".into(),
+                choice: "Result<T, AppError>".into(),
+                reason: "Consistent error propagation".into(),
+                alternatives: vec![],
+                tags: vec![],
+                created: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            },
+        };
+        let (covered, uncovered) = compute_concern_coverage(&[&security_dec, &error_dec]);
+        assert!(covered.contains(&"Security boundaries"));
+        assert!(covered.contains(&"Error handling & failure modes"));
+        assert!(uncovered.contains(&"Concurrency & locking"));
+        assert_eq!(covered.len() + uncovered.len(), CONCERNS.len());
     }
 }
