@@ -330,6 +330,14 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
         "You are running a Trurl design session for component [{component}].\n\n"
     ));
 
+    // ── Source code mandate ─────────────────────────────────────────
+    out.push_str(
+        "MANDATORY FIRST STEP — READ THE SOURCE CODE:\n\
+         Before asking any questions, use your file-reading tools to read the \
+         actual source files for this component. Do NOT rely on README or \
+         documentation — read the implementation. The source code is truth.\n\n",
+    );
+
     // Existing constraints.
     let project_rules = graph.project_decisions();
     let existing = graph.decisions_for(component);
@@ -365,6 +373,23 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
         out.push_str(&format!("TASK CONTEXT: {t}\n\n"));
     }
 
+    // Scope boundary.
+    if component == "project" {
+        out.push_str(
+            "SCOPE — PROJECT LEVEL:\n\
+             Project decisions are cross-cutting principles: error strategy, \
+             coding standards, security posture, dependency policy, build \
+             configuration. Do NOT record component-specific implementation \
+             details here.\n\n",
+        );
+    } else {
+        out.push_str(&format!(
+            "SCOPE — COMPONENT [{component}]:\n\
+             Record only decisions specific to this component. Cross-cutting \
+             principles belong at project scope.\n\n"
+        ));
+    }
+
     // Dynamic concern tracking.
     let all_decs: Vec<&DecisionFile> = project_rules
         .iter()
@@ -373,13 +398,13 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
         .collect();
     out.push_str(&concern_status(&all_decs));
 
-    // Decision count context.
+    // Decision count context — no hardcoded numbers.
     let n_existing = existing.len();
-    let n_connections = connects_to.len() + connects_from.len();
     out.push_str(&format!(
-        "CURRENT STATE: {n_existing} decisions recorded. \
-         Components with {n_connections}+ connections typically need 10-20 decisions. \
-         Components with 0-1 connections typically need 3-8.\n\n",
+        "CURRENT STATE: {n_existing} decisions recorded.\n\
+         The number of decisions is NOT predetermined — it depends on the \
+         component's complexity. Stop when every concern area is covered and \
+         the user can articulate the design, not when you reach a count.\n\n",
     ));
 
     out.push_str(
@@ -390,28 +415,34 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
          After each answer, call record_decision with tags: [\"scope\"].\n\n\
          PHASE 2 — TECHNICAL CHOICES:\n\
          Work through each UNCOVERED concern above. For each:\n\
+         - Read the relevant source code for that concern area\n\
          - Present 2-3 viable options with trade-offs\n\
          - Ask the user to choose\n\
          - Call record_decision with tags: [concern_area_lowercase, specific_topic]\n\
            Example tags: [\"concurrency\", \"file-locking\"] or [\"security\", \"path-validation\"]\n\
            Tags are REQUIRED — they enable server-side pattern detection.\n\
-         - If the component has domain-specific concerns not in the list, ask about those too.\n\
-         - Every 3 decisions: \"What other architectural choices have we not captured?\"\n\n\
+         - If the component has domain-specific concerns not in the list, ask about those too.\n\n\
          COMPREHENSION GATE (after each decision):\n\
          Ask the USER to state one concrete implication:\n\
            \"What does this decision mean in practice? Give me one specific scenario.\"\n\
          The USER must articulate the implication — not you.\n\
-         If their answer is correct, move on.\n\
-         If wrong, correct them and ask again.\n\
-         Do not record the decision until the user can explain what it implies.\n\n\
+         If their answer is CORRECT BUT SHALLOW (e.g. a one-sentence restatement):\n\
+           You are a senior engineer. Expand their understanding:\n\
+           - Explain the deeper implications they didn't mention\n\
+           - Give a concrete failure scenario this decision prevents\n\
+           - Connect it to other decisions already recorded\n\
+           Then: \"Does that deepen your understanding? Can you add to \
+           what you said?\"\n\
+         If WRONG: correct them, explain clearly, and ask again.\n\
+         Do not record the decision until the user demonstrates understanding.\n\n\
          \"I DON'T KNOW\" PROTOCOL:\n\
          When the user says \"I don't know\" or gives a ≤3 word answer:\n\
-         1. Do NOT explain the answer.\n\
-         2. Decompose into a simpler question: \"Let me narrow it down —\n\
-            [specific sub-question about a concrete scenario].\"\n\
-         3. If they still cannot answer after 2 attempts, give a brief\n\
-            explanation (2-3 sentences), then ask: \"Can you restate that\n\
-            in your own words?\" Record only after they do.\n\n\
+         You are a senior engineer teaching. Do explain:\n\
+         1. Describe what the code does and why the decision matters (3-4 sentences)\n\
+         2. Give one concrete failure scenario if the decision were different\n\
+         3. Then ask: \"Can you restate that in your own words?\"\n\
+         Record only after they demonstrate understanding.\n\
+         This is a teaching moment, not a test.\n\n\
          PATTERN DETECTION:\n\
          If record_decision returns a pattern_opportunity field (non-null),\n\
          present it to the user. If they confirm, call record_pattern\n\
@@ -419,11 +450,10 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
          PHASE 3 — COVERAGE CHECK:\n\
          Before proceeding to the summary, verify you have addressed the\n\
          UNCOVERED concerns listed above. If more than half remain uncovered,\n\
-         go back and probe each one. A component is not \"done\" with 3 decisions\n\
-         when 8 concern areas are unexplored.\n\n\
+         go back and probe each one.\n\n\
          PHASE 4 — SUMMARY CHECKPOINT:\n\
-         Ask: \"Without looking at the list, write 3-5 sentences describing\n\
-         the constraints any code touching this component must respect.\"\n\
+         Ask: \"Without looking at the list, describe in 3-5 sentences the \
+         constraints any code touching this component must respect.\"\n\
          Do NOT help. Do NOT break it into sub-questions. Do NOT give hints.\n\
          If the user cannot produce a coherent summary, the comprehension\n\
          gates were insufficient — revisit the decisions they could not explain.\n\
@@ -467,7 +497,9 @@ fn build_quick_instructions(graph: &InMemoryGraph, component: &str, task: Option
     }
 
     out.push_str(
-        "STEP 1 — CONFIRM EXISTING CONSTRAINTS:\n\
+        "FIRST: Read the source code relevant to this task before asking \
+         questions. The code is truth.\n\n\
+         STEP 1 — CONFIRM EXISTING CONSTRAINTS:\n\
          Present the constraints above and ask:\n\
          \"This task touches this component. Here are the existing constraints.\n\
          Do all of these still apply, or does something need to change?\"\n\
@@ -476,11 +508,14 @@ fn build_quick_instructions(graph: &InMemoryGraph, component: &str, task: Option
          STEP 2 — CHECK FOR NEW DECISIONS:\n\
          Ask: \"Does this task introduce any new architectural choice not\n\
          covered by the constraints above?\"\n\
-         If NO → call get_context for the implementation brief and proceed.\n\
+         If NO → the session is complete. Call advance to check readiness.\n\
          If YES → ask 1-3 targeted questions, call record_decision for each.\n\n\
          COMPREHENSION GATE (only if any decision was changed or added):\n\
          Ask the user: \"What does this change mean in practice?\"\n\
-         The user must articulate the implication — not you.\n",
+         The user must articulate the implication — not you.\n\
+         If their answer is correct but shallow, expand their understanding \
+         as a senior engineer would — deeper implications, failure scenarios, \
+         connections to other decisions — then confirm they follow.\n",
     );
 
     out
@@ -489,73 +524,148 @@ fn build_quick_instructions(graph: &InMemoryGraph, component: &str, task: Option
 // ── Learn mode ──────────────────────────────────────────────────────────────
 
 fn build_learn_instructions(graph: &InMemoryGraph, component: &str) -> String {
-    let mut out = String::with_capacity(512);
+    let mut out = String::with_capacity(2048);
 
     out.push_str(&format!(
         "You are running a Trurl learn session for [{component}].\n\
-         The goal is understanding, not implementation.\n\n"
+         The goal is understanding AND capturing — every implicit decision \
+         in the code becomes an explicit, recorded decision.\n\n"
     ));
 
+    // ── Source code mandate ─────────────────────────────────────────
+    out.push_str(
+        "MANDATORY FIRST STEP — READ THE SOURCE CODE:\n\
+         Use your file-reading tools to read the actual source files for \
+         this component. Do NOT rely on README, documentation, or comments \
+         about the code — read the implementation. The source code is truth.\n\n\
+         For project scope: read Cargo.toml, the crate root (lib.rs or \
+         main.rs), and any configuration files.\n\
+         For components: read every source file in the component's module.\n\n",
+    );
+
     let decisions = graph.decisions_for(component);
+    let project_rules = graph.project_decisions();
     let patterns = graph.patterns_for(component);
 
-    if decisions.is_empty() {
-        out.push_str(
-            "No decisions recorded for this component yet.\n\n\
-             This component exists in the codebase but has no architectural decisions\n\
-             captured. Probe for implicit decisions that are embedded in the code:\n\n\
-             Ask the user about each of these (skip clearly irrelevant ones):\n\
-             - What data format does this component use, and why?\n\
-             - How does it handle errors and failure modes?\n\
-             - What concurrency or locking strategy does it use?\n\
-             - What integrity or validation rules does it enforce?\n\
-             - What are its performance constraints?\n\
-             - What are its external interfaces?\n\
-             - What security boundaries does it respect?\n\
-             - What are its key dependencies, and why those?\n\n\
-             For each answer that reveals an architectural choice, call record_decision.\n\
-             After each decision, ask \"What else?\" until the user says they're done.\n\
-             Learning IS capturing — these are decisions that already exist in the code\n\
-             but haven't been made explicit.\n",
-        );
-        return out;
-    }
-
-    out.push_str("Present each decision one by one. For each:\n\n");
-
-    for (name, d) in &decisions {
-        out.push_str(&format!("DECISION: {} — {}\n", name, d.decision.choice));
-        out.push_str(&format!("  Reason: {}\n", d.decision.reason));
-        if !d.decision.alternatives.is_empty() {
-            out.push_str("  Alternatives considered:\n");
-            for alt in &d.decision.alternatives {
-                out.push_str(&format!("    - {alt}\n"));
-            }
+    // ── Existing decisions context ──────────────────────────────────
+    if !project_rules.is_empty() || !decisions.is_empty() {
+        out.push_str("ALREADY RECORDED (do not re-record these):\n");
+        for (name, d) in &project_rules {
+            out.push_str(&format!("  [project] {}: {}\n", name, d.decision.choice));
         }
-        out.push_str(&format!(
-            "  → Ask: \"Why was `{}` chosen over the alternatives?\"\n",
-            d.decision.choice
-        ));
-        out.push_str("  → Ask: \"What would need to change if we reversed this?\"\n\n");
+        for (name, d) in &decisions {
+            out.push_str(&format!("  {}: {}\n", name, d.decision.choice));
+        }
+        out.push('\n');
     }
 
+    // ── Analysis phase ──────────────────────────────────────────────
+    out.push_str(
+        "STEP 1 — ANALYZE THE CODE:\n\
+         After reading the source, build a numbered list of every \
+         architectural decision you can identify. Look for:\n\
+         - Data structures and why they were chosen\n\
+         - Error handling strategy (Result types, error enums, panics)\n\
+         - Concurrency primitives (locks, channels, atomics, async)\n\
+         - Validation and integrity checks\n\
+         - Performance-sensitive paths (caching, batching, allocation)\n\
+         - External boundaries (protocols, serialization, I/O)\n\
+         - Security measures (input validation, secret handling, trust boundaries)\n\
+         - Storage strategy (file layout, formats, atomicity)\n\
+         - Dependency choices (why this crate, not that one)\n\
+         - What the code explicitly does NOT do (scope boundaries)\n\n\
+         Present this list to the user: \"I found N architectural decisions \
+         in the source code. Let me go through each one.\"\n\
+         The list drives the session — do not stop until every identified \
+         decision has been discussed.\n\n",
+    );
+
+    // ── Scope boundary ──────────────────────────────────────────────
+    if component == "project" {
+        out.push_str(
+            "SCOPE — PROJECT LEVEL:\n\
+             Project decisions are cross-cutting principles that apply \
+             everywhere: error strategy, coding standards, security posture, \
+             dependency policy, build configuration. If a decision is specific \
+             to one component's implementation, it belongs on that component, \
+             not here.\n\n",
+        );
+    } else {
+        out.push_str(&format!(
+            "SCOPE — COMPONENT [{component}]:\n\
+             Record only decisions specific to this component's implementation. \
+             Cross-cutting principles (error strategy, coding standards) belong \
+             at project scope. If a decision applies to multiple components \
+             equally, it is a project rule.\n\n"
+        ));
+    }
+
+    // ── Walkthrough protocol ────────────────────────────────────────
+    out.push_str(
+        "STEP 2 — SYSTEMATIC WALKTHROUGH:\n\
+         For each decision from your analysis:\n\
+         1. State what you found in the code (cite the specific file/function)\n\
+         2. Explain WHY this is an architectural decision, not just an \
+            implementation detail — what would break if someone changed it?\n\
+         3. Ask the user to confirm or correct your understanding\n\n\
+         WHEN THE USER'S ANSWER IS CORRECT BUT SHALLOW:\n\
+         Do not just move on. You are a senior engineer mentoring. Expand:\n\
+         - Explain the deeper implications they may not have considered\n\
+         - Give a concrete scenario where this decision prevents a real problem\n\
+         - Connect it to other decisions in the graph\n\
+         Then ask: \"Does that match your reasoning, or was there something \
+         else driving this choice?\"\n\n\
+         WHEN THE USER SAYS \"I DON'T KNOW\":\n\
+         This is a teaching moment, not a failure. Explain it:\n\
+         1. Describe what the code does and why it matters (2-4 sentences)\n\
+         2. Give one concrete failure scenario if the decision were different\n\
+         3. Ask: \"Can you restate that in your own words?\"\n\
+         Record the decision after they demonstrate understanding.\n\n\
+         After each confirmed decision, call record_decision immediately. \
+         Include specific tags matching the concern area (e.g. [\"concurrency\", \
+         \"file-locking\"]). Tags are required.\n\n",
+    );
+
+    // ── Existing decision review ────────────────────────────────────
+    if !decisions.is_empty() {
+        out.push_str(
+            "STEP 2.5 — REVIEW ALREADY-RECORDED DECISIONS:\n\
+             Before probing for new ones, briefly confirm each existing \
+             decision still matches the code:\n",
+        );
+        for (name, d) in &decisions {
+            out.push_str(&format!(
+                "  {}: {} — ask: \"Is this still accurate?\"\n",
+                name, d.decision.choice,
+            ));
+        }
+        out.push_str(
+            "If any are outdated → call update_decision(mode=\"supersede\").\n\
+             Then continue identifying NEW decisions from the code analysis.\n\n",
+        );
+    }
+
+    // ── Patterns ────────────────────────────────────────────────────
     if !patterns.is_empty() {
-        out.push_str("PATTERNS:\n");
+        out.push_str("EXISTING PATTERNS:\n");
         for (name, p) in &patterns {
             out.push_str(&format!("- {}: {}\n", name, p.pattern.description));
         }
         out.push('\n');
     }
 
+    // ── Completion ──────────────────────────────────────────────────
     out.push_str(
-        "If the user says \"actually, this should be different\", call \
-         update_decision with mode=\"supersede\".\n\n\
-         AFTER ALL DECISIONS REVIEWED:\n\
-         Ask: \"Are there architectural decisions about this component that exist\n\
-         in the code but haven't been captured here? Common areas: error handling,\n\
-         concurrency, data formats, performance constraints, security boundaries.\"\n\
-         For each new decision identified, call record_decision.\n\n\
-         Learning IS the output. Do not proceed to implementation.\n",
+        "STEP 3 — COMPLETENESS CHECK:\n\
+         After all identified decisions are recorded, ask:\n\
+         \"I've captured N decisions from the source code. Are there \
+         architectural choices I missed — things that aren't obvious from \
+         reading the code but that you decided deliberately?\"\n\n\
+         If record_decision returns a pattern_opportunity field (non-null), \
+         present it to the user. If they confirm, call record_pattern \
+         immediately.\n\n\
+         The session ends when the user confirms all decisions are captured. \
+         Do not proceed to implementation.\n",
     );
 
     out
@@ -564,12 +674,19 @@ fn build_learn_instructions(graph: &InMemoryGraph, component: &str) -> String {
 // ── Review mode ─────────────────────────────────────────────────────────────
 
 fn build_review_instructions(graph: &InMemoryGraph, component: &str) -> String {
-    let mut out = String::with_capacity(512);
+    let mut out = String::with_capacity(1024);
 
     out.push_str(&format!(
         "You are running a Trurl design review for [{component}].\n\
-         Challenge each decision. Look for drift and staleness.\n\n"
+         Challenge each decision against the current source code.\n\n"
     ));
+
+    out.push_str(
+        "MANDATORY FIRST STEP — READ THE SOURCE CODE:\n\
+         Read the current source files for this component. Compare what \
+         the code actually does against each recorded decision. Decisions \
+         may have drifted from the implementation.\n\n",
+    );
 
     let mut decisions: Vec<_> = graph.decisions_for(component);
     // Sort oldest-first by created timestamp.
@@ -591,18 +708,24 @@ fn build_review_instructions(graph: &InMemoryGraph, component: &str) -> String {
             d.decision.reason,
         ));
         out.push_str(
-            "  → Ask: \"In your own words, why does this still hold? \
+            "  → First: verify this matches the current source code\n\
+             → Ask: \"In your own words, why does this still hold? \
              Or has something changed?\"\n",
         );
         out.push_str(
             "  The user must articulate why — \"yes\" is not sufficient.\n\
-             If they say it no longer holds → call update_decision with mode=\"supersede\".\n\n",
+             If their answer is correct but shallow, explain the deeper \
+             implications as a senior engineer would.\n\
+             If they say it no longer holds → call update_decision \
+             with mode=\"supersede\".\n\n",
         );
     }
 
     out.push_str(
-        "After all decisions reviewed, call validate_consistency \
-         to check graph health.\n",
+        "After all decisions reviewed, check for any architectural choices \
+         in the current source code that are NOT captured as decisions. \
+         If found, ask the user about each and call record_decision.\n\n\
+         Finally, call validate_consistency to check graph health.\n",
     );
 
     out
@@ -845,6 +968,84 @@ mod tests {
     }
 
     #[test]
+    fn full_mode_mandates_source_reading() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+        assert!(
+            instructions.contains("READ THE SOURCE CODE"),
+            "full mode must mandate reading source code before asking questions"
+        );
+    }
+
+    #[test]
+    fn full_mode_explains_shallow_answers() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+        assert!(
+            instructions.contains("CORRECT BUT SHALLOW"),
+            "comprehension gate must handle correct-but-shallow answers"
+        );
+        assert!(
+            instructions.contains("senior engineer"),
+            "agent must explain deeply like a senior engineer"
+        );
+    }
+
+    #[test]
+    fn full_mode_teaches_on_i_dont_know() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+        assert!(
+            instructions.contains("I DON'T KNOW"),
+            "must have I DON'T KNOW protocol"
+        );
+        assert!(
+            instructions.contains("teaching moment"),
+            "I DON'T KNOW should be a teaching moment, not a block"
+        );
+    }
+
+    #[test]
+    fn project_scope_has_boundary_guidance() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "project", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+        assert!(
+            instructions.contains("cross-cutting"),
+            "project scope must explain what belongs at project level"
+        );
+    }
+
+    #[test]
+    fn component_scope_has_boundary_guidance() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+        assert!(
+            instructions.contains("SCOPE"),
+            "component scope must have boundary guidance"
+        );
+    }
+
+    #[test]
+    fn full_mode_no_hardcoded_decision_count() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+        assert!(
+            !instructions.contains("10-20") && !instructions.contains("3-8"),
+            "must not have hardcoded decision count guidance"
+        );
+        assert!(
+            instructions.contains("NOT predetermined"),
+            "should say decision count depends on complexity"
+        );
+    }
+
+    #[test]
     fn quick_mode_compact() {
         let state = test_state();
         let result = build_design_prompt(&state, "auth", None, DesignMode::Quick).unwrap();
@@ -873,16 +1074,22 @@ mod tests {
     }
 
     #[test]
-    fn learn_mode_has_challenge_questions() {
+    fn learn_mode_mandates_source_reading() {
         let state = test_state();
         let result = build_design_prompt(&state, "auth", None, DesignMode::Learn).unwrap();
         let instructions = result["system_instructions"].as_str().unwrap();
 
         assert!(instructions.contains("learn session"));
+        assert!(
+            instructions.contains("READ THE SOURCE CODE"),
+            "learn mode must mandate reading source code, not README"
+        );
+        assert!(
+            instructions.contains("ANALYZE THE CODE"),
+            "learn mode must drive code analysis before asking questions"
+        );
+        // Existing decisions shown for context.
         assert!(instructions.contains("JWT with DPoP"));
-        assert!(instructions.contains("Why was"));
-        assert!(instructions.contains("reversed this"));
-        assert!(instructions.contains("Session cookies"));
         assert_eq!(result["token_budget"], "standard");
     }
 
@@ -944,25 +1151,39 @@ mod tests {
     }
 
     #[test]
-    fn learn_mode_empty_component() {
+    fn learn_mode_empty_component_still_analyzes_code() {
         let state = test_state();
         let result = build_design_prompt(&state, "database", None, DesignMode::Learn).unwrap();
         let instructions = result["system_instructions"].as_str().unwrap();
-        assert!(instructions.contains("No decisions recorded"));
         assert!(
-            instructions.contains("Probe for implicit decisions"),
-            "empty learn mode should guide the agent to probe for unrecorded decisions"
+            instructions.contains("READ THE SOURCE CODE"),
+            "empty learn mode must still read source code"
+        );
+        assert!(
+            instructions.contains("ANALYZE THE CODE"),
+            "empty learn mode should drive code analysis to find implicit decisions"
         );
     }
 
     #[test]
-    fn learn_mode_probes_for_missing_decisions() {
+    fn learn_mode_has_completeness_check() {
         let state = test_state();
         let result = build_design_prompt(&state, "auth", None, DesignMode::Learn).unwrap();
         let instructions = result["system_instructions"].as_str().unwrap();
         assert!(
-            instructions.contains("AFTER ALL DECISIONS REVIEWED"),
-            "learn mode should ask about unrecorded decisions after reviewing existing ones"
+            instructions.contains("COMPLETENESS CHECK"),
+            "learn mode should verify all decisions are captured before ending"
+        );
+    }
+
+    #[test]
+    fn learn_mode_explains_when_user_doesnt_know() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Learn).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+        assert!(
+            instructions.contains("senior engineer"),
+            "learn mode should instruct agent to teach like a senior engineer"
         );
     }
 
