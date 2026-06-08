@@ -61,7 +61,10 @@ pub trait LlmProvider {
 
 pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
     let client = Client::builder()
+        .user_agent(concat!("trurl/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(30))
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_keepalive(Duration::from_secs(60))
         .build()
         .map_err(|e| Error::ProviderConfig(format!("failed to create HTTP client: {e}")))?;
 

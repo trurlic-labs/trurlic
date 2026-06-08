@@ -398,9 +398,15 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
     }
     if let Some(ref c) = body.choice {
         check_field_len("choice", c)?;
+        if c.trim().is_empty() {
+            return Err(api_err(StatusCode::BAD_REQUEST, "choice must not be empty"));
+        }
     }
     if let Some(ref r) = body.reason {
         check_field_len("reason", r)?;
+        if r.trim().is_empty() {
+            return Err(api_err(StatusCode::BAD_REQUEST, "reason must not be empty"));
+        }
     }
     if let Some(ref t) = body.tags {
         if t.len() > MAX_TAGS {

@@ -21,7 +21,7 @@ pub(super) fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, Str
     let val = args
         .get(key)
         .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| format!("missing required parameter: {key}"))?;
     if val.len() > MAX_TEXT_ARG_BYTES {
         return Err(format!(
@@ -36,7 +36,7 @@ pub(super) fn opt_str<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>,
     match args
         .get(key)
         .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.trim().is_empty())
     {
         Some(val) if val.len() > MAX_TEXT_ARG_BYTES => Err(format!(
             "`{key}` exceeds {MAX_TEXT_ARG_BYTES} byte limit ({} bytes)",

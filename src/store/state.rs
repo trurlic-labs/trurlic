@@ -218,7 +218,7 @@ pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
 mod tests {
     use super::*;
     use crate::store::graph::Severity;
-    
+
     use crate::store::testing::*;
 
     use tempfile::TempDir;
