@@ -603,24 +603,29 @@ fn build_learn_instructions(graph: &InMemoryGraph, component: &str) -> String {
     // ── Walkthrough protocol ────────────────────────────────────────
     out.push_str(
         "STEP 2 — SYSTEMATIC WALKTHROUGH:\n\
+         Present ONE decision per message. After asking any question, STOP \
+         and wait for the user's response. Do not continue to the next \
+         decision in the same message.\n\n\
          For each decision from your analysis:\n\
          1. State what you found in the code (cite the specific file/function)\n\
          2. Explain WHY this is an architectural decision, not just an \
             implementation detail — what would break if someone changed it?\n\
-         3. Ask the user to confirm or correct your understanding\n\n\
+         3. Ask the user to confirm or correct your understanding\n\
+         4. STOP. Wait for their response.\n\n\
          WHEN THE USER'S ANSWER IS CORRECT BUT SHALLOW:\n\
          Do not just move on. You are a senior engineer mentoring. Expand:\n\
          - Explain the deeper implications they may not have considered\n\
          - Give a concrete scenario where this decision prevents a real problem\n\
          - Connect it to other decisions in the graph\n\
          Then ask: \"Does that match your reasoning, or was there something \
-         else driving this choice?\"\n\n\
+         else driving this choice?\"\n\
+         STOP. Wait for their response before moving on.\n\n\
          WHEN THE USER SAYS \"I DON'T KNOW\":\n\
          This is a teaching moment, not a failure. Explain it:\n\
          1. Describe what the code does and why it matters (2-4 sentences)\n\
          2. Give one concrete failure scenario if the decision were different\n\
          3. Ask: \"Can you restate that in your own words?\"\n\
-         Record the decision after they demonstrate understanding.\n\n\
+         STOP. Wait. Record the decision after they demonstrate understanding.\n\n\
          After each confirmed decision, call record_decision immediately. \
          Include specific tags matching the concern area (e.g. [\"concurrency\", \
          \"file-locking\"]). Tags are required.\n\n",
@@ -664,8 +669,18 @@ fn build_learn_instructions(graph: &InMemoryGraph, component: &str) -> String {
          If record_decision returns a pattern_opportunity field (non-null), \
          present it to the user. If they confirm, call record_pattern \
          immediately.\n\n\
-         The session ends when the user confirms all decisions are captured. \
-         Do not proceed to implementation.\n",
+         STEP 4 — PATTERN IDENTIFICATION:\n\
+         Review all recorded decisions for this component (and project rules). \
+         Look for groups of 2+ decisions that share a common theme, reinforce \
+         the same invariant, or form an interlocking guarantee. Examples:\n\
+         - Multiple security decisions forming a defense-in-depth chain\n\
+         - Multiple integrity decisions forming a consistency guarantee\n\
+         - Multiple performance decisions forming a latency budget\n\
+         For each candidate pattern, ask the user: \"These N decisions seem \
+         to form a pattern — [describe it]. Should I record this as a pattern?\"\n\
+         If confirmed, call record_pattern with the decision names.\n\n\
+         The session ends when the user confirms all decisions and patterns \
+         are captured. Do not proceed to implementation.\n",
     );
 
     out
