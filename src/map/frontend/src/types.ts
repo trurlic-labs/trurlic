@@ -83,3 +83,26 @@ export interface Viewport {
   w: number;
   h: number;
 }
+
+// ── Filtering ──────────────────────────────────────────────────────────────
+
+/** Toolbar filter state passed through to the renderer. */
+export interface FilterState {
+  /** Edge kinds to render. Kinds not in this set are hidden. */
+  edgeKinds: Set<string>;
+  /** Active tag filter. Empty = show all decisions. Non-empty = only matching. */
+  activeTags: Set<string>;
+  /** Focus mode: when true + a node is selected, dim non-neighbors. */
+  focusMode: boolean;
+  /** Hide decisions older than this many days. null = no age filter. */
+  maxAgeDays: number | null;
+}
+
+export function defaultFilterState(): FilterState {
+  return {
+    edgeKinds: new Set(['connects_to', 'depends_on', 'constrains', 'supersedes']),
+    activeTags: new Set(),
+    focusMode: false,
+    maxAgeDays: null,
+  };
+}

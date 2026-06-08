@@ -1,6 +1,6 @@
 import type { Camera } from './camera';
 import type { Graph } from '../state/graph';
-import type { RenderNode } from '../types';
+import type { RenderNode, FilterState, DecisionNode } from '../types';
 import { LOD } from './lod';
 import type { AABB } from './culling';
 import { EDGE_DASH, edgeColor } from './edges';
@@ -30,6 +30,23 @@ function css(prop: string, fallback: string): string {
 }
 
 // ── Edge dash patterns imported from ./edges ───────────────────────────────
+
+// ── Decision filtering ─────────────────────────────────────────────────────
+
+const DAY_MS = 86_400_000;
+
+function filterDecisions(decisions: DecisionNode[], f: FilterState): DecisionNode[] {
+  if (f.activeTags.size === 0 && f.maxAgeDays === null) return decisions;
+  const now = Date.now();
+  return decisions.filter((d) => {
+    if (f.activeTags.size > 0 && !d.tags.some((t) => f.activeTags.has(t))) return false;
+    if (f.maxAgeDays !== null) {
+      const age = (now - new Date(d.created).getTime()) / DAY_MS;
+      if (age > f.maxAgeDays) return false;
+    }
+    return true;
+  });
+}
 
 // ── Renderer ───────────────────────────────────────────────────────────────
 
@@ -65,7 +82,13 @@ export class Renderer {
    * When `focus` is set, nodes outside the set are drawn at 30%
    * opacity (search highlight / focus mode per spec §Navigation).
    */
-  render(graph: Graph, selected: string | null, lod: LOD, focus: Set<string> | null = null): void {
+  render(
+    graph: Graph,
+    selected: string | null,
+    lod: LOD,
+    focus: Set<string> | null = null,
+    filters?: FilterState,
+  ): void {
     const { ctx, cam, dpr } = this;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -89,15 +112,21 @@ export class Renderer {
     ctx.scale(cam.zoom, cam.zoom);
     ctx.translate(-cam.cx, -cam.cy);
 
-    this.drawEdges(graph, visibleNames, lod, focus);
-    this.drawNodes(graph, visibleNames, selected, lod, focus);
+    this.drawEdges(graph, visibleNames, lod, focus, filters);
+    this.drawNodes(graph, visibleNames, selected, lod, focus, filters);
 
     ctx.restore();
   }
 
   // ── Edges ──────────────────────────────────────────────────────────────
 
-  private drawEdges(graph: Graph, visible: Set<string>, lod: LOD, focus: Set<string> | null): void {
+  private drawEdges(
+    graph: Graph,
+    visible: Set<string>,
+    lod: LOD,
+    focus: Set<string> | null,
+    filters?: FilterState,
+  ): void {
     const { ctx, cam } = this;
     const baseWidth = 1.5 / cam.zoom;
 
@@ -106,6 +135,8 @@ export class Renderer {
       if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
       // Skip belongs_to edges — structural, not visual.
       if (e.kind === 'belongs_to') continue;
+      // Toolbar edge-kind filter.
+      if (filters && !filters.edgeKinds.has(e.kind)) continue;
 
       const a = graph.nodes.get(e.from);
       const b = graph.nodes.get(e.to);
@@ -176,6 +207,7 @@ export class Renderer {
     selected: string | null,
     lod: LOD,
     focus: Set<string> | null,
+    filters?: FilterState,
   ): void {
     for (const name of visible) {
       const node = graph.nodes.get(name);
@@ -188,13 +220,13 @@ export class Renderer {
 
       switch (lod) {
         case LOD.Overview:
-          this.drawNodeLOD0(node, isSelected, graph);
+          this.drawNodeLOD0(node, isSelected, graph, filters);
           break;
         case LOD.Component:
-          this.drawNodeLOD1(node, isSelected, graph);
+          this.drawNodeLOD1(node, isSelected, graph, filters);
           break;
         case LOD.Decision:
-          this.drawNodeLOD2(node, isSelected, graph);
+          this.drawNodeLOD2(node, isSelected, graph, filters);
           break;
       }
     }
@@ -202,7 +234,12 @@ export class Renderer {
   }
 
   /** LOD 0 — System Overview: labeled box + decision count badge. */
-  private drawNodeLOD0(node: RenderNode, selected: boolean, _graph: Graph): void {
+  private drawNodeLOD0(
+    node: RenderNode,
+    selected: boolean,
+    graph: Graph,
+    filters?: FilterState,
+  ): void {
     const { ctx, cam } = this;
 
     if (selected) this.drawSelectRing(node);
@@ -221,9 +258,14 @@ export class Renderer {
     ctx.textBaseline = 'middle';
     ctx.fillText(node.name, node.x, node.y - 4, node.w - 16);
 
-    // Decision count badge.
-    if (node.decisionCount != null && node.decisionCount > 0) {
-      const badge = `${node.decisionCount}`;
+    // Decision count badge — reflects active filters.
+    const rawCount = node.decisionCount ?? 0;
+    const count =
+      filters && rawCount > 0
+        ? filterDecisions(graph.decisionsFor(node.name), filters).length
+        : rawCount;
+    if (count > 0) {
+      const badge = `${count}`;
       const badgeFontSize = fontSize * 0.7;
       ctx.font = `500 ${badgeFontSize}px system-ui, sans-serif`;
       ctx.fillStyle = C.badge();
@@ -236,9 +278,15 @@ export class Renderer {
   }
 
   /** LOD 1 — Component Detail: name, description, and decision list inside box. */
-  private drawNodeLOD1(node: RenderNode, selected: boolean, graph: Graph): void {
+  private drawNodeLOD1(
+    node: RenderNode,
+    selected: boolean,
+    graph: Graph,
+    filters?: FilterState,
+  ): void {
     const { ctx, cam } = this;
-    const decisions = graph.decisionsFor(node.name);
+    const rawDecisions = graph.decisionsFor(node.name);
+    const decisions = filters ? filterDecisions(rawDecisions, filters) : rawDecisions;
     const lineH = 16 / cam.zoom;
     const expandedH = Math.max(node.h, 40 + decisions.length * lineH);
 
@@ -296,9 +344,15 @@ export class Renderer {
   }
 
   /** LOD 2 — Decision Detail: full cards with choice, reason, tags, timestamp. */
-  private drawNodeLOD2(node: RenderNode, selected: boolean, graph: Graph): void {
+  private drawNodeLOD2(
+    node: RenderNode,
+    selected: boolean,
+    graph: Graph,
+    filters?: FilterState,
+  ): void {
     const { ctx, cam } = this;
-    const decisions = graph.decisionsFor(node.name);
+    const rawDecisions = graph.decisionsFor(node.name);
+    const decisions = filters ? filterDecisions(rawDecisions, filters) : rawDecisions;
     const cardH = 50 / cam.zoom;
     const gap = 6 / cam.zoom;
     const expandedH = Math.max(node.h, 50 + decisions.length * (cardH + gap));

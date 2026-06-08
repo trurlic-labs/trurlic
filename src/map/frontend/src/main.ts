@@ -11,9 +11,11 @@ import { search, neighborhood } from './ui/search';
 import { CommandPalette } from './ui/command';
 import type { PaletteAction } from './ui/command';
 import { Breadcrumb } from './ui/breadcrumb';
+import { Toolbar } from './ui/toolbar';
 import { KeyboardDispatch, Keys } from './interaction/keyboard';
 import type { AABB } from './renderer/culling';
 import type { SearchResult } from './ui/search';
+import type { FilterState } from './types';
 
 // ── Undo / Redo ──────────────────────────────────────────────────────────
 
@@ -81,7 +83,9 @@ class App {
   private undoStack = new UndoStack();
   private palette: CommandPalette;
   private breadcrumb: Breadcrumb;
+  private toolbar: Toolbar;
   private aria: HTMLElement;
+  private filters: FilterState | undefined;
 
   private selected: string | null = null;
   private dragging: string | null = null;
@@ -130,13 +134,15 @@ class App {
     this.breadcrumb = new Breadcrumb({
       onProject: () => {
         this.selected = null;
-        this.focusSet = null;
+        this.clearFocus();
         this.panel.showProject(this.graph);
         this.fitView();
         this.breadcrumb.update(this.graph.projectName, null);
       },
       onComponent: (name) => this.selectAndFocus(name),
     });
+
+    this.toolbar = new Toolbar((state) => this.onFilterChange(state));
 
     const minimap = document.getElementById('minimap') as HTMLCanvasElement;
     const mctx = minimap.getContext('2d');
@@ -160,6 +166,7 @@ class App {
         this.updateLOD();
         this.panel.showProject(this.graph);
         this.breadcrumb.update(this.graph.projectName, null);
+        this.toolbar.setAvailableTags(this.graph.allTags());
         this.needsRender = true;
       })
       .catch((e) => {
@@ -222,13 +229,13 @@ class App {
     if (hit) {
       this.dragging = hit.name;
       this.selected = hit.name;
-      this.focusSet = null;
+      this.clearFocus();
       this.panel.showComponent(hit, this.graph);
       this.announce(`Selected component: ${hit.name}`);
     } else {
       this.panning = true;
       this.selected = null;
-      this.focusSet = null;
+      this.clearFocus();
       this.panel.showProject(this.graph);
     }
     this.breadcrumb.update(this.graph.projectName, this.selected);
@@ -335,11 +342,11 @@ class App {
         match: Keys.escape,
         run: () => {
           if (this.focusSet) {
-            this.focusSet = null;
+            this.clearFocus();
             this.needsRender = true;
           } else if (this.selected) {
             this.selected = null;
-            this.focusSet = null;
+            this.clearFocus();
             this.panel.showProject(this.graph);
             this.announce('Selection cleared');
             this.breadcrumb.update(this.graph.projectName, null);
@@ -376,7 +383,7 @@ class App {
       {
         match: (e) => Keys.enter(e) && this.selected !== null,
         run: () => {
-          this.focusSet = neighborhood(this.graph, this.selected!);
+          this.setFocus(this.selected!);
           this.zoomToNode(this.selected!);
           this.needsRender = true;
         },
@@ -453,6 +460,19 @@ class App {
     }
 
     return actions;
+  }
+
+  // ── Filter state ─────────────────────────────────────────────────────────
+
+  private onFilterChange(state: FilterState): void {
+    this.filters = state;
+    // Focus mode toggled on: activate neighborhood if a node is selected.
+    if (state.focusMode && this.selected) {
+      this.setFocus(this.selected);
+    } else if (!state.focusMode) {
+      this.clearFocus();
+    }
+    this.needsRender = true;
   }
 
   // ── Delete selected ─────────────────────────────────────────────────────
@@ -594,18 +614,18 @@ class App {
 
     if (result.kind === 'component') {
       this.selectAndFocus(result.name);
-      this.focusSet = neighborhood(this.graph, result.name);
+      this.setFocus(result.name);
     } else if (result.kind === 'decision') {
       const dec = this.graph.decisions.get(result.name);
       if (dec) {
         this.selectAndFocus(dec.component);
-        this.focusSet = neighborhood(this.graph, dec.component);
+        this.setFocus(dec.component);
       }
     } else if (result.kind === 'pattern') {
       const pat = this.graph.patterns.get(result.name);
       if (pat && pat.components.length > 0) {
         this.selectAndFocus(pat.components[0]);
-        this.focusSet = neighborhood(this.graph, pat.components[0]);
+        this.setFocus(pat.components[0]);
       }
     }
 
@@ -637,6 +657,18 @@ class App {
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────
+
+  /** Clear the focus set and sync the toolbar pill. */
+  private clearFocus(): void {
+    this.focusSet = null;
+    this.toolbar.setFocusActive(false);
+  }
+
+  /** Set focus to a node's neighborhood and sync the toolbar pill. */
+  private setFocus(name: string): void {
+    this.focusSet = neighborhood(this.graph, name);
+    this.toolbar.setFocusActive(true);
+  }
 
   private selectAndFocus(name: string): void {
     const node = this.graph.nodes.get(name);
@@ -687,6 +719,7 @@ class App {
         this.graph.rebuildQuadtree();
         this.updateLOD();
         this.needsRender = true;
+        this.toolbar.setAvailableTags(this.graph.allTags());
         this.refreshPanel();
       })
       .catch((e) => console.error('Reload failed:', e));
@@ -736,7 +769,7 @@ class App {
     }
 
     if (this.needsRender) {
-      this.renderer.render(this.graph, this.selected, this.lod, this.focusSet);
+      this.renderer.render(this.graph, this.selected, this.lod, this.focusSet, this.filters);
       this.minimapTransform = this.renderMinimap();
       this.needsRender = false;
     }
@@ -786,7 +819,7 @@ class App {
     if (this.graph.nodes.size > 0) {
       this.camera.fitBounds(minX, minY, maxX, maxY);
     }
-    this.focusSet = null;
+    this.clearFocus();
     this.updateLOD();
     this.needsRender = true;
   }

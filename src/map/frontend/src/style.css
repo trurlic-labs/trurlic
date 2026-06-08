@@ -504,3 +504,74 @@ details li {
   color: var(--text-dim);
   font-family: monospace;
 }
+
+/* ── Toolbar ────────────────────────────────────────────────────────── */
+.toolbar {
+  position: fixed;
+  top: 38px;
+  left: 12px;
+  z-index: 14;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: calc(100vw - 340px);
+  pointer-events: none;
+}
+.toolbar:empty {
+  display: none;
+}
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  pointer-events: auto;
+}
+.toolbar-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 2px;
+  user-select: none;
+}
+.toolbar-pill {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  transition:
+    background 120ms,
+    color 120ms;
+}
+.toolbar-pill:hover {
+  background: var(--surface-hi);
+  color: var(--text);
+}
+.toolbar-pill.on {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+.toolbar-select {
+  font-size: 11px;
+  font-family: inherit;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.toolbar-select:focus {
+  outline: 1px solid var(--accent-dim);
+}
