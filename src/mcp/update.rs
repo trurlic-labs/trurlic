@@ -4,7 +4,7 @@ use crate::store::graph::Direction;
 use crate::store::schema::EdgeKind;
 use crate::store::{self, Store};
 
-use super::write::{opt_str, record_decision, require_str};
+use super::write::{MAX_CHOICE_BYTES, MIN_REASON_BYTES, opt_str, record_decision, require_str};
 
 // ── remove_decision ─────────────────────────────────────────────────────────
 
@@ -127,6 +127,22 @@ fn amend_decision(
     if new_choice.is_none() && new_reason.is_none() {
         return Err("amend requires at least one of `choice` or `reason`".into());
     }
+
+    // Quality floor: amended values must meet the same bar as new decisions.
+    if let Some(c) = new_choice
+        && c.len() > MAX_CHOICE_BYTES {
+            return Err(format!(
+                "choice must be ≤{MAX_CHOICE_BYTES} characters ({} given)",
+                c.len(),
+            ));
+        }
+    if let Some(r) = new_reason
+        && r.len() < MIN_REASON_BYTES {
+            return Err(format!(
+                "reason must be at least {MIN_REASON_BYTES} characters ({} given)",
+                r.len(),
+            ));
+        }
 
     let lock = store.lock().map_err(|e| e.to_string())?;
 
@@ -580,6 +596,37 @@ mod tests {
         assert!(
             result.get("superseded").is_some(),
             "supersede must report old name"
+        );
+    }
+
+    // ── amend quality floor ───────────────────────────────────────────
+
+    #[test]
+    fn amend_rejects_short_reason() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "amend", "reason": "ok" });
+        let err = update_decision(&store, &mut state, &args).unwrap_err();
+        assert!(
+            err.contains("at least") && err.contains("characters"),
+            "amend should enforce quality floor: {err}"
+        );
+    }
+
+    #[test]
+    fn amend_rejects_long_choice() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let long = "x".repeat(201);
+        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": long });
+        let err = update_decision(&store, &mut state, &args).unwrap_err();
+        assert!(
+            err.contains("200"),
+            "amend should enforce choice length: {err}"
         );
     }
 }

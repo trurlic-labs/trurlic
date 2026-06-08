@@ -19,11 +19,11 @@ pub(super) const MAX_ARRAY_ARG_LEN: usize = 100;
 
 /// Minimum byte length for a decision's `reason` field.
 /// Forces actual reasoning instead of rubber-stamp approvals.
-const MIN_REASON_BYTES: usize = 10;
+pub(super) const MIN_REASON_BYTES: usize = 10;
 
 /// Maximum byte length for a decision's `choice` field.
 /// A choice is a concise title, not a paragraph.
-const MAX_CHOICE_BYTES: usize = 200;
+pub(super) const MAX_CHOICE_BYTES: usize = 200;
 
 pub(super) fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     let val = args
@@ -36,6 +36,9 @@ pub(super) fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, Str
             "`{key}` exceeds {MAX_TEXT_ARG_BYTES} byte limit ({} bytes)",
             val.len()
         ));
+    }
+    if has_control_chars(val) {
+        return Err(format!("`{key}` contains invalid control characters"));
     }
     Ok(val)
 }
@@ -50,8 +53,18 @@ pub(super) fn opt_str<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>,
             "`{key}` exceeds {MAX_TEXT_ARG_BYTES} byte limit ({} bytes)",
             val.len()
         )),
+        Some(val) if has_control_chars(val) => {
+            Err(format!("`{key}` contains invalid control characters"))
+        }
         other => Ok(other),
     }
+}
+
+/// Reject ASCII control characters that could corrupt TOML files.
+/// Allows common whitespace (newline, carriage return, tab).
+fn has_control_chars(s: &str) -> bool {
+    s.bytes()
+        .any(|b| b < 0x20 && b != b'\n' && b != b'\r' && b != b'\t')
 }
 
 pub(super) fn opt_str_array(args: &Value, key: &str) -> Result<Vec<String>, String> {
@@ -220,6 +233,25 @@ pub(crate) fn record_decision(
         for (pat_name, _) in state.graph.patterns_containing(sup) {
             warnings.push(format!(
                 "superseded decision `{sup}` is referenced by pattern `{pat_name}`"
+            ));
+        }
+    }
+
+    // Detect near-duplicate: warn if an existing decision in the same
+    // component has identical choice text (case-insensitive). The new
+    // decision is already written, so this is advisory — the agent may
+    // want to supersede or remove the duplicate.
+    let choice_lower = choice.to_ascii_lowercase();
+    for (existing_name, existing_dec) in &state.decisions {
+        if existing_name.as_str() == stem {
+            continue;
+        }
+        if existing_dec.decision.component == component
+            && existing_dec.decision.choice.to_ascii_lowercase() == choice_lower
+        {
+            warnings.push(format!(
+                "decision `{existing_name}` in the same component has identical \
+                 choice text — consider using update_decision instead"
             ));
         }
     }
@@ -428,9 +460,19 @@ pub(crate) fn add_component(
     }
     state.rebuild_graph();
 
+    let mut warnings: Vec<String> = Vec::new();
+    if description.is_empty() {
+        warnings.push(
+            "component has no description — add one so get_context and \
+             the map can show what this component is responsible for"
+                .into(),
+        );
+    }
+
     Ok(serde_json::json!({
         "name": name,
         "path": store.component_path(name).display().to_string(),
+        "warnings": warnings,
         "workflow": {
             "next": "get_design_prompt",
             "args": { "component": name, "mode": "full" },
@@ -1114,6 +1156,61 @@ mod tests {
         assert!(
             result["pattern_opportunity"].is_null(),
             "same-component tag overlap is not a cross-component pattern"
+        );
+    }
+
+    // ── input hardening ───────────────────────────────────────────────
+
+    #[test]
+    fn require_str_rejects_control_characters() {
+        let args = json!({ "key": "hello\x00world" });
+        let err = require_str(&args, "key").unwrap_err();
+        assert!(err.contains("control characters"));
+    }
+
+    #[test]
+    fn require_str_allows_normal_whitespace() {
+        let args = json!({ "key": "hello\nworld\ttab" });
+        assert!(require_str(&args, "key").is_ok());
+    }
+
+    #[test]
+    fn record_decision_warns_on_duplicate_choice() {
+        let (_tmp, store, mut state) = setup();
+        let d1 = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Stateless authentication model",
+        });
+        record_decision(&store, &mut state, &d1).unwrap();
+
+        // Same choice text, same component.
+        let d2 = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Different reasoning entirely",
+        });
+        let result = record_decision(&store, &mut state, &d2).unwrap();
+        let warnings = result["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("identical choice")),
+            "should warn about duplicate: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn add_component_warns_on_empty_description() {
+        let (_tmp, store, mut state) = setup();
+        let args = json!({ "name": "cache" });
+        let result = add_component(&store, &mut state, &args).unwrap();
+        let warnings = result["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("no description")),
+            "should warn about missing description: {warnings:?}"
         );
     }
 }

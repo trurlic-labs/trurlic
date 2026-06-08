@@ -452,18 +452,36 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
     }
 
     if matches.is_empty() {
+        // Suggest the most relevant component for a design session by
+        // matching query words against component names and descriptions.
+        let suggested_component = suggest_component_for(state, &query_words);
+
+        let workflow = match suggested_component {
+            Some(comp) => serde_json::json!({
+                "hint": "design_needed",
+                "next": "get_design_prompt",
+                "args": { "component": comp, "mode": "full" },
+                "message": format!(
+                    "Pattern not covered. Component `{comp}` looks most \
+                     relevant — call get_design_prompt to design.",
+                ),
+            }),
+            None => serde_json::json!({
+                "hint": "design_needed",
+                "next": "add_component",
+                "message": "Pattern not covered and no existing component \
+                            matches. Call add_component first, then \
+                            get_design_prompt.",
+            }),
+        };
+
         serde_json::json!({
             "status": "not_covered",
             "message": "No existing decisions cover this pattern. \
                         A design session is needed before proceeding.",
             "decisions": [],
             "patterns": [],
-            "workflow": {
-                "hint": "design_needed",
-                "next": "get_design_prompt",
-                "message": "Pattern not covered. Call get_design_prompt \
-                            to design before implementing.",
-            }
+            "workflow": workflow,
         })
     } else {
         serde_json::json!({
@@ -761,6 +779,45 @@ fn is_stop_word(word: &str) -> bool {
             | "they"
             | "their"
     )
+}
+
+/// Find the component whose name or description best matches the query words.
+/// Returns `None` if no component has any keyword overlap (suggesting the
+/// agent should `add_component` first).
+///
+/// Matching: component name is split on hyphens, description is word-extracted.
+/// Score = count of matching query words. Highest score wins; ties broken by
+/// fewest existing decisions (prefer under-designed components).
+fn suggest_component_for<'a>(state: &'a ProjectState, query_words: &[String]) -> Option<&'a str> {
+    let mut best: Option<(&str, usize, usize)> = None; // (name, score, decision_count)
+
+    for (name, comp) in &state.components {
+        let name_words: Vec<String> = name
+            .split('-')
+            .filter(|w| w.len() >= 3)
+            .map(|w| w.to_lowercase())
+            .collect();
+        let desc_words = extract_words(&comp.component.description);
+
+        let score = query_words
+            .iter()
+            .filter(|qw| name_words.iter().any(|nw| nw == *qw) || desc_words.contains(qw))
+            .count();
+
+        if score == 0 {
+            continue;
+        }
+
+        let dec_count = state.graph.decisions_for(name).len();
+        let dominated = best
+            .as_ref()
+            .is_some_and(|(_, bs, bd)| *bs > score || (*bs == score && *bd <= dec_count));
+        if !dominated {
+            best = Some((name, score, dec_count));
+        }
+    }
+
+    best.map(|(name, _, _)| name)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -1200,7 +1257,8 @@ mod tests {
         let result = check_pattern(&state, "WebSocket notifications");
         assert_eq!(result["status"], "not_covered");
         assert_eq!(result["workflow"]["hint"], "design_needed");
-        assert_eq!(result["workflow"]["next"], "get_design_prompt");
+        // No component matches "WebSocket" → suggests add_component.
+        assert_eq!(result["workflow"]["next"], "add_component");
     }
 
     #[test]
@@ -1353,5 +1411,25 @@ mod tests {
         // rate-limiter has no component-specific decisions.
         let result = get_context(&state, "rate-limiter", None, ContextDepth::Full).unwrap();
         assert_eq!(result["workflow"]["args"]["mode"], "full");
+    }
+
+    // ── component suggestion ──────────────────────────────────────────
+
+    #[test]
+    fn check_pattern_suggests_matching_component() {
+        let state = test_state();
+        // "rate limiting" should match the "rate-limiter" component by name.
+        let result = check_pattern(&state, "rate limiting for API requests");
+        assert_eq!(result["status"], "not_covered");
+        assert_eq!(result["workflow"]["args"]["component"], "rate-limiter");
+    }
+
+    #[test]
+    fn check_pattern_suggests_add_component_when_no_match() {
+        let state = test_state();
+        // "WebSocket notifications" matches no existing component.
+        let result = check_pattern(&state, "WebSocket notification streaming");
+        assert_eq!(result["status"], "not_covered");
+        assert_eq!(result["workflow"]["next"], "add_component");
     }
 }
