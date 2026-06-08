@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -202,34 +202,6 @@ impl InMemoryGraph {
         result
     }
 
-    /// Transitive dependencies via `DependsOn` edges. BFS, max depth 3.
-    #[allow(dead_code)] // planned for Phase 6 (MCP design-prompt enrichment)
-    pub fn transitive_deps(&self, decision: &str) -> Vec<&str> {
-        let mut result = Vec::new();
-        let mut visited: HashSet<&str> = HashSet::new();
-        visited.insert(decision);
-
-        let mut current: Vec<&str> = vec![decision];
-        for _depth in 0..3 {
-            let mut next = Vec::new();
-            for node in &current {
-                if let Some(edges) = self.forward.get(*node) {
-                    for edge in edges {
-                        if edge.kind == EdgeKind::DependsOn && visited.insert(&edge.target) {
-                            next.push(edge.target.as_ref());
-                            result.push(edge.target.as_ref());
-                        }
-                    }
-                }
-            }
-            if next.is_empty() {
-                break;
-            }
-            current = next;
-        }
-        result
-    }
-
     /// Patterns that apply to a component (reverse `AppliesTo` edges).
     pub fn patterns_for(&self, component: &str) -> Vec<(&Arc<str>, &PatternFile)> {
         self.reverse_targets(component, EdgeKind::AppliesTo, |name| {
@@ -418,71 +390,33 @@ impl InMemoryGraph {
         CascadeResult { blockers, warnings }
     }
 
-    /// Check if adding a `DependsOn` edge from → to would create a cycle.
-    ///
-    /// Returns `true` if `from` is reachable from `to` via existing
-    /// `DependsOn` edges (meaning the new edge would close a loop).
-    #[allow(dead_code)] // planned for Phase 7 (interactive cycle prevention)
-    pub fn would_cycle(&self, from: &str, to: &str) -> bool {
-        if from == to {
-            return true;
-        }
-        // BFS from `to`: if we can reach `from`, the new edge creates a cycle.
-        let mut visited: HashSet<&str> = HashSet::new();
-        let mut queue: VecDeque<&str> = VecDeque::new();
-        queue.push_back(to);
-        visited.insert(to);
-
-        while let Some(current) = queue.pop_front() {
-            if let Some(edges) = self.forward.get(current) {
-                for edge in edges {
-                    if edge.kind == EdgeKind::DependsOn {
-                        if edge.target.as_ref() == from {
-                            return true;
-                        }
-                        if visited.insert(&edge.target) {
-                            queue.push_back(&edge.target);
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-
     // ── Content access ───────────────────────────────────────────────────
 
-    #[allow(dead_code)] // used in tests; graph query API for future phases
+    #[cfg(test)]
     pub fn component(&self, name: &str) -> Option<&ComponentFile> {
         self.components.get(name)
     }
 
-    #[allow(dead_code)] // used in tests; graph query API for future phases
+    #[cfg(test)]
     pub fn decision(&self, name: &str) -> Option<&DecisionFile> {
         self.decisions.get(name)
     }
 
-    #[allow(dead_code)] // planned for Phase 6 (MCP pattern-aware context)
-    pub fn pattern(&self, name: &str) -> Option<&PatternFile> {
-        self.patterns.get(name)
-    }
-
-    #[allow(dead_code)] // used in tests; graph query API for future phases
     pub fn node_meta(&self, name: &str) -> Option<&NodeMeta> {
         self.nodes.get(name)
     }
 
-    #[allow(dead_code)] // used in tests; graph query API for future phases
+    #[cfg(test)]
     pub fn component_count(&self) -> usize {
         self.components.len()
     }
 
-    #[allow(dead_code)] // used in tests; graph query API for future phases
+    #[cfg(test)]
     pub fn decision_count(&self) -> usize {
         self.decisions.len()
     }
 
-    #[allow(dead_code)] // used in tests; graph query API for future phases
+    #[cfg(test)]
     pub fn pattern_count(&self) -> usize {
         self.patterns.len()
     }
@@ -712,116 +646,6 @@ mod tests {
         InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new())
     }
 
-    /// Graph with a DependsOn chain: d-a → d-b → d-c (depth 3 test).
-    fn dep_chain_graph() -> InMemoryGraph {
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: ts(),
-            nodes: vec![
-                NodeEntry {
-                    name: "project".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: "p".into(),
-                },
-                NodeEntry {
-                    name: "comp".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: "c".into(),
-                },
-                NodeEntry {
-                    name: "d-a".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "a".into(),
-                },
-                NodeEntry {
-                    name: "d-b".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "b".into(),
-                },
-                NodeEntry {
-                    name: "d-c".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "c2".into(),
-                },
-                NodeEntry {
-                    name: "d-d".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "d".into(),
-                },
-            ],
-            edges: vec![
-                EdgeEntry {
-                    from: "d-a".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-b".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-c".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-d".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-a".into(),
-                    to: "d-b".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-                EdgeEntry {
-                    from: "d-b".into(),
-                    to: "d-c".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-                EdgeEntry {
-                    from: "d-c".into(),
-                    to: "d-d".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-            ],
-        };
-        let mut components = BTreeMap::new();
-        components.insert(
-            "comp".into(),
-            ComponentFile {
-                component: Component {
-                    name: "comp".into(),
-                    description: String::new(),
-                },
-            },
-        );
-        let mut decisions = BTreeMap::new();
-        for name in ["d-a", "d-b", "d-c", "d-d"] {
-            decisions.insert(
-                name.into(),
-                DecisionFile {
-                    decision: Decision {
-                        component: "comp".into(),
-                        choice: format!("Choice {name}"),
-                        reason: format!("Reason {name}"),
-                        alternatives: vec![],
-                        tags: vec![],
-                        created: ts(),
-                    },
-                },
-            );
-        }
-        InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new())
-    }
-
     // ── build ────────────────────────────────────────────────────────────
 
     #[test]
@@ -920,168 +744,6 @@ mod tests {
         let related = g.related_decisions("database");
         let names: HashSet<&str> = related.iter().map(|(n, _)| n.as_ref()).collect();
         assert!(names.contains("use-jwt"));
-    }
-
-    // ── transitive_deps ──────────────────────────────────────────────────
-
-    #[test]
-    fn transitive_deps_follows_chain() {
-        let g = dep_chain_graph();
-        let deps = g.transitive_deps("d-a");
-        let names: Vec<&str> = deps.to_vec();
-        assert!(names.contains(&"d-b"));
-        assert!(names.contains(&"d-c"));
-        assert!(names.contains(&"d-d"));
-    }
-
-    #[test]
-    fn transitive_deps_max_depth_3() {
-        // d-a → d-b → d-c → d-d. From d-a: depths 1,2,3 → all found.
-        let g = dep_chain_graph();
-        let deps = g.transitive_deps("d-a");
-        assert_eq!(deps.len(), 3);
-    }
-
-    #[test]
-    fn transitive_deps_respects_depth_limit() {
-        // Add a 5th decision d-e at depth 4 from d-a.
-        let mut index = GraphIndex {
-            version: 1,
-            rebuilt: ts(),
-            nodes: vec![
-                NodeEntry {
-                    name: "project".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: "p".into(),
-                },
-                NodeEntry {
-                    name: "comp".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: "c".into(),
-                },
-                NodeEntry {
-                    name: "d-a".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "1".into(),
-                },
-                NodeEntry {
-                    name: "d-b".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "2".into(),
-                },
-                NodeEntry {
-                    name: "d-c".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "3".into(),
-                },
-                NodeEntry {
-                    name: "d-d".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "4".into(),
-                },
-                NodeEntry {
-                    name: "d-e".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "5".into(),
-                },
-            ],
-            edges: vec![
-                EdgeEntry {
-                    from: "d-a".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-b".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-c".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-d".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-e".into(),
-                    to: "comp".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "d-a".into(),
-                    to: "d-b".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-                EdgeEntry {
-                    from: "d-b".into(),
-                    to: "d-c".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-                EdgeEntry {
-                    from: "d-c".into(),
-                    to: "d-d".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-                EdgeEntry {
-                    from: "d-d".into(),
-                    to: "d-e".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-            ],
-        };
-        let _ = &mut index; // suppress unused_mut
-        let mut decisions = BTreeMap::new();
-        let mut components = BTreeMap::new();
-        components.insert(
-            "comp".into(),
-            ComponentFile {
-                component: Component {
-                    name: "comp".into(),
-                    description: String::new(),
-                },
-            },
-        );
-        for name in ["d-a", "d-b", "d-c", "d-d", "d-e"] {
-            decisions.insert(
-                name.into(),
-                DecisionFile {
-                    decision: Decision {
-                        component: "comp".into(),
-                        choice: format!("C-{name}"),
-                        reason: format!("R-{name}"),
-                        alternatives: vec![],
-                        tags: vec![],
-                        created: ts(),
-                    },
-                },
-            );
-        }
-        let g = InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new());
-        let deps = g.transitive_deps("d-a");
-        // Depth 1: d-b, depth 2: d-c, depth 3: d-d. d-e is depth 4 → excluded.
-        assert_eq!(deps.len(), 3);
-        let names: Vec<&str> = deps.to_vec();
-        assert!(names.contains(&"d-b"));
-        assert!(names.contains(&"d-c"));
-        assert!(names.contains(&"d-d"));
-        assert!(!names.contains(&"d-e"));
-    }
-
-    #[test]
-    fn transitive_deps_empty_for_leaf() {
-        let g = dep_chain_graph();
-        assert!(g.transitive_deps("d-d").is_empty());
     }
 
     // ── patterns_for ─────────────────────────────────────────────────────
@@ -1223,36 +885,6 @@ mod tests {
     fn edges_involving_empty_for_unknown() {
         let g = test_graph();
         assert!(g.edges_involving("nonexistent").is_empty());
-    }
-
-    // ── would_cycle ──────────────────────────────────────────────────────
-
-    #[test]
-    fn would_cycle_detects_direct() {
-        let g = dep_chain_graph();
-        // d-b already depends on d-c. Adding d-c → d-b would cycle.
-        assert!(g.would_cycle("d-c", "d-b"));
-    }
-
-    #[test]
-    fn would_cycle_detects_transitive() {
-        let g = dep_chain_graph();
-        // d-a → d-b → d-c → d-d. Adding d-d → d-a would cycle.
-        assert!(g.would_cycle("d-d", "d-a"));
-    }
-
-    #[test]
-    fn would_cycle_self_loop() {
-        let g = dep_chain_graph();
-        assert!(g.would_cycle("d-a", "d-a"));
-    }
-
-    #[test]
-    fn would_cycle_allows_valid() {
-        let g = dep_chain_graph();
-        // d-a → d-b → d-c → d-d. Adding d-a → d-d is a shortcut, not a cycle:
-        // from d-d there are no outgoing DependsOn edges, so d-a is unreachable.
-        assert!(!g.would_cycle("d-a", "d-d"));
     }
 
     // ── validate: clean graph ────────────────────────────────────────────

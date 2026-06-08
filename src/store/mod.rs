@@ -5,6 +5,7 @@ mod validate;
 mod state;
 mod write;
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::ErrorKind;
@@ -223,7 +224,7 @@ impl Store {
         self.read_toml(&self.root.join("project.toml"))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn read_component(&self, name: &str) -> Result<ComponentFile> {
         let path = self.component_path(name);
         match self.read_toml(&path) {
@@ -235,7 +236,7 @@ impl Store {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn read_decision(&self, name: &str) -> Result<DecisionFile> {
         let path = self.decision_path(name);
         match self.read_toml(&path) {
@@ -243,18 +244,6 @@ impl Store {
             Err(Error::Io(e)) if e.kind() == ErrorKind::NotFound => {
                 Err(Error::DecisionNotFound(name.into()))
             }
-            Err(e) => Err(e),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn read_pattern(&self, name: &str) -> Result<PatternFile> {
-        let path = self.pattern_path(name);
-        match self.read_toml(&path) {
-            Ok(file) => Ok(file),
-            Err(Error::Io(e)) if e.kind() == ErrorKind::NotFound => Err(Error::Validation(
-                format!("pattern `{name}` does not exist"),
-            )),
             Err(e) => Err(e),
         }
     }
@@ -456,33 +445,16 @@ impl Store {
         if stored == FORMAT_VERSION {
             return Ok(());
         }
-
-        let (s_maj, s_min, _) = parse_semver(stored);
-        let (c_maj, c_min, _) = parse_semver(FORMAT_VERSION);
-
-        // Different major version — hard boundary per spec §Storage.
-        if s_maj > c_maj {
-            return Err(Error::Validation(format!(
+        match compare_versions(stored, FORMAT_VERSION) {
+            Ordering::Greater => Err(Error::Validation(format!(
                 ".trurl/ format version `{stored}` is newer than this CLI \
                  (expected `{FORMAT_VERSION}`). Please upgrade trurl."
-            )));
-        }
-        if s_maj < c_maj {
-            return Err(Error::Validation(format!(
+            ))),
+            _ => Err(Error::Validation(format!(
                 ".trurl/ format version `{stored}` is older than this CLI \
                  (expected `{FORMAT_VERSION}`). A format migration may be needed."
-            )));
+            ))),
         }
-
-        // Same major, stored minor is newer → warn but proceed.
-        if s_min > c_min {
-            eprintln!(
-                "warning: .trurl/ format {stored} has a newer minor version than \
-                 expected {FORMAT_VERSION}. Some features may not be recognized."
-            );
-        }
-
-        Ok(())
     }
 }
 
@@ -496,17 +468,15 @@ pub struct StoreLock {
 
 // ── Version comparison ──────────────────────────────────────────────────────
 
-fn parse_semver(v: &str) -> (u32, u32, u32) {
-    let mut parts = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
-    let major = parts.next().unwrap_or(0);
-    let minor = parts.next().unwrap_or(0);
-    let patch = parts.next().unwrap_or(0);
-    (major, minor, patch)
-}
-
-#[cfg(test)]
 fn compare_versions(a: &str, b: &str) -> Ordering {
-    parse_semver(a).cmp(&parse_semver(b))
+    let parse = |v: &str| -> (u32, u32, u32) {
+        let mut parts = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+        let major = parts.next().unwrap_or(0);
+        let minor = parts.next().unwrap_or(0);
+        let patch = parts.next().unwrap_or(0);
+        (major, minor, patch)
+    };
+    parse(a).cmp(&parse(b))
 }
 
 // ── Test helpers ────────────────────────────────────────────────────────────
@@ -905,7 +875,7 @@ mod tests {
     }
 
     #[test]
-    fn check_version_rejects_newer_major() {
+    fn check_version_rejects_newer_format() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store_with_version(tmp.path(), "99.0.0");
 
@@ -921,38 +891,19 @@ mod tests {
     }
 
     #[test]
-    fn check_version_accepts_same_major_older_minor() {
-        // FORMAT_VERSION is "0.2.0". Stored "0.1.0" has the same major (0),
-        // older minor — the CLI should accept this without error.
+    fn check_version_rejects_older_format() {
         let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "0.1.0");
-        store.check_version().unwrap();
-    }
+        let store = setup_store_with_version(tmp.path(), "0.0.1");
 
-    #[test]
-    fn check_version_accepts_same_major_newer_minor_with_warning() {
-        // Stored "0.3.0" has a newer minor than FORMAT_VERSION "0.2.0".
-        // Should proceed (Ok) but print a warning to stderr.
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "0.3.0");
-        store.check_version().unwrap();
-    }
-
-    #[test]
-    fn check_version_accepts_different_patch() {
-        // Stored "0.2.1" differs only in patch — always accepted.
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "0.2.1");
-        store.check_version().unwrap();
-    }
-
-    #[test]
-    fn check_version_rejects_newer_major_at_boundary() {
-        // "1.0.0" stored vs "0.2.0" CLI — major mismatch.
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "1.0.0");
         let err = store.check_version().unwrap_err();
-        assert!(matches!(err, Error::Validation(_)));
+        match err {
+            Error::Validation(msg) => {
+                assert!(msg.contains("0.0.1"));
+                assert!(msg.contains("older"), "should mention 'older': {msg}");
+                assert!(msg.contains("migration"), "should mention migration: {msg}");
+            }
+            other => panic!("expected Validation, got: {other}"),
+        }
     }
 
     // ── verify_path ──────────────────────────────────────────────────────

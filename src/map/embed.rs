@@ -24,13 +24,19 @@ pub(crate) async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
     };
 
     match Assets::get(path) {
-        Some(content) => Response::builder()
-            .header(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(mime_for(path)),
-            )
-            .body(axum::body::Body::from(content.data.into_owned()))
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+        Some(content) => {
+            let body = match content.data {
+                std::borrow::Cow::Borrowed(bytes) => axum::body::Body::from(bytes),
+                std::borrow::Cow::Owned(vec) => axum::body::Body::from(vec),
+            };
+            Response::builder()
+                .header(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static(mime_for(path)),
+                )
+                .body(body)
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }

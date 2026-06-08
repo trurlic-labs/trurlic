@@ -318,7 +318,7 @@ pub(crate) fn tool_result(payload: &Value) -> Value {
     serde_json::json!({
         "content": [{
             "type": "text",
-            "text": serde_json::to_string_pretty(payload)
+            "text": serde_json::to_string(payload)
                 .unwrap_or_else(|_| "{}".to_string())
         }]
     })

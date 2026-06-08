@@ -8,7 +8,6 @@ use serde_json::Value;
 #[derive(Debug, Deserialize)]
 pub(crate) struct Request {
     /// Must be `"2.0"`.
-    #[allow(dead_code)]
     pub jsonrpc: String,
 
     /// Absent → notification (`None`).  Present (including explicit `null`) →
