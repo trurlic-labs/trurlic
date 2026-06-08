@@ -71,6 +71,7 @@ trurl serve
 
 | Tool | Purpose |
 |------|---------|
+| `advance` | Compute workflow state and return the next action — the orchestration hub |
 | `get_context` | Tailored brief for a component: decisions, project rules, related constraints |
 | `check_pattern` | Check if an approach is covered by existing decisions |
 | `get_architecture` | Full system overview: components, connections, patterns |
@@ -91,19 +92,30 @@ Add to your `CLAUDE.md` (or equivalent):
 ## Trurl
 
 This project uses Trurl for architectural decisions.
+The Trurl MCP server enforces design-before-implementation.
 
 ### Workflow
 
-1. Before implementing any task, call `check_pattern` with a description of what you're about to do.
-2. If `covered`: call `get_context` and follow the brief as authoritative constraints.
-3. If `not_covered`: call `get_design_prompt` and run the design conversation with the user before implementing.
-4. During design conversations, use `add_component` / `add_connection` for graph structure and `record_decision` for each choice the user makes.
-5. After design, call `get_context` for the implementation brief.
-6. Never introduce a new pattern, dependency, or architectural approach without checking Trurl first.
+Before implementing any task:
+
+1. Call `check_pattern` with a description of what you're about to do.
+   - If covered: call `get_context` and use the brief as constraints.
+   - If not covered: continue to step 2.
+2. Call `advance` with the component name.
+3. Follow the returned `action` exactly.
+4. After completing the action, call `advance` again.
+5. Repeat until `ready: true`.
+6. Call `get_context` for the implementation brief.
+7. Implement, constrained by every decision in the brief.
+
+When the user asks to learn or review:
+call `advance` with `intent: "learn"` or `intent: "review"`.
 
 ### Comprehension Gates
 
-When Trurl's design prompt includes comprehension checkpoints, you MUST ask the user to articulate their understanding before proceeding. Do not skip these.
+When Trurl's design prompt includes comprehension checkpoints,
+ask the user to articulate their understanding in their own words.
+The user explains — you validate. Do not explain on their behalf.
 ```
 
 ### What the Agent Sees
