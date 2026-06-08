@@ -102,37 +102,40 @@ fn amend_decision(
 
     let lock = store.lock().map_err(|e| e.to_string())?;
 
-    let dec = state
+    // Build the amended decision as a separate value. State is not mutated
+    // until prepare_write succeeds, so a serialization failure leaves the
+    // in-memory graph clean.
+    let old_dec = state
         .decisions
-        .get_mut(name)
-        .ok_or_else(|| format!("decision `{name}` disappeared during amend"))?;
+        .get(name)
+        .ok_or_else(|| format!("decision `{name}` does not exist"))?
+        .clone();
 
-    let old_choice = dec.decision.choice.clone();
-    let old_reason = dec.decision.reason.clone();
-
+    let mut amended = old_dec.clone();
     if let Some(c) = new_choice {
-        dec.decision.choice = c.into();
+        amended.decision.choice = c.into();
     }
     if let Some(r) = new_reason {
-        dec.decision.reason = r.into();
+        amended.decision.reason = r.into();
     }
 
     let write = store
-        .prepare_write(&store.decision_path(name), dec)
+        .prepare_write(&store.decision_path(name), &amended)
         .map_err(|e| e.to_string())?;
     let hash = write.content_hash();
 
-    // Update hash in graph index.
+    // Validation passed — now mutate state. Snapshot first for rollback.
+    let graph_snapshot = state.graph_index.clone();
+
+    state.decisions.insert(name.into(), amended);
     if let Some(node) = state.graph_index.nodes.iter_mut().find(|n| n.name == name) {
         node.hash = hash;
     }
 
     if let Err(e) = store.commit_with_graph(&lock, vec![write], vec![], state) {
-        // Rollback in-memory changes.
-        if let Some(dec) = state.decisions.get_mut(name) {
-            dec.decision.choice = old_choice;
-            dec.decision.reason = old_reason;
-        }
+        // Full rollback: both decision content and graph index.
+        state.decisions.insert(name.into(), old_dec);
+        state.graph_index = graph_snapshot;
         return Err(e.to_string());
     }
 

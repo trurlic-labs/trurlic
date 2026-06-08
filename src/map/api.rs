@@ -410,43 +410,36 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
 
     let mut ps = state.write_project_state();
 
-    // Apply changes within a scoped mutable borrow, returning old values for rollback.
-    let (old_choice, old_reason, old_tags) = {
-        let dec = ps
-            .decisions
-            .get_mut(&name)
-            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "decision not found"))?;
-        let old = (
-            dec.decision.choice.clone(),
-            dec.decision.reason.clone(),
-            dec.decision.tags.clone(),
-        );
-        if let Some(ref c) = body.choice {
-            dec.decision.choice.clone_from(c);
-        }
-        if let Some(ref r) = body.reason {
-            dec.decision.reason.clone_from(r);
-        }
-        if let Some(ref t) = body.tags {
-            dec.decision.tags.clone_from(t);
-        }
-        old
-    };
-    // Mutable borrow on ps.decisions released — other fields accessible again.
+    // Build the amended decision as a separate value. State is not mutated
+    // until prepare_write succeeds, so a serialization failure leaves the
+    // in-memory graph clean.
+    let old_dec = ps
+        .decisions
+        .get(&name)
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "decision not found"))?
+        .clone();
 
-    let graph_snapshot = ps.graph_index.clone();
+    let mut amended = old_dec.clone();
+    if let Some(ref c) = body.choice {
+        amended.decision.choice.clone_from(c);
+    }
+    if let Some(ref r) = body.reason {
+        amended.decision.reason.clone_from(r);
+    }
+    if let Some(ref t) = body.tags {
+        amended.decision.tags.clone_from(t);
+    }
 
     let write = state
         .store
-        .prepare_write(
-            &state.store.decision_path(&name),
-            ps.decisions
-                .get(&name)
-                .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "decision not found"))?,
-        )
+        .prepare_write(&state.store.decision_path(&name), &amended)
         .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let hash = write.content_hash();
 
+    // Validation passed — now mutate state. Snapshot first for rollback.
+    let graph_snapshot = ps.graph_index.clone();
+
+    ps.decisions.insert(name.clone(), amended);
     if let Some(node) = ps.graph_index.nodes.iter_mut().find(|n| n.name == name) {
         node.hash = hash;
         if let Some(ref t) = body.tags {
@@ -455,11 +448,7 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
     }
 
     let lock = state.store.lock().map_err(|e| {
-        if let Some(dec) = ps.decisions.get_mut(&name) {
-            dec.decision.choice.clone_from(&old_choice);
-            dec.decision.reason.clone_from(&old_reason);
-            dec.decision.tags.clone_from(&old_tags);
-        }
+        ps.decisions.insert(name.clone(), old_dec.clone());
         ps.graph_index = graph_snapshot.clone();
         api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     })?;
@@ -467,11 +456,7 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
         .store
         .commit_with_graph(&lock, vec![write], vec![], &ps)
     {
-        if let Some(dec) = ps.decisions.get_mut(&name) {
-            dec.decision.choice = old_choice;
-            dec.decision.reason = old_reason;
-            dec.decision.tags = old_tags;
-        }
+        ps.decisions.insert(name, old_dec);
         ps.graph_index = graph_snapshot;
         return Err(api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
     }
