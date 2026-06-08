@@ -3,6 +3,8 @@ import { Graph, ApiClient, WsConnection } from './graph';
 import { ForceLayout } from './layout';
 import { Panel } from './panel';
 import { Renderer } from './renderer';
+import { LOD, computeLOD } from './types';
+import type { AABB } from './quadtree';
 
 class App {
   private graph = new Graph();
@@ -12,12 +14,15 @@ class App {
   private panel: Panel;
   private miniCtx: CanvasRenderingContext2D;
   private api: ApiClient;
+  private aria: HTMLElement;
   private selected: string | null = null;
   private dragging: string | null = null;
   private panning = false;
   private lastMouse = { x: 0, y: 0 };
   private needsRender = true;
   private layoutSaveTimer: number | null = null;
+  private lod: LOD = LOD.Overview;
+  private visibleCount = 0;
 
   constructor() {
     const token = new URLSearchParams(location.search).get('token') ?? '';
@@ -26,6 +31,7 @@ class App {
     const canvas = document.getElementById('canvas') as HTMLCanvasElement;
     this.renderer = new Renderer(canvas, this.camera);
     this.panel = new Panel(document.getElementById('panel')!);
+    this.aria = document.getElementById('aria-live')!;
 
     const minimap = document.getElementById('minimap') as HTMLCanvasElement;
     const mctx = minimap.getContext('2d');
@@ -42,7 +48,9 @@ class App {
       .then((snap) => {
         this.graph.loadSnapshot(snap);
         this.layout.run(this.graph.nodes, this.graph.edges, 200);
+        this.graph.rebuildQuadtree();
         this.fitView();
+        this.updateLOD();
         this.panel.showProject(this.graph);
         this.needsRender = true;
       })
@@ -57,7 +65,22 @@ class App {
     this.renderLoop();
   }
 
-  // ── Events ─────────────────────────────────────────────────────────────
+  // ── LOD ──────────────────────────────────────────────────────────────────
+
+  private updateLOD(): void {
+    const vp = this.camera.viewport();
+    const vpAABB: AABB = {
+      cx: vp.x + vp.w / 2,
+      cy: vp.y + vp.h / 2,
+      hw: vp.w / 2,
+      hh: vp.h / 2,
+    };
+    const visible = this.graph.quadtree.queryViewport(vpAABB);
+    this.visibleCount = new Set(visible).size;
+    this.lod = computeLOD(this.visibleCount);
+  }
+
+  // ── Events ──────────────────────────────────────────────────────────────
 
   private setupEvents(canvas: HTMLCanvasElement): void {
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
@@ -71,6 +94,7 @@ class App {
       if (e.key === 'Escape') {
         this.selected = null;
         this.panel.showProject(this.graph);
+        this.announce('Selection cleared');
         this.needsRender = true;
       }
       // Ctrl+0 / Cmd+0: zoom to fit.
@@ -92,6 +116,7 @@ class App {
       this.dragging = hit.name;
       this.selected = hit.name;
       this.panel.showComponent(hit, this.graph);
+      this.announce(`Selected component: ${hit.name}`);
     } else {
       this.panning = true;
       this.selected = null;
@@ -108,6 +133,7 @@ class App {
 
     if (this.panning) {
       this.camera.pan(dx, dy);
+      this.updateLOD();
       this.needsRender = true;
     } else if (this.dragging) {
       const node = this.graph.nodes.get(this.dragging);
@@ -115,6 +141,7 @@ class App {
         node.x += dx / this.camera.zoom;
         node.y += dy / this.camera.zoom;
         node.pinned = true;
+        // Defer quadtree rebuild to pointer-up (spec: no layout recomputation during drag).
         this.needsRender = true;
       }
     }
@@ -122,6 +149,8 @@ class App {
 
   private onPointerUp(): void {
     if (this.dragging) {
+      this.graph.rebuildQuadtree();
+      this.updateLOD();
       this.scheduleLayoutSave();
     }
     this.dragging = null;
@@ -132,34 +161,32 @@ class App {
     e.preventDefault();
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     this.camera.zoomAt(e.offsetX, e.offsetY, factor);
+    this.updateLOD();
     this.needsRender = true;
+  }
+
+  // ── ARIA ────────────────────────────────────────────────────────────────
+
+  private announce(text: string): void {
+    this.aria.textContent = text;
   }
 
   // ── WebSocket ──────────────────────────────────────────────────────────
 
-  private handleWsEvent(event: { type: string; [k: string]: unknown }): void {
-    if (event.type === 'full_reload') {
-      this.api
-        .fetchGraph()
-        .then((snap) => {
-          this.graph.loadSnapshot(snap);
-          this.layout.run(this.graph.nodes, this.graph.edges, 50);
-          this.needsRender = true;
-          if (this.selected) this.refreshPanel();
-        })
-        .catch((e) => console.error('Reload failed:', e));
-    } else {
-      // For granular events, just do a full refresh for now.
-      // Granular client-side patching is a future optimization.
-      this.api
-        .fetchGraph()
-        .then((snap) => {
-          this.graph.loadSnapshot(snap);
-          this.needsRender = true;
-          if (this.selected) this.refreshPanel();
-        })
-        .catch(() => {});
-    }
+  private handleWsEvent(_event: { type: string; [k: string]: unknown }): void {
+    // For all event types, do a full refresh for now.
+    // Granular client-side patching is a future optimization.
+    this.api
+      .fetchGraph()
+      .then((snap) => {
+        this.graph.loadSnapshot(snap);
+        this.layout.run(this.graph.nodes, this.graph.edges, 50);
+        this.graph.rebuildQuadtree();
+        this.updateLOD();
+        this.needsRender = true;
+        if (this.selected) this.refreshPanel();
+      })
+      .catch((e) => console.error('Reload failed:', e));
   }
 
   private refreshPanel(): void {
@@ -202,7 +229,7 @@ class App {
 
   private renderLoop = (): void => {
     if (this.needsRender) {
-      this.renderer.render(this.graph, this.selected);
+      this.renderer.render(this.graph, this.selected, this.lod);
       this.renderer.renderMinimap(this.miniCtx, 180, 120, this.graph);
       this.needsRender = false;
     }
@@ -223,6 +250,7 @@ class App {
     if (this.graph.nodes.size > 0) {
       this.camera.fitBounds(minX, minY, maxX, maxY);
     }
+    this.updateLOD();
     this.needsRender = true;
   }
 
@@ -238,6 +266,7 @@ class App {
     minimap.width = 180 * dpr;
     minimap.height = 120 * dpr;
 
+    this.updateLOD();
     this.needsRender = true;
   }
 }

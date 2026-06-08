@@ -83,3 +83,27 @@ export interface Viewport {
   w: number;
   h: number;
 }
+
+// ── Level of Detail ───────────────────────────────────────────────────────
+
+/** Semantic zoom levels per spec §Rendering Pipeline. */
+export const enum LOD {
+  /** System overview: component boxes with decision count badge. */
+  Overview = 0,
+  /** Component detail: decision names listed inside component boxes. */
+  Component = 1,
+  /** Decision detail: full cards with choice, reason, tags. */
+  Decision = 2,
+}
+
+/**
+ * Determine LOD from the number of visible nodes.
+ * Density-driven per spec: sparse viewport → more detail,
+ * dense viewport → less detail. Thresholds tuned for readability
+ * on a typical 1920×1080 canvas.
+ */
+export function computeLOD(visibleCount: number): LOD {
+  if (visibleCount > 40) return LOD.Overview;
+  if (visibleCount > 10) return LOD.Component;
+  return LOD.Decision;
+}

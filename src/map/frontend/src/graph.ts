@@ -6,17 +6,20 @@ import type {
   RenderEdge,
   WsEvent,
 } from './types';
+import { Quadtree } from './quadtree';
 
 // ── Graph model ────────────────────────────────────────────────────────────
 
 export class Graph {
   nodes: Map<string, RenderNode> = new Map();
+  /** All edges — connects_to rendered at LOD 0, others at LOD 1+. */
   edges: RenderEdge[] = [];
   decisions: Map<string, DecisionNode> = new Map();
   patterns: Map<string, PatternNode> = new Map();
   projectName = '';
   projectDescription = '';
   layoutVersion = 0;
+  quadtree = new Quadtree();
 
   loadSnapshot(snap: GraphSnapshot): void {
     this.nodes.clear();
@@ -44,22 +47,24 @@ export class Graph {
 
     for (const d of snap.decisions) {
       this.decisions.set(d.name, d);
-      // Decisions are not rendered as independent nodes at LOD 0.
-      // They appear inside their parent component.
     }
 
     for (const p of snap.patterns) {
       this.patterns.set(p.name, p);
     }
 
+    // Store all edge types — renderer uses LOD to decide which to draw.
     for (const e of snap.edges) {
-      if (e.kind === 'connects_to') {
-        this.edges.push({ from: e.from, to: e.to, kind: e.kind });
-      }
+      this.edges.push({ from: e.from, to: e.to, kind: e.kind });
     }
 
-    // Assign initial positions to nodes that don't have saved positions.
     this.assignMissingPositions();
+    this.rebuildQuadtree();
+  }
+
+  /** Rebuild the spatial index. Call after layout changes or drag. */
+  rebuildQuadtree(): void {
+    this.quadtree.build(this.nodes);
   }
 
   private assignMissingPositions(): void {
@@ -76,20 +81,10 @@ export class Graph {
     }
   }
 
+  /** Hit test using quadtree — O(log n) instead of linear scan. */
   nodeAt(wx: number, wy: number): RenderNode | null {
-    // Iterate in reverse so top-drawn nodes are hit first.
-    const arr = [...this.nodes.values()].reverse();
-    for (const n of arr) {
-      if (
-        wx >= n.x - n.w / 2 &&
-        wx <= n.x + n.w / 2 &&
-        wy >= n.y - n.h / 2 &&
-        wy <= n.y + n.h / 2
-      ) {
-        return n;
-      }
-    }
-    return null;
+    const name = this.quadtree.hitTest(wx, wy);
+    return name ? (this.nodes.get(name) ?? null) : null;
   }
 
   decisionsFor(component: string): DecisionNode[] {
