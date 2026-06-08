@@ -12,23 +12,30 @@ use super::context;
 /// content. Used to track design session progress: decisions matching a
 /// concern's keywords mark it as covered, so the agent focuses on gaps.
 ///
+/// **Array order IS priority order.** Priority determines the `focus` field
+/// in `advance(incomplete)` responses — the most dangerous gaps are
+/// addressed first. See the `advance` spec for the full priority table.
+///
 /// Also used by `get_context` and `get_architecture` to report per-component
 /// coverage so the agent can identify under-designed areas.
 pub(super) const CONCERNS: &[(&str, &[&str])] = &[
     (
-        "Data format & serialization",
+        "Security boundaries",
         &[
-            "format",
-            "toml",
-            "json",
-            "yaml",
-            "serialize",
-            "deserialize",
-            "schema",
-            "encoding",
-            "parse",
-            "marshal",
-            "protobuf",
+            "security",
+            "auth",
+            "authentication",
+            "authorization",
+            "token",
+            "permission",
+            "trust",
+            "encrypt",
+            "encryption",
+            "secret",
+            "credential",
+            "tls",
+            "certificate",
+            "zeroize",
         ],
     ),
     (
@@ -107,25 +114,6 @@ pub(super) const CONCERNS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "Security boundaries",
-        &[
-            "security",
-            "auth",
-            "authentication",
-            "authorization",
-            "token",
-            "permission",
-            "trust",
-            "encrypt",
-            "encryption",
-            "secret",
-            "credential",
-            "tls",
-            "certificate",
-            "zeroize",
-        ],
-    ),
-    (
         "Storage & persistence",
         &[
             "storage",
@@ -140,6 +128,22 @@ pub(super) const CONCERNS: &[(&str, &[&str])] = &[
             "save",
             "load",
             "filesystem",
+        ],
+    ),
+    (
+        "Data format & serialization",
+        &[
+            "format",
+            "toml",
+            "json",
+            "yaml",
+            "serialize",
+            "deserialize",
+            "schema",
+            "encoding",
+            "parse",
+            "marshal",
+            "protobuf",
         ],
     ),
     (

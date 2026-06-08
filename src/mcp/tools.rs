@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::store::{ProjectState, Store};
 
+use super::advance;
 use super::context;
 use super::prompts;
 use super::{update, write};
@@ -16,6 +17,37 @@ use super::{update, write};
 static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
     serde_json::json!({
         "tools": [
+            {
+                "name": "advance",
+                "description": "Compute the workflow state for a component \
+                    and return the next action. Call before acting on a \
+                    component and after completing each action. The returned \
+                    `ready` field is the only signal that implementation \
+                    can proceed.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "component": {
+                            "type": "string",
+                            "description": "Component name (kebab-case) or 'project'."
+                        },
+                        "intent": {
+                            "type": "string",
+                            "enum": ["implement", "learn", "review"],
+                            "description": "implement (default): full readiness check — \
+                                routes through design until coverage is adequate. \
+                                learn: study existing decisions regardless of coverage. \
+                                review: challenge decisions for drift."
+                        },
+                        "task": {
+                            "type": "string",
+                            "description": "Optional task context passed through to \
+                                design prompts."
+                        }
+                    },
+                    "required": ["component"]
+                }
+            },
             {
                 "name": "get_context",
                 "description": "Get the architectural context for a component. Returns \
@@ -308,6 +340,7 @@ pub(crate) fn is_write_tool(name: &str) -> bool {
 /// Unknown tool names are handled here (they are not write tools).
 pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> Value {
     match name {
+        "advance" => dispatch_advance(state, args),
         "get_context" => dispatch_get_context(state, args),
         "check_pattern" => dispatch_check_pattern(state, args),
         "get_architecture" => tool_result(&context::get_architecture(state)),
@@ -389,6 +422,19 @@ fn dispatch_get_design_prompt(state: &ProjectState, args: &Value) -> Value {
     }
 }
 
+fn dispatch_advance(state: &ProjectState, args: &Value) -> Value {
+    let component = match args.get("component").and_then(|v| v.as_str()) {
+        Some(c) => c,
+        None => return tool_error("missing required parameter: component"),
+    };
+    let intent = args.get("intent").and_then(|v| v.as_str());
+    let task = args.get("task").and_then(|v| v.as_str());
+    match advance::advance(state, component, intent, task) {
+        Ok(result) => tool_result(&result),
+        Err(msg) => tool_error(&msg),
+    }
+}
+
 pub(crate) fn tool_result(payload: &Value) -> Value {
     serde_json::json!({
         "content": [{
@@ -417,6 +463,7 @@ mod tests {
         let list = tool_list();
         let tools = list["tools"].as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"advance"));
         assert!(names.contains(&"get_context"));
         assert!(names.contains(&"check_pattern"));
         assert!(names.contains(&"get_architecture"));
@@ -478,6 +525,7 @@ mod tests {
         assert!(is_write_tool("add_connection"));
 
         // Read tools.
+        assert!(!is_write_tool("advance"));
         assert!(!is_write_tool("get_context"));
         assert!(!is_write_tool("check_pattern"));
         assert!(!is_write_tool("get_architecture"));
@@ -486,6 +534,13 @@ mod tests {
 
         // Unknown.
         assert!(!is_write_tool("nonexistent"));
+    }
+
+    #[test]
+    fn dispatch_advance_missing_component() {
+        let state = empty_state();
+        let result = call_read_tool(&state, "advance", &serde_json::json!({}));
+        assert_eq!(result["isError"], true);
     }
 
     #[test]

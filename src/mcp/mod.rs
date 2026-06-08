@@ -1,3 +1,4 @@
+mod advance;
 mod context;
 mod prompts;
 mod protocol;

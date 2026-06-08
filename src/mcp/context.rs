@@ -8,6 +8,8 @@ use crate::store::graph::InMemoryGraph;
 use crate::store::schema::EdgeKind;
 use crate::store::{DecisionFile, PatternFile, ProjectState};
 
+use super::advance::STALENESS_THRESHOLD_DAYS;
+
 // ── Context depth ──────────────────────────────────────────────────────────
 
 /// Controls how much detail `get_context` returns.
@@ -20,10 +22,6 @@ pub(crate) enum ContextDepth {
     /// no related decisions, compact brief. ~60-70% fewer tokens.
     Constraints,
 }
-
-/// Decisions older than this are flagged as stale in the response,
-/// suggesting a review session.
-const STALENESS_THRESHOLD_DAYS: i64 = 90;
 
 // ── get_context ──────────────────────────────────────────────────────────
 
