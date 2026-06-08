@@ -36,14 +36,42 @@ pub(crate) fn get_context(
     let related_decisions = graph.related_decisions(component);
     let patterns = graph.patterns_for(component);
 
+    // Transitive depends_on traversal (BFS, max depth 3).
+    // Surfaces constraints from non-adjacent decisions that the component's
+    // decisions transitively depend on.
+    let seeds: Vec<&str> = component_decisions
+        .iter()
+        .map(|(name, _)| name.as_ref())
+        .collect();
+    let transitive_deps = graph.transitive_depends_on(&seeds, 3);
+
     let brief = build_brief(
         component,
         task_description,
         &component_decisions,
         &project_decisions,
         &related_decisions,
+        &transitive_deps,
         &patterns,
     );
+
+    // Merge related + transitive, deduplicated by name.
+    let mut seen: HashSet<&str> = HashSet::new();
+    // Exclude the component's own decisions from the combined list.
+    for (name, _) in &component_decisions {
+        seen.insert(name);
+    }
+    let combined_related: Vec<String> = related_decisions
+        .iter()
+        .chain(transitive_deps.iter())
+        .filter(|(name, _)| seen.insert(name))
+        .map(|(_, d)| {
+            format!(
+                "{}: {} ({})",
+                d.decision.component, d.decision.choice, d.decision.reason
+            )
+        })
+        .collect();
 
     let status = if !component_decisions.is_empty() {
         "covered"
@@ -65,12 +93,7 @@ pub(crate) fn get_context(
             .map(|(_, d)| &d.decision.choice)
             .collect::<Vec<_>>(),
         "patterns": format_patterns(&patterns),
-        "related_decisions": related_decisions.iter()
-            .map(|(_, d)| format!(
-                "{}: {} ({})",
-                d.decision.component, d.decision.choice, d.decision.reason
-            ))
-            .collect::<Vec<_>>(),
+        "related_decisions": combined_related,
         "brief": brief,
         "status": status,
     }))
@@ -128,6 +151,7 @@ fn build_brief(
     component_decisions: &[(&Arc<str>, &DecisionFile)],
     project_decisions: &[(&Arc<str>, &DecisionFile)],
     related_decisions: &[(&Arc<str>, &DecisionFile)],
+    transitive_deps: &[(&Arc<str>, &DecisionFile)],
     patterns: &[(&Arc<str>, &PatternFile)],
 ) -> String {
     let mut brief = String::with_capacity(512);
@@ -164,6 +188,17 @@ fn build_brief(
         }
     }
     brief.push('\n');
+
+    if !transitive_deps.is_empty() {
+        brief.push_str("DEPENDENCIES:\n");
+        for (_, d) in transitive_deps {
+            brief.push_str(&format!(
+                "- {}: {} ({})\n",
+                d.decision.component, d.decision.choice, d.decision.reason
+            ));
+        }
+        brief.push('\n');
+    }
 
     if !related_decisions.is_empty() {
         brief.push_str("RELATED:\n");
@@ -605,6 +640,68 @@ mod tests {
 
         assert!(brief.contains("RULES:\n"));
         assert!(brief.contains("Result<T, AppError>"));
+    }
+
+    #[test]
+    fn brief_includes_transitive_dependencies() {
+        use crate::store::schema::*;
+        use chrono::{TimeZone, Utc};
+
+        let mut state = test_state();
+
+        // Add a decision that use-jwt depends on (in a non-connected component).
+        state.decisions.insert(
+            "tls-required".into(),
+            DecisionFile {
+                decision: Decision {
+                    component: "rate-limiter".into(),
+                    choice: "TLS everywhere".into(),
+                    reason: "Zero trust".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+                },
+            },
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "tls-required".into(),
+            kind: NodeKind::Decision,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "tls-required".into(),
+            to: "rate-limiter".into(),
+            kind: EdgeKind::BelongsTo,
+        });
+        // use-jwt depends on tls-required (cross-component dependency).
+        state.graph_index.edges.push(EdgeEntry {
+            from: "use-jwt".into(),
+            to: "tls-required".into(),
+            kind: EdgeKind::DependsOn,
+        });
+        state.rebuild_graph();
+
+        let result = get_context(&state, "auth", None).unwrap();
+        let brief = result["brief"].as_str().unwrap();
+
+        assert!(
+            brief.contains("DEPENDENCIES:"),
+            "brief should have a DEPENDENCIES section when transitive deps exist: {brief}"
+        );
+        assert!(
+            brief.contains("TLS everywhere"),
+            "transitive dependency should appear in brief: {brief}"
+        );
+
+        // Also in the related_decisions field.
+        let related = result["related_decisions"].as_array().unwrap();
+        assert!(
+            related
+                .iter()
+                .any(|r| r.as_str().is_some_and(|s| s.contains("TLS everywhere"))),
+            "transitive dependency should appear in related_decisions: {related:?}"
+        );
     }
 
     // ── check_pattern ───────────────────────────────────────────────────

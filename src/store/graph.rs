@@ -280,6 +280,62 @@ impl InMemoryGraph {
             .unwrap_or_default()
     }
 
+    /// BFS on `DependsOn` forward edges from a set of seed decisions.
+    ///
+    /// Returns all reachable decisions within `max_depth` hops, excluding
+    /// the seeds themselves. Used by `get_context` to surface transitive
+    /// constraints that affect a component's decisions — e.g. if auth's
+    /// "use-jwt" depends on infrastructure's "redis-available", that
+    /// constraint appears in the auth context even if infrastructure is
+    /// not directly connected to auth.
+    ///
+    /// Cycles are handled by the visited set — each node is visited at
+    /// most once.
+    pub fn transitive_depends_on(
+        &self,
+        seeds: &[&str],
+        max_depth: usize,
+    ) -> Vec<(&Arc<str>, &DecisionFile)> {
+        use std::collections::VecDeque;
+
+        let mut visited: HashSet<&str> = HashSet::with_capacity(seeds.len() * 4);
+        for &seed in seeds {
+            visited.insert(seed);
+        }
+
+        let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
+
+        // Seed BFS from all seed decisions.
+        for &seed in seeds {
+            if let Some(edges) = self.forward.get(seed) {
+                for edge in edges {
+                    if edge.kind == EdgeKind::DependsOn && visited.insert(edge.target.as_ref()) {
+                        queue.push_back((edge.target.as_ref(), 1));
+                    }
+                }
+            }
+        }
+
+        let mut result = Vec::new();
+
+        while let Some((node, depth)) = queue.pop_front() {
+            if let Some((key, dec)) = self.decisions.get_key_value(node) {
+                result.push((key, dec));
+            }
+            if depth < max_depth
+                && let Some(edges) = self.forward.get(node) {
+                    for edge in edges {
+                        if edge.kind == EdgeKind::DependsOn && visited.insert(edge.target.as_ref())
+                        {
+                            queue.push_back((edge.target.as_ref(), depth + 1));
+                        }
+                    }
+                }
+        }
+
+        result
+    }
+
     /// Components that a pattern applies to (forward `AppliesTo` edges).
     pub fn components_for_pattern(&self, pattern: &str) -> Vec<&str> {
         self.forward_targets(pattern, EdgeKind::AppliesTo)
@@ -951,6 +1007,286 @@ mod tests {
     fn edges_involving_empty_for_unknown() {
         let g = test_graph();
         assert!(g.edges_involving("nonexistent").is_empty());
+    }
+
+    // ── transitive_depends_on ───────────────────────────────────────────
+
+    /// Build a chain graph: d1 → d2 → d3 → d4 (all DependsOn).
+    /// All decisions belong to component "chain-comp".
+    fn chain_graph() -> InMemoryGraph {
+        let index = GraphIndex {
+            version: 1,
+            rebuilt: ts(),
+            nodes: vec![
+                NodeEntry {
+                    name: "project".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "p".into(),
+                },
+                NodeEntry {
+                    name: "chain-comp".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "cc".into(),
+                },
+                NodeEntry {
+                    name: "other-comp".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "oc".into(),
+                },
+                NodeEntry {
+                    name: "d1".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "h1".into(),
+                },
+                NodeEntry {
+                    name: "d2".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "h2".into(),
+                },
+                NodeEntry {
+                    name: "d3".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "h3".into(),
+                },
+                NodeEntry {
+                    name: "d4".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "h4".into(),
+                },
+            ],
+            edges: vec![
+                EdgeEntry {
+                    from: "d1".into(),
+                    to: "chain-comp".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "d2".into(),
+                    to: "other-comp".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "d3".into(),
+                    to: "other-comp".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "d4".into(),
+                    to: "other-comp".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "d1".into(),
+                    to: "d2".into(),
+                    kind: EdgeKind::DependsOn,
+                },
+                EdgeEntry {
+                    from: "d2".into(),
+                    to: "d3".into(),
+                    kind: EdgeKind::DependsOn,
+                },
+                EdgeEntry {
+                    from: "d3".into(),
+                    to: "d4".into(),
+                    kind: EdgeKind::DependsOn,
+                },
+            ],
+        };
+
+        let mut components = BTreeMap::new();
+        for name in ["chain-comp", "other-comp"] {
+            components.insert(
+                name.into(),
+                ComponentFile {
+                    component: Component {
+                        name: name.into(),
+                        description: String::new(),
+                    },
+                },
+            );
+        }
+        let mut decisions = BTreeMap::new();
+        for (name, comp) in [
+            ("d1", "chain-comp"),
+            ("d2", "other-comp"),
+            ("d3", "other-comp"),
+            ("d4", "other-comp"),
+        ] {
+            decisions.insert(
+                name.into(),
+                DecisionFile {
+                    decision: Decision {
+                        component: comp.into(),
+                        choice: format!("choice-{name}"),
+                        reason: "test".into(),
+                        alternatives: vec![],
+                        tags: vec![],
+                        created: ts(),
+                    },
+                },
+            );
+        }
+
+        InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new())
+    }
+
+    #[test]
+    fn transitive_depth_1() {
+        let g = chain_graph();
+        let result = g.transitive_depends_on(&["d1"], 1);
+        let names: Vec<&str> = result.iter().map(|(n, _)| n.as_ref()).collect();
+        assert_eq!(names, vec!["d2"]);
+    }
+
+    #[test]
+    fn transitive_depth_2() {
+        let g = chain_graph();
+        let result = g.transitive_depends_on(&["d1"], 2);
+        let mut names: Vec<&str> = result.iter().map(|(n, _)| n.as_ref()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["d2", "d3"]);
+    }
+
+    #[test]
+    fn transitive_depth_3() {
+        let g = chain_graph();
+        let result = g.transitive_depends_on(&["d1"], 3);
+        let mut names: Vec<&str> = result.iter().map(|(n, _)| n.as_ref()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["d2", "d3", "d4"]);
+    }
+
+    #[test]
+    fn transitive_respects_max_depth() {
+        let g = chain_graph();
+        // d1 → d2 → d3 → d4, but max_depth=2 should stop before d4.
+        let result = g.transitive_depends_on(&["d1"], 2);
+        let names: Vec<&str> = result.iter().map(|(n, _)| n.as_ref()).collect();
+        assert!(!names.contains(&"d4"));
+    }
+
+    #[test]
+    fn transitive_excludes_seeds() {
+        let g = chain_graph();
+        let result = g.transitive_depends_on(&["d1"], 3);
+        let names: Vec<&str> = result.iter().map(|(n, _)| n.as_ref()).collect();
+        assert!(!names.contains(&"d1"), "seed should be excluded");
+    }
+
+    #[test]
+    fn transitive_multiple_seeds() {
+        let g = chain_graph();
+        // d1 depends on d2, d2 depends on d3. Seeds are [d1, d2].
+        // d2 is excluded (it's a seed). d3 is reachable from d2 at depth 1.
+        // d4 is reachable from d3 at depth 2 (from d2's perspective).
+        let result = g.transitive_depends_on(&["d1", "d2"], 2);
+        let mut names: Vec<&str> = result.iter().map(|(n, _)| n.as_ref()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["d3", "d4"]);
+    }
+
+    #[test]
+    fn transitive_empty_for_no_dependencies() {
+        let g = chain_graph();
+        // d4 has no DependsOn edges.
+        let result = g.transitive_depends_on(&["d4"], 3);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn transitive_handles_cycle() {
+        // Build a cycle: a → b → a (via DependsOn).
+        let index = GraphIndex {
+            version: 1,
+            rebuilt: ts(),
+            nodes: vec![
+                NodeEntry {
+                    name: "project".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "p".into(),
+                },
+                NodeEntry {
+                    name: "comp".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "c".into(),
+                },
+                NodeEntry {
+                    name: "a".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "ha".into(),
+                },
+                NodeEntry {
+                    name: "b".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "hb".into(),
+                },
+            ],
+            edges: vec![
+                EdgeEntry {
+                    from: "a".into(),
+                    to: "comp".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "b".into(),
+                    to: "comp".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "a".into(),
+                    to: "b".into(),
+                    kind: EdgeKind::DependsOn,
+                },
+                EdgeEntry {
+                    from: "b".into(),
+                    to: "a".into(),
+                    kind: EdgeKind::DependsOn,
+                },
+            ],
+        };
+        let mut components = BTreeMap::new();
+        components.insert(
+            "comp".into(),
+            ComponentFile {
+                component: Component {
+                    name: "comp".into(),
+                    description: String::new(),
+                },
+            },
+        );
+        let mut decisions = BTreeMap::new();
+        for name in ["a", "b"] {
+            decisions.insert(
+                name.into(),
+                DecisionFile {
+                    decision: Decision {
+                        component: "comp".into(),
+                        choice: name.into(),
+                        reason: "test".into(),
+                        alternatives: vec![],
+                        tags: vec![],
+                        created: ts(),
+                    },
+                },
+            );
+        }
+        let g = InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new());
+
+        // Must terminate despite the cycle, and return only b (not a, the seed).
+        let result = g.transitive_depends_on(&["a"], 10);
+        let names: Vec<&str> = result.iter().map(|(n, _)| n.as_ref()).collect();
+        assert_eq!(names, vec!["b"]);
     }
 
     // ── validate: clean graph ────────────────────────────────────────────
