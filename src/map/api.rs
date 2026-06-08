@@ -150,7 +150,7 @@ pub(crate) async fn get_graph(State(state): State<Arc<MapState>>) -> ApiResult {
             json!({
                 "from": e.from,
                 "to": e.to,
-                "kind": edge_kind_str(e.kind),
+                "kind": e.kind.as_str(),
             })
         })
         .collect();
@@ -652,10 +652,4 @@ fn remove_connection(state: Arc<MapState>, from: String, to: String) -> ApiResul
         }],
     );
     Ok(Json(json!({ "ok": true })))
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-fn edge_kind_str(kind: EdgeKind) -> &'static str {
-    kind.as_str()
 }

@@ -19,6 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::http::header::{
     CONTENT_SECURITY_POLICY, HeaderValue, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
 };
@@ -137,7 +138,8 @@ pub(crate) async fn start(
                 X_FRAME_OPTIONS,
                 HeaderValue::from_static("DENY"),
             ),
-        );
+        )
+        .layer(DefaultBodyLimit::max(1_048_576)); // 1 MB
 
     // Bind to 127.0.0.1 only — never 0.0.0.0.
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port.unwrap_or(0)));

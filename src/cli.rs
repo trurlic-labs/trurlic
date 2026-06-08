@@ -91,6 +91,10 @@ pub enum Command {
         /// Start the server without opening the browser.
         #[arg(long)]
         no_open: bool,
+
+        /// Background the server; print the URL and exit.
+        #[arg(long)]
+        detach: bool,
     },
 
     /// Show project status: component count, decision count, issues.
@@ -210,7 +214,11 @@ pub fn run(cli: Cli) -> Result<()> {
             &alternatives,
         ),
         Command::Serve => commands::serve(&cwd),
-        Command::Map { port, no_open } => commands::map(&cwd, port, no_open),
+        Command::Map {
+            port,
+            no_open,
+            detach,
+        } => commands::map(&cwd, port, no_open, detach),
         Command::Status => commands::status(&cwd),
         Command::Check { rebuild } => commands::check(&cwd, rebuild),
     }
