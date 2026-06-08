@@ -43,22 +43,65 @@ pub struct Issue {
     pub node: Option<String>,
 }
 
+/// A hard blocker that prevents node removal.
+#[derive(Debug, Clone)]
+pub struct CascadeBlocker {
+    /// The node that causes the block.
+    pub node: String,
+    /// The edge kind creating the dependency.
+    pub edge: EdgeKind,
+    /// Human-readable explanation.
+    pub message: String,
+}
+
+/// A non-blocking side-effect the user should know about.
+#[derive(Debug, Clone)]
+pub struct CascadeEffect {
+    /// The affected node.
+    pub node: String,
+    /// The edge kind being removed or broken.
+    pub edge: EdgeKind,
+    /// Human-readable explanation.
+    pub message: String,
+}
+
+/// An outgoing edge from the deleted node that will be silently removed.
+#[derive(Debug, Clone)]
+pub struct CascadeCleanup {
+    /// The edge kind being removed.
+    pub edge: EdgeKind,
+    /// The target node of the edge.
+    pub target: String,
+}
+
 /// Result of a cascade pre-flight check before removing a node.
 ///
 /// Shared by CLI, MCP, and map API to enforce identical deletion rules
 /// regardless of the mutation entry point.
 #[derive(Debug, Clone)]
 pub struct CascadeResult {
-    /// Non-empty means removal is blocked. Each string explains why.
-    pub blockers: Vec<String>,
-    /// Non-blocking side-effects that will be cleaned up. Informational.
-    pub warnings: Vec<String>,
+    /// Non-empty means removal is blocked.
+    pub blockers: Vec<CascadeBlocker>,
+    /// Non-blocking side-effects the user should be aware of.
+    pub warnings: Vec<CascadeEffect>,
+    /// Outgoing edges that will be silently cleaned up.
+    pub cleanups: Vec<CascadeCleanup>,
 }
 
 impl CascadeResult {
     #[must_use]
     pub fn is_blocked(&self) -> bool {
         !self.blockers.is_empty()
+    }
+
+    /// Concatenate blocker messages for flat error reporting (CLI, map 409).
+    #[must_use]
+    pub fn blocker_summary(&self) -> String {
+        self.blockers
+            .iter()
+            .map(|b| b.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 }
 
@@ -271,8 +314,8 @@ impl InMemoryGraph {
     // ── Cascade checks ──────────────────────────────────────────────────
 
     /// Pre-flight check for removing a decision. Returns blockers that
-    /// must prevent the removal and warnings about side-effects that will
-    /// be cleaned up.
+    /// must prevent the removal, warnings about side-effects, and cleanups
+    /// for outgoing edges that will be silently removed.
     ///
     /// Used by the CLI, MCP server, and map API to enforce identical
     /// cascade rules regardless of the mutation entry point.
@@ -281,113 +324,136 @@ impl InMemoryGraph {
         let involved = self.edges_involving(name);
         let mut blockers = Vec::new();
         let mut warnings = Vec::new();
+        let mut cleanups = Vec::new();
 
-        // Block: other decisions depend on this one via DependsOn.
-        let dependents: Vec<&str> = involved
-            .iter()
-            .filter(|(_, e, d)| e.kind == EdgeKind::DependsOn && *d == Direction::Reverse)
-            .map(|(other, _, _)| *other)
-            .collect();
-        if !dependents.is_empty() {
-            blockers.push(format!(
-                "decision `{name}` is depended on by: {}. \
-                 Remove or update them first.",
-                dependents.join(", ")
-            ));
-        }
-
-        // Block: pattern would have <2 members after removal.
         for (other, edge, dir) in &involved {
-            if edge.kind == EdgeKind::MemberOf && *dir == Direction::Reverse {
-                let member_count = self.forward_edge_count(other, EdgeKind::MemberOf);
-                if member_count <= 2 {
-                    blockers.push(format!(
-                        "removing `{name}` would leave pattern `{other}` with \
-                         fewer than 2 members. Remove or update the pattern first."
-                    ));
+            match (edge.kind, *dir) {
+                // Block: other decisions depend on this one.
+                (EdgeKind::DependsOn, Direction::Reverse) => {
+                    blockers.push(CascadeBlocker {
+                        node: other.to_string(),
+                        edge: EdgeKind::DependsOn,
+                        message: format!(
+                            "decision `{other}` depends on `{name}` — \
+                             remove or update it first"
+                        ),
+                    });
                 }
+                // Block or warn: pattern membership.
+                (EdgeKind::MemberOf, Direction::Reverse) => {
+                    let member_count = self.forward_edge_count(other, EdgeKind::MemberOf);
+                    if member_count <= 2 {
+                        blockers.push(CascadeBlocker {
+                            node: other.to_string(),
+                            edge: EdgeKind::MemberOf,
+                            message: format!(
+                                "pattern `{other}` would have fewer than 2 members — \
+                                 remove or update the pattern first"
+                            ),
+                        });
+                    } else {
+                        warnings.push(CascadeEffect {
+                            node: other.to_string(),
+                            edge: EdgeKind::MemberOf,
+                            message: format!(
+                                "pattern `{other}` will be updated to exclude this decision"
+                            ),
+                        });
+                    }
+                }
+                // Warn: incoming constrains edges.
+                (EdgeKind::Constrains, Direction::Reverse) => {
+                    warnings.push(CascadeEffect {
+                        node: other.to_string(),
+                        edge: EdgeKind::Constrains,
+                        message: format!("constraint from `{other}` will be removed"),
+                    });
+                }
+                // Warn: broken supersede chains.
+                (EdgeKind::Supersedes, Direction::Reverse) => {
+                    warnings.push(CascadeEffect {
+                        node: other.to_string(),
+                        edge: EdgeKind::Supersedes,
+                        message: format!("supersede chain broken — `{other}` references `{name}`"),
+                    });
+                }
+                // Clean: all outgoing edges from this decision.
+                (_, Direction::Forward) => {
+                    cleanups.push(CascadeCleanup {
+                        edge: edge.kind,
+                        target: other.to_string(),
+                    });
+                }
+                // Other reverse edges: no action needed.
+                _ => {}
             }
         }
 
-        // Warn: incoming constrains edges (constraint source is being removed).
-        let constrainers: Vec<&str> = involved
-            .iter()
-            .filter(|(_, e, d)| e.kind == EdgeKind::Constrains && *d == Direction::Reverse)
-            .map(|(other, _, _)| *other)
-            .collect();
-        if !constrainers.is_empty() {
-            warnings.push(format!(
-                "removing constraint edges from: {}",
-                constrainers.join(", ")
-            ));
+        CascadeResult {
+            blockers,
+            warnings,
+            cleanups,
         }
-
-        // Warn: broken supersede chains.
-        let supersede_refs: Vec<&str> = involved
-            .iter()
-            .filter(|(_, e, d)| e.kind == EdgeKind::Supersedes && *d == Direction::Reverse)
-            .map(|(other, _, _)| *other)
-            .collect();
-        if !supersede_refs.is_empty() {
-            warnings.push(format!(
-                "supersede chain broken — these decisions reference `{name}`: {}",
-                supersede_refs.join(", ")
-            ));
-        }
-
-        CascadeResult { blockers, warnings }
     }
 
     /// Pre-flight check for removing a component. Returns blockers that
-    /// must prevent the removal and warnings about side-effects that will
-    /// be cleaned up.
+    /// must prevent the removal, warnings about side-effects, and cleanups
+    /// for outgoing edges that will be silently removed.
     #[must_use]
     pub fn check_component_cascade(&self, name: &str) -> CascadeResult {
         let involved = self.edges_involving(name);
         let mut blockers = Vec::new();
         let mut warnings = Vec::new();
+        let mut cleanups = Vec::new();
 
-        // Block: decisions belong to this component.
-        let decisions: Vec<&str> = involved
-            .iter()
-            .filter(|(_, e, d)| e.kind == EdgeKind::BelongsTo && *d == Direction::Reverse)
-            .map(|(other, _, _)| *other)
-            .collect();
-        if !decisions.is_empty() {
-            blockers.push(format!(
-                "component `{name}` is referenced by decisions: {}. \
-                 Remove or reassign them first.",
-                decisions.join(", ")
-            ));
+        for (other, edge, dir) in &involved {
+            match (edge.kind, *dir) {
+                // Block: decisions belong to this component.
+                (EdgeKind::BelongsTo, Direction::Reverse) => {
+                    blockers.push(CascadeBlocker {
+                        node: other.to_string(),
+                        edge: EdgeKind::BelongsTo,
+                        message: format!(
+                            "decision `{other}` belongs to `{name}` — \
+                             remove or reassign it first"
+                        ),
+                    });
+                }
+                // Warn: patterns that apply to this component.
+                (EdgeKind::AppliesTo, Direction::Reverse) => {
+                    warnings.push(CascadeEffect {
+                        node: other.to_string(),
+                        edge: EdgeKind::AppliesTo,
+                        message: format!(
+                            "pattern `{other}` applies_to association will be removed"
+                        ),
+                    });
+                }
+                // Warn: incoming connections from other components.
+                (EdgeKind::ConnectsTo, Direction::Reverse) => {
+                    warnings.push(CascadeEffect {
+                        node: other.to_string(),
+                        edge: EdgeKind::ConnectsTo,
+                        message: format!("incoming connection from `{other}` will be removed"),
+                    });
+                }
+                // Clean: all outgoing edges from this component.
+                (_, Direction::Forward) => {
+                    cleanups.push(CascadeCleanup {
+                        edge: edge.kind,
+                        target: other.to_string(),
+                    });
+                }
+                // Other reverse edges: no action needed.
+                _ => {}
+            }
         }
 
-        // Warn: patterns that apply to this component.
-        let patterns: Vec<&str> = involved
-            .iter()
-            .filter(|(_, e, d)| e.kind == EdgeKind::AppliesTo && *d == Direction::Reverse)
-            .map(|(other, _, _)| *other)
-            .collect();
-        if !patterns.is_empty() {
-            warnings.push(format!(
-                "removing pattern associations: {}",
-                patterns.join(", ")
-            ));
+        CascadeResult {
+            blockers,
+            warnings,
+            cleanups,
         }
-
-        // Warn: incoming connections from other components.
-        let incoming: Vec<&str> = involved
-            .iter()
-            .filter(|(_, e, d)| e.kind == EdgeKind::ConnectsTo && *d == Direction::Reverse)
-            .map(|(other, _, _)| *other)
-            .collect();
-        if !incoming.is_empty() {
-            warnings.push(format!(
-                "removing incoming connections from: {}",
-                incoming.join(", ")
-            ));
-        }
-
-        CascadeResult { blockers, warnings }
     }
 
     // ── Content access ───────────────────────────────────────────────────
@@ -1903,7 +1969,11 @@ mod tests {
         let g = cascade_graph();
         let r = g.check_decision_cascade("use-jwt");
         assert!(r.is_blocked());
-        assert!(r.blockers.iter().any(|b| b.contains("token-expiry")));
+        assert!(
+            r.blockers
+                .iter()
+                .any(|b| b.node == "token-expiry" && b.edge == EdgeKind::DependsOn)
+        );
     }
 
     #[test]
@@ -1914,11 +1984,9 @@ mod tests {
         // Also blocked by nothing depending on it via DependsOn (only use-jwt has
         // DependsOn, pointing the other way). But pattern check should block.
         assert!(r.is_blocked());
-        assert!(
-            r.blockers
-                .iter()
-                .any(|b| b.contains("auth-pattern") && b.contains("fewer than 2"))
-        );
+        assert!(r.blockers.iter().any(|b| b.node == "auth-pattern"
+            && b.edge == EdgeKind::MemberOf
+            && b.message.contains("fewer than 2")));
     }
 
     #[test]
@@ -1929,6 +1997,18 @@ mod tests {
     }
 
     #[test]
+    fn cascade_decision_collects_cleanups() {
+        let g = cascade_graph();
+        let r = g.check_decision_cascade("db-pool");
+        // db-pool has a forward BelongsTo edge to database.
+        assert!(
+            r.cleanups
+                .iter()
+                .any(|c| c.edge == EdgeKind::BelongsTo && c.target == "database")
+        );
+    }
+
+    #[test]
     fn cascade_component_blocks_when_has_decisions() {
         let g = cascade_graph();
         let r = g.check_component_cascade("auth");
@@ -1936,7 +2016,7 @@ mod tests {
         assert!(
             r.blockers
                 .iter()
-                .any(|b| b.contains("use-jwt") || b.contains("token-expiry"))
+                .any(|b| b.node == "use-jwt" || b.node == "token-expiry")
         );
     }
 
@@ -1993,7 +2073,11 @@ mod tests {
         let g2 = InMemoryGraph::build(&index, &components, &BTreeMap::new(), &BTreeMap::new());
         let r2 = g2.check_component_cascade("database");
         assert!(!r2.is_blocked());
-        assert!(r2.warnings.iter().any(|w| w.contains("auth")));
+        assert!(
+            r2.warnings
+                .iter()
+                .any(|w| w.node == "auth" && w.edge == EdgeKind::ConnectsTo)
+        );
     }
 
     #[test]
@@ -2031,19 +2115,51 @@ mod tests {
         let r = g.check_component_cascade("orphan");
         assert!(!r.is_blocked());
         assert!(r.warnings.is_empty());
+        assert!(r.cleanups.is_empty());
     }
 
     #[test]
     fn cascade_result_is_blocked_semantics() {
         let empty = CascadeResult {
             blockers: vec![],
-            warnings: vec!["something".into()],
+            warnings: vec![CascadeEffect {
+                node: "x".into(),
+                edge: EdgeKind::Constrains,
+                message: "something".into(),
+            }],
+            cleanups: vec![],
         };
         assert!(!empty.is_blocked());
         let blocked = CascadeResult {
-            blockers: vec!["reason".into()],
+            blockers: vec![CascadeBlocker {
+                node: "y".into(),
+                edge: EdgeKind::DependsOn,
+                message: "reason".into(),
+            }],
             warnings: vec![],
+            cleanups: vec![],
         };
         assert!(blocked.is_blocked());
+    }
+
+    #[test]
+    fn cascade_blocker_summary_joins_messages() {
+        let result = CascadeResult {
+            blockers: vec![
+                CascadeBlocker {
+                    node: "a".into(),
+                    edge: EdgeKind::DependsOn,
+                    message: "first".into(),
+                },
+                CascadeBlocker {
+                    node: "b".into(),
+                    edge: EdgeKind::MemberOf,
+                    message: "second".into(),
+                },
+            ],
+            warnings: vec![],
+            cleanups: vec![],
+        };
+        assert_eq!(result.blocker_summary(), "first; second");
     }
 }

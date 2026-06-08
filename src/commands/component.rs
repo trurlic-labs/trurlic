@@ -187,11 +187,11 @@ pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
     let cascade = state.graph.check_component_cascade(name);
 
     if cascade.is_blocked() {
-        return Err(Error::CascadeBlocked(cascade.blockers.join("; ")));
+        return Err(Error::CascadeBlocked(cascade.blocker_summary()));
     }
 
-    for warning in &cascade.warnings {
-        eprintln!("warning: {warning}");
+    for w in &cascade.warnings {
+        eprintln!("warning: {}", w.message);
     }
 
     state.components.remove(name);

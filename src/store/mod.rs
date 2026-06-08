@@ -457,6 +457,68 @@ impl Store {
             ))),
         }
     }
+
+    // ── Hash verification ────────────────────────────────────────────────
+
+    /// Compare stored `graph.toml` hashes against actual file content.
+    ///
+    /// Reports mismatches as warnings — files edited outside Trurl, bitrot,
+    /// or interrupted writes that were not yet reconciled. This runs
+    /// **before** `load_state` (which silently reconciles), so `trurl check`
+    /// can surface discrepancies the user would otherwise never see.
+    pub fn verify_hashes(&self) -> Result<Vec<graph::Issue>> {
+        let graph_path = self.graph_path();
+        if !graph_path.exists() {
+            return Ok(vec![graph::Issue {
+                severity: graph::Severity::Warning,
+                message: "graph.toml is missing (will be rebuilt from node files)".into(),
+                node: None,
+            }]);
+        }
+
+        let index: GraphIndex = self.read_toml(&graph_path)?;
+        let mut issues = Vec::new();
+
+        for node in &index.nodes {
+            let path = match node.kind {
+                NodeKind::Component if node.name == "project" => self.root.join("project.toml"),
+                NodeKind::Component => self.component_path(&node.name),
+                NodeKind::Decision => self.decision_path(&node.name),
+                NodeKind::Pattern => self.pattern_path(&node.name),
+            };
+
+            match hash_file(&path) {
+                Ok(actual) if actual != node.hash => {
+                    issues.push(graph::Issue {
+                        severity: graph::Severity::Warning,
+                        message: format!(
+                            "{} `{}` content changed since last indexed \
+                             (stored: {}…, actual: {}…)",
+                            node.kind.as_str(),
+                            node.name,
+                            &node.hash[..node.hash.len().min(12)],
+                            &actual[..actual.len().min(12)],
+                        ),
+                        node: Some(node.name.clone()),
+                    });
+                }
+                Ok(_) => {} // hash matches
+                Err(_) => {
+                    issues.push(graph::Issue {
+                        severity: graph::Severity::Warning,
+                        message: format!(
+                            "{} `{}` is in graph.toml but the file is missing or unreadable",
+                            node.kind.as_str(),
+                            node.name,
+                        ),
+                        node: Some(node.name.clone()),
+                    });
+                }
+            }
+        }
+
+        Ok(issues)
+    }
 }
 
 // ── StoreLock ────────────────────────────────────────────────────────────────

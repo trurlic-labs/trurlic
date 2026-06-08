@@ -26,9 +26,25 @@ pub(crate) fn remove_decision(
         return Ok(serde_json::json!({
             "removed": false,
             "blocked_by": cascade.blockers.iter()
-                .map(|b| serde_json::json!({ "message": b }))
+                .map(|b| serde_json::json!({
+                    "node": b.node,
+                    "edge": b.edge.as_str(),
+                    "message": b.message,
+                }))
                 .collect::<Vec<_>>(),
-            "warnings": cascade.warnings,
+            "would_warn": cascade.warnings.iter()
+                .map(|w| serde_json::json!({
+                    "node": w.node,
+                    "edge": w.edge.as_str(),
+                    "message": w.message,
+                }))
+                .collect::<Vec<_>>(),
+            "would_clean": cascade.cleanups.iter()
+                .map(|c| serde_json::json!({
+                    "edge": c.edge.as_str(),
+                    "target": c.target,
+                }))
+                .collect::<Vec<_>>(),
         }));
     }
 
@@ -53,7 +69,19 @@ pub(crate) fn remove_decision(
     Ok(serde_json::json!({
         "removed": true,
         "blocked_by": [],
-        "warnings": cascade.warnings,
+        "would_warn": cascade.warnings.iter()
+            .map(|w| serde_json::json!({
+                "node": w.node,
+                "edge": w.edge.as_str(),
+                "message": w.message,
+            }))
+            .collect::<Vec<_>>(),
+        "would_clean": cascade.cleanups.iter()
+            .map(|c| serde_json::json!({
+                "edge": c.edge.as_str(),
+                "target": c.target,
+            }))
+            .collect::<Vec<_>>(),
     }))
 }
 
@@ -268,6 +296,11 @@ mod tests {
         assert_eq!(result["removed"], false);
         let blocked = result["blocked_by"].as_array().unwrap();
         assert!(!blocked.is_empty());
+        assert!(
+            blocked
+                .iter()
+                .any(|b| b["node"] == "token-expiry" && b["edge"] == "depends_on")
+        );
         assert!(state.decisions.contains_key("use-jwt"));
     }
 
@@ -293,9 +326,10 @@ mod tests {
         assert_eq!(result["removed"], false);
         let blocked = result["blocked_by"].as_array().unwrap();
         assert!(blocked.iter().any(|b| {
-            b["message"]
-                .as_str()
-                .is_some_and(|m| m.contains("fewer than 2"))
+            b["edge"] == "member_of"
+                && b["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("fewer than 2"))
         }));
     }
 

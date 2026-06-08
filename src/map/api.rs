@@ -536,7 +536,7 @@ fn remove_component(state: Arc<MapState>, name: String) -> ApiResult {
 
     let cascade = ps.graph.check_component_cascade(&name);
     if cascade.is_blocked() {
-        return Err(api_err(StatusCode::CONFLICT, cascade.blockers.join("; ")));
+        return Err(api_err(StatusCode::CONFLICT, cascade.blocker_summary()));
     }
 
     let comp_snapshot = ps.components.remove(&name);
@@ -565,7 +565,7 @@ fn remove_component(state: Arc<MapState>, name: String) -> ApiResult {
     ws::broadcast(&state.ws_tx, &[WsEvent::NodeRemoved { name: name.clone() }]);
     Ok(Json(json!({
         "ok": true,
-        "warnings": cascade.warnings,
+        "warnings": cascade.warnings.iter().map(|w| &w.message).collect::<Vec<_>>(),
     })))
 }
 
@@ -591,7 +591,7 @@ fn remove_decision(state: Arc<MapState>, name: String) -> ApiResult {
 
     let cascade = ps.graph.check_decision_cascade(&name);
     if cascade.is_blocked() {
-        return Err(api_err(StatusCode::CONFLICT, cascade.blockers.join("; ")));
+        return Err(api_err(StatusCode::CONFLICT, cascade.blocker_summary()));
     }
 
     let dec_snapshot = ps.decisions.remove(&name);
@@ -620,7 +620,7 @@ fn remove_decision(state: Arc<MapState>, name: String) -> ApiResult {
     ws::broadcast(&state.ws_tx, &[WsEvent::NodeRemoved { name: name.clone() }]);
     Ok(Json(json!({
         "ok": true,
-        "warnings": cascade.warnings,
+        "warnings": cascade.warnings.iter().map(|w| &w.message).collect::<Vec<_>>(),
     })))
 }
 

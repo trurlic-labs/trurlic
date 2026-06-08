@@ -40,19 +40,27 @@ pub fn check(cwd: &Path, rebuild: bool) -> Result<()> {
     }
 
     let store = discover_store(cwd)?;
-    let state = store.load_state()?;
-    let issues = state.validate();
 
-    if issues.is_empty() {
+    // Phase 1: verify hashes against the raw graph.toml before load_state
+    // reconciles them. This surfaces files edited outside Trurl.
+    let hash_issues = store.verify_hashes()?;
+
+    // Phase 2: load (which reconciles) and run structural validation.
+    let state = store.load_state()?;
+    let structural_issues = state.validate();
+
+    let all_issues: Vec<_> = hash_issues.iter().chain(structural_issues.iter()).collect();
+
+    if all_issues.is_empty() {
         println!(".trurl/ is consistent");
         return Ok(());
     }
 
-    let error_count = issues
+    let error_count = all_issues
         .iter()
         .filter(|i| i.severity == Severity::Error)
         .count();
-    for issue in &issues {
+    for issue in &all_issues {
         let prefix = match issue.severity {
             Severity::Error => "error",
             Severity::Warning => "warning",
@@ -202,6 +210,107 @@ mod tests {
         let state = store.load_state().unwrap();
         assert!(state.graph_index.nodes.iter().any(|n| n.name == "auth"));
         assert!(state.graph_index.nodes.iter().any(|n| n.name == "project"));
+    }
+
+    // ── verify_hashes ──────────────────────────────────────────────────
+
+    #[test]
+    fn verify_hashes_clean_state() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let issues = store.verify_hashes().unwrap();
+        assert!(issues.is_empty(), "clean state should have no hash issues");
+    }
+
+    #[test]
+    fn verify_hashes_detects_modified_file() {
+        use std::fs;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+
+        // Tamper with the component file after it's been indexed.
+        let path = store.component_path("auth");
+        fs::write(
+            &path,
+            "[component]\nname = \"auth\"\ndescription = \"tampered\"\n",
+        )
+        .unwrap();
+
+        let issues = store.verify_hashes().unwrap();
+        assert!(
+            issues.iter().any(|i| i.node.as_deref() == Some("auth")
+                && i.message.contains("content changed")),
+            "should detect the modified file: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn verify_hashes_detects_missing_file() {
+        use std::fs;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+
+        // Delete the component file but leave graph.toml intact.
+        fs::remove_file(store.component_path("auth")).unwrap();
+
+        let issues = store.verify_hashes().unwrap();
+        assert!(
+            issues.iter().any(|i| i.node.as_deref() == Some("auth")
+                && i.message.contains("missing or unreadable")),
+            "should detect the missing file: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn verify_hashes_warns_when_graph_toml_missing() {
+        use std::fs;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        fs::remove_file(store.graph_path()).unwrap();
+
+        let issues = store.verify_hashes().unwrap();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.message.contains("graph.toml is missing")),
+            "should warn about missing graph.toml: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn check_reports_hash_mismatches_as_warnings() {
+        use std::fs;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let path = store.component_path("auth");
+        fs::write(
+            &path,
+            "[component]\nname = \"auth\"\ndescription = \"tampered\"\n",
+        )
+        .unwrap();
+
+        // check should succeed (warnings only, no errors) but the
+        // tampered file will be reported.
+        check(tmp.path(), false).unwrap();
     }
 
     #[test]
