@@ -180,28 +180,13 @@ fn node_changes(old: &NodeEntry, new: &NodeEntry, state: &ProjectState) -> Value
 mod tests {
     use super::*;
     use crate::store::schema::*;
-    use chrono::Utc;
-    use std::collections::BTreeMap;
 
     fn minimal_state(nodes: Vec<NodeEntry>, edges: Vec<EdgeEntry>) -> ProjectState {
-        ProjectState::new(
-            ProjectFile {
-                trurl_version: "0.2.0".into(),
-                project: Project {
-                    name: "test".into(),
-                    description: String::new(),
-                },
-            },
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            GraphIndex {
-                version: 1,
-                rebuilt: Utc::now(),
-                nodes,
-                edges,
-            },
-        )
+        let mut state = crate::store::testing::empty_project_state();
+        state.graph_index.nodes = nodes;
+        state.graph_index.edges = edges;
+        state.rebuild_graph();
+        state
     }
 
     fn node(name: &str, kind: NodeKind, hash: &str) -> NodeEntry {

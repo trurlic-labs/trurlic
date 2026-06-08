@@ -389,7 +389,7 @@ mod tests {
 
         ProjectState::new(
             ProjectFile {
-                trurl_version: "0.2.0".into(),
+                trurl_version: FORMAT_VERSION.into(),
                 project: Project {
                     name: "test-project".into(),
                     description: String::new(),

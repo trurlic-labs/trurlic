@@ -105,11 +105,11 @@ async fn conversation_loop(
             return Ok(());
         }
 
+        session.add_message(Role::Assistant, &response);
         messages.push(Message {
             role: Role::Assistant,
             content: response,
         });
-        session.add_message(Role::Assistant, messages.last().map_or("", |m| &m.content));
         session::save(store, session)?;
 
         print!("\n> ");
