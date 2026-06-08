@@ -32,6 +32,7 @@ check-frontend: $(NODE_STAMP)
 	cd $(FRONTEND_DIR) && npm run typecheck
 
 test-frontend: check-frontend
+	cd $(FRONTEND_DIR) && npm test
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 

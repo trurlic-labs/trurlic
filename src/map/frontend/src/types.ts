@@ -87,7 +87,7 @@ export interface Viewport {
 // ── Level of Detail ───────────────────────────────────────────────────────
 
 /** Semantic zoom levels per spec §Rendering Pipeline. */
-export const enum LOD {
+export enum LOD {
   /** System overview: component boxes with decision count badge. */
   Overview = 0,
   /** Component detail: decision names listed inside component boxes. */

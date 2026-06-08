@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "build": "esbuild src/main.ts --bundle --outfile=dist/app.js --format=iife --target=es2020 --minify",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "fmt": "prettier --write 'src/**/*.{ts,css,html}'",
     "fmt:check": "prettier --check 'src/**/*.{ts,css,html}'"
@@ -15,6 +17,7 @@
   "devDependencies": {
     "esbuild": "^0.28.0",
     "prettier": "^3.8.3",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }
