@@ -55,6 +55,10 @@ class App {
     const canvas = document.getElementById('canvas') as HTMLCanvasElement;
     this.renderer = new Renderer(canvas, this.camera);
     this.panel = new Panel(document.getElementById('panel')!);
+    this.panel.init(this.api, {
+      onNavigate: (name) => this.selectAndFocus(name),
+      onMutated: () => this.reloadGraph(),
+    });
     this.aria = document.getElementById('aria-live')!;
 
     const minimap = document.getElementById('minimap') as HTMLCanvasElement;
@@ -446,6 +450,12 @@ class App {
   // ── WebSocket ───────────────────────────────────────────────────────────
 
   private handleWsEvent(_event: { type: string; [k: string]: unknown }): void {
+    this.reloadGraph();
+  }
+
+  /** Reload the full graph from the server. Called on WebSocket events
+   *  and after panel mutations (edit, delete). */
+  private reloadGraph(): void {
     this.api
       .fetchGraph()
       .then((snap) => {
@@ -455,7 +465,7 @@ class App {
         this.graph.rebuildQuadtree();
         this.updateLOD();
         this.needsRender = true;
-        if (this.selected) this.refreshPanel();
+        this.refreshPanel();
       })
       .catch((e) => console.error('Reload failed:', e));
   }

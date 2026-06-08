@@ -157,6 +157,12 @@ body {
   padding: 10px 12px;
   margin-bottom: 8px;
 }
+.dec-card.dec-link {
+  cursor: pointer;
+}
+.dec-card.dec-link:hover {
+  border-color: var(--accent-dim);
+}
 .dec-choice {
   font-weight: 600;
   font-size: 13px;
@@ -165,6 +171,82 @@ body {
 .dec-reason {
   font-size: 12px;
   line-height: 1.4;
+}
+
+/* ── Editable fields ─────────────────────────────────────────────────── */
+.editable-heading,
+.editable-block {
+  outline: none;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  transition: background 0.15s;
+}
+.editable-heading:hover,
+.editable-block:hover {
+  background: var(--surface);
+}
+.editable-heading:focus,
+.editable-block:focus {
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+.editable-block {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* ── Panel actions ───────────────────────────────────────────────────── */
+.panel-actions {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.btn:hover {
+  background: var(--surface-hi);
+}
+.btn-danger {
+  color: #e55;
+  border-color: #e5555540;
+}
+.btn-danger:hover {
+  background: #e5555520;
+}
+
+/* ── Alternatives list ───────────────────────────────────────────────── */
+.alt-list {
+  padding-left: 18px;
+  margin-top: 4px;
+}
+.alt-list li {
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+/* ── Save/error indicators ───────────────────────────────────────────── */
+.save-indicator {
+  font-size: 11px;
+  color: #5a8;
+  padding: 4px 0;
+}
+.panel-error {
+  font-size: 12px;
+  color: #e55;
+  padding: 6px 10px;
+  background: #e5555515;
+  border-radius: 6px;
+  margin-bottom: 8px;
 }
 
 /* ── Chips ────────────────────────────────────────────────────────────── */
