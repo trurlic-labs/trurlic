@@ -385,8 +385,7 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
         out.push_str(&format!("TASK CONTEXT: {t}\n\n"));
     }
 
-    // Dynamic concern tracking — shows the agent what's already covered
-    // and what needs exploration.
+    // Dynamic concern tracking.
     let all_decs: Vec<&DecisionFile> = project_rules
         .iter()
         .chain(existing.iter())
@@ -394,53 +393,61 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
         .collect();
     out.push_str(&concern_status(&all_decs));
 
+    // Decision count context.
+    let n_existing = existing.len();
+    let n_connections = connects_to.len() + connects_from.len();
+    out.push_str(&format!(
+        "CURRENT STATE: {n_existing} decisions recorded. \
+         Components with {n_connections}+ connections typically need 10-20 decisions. \
+         Components with 0-1 connections typically need 3-8.\n\n",
+    ));
+
     out.push_str(
         "PHASE 1 — SCOPE:\n\
-         Ask the user:\n\
-         - What is this component responsible for?\n\
-         - What is explicitly NOT its responsibility?\n\
-         - What components does it interact with?\n\
-         After each answer, call record_decision with tag \"scope\".\n\n\
+         Ask ONE question at a time. Wait for the answer before asking the next.\n\
+         1. \"What is this component responsible for?\"\n\
+         2. \"What is explicitly NOT its responsibility?\"\n\
+         After each answer, call record_decision with tags: [\"scope\"].\n\n\
          PHASE 2 — TECHNICAL CHOICES:\n\
          Work through each UNCOVERED concern above. For each:\n\
          - Present 2-3 viable options with trade-offs\n\
          - Ask the user to choose\n\
-         - Call record_decision\n\
-         If the component has domain-specific concerns not listed above,\n\
-         ask about those too.\n\n\
+         - Call record_decision with tags: [concern_area_lowercase, specific_topic]\n\
+           Example tags: [\"concurrency\", \"file-locking\"] or [\"security\", \"path-validation\"]\n\
+           Tags are REQUIRED — they enable server-side pattern detection.\n\
+         - If the component has domain-specific concerns not in the list, ask about those too.\n\
+         - Every 3 decisions: \"What other architectural choices have we not captured?\"\n\n\
          COMPREHENSION GATE (after each decision):\n\
-         State one concrete, testable implication:\n\
-           \"This means that when [specific scenario], the system will \
-         [specific behavior].\"\n\
-         Ask: \"Is that correct, or am I missing something?\"\n\
-         Wait for the user's response. If they correct you, adjust the decision.\n\
-         Do not move to the next concern until the gate is satisfied.\n\
-         Decisions without verified implications are incomplete.\n\n\
-         DEPTH CHECK — after every 2-3 decisions:\n\
-         \"Are there other architectural choices about this component we \
-         haven't captured?\"\n\
-         Continue until the user says done. Three decisions for a complex \
-         component almost certainly means important choices are still implicit.\n\n\
-         PHASE 3 — PATTERN DETECTION:\n\
-         After each decision, scan ALL decisions (this component + project-wide)\n\
-         for shared themes:\n\
-         - Same technology chosen across different concerns\n\
-           (e.g., Redis for rate limiting AND session cache → \
-         \"All state in Redis\")\n\
-         - Same strategy applied repeatedly\n\
-           (e.g., fail-closed in auth AND writes → \
-         \"Fail-closed everywhere\")\n\
-         - Same constraint or boundary repeated\n\
-           (e.g., <100ms on multiple operations → \
-         \"Sub-100ms budget\")\n\
-         If you identify a theme spanning 2+ decisions, present it:\n\
-           \"These decisions share a pattern: [description]. Record it?\"\n\
-         If confirmed, call record_pattern with the constituent decision names.\n\n\
+         Ask the USER to state one concrete implication:\n\
+           \"What does this decision mean in practice? Give me one specific scenario.\"\n\
+         The USER must articulate the implication — not you.\n\
+         If their answer is correct, move on.\n\
+         If wrong, correct them and ask again.\n\
+         Do not record the decision until the user can explain what it implies.\n\n\
+         \"I DON'T KNOW\" PROTOCOL:\n\
+         When the user says \"I don't know\" or gives a ≤3 word answer:\n\
+         1. Do NOT explain the answer.\n\
+         2. Decompose into a simpler question: \"Let me narrow it down —\n\
+            [specific sub-question about a concrete scenario].\"\n\
+         3. If they still cannot answer after 2 attempts, give a brief\n\
+            explanation (2-3 sentences), then ask: \"Can you restate that\n\
+            in your own words?\" Record only after they do.\n\n\
+         PATTERN DETECTION:\n\
+         If record_decision returns a pattern_opportunity field (non-null),\n\
+         present it to the user. If they confirm, call record_pattern\n\
+         immediately with the listed decision names. Do not defer.\n\n\
+         PHASE 3 — COVERAGE CHECK:\n\
+         Before proceeding to the summary, verify you have addressed the\n\
+         UNCOVERED concerns listed above. If more than half remain uncovered,\n\
+         go back and probe each one. A component is not \"done\" with 3 decisions\n\
+         when 8 concern areas are unexplored.\n\n\
          PHASE 4 — SUMMARY CHECKPOINT:\n\
-         Ask: \"Before we implement — summarize this design. What are the \
-         constraints the implementation must respect?\"\n\
-         Do NOT proceed to implementation until the user demonstrates \
-         understanding of the design they just created.\n",
+         Ask: \"Without looking at the list, write 3-5 sentences describing\n\
+         the constraints any code touching this component must respect.\"\n\
+         Do NOT help. Do NOT break it into sub-questions. Do NOT give hints.\n\
+         If the user cannot produce a coherent summary, the comprehension\n\
+         gates were insufficient — revisit the decisions they could not explain.\n\
+         The session ends only when the user demonstrates ownership.\n",
     );
 
     out
@@ -492,10 +499,8 @@ fn build_quick_instructions(graph: &InMemoryGraph, component: &str, task: Option
          If NO → call get_context for the implementation brief and proceed.\n\
          If YES → ask 1-3 targeted questions, call record_decision for each.\n\n\
          COMPREHENSION GATE (only if any decision was changed or added):\n\
-         State one concrete implication:\n\
-           \"This means that when [specific scenario], the system will \
-         [specific behavior].\"\n\
-         Ask: \"Is that correct?\"\n",
+         Ask the user: \"What does this change mean in practice?\"\n\
+         The user must articulate the implication — not you.\n",
     );
 
     out
@@ -605,11 +610,13 @@ fn build_review_instructions(graph: &InMemoryGraph, component: &str) -> String {
             d.decision.choice,
             d.decision.reason,
         ));
-        out.push_str("  → Ask: \"Does this still hold?\"\n");
-        out.push_str("  If YES → move on.\n");
         out.push_str(
-            "  If NO → run a mini design conversation, then call \
-             update_decision with mode=\"supersede\".\n\n",
+            "  → Ask: \"In your own words, why does this still hold? \
+             Or has something changed?\"\n",
+        );
+        out.push_str(
+            "  The user must articulate why — \"yes\" is not sufficient.\n\
+             If they say it no longer holds → call update_decision with mode=\"supersede\".\n\n",
         );
     }
 
@@ -791,8 +798,9 @@ mod tests {
             "should have dynamic concern status"
         );
         assert!(instructions.contains("COMPREHENSION GATE"));
-        assert!(instructions.contains("DEPTH CHECK"));
+        assert!(instructions.contains("I DON'T KNOW"));
         assert!(instructions.contains("PATTERN DETECTION"));
+        assert!(instructions.contains("COVERAGE CHECK"));
     }
 
     #[test]
@@ -826,6 +834,33 @@ mod tests {
         assert!(
             instructions.contains("UNCOVERED"),
             "mostly-empty component should have many uncovered concerns"
+        );
+    }
+
+    #[test]
+    fn full_mode_has_decision_count_and_user_gate() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+
+        // Decision count guidance.
+        assert!(
+            instructions.contains("CURRENT STATE:"),
+            "should include decision count context"
+        );
+        assert!(
+            instructions.contains("decisions recorded"),
+            "should show how many decisions exist"
+        );
+        // Gate flipped: user articulates, not agent.
+        assert!(
+            instructions.contains("The USER must articulate"),
+            "comprehension gate must require user to explain, not agent"
+        );
+        // Mandatory tags.
+        assert!(
+            instructions.contains("Tags are REQUIRED"),
+            "tags instruction must be mandatory"
         );
     }
 
@@ -878,8 +913,13 @@ mod tests {
         let instructions = result["system_instructions"].as_str().unwrap();
 
         assert!(instructions.contains("review"));
-        assert!(instructions.contains("Does this still hold"));
+        assert!(instructions.contains("still hold"));
         assert!(instructions.contains("validate_consistency"));
+        // Review must require articulation, not just yes/no.
+        assert!(
+            instructions.contains("must articulate") || instructions.contains("not sufficient"),
+            "review mode must require the user to articulate, not just confirm"
+        );
         assert_eq!(result["token_budget"], "standard");
     }
 

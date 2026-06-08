@@ -130,19 +130,21 @@ fn amend_decision(
 
     // Quality floor: amended values must meet the same bar as new decisions.
     if let Some(c) = new_choice
-        && c.len() > MAX_CHOICE_BYTES {
-            return Err(format!(
-                "choice must be ≤{MAX_CHOICE_BYTES} characters ({} given)",
-                c.len(),
-            ));
-        }
+        && c.len() > MAX_CHOICE_BYTES
+    {
+        return Err(format!(
+            "choice must be ≤{MAX_CHOICE_BYTES} characters ({} given)",
+            c.len(),
+        ));
+    }
     if let Some(r) = new_reason
-        && r.len() < MIN_REASON_BYTES {
-            return Err(format!(
-                "reason must be at least {MIN_REASON_BYTES} characters ({} given)",
-                r.len(),
-            ));
-        }
+        && r.len() < MIN_REASON_BYTES
+    {
+        return Err(format!(
+            "reason must be at least {MIN_REASON_BYTES} characters ({} given)",
+            r.len(),
+        ));
+    }
 
     let lock = store.lock().map_err(|e| e.to_string())?;
 
