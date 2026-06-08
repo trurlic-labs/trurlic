@@ -103,4 +103,38 @@ export class Graph {
     }
     return [...tags].sort();
   }
+
+  // ── Incremental updates (WS diff processing) ─────────────────────────
+
+  /**
+   * Remove a node and all its related data. Used for `node_removed` WS
+   * events to avoid a full graph refetch.
+   */
+  removeNode(name: string): void {
+    this.nodes.delete(name);
+    this.decisions.delete(name);
+    this.byComponent.delete(name);
+    // Also remove decisions that belong to this component.
+    for (const [dName, d] of this.decisions) {
+      if (d.component === name) {
+        this.decisions.delete(dName);
+      }
+    }
+    // Rebuild the component index for affected entries.
+    this.byComponent.delete(name);
+    // Remove edges involving this node.
+    this.edges = this.edges.filter((e) => e.from !== name && e.to !== name);
+    this.rebuildQuadtree();
+  }
+
+  /** Add an edge. Used for `edge_added` WS events. */
+  addEdge(from: string, to: string, kind: string): void {
+    this.edges.push({ from, to, kind });
+  }
+
+  /** Remove a specific edge. Used for `edge_removed` WS events. */
+  removeEdge(from: string, to: string, kind: string): void {
+    const idx = this.edges.findIndex((e) => e.from === from && e.to === to && e.kind === kind);
+    if (idx !== -1) this.edges.splice(idx, 1);
+  }
 }

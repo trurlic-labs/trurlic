@@ -124,7 +124,12 @@ pub(crate) async fn start(
                     "default-src 'self'; \
                      script-src 'self'; \
                      style-src 'self' 'unsafe-inline'; \
-                     connect-src 'self' ws://127.0.0.1:*",
+                     connect-src 'self' ws://127.0.0.1:*; \
+                     img-src 'self' data:; \
+                     font-src 'none'; \
+                     object-src 'none'; \
+                     base-uri 'none'; \
+                     form-action 'none'",
                 ),
             ),
         )

@@ -695,8 +695,47 @@ class App {
 
   // ── WebSocket ───────────────────────────────────────────────────────────
 
-  private handleWsEvent(_event: { type: string; [k: string]: unknown }): void {
-    this.reloadGraph();
+  private handleWsEvent(event: { type: string; [k: string]: unknown }): void {
+    switch (event.type) {
+      case 'node_removed': {
+        const name = event.name as string | undefined;
+        if (!name) break;
+        this.graph.removeNode(name);
+        if (this.selected === name) {
+          this.selected = null;
+          this.breadcrumb.update(this.graph.projectName, null);
+          this.panel.showProject(this.graph);
+        }
+        this.componentNames = [...this.graph.nodes.keys()].sort();
+        this.toolbar.setAvailableTags(this.graph.allTags());
+        this.updateLOD();
+        this.needsRender = true;
+        return;
+      }
+      case 'edge_added': {
+        const edge = event.edge as { from: string; to: string; kind: string } | undefined;
+        if (edge) {
+          this.graph.addEdge(edge.from, edge.to, edge.kind);
+          this.needsRender = true;
+        }
+        return;
+      }
+      case 'edge_removed': {
+        const from = event.from as string | undefined;
+        const to = event.to as string | undefined;
+        const kind = event.kind as string | undefined;
+        if (from && to && kind) {
+          this.graph.removeEdge(from, to, kind);
+          this.needsRender = true;
+        }
+        return;
+      }
+      default:
+        // node_added, node_updated, full_reload — event payload doesn't
+        // carry enough data for client-side apply. Full fetch required.
+        this.reloadGraph();
+        return;
+    }
   }
 
   private handleWsState(state: WsState): void {
