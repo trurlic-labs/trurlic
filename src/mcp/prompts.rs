@@ -2,8 +2,229 @@ use serde_json::Value;
 
 use crate::store::ProjectState;
 use crate::store::graph::InMemoryGraph;
+use crate::store::schema::DecisionFile;
 
 use super::context;
+
+// ── Concern tracking ────────────────────────────────────────────────────────
+
+/// Architectural concern areas and keywords for matching against decision
+/// content. Used to track design session progress: decisions matching a
+/// concern's keywords mark it as covered, so the agent focuses on gaps.
+const CONCERNS: &[(&str, &[&str])] = &[
+    (
+        "Data format & serialization",
+        &[
+            "format",
+            "toml",
+            "json",
+            "yaml",
+            "serialize",
+            "deserialize",
+            "schema",
+            "encoding",
+            "parse",
+            "marshal",
+            "protobuf",
+        ],
+    ),
+    (
+        "Error handling & failure modes",
+        &[
+            "error", "errors", "fail", "failure", "panic", "result", "recovery", "retry",
+            "graceful", "crash", "fault", "fallback",
+        ],
+    ),
+    (
+        "Concurrency & locking",
+        &[
+            "lock",
+            "locking",
+            "concurrent",
+            "concurrency",
+            "mutex",
+            "rwlock",
+            "atomic",
+            "thread",
+            "async",
+            "parallel",
+            "race",
+            "deadlock",
+            "flock",
+        ],
+    ),
+    (
+        "Integrity & validation",
+        &[
+            "hash",
+            "hashing",
+            "validate",
+            "validation",
+            "integrity",
+            "verify",
+            "blake3",
+            "sha256",
+            "checksum",
+            "corrupt",
+            "consistency",
+        ],
+    ),
+    (
+        "Performance constraints",
+        &[
+            "performance",
+            "latency",
+            "throughput",
+            "cache",
+            "caching",
+            "memory",
+            "speed",
+            "budget",
+            "target",
+            "millisecond",
+            "benchmark",
+            "optimize",
+        ],
+    ),
+    (
+        "External interfaces & APIs",
+        &[
+            "api",
+            "interface",
+            "endpoint",
+            "protocol",
+            "http",
+            "rpc",
+            "mcp",
+            "rest",
+            "grpc",
+            "websocket",
+            "boundary",
+            "stdio",
+        ],
+    ),
+    (
+        "Security boundaries",
+        &[
+            "security",
+            "auth",
+            "authentication",
+            "authorization",
+            "token",
+            "permission",
+            "trust",
+            "encrypt",
+            "encryption",
+            "secret",
+            "credential",
+            "tls",
+            "certificate",
+            "zeroize",
+        ],
+    ),
+    (
+        "Storage & persistence",
+        &[
+            "storage",
+            "file",
+            "disk",
+            "persist",
+            "persistence",
+            "write",
+            "read",
+            "database",
+            "redis",
+            "save",
+            "load",
+            "filesystem",
+        ],
+    ),
+    (
+        "Dependencies & coupling",
+        &[
+            "dependency",
+            "dependencies",
+            "crate",
+            "library",
+            "coupling",
+            "vendor",
+            "package",
+            "module",
+        ],
+    ),
+    (
+        "Migration & versioning",
+        &[
+            "migration",
+            "migrate",
+            "version",
+            "versioning",
+            "upgrade",
+            "backward",
+            "compatibility",
+            "breaking",
+        ],
+    ),
+];
+
+/// Check if a decision's content matches any keyword for a concern area.
+/// Uses word-boundary matching to avoid substring false positives.
+fn decision_covers_concern(dec: &DecisionFile, keywords: &[&str]) -> bool {
+    let text = format!(
+        "{} {} {}",
+        dec.decision.choice,
+        dec.decision.reason,
+        dec.decision.tags.join(" "),
+    );
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 2)
+        .map(|w| w.to_lowercase())
+        .collect();
+    keywords.iter().any(|kw| words.iter().any(|w| w == kw))
+}
+
+/// Analyze which concern areas are covered by existing decisions.
+/// Returns formatted prompt text showing covered (with decision names)
+/// and uncovered areas for the agent to explore.
+fn concern_status(decisions: &[&DecisionFile]) -> String {
+    let mut covered: Vec<(&str, Vec<&str>)> = Vec::new();
+    let mut uncovered: Vec<&str> = Vec::new();
+
+    for &(concern_name, keywords) in CONCERNS {
+        let matching: Vec<&str> = decisions
+            .iter()
+            .filter(|d| decision_covers_concern(d, keywords))
+            .map(|d| d.decision.choice.as_str())
+            .collect();
+
+        if matching.is_empty() {
+            uncovered.push(concern_name);
+        } else {
+            covered.push((concern_name, matching));
+        }
+    }
+
+    let mut out = String::new();
+
+    if !covered.is_empty() {
+        out.push_str("COVERED (decisions exist — do not re-ask):\n");
+        for (name, choices) in &covered {
+            out.push_str(&format!("  ✓ {name}: \"{}\"\n", choices.join("\", \"")));
+        }
+        out.push('\n');
+    }
+
+    if !uncovered.is_empty() {
+        out.push_str("UNCOVERED (systematically ask about each):\n");
+        for name in &uncovered {
+            out.push_str(&format!("  □ {name}\n"));
+        }
+        out.push('\n');
+    }
+
+    out
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -71,7 +292,7 @@ pub(crate) fn build_design_prompt(
 // ── Full mode ───────────────────────────────────────────────────────────────
 
 fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<&str>) -> String {
-    let mut out = String::with_capacity(1024);
+    let mut out = String::with_capacity(2048);
 
     out.push_str(&format!(
         "You are running a Trurl design session for component [{component}].\n\n"
@@ -112,6 +333,15 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
         out.push_str(&format!("TASK CONTEXT: {t}\n\n"));
     }
 
+    // Dynamic concern tracking — shows the agent what's already covered
+    // and what needs exploration.
+    let all_decs: Vec<&DecisionFile> = project_rules
+        .iter()
+        .chain(existing.iter())
+        .map(|(_, d)| *d)
+        .collect();
+    out.push_str(&concern_status(&all_decs));
+
     out.push_str(
         "PHASE 1 — SCOPE:\n\
          Ask the user:\n\
@@ -120,37 +350,45 @@ fn build_full_instructions(graph: &InMemoryGraph, component: &str, task: Option<
          - What components does it interact with?\n\
          After each answer, call record_decision with tag \"scope\".\n\n\
          PHASE 2 — TECHNICAL CHOICES:\n\
-         Systematically explore each relevant concern area. For every concern\n\
-         that applies to this component, ask the user to decide:\n\n\
-         CONCERN CHECKLIST (skip only the clearly irrelevant ones):\n\
-         - Data format & serialization\n\
-         - Error handling & failure modes\n\
-         - Concurrency & locking strategy\n\
-         - Integrity & validation rules\n\
-         - Performance constraints & targets\n\
-         - External interfaces & API boundaries\n\
-         - Security boundaries & trust model\n\
-         - Storage, caching, or persistence\n\
-         - Key dependencies & coupling decisions\n\
-         - Migration & versioning strategy\n\n\
-         For each concern:\n\
+         Work through each UNCOVERED concern above. For each:\n\
          - Present 2-3 viable options with trade-offs\n\
          - Ask the user to choose\n\
          - Call record_decision\n\
-         - Then ask: \"In your own words, what does this mean for [connected component]?\"\n\
-         If the user's answer is thin, explain the implication and ask again.\n\n\
-         DEPTH CHECK — after every 2-3 decisions, ask:\n\
-         \"Are there other architectural choices about [component] we haven't captured yet?\"\n\
-         Continue until the user says they're done. Aim for 5-15 decisions per\n\
-         component in a full design session. Three decisions almost certainly\n\
-         means important choices are still implicit.\n\n\
-         PHASE 3 — PATTERN RECOGNITION:\n\
-         After 3+ decisions, check if they form a pattern with existing decisions.\n\
-         If yes, present: \"These decisions together mean [X]. Record as a pattern?\"\n\
-         If confirmed, call record_pattern.\n\n\
+         If the component has domain-specific concerns not listed above,\n\
+         ask about those too.\n\n\
+         COMPREHENSION GATE (after each decision):\n\
+         State one concrete, testable implication:\n\
+           \"This means that when [specific scenario], the system will \
+         [specific behavior].\"\n\
+         Ask: \"Is that correct, or am I missing something?\"\n\
+         Wait for the user's response. If they correct you, adjust the decision.\n\
+         Do not move to the next concern until the gate is satisfied.\n\
+         Decisions without verified implications are incomplete.\n\n\
+         DEPTH CHECK — after every 2-3 decisions:\n\
+         \"Are there other architectural choices about this component we \
+         haven't captured?\"\n\
+         Continue until the user says done. Three decisions for a complex \
+         component almost certainly means important choices are still implicit.\n\n\
+         PHASE 3 — PATTERN DETECTION:\n\
+         After each decision, scan ALL decisions (this component + project-wide)\n\
+         for shared themes:\n\
+         - Same technology chosen across different concerns\n\
+           (e.g., Redis for rate limiting AND session cache → \
+         \"All state in Redis\")\n\
+         - Same strategy applied repeatedly\n\
+           (e.g., fail-closed in auth AND writes → \
+         \"Fail-closed everywhere\")\n\
+         - Same constraint or boundary repeated\n\
+           (e.g., <100ms on multiple operations → \
+         \"Sub-100ms budget\")\n\
+         If you identify a theme spanning 2+ decisions, present it:\n\
+           \"These decisions share a pattern: [description]. Record it?\"\n\
+         If confirmed, call record_pattern with the constituent decision names.\n\n\
          PHASE 4 — SUMMARY CHECKPOINT:\n\
-         Ask: \"Before we implement — summarize this design. What are the constraints?\"\n\
-         Do NOT proceed to implementation until the user demonstrates understanding.\n",
+         Ask: \"Before we implement — summarize this design. What are the \
+         constraints the implementation must respect?\"\n\
+         Do NOT proceed to implementation until the user demonstrates \
+         understanding of the design they just created.\n",
     );
 
     out
@@ -166,8 +404,16 @@ fn build_quick_instructions(graph: &InMemoryGraph, component: &str, task: Option
     ));
 
     let existing = graph.decisions_for(component);
-    if !existing.is_empty() {
-        out.push_str("EXISTING DECISIONS:\n");
+    let project_rules = graph.project_decisions();
+
+    if !existing.is_empty() || !project_rules.is_empty() {
+        out.push_str("ACTIVE CONSTRAINTS (the user must confirm each applies):\n");
+        for (name, d) in &project_rules {
+            out.push_str(&format!(
+                "- [project] {}: {} ({})\n",
+                name, d.decision.choice, d.decision.reason
+            ));
+        }
         for (name, d) in &existing {
             out.push_str(&format!(
                 "- {}: {} ({})\n",
@@ -182,13 +428,22 @@ fn build_quick_instructions(graph: &InMemoryGraph, component: &str, task: Option
     }
 
     out.push_str(
-        "Ask the user: \"Does this task introduce any new pattern or \
-         architectural choice not covered above?\"\n\n\
-         If NO → proceed with existing constraints.\n\
-         If YES → ask 1-3 targeted questions, call record_decision for each, \
-         then proceed.\n\n\
-         Comprehension gate (only if a new decision was recorded):\n\
-         \"What does this decision mean for the connected components?\"\n",
+        "STEP 1 — CONFIRM EXISTING CONSTRAINTS:\n\
+         Present the constraints above and ask:\n\
+         \"This task touches this component. Here are the existing constraints.\n\
+         Do all of these still apply, or does something need to change?\"\n\
+         Wait for the user to confirm or flag changes.\n\
+         If changes → call update_decision (amend or supersede) for each.\n\n\
+         STEP 2 — CHECK FOR NEW DECISIONS:\n\
+         Ask: \"Does this task introduce any new architectural choice not\n\
+         covered by the constraints above?\"\n\
+         If NO → call get_context for the implementation brief and proceed.\n\
+         If YES → ask 1-3 targeted questions, call record_decision for each.\n\n\
+         COMPREHENSION GATE (only if any decision was changed or added):\n\
+         State one concrete implication:\n\
+           \"This means that when [specific scenario], the system will \
+         [specific behavior].\"\n\
+         Ask: \"Is that correct?\"\n",
     );
 
     out
@@ -477,11 +732,49 @@ mod tests {
         let result = build_design_prompt(&state, "auth", None, DesignMode::Full).unwrap();
         let instructions = result["system_instructions"].as_str().unwrap();
 
-        assert!(instructions.contains("CONCERN CHECKLIST"));
-        assert!(instructions.contains("Error handling"));
-        assert!(instructions.contains("Concurrency"));
-        assert!(instructions.contains("Security boundaries"));
+        // Auth has one decision (JWT with DPoP) — some concerns should be
+        // COVERED and others UNCOVERED.
+        assert!(
+            instructions.contains("COVERED") || instructions.contains("UNCOVERED"),
+            "should have dynamic concern status"
+        );
+        assert!(instructions.contains("COMPREHENSION GATE"));
         assert!(instructions.contains("DEPTH CHECK"));
+        assert!(instructions.contains("PATTERN DETECTION"));
+    }
+
+    #[test]
+    fn full_mode_concern_status_reflects_existing_decisions() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+
+        // "JWT with DPoP binding" should trigger Security boundaries concern.
+        // "Stateless, no session store" has no direct keyword match for other concerns.
+        // Project rule "Result<T, AppError>" should trigger Error handling concern.
+        assert!(
+            instructions.contains("COVERED"),
+            "should show covered concerns: {instructions}"
+        );
+        assert!(
+            instructions.contains("UNCOVERED"),
+            "should show uncovered concerns for remaining areas: {instructions}"
+        );
+    }
+
+    #[test]
+    fn full_mode_empty_component_all_uncovered() {
+        let state = test_state();
+        // database has no decisions in this fixture.
+        let result = build_design_prompt(&state, "database", None, DesignMode::Full).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+
+        // Project-wide "Result<T, AppError>" covers Error handling.
+        // Everything else should be UNCOVERED.
+        assert!(
+            instructions.contains("UNCOVERED"),
+            "mostly-empty component should have many uncovered concerns"
+        );
     }
 
     #[test]
@@ -491,10 +784,25 @@ mod tests {
         let instructions = result["system_instructions"].as_str().unwrap();
 
         assert!(instructions.contains("quick"));
-        assert!(instructions.contains("EXISTING DECISIONS"));
+        assert!(instructions.contains("ACTIVE CONSTRAINTS"));
         assert!(instructions.contains("JWT with DPoP"));
+        assert!(instructions.contains("CONFIRM EXISTING"));
+        assert!(instructions.contains("CHECK FOR NEW"));
         assert!(!instructions.contains("PHASE 1"));
         assert_eq!(result["token_budget"], "compact");
+    }
+
+    #[test]
+    fn quick_mode_includes_project_rules() {
+        let state = test_state();
+        let result = build_design_prompt(&state, "auth", None, DesignMode::Quick).unwrap();
+        let instructions = result["system_instructions"].as_str().unwrap();
+
+        assert!(
+            instructions.contains("[project]"),
+            "quick mode should show project rules for confirmation"
+        );
+        assert!(instructions.contains("Result<T, AppError>"));
     }
 
     #[test]
@@ -566,6 +874,78 @@ mod tests {
         assert!(
             instructions.contains("AFTER ALL DECISIONS REVIEWED"),
             "learn mode should ask about unrecorded decisions after reviewing existing ones"
+        );
+    }
+
+    // ── concern tracking ───────────────────────────────────────────────
+
+    #[test]
+    fn concern_matching_security_keywords() {
+        let dec = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT with DPoP binding".into(),
+                reason: "Token security via proof-of-possession".into(),
+                alternatives: vec![],
+                tags: vec!["security".into()],
+                created: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            },
+        };
+        // "security" and "token" are Security concern keywords.
+        let security_kw = CONCERNS
+            .iter()
+            .find(|(name, _)| *name == "Security boundaries")
+            .map(|(_, kw)| *kw)
+            .unwrap();
+        assert!(decision_covers_concern(&dec, security_kw));
+    }
+
+    #[test]
+    fn concern_matching_no_false_positives() {
+        let dec = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT tokens".into(),
+                reason: "Stateless".into(),
+                alternatives: vec![],
+                tags: vec![],
+                created: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            },
+        };
+        // "JWT tokens" / "Stateless" should NOT match concurrency concern.
+        let concurrency_kw = CONCERNS
+            .iter()
+            .find(|(name, _)| *name == "Concurrency & locking")
+            .map(|(_, kw)| *kw)
+            .unwrap();
+        assert!(!decision_covers_concern(&dec, concurrency_kw));
+    }
+
+    #[test]
+    fn concern_status_shows_covered_and_uncovered() {
+        let dec = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "BLAKE3 content hashing".into(),
+                reason: "Fast integrity verification".into(),
+                alternatives: vec![],
+                tags: vec![],
+                created: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            },
+        };
+        let output = concern_status(&[&dec]);
+        assert!(output.contains("COVERED"), "should have covered section");
+        assert!(
+            output.contains("Integrity"),
+            "BLAKE3/hashing should match Integrity concern"
+        );
+        assert!(
+            output.contains("UNCOVERED"),
+            "should have uncovered section"
+        );
+        assert!(
+            output.contains("Concurrency"),
+            "Concurrency should be uncovered"
         );
     }
 }

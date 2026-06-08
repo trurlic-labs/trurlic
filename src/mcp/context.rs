@@ -161,7 +161,7 @@ fn build_brief(
     }
 
     if !project_decisions.is_empty() {
-        brief.push_str("RULES:\n");
+        brief.push_str("RULES (inviolable — every generated line must respect these):\n");
         for (_, d) in project_decisions {
             brief.push_str(&format!("- {}\n", d.decision.choice));
         }
@@ -210,6 +210,13 @@ fn build_brief(
         }
         brief.push('\n');
     }
+
+    brief.push_str(
+        "OVERRIDE POLICY:\n\
+         RULES are inviolable. Component decisions are strong defaults —\n\
+         follow them unless the user explicitly revises them in a design session.\n\
+         Never silently deviate from either.\n\n",
+    );
 
     brief.push_str("WHEN UNCERTAIN:\n");
     brief.push_str("STOP. This introduces a new pattern. Ask the user to design it first.\n");
@@ -633,12 +640,23 @@ mod tests {
     }
 
     #[test]
+    fn brief_has_override_policy() {
+        let state = test_state();
+        let result = get_context(&state, "auth", None).unwrap();
+        let brief = result["brief"].as_str().unwrap();
+
+        assert!(brief.contains("OVERRIDE POLICY:"));
+        assert!(brief.contains("inviolable"));
+        assert!(brief.contains("strong defaults"));
+    }
+
+    #[test]
     fn brief_has_rules_section() {
         let state = test_state();
         let result = get_context(&state, "auth", None).unwrap();
         let brief = result["brief"].as_str().unwrap();
 
-        assert!(brief.contains("RULES:\n"));
+        assert!(brief.contains("RULES (inviolable"));
         assert!(brief.contains("Result<T, AppError>"));
     }
 
