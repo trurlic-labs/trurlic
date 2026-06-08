@@ -86,6 +86,33 @@ export interface Viewport {
 
 // ── Filtering ──────────────────────────────────────────────────────────────
 
+// ── Renderer color snapshot ────────────────────────────────────────────────
+
+/**
+ * Plain-object snapshot of every CSS variable the renderer reads.
+ * Created once per render frame to eliminate per-draw-call
+ * `getComputedStyle` overhead.
+ */
+export interface ColorSnapshot {
+  bg: string;
+  surface: string;
+  surfaceHi: string;
+  border: string;
+  text: string;
+  textDim: string;
+  accent: string;
+  accentDim: string;
+  edge: string;
+  edgeDep: string;
+  edgeCon: string;
+  selectRing: string;
+  badge: string;
+  minimap: string;
+  minimapVp: string;
+}
+
+// ── Filtering ──────────────────────────────────────────────────────────────
+
 /** Toolbar filter state passed through to the renderer. */
 export interface FilterState {
   /** Edge kinds to render. Kinds not in this set are hidden. */

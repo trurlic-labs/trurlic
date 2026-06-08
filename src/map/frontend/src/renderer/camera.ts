@@ -1,5 +1,13 @@
 import type { Viewport } from '../types';
 
+/** Cached reduced-motion preference. Updated on change. */
+const motionQuery =
+  typeof matchMedia !== 'undefined' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+let reducedMotion = motionQuery?.matches ?? false;
+motionQuery?.addEventListener?.('change', (e) => {
+  reducedMotion = e.matches;
+});
+
 /**
  * Camera manages the world→screen coordinate transform.
  * World origin is (0,0) at graph center. Zoom > 1 means closer.
@@ -75,17 +83,30 @@ export class Camera {
   }
 
   /**
-   * Smoothly animate to a target position/zoom over `durationMs`.
-   * Call `tick()` each frame to advance. User input cancels the animation.
+   * Smoothly animate to a target position/zoom.
+   *
+   * When the user prefers reduced motion, snaps instantly instead of
+   * animating. The preference is read from a cached `matchMedia` query
+   * that auto-updates on system changes.
    */
   animateTo(cx: number, cy: number, zoom: number, durationMs = 300): void {
+    const clampedZoom = Math.max(this.minZoom, Math.min(this.maxZoom, zoom));
+
+    if (reducedMotion) {
+      this.cx = cx;
+      this.cy = cy;
+      this.zoom = clampedZoom;
+      this.anim = null;
+      return;
+    }
+
     this.anim = {
       fromCx: this.cx,
       fromCy: this.cy,
       fromZoom: this.zoom,
       toCx: cx,
       toCy: cy,
-      toZoom: Math.max(this.minZoom, Math.min(this.maxZoom, zoom)),
+      toZoom: clampedZoom,
       start: performance.now(),
       duration: durationMs,
     };

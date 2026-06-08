@@ -1,6 +1,9 @@
 import type { GraphSnapshot, DecisionNode, PatternNode, RenderNode, RenderEdge } from '../types';
 import { Quadtree } from '../renderer/culling';
 
+/** Shared empty array — avoids allocation on `decisionsFor` misses. */
+const NO_DECISIONS: readonly DecisionNode[] = Object.freeze([]);
+
 /** Client-side graph model. */
 export class Graph {
   nodes: Map<string, RenderNode> = new Map();
@@ -13,11 +16,15 @@ export class Graph {
   layoutVersion = 0;
   quadtree = new Quadtree();
 
+  /** Component name → decisions index. O(1) lookup. */
+  private byComponent = new Map<string, DecisionNode[]>();
+
   loadSnapshot(snap: GraphSnapshot): void {
     this.nodes.clear();
     this.edges = [];
     this.decisions.clear();
     this.patterns.clear();
+    this.byComponent.clear();
     this.projectName = snap.project.name;
     this.projectDescription = snap.project.description;
     this.layoutVersion = snap.layout_version;
@@ -39,6 +46,11 @@ export class Graph {
 
     for (const d of snap.decisions) {
       this.decisions.set(d.name, d);
+
+      // Build component → decisions index.
+      const list = this.byComponent.get(d.component);
+      if (list) list.push(d);
+      else this.byComponent.set(d.component, [d]);
     }
 
     for (const p of snap.patterns) {
@@ -78,8 +90,9 @@ export class Graph {
     return name ? (this.nodes.get(name) ?? null) : null;
   }
 
-  decisionsFor(component: string): DecisionNode[] {
-    return [...this.decisions.values()].filter((d) => d.component === component);
+  /** O(1) lookup via pre-built index. Returns frozen empty array on miss. */
+  decisionsFor(component: string): readonly DecisionNode[] {
+    return this.byComponent.get(component) ?? NO_DECISIONS;
   }
 
   /** All unique tags across every decision. Sorted alphabetically. */

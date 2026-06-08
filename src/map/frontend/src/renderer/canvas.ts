@@ -1,41 +1,42 @@
 import type { Camera } from './camera';
 import type { Graph } from '../state/graph';
-import type { RenderNode, FilterState, DecisionNode } from '../types';
+import type { RenderNode, FilterState, DecisionNode, ColorSnapshot } from '../types';
 import { LOD } from './lod';
 import type { AABB } from './culling';
 import { EDGE_DASH, edgeColor } from './edges';
 
-// ── Colors (CSS variable-aware) ────────────────────────────────────────────
+// ── Per-frame color snapshot ──────────────────────────────────────────────
 
-const C = {
-  bg: () => css('--bg', '#0f1117'),
-  surface: () => css('--surface', '#1a1d27'),
-  surfaceHi: () => css('--surface-hi', '#252836'),
-  border: () => css('--border', '#2e3244'),
-  text: () => css('--text', '#e1e4ed'),
-  textDim: () => css('--text-dim', '#8b90a0'),
-  accent: () => css('--accent', '#6c8cff'),
-  accentDim: () => css('--accent-dim', '#3a4f8f'),
-  edge: () => css('--edge', '#3a3f52'),
-  edgeDep: () => css('--edge-dep', '#5a7f5a'),
-  edgeCon: () => css('--edge-con', '#8f6c3a'),
-  selectRing: () => css('--select', '#6c8cff'),
-  badge: () => css('--badge', '#4a5068'),
-  minimap: () => css('--minimap-bg', '#13151d'),
-  minimapVp: () => css('--minimap-vp', 'rgba(108,140,255,0.25)'),
-};
-
-function css(prop: string, fallback: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(prop).trim() || fallback;
+function snapshotColors(): ColorSnapshot {
+  const s = getComputedStyle(document.documentElement);
+  const v = (prop: string, fb: string) => s.getPropertyValue(prop).trim() || fb;
+  return {
+    bg: v('--bg', '#0f1117'),
+    surface: v('--surface', '#1a1d27'),
+    surfaceHi: v('--surface-hi', '#252836'),
+    border: v('--border', '#2e3244'),
+    text: v('--text', '#e1e4ed'),
+    textDim: v('--text-dim', '#8b90a0'),
+    accent: v('--accent', '#6c8cff'),
+    accentDim: v('--accent-dim', '#3a4f8f'),
+    edge: v('--edge', '#3a3f52'),
+    edgeDep: v('--edge-dep', '#5a7f5a'),
+    edgeCon: v('--edge-con', '#8f6c3a'),
+    selectRing: v('--select', '#6c8cff'),
+    badge: v('--badge', '#4a5068'),
+    minimap: v('--minimap-bg', '#13151d'),
+    minimapVp: v('--minimap-vp', 'rgba(108,140,255,0.25)'),
+  };
 }
-
-// ── Edge dash patterns imported from ./edges ───────────────────────────────
 
 // ── Decision filtering ─────────────────────────────────────────────────────
 
 const DAY_MS = 86_400_000;
 
-function filterDecisions(decisions: DecisionNode[], f: FilterState): DecisionNode[] {
+function filterDecisions(
+  decisions: readonly DecisionNode[],
+  f: FilterState,
+): readonly DecisionNode[] {
   if (f.activeTags.size === 0 && f.maxAgeDays === null) return decisions;
   const now = Date.now();
   return decisions.filter((d) => {
@@ -54,6 +55,8 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private cam: Camera;
   private dpr: number;
+  /** Per-frame color snapshot — refreshed at the top of render(). */
+  private c: ColorSnapshot;
 
   constructor(canvas: HTMLCanvasElement, cam: Camera) {
     const ctx = canvas.getContext('2d');
@@ -61,6 +64,7 @@ export class Renderer {
     this.ctx = ctx;
     this.cam = cam;
     this.dpr = window.devicePixelRatio || 1;
+    this.c = snapshotColors();
   }
 
   resize(w: number, h: number): void {
@@ -75,12 +79,8 @@ export class Renderer {
   }
 
   /**
-   * Main render pass. Uses the quadtree for viewport culling —
-   * only visible nodes are drawn, giving O(k) cost where k is
-   * the number of on-screen nodes, not the total graph size.
-   *
-   * When `focus` is set, nodes outside the set are drawn at 30%
-   * opacity (search highlight / focus mode per spec §Navigation).
+   * Main render pass. Snapshots CSS colors once, then uses the snapshot
+   * for all draw calls — zero getComputedStyle overhead in the hot path.
    */
   render(
     graph: Graph,
@@ -89,13 +89,13 @@ export class Renderer {
     focus: Set<string> | null = null,
     filters?: FilterState,
   ): void {
-    const { ctx, cam, dpr } = this;
+    this.c = snapshotColors();
+    const { ctx, cam, dpr, c } = this;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = C.bg();
+    ctx.fillStyle = c.bg;
     ctx.fillRect(0, 0, cam.screenW * dpr, cam.screenH * dpr);
 
-    // Viewport in world coordinates for quadtree query.
     const vp = cam.viewport();
     const vpAABB: AABB = {
       cx: vp.x + vp.w / 2,
@@ -106,7 +106,6 @@ export class Renderer {
 
     const visibleNames = new Set(graph.quadtree.queryViewport(vpAABB));
 
-    // Apply camera transform.
     ctx.save();
     ctx.translate(cam.screenW / 2, cam.screenH / 2);
     ctx.scale(cam.zoom, cam.zoom);
@@ -127,28 +126,24 @@ export class Renderer {
     focus: Set<string> | null,
     filters?: FilterState,
   ): void {
-    const { ctx, cam } = this;
+    const { ctx, cam, c } = this;
     const baseWidth = 1.5 / cam.zoom;
 
     for (const e of graph.edges) {
-      // LOD 0: only connects_to (architecture skeleton).
       if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
-      // Skip belongs_to edges — structural, not visual.
       if (e.kind === 'belongs_to') continue;
-      // Toolbar edge-kind filter.
       if (filters && !filters.edgeKinds.has(e.kind)) continue;
 
       const a = graph.nodes.get(e.from);
       const b = graph.nodes.get(e.to);
       if (!a || !b) continue;
-      // Draw if either endpoint is visible (edge may cross viewport).
       if (!visible.has(e.from) && !visible.has(e.to)) continue;
 
-      // Focus dimming: edges between non-focused nodes fade to 30%.
       const dimmed = focus !== null && !focus.has(e.from) && !focus.has(e.to);
       ctx.globalAlpha = dimmed ? 0.15 : 1;
 
-      ctx.strokeStyle = edgeColor(e.kind);
+      const color = edgeColor(e.kind, c);
+      ctx.strokeStyle = color;
       ctx.lineWidth = baseWidth;
       ctx.setLineDash((EDGE_DASH[e.kind] ?? []).map((v) => v / cam.zoom));
 
@@ -168,7 +163,7 @@ export class Renderer {
       const tipX = b.x - ux * (b.w / 2 + 2);
       const tipY = b.y - uy * (b.h / 2 + 2);
 
-      ctx.fillStyle = edgeColor(e.kind);
+      ctx.fillStyle = color;
       ctx.setLineDash([]);
       ctx.beginPath();
       ctx.moveTo(tipX, tipY);
@@ -188,7 +183,7 @@ export class Renderer {
         const my = (a.y + b.y) / 2;
         const labelSize = 9 / cam.zoom;
         ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
-        ctx.fillStyle = C.textDim();
+        ctx.fillStyle = c.textDim;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillText(e.kind.replace(/_/g, ' '), mx, my - 3 / cam.zoom);
@@ -214,7 +209,6 @@ export class Renderer {
       if (!node) continue;
       const isSelected = name === selected;
 
-      // Focus dimming: non-focused nodes at 30%.
       const dimmed = focus !== null && !focus.has(name);
       this.ctx.globalAlpha = dimmed ? 0.3 : 1;
 
@@ -240,20 +234,20 @@ export class Renderer {
     graph: Graph,
     filters?: FilterState,
   ): void {
-    const { ctx, cam } = this;
+    const { ctx, cam, c } = this;
 
     if (selected) this.drawSelectRing(node);
 
-    ctx.fillStyle = selected ? C.surfaceHi() : C.surface();
+    ctx.fillStyle = selected ? c.surfaceHi : c.surface;
     this.roundRect(node.x - node.w / 2, node.y - node.h / 2, node.w, node.h, 8);
     ctx.fill();
-    ctx.strokeStyle = C.border();
+    ctx.strokeStyle = c.border;
     ctx.lineWidth = 1 / cam.zoom;
     ctx.stroke();
 
     const fontSize = Math.max(12, 14 / Math.max(cam.zoom, 0.5));
     ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
-    ctx.fillStyle = C.text();
+    ctx.fillStyle = c.text;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(node.name, node.x, node.y - 4, node.w - 16);
@@ -268,11 +262,11 @@ export class Renderer {
       const badge = `${count}`;
       const badgeFontSize = fontSize * 0.7;
       ctx.font = `500 ${badgeFontSize}px system-ui, sans-serif`;
-      ctx.fillStyle = C.badge();
+      ctx.fillStyle = c.badge;
       const bw = ctx.measureText(badge).width + 10;
       this.roundRect(node.x - bw / 2, node.y + 8, bw, badgeFontSize + 6, 4);
       ctx.fill();
-      ctx.fillStyle = C.textDim();
+      ctx.fillStyle = c.textDim;
       ctx.fillText(badge, node.x, node.y + 8 + (badgeFontSize + 6) / 2, bw);
     }
   }
@@ -284,7 +278,7 @@ export class Renderer {
     graph: Graph,
     filters?: FilterState,
   ): void {
-    const { ctx, cam } = this;
+    const { ctx, cam, c } = this;
     const rawDecisions = graph.decisionsFor(node.name);
     const decisions = filters ? filterDecisions(rawDecisions, filters) : rawDecisions;
     const lineH = 16 / cam.zoom;
@@ -294,10 +288,10 @@ export class Renderer {
       this.drawSelectRing(node, expandedH);
     }
 
-    ctx.fillStyle = selected ? C.surfaceHi() : C.surface();
+    ctx.fillStyle = selected ? c.surfaceHi : c.surface;
     this.roundRect(node.x - node.w / 2, node.y - expandedH / 2, node.w, expandedH, 8);
     ctx.fill();
-    ctx.strokeStyle = C.border();
+    ctx.strokeStyle = c.border;
     ctx.lineWidth = 1 / cam.zoom;
     ctx.stroke();
 
@@ -306,7 +300,7 @@ export class Renderer {
 
     // Name.
     ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
-    ctx.fillStyle = C.text();
+    ctx.fillStyle = c.text;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(node.name, node.x, cursorY, node.w - 16);
@@ -316,7 +310,7 @@ export class Renderer {
     if (node.description) {
       const descSize = fontSize * 0.75;
       ctx.font = `400 ${descSize}px system-ui, sans-serif`;
-      ctx.fillStyle = C.textDim();
+      ctx.fillStyle = c.textDim;
       const desc =
         node.description.length > 50 ? node.description.slice(0, 47) + '…' : node.description;
       ctx.fillText(desc, node.x, cursorY + descSize, node.w - 16);
@@ -334,9 +328,9 @@ export class Renderer {
 
       for (const d of decisions) {
         cursorY += lineH;
-        ctx.fillStyle = C.accent();
+        ctx.fillStyle = c.accent;
         ctx.fillText('•', leftX, cursorY);
-        ctx.fillStyle = C.text();
+        ctx.fillStyle = c.text;
         const label = d.choice.length > 35 ? d.choice.slice(0, 32) + '…' : d.choice;
         ctx.fillText(label, leftX + 10 / cam.zoom, cursorY, maxW - 10 / cam.zoom);
       }
@@ -350,7 +344,7 @@ export class Renderer {
     graph: Graph,
     filters?: FilterState,
   ): void {
-    const { ctx, cam } = this;
+    const { ctx, cam, c } = this;
     const rawDecisions = graph.decisionsFor(node.name);
     const decisions = filters ? filterDecisions(rawDecisions, filters) : rawDecisions;
     const cardH = 50 / cam.zoom;
@@ -361,10 +355,10 @@ export class Renderer {
       this.drawSelectRing(node, expandedH);
     }
 
-    ctx.fillStyle = selected ? C.surfaceHi() : C.surface();
+    ctx.fillStyle = selected ? c.surfaceHi : c.surface;
     this.roundRect(node.x - node.w / 2, node.y - expandedH / 2, node.w, expandedH, 8);
     ctx.fill();
-    ctx.strokeStyle = C.border();
+    ctx.strokeStyle = c.border;
     ctx.lineWidth = 1 / cam.zoom;
     ctx.stroke();
 
@@ -373,7 +367,7 @@ export class Renderer {
 
     // Name.
     ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
-    ctx.fillStyle = C.text();
+    ctx.fillStyle = c.text;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(node.name, node.x, cursorY, node.w - 16);
@@ -383,7 +377,7 @@ export class Renderer {
     if (node.description) {
       const descSize = fontSize * 0.8;
       ctx.font = `400 ${descSize}px system-ui, sans-serif`;
-      ctx.fillStyle = C.textDim();
+      ctx.fillStyle = c.textDim;
       ctx.fillText(node.description, node.x, cursorY + descSize, node.w - 16);
       cursorY += descSize + 6 / cam.zoom;
     }
@@ -397,7 +391,7 @@ export class Renderer {
       for (const d of decisions) {
         cursorY += gap;
         // Card background.
-        ctx.fillStyle = C.bg();
+        ctx.fillStyle = c.bg;
         this.roundRect(leftX, cursorY, cardW, cardH, 4);
         ctx.fill();
 
@@ -407,7 +401,7 @@ export class Renderer {
 
         // Choice.
         ctx.font = `600 ${cSize}px system-ui, sans-serif`;
-        ctx.fillStyle = C.text();
+        ctx.fillStyle = c.text;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         const choiceLabel = d.choice.length > 45 ? d.choice.slice(0, 42) + '…' : d.choice;
@@ -415,7 +409,7 @@ export class Renderer {
 
         // Reason.
         ctx.font = `400 ${rSize}px system-ui, sans-serif`;
-        ctx.fillStyle = C.textDim();
+        ctx.fillStyle = c.textDim;
         const reasonLabel = d.reason.length > 60 ? d.reason.slice(0, 57) + '…' : d.reason;
         ctx.fillText(
           reasonLabel,
@@ -432,10 +426,10 @@ export class Renderer {
           const tagY = cursorY + cardH - tagSize - pad;
           for (const tag of d.tags.slice(0, 4)) {
             const tw = ctx.measureText(tag).width + 6 / cam.zoom;
-            ctx.fillStyle = C.accentDim();
+            ctx.fillStyle = c.accentDim;
             this.roundRect(tagX, tagY, tw, tagSize + 3 / cam.zoom, 2);
             ctx.fill();
-            ctx.fillStyle = C.text();
+            ctx.fillStyle = c.text;
             ctx.textBaseline = 'middle';
             ctx.fillText(tag, tagX + 3 / cam.zoom, tagY + (tagSize + 3 / cam.zoom) / 2);
             tagX += tw + 3 / cam.zoom;
@@ -450,9 +444,9 @@ export class Renderer {
   // ── Selection ring ────────────────────────────────────────────────────
 
   private drawSelectRing(node: RenderNode, overrideH?: number): void {
-    const { ctx, cam } = this;
+    const { ctx, cam, c } = this;
     const h = overrideH ?? node.h;
-    ctx.strokeStyle = C.selectRing();
+    ctx.strokeStyle = c.selectRing;
     ctx.lineWidth = 3 / cam.zoom;
     this.roundRect(node.x - node.w / 2 - 4, node.y - h / 2 - 4, node.w + 8, h + 8, 12);
     ctx.stroke();
@@ -461,9 +455,9 @@ export class Renderer {
   // ── Minimap ────────────────────────────────────────────────────────────
 
   renderMinimap(miniCtx: CanvasRenderingContext2D, mw: number, mh: number, graph: Graph): void {
-    const dpr = this.dpr;
+    const { dpr, c } = this;
     miniCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    miniCtx.fillStyle = C.minimap();
+    miniCtx.fillStyle = c.minimap;
     miniCtx.fillRect(0, 0, mw, mh);
 
     if (graph.nodes.size === 0) return;
@@ -490,7 +484,7 @@ export class Renderer {
     const oy = (mh - bh * scale) / 2;
 
     // Edges as hairlines.
-    miniCtx.strokeStyle = C.edge();
+    miniCtx.strokeStyle = c.edge;
     miniCtx.lineWidth = 0.5;
     miniCtx.beginPath();
     for (const e of graph.edges) {
@@ -504,7 +498,7 @@ export class Renderer {
     miniCtx.stroke();
 
     // Nodes as dots.
-    miniCtx.fillStyle = C.accent();
+    miniCtx.fillStyle = c.accent;
     for (const n of graph.nodes.values()) {
       miniCtx.beginPath();
       miniCtx.arc(ox + (n.x - minX) * scale, oy + (n.y - minY) * scale, 3, 0, Math.PI * 2);
@@ -517,10 +511,10 @@ export class Renderer {
     const vy = oy + (vp.y - minY) * scale;
     const vw = vp.w * scale;
     const vh = vp.h * scale;
-    miniCtx.strokeStyle = C.selectRing();
+    miniCtx.strokeStyle = c.selectRing;
     miniCtx.lineWidth = 1.5;
     miniCtx.strokeRect(vx, vy, vw, vh);
-    miniCtx.fillStyle = C.minimapVp();
+    miniCtx.fillStyle = c.minimapVp;
     miniCtx.fillRect(vx, vy, vw, vh);
   }
 
