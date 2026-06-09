@@ -4,6 +4,7 @@ import type { RenderNode, FilterState, DecisionNode, ColorSnapshot } from '../ty
 import { LOD } from './lod';
 import type { AABB } from './culling';
 import { EDGE_DASH, edgeColor } from './edges';
+import { convexHull, expandHull, roundedHullPath, nodeCorners } from './geometry';
 import type { HoverRenderState } from '../app/hover';
 
 // ── Per-frame color snapshot ──────────────────────────────────────────────
@@ -50,6 +51,20 @@ function filterDecisions(
   });
 }
 
+// ── Pattern region colors ──────────────────────────────────────────────────
+
+/** Fixed hue palette for pattern regions (degrees). */
+const PATTERN_HUES = [210, 150, 30, 330, 270, 90, 0, 60];
+
+/** LOD label fade duration (ms). */
+const LOD_FADE_MS = 150;
+
+/** Pattern hull expansion (world units). */
+const HULL_EXPAND = 30;
+
+/** Pattern hull corner rounding radius (world units). */
+const HULL_RADIUS = 12;
+
 // ── Renderer ───────────────────────────────────────────────────────────────
 
 export class Renderer {
@@ -60,6 +75,11 @@ export class Renderer {
   private c: ColorSnapshot;
   /** Per-frame hover state — set at the top of render(), read by draw methods. */
   private fh: HoverRenderState | null = null;
+
+  // LOD transition fade state.
+  private prevLod: LOD = LOD.Overview;
+  private lodFadeAlpha = 1;
+  private lodFadeStart = 0;
 
   constructor(canvas: HTMLCanvasElement, cam: Camera) {
     const ctx = canvas.getContext('2d');
@@ -84,6 +104,9 @@ export class Renderer {
   /**
    * Main render pass. Snapshots CSS colors once, then uses the snapshot
    * for all draw calls — zero getComputedStyle overhead in the hot path.
+   *
+   * Returns `true` if a LOD transition fade is in progress (caller
+   * should keep re-rendering).
    */
   render(
     graph: Graph,
@@ -92,10 +115,21 @@ export class Renderer {
     focus: Set<string> | null = null,
     filters?: FilterState,
     hover?: HoverRenderState,
-  ): void {
+  ): boolean {
     this.c = snapshotColors();
     this.fh = hover ?? null;
     const { ctx, cam, dpr, c } = this;
+
+    // LOD transition fade.
+    const now = performance.now();
+    if (lod !== this.prevLod) {
+      this.lodFadeAlpha = 0;
+      this.lodFadeStart = now;
+      this.prevLod = lod;
+    }
+    if (this.lodFadeAlpha < 1) {
+      this.lodFadeAlpha = Math.min(1, (now - this.lodFadeStart) / LOD_FADE_MS);
+    }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = c.bg;
@@ -116,6 +150,9 @@ export class Renderer {
     ctx.scale(cam.zoom, cam.zoom);
     ctx.translate(-cam.cx, -cam.cy);
 
+    if (lod <= LOD.Component) {
+      this.drawPatternRegions(graph, visibleNames, focus, filters);
+    }
     this.drawEdges(graph, visibleNames, lod, focus, filters);
     this.drawNodes(graph, visibleNames, selected, lod, focus, filters);
 
@@ -127,6 +164,97 @@ export class Renderer {
     }
 
     this.fh = null;
+    return this.lodFadeAlpha < 1;
+  }
+
+  // ── Pattern regions ─────────────────────────────────────────────────────
+
+  /**
+   * Draw semi-transparent pattern regions behind nodes/edges.
+   * Skipped at LOD 2 (regions would fill the entire viewport).
+   */
+  private drawPatternRegions(
+    graph: Graph,
+    visible: Set<string>,
+    focus: Set<string> | null,
+    filters?: FilterState,
+  ): void {
+    if (graph.patterns.size === 0) return;
+    const { ctx, cam, c } = this;
+    const prefersLight =
+      typeof matchMedia !== 'undefined'
+        ? matchMedia('(prefers-color-scheme: light)').matches
+        : false;
+    const lightness = prefersLight ? 45 : 55;
+    const baseFill = prefersLight ? 0.06 : 0.08;
+    const baseStroke = 0.25;
+    const dimFill = 0.03;
+    const labelSize = 11 / cam.zoom;
+
+    let patIdx = 0;
+    for (const [, pat] of graph.patterns) {
+      // Skip patterns with no visible components.
+      const memberNames = pat.components.filter((name) => visible.has(name));
+      if (memberNames.length === 0) {
+        patIdx++;
+        continue;
+      }
+
+      // Collect bounding-box corners of member components.
+      const corners = nodeCorners(pat.components, graph.nodes);
+      if (corners.length < 3) {
+        patIdx++;
+        continue;
+      }
+
+      const hull = convexHull(corners);
+      if (hull.length < 3) {
+        patIdx++;
+        continue;
+      }
+
+      const expanded = expandHull(hull, HULL_EXPAND);
+
+      // Focus dimming.
+      const dimmedByFocus = focus !== null && !pat.components.some((n) => focus.has(n));
+
+      // Filter dimming: when tag filter is active and no decisions in
+      // this pattern match the active tags, dim to 3%.
+      let dimmedByFilter = false;
+      if (filters && filters.activeTags.size > 0) {
+        dimmedByFilter = !pat.decisions.some((dName) => {
+          const dec = graph.decisions.get(dName);
+          return dec && dec.tags.some((t) => filters.activeTags.has(t));
+        });
+      }
+
+      const fillAlpha = dimmedByFilter ? dimFill : baseFill;
+      const hue = PATTERN_HUES[patIdx % PATTERN_HUES.length];
+
+      ctx.globalAlpha = dimmedByFocus ? 0.15 : 1;
+
+      // Fill.
+      ctx.fillStyle = `hsla(${hue}, 60%, ${lightness}%, ${fillAlpha})`;
+      roundedHullPath(ctx, expanded, HULL_RADIUS);
+      ctx.fill();
+
+      // Stroke.
+      ctx.strokeStyle = `hsla(${hue}, 60%, ${lightness}%, ${baseStroke})`;
+      ctx.lineWidth = 1.5 / cam.zoom;
+      ctx.stroke();
+
+      // Label: centered in region.
+      const cx = expanded.reduce((s, p) => s + p.x, 0) / expanded.length;
+      const cy = expanded.reduce((s, p) => s + p.y, 0) / expanded.length;
+      ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+      ctx.fillStyle = c.textDim;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(pat.name, cx, cy);
+
+      patIdx++;
+    }
+    ctx.globalAlpha = 1;
   }
 
   // ── Edges ──────────────────────────────────────────────────────────────
@@ -337,8 +465,10 @@ export class Renderer {
       cursorY += descSize + 4 / cam.zoom;
     }
 
-    // Decision rows.
+    // Decision rows — faded in during LOD transition.
     if (decisions.length > 0) {
+      const prevAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = prevAlpha * this.lodFadeAlpha;
       cursorY += 6 / cam.zoom;
       const rowSize = fontSize * 0.7;
       ctx.font = `400 ${rowSize}px system-ui, sans-serif`;
@@ -354,6 +484,7 @@ export class Renderer {
         const label = d.choice.length > 35 ? d.choice.slice(0, 32) + '…' : d.choice;
         ctx.fillText(label, leftX + 10 / cam.zoom, cursorY, maxW - 10 / cam.zoom);
       }
+      ctx.globalAlpha = prevAlpha;
     }
   }
 
@@ -402,8 +533,10 @@ export class Renderer {
       cursorY += descSize + 6 / cam.zoom;
     }
 
-    // Decision cards.
+    // Decision cards — faded in during LOD transition.
     if (decisions.length > 0) {
+      const prevAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = prevAlpha * this.lodFadeAlpha;
       cursorY += 4 / cam.zoom;
       const leftX = node.x - node.w / 2 + 8 / cam.zoom;
       const cardW = node.w - 16 / cam.zoom;
@@ -458,6 +591,7 @@ export class Renderer {
 
         cursorY += cardH;
       }
+      ctx.globalAlpha = prevAlpha;
     }
   }
 

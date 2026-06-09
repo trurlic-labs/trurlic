@@ -1,6 +1,12 @@
 import type { Camera } from '../renderer/camera';
 import type { Graph } from '../state/graph';
 
+/** Duration (ms) for fit-all-nodes animation. */
+const FIT_ALL_MS = 400;
+
+/** Duration (ms) for focus-single-node animation. */
+const FOCUS_NODE_MS = 300;
+
 /**
  * High-level camera navigation.
  *
@@ -29,7 +35,7 @@ export class Navigation {
       maxX = Math.max(maxX, n.x + n.w / 2);
       maxY = Math.max(maxY, n.y + n.h / 2);
     }
-    this.camera.fitBounds(minX, minY, maxX, maxY);
+    this.camera.fitBounds(minX, minY, maxX, maxY, 80, FIT_ALL_MS);
   }
 
   /** Zoom to center a specific node with generous padding. */
@@ -37,6 +43,13 @@ export class Navigation {
     const node = graph.nodes.get(name);
     if (!node) return;
     const pad = 300;
-    this.camera.fitBounds(node.x - pad, node.y - pad, node.x + pad, node.y + pad);
+    this.camera.fitBounds(
+      node.x - pad,
+      node.y - pad,
+      node.x + pad,
+      node.y + pad,
+      80,
+      FOCUS_NODE_MS,
+    );
   }
 }

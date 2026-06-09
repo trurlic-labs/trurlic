@@ -1,0 +1,154 @@
+import { describe, it, expect } from 'vitest';
+import { convexHull, expandHull, cross, nodeCorners } from './geometry';
+import type { Point } from './geometry';
+
+describe('cross', () => {
+  it('returns positive for left turn', () => {
+    expect(cross({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 })).toBeGreaterThan(0);
+  });
+
+  it('returns negative for right turn', () => {
+    expect(cross({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: -1 })).toBeLessThan(0);
+  });
+
+  it('returns 0 for collinear points', () => {
+    expect(cross({ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 })).toBe(0);
+  });
+});
+
+describe('convexHull', () => {
+  it('returns a triangle for 3 non-collinear points', () => {
+    const pts: Point[] = [
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+      { x: 2, y: 3 },
+    ];
+    const hull = convexHull(pts);
+    expect(hull).toHaveLength(3);
+  });
+
+  it('excludes interior points', () => {
+    const pts: Point[] = [
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+      { x: 4, y: 4 },
+      { x: 0, y: 4 },
+      { x: 2, y: 2 }, // interior
+    ];
+    const hull = convexHull(pts);
+    expect(hull).toHaveLength(4);
+    const names = hull.map((p) => `${p.x},${p.y}`);
+    expect(names).not.toContain('2,2');
+  });
+
+  it('returns points for fewer than 3 inputs', () => {
+    expect(convexHull([{ x: 0, y: 0 }])).toHaveLength(1);
+    expect(
+      convexHull([
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+      ]),
+    ).toHaveLength(2);
+  });
+
+  it('handles collinear points', () => {
+    const pts: Point[] = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 3, y: 0 },
+    ];
+    const hull = convexHull(pts);
+    // Collinear → degenerate hull with 2 endpoints.
+    expect(hull.length).toBeLessThanOrEqual(4);
+    expect(hull.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('handles duplicate points', () => {
+    const pts: Point[] = [
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+    ];
+    const hull = convexHull(pts);
+    expect(hull.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('expandHull', () => {
+  function squareHull(): Point[] {
+    return convexHull([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ]);
+  }
+
+  it('expands a square outward', () => {
+    const hull = squareHull();
+    const exp = expandHull(hull, 10);
+    expect(exp).toHaveLength(4);
+
+    // Every expanded vertex should be farther from the centroid.
+    const cx = 50;
+    const cy = 50;
+    for (let i = 0; i < hull.length; i++) {
+      const origDist = Math.hypot(hull[i].x - cx, hull[i].y - cy);
+      const expDist = Math.hypot(exp[i].x - cx, exp[i].y - cy);
+      expect(expDist).toBeGreaterThan(origDist);
+    }
+  });
+
+  it('preserves vertex count', () => {
+    const hull = squareHull();
+    const exp = expandHull(hull, 30);
+    expect(exp).toHaveLength(hull.length);
+  });
+
+  it('approximate uniform offset for square', () => {
+    const hull = squareHull();
+    const exp = expandHull(hull, 20);
+
+    // For a 90° corner, the bisector offset distance is d / cos(45°)
+    // ≈ 28.3, but each coordinate component is 28.3 × cos(45°) = 20.
+    // So the bottom-left vertex (0,0) moves to (-20, -20).
+    const bl = exp.find((p) => p.x < 50 && p.y < 50);
+    expect(bl).toBeDefined();
+    expect(bl!.x).toBeCloseTo(-20, 0);
+    expect(bl!.y).toBeCloseTo(-20, 0);
+  });
+
+  it('returns copy for fewer than 3 points', () => {
+    const pts = [
+      { x: 0, y: 0 },
+      { x: 1, y: 1 },
+    ];
+    const exp = expandHull(pts, 10);
+    expect(exp).toHaveLength(2);
+    expect(exp).not.toBe(pts); // should be a new array
+  });
+});
+
+describe('nodeCorners', () => {
+  it('collects 4 corners per node', () => {
+    const nodes = new Map([
+      ['a', { x: 0, y: 0, w: 100, h: 60 }],
+      ['b', { x: 200, y: 100, w: 100, h: 60 }],
+    ]);
+    const pts = nodeCorners(['a', 'b'], nodes);
+    expect(pts).toHaveLength(8); // 4 per node
+  });
+
+  it('skips missing nodes', () => {
+    const nodes = new Map([['a', { x: 0, y: 0, w: 100, h: 60 }]]);
+    const pts = nodeCorners(['a', 'missing'], nodes);
+    expect(pts).toHaveLength(4);
+  });
+
+  it('returns empty for no matches', () => {
+    const pts = nodeCorners(['x'], new Map());
+    expect(pts).toHaveLength(0);
+  });
+});

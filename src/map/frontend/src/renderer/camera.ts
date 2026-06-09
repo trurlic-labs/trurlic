@@ -71,7 +71,14 @@ export class Camera {
   }
 
   /** Animate to fit a bounding box with padding. */
-  fitBounds(minX: number, minY: number, maxX: number, maxY: number, padding = 80): void {
+  fitBounds(
+    minX: number,
+    minY: number,
+    maxX: number,
+    maxY: number,
+    padding = 80,
+    durationMs = 300,
+  ): void {
     const bw = maxX - minX + padding * 2;
     const bh = maxY - minY + padding * 2;
     if (bw <= 0 || bh <= 0) return;
@@ -79,7 +86,7 @@ export class Camera {
     const toCy = (minY + maxY) / 2;
     let toZoom = Math.min(this.screenW / bw, this.screenH / bh, this.maxZoom);
     toZoom = Math.max(toZoom, this.minZoom);
-    this.animateTo(toCx, toCy, toZoom);
+    this.animateTo(toCx, toCy, toZoom, durationMs);
   }
 
   /**

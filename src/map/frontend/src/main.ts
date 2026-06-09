@@ -760,7 +760,7 @@ class App {
     }
 
     if (this.needsRender) {
-      this.renderer.render(
+      const fading = this.renderer.render(
         this.graph,
         this.selection.selected,
         this.lod,
@@ -769,7 +769,7 @@ class App {
         this.hover,
       );
       this.drag.setMinimapTransform(this.renderMinimap());
-      this.needsRender = false;
+      this.needsRender = fading;
     }
     requestAnimationFrame(this.renderLoop);
   };
