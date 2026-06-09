@@ -1023,12 +1023,12 @@ mod tests {
         for &(name, desc) in components {
             comp_map.insert(
                 name.into(),
-                ComponentFile {
+                Arc::new(ComponentFile {
                     component: Component {
                         name: name.into(),
                         description: desc.into(),
                     },
-                },
+                }),
             );
         }
 
@@ -1045,7 +1045,7 @@ mod tests {
         let mut edges = Vec::new();
 
         for &(name, ref dec) in decisions {
-            dec_map.insert(name.into(), dec.clone());
+            dec_map.insert(name.into(), Arc::new(dec.clone()));
             nodes.push(NodeEntry {
                 name: name.into(),
                 kind: NodeKind::Decision,
@@ -1088,12 +1088,12 @@ mod tests {
         for &(name, desc, applies_to) in patterns {
             state.patterns.insert(
                 name.into(),
-                PatternFile {
+                Arc::new(PatternFile {
                     pattern: Pattern {
                         name: name.into(),
                         description: desc.into(),
                     },
-                },
+                }),
             );
             state.graph_index.nodes.push(NodeEntry {
                 name: name.into(),

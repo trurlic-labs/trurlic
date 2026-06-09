@@ -895,7 +895,7 @@ mod tests {
         // Add a decision that use-jwt depends on (in a non-connected component).
         state.decisions.insert(
             "tls-required".into(),
-            DecisionFile {
+            Arc::new(DecisionFile {
                 decision: Decision {
                     component: "rate-limiter".into(),
                     choice: "TLS everywhere".into(),
@@ -904,7 +904,7 @@ mod tests {
                     tags: vec![],
                     created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
                 },
-            },
+            }),
         );
         state.graph_index.nodes.push(NodeEntry {
             name: "tls-required".into(),
@@ -1009,12 +1009,12 @@ mod tests {
         // Add a pattern with MemberOf edges.
         state.patterns.insert(
             "auth-pattern".into(),
-            PatternFile {
+            Arc::new(PatternFile {
                 pattern: Pattern {
                     name: "auth-pattern".into(),
                     description: "Stateless auth via JWT".into(),
                 },
-            },
+            }),
         );
         state.graph_index.nodes.push(NodeEntry {
             name: "auth-pattern".into(),
@@ -1070,12 +1070,12 @@ mod tests {
 
         state.patterns.insert(
             "state-in-redis".into(),
-            PatternFile {
+            Arc::new(PatternFile {
                 pattern: Pattern {
                     name: "state-in-redis".into(),
                     description: "All state uses Redis".into(),
                 },
-            },
+            }),
         );
         state.graph_index.nodes.push(NodeEntry {
             name: "state-in-redis".into(),

@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -344,19 +345,19 @@ impl Store {
         let mut components = BTreeMap::new();
         for (name, file, hash) in comp_items {
             hashes.insert(name.clone(), hash);
-            components.insert(name, file);
+            components.insert(name, Arc::new(file));
         }
 
         let mut decisions = BTreeMap::new();
         for (name, file, hash) in dec_items {
             hashes.insert(name.clone(), hash);
-            decisions.insert(name, file);
+            decisions.insert(name, Arc::new(file));
         }
 
         let mut patterns = BTreeMap::new();
         for (name, file, hash) in pat_items {
             hashes.insert(name.clone(), hash);
-            patterns.insert(name, file);
+            patterns.insert(name, Arc::new(file));
         }
 
         let graph_index = self.load_graph_index(&components, &decisions, &patterns, &hashes)?;
@@ -380,9 +381,9 @@ impl Store {
     /// BelongsTo edges for all decisions.
     fn load_graph_index(
         &self,
-        components: &BTreeMap<String, ComponentFile>,
-        decisions: &BTreeMap<String, DecisionFile>,
-        patterns: &BTreeMap<String, PatternFile>,
+        components: &BTreeMap<String, Arc<ComponentFile>>,
+        decisions: &BTreeMap<String, Arc<DecisionFile>>,
+        patterns: &BTreeMap<String, Arc<PatternFile>>,
         hashes: &HashMap<String, String>,
     ) -> Result<schema::GraphIndex> {
         let graph_path = self.graph_path();
@@ -724,19 +725,19 @@ pub(crate) mod testing {
         ] {
             components.insert(
                 name.into(),
-                ComponentFile {
+                Arc::new(ComponentFile {
                     component: Component {
                         name: name.into(),
                         description: desc.into(),
                     },
-                },
+                }),
             );
         }
 
         let mut decisions = BTreeMap::new();
         decisions.insert(
             "use-jwt".into(),
-            DecisionFile {
+            Arc::new(DecisionFile {
                 decision: Decision {
                     component: "auth".into(),
                     choice: "JWT with DPoP binding".into(),
@@ -745,11 +746,11 @@ pub(crate) mod testing {
                     tags: vec![],
                     created: ts,
                 },
-            },
+            }),
         );
         decisions.insert(
             "error-strategy".into(),
-            DecisionFile {
+            Arc::new(DecisionFile {
                 decision: Decision {
                     component: "project".into(),
                     choice: "ALL error handling MUST use Result<T, AppError>".into(),
@@ -758,11 +759,11 @@ pub(crate) mod testing {
                     tags: vec![],
                     created: ts,
                 },
-            },
+            }),
         );
         decisions.insert(
             "db-pool".into(),
-            DecisionFile {
+            Arc::new(DecisionFile {
                 decision: Decision {
                     component: "database".into(),
                     choice: "Shared connection pool via app state".into(),
@@ -771,7 +772,7 @@ pub(crate) mod testing {
                     tags: vec![],
                     created: ts,
                 },
-            },
+            }),
         );
 
         let graph_index = GraphIndex {

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::{Error, Result};
 
@@ -14,11 +15,17 @@ use super::schema::{
 
 /// Complete in-memory snapshot of `.trurlic/`.
 /// Keyed by filename stem (e.g. `"auth"`, `"error-strategy"`).
+///
+/// Content values (`ComponentFile`, `DecisionFile`, `PatternFile`) are
+/// `Arc`-wrapped for zero-cost sharing with [`InMemoryGraph`]. Graph
+/// rebuilds (which happen on every write operation) clone only the `Arc`
+/// pointer — not the underlying data — making rebuild cost O(n) pointer
+/// increments instead of O(n) deep copies.
 pub struct ProjectState {
     pub project: ProjectFile,
-    pub components: BTreeMap<String, ComponentFile>,
-    pub decisions: BTreeMap<String, DecisionFile>,
-    pub patterns: BTreeMap<String, PatternFile>,
+    pub components: BTreeMap<String, Arc<ComponentFile>>,
+    pub decisions: BTreeMap<String, Arc<DecisionFile>>,
+    pub patterns: BTreeMap<String, Arc<PatternFile>>,
     pub graph_index: GraphIndex,
     /// Cached in-memory graph. Kept in sync by
     /// [`Store::commit_with_graph`], which assigns the validated graph
@@ -27,12 +34,17 @@ pub struct ProjectState {
 }
 
 impl ProjectState {
-    /// Construct with a pre-built graph cache.
+    /// Construct from `Arc`-wrapped content maps.
+    ///
+    /// Content values are `Arc`-wrapped so `InMemoryGraph` can share them
+    /// via pointer clone instead of deep copy. Callers that load from disk
+    /// wrap at construction time; test helpers like `sample_component` and
+    /// `sample_decision` return `Arc<T>` directly.
     pub fn new(
         project: ProjectFile,
-        components: BTreeMap<String, ComponentFile>,
-        decisions: BTreeMap<String, DecisionFile>,
-        patterns: BTreeMap<String, PatternFile>,
+        components: BTreeMap<String, Arc<ComponentFile>>,
+        decisions: BTreeMap<String, Arc<DecisionFile>>,
+        patterns: BTreeMap<String, Arc<PatternFile>>,
         graph_index: GraphIndex,
     ) -> Self {
         let graph = Self::build_graph_from(&graph_index, &components, &decisions, &patterns);
@@ -88,9 +100,9 @@ impl ProjectState {
 
     fn build_graph_from(
         graph_index: &GraphIndex,
-        components: &BTreeMap<String, ComponentFile>,
-        decisions: &BTreeMap<String, DecisionFile>,
-        patterns: &BTreeMap<String, PatternFile>,
+        components: &BTreeMap<String, Arc<ComponentFile>>,
+        decisions: &BTreeMap<String, Arc<DecisionFile>>,
+        patterns: &BTreeMap<String, Arc<PatternFile>>,
     ) -> InMemoryGraph {
         InMemoryGraph::build(graph_index, components, decisions, patterns)
     }
@@ -430,9 +442,10 @@ mod tests {
     #[test]
     fn unique_stem_appends_suffix_on_collision() {
         let mut state = empty_state();
-        state
-            .decisions
-            .insert("use-redis".into(), sample_decision("use-redis", "project"));
+        state.decisions.insert(
+            "use-redis".into(),
+            sample_decision("use-redis", "project").into(),
+        );
         assert_eq!(
             unique_decision_stem(&state, "use-redis").unwrap(),
             "use-redis-2"
@@ -445,7 +458,7 @@ mod tests {
         for name in &["use-redis", "use-redis-2", "use-redis-3"] {
             state
                 .decisions
-                .insert(name.to_string(), sample_decision(name, "project"));
+                .insert(name.to_string(), sample_decision(name, "project").into());
         }
         assert_eq!(
             unique_decision_stem(&state, "use-redis").unwrap(),
@@ -469,7 +482,7 @@ mod tests {
         let mut state = empty_state();
         state
             .components
-            .insert("auth".into(), sample_component("auth"));
+            .insert("auth".into(), sample_component("auth").into());
         // "auth" is taken by a component — stem must be suffixed.
         assert_eq!(unique_decision_stem(&state, "auth").unwrap(), "auth-2");
     }
@@ -479,12 +492,12 @@ mod tests {
         let mut state = empty_state();
         state.patterns.insert(
             "state-in-redis".into(),
-            crate::store::schema::PatternFile {
+            Arc::new(crate::store::schema::PatternFile {
                 pattern: crate::store::schema::Pattern {
                     name: "state-in-redis".into(),
                     description: "test".into(),
                 },
-            },
+            }),
         );
         assert_eq!(
             unique_decision_stem(&state, "state-in-redis").unwrap(),
@@ -537,13 +550,13 @@ mod tests {
 
         state
             .components
-            .insert("auth".into(), sample_component("auth"));
+            .insert("auth".into(), sample_component("auth").into());
         assert!(state.is_node_name_taken("auth"), "component");
         assert!(!state.is_node_name_taken("use-jwt"));
 
         state
             .decisions
-            .insert("use-jwt".into(), sample_decision("use-jwt", "auth"));
+            .insert("use-jwt".into(), sample_decision("use-jwt", "auth").into());
         assert!(state.is_node_name_taken("use-jwt"), "decision");
     }
 

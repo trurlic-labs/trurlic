@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::Utc;
 use serde::Serialize;
@@ -428,7 +429,7 @@ impl Store {
             });
         }
 
-        state.decisions.insert(stem.clone(), decision);
+        state.decisions.insert(stem.clone(), Arc::new(decision));
 
         if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
             state.decisions.remove(&stem);
@@ -488,7 +489,7 @@ impl Store {
             tags: vec![],
             hash,
         });
-        state.components.insert(name.into(), comp);
+        state.components.insert(name.into(), Arc::new(comp));
 
         if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
             state.rollback_graph(checkpoint);
@@ -699,7 +700,7 @@ impl Store {
             .ok_or_else(|| Error::DecisionNotFound(name.into()))?
             .clone();
 
-        let mut amended = old_dec.clone();
+        let mut amended = DecisionFile::clone(&old_dec);
         if let Some(c) = params.choice {
             amended.decision.choice = c.into();
         }
@@ -714,7 +715,7 @@ impl Store {
         let hash = write.content_hash();
 
         // Mutate state. Save only the affected fields for rollback.
-        state.decisions.insert(name.into(), amended);
+        state.decisions.insert(name.into(), Arc::new(amended));
         let old_hash = state.update_node_hash(name, hash);
         let old_tags = if let Some(t) = params.tags {
             state
@@ -789,16 +790,17 @@ impl Store {
             .collect();
 
         // Apply in-memory mutations.
-        let mut renamed = state
+        let old_comp = state
             .components
             .remove(old)
             .ok_or_else(|| Error::ComponentNotFound(old.into()))?;
+        let mut renamed = ComponentFile::clone(&old_comp);
         renamed.component.name = new.into();
-        state.components.insert(new.into(), renamed);
+        state.components.insert(new.into(), Arc::new(renamed));
 
         for dec in state.decisions.values_mut() {
             if dec.decision.component == old {
-                dec.decision.component = new.into();
+                Arc::make_mut(dec).decision.component = new.into();
             }
         }
 
@@ -819,15 +821,18 @@ impl Store {
         // Prepare writes and update hashes.
         let mut writes = Vec::new();
 
-        let comp_write = self.prepare_write(&self.component_path(new), &state.components[new])?;
+        let comp_write =
+            self.prepare_write(&self.component_path(new), state.components[new].as_ref())?;
         if let Some(node) = state.graph_index.nodes.iter_mut().find(|n| n.name == new) {
             node.hash = comp_write.content_hash();
         }
         writes.push(comp_write);
 
         for dname in &affected_decisions {
-            let dec_write =
-                self.prepare_write(&self.decision_path(dname), &state.decisions[dname.as_str()])?;
+            let dec_write = self.prepare_write(
+                &self.decision_path(dname),
+                state.decisions[dname.as_str()].as_ref(),
+            )?;
             if let Some(node) = state
                 .graph_index
                 .nodes
@@ -843,14 +848,15 @@ impl Store {
 
         if let Err(e) = self.commit_with_graph(lock, writes, removes, state) {
             // Rollback: revert component rename.
-            if let Some(mut c) = state.components.remove(new) {
-                c.component.name = old.into();
-                state.components.insert(old.into(), c);
+            if let Some(comp) = state.components.remove(new) {
+                let mut reverted = ComponentFile::clone(&comp);
+                reverted.component.name = old.into();
+                state.components.insert(old.into(), Arc::new(reverted));
             }
             // Revert decision component fields.
             for dec in state.decisions.values_mut() {
                 if dec.decision.component == new {
-                    dec.decision.component = old.into();
+                    Arc::make_mut(dec).decision.component = old.into();
                 }
             }
             // Revert graph_index entirely (node names + edge refs + hashes).
@@ -959,7 +965,7 @@ impl Store {
             });
         }
 
-        state.patterns.insert(slug.clone(), pattern);
+        state.patterns.insert(slug.clone(), Arc::new(pattern));
 
         if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
             state.patterns.remove(&slug);
@@ -1292,7 +1298,7 @@ mod tests {
             tags: vec![],
             hash,
         });
-        state.components.insert("auth".into(), comp);
+        state.components.insert("auth".into(), Arc::new(comp));
 
         store
             .commit_with_graph(&lock, vec![write], vec![], &mut state)
@@ -1325,9 +1331,10 @@ mod tests {
             to: "nonexistent".into(),
             kind: EdgeKind::BelongsTo,
         });
-        state
-            .decisions
-            .insert("orphan".into(), sample_decision("orphan", "nonexistent"));
+        state.decisions.insert(
+            "orphan".into(),
+            sample_decision("orphan", "nonexistent").into(),
+        );
 
         let err = store
             .commit_with_graph(&lock, vec![], vec![], &mut state)
@@ -1371,8 +1378,8 @@ mod tests {
             to: "a-comp".into(),
             kind: EdgeKind::ConnectsTo,
         });
-        state.components.insert("z-comp".into(), c1);
-        state.components.insert("a-comp".into(), c2);
+        state.components.insert("z-comp".into(), Arc::new(c1));
+        state.components.insert("a-comp".into(), Arc::new(c2));
 
         store
             .commit_with_graph(&lock, vec![w1, w2], vec![], &mut state)

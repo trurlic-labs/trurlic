@@ -634,26 +634,27 @@ mod tests {
     use crate::store::schema::*;
     use chrono::{TimeZone, Utc};
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     fn test_state() -> ProjectState {
         let mut comps = BTreeMap::new();
         comps.insert(
             "auth".into(),
-            ComponentFile {
+            Arc::new(ComponentFile {
                 component: Component {
                     name: "auth".into(),
                     description: "Authentication".into(),
                 },
-            },
+            }),
         );
         comps.insert(
             "store".into(),
-            ComponentFile {
+            Arc::new(ComponentFile {
                 component: Component {
                     name: "store".into(),
                     description: "Data store".into(),
                 },
-            },
+            }),
         );
 
         let ts = Utc.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).unwrap();
@@ -661,7 +662,7 @@ mod tests {
         let mut decs = BTreeMap::new();
         decs.insert(
             "auth-jwt".into(),
-            DecisionFile {
+            Arc::new(DecisionFile {
                 decision: Decision {
                     component: "auth".into(),
                     choice: "JWT with DPoP binding".into(),
@@ -670,11 +671,11 @@ mod tests {
                     tags: vec!["security".into(), "auth".into()],
                     created: ts,
                 },
-            },
+            }),
         );
         decs.insert(
             "auth-scope".into(),
-            DecisionFile {
+            Arc::new(DecisionFile {
                 decision: Decision {
                     component: "auth".into(),
                     choice: "Handles authentication only".into(),
@@ -683,11 +684,11 @@ mod tests {
                     tags: vec!["scope".into()],
                     created: ts,
                 },
-            },
+            }),
         );
         decs.insert(
             "project-errors".into(),
-            DecisionFile {
+            Arc::new(DecisionFile {
                 decision: Decision {
                     component: "project".into(),
                     choice: "Result<T, AppError>".into(),
@@ -696,7 +697,7 @@ mod tests {
                     tags: vec![],
                     created: ts,
                 },
-            },
+            }),
         );
 
         let nodes = vec![

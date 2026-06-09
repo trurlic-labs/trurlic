@@ -112,9 +112,9 @@ pub struct InMemoryGraph {
     pub(crate) nodes: HashMap<Arc<str>, NodeMeta>,
     pub(crate) forward: HashMap<Arc<str>, Vec<Edge>>,
     pub(crate) reverse: HashMap<Arc<str>, Vec<Edge>>,
-    pub(crate) components: HashMap<Arc<str>, ComponentFile>,
-    pub(crate) decisions: HashMap<Arc<str>, DecisionFile>,
-    pub(crate) patterns: HashMap<Arc<str>, PatternFile>,
+    pub(crate) components: HashMap<Arc<str>, Arc<ComponentFile>>,
+    pub(crate) decisions: HashMap<Arc<str>, Arc<DecisionFile>>,
+    pub(crate) patterns: HashMap<Arc<str>, Arc<PatternFile>>,
 }
 
 impl InMemoryGraph {
@@ -122,12 +122,13 @@ impl InMemoryGraph {
     ///
     /// All node names are interned as [`Arc<str>`] for zero-cost sharing
     /// across adjacency maps, content caches, and query results.
+    /// Content values are `Arc::clone`'d — pointer increment, not deep copy.
     #[must_use]
     pub fn build(
         index: &GraphIndex,
-        components: &BTreeMap<String, ComponentFile>,
-        decisions: &BTreeMap<String, DecisionFile>,
-        patterns: &BTreeMap<String, PatternFile>,
+        components: &BTreeMap<String, Arc<ComponentFile>>,
+        decisions: &BTreeMap<String, Arc<DecisionFile>>,
+        patterns: &BTreeMap<String, Arc<PatternFile>>,
     ) -> Self {
         // Intern every name that appears in nodes or edges.
         let mut pool: HashMap<String, Arc<str>> = HashMap::with_capacity(index.nodes.len());
@@ -177,15 +178,15 @@ impl InMemoryGraph {
             reverse,
             components: components
                 .iter()
-                .map(|(k, v)| (intern(k), v.clone()))
+                .map(|(k, v)| (intern(k), Arc::clone(v)))
                 .collect(),
             decisions: decisions
                 .iter()
-                .map(|(k, v)| (intern(k), v.clone()))
+                .map(|(k, v)| (intern(k), Arc::clone(v)))
                 .collect(),
             patterns: patterns
                 .iter()
-                .map(|(k, v)| (intern(k), v.clone()))
+                .map(|(k, v)| (intern(k), Arc::clone(v)))
                 .collect(),
         }
     }
@@ -195,7 +196,7 @@ impl InMemoryGraph {
     /// All decisions belonging to a component (reverse `BelongsTo` edges).
     pub fn decisions_for(&self, component: &str) -> Vec<(&Arc<str>, &DecisionFile)> {
         self.reverse_targets(component, EdgeKind::BelongsTo, |name| {
-            self.decisions.get(name).map(|d| (name, d))
+            self.decisions.get(name).map(|d| (name, d.as_ref()))
         })
     }
 
@@ -248,7 +249,7 @@ impl InMemoryGraph {
     /// Patterns that apply to a component (reverse `AppliesTo` edges).
     pub fn patterns_for(&self, component: &str) -> Vec<(&Arc<str>, &PatternFile)> {
         self.reverse_targets(component, EdgeKind::AppliesTo, |name| {
-            self.patterns.get(name).map(|p| (name, p))
+            self.patterns.get(name).map(|p| (name, p.as_ref()))
         })
     }
 
@@ -262,7 +263,7 @@ impl InMemoryGraph {
     /// Patterns that include this decision (reverse `MemberOf` edges).
     pub fn patterns_containing(&self, decision: &str) -> Vec<(&Arc<str>, &PatternFile)> {
         self.reverse_targets(decision, EdgeKind::MemberOf, |name| {
-            self.patterns.get(name).map(|p| (name, p))
+            self.patterns.get(name).map(|p| (name, p.as_ref()))
         })
     }
 
@@ -274,7 +275,11 @@ impl InMemoryGraph {
                 edges
                     .iter()
                     .filter(|e| e.kind == EdgeKind::MemberOf)
-                    .filter_map(|e| self.decisions.get(&e.target).map(|d| (&e.target, d)))
+                    .filter_map(|e| {
+                        self.decisions
+                            .get(&e.target)
+                            .map(|d| (&e.target, d.as_ref()))
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -320,7 +325,7 @@ impl InMemoryGraph {
 
         while let Some((node, depth)) = queue.pop_front() {
             if let Some((key, dec)) = self.decisions.get_key_value(node) {
-                result.push((key, dec));
+                result.push((key, dec.as_ref()));
             }
             if depth < max_depth
                 && let Some(edges) = self.forward.get(node)
@@ -516,12 +521,12 @@ impl InMemoryGraph {
 
     #[cfg(test)]
     pub fn component(&self, name: &str) -> Option<&ComponentFile> {
-        self.components.get(name)
+        self.components.get(name).map(|c| c.as_ref())
     }
 
     #[cfg(test)]
     pub fn decision(&self, name: &str) -> Option<&DecisionFile> {
-        self.decisions.get(name)
+        self.decisions.get(name).map(|d| d.as_ref())
     }
 
     pub fn node_meta(&self, name: &str) -> Option<&NodeMeta> {
@@ -627,6 +632,11 @@ mod tests {
 
     fn ts() -> chrono::DateTime<Utc> {
         Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap()
+    }
+
+    /// Wrap a BTreeMap's values in Arc for InMemoryGraph::build().
+    fn arc_map<T>(map: BTreeMap<String, T>) -> BTreeMap<String, Arc<T>> {
+        map.into_iter().map(|(k, v)| (k, Arc::new(v))).collect()
     }
 
     /// Realistic graph:
@@ -765,7 +775,12 @@ mod tests {
             },
         );
 
-        InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new())
+        InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        )
     }
 
     // ── build ────────────────────────────────────────────────────────────
@@ -972,7 +987,12 @@ mod tests {
             },
         );
 
-        let g = InMemoryGraph::build(&index, &components, &decisions, &patterns);
+        let g = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &arc_map(patterns),
+        );
         let pats = g.patterns_for("comp");
         assert_eq!(pats.len(), 1);
         assert_eq!(pats[0].0.as_ref(), "my-pattern");
@@ -1134,7 +1154,12 @@ mod tests {
             );
         }
 
-        InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new())
+        InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        )
     }
 
     #[test]
@@ -1281,7 +1306,12 @@ mod tests {
                 },
             );
         }
-        let g = InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        );
 
         // Must terminate despite the cycle, and return only b (not a, the seed).
         let result = g.transitive_depends_on(&["a"], 10);
@@ -1536,7 +1566,12 @@ mod tests {
                 },
             );
         }
-        let g = InMemoryGraph::build(&index, &BTreeMap::new(), &decisions, &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &BTreeMap::new(),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(issues.iter().any(|i| i.message.contains("cycle")));
     }
@@ -1570,7 +1605,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &BTreeMap::new(), &decisions, &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &BTreeMap::new(),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(issues.iter().any(|i| i.message.contains("empty choice")));
     }
@@ -1602,7 +1642,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &BTreeMap::new(), &decisions, &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &BTreeMap::new(),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(issues.iter().any(|i| i.message.contains("empty reason")));
     }
@@ -1632,7 +1677,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &components, &BTreeMap::new(), &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(issues.iter().any(|i| i.message.contains("does not match")));
     }
@@ -1660,7 +1710,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &components, &BTreeMap::new(), &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(issues.iter().any(|i| i.message.contains("kebab-case")));
     }
@@ -1771,7 +1826,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(issues.iter().any(|i| i.message.contains("no BelongsTo")));
     }
@@ -1847,7 +1907,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(
             issues
@@ -1920,7 +1985,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &components, &decisions, &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(
             issues
@@ -1954,7 +2024,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &BTreeMap::new(), &BTreeMap::new(), &patterns);
+        let g = InMemoryGraph::build(
+            &index,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &arc_map(patterns),
+        );
         let issues = g.validate();
         assert!(issues.iter().any(|i| i.message.contains("empty name")));
     }
@@ -2040,7 +2115,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &BTreeMap::new(), &decisions, &patterns);
+        let g = InMemoryGraph::build(
+            &index,
+            &BTreeMap::new(),
+            &arc_map(decisions),
+            &arc_map(patterns),
+        );
         let issues = g.validate();
         // Must NOT produce any warnings or errors about name mismatch.
         assert!(
@@ -2149,7 +2229,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &BTreeMap::new(), &decisions, &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &BTreeMap::new(),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        );
         let issues = g.validate();
         assert!(
             issues
@@ -2297,7 +2382,12 @@ mod tests {
             },
         );
 
-        InMemoryGraph::build(&index, &components, &decisions, &patterns)
+        InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &arc_map(patterns),
+        )
     }
 
     #[test]
@@ -2406,7 +2496,12 @@ mod tests {
                 },
             );
         }
-        let g2 = InMemoryGraph::build(&index, &components, &BTreeMap::new(), &BTreeMap::new());
+        let g2 = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
         let r2 = g2.check_component_cascade("database");
         assert!(!r2.is_blocked());
         assert!(
@@ -2447,7 +2542,12 @@ mod tests {
                 },
             },
         );
-        let g = InMemoryGraph::build(&index, &components, &BTreeMap::new(), &BTreeMap::new());
+        let g = InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
         let r = g.check_component_cascade("orphan");
         assert!(!r.is_blocked());
         assert!(r.warnings.is_empty());

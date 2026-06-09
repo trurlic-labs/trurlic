@@ -213,6 +213,7 @@ mod integration_tests {
     use crate::store::schema::*;
     use chrono::{TimeZone, Utc};
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     fn build_state(
         components: &[(&str, &str)],
@@ -222,12 +223,12 @@ mod integration_tests {
         for &(name, desc) in components {
             comp_map.insert(
                 name.into(),
-                ComponentFile {
+                Arc::new(ComponentFile {
                     component: Component {
                         name: name.into(),
                         description: desc.into(),
                     },
-                },
+                }),
             );
         }
 
@@ -244,7 +245,7 @@ mod integration_tests {
         let mut edges = Vec::new();
 
         for &(name, ref dec) in decisions {
-            dec_map.insert(name.into(), dec.clone());
+            dec_map.insert(name.into(), Arc::new(dec.clone()));
             nodes.push(NodeEntry {
                 name: name.into(),
                 kind: NodeKind::Decision,
