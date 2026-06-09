@@ -41,10 +41,11 @@ pub fn advance(
     component: &str,
     task_type: Option<TaskType>,
     task: Option<&str>,
+    completed_steps: &[&str],
 ) -> Result<Value, String> {
     // Project scope: simplified state machine.
     if component == "project" {
-        return Ok(advance_project(state, task_type, task));
+        return Ok(advance_project(state, task_type, task, completed_steps));
     }
 
     // Unregistered: component not in graph.
@@ -114,7 +115,16 @@ pub fn advance(
     // ── Deduce step ───────────────────────────────────────────────────
 
     let step = deduce_step(
-        task_type, &decisions, &covered, &uncovered, &stale, &patterns, graph, component, task,
+        task_type,
+        &decisions,
+        &covered,
+        &uncovered,
+        &stale,
+        &patterns,
+        graph,
+        component,
+        task,
+        completed_steps,
     );
 
     if is_debug() {
@@ -196,23 +206,31 @@ fn deduce_step(
     graph: &crate::store::graph::InMemoryGraph,
     component: &str,
     task: Option<&str>,
+    completed: &[&str],
 ) -> Step {
     match task_type {
-        TaskType::NewComponent => deduce_new_component(decisions, covered, uncovered, patterns),
-        TaskType::Feature => deduce_feature(covered, uncovered, task),
-        TaskType::Fix => deduce_fix(decisions, graph, component),
+        TaskType::NewComponent => {
+            deduce_new_component(decisions, covered, uncovered, patterns, completed)
+        }
+        TaskType::Feature => {
+            deduce_feature(decisions, covered, uncovered, patterns, task, completed)
+        }
+        TaskType::Fix => deduce_fix(decisions, graph, component, completed),
         TaskType::Learn => deduce_learn(decisions, patterns),
-        TaskType::Review => deduce_review(stale, covered, uncovered, patterns),
-        TaskType::Harden => deduce_harden(uncovered, patterns),
+        TaskType::Review => {
+            deduce_review(decisions, stale, covered, uncovered, patterns, completed)
+        }
+        TaskType::Harden => deduce_harden(uncovered, patterns, completed),
     }
 }
 
-/// NewComponent: Register → DefineScope → CoverConcerns → PatternDetection → SummaryGate
+/// NewComponent: Register → DefineScope → CoverConcerns → PatternDetection → SummaryGate → Ready
 fn deduce_new_component(
     decisions: &[(&Arc<str>, &DecisionFile)],
     covered: &[&str],
     uncovered: &[&str],
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
+    completed: &[&str],
 ) -> Step {
     if !has_scope_decision(decisions) {
         return Step::DefineScope;
@@ -225,17 +243,42 @@ fn deduce_new_component(
     if patterns.is_empty() {
         return Step::PatternDetection;
     }
-    Step::SummaryGate
+    if !completed.contains(&"summary_gate") {
+        return Step::SummaryGate;
+    }
+    Step::Ready
 }
 
-/// Feature: VerifyConstraints → CoverConcerns(focused) → Ready
+/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → Ready
 ///
-/// When a task is provided, filter uncovered concerns by keyword relevance
-/// to the task description (e.g. "add caching" matches "Performance
-/// constraints" via the "cache" keyword). If no task or no keyword matches,
-/// fall back to the majority threshold (uncovered > covered).
-fn deduce_feature(covered: &[&str], uncovered: &[&str], task: Option<&str>) -> Step {
-    // Task-relevant filtering: only cover concerns that match the task.
+/// VerifyConstraints: ensures existing decisions still hold for the new
+/// feature. Has no verifiable graph postcondition — uses `completed_steps`
+/// for progression. Often produces `update_decision` calls that change the
+/// graph naturally.
+///
+/// CoverConcerns: when a task is provided, filter uncovered concerns by
+/// keyword relevance to the task description (e.g. "add caching" matches
+/// "Performance constraints" via the "cache" keyword). If no task or no
+/// keyword matches, fall back to the majority threshold (uncovered > covered).
+///
+/// PatternDetection: after concerns are covered, look for patterns across
+/// decisions. Has a verifiable postcondition (patterns recorded).
+fn deduce_feature(
+    decisions: &[(&Arc<str>, &DecisionFile)],
+    covered: &[&str],
+    uncovered: &[&str],
+    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
+    task: Option<&str>,
+    completed: &[&str],
+) -> Step {
+    // VerifyConstraints: existing decisions need checking against the task.
+    // Skipped only when no decisions exist (nothing to verify) or when
+    // the caller signals the step was already completed.
+    if !decisions.is_empty() && !completed.contains(&"verify_constraints") {
+        return Step::VerifyConstraints;
+    }
+
+    // CoverConcerns: focused on task-relevant gaps.
     if let Some(t) = task {
         let relevant = task_relevant_concerns(uncovered, t);
         if !relevant.is_empty() {
@@ -245,12 +288,18 @@ fn deduce_feature(covered: &[&str], uncovered: &[&str], task: Option<&str>) -> S
         }
     }
 
-    // No task or no keyword match — majority threshold.
+    // Fallback: majority threshold.
     if uncovered.len() > covered.len() {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };
     }
+
+    // PatternDetection: after concerns are covered.
+    if patterns.is_empty() && !decisions.is_empty() && !completed.contains(&"pattern_detection") {
+        return Step::PatternDetection;
+    }
+
     Step::Ready
 }
 
@@ -286,25 +335,30 @@ fn task_relevant_concerns<'a>(uncovered: &[&'a str], task: &str) -> Vec<&'a str>
 
 /// Fix: VerifyConstraints → ImpactCheck → Ready
 ///
-/// Neither step has verifiable postconditions. Heuristic: if the component
-/// has connections, the fix might affect them — return ImpactCheck (which
-/// embeds constraint verification in its prompt preamble). For isolated
-/// components, return VerifyConstraints.
+/// Both steps run in sequence. VerifyConstraints ensures the fix doesn't
+/// break existing decisions. ImpactCheck verifies cross-component effects
+/// for connected components. Both lack verifiable graph postconditions —
+/// `completed_steps` handles progression when no decisions are updated.
 fn deduce_fix(
     decisions: &[(&Arc<str>, &DecisionFile)],
     graph: &crate::store::graph::InMemoryGraph,
     component: &str,
+    completed: &[&str],
 ) -> Step {
     if decisions.is_empty() {
         return Step::Ready;
     }
+    // VerifyConstraints first, regardless of connections.
+    if !completed.contains(&"verify_constraints") {
+        return Step::VerifyConstraints;
+    }
+    // ImpactCheck: only meaningful for connected components.
     let has_connections =
         !graph.connects_to(component).is_empty() || !graph.connects_from(component).is_empty();
-    if has_connections {
-        Step::ImpactCheck
-    } else {
-        Step::VerifyConstraints
+    if has_connections && !completed.contains(&"impact_check") {
+        return Step::ImpactCheck;
     }
+    Step::Ready
 }
 
 /// Learn: AnalyzeCode → WalkDecisions → PatternDetection → Ready
@@ -325,25 +379,41 @@ fn deduce_learn(
     Step::Ready
 }
 
-/// Review: DriftCheck → CoverageAudit → PatternDetection → Ready
+/// Review: WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → Ready
 ///
-/// Stale decisions drive DriftCheck — the agent compares each against the
-/// current source code. Updated decisions reset timestamps, advancing past
-/// this step. CoverageAudit triggers only when the majority of concerns
-/// lack decisions (a few gaps are expected and shouldn't block review).
+/// WalkDecisions: interactive walkthrough of all decisions, challenging
+/// each against current source code. No verifiable graph postcondition,
+/// but typically produces updated decisions and/or patterns. Uses
+/// `completed_steps` for progression.
+///
+/// DriftCheck: systematic verification for stale decisions — agent
+/// updates timestamps by calling `update_decision`, advancing the
+/// state machine past this step naturally.
+///
+/// CoverageAudit: surfaces coverage gaps. Agent may record intentional-
+/// gap decisions (graph change) or note gaps for future work.
 fn deduce_review(
+    decisions: &[(&Arc<str>, &DecisionFile)],
     stale: &[StaleDec],
     covered: &[&str],
     uncovered: &[&str],
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
+    completed: &[&str],
 ) -> Step {
+    // WalkDecisions: review starts with interactive walkthrough.
+    if !decisions.is_empty() && !completed.contains(&"walk_decisions") {
+        return Step::WalkDecisions;
+    }
+    // DriftCheck: stale decisions need verification against current code.
     if !stale.is_empty() {
         return Step::DriftCheck;
     }
+    // CoverageAudit: check for coverage gaps.
     if uncovered.len() > covered.len() {
         return Step::CoverageAudit;
     }
-    if patterns.is_empty() {
+    // PatternDetection: find patterns across fresh decisions.
+    if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
     Step::Ready
@@ -351,18 +421,29 @@ fn deduce_review(
 
 /// Harden: CoverageAudit → CoverConcerns(gaps) → PatternDetection → Ready
 ///
-/// CoverageAudit is the entry step (reported via assessment). CoverConcerns
-/// fills the gaps. PatternDetection is the final pass.
+/// CoverageAudit is the entry step: present the gap landscape to the user
+/// so they can decide which gaps are intentional before filling real ones.
+/// No verifiable graph postcondition — uses `completed_steps`.
+///
+/// CoverConcerns fills the real gaps with recorded decisions (verifiable).
+/// PatternDetection is the final pass.
 fn deduce_harden(
     uncovered: &[&str],
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
+    completed: &[&str],
 ) -> Step {
+    // CoverageAudit: entry step, assess gaps before filling.
+    if !uncovered.is_empty() && !completed.contains(&"coverage_audit") {
+        return Step::CoverageAudit;
+    }
+    // CoverConcerns: fill the real gaps.
     if !uncovered.is_empty() {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };
     }
-    if patterns.is_empty() {
+    // PatternDetection: final pass.
+    if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
     Step::Ready
@@ -376,7 +457,12 @@ fn deduce_harden(
 /// that don't map to the 10 technical concern areas. Patterns serve as
 /// the progression signal: once decisions are recorded AND patterns are
 /// identified, the project is ready.
-fn advance_project(state: &ProjectState, task_type: Option<TaskType>, task: Option<&str>) -> Value {
+fn advance_project(
+    state: &ProjectState,
+    task_type: Option<TaskType>,
+    task: Option<&str>,
+    completed_steps: &[&str],
+) -> Value {
     let graph = &state.graph;
     let decisions = graph.project_decisions();
     let has_decisions = !decisions.is_empty();
@@ -458,7 +544,7 @@ fn advance_project(state: &ProjectState, task_type: Option<TaskType>, task: Opti
                          explore what principles guide this project.",
                     ),
                 )
-            } else if !has_patterns {
+            } else if !has_patterns && !completed_steps.contains(&"walk_decisions") {
                 (
                     Step::WalkDecisions,
                     false,
@@ -486,7 +572,7 @@ fn advance_project(state: &ProjectState, task_type: Option<TaskType>, task: Opti
                         "No project rules to review. Run a design session.",
                     ),
                 )
-            } else if !has_patterns {
+            } else if !has_patterns && !completed_steps.contains(&"drift_check") {
                 (
                     Step::DriftCheck,
                     false,
@@ -983,7 +1069,7 @@ mod tests {
     #[test]
     fn unregistered_returns_register_step() {
         let state = build_state(&[], &[]);
-        let result = advance(&state, "rate-limiter", None, None).unwrap();
+        let result = advance(&state, "rate-limiter", None, None, &[]).unwrap();
 
         assert_eq!(result["step"], "register");
         assert_eq!(result["task_type"], "new_component");
@@ -995,7 +1081,7 @@ mod tests {
     #[test]
     fn unregistered_suggests_kebab() {
         let state = build_state(&[], &[]);
-        let result = advance(&state, "Rate Limiter", None, None).unwrap();
+        let result = advance(&state, "Rate Limiter", None, None, &[]).unwrap();
 
         assert_eq!(result["step"], "register");
         assert_eq!(result["action"]["args"]["name"], "rate-limiter");
@@ -1006,7 +1092,7 @@ mod tests {
     #[test]
     fn infer_learn_when_empty_no_task() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", None, None).unwrap();
+        let result = advance(&state, "store", None, None, &[]).unwrap();
 
         assert_eq!(result["task_type"], "learn");
         assert_eq!(result["step"], "analyze_code");
@@ -1015,7 +1101,7 @@ mod tests {
     #[test]
     fn infer_new_component_when_empty_with_task() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", None, Some("build data layer")).unwrap();
+        let result = advance(&state, "store", None, Some("build data layer"), &[]).unwrap();
 
         assert_eq!(result["task_type"], "new_component");
         assert_eq!(result["step"], "define_scope");
@@ -1030,20 +1116,20 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &["format"]),
             )],
         );
-        let result = advance(&state, "store", None, None).unwrap();
+        let result = advance(&state, "store", None, None, &[]).unwrap();
 
         assert_eq!(result["task_type"], "harden");
-        assert_eq!(result["step"], "cover_concerns");
+        assert_eq!(result["step"], "coverage_audit");
     }
 
     #[test]
     fn infer_review_when_stale() {
         let decisions = well_covered_decisions("store", false);
         let state = build_state(&[("store", "Data store")], &decisions);
-        let result = advance(&state, "store", None, None).unwrap();
+        let result = advance(&state, "store", None, None, &[]).unwrap();
 
         assert_eq!(result["task_type"], "review");
-        assert_eq!(result["step"], "drift_check");
+        assert_eq!(result["step"], "walk_decisions");
     }
 
     #[test]
@@ -1052,7 +1138,7 @@ mod tests {
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", None, Some("add caching")).unwrap();
+        let result = advance(&state, "store", None, Some("add caching"), &[]).unwrap();
 
         assert_eq!(result["task_type"], "feature");
     }
@@ -1063,7 +1149,7 @@ mod tests {
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", None, None).unwrap();
+        let result = advance(&state, "store", None, None, &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1074,7 +1160,7 @@ mod tests {
     #[test]
     fn new_component_starts_with_define_scope() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
 
         assert_eq!(result["step"], "define_scope");
         assert_eq!(result["ready"], false);
@@ -1089,7 +1175,7 @@ mod tests {
                 fresh_decision("store", "Data layer", "Scope", &["scope"]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
 
         assert_eq!(result["step"], "cover_concerns");
         let focus = result["action"]["focus"].as_array().unwrap();
@@ -1104,7 +1190,7 @@ mod tests {
             fresh_decision("store", "Data layer", "Scope", &["scope"]),
         ));
         let state = build_state(&[("store", "Data store")], &decs);
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
 
         assert_eq!(result["step"], "pattern_detection");
     }
@@ -1121,16 +1207,41 @@ mod tests {
             &decs,
             &[("p1", "Integrity chain", &["store"])],
         );
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
 
         assert_eq!(result["step"], "summary_gate");
         assert_eq!(result["ready"], false);
     }
 
+    #[test]
+    fn new_component_after_summary_gate_is_ready() {
+        let mut decs = well_covered_decisions("store", true);
+        decs.push((
+            "d-scope",
+            fresh_decision("store", "Data layer", "Scope", &["scope"]),
+        ));
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &decs,
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::NewComponent),
+            None,
+            &["summary_gate"],
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["ready"], true);
+    }
+
     // ── Feature step sequence ─────────────────────────────────────────
 
     #[test]
-    fn feature_with_gaps_covers_concerns() {
+    fn feature_with_gaps_verifies_constraints_first() {
         let state = build_state(
             &[("store", "Data store")],
             &[(
@@ -1138,19 +1249,69 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &["format"]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Feature), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Feature), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "verify_constraints");
+    }
+
+    #[test]
+    fn feature_after_verify_covers_concerns() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &["verify_constraints"],
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "cover_concerns");
     }
 
     #[test]
-    fn feature_fully_covered_is_ready() {
+    fn feature_fully_covered_verifies_then_detects_patterns() {
         let state = build_state(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", Some(TaskType::Feature), None).unwrap();
+        // First call: VerifyConstraints (decisions exist).
+        let result = advance(&state, "store", Some(TaskType::Feature), None, &[]).unwrap();
+        assert_eq!(result["step"], "verify_constraints");
 
+        // After verification: PatternDetection (no patterns yet).
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &["verify_constraints"],
+        )
+        .unwrap();
+        assert_eq!(result["step"], "pattern_detection");
+    }
+
+    #[test]
+    fn feature_fully_covered_with_patterns_is_ready() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &["verify_constraints"],
+        )
+        .unwrap();
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
     }
@@ -1166,13 +1327,13 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &["format"]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Fix), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
 
         assert_eq!(result["step"], "verify_constraints");
     }
 
     #[test]
-    fn fix_with_connections_checks_impact() {
+    fn fix_with_connections_verifies_then_checks_impact() {
         let mut state = build_state(
             &[("store", "Data store"), ("api", "API layer")],
             &[(
@@ -1187,14 +1348,59 @@ mod tests {
         });
         state.rebuild_graph();
 
-        let result = advance(&state, "store", Some(TaskType::Fix), None).unwrap();
+        // First: VerifyConstraints (always first for Fix).
+        let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
+        assert_eq!(result["step"], "verify_constraints");
+
+        // After verification: ImpactCheck (connected component).
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Fix),
+            None,
+            &["verify_constraints"],
+        )
+        .unwrap();
         assert_eq!(result["step"], "impact_check");
+
+        // After impact check: Ready.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Fix),
+            None,
+            &["verify_constraints", "impact_check"],
+        )
+        .unwrap();
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["ready"], true);
+    }
+
+    #[test]
+    fn fix_isolated_skips_impact_check() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // After verification on isolated component: straight to Ready.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Fix),
+            None,
+            &["verify_constraints"],
+        )
+        .unwrap();
+        assert_eq!(result["step"], "ready");
     }
 
     #[test]
     fn fix_empty_component_is_ready() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", Some(TaskType::Fix), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
     }
@@ -1204,7 +1410,7 @@ mod tests {
     #[test]
     fn learn_empty_starts_with_analyze_code() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", Some(TaskType::Learn), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Learn), None, &[]).unwrap();
 
         assert_eq!(result["step"], "analyze_code");
         assert_eq!(result["ready"], false);
@@ -1219,7 +1425,7 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Learn), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Learn), None, &[]).unwrap();
 
         assert_eq!(result["step"], "walk_decisions");
     }
@@ -1234,7 +1440,7 @@ mod tests {
             )],
             &[("p1", "Integrity chain", &["store"])],
         );
-        let result = advance(&state, "store", Some(TaskType::Learn), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Learn), None, &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1243,17 +1449,34 @@ mod tests {
     // ── Review step sequence ──────────────────────────────────────────
 
     #[test]
-    fn review_stale_checks_drift() {
+    fn review_starts_with_walk_decisions() {
         let decisions = well_covered_decisions("store", false);
         let state = build_state(&[("store", "Data store")], &decisions);
-        let result = advance(&state, "store", Some(TaskType::Review), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "walk_decisions");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn review_after_walk_checks_drift() {
+        let decisions = well_covered_decisions("store", false);
+        let state = build_state(&[("store", "Data store")], &decisions);
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &["walk_decisions"],
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "drift_check");
         assert_eq!(result["ready"], false);
     }
 
     #[test]
-    fn review_fresh_with_gaps_audits_coverage() {
+    fn review_fresh_with_gaps_walks_then_audits() {
         let state = build_state(
             &[("store", "Data store")],
             &[(
@@ -1261,30 +1484,60 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Review), None).unwrap();
+        // First: WalkDecisions (decisions exist).
+        let result = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
+        assert_eq!(result["step"], "walk_decisions");
 
+        // After walk: CoverageAudit (gaps, no stale).
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &["walk_decisions"],
+        )
+        .unwrap();
         assert_eq!(result["step"], "coverage_audit");
     }
 
     #[test]
-    fn review_healthy_no_patterns_detects_patterns() {
+    fn review_healthy_walks_then_detects_patterns() {
         let state = build_state(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", Some(TaskType::Review), None).unwrap();
+        // First: WalkDecisions.
+        let result = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
+        assert_eq!(result["step"], "walk_decisions");
 
+        // After walk: PatternDetection (no stale, no gaps).
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &["walk_decisions"],
+        )
+        .unwrap();
         assert_eq!(result["step"], "pattern_detection");
     }
 
     #[test]
-    fn review_fully_healthy_is_ready() {
+    fn review_fully_healthy_is_ready_after_walk() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
             &[("p1", "Integrity chain", &["store"])],
         );
-        let result = advance(&state, "store", Some(TaskType::Review), None).unwrap();
+        // With completed walk: Ready (no stale, no gaps, patterns exist).
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &["walk_decisions"],
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1293,7 +1546,7 @@ mod tests {
     // ── Harden step sequence ──────────────────────────────────────────
 
     #[test]
-    fn harden_with_gaps_covers_concerns() {
+    fn harden_starts_with_coverage_audit() {
         let state = build_state(
             &[("store", "Data store")],
             &[(
@@ -1301,7 +1554,28 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Harden), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Harden), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "coverage_audit");
+    }
+
+    #[test]
+    fn harden_after_audit_covers_concerns() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &[]),
+            )],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Harden),
+            None,
+            &["coverage_audit"],
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "cover_concerns");
         let focus = result["action"]["focus"].as_array().unwrap();
@@ -1314,7 +1588,7 @@ mod tests {
             &[("store", "Data store")],
             &fully_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", Some(TaskType::Harden), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Harden), None, &[]).unwrap();
 
         assert_eq!(result["step"], "pattern_detection");
     }
@@ -1326,7 +1600,7 @@ mod tests {
             &fully_covered_decisions("store", true),
             &[("p1", "Integrity chain", &["store"])],
         );
-        let result = advance(&state, "store", Some(TaskType::Harden), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Harden), None, &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1337,7 +1611,7 @@ mod tests {
     #[test]
     fn project_empty_defines_scope() {
         let state = build_state(&[], &[]);
-        let result = advance(&state, "project", None, None).unwrap();
+        let result = advance(&state, "project", None, None, &[]).unwrap();
 
         assert_eq!(result["step"], "define_scope");
         assert_eq!(result["ready"], false);
@@ -1352,7 +1626,7 @@ mod tests {
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
         );
-        let result = advance(&state, "project", None, Some("add auth")).unwrap();
+        let result = advance(&state, "project", None, Some("add auth"), &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1367,7 +1641,7 @@ mod tests {
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
         );
-        let result = advance(&state, "project", Some(TaskType::Learn), None).unwrap();
+        let result = advance(&state, "project", Some(TaskType::Learn), None, &[]).unwrap();
 
         assert_eq!(result["step"], "walk_decisions");
         assert_eq!(result["task_type"], "learn");
@@ -1384,7 +1658,7 @@ mod tests {
             )],
             &[("p1", "Security posture", &["auth"])],
         );
-        let result = advance(&state, "project", Some(TaskType::Learn), None).unwrap();
+        let result = advance(&state, "project", Some(TaskType::Learn), None, &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1399,7 +1673,7 @@ mod tests {
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
         );
-        let result = advance(&state, "project", Some(TaskType::Review), None).unwrap();
+        let result = advance(&state, "project", Some(TaskType::Review), None, &[]).unwrap();
 
         assert_eq!(result["step"], "drift_check");
         assert_eq!(result["ready"], false);
@@ -1415,7 +1689,7 @@ mod tests {
             )],
             &[("p1", "Security posture", &["auth"])],
         );
-        let result = advance(&state, "project", Some(TaskType::Review), None).unwrap();
+        let result = advance(&state, "project", Some(TaskType::Review), None, &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1431,7 +1705,7 @@ mod tests {
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
         );
-        let result = advance(&state, "project", None, None).unwrap();
+        let result = advance(&state, "project", None, None, &[]).unwrap();
 
         assert_eq!(result["task_type"], "learn");
         assert_eq!(result["step"], "walk_decisions");
@@ -1448,7 +1722,7 @@ mod tests {
             )],
             &[("p1", "Security posture", &["auth"])],
         );
-        let result = advance(&state, "project", None, None).unwrap();
+        let result = advance(&state, "project", None, None, &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1465,7 +1739,7 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", None, None).unwrap();
+        let result = advance(&state, "store", None, None, &[]).unwrap();
 
         assert!(result.get("component").is_some());
         assert!(result.get("task_type").is_some());
@@ -1486,7 +1760,7 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", None, None).unwrap();
+        let result = advance(&state, "store", None, None, &[]).unwrap();
         let assessment = &result["assessment"];
 
         assert!(assessment.get("decisions").is_some());
@@ -1507,8 +1781,8 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let a = advance(&state, "store", None, None).unwrap();
-        let b = advance(&state, "store", None, None).unwrap();
+        let a = advance(&state, "store", None, None, &[]).unwrap();
+        let b = advance(&state, "store", None, None, &[]).unwrap();
         assert_eq!(a, b);
     }
 
@@ -1518,8 +1792,8 @@ mod tests {
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let a = advance(&state, "store", Some(TaskType::Review), None).unwrap();
-        let b = advance(&state, "store", Some(TaskType::Review), None).unwrap();
+        let a = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
+        let b = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
         assert_eq!(a, b);
     }
 
@@ -1553,7 +1827,7 @@ mod tests {
                 ),
             ],
         );
-        let result = advance(&state, "store", None, None).unwrap();
+        let result = advance(&state, "store", None, None, &[]).unwrap();
 
         // 5 covered, 5 uncovered → not harden (5 is not > 5).
         assert_ne!(result["task_type"], "harden");
@@ -1576,7 +1850,7 @@ mod tests {
                 ),
             ],
         );
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None).unwrap();
+        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
         let focus = result["action"]["focus"].as_array().unwrap();
 
         // Data format (priority 8) covered via "TOML"/"format"/"Schema".
@@ -1592,7 +1866,7 @@ mod tests {
     #[test]
     fn task_appears_in_action_args() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", None, Some("add caching")).unwrap();
+        let result = advance(&state, "store", None, Some("add caching"), &[]).unwrap();
 
         assert_eq!(result["action"]["args"]["task"], "add caching");
     }
@@ -1603,7 +1877,7 @@ mod tests {
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", None, Some("fix bug")).unwrap();
+        let result = advance(&state, "store", None, Some("fix bug"), &[]).unwrap();
 
         assert_eq!(result["action"]["args"]["task"], "fix bug");
     }

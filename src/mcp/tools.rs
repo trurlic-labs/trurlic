@@ -52,6 +52,15 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                             "type": "string",
                             "description": "Optional task context passed through to \
                                 design prompts."
+                        },
+                        "completed_steps": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Steps already completed without graph \
+                                changes. The state machine skips these to progress \
+                                through steps whose postconditions are not verifiable \
+                                from the graph alone (e.g. verify_constraints, \
+                                walk_decisions, coverage_audit, summary_gate)."
                         }
                     },
                     "required": ["component"]
@@ -456,7 +465,19 @@ fn dispatch_advance(state: &ProjectState, args: &Value) -> Value {
         None => None,
     };
     let task = args.get("task").and_then(|v| v.as_str());
-    match workflow::advance::advance(state, component, task_type, task) {
+
+    let completed_owned: Vec<String> = args
+        .get("completed_steps")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let completed_refs: Vec<&str> = completed_owned.iter().map(|s| s.as_str()).collect();
+
+    match workflow::advance::advance(state, component, task_type, task, &completed_refs) {
         Ok(result) => tool_result(&result),
         Err(msg) => tool_error(&msg),
     }

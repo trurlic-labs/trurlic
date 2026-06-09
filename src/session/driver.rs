@@ -26,11 +26,12 @@ use super::persistence::{self, Session};
 /// `workflow::steps`, and runs LLM dialogue until `ready: true`. Session
 /// state is persisted after every exchange for crash recovery.
 ///
-/// Loop-breaking: if advance returns a step that was already completed
-/// (tracked in `session.completed_steps`) and the graph hasn't changed
-/// since, the driver treats the component as ready. This prevents infinite
-/// loops for steps with heuristic postconditions (e.g. PatternDetection
-/// when no patterns exist).
+/// Progression through steps without verifiable graph postconditions
+/// (e.g. `VerifyConstraints`, `WalkDecisions`, `CoverageAudit`) relies
+/// on `session.completed_steps`, which is passed to `advance()`. If a
+/// step completes without changing the graph, it is added to the set;
+/// `advance()` then skips it and returns the next step in the sequence.
+/// A graph change clears the set so the full sequence re-evaluates.
 pub(crate) async fn run(
     store: &Store,
     client: &dyn LlmProvider,
@@ -44,8 +45,13 @@ pub(crate) async fn run(
 
     loop {
         // ── Advance: determine current step ───────────────────────────
-        let advance_result = workflow::advance::advance(state, component, task_type, task)
-            .map_err(Error::Validation)?;
+        // Clone into owned strings so `completed` does not borrow `session`,
+        // which must remain mutably accessible for add_message / persist.
+        let completed_owned: Vec<String> = session.completed_steps.iter().cloned().collect();
+        let completed: Vec<&str> = completed_owned.iter().map(|s| s.as_str()).collect();
+        let advance_result =
+            workflow::advance::advance(state, component, task_type, task, &completed)
+                .map_err(Error::Validation)?;
 
         let ready = advance_result["ready"].as_bool().unwrap_or(false);
         if ready {
@@ -118,8 +124,9 @@ pub(crate) async fn run(
             persistence::save(store, session)?;
 
             // ── Check if step changed ─────────────────────────────────
-            let re_advance = workflow::advance::advance(state, component, task_type, task)
-                .map_err(Error::Validation)?;
+            let re_advance =
+                workflow::advance::advance(state, component, task_type, task, &completed)
+                    .map_err(Error::Validation)?;
 
             let new_ready = re_advance["ready"].as_bool().unwrap_or(false);
             if new_ready {

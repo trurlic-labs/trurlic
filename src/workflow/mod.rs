@@ -12,8 +12,11 @@
 //! 2. **One step at a time.** Each `advance` call returns instructions for
 //!    exactly one step.
 //!
-//! 3. **Graph is the only state.** No session tracking, no step counters.
-//!    The state machine inspects the graph and deduces which step comes next.
+//! 3. **Graph is the primary state.** The state machine inspects the graph
+//!    and deduces which step comes next. For steps whose postconditions
+//!    are not verifiable from the graph alone, callers may provide a
+//!    `completed_steps` hint — a progression signal compatible with
+//!    crash recovery (session files persist completed steps across restarts).
 //!
 //! 4. **Transport-agnostic.** Prompt generation lives here, not in `mcp/`
 //!    or `session/`.
@@ -37,11 +40,11 @@ pub const CONCERN_FOCUS_LIMIT: usize = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskType {
     /// Build a new component from scratch.
-    /// DefineScope → CoverConcerns → PatternDetection → SummaryGate.
+    /// DefineScope → CoverConcerns → PatternDetection → SummaryGate → Ready.
     NewComponent,
 
     /// Add a feature to an existing component.
-    /// VerifyConstraints → CoverConcerns(focused) → Ready.
+    /// VerifyConstraints → CoverConcerns(focused) → PatternDetection → Ready.
     Feature,
 
     /// Fix a bug or apply a hotfix.
@@ -167,7 +170,7 @@ impl Step {
     /// actions required).
     #[allow(dead_code)]
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Ready | Self::SummaryGate)
+        matches!(self, Self::Ready)
     }
 }
 
@@ -281,8 +284,8 @@ mod integration_tests {
         component: &str,
         task_type: Option<TaskType>,
     ) {
-        let result =
-            advance::advance(state, component, task_type, None).expect("advance should succeed");
+        let result = advance::advance(state, component, task_type, None, &[])
+            .expect("advance should succeed");
 
         let step_name = result["step"]
             .as_str()

@@ -66,6 +66,7 @@ pub fn build_step_prompt(
         "define_scope"
             | "cover_concerns"
             | "verify_constraints"
+            | "impact_check"
             | "walk_decisions"
             | "summary_gate"
             | "drift_check"
