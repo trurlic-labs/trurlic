@@ -40,7 +40,7 @@ pub fn design(
         .build()
         .map_err(|e| Error::Io(std::io::Error::other(e)))?;
 
-    rt.block_on(crate::conversation::run_design(
+    rt.block_on(crate::session::run_design(
         &store,
         &*client,
         component,
