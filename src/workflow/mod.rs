@@ -20,6 +20,7 @@
 
 pub mod advance;
 pub mod concerns;
+pub mod steps;
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -164,6 +165,7 @@ impl Step {
 
     /// Whether this step represents a terminal state (no more workflow
     /// actions required).
+    #[allow(dead_code)]
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Ready | Self::SummaryGate)
     }

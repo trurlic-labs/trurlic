@@ -3,7 +3,6 @@ use std::sync::LazyLock;
 use serde_json::Value;
 
 use super::context;
-use super::prompts;
 use super::{update, write};
 use crate::store::{ProjectState, Store};
 use crate::workflow;
@@ -245,10 +244,10 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 }
             },
             {
-                "name": "get_design_prompt",
-                "description": "Get a structured prompt for running a design conversation. \
-                    Returns system instructions, component context, and comprehension \
-                    gates tailored to the mode.",
+                "name": "get_step_prompt",
+                "description": "Get the prompt for a specific workflow step. \
+                    Called as directed by advance. Returns system instructions, \
+                    component context, and step metadata.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -256,18 +255,30 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                             "type": "string",
                             "description": "Component name or 'project'."
                         },
+                        "step": {
+                            "type": "string",
+                            "enum": [
+                                "register",
+                                "define_scope",
+                                "analyze_code",
+                                "cover_concerns",
+                                "walk_decisions",
+                                "verify_constraints",
+                                "impact_check",
+                                "pattern_detection",
+                                "summary_gate",
+                                "drift_check",
+                                "coverage_audit",
+                                "ready"
+                            ],
+                            "description": "Workflow step to get the prompt for."
+                        },
                         "task": {
                             "type": "string",
                             "description": "Optional task context."
-                        },
-                        "mode": {
-                            "type": "string",
-                            "enum": ["full", "quick", "learn", "review"],
-                            "description": "full = new component; quick = small addition; \
-                                learn = study existing; review = periodic health check."
                         }
                     },
-                    "required": ["component", "mode"]
+                    "required": ["component", "step"]
                 }
             },
             {
@@ -292,7 +303,7 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "name": "add_connection",
                 "description": "Add a directional connection between two components. \
                     Represents data or control flow. Connections provide context \
-                    to get_context and get_design_prompt.",
+                    to get_context and get_step_prompt.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -344,7 +355,7 @@ pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> 
         "check_pattern" => dispatch_check_pattern(state, args),
         "get_architecture" => tool_result(&context::get_architecture(state)),
         "validate_consistency" => tool_result(&write::validate_consistency(state)),
-        "get_design_prompt" => dispatch_get_design_prompt(state, args),
+        "get_step_prompt" => dispatch_get_step_prompt(state, args),
         _ => tool_error(&format!("unknown tool: {name}")),
     }
 }
@@ -400,25 +411,36 @@ fn dispatch_check_pattern(state: &ProjectState, args: &Value) -> Value {
     tool_result(&context::check_pattern(state, description))
 }
 
-fn dispatch_get_design_prompt(state: &ProjectState, args: &Value) -> Value {
+fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> Value {
     let component = match args.get("component").and_then(|v| v.as_str()) {
         Some(c) => c,
         None => return tool_error("missing required parameter: component"),
     };
-    let mode_str = match args.get("mode").and_then(|v| v.as_str()) {
-        Some(m) => m,
-        None => return tool_error("missing required parameter: mode"),
-    };
-    let mode = match prompts::DesignMode::parse(mode_str) {
-        Ok(m) => m,
-        Err(msg) => return tool_error(&msg),
+    let step = match args.get("step").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return tool_error("missing required parameter: step"),
     };
     let task = args.get("task").and_then(|v| v.as_str());
 
-    match prompts::build_design_prompt(state, component, task, mode) {
-        Ok(result) => tool_result(&result),
-        Err(msg) => tool_error(&msg),
+    let prompt = match workflow::steps::build_step_prompt(state, component, step, task) {
+        Ok(p) => p,
+        Err(msg) => return tool_error(&msg),
+    };
+
+    let ctx = match context::get_context(state, component, task, context::ContextDepth::Full) {
+        Ok(c) => c,
+        Err(msg) => return tool_error(&msg),
+    };
+
+    let mut result = serde_json::json!({
+        "system_instructions": prompt.instructions,
+        "context": ctx,
+        "step": step,
+    });
+    if !prompt.focus.is_empty() {
+        result["focus"] = serde_json::json!(prompt.focus);
     }
+    tool_result(&result)
 }
 
 fn dispatch_advance(state: &ProjectState, args: &Value) -> Value {
@@ -477,7 +499,7 @@ mod tests {
         assert!(names.contains(&"record_pattern"));
         assert!(names.contains(&"remove_decision"));
         assert!(names.contains(&"update_decision"));
-        assert!(names.contains(&"get_design_prompt"));
+        assert!(names.contains(&"get_step_prompt"));
         assert!(names.contains(&"add_component"));
         assert!(names.contains(&"add_connection"));
     }
@@ -535,7 +557,7 @@ mod tests {
         assert!(!is_write_tool("check_pattern"));
         assert!(!is_write_tool("get_architecture"));
         assert!(!is_write_tool("validate_consistency"));
-        assert!(!is_write_tool("get_design_prompt"));
+        assert!(!is_write_tool("get_step_prompt"));
 
         // Unknown.
         assert!(!is_write_tool("nonexistent"));

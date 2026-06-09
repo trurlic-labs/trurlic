@@ -105,7 +105,7 @@ pub fn advance(
     // ── Deduce step ───────────────────────────────────────────────────
 
     let step = deduce_step(
-        task_type, &decisions, &covered, &uncovered, &stale, &patterns,
+        task_type, &decisions, &covered, &uncovered, &stale, &patterns, graph, component,
     );
     let ready = matches!(step, Step::Ready);
     let assessment = build_assessment(&decisions, &covered, &uncovered, &stale, &patterns);
@@ -162,6 +162,7 @@ fn infer_task_type(
 /// the sequence by checking postconditions. Some postconditions are
 /// heuristic (e.g. `PatternDetection` — checked via pattern count).
 /// The machine errs on the side of returning `Ready` rather than looping.
+#[allow(clippy::too_many_arguments)]
 fn deduce_step(
     task_type: TaskType,
     decisions: &[(&Arc<str>, &DecisionFile)],
@@ -169,13 +170,15 @@ fn deduce_step(
     uncovered: &[&str],
     stale: &[StaleDec],
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
+    graph: &crate::store::graph::InMemoryGraph,
+    component: &str,
 ) -> Step {
     match task_type {
         TaskType::NewComponent => deduce_new_component(decisions, covered, uncovered, patterns),
-        TaskType::Feature => deduce_feature(uncovered),
-        TaskType::Fix => deduce_fix(decisions),
+        TaskType::Feature => deduce_feature(covered, uncovered),
+        TaskType::Fix => deduce_fix(decisions, graph, component),
         TaskType::Learn => deduce_learn(decisions, patterns),
-        TaskType::Review => deduce_review(stale, uncovered, patterns),
+        TaskType::Review => deduce_review(stale, covered, uncovered, patterns),
         TaskType::Harden => deduce_harden(uncovered, patterns),
     }
 }
@@ -204,12 +207,11 @@ fn deduce_new_component(
 /// Feature: VerifyConstraints → CoverConcerns(focused) → Ready
 ///
 /// VerifyConstraints has no verifiable postcondition in the graph. The
-/// heuristic: if uncovered concerns exist, the design phase is still
-/// active (constraint verification is embedded in the CoverConcerns
-/// prompt preamble). Once all concerns are covered, the component is
-/// ready.
-fn deduce_feature(uncovered: &[&str]) -> Step {
-    if !uncovered.is_empty() {
+/// heuristic: if the majority of concerns are uncovered, the design is
+/// too thin for a feature — cover the gaps first. A few uncovered areas
+/// are normal and shouldn't block work.
+fn deduce_feature(covered: &[&str], uncovered: &[&str]) -> Step {
+    if uncovered.len() > covered.len() {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };
@@ -219,14 +221,25 @@ fn deduce_feature(uncovered: &[&str]) -> Step {
 
 /// Fix: VerifyConstraints → ImpactCheck → Ready
 ///
-/// Both VerifyConstraints and ImpactCheck have no verifiable postconditions.
-/// VerifyConstraints is the canonical step — the prompt includes impact
-/// analysis. The agent completes verification and proceeds.
-fn deduce_fix(decisions: &[(&Arc<str>, &DecisionFile)]) -> Step {
+/// Neither step has verifiable postconditions. Heuristic: if the component
+/// has connections, the fix might affect them — return ImpactCheck (which
+/// embeds constraint verification in its prompt preamble). For isolated
+/// components, return VerifyConstraints.
+fn deduce_fix(
+    decisions: &[(&Arc<str>, &DecisionFile)],
+    graph: &crate::store::graph::InMemoryGraph,
+    component: &str,
+) -> Step {
     if decisions.is_empty() {
         return Step::Ready;
     }
-    Step::VerifyConstraints
+    let has_connections =
+        !graph.connects_to(component).is_empty() || !graph.connects_from(component).is_empty();
+    if has_connections {
+        Step::ImpactCheck
+    } else {
+        Step::VerifyConstraints
+    }
 }
 
 /// Learn: AnalyzeCode → WalkDecisions → PatternDetection → Ready
@@ -247,21 +260,22 @@ fn deduce_learn(
     Step::Ready
 }
 
-/// Review: WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → Ready
+/// Review: DriftCheck → CoverageAudit → PatternDetection → Ready
 ///
-/// Stale decisions drive WalkDecisions (reviewable postcondition: decisions
-/// get updated via `update_decision`, resetting timestamps). DriftCheck is
-/// embedded in the WalkDecisions prompt for review. CoverageAudit maps to
-/// uncovered concern detection.
+/// Stale decisions drive DriftCheck — the agent compares each against the
+/// current source code. Updated decisions reset timestamps, advancing past
+/// this step. CoverageAudit triggers only when the majority of concerns
+/// lack decisions (a few gaps are expected and shouldn't block review).
 fn deduce_review(
     stale: &[StaleDec],
+    covered: &[&str],
     uncovered: &[&str],
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
 ) -> Step {
     if !stale.is_empty() {
-        return Step::WalkDecisions;
+        return Step::DriftCheck;
     }
-    if !uncovered.is_empty() {
+    if uncovered.len() > covered.len() {
         return Step::CoverageAudit;
     }
     if patterns.is_empty() {
@@ -335,12 +349,11 @@ fn advance_project(state: &ProjectState, task_type: Option<TaskType>, task: Opti
                 (
                     Step::DefineScope,
                     false,
-                    design_action(
+                    step_prompt_action(
                         "project",
-                        "full",
+                        "define_scope",
                         task,
-                        None,
-                        "No project rules recorded. Run a full design session \
+                        "No project rules recorded. Run a design session \
                          to establish cross-cutting principles.",
                     ),
                 )
@@ -362,11 +375,10 @@ fn advance_project(state: &ProjectState, task_type: Option<TaskType>, task: Opti
                 (
                     Step::DefineScope,
                     false,
-                    design_action(
+                    step_prompt_action(
                         "project",
-                        "full",
+                        "define_scope",
                         task,
-                        None,
                         "No project rules recorded. Establish cross-cutting \
                          principles before proceeding.",
                     ),
@@ -383,7 +395,7 @@ fn advance_project(state: &ProjectState, task_type: Option<TaskType>, task: Opti
             (
                 Step::WalkDecisions,
                 false,
-                design_action("project", "learn", task, None, instruction),
+                step_prompt_action("project", "walk_decisions", task, instruction),
             )
         }
         TaskType::Review => {
@@ -391,11 +403,10 @@ fn advance_project(state: &ProjectState, task_type: Option<TaskType>, task: Opti
                 (
                     Step::WalkDecisions,
                     false,
-                    design_action(
+                    step_prompt_action(
                         "project",
-                        "review",
+                        "walk_decisions",
                         task,
-                        None,
                         "Review project rules for drift.",
                     ),
                 )
@@ -403,12 +414,11 @@ fn advance_project(state: &ProjectState, task_type: Option<TaskType>, task: Opti
                 (
                     Step::DefineScope,
                     false,
-                    design_action(
+                    step_prompt_action(
                         "project",
-                        "full",
+                        "define_scope",
                         task,
-                        None,
-                        "No project rules to review. Run a full design session.",
+                        "No project rules to review. Run a design session.",
                     ),
                 )
             }
@@ -425,53 +435,52 @@ fn step_action(component: &str, step: &Step, task: Option<&str>) -> Value {
     match step {
         Step::Register => unreachable!("handled before step deduction"),
 
-        Step::DefineScope => design_action(
+        Step::DefineScope => step_prompt_action(
             component,
-            "full",
+            "define_scope",
             task,
-            None,
             "Define what the component is and isn't responsible for. \
              Record each answer as a decision with tags: [\"scope\"].",
         ),
 
-        Step::AnalyzeCode => design_action(
+        Step::AnalyzeCode => step_prompt_action(
             component,
-            "learn",
+            "analyze_code",
             task,
-            None,
             "Read every source file in this component. Build a numbered \
              list of all architectural decisions you identify. Present \
              the list, then walk through each one.",
         ),
 
-        Step::CoverConcerns { focus } => design_action(
-            component,
-            "quick",
-            task,
-            Some(focus),
-            &format!(
-                "Cover uncovered concern areas: {}. For each, present \
-                 2-3 viable options with trade-offs, ask the user to \
-                 choose, and record with matching tags.",
-                focus.join(", "),
-            ),
-        ),
+        Step::CoverConcerns { focus } => {
+            let mut action = step_prompt_action(
+                component,
+                "cover_concerns",
+                task,
+                &format!(
+                    "Cover uncovered concern areas: {}. For each, present \
+                     2-3 viable options with trade-offs, ask the user to \
+                     choose, and record with matching tags.",
+                    focus.join(", "),
+                ),
+            );
+            action["focus"] = serde_json::json!(focus);
+            action
+        }
 
-        Step::WalkDecisions => design_action(
+        Step::WalkDecisions => step_prompt_action(
             component,
-            "learn",
+            "walk_decisions",
             task,
-            None,
             "Walk through each recorded decision with the user. Present \
              one per message. After each, STOP and wait for the user's \
              response. Then identify patterns across decisions.",
         ),
 
-        Step::VerifyConstraints => design_action(
+        Step::VerifyConstraints => step_prompt_action(
             component,
-            "quick",
+            "verify_constraints",
             task,
-            None,
             "Present each existing constraint that the task may affect. \
              For each, ask: \"Does your change respect this constraint, \
              violate it, or require changing it?\" STOP and wait. If \
@@ -479,19 +488,18 @@ fn step_action(component: &str, step: &Step, task: Option<&str>) -> Value {
              check whether this change impacts connected components.",
         ),
 
-        Step::ImpactCheck => serde_json::json!({
-            "tool": "get_context",
-            "args": { "component": component, "task": task },
-            "instruction": "Check whether this change impacts connected \
-                            components. Review the architecture brief \
-                            for cross-component effects.",
-        }),
-
-        Step::PatternDetection => design_action(
+        Step::ImpactCheck => step_prompt_action(
             component,
-            "learn",
+            "impact_check",
             task,
-            None,
+            "Check whether this change impacts connected components. \
+             Review the architecture brief for cross-component effects.",
+        ),
+
+        Step::PatternDetection => step_prompt_action(
+            component,
+            "pattern_detection",
+            task,
             "Review all recorded decisions for this component and project \
              rules. Look for groups of 2+ decisions that reinforce the \
              same invariant, form a defense-in-depth chain, or share a \
@@ -499,11 +507,10 @@ fn step_action(component: &str, step: &Step, task: Option<&str>) -> Value {
              confirm, then call record_pattern.",
         ),
 
-        Step::SummaryGate => design_action(
+        Step::SummaryGate => step_prompt_action(
             component,
-            "full",
+            "summary_gate",
             task,
-            None,
             "Ask the user: \"Without looking at the list, describe in \
              3-5 sentences the constraints any code touching this \
              component must respect.\" Do NOT help, hint, or break it \
@@ -511,21 +518,19 @@ fn step_action(component: &str, step: &Step, task: Option<&str>) -> Value {
              summary, revisit the decisions they couldn't explain.",
         ),
 
-        Step::DriftCheck => design_action(
+        Step::DriftCheck => step_prompt_action(
             component,
-            "review",
+            "drift_check",
             task,
-            None,
             "Compare each recorded decision against the current source \
              code. Flag any that have drifted from the implementation. \
              For drifted decisions, call update_decision(supersede).",
         ),
 
-        Step::CoverageAudit => design_action(
+        Step::CoverageAudit => step_prompt_action(
             component,
-            "review",
+            "coverage_audit",
             task,
-            None,
             "Audit concern coverage. The assessment shows which areas \
              lack decisions. For each gap, determine whether the \
              component needs a decision there or if the gap is \
@@ -621,27 +626,17 @@ fn ready_response(
     )
 }
 
-/// Build a `get_design_prompt` action with optional focus.
-fn design_action(
-    component: &str,
-    mode: &str,
-    task: Option<&str>,
-    focus: Option<&[String]>,
-    instruction: &str,
-) -> Value {
-    let mut action = serde_json::json!({
-        "tool": "get_design_prompt",
+/// Build a `get_step_prompt` action.
+fn step_prompt_action(component: &str, step: &str, task: Option<&str>, instruction: &str) -> Value {
+    serde_json::json!({
+        "tool": "get_step_prompt",
         "args": {
             "component": component,
-            "mode": mode,
+            "step": step,
             "task": task,
         },
         "instruction": instruction,
-    });
-    if let Some(f) = focus {
-        action["focus"] = serde_json::json!(f);
-    }
-    action
+    })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -845,6 +840,55 @@ mod tests {
         ]
     }
 
+    /// Ten decisions covering all 10 concerns → full coverage.
+    fn fully_covered_decisions(component: &str, fresh: bool) -> Vec<(&'static str, DecisionFile)> {
+        let mut decs = well_covered_decisions(component, fresh);
+        let make = if fresh {
+            fresh_decision
+        } else {
+            stale_decision
+        };
+        decs.extend([
+            (
+                "d-storage",
+                make(
+                    component,
+                    "File-per-entity",
+                    "Storage isolation",
+                    &["storage"],
+                ),
+            ),
+            (
+                "d-format",
+                make(
+                    component,
+                    "TOML serialization",
+                    "Human-readable format",
+                    &["format"],
+                ),
+            ),
+            (
+                "d-deps",
+                make(
+                    component,
+                    "Minimal dependencies",
+                    "Supply chain risk",
+                    &["dependency"],
+                ),
+            ),
+            (
+                "d-migration",
+                make(
+                    component,
+                    "Semver schema versions",
+                    "Migration path",
+                    &["version"],
+                ),
+            ),
+        ]);
+        decs
+    }
+
     // ── Unregistered ──────────────────────────────────────────────────
 
     #[test]
@@ -910,7 +954,7 @@ mod tests {
         let result = advance(&state, "store", None, None).unwrap();
 
         assert_eq!(result["task_type"], "review");
-        assert_eq!(result["step"], "walk_decisions");
+        assert_eq!(result["step"], "drift_check");
     }
 
     #[test]
@@ -1039,6 +1083,26 @@ mod tests {
     }
 
     #[test]
+    fn fix_with_connections_checks_impact() {
+        let mut state = build_state(
+            &[("store", "Data store"), ("api", "API layer")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        state.graph_index.edges.push(EdgeEntry {
+            from: "api".into(),
+            to: "store".into(),
+            kind: EdgeKind::ConnectsTo,
+        });
+        state.rebuild_graph();
+
+        let result = advance(&state, "store", Some(TaskType::Fix), None).unwrap();
+        assert_eq!(result["step"], "impact_check");
+    }
+
+    #[test]
     fn fix_empty_component_is_ready() {
         let state = build_state(&[("store", "Data store")], &[]);
         let result = advance(&state, "store", Some(TaskType::Fix), None).unwrap();
@@ -1090,12 +1154,12 @@ mod tests {
     // ── Review step sequence ──────────────────────────────────────────
 
     #[test]
-    fn review_stale_walks_decisions() {
+    fn review_stale_checks_drift() {
         let decisions = well_covered_decisions("store", false);
         let state = build_state(&[("store", "Data store")], &decisions);
         let result = advance(&state, "store", Some(TaskType::Review), None).unwrap();
 
-        assert_eq!(result["step"], "walk_decisions");
+        assert_eq!(result["step"], "drift_check");
         assert_eq!(result["ready"], false);
     }
 
@@ -1159,7 +1223,7 @@ mod tests {
     fn harden_covered_detects_patterns() {
         let state = build_state(
             &[("store", "Data store")],
-            &well_covered_decisions("store", true),
+            &fully_covered_decisions("store", true),
         );
         let result = advance(&state, "store", Some(TaskType::Harden), None).unwrap();
 
@@ -1170,7 +1234,7 @@ mod tests {
     fn harden_fully_done_is_ready() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
-            &well_covered_decisions("store", true),
+            &fully_covered_decisions("store", true),
             &[("p1", "Integrity chain", &["store"])],
         );
         let result = advance(&state, "store", Some(TaskType::Harden), None).unwrap();
@@ -1332,15 +1396,22 @@ mod tests {
     fn focus_follows_priority_order() {
         let state = build_state(
             &[("store", "Data store")],
-            &[(
-                "d1",
-                fresh_decision("store", "TOML format", "Schema encoding", &[]),
-            )],
+            &[
+                (
+                    "d-scope",
+                    fresh_decision("store", "Data layer", "Scope", &["scope"]),
+                ),
+                (
+                    "d1",
+                    fresh_decision("store", "TOML format", "Schema encoding", &[]),
+                ),
+            ],
         );
         let result = advance(&state, "store", Some(TaskType::NewComponent), None).unwrap();
         let focus = result["action"]["focus"].as_array().unwrap();
 
-        // Data format (priority 8) covered. Top 3 uncovered by priority:
+        // Data format (priority 8) covered via "TOML"/"format"/"Schema".
+        // Top 3 uncovered by priority:
         // Security (1), Error (2), Concurrency (3).
         assert_eq!(focus[0], "Security boundaries");
         assert_eq!(focus[1], "Error handling & failure modes");
