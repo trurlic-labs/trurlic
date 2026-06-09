@@ -51,11 +51,13 @@ Every decision came from a human. The agent generates code; the graph constrains
 
 ## Install
 
-```
-cargo install trurlic
+```bash
+curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/main/install.sh | bash
 ```
 
-Requires Rust 1.88+. Pure Rust — no C dependencies, no OpenSSL.
+Or with Rust: `cargo install trurlic` (requires Rust 1.88+).
+
+Pre-built binaries for Linux, macOS, and Windows are on the [Releases](https://github.com/trurlic-labs/trurlic/releases) page.
 
 ## Quick start
 
