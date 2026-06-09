@@ -25,11 +25,18 @@ use super::persistence::{self, Session};
 /// Calls `advance()` to determine each step, builds focused prompts via
 /// `workflow::steps`, and runs LLM dialogue until `ready: true`. Session
 /// state is persisted after every exchange for crash recovery.
+///
+/// Loop-breaking: if advance returns a step that was already completed
+/// (tracked in `session.completed_steps`) and the graph hasn't changed
+/// since, the driver treats the component as ready. This prevents infinite
+/// loops for steps with heuristic postconditions (e.g. PatternDetection
+/// when no patterns exist).
 pub(crate) async fn run(
     store: &Store,
     client: &dyn LlmProvider,
     component: &str,
     task_type: Option<TaskType>,
+    task: Option<&str>,
     session: &mut Session,
     state: &mut store::ProjectState,
 ) -> Result<()> {
@@ -37,7 +44,7 @@ pub(crate) async fn run(
 
     loop {
         // ── Advance: determine current step ───────────────────────────
-        let advance_result = workflow::advance::advance(state, component, task_type, None)
+        let advance_result = workflow::advance::advance(state, component, task_type, task)
             .map_err(Error::Validation)?;
 
         let ready = advance_result["ready"].as_bool().unwrap_or(false);
@@ -52,16 +59,23 @@ pub(crate) async fn run(
             .unwrap_or("ready")
             .to_string();
 
+        // ── Loop detection: skip already-completed steps ──────────────
+        if session.completed_steps.contains(&step) {
+            eprintln!("\nAll reachable steps complete.");
+            persistence::cleanup(store, component);
+            return Ok(());
+        }
+
         // ── Build step prompt ─────────────────────────────────────────
-        let prompt = workflow::steps::build_step_prompt(state, component, &step, None)
+        let prompt = workflow::steps::build_step_prompt(state, component, &step, task)
             .map_err(Error::Validation)?;
 
         let step_label = step.replace('_', " ");
         eprintln!("\n── {step_label} ──");
 
         // ── Step dialogue loop ────────────────────────────────────────
-        // Run LLM exchanges until advance returns a different step
-        // (i.e., the graph changed enough to progress the workflow).
+        let decisions_before = session.decisions_recorded.len();
+
         loop {
             let response = {
                 let result = client
@@ -104,7 +118,7 @@ pub(crate) async fn run(
             persistence::save(store, session)?;
 
             // ── Check if step changed ─────────────────────────────────
-            let re_advance = workflow::advance::advance(state, component, task_type, None)
+            let re_advance = workflow::advance::advance(state, component, task_type, task)
                 .map_err(Error::Validation)?;
 
             let new_ready = re_advance["ready"].as_bool().unwrap_or(false);
@@ -115,8 +129,7 @@ pub(crate) async fn run(
             }
             let new_step = re_advance["step"].as_str().unwrap_or("ready");
             if new_step != step {
-                // Step changed — break inner loop, outer loop picks up new step.
-                break;
+                break; // Step changed — outer loop picks up new step.
             }
 
             // ── User input ────────────────────────────────────────────
@@ -139,6 +152,15 @@ pub(crate) async fn run(
             session.add_message(Role::User, &input);
             persistence::save(store, session)?;
         }
+
+        // ── Step completed ────────────────────────────────────────────
+        let graph_changed = session.decisions_recorded.len() > decisions_before;
+        if graph_changed {
+            // Graph changed — prior step completions may no longer apply.
+            session.completed_steps.clear();
+        }
+        session.completed_steps.insert(step);
+        persistence::save(store, session)?;
     }
 }
 

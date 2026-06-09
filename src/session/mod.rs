@@ -21,17 +21,39 @@ use persistence::Session;
 /// `build_step_prompt()` produces focused instructions, and the LLM runs
 /// the dialogue. Step transitions happen automatically as the graph changes
 /// (decisions recorded → advance returns a different step).
+///
+/// Acquires an exclusive session lock to prevent concurrent sessions on
+/// the same component. The lock is released on completion or error.
 pub async fn run_design(
     store: &Store,
     client: &dyn LlmProvider,
     component: &str,
     continue_session: bool,
     revisit: bool,
+    task: Option<&str>,
 ) -> Result<()> {
     if component != "project" && !store::is_valid_kebab_case(component) {
         return Err(Error::InvalidName(component.into()));
     }
 
+    // ── Exclusive session lock ────────────────────────────────────────
+    persistence::try_acquire_lock(store, component)?;
+
+    let result = run_design_inner(store, client, component, continue_session, revisit, task).await;
+
+    // Always release the lock, whether we succeeded or failed.
+    persistence::release_lock(store, component);
+    result
+}
+
+async fn run_design_inner(
+    store: &Store,
+    client: &dyn LlmProvider,
+    component: &str,
+    continue_session: bool,
+    revisit: bool,
+    task: Option<&str>,
+) -> Result<()> {
     let mut session = if continue_session {
         let s = persistence::load(store, component)?;
         eprintln!(
@@ -75,6 +97,7 @@ pub async fn run_design(
         client,
         component,
         task_type,
+        task,
         &mut session,
         &mut state,
     )

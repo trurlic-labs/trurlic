@@ -48,6 +48,11 @@ pub enum Command {
         #[arg(long)]
         revisit: bool,
 
+        /// Task description (e.g. "add caching", "fix auth race condition").
+        /// Focuses the workflow on concerns relevant to the task.
+        #[arg(long, short = 't')]
+        task: Option<String>,
+
         /// LLM provider: anthropic, openai, openrouter (auto-detected if omitted).
         #[arg(long, short = 'p')]
         provider: Option<String>,
@@ -189,6 +194,7 @@ pub fn run(cli: Cli) -> Result<()> {
             component,
             continue_session,
             revisit,
+            task,
             provider,
             model,
         } => commands::design(
@@ -196,6 +202,7 @@ pub fn run(cli: Cli) -> Result<()> {
             &component,
             continue_session,
             revisit,
+            task.as_deref(),
             provider.as_deref(),
             model.as_deref(),
         ),

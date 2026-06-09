@@ -12,6 +12,7 @@ pub fn design(
     component: &str,
     continue_session: bool,
     revisit: bool,
+    task: Option<&str>,
     provider_flag: Option<&str>,
     model_flag: Option<&str>,
 ) -> Result<()> {
@@ -46,6 +47,7 @@ pub fn design(
         component,
         continue_session,
         revisit,
+        task,
     ))
 }
 
@@ -60,10 +62,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = design(tmp.path(), "../escape", false, false, None, None).unwrap_err();
+        let err = design(tmp.path(), "../escape", false, false, None, None, None).unwrap_err();
         assert!(matches!(err, Error::InvalidName(_)));
 
-        let err = design(tmp.path(), "", false, false, None, None).unwrap_err();
+        let err = design(tmp.path(), "", false, false, None, None, None).unwrap_err();
         assert!(matches!(err, Error::InvalidName(_)));
     }
 
@@ -72,7 +74,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = design(tmp.path(), "ghost", false, false, None, None).unwrap_err();
+        let err = design(tmp.path(), "ghost", false, false, None, None, None).unwrap_err();
         assert!(matches!(err, Error::ComponentNotFound(ref n) if n == "ghost"));
     }
 }

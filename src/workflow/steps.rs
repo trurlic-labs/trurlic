@@ -124,7 +124,11 @@ pub fn build_step_prompt(
     if !patterns.is_empty() && matches!(step, "pattern_detection" | "walk_decisions") {
         out.push_str("EXISTING PATTERNS (do not re-record):\n");
         for (name, p) in &patterns {
-            out.push_str(&format!("- {}: {}\n", name, p.pattern.description));
+            out.push_str(&format!(
+                "- {}: {}\n",
+                name,
+                sanitize(&p.pattern.description)
+            ));
         }
         out.push('\n');
     }
@@ -179,13 +183,17 @@ fn existing_constraints(graph: &InMemoryGraph, component: &str) -> String {
     for (name, d) in &project_rules {
         out.push_str(&format!(
             "  [project] {}: {} ({})\n",
-            name, d.decision.choice, d.decision.reason
+            name,
+            sanitize(&d.decision.choice),
+            sanitize(&d.decision.reason)
         ));
     }
     for (name, d) in &existing {
         out.push_str(&format!(
             "  {}: {} ({})\n",
-            name, d.decision.choice, d.decision.reason
+            name,
+            sanitize(&d.decision.choice),
+            sanitize(&d.decision.reason)
         ));
     }
     out.push('\n');
@@ -317,7 +325,8 @@ fn step_walk_decisions(graph: &InMemoryGraph, component: &str) -> String {
              → Cite the specific file/function where this manifests\n\
              → Ask the user to confirm or correct\n\
              → STOP. Wait for response.\n\n",
-            d.decision.choice, d.decision.reason,
+            sanitize(&d.decision.choice),
+            sanitize(&d.decision.reason),
         ));
     }
 
@@ -354,7 +363,8 @@ fn step_verify_constraints(graph: &InMemoryGraph, component: &str) -> String {
              → Ask: \"Does your change respect this constraint, violate \
              it, or require changing it?\"\n\
              → STOP. Wait.\n\n",
-            d.decision.choice, d.decision.reason,
+            sanitize(&d.decision.choice),
+            sanitize(&d.decision.reason),
         ));
     }
 
@@ -406,10 +416,13 @@ fn step_pattern_detection(graph: &InMemoryGraph, component: &str) -> String {
     );
 
     for (name, d) in &project_rules {
-        out.push_str(&format!("  [project] {name}: {}\n", d.decision.choice));
+        out.push_str(&format!(
+            "  [project] {name}: {}\n",
+            sanitize(&d.decision.choice)
+        ));
     }
     for (name, d) in &decisions {
-        out.push_str(&format!("  {name}: {}\n", d.decision.choice));
+        out.push_str(&format!("  {name}: {}\n", sanitize(&d.decision.choice)));
     }
 
     out.push_str(
@@ -460,8 +473,8 @@ fn step_drift_check(graph: &InMemoryGraph, component: &str) -> String {
              → Verify this matches the current implementation\n\
              → If drifted, call update_decision(mode=\"supersede\")\n\n",
             d.decision.created.format("%Y-%m-%d"),
-            d.decision.choice,
-            d.decision.reason,
+            sanitize(&d.decision.choice),
+            sanitize(&d.decision.reason),
         ));
     }
     out
@@ -503,6 +516,28 @@ fn step_ready(component: &str) -> String {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+/// Maximum byte length for a single decision value inlined into a prompt.
+/// Prevents pathologically large decisions from bloating the system message.
+const MAX_PROMPT_VALUE_LEN: usize = 512;
+
+/// Sanitize a graph value before inlining it into a prompt string.
+///
+/// Strips control characters (except newline), truncates to a safe length,
+/// and ensures the value cannot be used for prompt injection via embedded
+/// directives in compromised `.toml` files.
+fn sanitize(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n')
+        .take(MAX_PROMPT_VALUE_LEN)
+        .collect();
+    if cleaned.len() < s.len() {
+        format!("{cleaned}…")
+    } else {
+        cleaned
+    }
+}
 
 fn top_n(concerns: &[&str], n: usize) -> Vec<String> {
     concerns.iter().take(n).map(|s| (*s).to_string()).collect()

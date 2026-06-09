@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::io::Write;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -13,6 +15,12 @@ pub(crate) struct Session {
     pub component: String,
     pub messages: Vec<SessionMessage>,
     pub decisions_recorded: Vec<String>,
+    /// Steps completed in this session. Used to break heuristic loops
+    /// when advance returns a step whose postcondition isn't verifiable
+    /// from the graph (e.g. PatternDetection with no patterns found).
+    /// Cleared when new decisions are recorded (graph changed).
+    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
+    pub completed_steps: HashSet<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -27,6 +35,7 @@ impl Session {
             component: component.into(),
             messages: Vec::new(),
             decisions_recorded: Vec::new(),
+            completed_steps: HashSet::new(),
         }
     }
 
@@ -93,7 +102,55 @@ pub(crate) fn load(store: &Store, component: &str) -> Result<Session> {
 
 pub(crate) fn cleanup(store: &Store, component: &str) {
     if let Ok(path) = session_path(store, component) {
-        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("lock"));
+    }
+}
+
+// ── Session locking ─────────────────────────────────────────────────────────
+
+/// Acquire an exclusive lock for a design session on this component.
+///
+/// Creates a `.lock` file atomically via `create_new`. If the lock file
+/// already exists, the component has an active session (or a stale lock
+/// from a crash). The error message includes the lock path for manual
+/// removal.
+pub(crate) fn try_acquire_lock(store: &Store, component: &str) -> Result<()> {
+    let lock_path = session_path(store, component)?.with_extension("lock");
+
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(mut file) => {
+            let _ = write!(file, "{}", std::process::id());
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let pid_info = std::fs::read_to_string(&lock_path)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .map(|pid| format!(" (PID {pid})"))
+                .unwrap_or_default();
+            Err(Error::Validation(format!(
+                "another session{pid_info} is active for `{component}` — \
+                 if the previous session crashed, remove: {}",
+                lock_path.display()
+            )))
+        }
+        Err(e) => Err(Error::Io(e)),
+    }
+}
+
+/// Release the session lock. Called on normal completion and error cleanup.
+pub(crate) fn release_lock(store: &Store, component: &str) {
+    if let Ok(path) = session_path(store, component) {
+        let _ = std::fs::remove_file(path.with_extension("lock"));
     }
 }
 

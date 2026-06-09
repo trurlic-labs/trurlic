@@ -19,6 +19,15 @@ use crate::store::schema::DecisionFile;
 use super::concerns;
 use super::{CONCERN_FOCUS_LIMIT, STALENESS_THRESHOLD_DAYS, Step, TaskType};
 
+// ── Observability ─────────────────────────────────────────────────────────
+
+/// Runtime debug flag. Checked once on first call (zero-cost after init).
+/// Enable via `TRURL_DEBUG=1` environment variable.
+fn is_debug() -> bool {
+    static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DEBUG.get_or_init(|| std::env::var_os("TRURL_DEBUG").is_some())
+}
+
 // ── Public API ────────────────────────────────────────────────────────────
 
 /// Compute the next workflow step for a component and return a structured
@@ -105,8 +114,22 @@ pub fn advance(
     // ── Deduce step ───────────────────────────────────────────────────
 
     let step = deduce_step(
-        task_type, &decisions, &covered, &uncovered, &stale, &patterns, graph, component,
+        task_type, &decisions, &covered, &uncovered, &stale, &patterns, graph, component, task,
     );
+
+    if is_debug() {
+        eprintln!(
+            "trurl: advance {component} → {} (type={}, decisions={}, coverage={}/{}, stale={}, patterns={})",
+            step.as_str(),
+            task_type.as_str(),
+            decisions.len(),
+            covered.len(),
+            covered.len() + uncovered.len(),
+            stale.len(),
+            patterns.len(),
+        );
+    }
+
     let ready = matches!(step, Step::Ready);
     let assessment = build_assessment(&decisions, &covered, &uncovered, &stale, &patterns);
     let action = step_action(component, &step, task);
@@ -172,10 +195,11 @@ fn deduce_step(
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
     graph: &crate::store::graph::InMemoryGraph,
     component: &str,
+    task: Option<&str>,
 ) -> Step {
     match task_type {
         TaskType::NewComponent => deduce_new_component(decisions, covered, uncovered, patterns),
-        TaskType::Feature => deduce_feature(covered, uncovered),
+        TaskType::Feature => deduce_feature(covered, uncovered, task),
         TaskType::Fix => deduce_fix(decisions, graph, component),
         TaskType::Learn => deduce_learn(decisions, patterns),
         TaskType::Review => deduce_review(stale, covered, uncovered, patterns),
@@ -206,17 +230,58 @@ fn deduce_new_component(
 
 /// Feature: VerifyConstraints → CoverConcerns(focused) → Ready
 ///
-/// VerifyConstraints has no verifiable postcondition in the graph. The
-/// heuristic: if the majority of concerns are uncovered, the design is
-/// too thin for a feature — cover the gaps first. A few uncovered areas
-/// are normal and shouldn't block work.
-fn deduce_feature(covered: &[&str], uncovered: &[&str]) -> Step {
+/// When a task is provided, filter uncovered concerns by keyword relevance
+/// to the task description (e.g. "add caching" matches "Performance
+/// constraints" via the "cache" keyword). If no task or no keyword matches,
+/// fall back to the majority threshold (uncovered > covered).
+fn deduce_feature(covered: &[&str], uncovered: &[&str], task: Option<&str>) -> Step {
+    // Task-relevant filtering: only cover concerns that match the task.
+    if let Some(t) = task {
+        let relevant = task_relevant_concerns(uncovered, t);
+        if !relevant.is_empty() {
+            return Step::CoverConcerns {
+                focus: top_n(&relevant, CONCERN_FOCUS_LIMIT),
+            };
+        }
+    }
+
+    // No task or no keyword match — majority threshold.
     if uncovered.len() > covered.len() {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };
     }
     Step::Ready
+}
+
+/// Filter uncovered concern names to those whose keywords overlap with
+/// words in the task description. O(concerns × keywords × task_words),
+/// all bounded by small constants — no allocations beyond the result vec.
+fn task_relevant_concerns<'a>(uncovered: &[&'a str], task: &str) -> Vec<&'a str> {
+    let task_words: Vec<String> = task
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 2)
+        .map(|w| w.to_lowercase())
+        .collect();
+
+    if task_words.is_empty() {
+        return Vec::new();
+    }
+
+    uncovered
+        .iter()
+        .filter(|concern_name| {
+            concerns::CONCERNS
+                .iter()
+                .find(|(name, _)| name == *concern_name)
+                .is_some_and(|(_, keywords)| {
+                    keywords
+                        .iter()
+                        .any(|kw| task_words.iter().any(|tw| tw == kw))
+                })
+        })
+        .copied()
+        .collect()
 }
 
 /// Fix: VerifyConstraints → ImpactCheck → Ready
