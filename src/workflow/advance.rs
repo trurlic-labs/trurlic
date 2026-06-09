@@ -221,6 +221,7 @@ fn deduce_step(
             deduce_review(decisions, stale, covered, uncovered, patterns, completed)
         }
         TaskType::Harden => deduce_harden(uncovered, patterns, completed),
+        TaskType::Bootstrap => deduce_bootstrap_component(decisions, patterns, component),
     }
 }
 
@@ -477,6 +478,28 @@ fn deduce_harden(
     Step::Ready
 }
 
+/// Bootstrap (component): ExtractDecisions → PatternDetection → Ready
+///
+/// Autonomous extraction for a single component. The agent reads source
+/// code and records decisions without interactive dialogue. Unlike
+/// `deduce_learn`, the step prompts omit the Socratic interaction
+/// protocol.
+fn deduce_bootstrap_component(
+    decisions: &[(&Arc<str>, &DecisionFile)],
+    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
+    component: &str,
+) -> Step {
+    if decisions.is_empty() {
+        return Step::ExtractDecisions {
+            component: component.into(),
+        };
+    }
+    if patterns.is_empty() {
+        return Step::PatternDetection;
+    }
+    Step::Ready
+}
+
 // ── Project scope ─────────────────────────────────────────────────────────
 
 /// Simplified state machine for project-wide rules.
@@ -616,6 +639,7 @@ fn advance_project(
                 (Step::Ready, true, ready_action)
             }
         }
+        TaskType::Bootstrap => deduce_bootstrap_project(state, task, completed_steps),
     };
 
     if is_debug() {
@@ -629,6 +653,107 @@ fn advance_project(
     }
 
     build_response("project", task_type, &step, ready, assessment, action)
+}
+
+// ── Bootstrap (project scope) ─────────────────────────────────────────────
+
+/// Autonomous project-wide bootstrap.
+///
+/// Sequences through four phases, each with a graph-verifiable
+/// postcondition. The `extract_decisions` phase cycles through
+/// components: each `advance` call returns the first component
+/// (alphabetical, via `BTreeMap` iteration order) with zero decisions,
+/// ensuring deterministic, idempotent behaviour.
+///
+/// Returns `(Step, ready, action)` for assembly into the project
+/// advance response.
+fn deduce_bootstrap_project(
+    state: &ProjectState,
+    task: Option<&str>,
+    completed: &[&str],
+) -> (Step, bool, Value) {
+    let graph = state.graph();
+
+    // Phase 1: no components registered → scan the project.
+    if state.components.is_empty() {
+        return (
+            Step::ScanProject,
+            false,
+            step_prompt_action(
+                "project",
+                "scan_project",
+                task,
+                "Read the project structure, identify major components, \
+                 and register them with add_component and add_connection.",
+            ),
+        );
+    }
+
+    // Phase 2: find the first component with zero decisions.
+    // BTreeMap iterates in sorted order → deterministic selection.
+    for name in state.components.keys() {
+        if graph.decisions_for(name).is_empty() {
+            let mut action = step_prompt_action(
+                name,
+                "extract_decisions",
+                task,
+                &format!(
+                    "Read every source file in [{name}] and record \
+                     architectural decisions autonomously."
+                ),
+            );
+            action["target_component"] = serde_json::json!(name);
+            return (
+                Step::ExtractDecisions {
+                    component: name.clone(),
+                },
+                false,
+                action,
+            );
+        }
+    }
+
+    // Phase 3: no project-level rules → record them.
+    if graph.project_decisions().is_empty() && !completed.contains(&"project_rules") {
+        return (
+            Step::ProjectRules,
+            false,
+            step_prompt_action(
+                "project",
+                "project_rules",
+                task,
+                "Identify cross-cutting project-level decisions and \
+                 record them with component='project'.",
+            ),
+        );
+    }
+
+    // Phase 4: no patterns → detect them.
+    if state.patterns.is_empty() && !completed.contains(&"pattern_detection") {
+        return (
+            Step::PatternDetection,
+            false,
+            step_prompt_action(
+                "project",
+                "pattern_detection",
+                task,
+                "Review all recorded decisions across components. \
+                 Identify patterns and call record_pattern.",
+            ),
+        );
+    }
+
+    // All phases complete.
+    (
+        Step::Ready,
+        true,
+        serde_json::json!({
+            "tool": "get_context",
+            "args": { "component": "project", "task": task },
+            "instruction": "Bootstrap complete. Call get_context for \
+                            the architectural brief.",
+        }),
+    )
 }
 
 // ── Step → action mapping ─────────────────────────────────────────────────
@@ -738,6 +863,22 @@ fn step_action(component: &str, step: &Step, task: Option<&str>) -> Value {
              lack decisions. For each gap, determine whether the \
              component needs a decision there or if the gap is \
              intentional.",
+        ),
+
+        // Bootstrap steps are handled in advance_project, never reached
+        // from the per-component path. Present for match exhaustiveness.
+        Step::ScanProject | Step::ProjectRules => {
+            unreachable!("project-scope bootstrap steps handled in advance_project")
+        }
+
+        Step::ExtractDecisions { .. } => step_prompt_action(
+            component,
+            "extract_decisions",
+            task,
+            &format!(
+                "Read every source file in [{component}] and record \
+                 architectural decisions autonomously."
+            ),
         ),
 
         Step::Ready => serde_json::json!({
@@ -2051,6 +2192,7 @@ mod tests {
             "learn",
             "review",
             "harden",
+            "bootstrap",
         ] {
             assert!(TaskType::parse(s).is_ok());
         }
@@ -2065,8 +2207,179 @@ mod tests {
             TaskType::Learn,
             TaskType::Review,
             TaskType::Harden,
+            TaskType::Bootstrap,
         ] {
             assert_eq!(TaskType::parse(tt.as_str()).unwrap(), *tt);
         }
+    }
+
+    // ── Bootstrap step sequence ───────────────────────────────────────
+
+    #[test]
+    fn bootstrap_empty_project_starts_with_scan() {
+        let state = build_state(&[], &[]);
+        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        assert_eq!(result["task_type"], "bootstrap");
+        assert_eq!(result["step"], "scan_project");
+        assert_eq!(result["ready"], false);
+        assert_eq!(result["action"]["args"]["step"], "scan_project");
+    }
+
+    #[test]
+    fn bootstrap_with_components_extracts_first_undecided() {
+        let state = build_state(&[("auth", "Auth"), ("store", "Data store")], &[]);
+        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "extract_decisions");
+        assert_eq!(result["ready"], false);
+        // BTreeMap order: "auth" < "store" → auth is first.
+        assert_eq!(result["action"]["target_component"], "auth");
+        assert_eq!(result["action"]["args"]["component"], "auth");
+    }
+
+    #[test]
+    fn bootstrap_cycles_through_components() {
+        // auth has decisions, store does not → extract_decisions targets store.
+        let state = build_state(
+            &[("auth", "Auth"), ("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
+            )],
+        );
+        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "extract_decisions");
+        assert_eq!(result["action"]["target_component"], "store");
+    }
+
+    #[test]
+    fn bootstrap_all_decided_moves_to_project_rules() {
+        let state = build_state(
+            &[("auth", "Auth")],
+            &[(
+                "d1",
+                fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
+            )],
+        );
+        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "project_rules");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn bootstrap_with_project_rules_detects_patterns() {
+        let state = build_state(
+            &[("auth", "Auth")],
+            &[
+                (
+                    "d1",
+                    fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
+                ),
+                (
+                    "rule-1",
+                    fresh_decision("project", "Fail-closed", "Safety", &[]),
+                ),
+            ],
+        );
+        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "pattern_detection");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn bootstrap_fully_populated_is_ready() {
+        let state = build_state_with_patterns(
+            &[("auth", "Auth")],
+            &[
+                (
+                    "d1",
+                    fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
+                ),
+                (
+                    "rule-1",
+                    fresh_decision("project", "Fail-closed", "Safety", &[]),
+                ),
+            ],
+            &[("p1", "Security posture", &["auth"])],
+        );
+        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["ready"], true);
+    }
+
+    #[test]
+    fn bootstrap_is_idempotent() {
+        let state = build_state(&[("auth", "Auth"), ("store", "Data store")], &[]);
+        let a = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let b = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn bootstrap_at_component_level_extracts_decisions() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(&state, "store", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        // Component-level bootstrap: autonomous extraction, not Learn.
+        assert_eq!(result["task_type"], "bootstrap");
+        assert_eq!(result["step"], "extract_decisions");
+        assert_eq!(result["action"]["args"]["component"], "store");
+    }
+
+    #[test]
+    fn bootstrap_component_with_decisions_detects_patterns() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let result = advance(&state, "store", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "pattern_detection");
+    }
+
+    #[test]
+    fn bootstrap_component_fully_done_is_ready() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+            &[("p1", "Data integrity", &["store"])],
+        );
+        let result = advance(&state, "store", Some(TaskType::Bootstrap), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["ready"], true);
+    }
+
+    #[test]
+    fn bootstrap_project_rules_skipped_via_completed_steps() {
+        let state = build_state(
+            &[("auth", "Auth")],
+            &[(
+                "d1",
+                fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
+            )],
+        );
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &["project_rules"],
+        )
+        .unwrap();
+
+        // project_rules completed → moves to pattern_detection.
+        assert_eq!(result["step"], "pattern_detection");
     }
 }

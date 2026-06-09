@@ -62,6 +62,12 @@ pub enum TaskType {
     /// Strengthen coverage of under-designed areas.
     /// CoverageAudit → CoverConcerns(gaps) → PatternDetection → Ready.
     Harden,
+
+    /// Autonomous codebase scan for existing projects.
+    /// Agent reads source code and records components, decisions, and
+    /// patterns without interactive dialogue.
+    /// ScanProject → ExtractDecisions(per-component) → ProjectRules → PatternDetection → Ready.
+    Bootstrap,
 }
 
 impl TaskType {
@@ -73,6 +79,7 @@ impl TaskType {
             Self::Learn => "learn",
             Self::Review => "review",
             Self::Harden => "harden",
+            Self::Bootstrap => "bootstrap",
         }
     }
 
@@ -84,9 +91,10 @@ impl TaskType {
             "learn" => Ok(Self::Learn),
             "review" => Ok(Self::Review),
             "harden" => Ok(Self::Harden),
+            "bootstrap" => Ok(Self::Bootstrap),
             _ => Err(format!(
                 "invalid task_type `{s}` — expected: \
-                 new_component, feature, fix, learn, review, harden"
+                 new_component, feature, fix, learn, review, harden, bootstrap"
             )),
         }
     }
@@ -144,6 +152,22 @@ pub enum Step {
     /// Audit concern coverage, identify gaps.
     CoverageAudit,
 
+    /// Scan the full project structure, identify components and connections.
+    /// Bootstrap-only. Non-interactive.
+    /// Postcondition: ≥1 component registered.
+    ScanProject,
+
+    /// Extract decisions from a specific component's source code.
+    /// Bootstrap-only. Non-interactive.
+    /// Carries the target component name for the action payload.
+    /// Postcondition: target component has ≥1 decision.
+    ExtractDecisions { component: String },
+
+    /// Record project-level cross-cutting decisions.
+    /// Bootstrap-only. Non-interactive.
+    /// Postcondition: project has ≥1 decision.
+    ProjectRules,
+
     /// All steps complete. Ready for implementation.
     Ready,
 }
@@ -162,6 +186,9 @@ impl Step {
             Self::SummaryGate => "summary_gate",
             Self::DriftCheck => "drift_check",
             Self::CoverageAudit => "coverage_audit",
+            Self::ScanProject => "scan_project",
+            Self::ExtractDecisions { .. } => "extract_decisions",
+            Self::ProjectRules => "project_rules",
             Self::Ready => "ready",
         }
     }
@@ -302,7 +329,14 @@ mod integration_tests {
             return;
         }
 
-        let prompt = steps::build_step_prompt(state, component, step_name, None)
+        // Bootstrap's extract_decisions targets a specific component
+        // (returned in action.args.component), not the advance caller's
+        // component. Use it when present so the pipeline contract holds.
+        let prompt_component = result["action"]["args"]["component"]
+            .as_str()
+            .unwrap_or(component);
+
+        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None)
             .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
 
         // Every prompt must include the source code preamble.
@@ -450,6 +484,29 @@ mod integration_tests {
         assert_pipeline(&state, "project", Some(TaskType::Learn));
     }
 
+    // ── Bootstrap pipeline ───────────────────────────────────────────
+
+    #[test]
+    fn pipeline_bootstrap_empty() {
+        let state = build_state(&[], &[]);
+        assert_pipeline(&state, "project", Some(TaskType::Bootstrap));
+    }
+
+    #[test]
+    fn pipeline_bootstrap_with_components() {
+        let state = build_state(&[("auth", "Auth"), ("store", "Data store")], &[]);
+        assert_pipeline(&state, "project", Some(TaskType::Bootstrap));
+    }
+
+    #[test]
+    fn pipeline_bootstrap_with_decisions() {
+        let state = build_state(
+            &[("auth", "Auth")],
+            &[("d1", fresh_decision("auth", "JWT tokens", "Stateless", &[]))],
+        );
+        assert_pipeline(&state, "project", Some(TaskType::Bootstrap));
+    }
+
     // ── Exhaustive step name coverage ─────────────────────────────────
 
     #[test]
@@ -474,6 +531,9 @@ mod integration_tests {
             "summary_gate",
             "drift_check",
             "coverage_audit",
+            "scan_project",
+            "extract_decisions",
+            "project_rules",
             "ready",
         ];
 
@@ -504,6 +564,11 @@ mod integration_tests {
             Step::SummaryGate,
             Step::DriftCheck,
             Step::CoverageAudit,
+            Step::ScanProject,
+            Step::ExtractDecisions {
+                component: "store".into(),
+            },
+            Step::ProjectRules,
             Step::Ready,
         ];
 

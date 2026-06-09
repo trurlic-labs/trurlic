@@ -37,7 +37,8 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                                 "fix",
                                 "learn",
                                 "review",
-                                "harden"
+                                "harden",
+                                "bootstrap"
                             ],
                             "description": "What the developer wants to accomplish. \
                                 Inferred from graph state if omitted. \
@@ -46,7 +47,10 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                                 fix: apply a bugfix. \
                                 learn: study existing decisions. \
                                 review: challenge decisions for drift. \
-                                harden: strengthen coverage gaps."
+                                harden: strengthen coverage gaps. \
+                                bootstrap: autonomous project scan — agent reads \
+                                source code and records components, decisions, \
+                                and patterns without interactive dialogue."
                         },
                         "task": {
                             "type": "string",
@@ -278,6 +282,9 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                                 "summary_gate",
                                 "drift_check",
                                 "coverage_audit",
+                                "scan_project",
+                                "extract_decisions",
+                                "project_rules",
                                 "ready"
                             ],
                             "description": "Workflow step to get the prompt for."

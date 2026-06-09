@@ -71,13 +71,18 @@ pub fn build_step_prompt(
             | "summary_gate"
             | "drift_check"
             | "coverage_audit"
+            | "extract_decisions"
+            | "project_rules"
     );
     if needs_constraints {
         out.push_str(&existing_constraints(graph, component));
     }
 
     // ── Component graph (conditional) ─────────────────────────────────
-    if matches!(step, "impact_check" | "verify_constraints" | "define_scope") {
+    if matches!(
+        step,
+        "impact_check" | "verify_constraints" | "define_scope" | "extract_decisions"
+    ) {
         out.push_str(&component_graph(graph, component));
     }
 
@@ -105,19 +110,26 @@ pub fn build_step_prompt(
             focus = uncovered.iter().map(|s| (*s).to_string()).collect();
             out.push_str(&step_coverage_audit(&covered, &uncovered));
         }
+        "scan_project" => out.push_str(&step_scan_project()),
+        "extract_decisions" => out.push_str(&step_extract_decisions(component)),
+        "project_rules" => out.push_str(&step_project_rules()),
         "ready" => out.push_str(&step_ready(component)),
         _ => {
             return Err(format!(
                 "unknown step `{step}` — expected: register, define_scope, \
              analyze_code, cover_concerns, walk_decisions, verify_constraints, \
              impact_check, pattern_detection, summary_gate, drift_check, \
-             coverage_audit, ready"
+             coverage_audit, scan_project, extract_decisions, project_rules, ready"
             ));
         }
     }
 
     // ── Shared interaction protocol ───────────────────────────────────
-    if !matches!(step, "register" | "ready") {
+    // Bootstrap steps are autonomous — no Socratic dialogue.
+    if !matches!(
+        step,
+        "register" | "ready" | "scan_project" | "extract_decisions" | "project_rules"
+    ) {
         out.push_str(INTERACTION_PROTOCOL);
     }
 
@@ -521,6 +533,71 @@ fn step_ready(component: &str) -> String {
     )
 }
 
+// ── Bootstrap step instructions ──────────────────────────────────────────
+//
+// These steps are autonomous: the agent reads source code and records
+// decisions directly, without Socratic dialogue or user confirmation.
+// The interaction protocol is intentionally omitted.
+
+fn step_scan_project() -> String {
+    "STEP: Scan Project\n\n\
+     Read the project structure. Examine:\n\
+     - Directory layout and module boundaries\n\
+     - Build configuration (Cargo.toml, package.json, etc.)\n\
+     - Entry points (main, lib, index)\n\
+     - Test layout and integration structure\n\n\
+     For each major architectural component:\n\
+     1. Call add_component with a kebab-case name and one-line description\n\
+     2. Identify directional dependencies and call add_connection\n\n\
+     A component is a cohesive unit with its own design decisions — \
+     not every file or subdirectory. When in doubt, prefer fewer \
+     well-scoped components over many fine-grained ones.\n\n\
+     Do NOT ask the user to confirm each component. Register them \
+     based on what the source code shows, then call advance again.\n"
+        .into()
+}
+
+fn step_extract_decisions(component: &str) -> String {
+    format!(
+        "STEP: Extract Decisions [{component}]\n\n\
+         Read every source file in [{component}]'s module. For each \
+         architectural decision embedded in the code, call \
+         record_decision immediately.\n\n\
+         Look for:\n\
+         - Data structures and why they were chosen\n\
+         - Error handling strategy\n\
+         - Concurrency primitives and locking\n\
+         - Validation and integrity checks\n\
+         - Performance-sensitive paths\n\
+         - External boundaries and APIs\n\
+         - Security measures\n\
+         - Storage and persistence strategy\n\
+         - Serialization and data format choices\n\
+         - Dependency choices and coupling boundaries\n\n\
+         Record what the code DOES, not what it SHOULD do. Each \
+         decision needs a concise choice (what was decided) and \
+         reason (why). Use tags matching the concern area \
+         (e.g. [\"security\"], [\"error\"], [\"concurrency\"]).\n\n\
+         Do NOT ask the user about each decision. Record based on \
+         source code evidence, then call advance again.\n"
+    )
+}
+
+fn step_project_rules() -> String {
+    "STEP: Project Rules\n\n\
+     Identify cross-cutting principles that apply to ALL components:\n\
+     - Error handling strategy (Result types, error enums, panic policy)\n\
+     - Coding standards (naming conventions, module structure, visibility)\n\
+     - Dependency policy (vendoring, version pinning, audit requirements)\n\
+     - Build and test strategy (CI, coverage, benchmarks)\n\
+     - Security posture (input validation, secrets handling, audit logging)\n\n\
+     For each principle, call record_decision with component=\"project\".\n\n\
+     Only record principles actually enforced in the codebase. \
+     Do NOT invent aspirational rules — record what IS, not what \
+     SHOULD BE. Then call advance again.\n"
+        .into()
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 /// Maximum byte length for a single decision value inlined into a prompt.
@@ -913,5 +990,100 @@ mod tests {
         let result = build_step_prompt(&state, "project", "define_scope", None).unwrap();
         assert!(result.instructions.contains("PROJECT LEVEL"));
         assert!(result.instructions.contains("cross-cutting principles"));
+    }
+
+    // ── Bootstrap steps ──────────────────────────────────────────────
+
+    #[test]
+    fn scan_project_includes_preamble() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "project", "scan_project", None).unwrap();
+        assert!(result.instructions.contains("source code"));
+    }
+
+    #[test]
+    fn scan_project_skips_interaction_protocol() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "project", "scan_project", None).unwrap();
+        assert!(
+            !result.instructions.contains("ONE topic per message"),
+            "scan_project must skip interaction protocol"
+        );
+    }
+
+    #[test]
+    fn scan_project_instructs_autonomous_registration() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "project", "scan_project", None).unwrap();
+        assert!(result.instructions.contains("add_component"));
+        assert!(result.instructions.contains("add_connection"));
+        assert!(result.instructions.contains("Do NOT ask the user"));
+    }
+
+    #[test]
+    fn extract_decisions_includes_preamble() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        assert!(result.instructions.contains("source code"));
+    }
+
+    #[test]
+    fn extract_decisions_skips_interaction_protocol() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        assert!(
+            !result.instructions.contains("ONE topic per message"),
+            "extract_decisions must skip interaction protocol"
+        );
+    }
+
+    #[test]
+    fn extract_decisions_targets_component() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        assert!(result.instructions.contains("[auth]"));
+        assert!(result.instructions.contains("record_decision"));
+    }
+
+    #[test]
+    fn extract_decisions_shows_existing_constraints() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        // auth has existing decisions → they appear as constraints context.
+        assert!(result.instructions.contains("EXISTING DECISIONS"));
+    }
+
+    #[test]
+    fn extract_decisions_shows_component_graph() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        // auth connects to store → graph context present.
+        assert!(result.instructions.contains("store"));
+    }
+
+    #[test]
+    fn project_rules_includes_preamble() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "project", "project_rules", None).unwrap();
+        assert!(result.instructions.contains("source code"));
+    }
+
+    #[test]
+    fn project_rules_skips_interaction_protocol() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "project", "project_rules", None).unwrap();
+        assert!(
+            !result.instructions.contains("ONE topic per message"),
+            "project_rules must skip interaction protocol"
+        );
+    }
+
+    #[test]
+    fn project_rules_instructs_cross_cutting() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "project", "project_rules", None).unwrap();
+        assert!(result.instructions.contains("cross-cutting"));
+        assert!(result.instructions.contains("record_decision"));
+        assert!(result.instructions.contains("project"));
     }
 }
