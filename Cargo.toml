@@ -15,6 +15,10 @@ path = "src/main.rs"
 name = "trurlic"
 path = "src/lib.rs"
 
+[[bench]]
+name = "store"
+harness = false
+
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -67,6 +71,7 @@ rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
+criterion = { version = "2", package = "codspeed-criterion-compat", default-features = false }
 tempfile = "3"
 
 [lints.rust]

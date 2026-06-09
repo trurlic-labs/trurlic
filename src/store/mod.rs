@@ -49,7 +49,7 @@ pub(crate) fn hash_file(path: &Path) -> Result<String> {
 
 /// BLAKE3 hash of an in-memory byte slice, returned as lowercase hex.
 #[must_use]
-pub(crate) fn hash_bytes(data: &[u8]) -> String {
+pub fn hash_bytes(data: &[u8]) -> String {
     blake3::hash(data).to_hex().to_string()
 }
 
