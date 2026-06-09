@@ -115,9 +115,20 @@ pub enum Command {
 
     /// Show bootstrap progress and agent instructions for autonomous
     /// architecture extraction from an existing codebase.
+    /// With -p/--provider, runs the bootstrap directly using the LLM API.
     Bootstrap {
         /// Bootstrap a single component instead of the full project.
         component: Option<String>,
+
+        /// LLM provider for direct mode: anthropic, openai, openrouter.
+        /// When set, runs the bootstrap using the LLM instead of printing
+        /// agent instructions.
+        #[arg(long, short = 'p')]
+        provider: Option<String>,
+
+        /// Model override (default per provider: claude-sonnet-4, gpt-4o, etc.).
+        #[arg(long, short = 'm')]
+        model: Option<String>,
     },
 }
 
@@ -235,9 +246,24 @@ pub fn run(cli: Cli) -> Result<()> {
         } => commands::map(&cwd, port, no_open, detach),
         Command::Status => commands::status(&cwd),
         Command::Check { rebuild } => commands::check(&cwd, rebuild),
-        Command::Bootstrap { component } => match component {
-            Some(ref c) => commands::bootstrap_component(&cwd, c),
-            None => commands::bootstrap(&cwd),
-        },
+        Command::Bootstrap {
+            component,
+            provider,
+            model,
+        } => {
+            if provider.is_some() {
+                commands::bootstrap_direct(
+                    &cwd,
+                    component.as_deref(),
+                    provider.as_deref(),
+                    model.as_deref(),
+                )
+            } else {
+                match component {
+                    Some(ref c) => commands::bootstrap_component(&cwd, c),
+                    None => commands::bootstrap(&cwd),
+                }
+            }
+        }
     }
 }

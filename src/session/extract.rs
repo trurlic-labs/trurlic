@@ -128,6 +128,190 @@ pub(crate) fn is_design_complete(response: &str) -> bool {
         .any(|line| line.trim() == "DESIGN_COMPLETE")
 }
 
+// ── Component extraction ────────────────────────────────────────────────────
+
+pub(crate) struct ExtractedComponent {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Extract component registrations from an LLM response.
+///
+/// Scans for JSON objects with a `name` field (and optional `description`).
+/// Rejects objects that also have `choice`/`reason` (those are decisions).
+pub(crate) fn extract_components(response: &str) -> Vec<ExtractedComponent> {
+    let mut components = Vec::new();
+    let bytes = response.as_bytes();
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        if bytes[pos] != b'{' {
+            pos += 1;
+            continue;
+        }
+        match find_matching_brace(response, pos) {
+            Some(end) => {
+                let candidate = &response[pos..=end];
+                if let Some(comp) = try_parse_component(candidate) {
+                    components.push(comp);
+                }
+                pos = end + 1;
+            }
+            None => pos += 1,
+        }
+    }
+
+    components
+}
+
+fn try_parse_component(json_str: &str) -> Option<ExtractedComponent> {
+    let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
+
+    // Must have "name", must NOT have "choice" (that's a decision).
+    if json.get("choice").is_some() {
+        return None;
+    }
+
+    let name = json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+
+    let description = json
+        .get("description")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+
+    Some(ExtractedComponent {
+        name: name.to_string(),
+        description,
+    })
+}
+
+// ── Connection extraction ───────────────────────────────────────────────────
+
+pub(crate) struct ExtractedConnection {
+    pub from: String,
+    pub to: String,
+}
+
+/// Extract connection definitions from an LLM response.
+///
+/// Scans for JSON objects with `from` and `to` fields.
+pub(crate) fn extract_connections(response: &str) -> Vec<ExtractedConnection> {
+    let mut connections = Vec::new();
+    let bytes = response.as_bytes();
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        if bytes[pos] != b'{' {
+            pos += 1;
+            continue;
+        }
+        match find_matching_brace(response, pos) {
+            Some(end) => {
+                let candidate = &response[pos..=end];
+                if let Some(conn) = try_parse_connection(candidate) {
+                    connections.push(conn);
+                }
+                pos = end + 1;
+            }
+            None => pos += 1,
+        }
+    }
+
+    connections
+}
+
+fn try_parse_connection(json_str: &str) -> Option<ExtractedConnection> {
+    let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let from = json.get("from")?.as_str().filter(|s| !s.is_empty())?;
+    let to = json.get("to")?.as_str().filter(|s| !s.is_empty())?;
+
+    // Reject if this is also a connection-like structure from other contexts
+    // (e.g. edge entries). Must NOT have "kind" (graph edge) or "choice" (decision).
+    if json.get("kind").is_some() || json.get("choice").is_some() {
+        return None;
+    }
+
+    Some(ExtractedConnection {
+        from: from.to_string(),
+        to: to.to_string(),
+    })
+}
+
+// ── Pattern extraction ──────────────────────────────────────────────────────
+
+pub(crate) struct ExtractedPattern {
+    pub name: String,
+    pub description: String,
+    pub decisions: Vec<String>,
+}
+
+/// Extract pattern definitions from an LLM response.
+///
+/// Scans for JSON objects with a `name` (or `pattern`) field, a
+/// `description`, and a `decisions` array.
+pub(crate) fn extract_patterns(response: &str) -> Vec<ExtractedPattern> {
+    let mut patterns = Vec::new();
+    let bytes = response.as_bytes();
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        if bytes[pos] != b'{' {
+            pos += 1;
+            continue;
+        }
+        match find_matching_brace(response, pos) {
+            Some(end) => {
+                let candidate = &response[pos..=end];
+                if let Some(pat) = try_parse_pattern(candidate) {
+                    patterns.push(pat);
+                }
+                pos = end + 1;
+            }
+            None => pos += 1,
+        }
+    }
+
+    patterns
+}
+
+fn try_parse_pattern(json_str: &str) -> Option<ExtractedPattern> {
+    let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
+
+    let name = json
+        .get("name")
+        .or_else(|| json.get("pattern"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+
+    let description = json
+        .get("description")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+
+    let decisions = json
+        .get("decisions")
+        .and_then(|v| v.as_array())?
+        .iter()
+        .filter_map(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect::<Vec<_>>();
+
+    if decisions.is_empty() {
+        return None;
+    }
+
+    Some(ExtractedPattern {
+        name: name.to_string(),
+        description: description.to_string(),
+        decisions,
+    })
+}
+
 // ── Recording ───────────────────────────────────────────────────────────────
 
 /// Write a single decision to the store, with full validation.
@@ -337,6 +521,83 @@ mod tests {
     fn no_false_completion() {
         assert!(!is_design_complete("the DESIGN_COMPLETE flag"));
         assert!(!is_design_complete("almost done"));
+    }
+
+    // ── extract_components ─────────────────────────────────────────────
+
+    #[test]
+    fn extracts_component_json() {
+        let response = "Found these:\n\
+            {\"name\": \"auth\", \"description\": \"Authentication\"}\n\
+            {\"name\": \"store\", \"description\": \"Persistence\"}";
+        let components = extract_components(response);
+        assert_eq!(components.len(), 2);
+        assert_eq!(components[0].name, "auth");
+        assert_eq!(components[1].name, "store");
+    }
+
+    #[test]
+    fn component_extraction_rejects_decisions() {
+        // A JSON with "choice" and "reason" is a decision, not a component.
+        let response = "{\"name\": \"auth\", \"choice\": \"JWT\", \"reason\": \"Stateless\"}";
+        assert!(extract_components(response).is_empty());
+    }
+
+    #[test]
+    fn component_extraction_without_description() {
+        let response = "{\"name\": \"auth\"}";
+        let components = extract_components(response);
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].name, "auth");
+        assert!(components[0].description.is_none());
+    }
+
+    // ── extract_connections ────────────────────────────────────────────
+
+    #[test]
+    fn extracts_connection_json() {
+        let response = "{\"from\": \"auth\", \"to\": \"store\"}";
+        let connections = extract_connections(response);
+        assert_eq!(connections.len(), 1);
+        assert_eq!(connections[0].from, "auth");
+        assert_eq!(connections[0].to, "store");
+    }
+
+    #[test]
+    fn connection_extraction_rejects_graph_edges() {
+        // Graph edge entries have a "kind" field — not user connections.
+        let response = "{\"from\": \"a\", \"to\": \"b\", \"kind\": \"belongs_to\"}";
+        assert!(extract_connections(response).is_empty());
+    }
+
+    // ── extract_patterns ──────────────────────────────────────────────
+
+    #[test]
+    fn extracts_pattern_json() {
+        let response = "{\"name\": \"Fail-closed\", \
+            \"description\": \"All error paths fail safely\", \
+            \"decisions\": [\"error-handling\", \"validation\"]}";
+        let patterns = extract_patterns(response);
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].name, "Fail-closed");
+        assert_eq!(patterns[0].decisions.len(), 2);
+    }
+
+    #[test]
+    fn pattern_extraction_uses_pattern_key() {
+        let response = "{\"pattern\": \"Integrity chain\", \
+            \"description\": \"Hash everything\", \
+            \"decisions\": [\"blake3\", \"verify\"]}";
+        let patterns = extract_patterns(response);
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].name, "Integrity chain");
+    }
+
+    #[test]
+    fn pattern_extraction_requires_decisions() {
+        let response =
+            "{\"name\": \"Lonely\", \"description\": \"No decisions\", \"decisions\": []}";
+        assert!(extract_patterns(response).is_empty());
     }
 
     // ── record_decision ─────────────────────────────────────────────────

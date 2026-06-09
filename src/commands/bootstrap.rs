@@ -4,7 +4,7 @@ use crate::store::ProjectState;
 use crate::workflow::{self, TaskType};
 use crate::{Error, Result};
 
-use super::open_store;
+use super::{discover_store, open_store};
 
 /// Show bootstrap progress and instructions.
 ///
@@ -74,6 +74,36 @@ pub fn bootstrap_component(cwd: &Path, component: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Run the bootstrap directly using an LLM API.
+///
+/// Resolves the provider, creates the client, and delegates to the
+/// session bootstrap driver which loops advance → LLM → record until
+/// `ready: true`.
+pub fn bootstrap_direct(
+    cwd: &Path,
+    component: Option<&str>,
+    provider_flag: Option<&str>,
+    model_flag: Option<&str>,
+) -> Result<()> {
+    let store = discover_store(cwd)?;
+
+    let config = crate::config::resolve_provider(provider_flag, model_flag)?;
+    let model = config.model.clone();
+    let client = crate::provider::create_provider(config)?;
+    eprintln!("Using {} ({})", client.provider_name(), model);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|e| Error::Io(std::io::Error::other(e)))?;
+
+    match component {
+        Some(c) => rt.block_on(crate::session::run_bootstrap_component(&store, &*client, c)),
+        None => rt.block_on(crate::session::run_bootstrap(&store, &*client)),
+    }
 }
 
 // ── Output helpers ──────────────────────────────────────────────────────────

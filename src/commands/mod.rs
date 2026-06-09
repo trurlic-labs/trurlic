@@ -7,7 +7,7 @@ mod map;
 mod query;
 mod serve;
 
-pub use bootstrap::{bootstrap, bootstrap_component};
+pub use bootstrap::{bootstrap, bootstrap_component, bootstrap_direct};
 pub use component::{
     add_component, add_connection, remove_component, remove_connection, rename_component,
 };

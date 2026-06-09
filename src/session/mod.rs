@@ -4,8 +4,10 @@
 //! module adds LLM API calls, stdin/stdout dialogue management, and session
 //! persistence. It is the only place where LLM calls happen.
 
+pub(crate) mod bootstrap;
 mod driver;
 pub(crate) mod extract;
+pub(crate) mod files;
 pub(crate) mod persistence;
 
 use crate::provider::LlmProvider;
@@ -107,4 +109,58 @@ async fn run_design_inner(
         eprintln!("Session saved. Resume with: trurlic design {component} --continue");
     }
     result
+}
+
+/// Run an autonomous bootstrap for the full project.
+///
+/// No interactive dialogue — the LLM reads source files (provided as
+/// context) and records components, decisions, and patterns directly.
+/// Crash recovery is implicit: `advance()` deduces the next step from
+/// the graph, so re-running picks up where it left off.
+pub async fn run_bootstrap(store: &Store, client: &dyn LlmProvider) -> Result<()> {
+    let project_root = store
+        .root()
+        .parent()
+        .ok_or_else(|| Error::Validation("cannot determine project root".into()))?
+        .to_path_buf();
+
+    let mut state = store.load_state()?;
+
+    let issues = state.validate();
+    let error_count = issues
+        .iter()
+        .filter(|i| i.severity == crate::store::graph::Severity::Error)
+        .count();
+    if error_count > 0 {
+        eprintln!(
+            "warning: .trurlic/ has {error_count} consistency issue(s) — run `trurlic check` for details"
+        );
+    }
+
+    bootstrap::run(store, client, &project_root, &mut state).await
+}
+
+/// Run an autonomous bootstrap for a single component.
+pub async fn run_bootstrap_component(
+    store: &Store,
+    client: &dyn LlmProvider,
+    component: &str,
+) -> Result<()> {
+    if !store::is_valid_kebab_case(component) {
+        return Err(Error::InvalidName(component.into()));
+    }
+
+    let project_root = store
+        .root()
+        .parent()
+        .ok_or_else(|| Error::Validation("cannot determine project root".into()))?
+        .to_path_buf();
+
+    let mut state = store.load_state()?;
+
+    if !state.components.contains_key(component) {
+        return Err(Error::ComponentNotFound(component.into()));
+    }
+
+    bootstrap::run_component(store, client, &project_root, &mut state, component).await
 }
