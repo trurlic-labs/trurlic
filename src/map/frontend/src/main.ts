@@ -7,7 +7,7 @@ import { ForceLayout } from './layout/force';
 import { Panel } from './ui/panel';
 import { Renderer } from './renderer/canvas';
 import { LOD, computeLOD } from './renderer/lod';
-import { search, neighborhood } from './ui/search';
+import { search } from './ui/search';
 import { CommandPalette } from './ui/command';
 import type { PaletteAction } from './ui/command';
 import { Breadcrumb } from './ui/breadcrumb';
@@ -17,105 +17,40 @@ import type { AABB } from './renderer/culling';
 import type { SearchResult } from './ui/search';
 import type { FilterState } from './types';
 
-// ── Undo / Redo ──────────────────────────────────────────────────────────
-
-interface UndoCommand {
-  readonly description: string;
-  undo(): Promise<void>;
-  redo(): Promise<void>;
-}
-
-class UndoStack {
-  private undos: UndoCommand[] = [];
-  private redos: UndoCommand[] = [];
-  private readonly limit = 50;
-
-  push(cmd: UndoCommand): void {
-    this.undos.push(cmd);
-    if (this.undos.length > this.limit) this.undos.shift();
-    this.redos.length = 0;
-  }
-
-  async undo(): Promise<string | null> {
-    const cmd = this.undos.pop();
-    if (!cmd) return null;
-    try {
-      await cmd.undo();
-      this.redos.push(cmd);
-      return cmd.description;
-    } catch (e) {
-      console.error('Undo failed:', e);
-      return null;
-    }
-  }
-
-  async redo(): Promise<string | null> {
-    const cmd = this.redos.pop();
-    if (!cmd) return null;
-    try {
-      await cmd.redo();
-      this.undos.push(cmd);
-      return cmd.description;
-    } catch (e) {
-      console.error('Redo failed:', e);
-      return null;
-    }
-  }
-
-  canUndo(): boolean {
-    return this.undos.length > 0;
-  }
-  canRedo(): boolean {
-    return this.redos.length > 0;
-  }
-}
+import { UndoStack } from './app/undo';
+import { Selection } from './app/selection';
+import { DragState } from './app/drag';
+import type { MinimapTransform } from './app/drag';
+import { Navigation } from './app/navigation';
+import { Filters } from './app/filters';
 
 // ── App ──────────────────────────────────────────────────────────────────
 
 class App {
-  private graph = new Graph();
-  private camera = new Camera();
-  private renderer: Renderer;
-  private layout = new ForceLayout();
-  private panel: Panel;
-  private miniCtx: CanvasRenderingContext2D;
-  private api: ApiClient;
-  private undoStack = new UndoStack();
-  private palette: CommandPalette;
-  private breadcrumb: Breadcrumb;
-  private toolbar: Toolbar;
-  private aria: HTMLElement;
-  private filters: FilterState | undefined;
+  // Infrastructure — immutable references, no domain state.
+  private readonly graph = new Graph();
+  private readonly camera = new Camera();
+  private readonly renderer: Renderer;
+  private readonly layout = new ForceLayout();
+  private readonly panel: Panel;
+  private readonly api: ApiClient;
+  private readonly palette: CommandPalette;
+  private readonly breadcrumb: Breadcrumb;
+  private readonly toolbar: Toolbar;
+  private readonly aria: HTMLElement;
+  private readonly miniCtx: CanvasRenderingContext2D;
 
-  private selected: string | null = null;
-  private dragging: string | null = null;
-  private panning = false;
-  private lastMouse = { x: 0, y: 0 };
+  // Domain modules — own all mutable application state.
+  private readonly undo = new UndoStack();
+  private readonly selection = new Selection();
+  private readonly drag = new DragState();
+  private readonly nav: Navigation;
+  private readonly filters = new Filters();
+
+  // Render-loop scheduling — derived per frame, not domain state.
   private needsRender = true;
-  private layoutSaveTimer: number | null = null;
   private lod: LOD = LOD.Overview;
   private visibleCount = 0;
-
-  // Search state.
-  private searchOpen = false;
-  private searchResults: SearchResult[] = [];
-  private searchActiveIndex = -1;
-  private focusSet: Set<string> | null = null;
-
-  // Minimap state — set after each minimap render.
-  private minimapTransform: {
-    minX: number;
-    minY: number;
-    scale: number;
-    ox: number;
-    oy: number;
-    mw: number;
-    mh: number;
-  } | null = null;
-  private minimapDragging = false;
-
-  // Component tab-cycling order.
-  private componentNames: string[] = [];
 
   constructor() {
     const token = new URLSearchParams(location.search).get('token') ?? '';
@@ -123,6 +58,8 @@ class App {
 
     const canvas = document.getElementById('canvas') as HTMLCanvasElement;
     this.renderer = new Renderer(canvas, this.camera);
+    this.nav = new Navigation(this.camera);
+
     this.panel = new Panel(document.getElementById('panel')!);
     this.panel.init(this.api, {
       onNavigate: (name) => this.selectAndFocus(name),
@@ -133,8 +70,8 @@ class App {
     this.palette = new CommandPalette();
     this.breadcrumb = new Breadcrumb({
       onProject: () => {
-        this.selected = null;
-        this.clearFocus();
+        this.selection.select(null);
+        this.syncFocusClear();
         this.panel.showProject(this.graph);
         this.fitView();
         this.breadcrumb.update(this.graph.projectName, null);
@@ -159,7 +96,7 @@ class App {
       .fetchGraph()
       .then((snap) => {
         this.graph.loadSnapshot(snap);
-        this.componentNames = [...this.graph.nodes.keys()].sort();
+        this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
         this.layout.run(this.graph.nodes, this.graph.edges, 200);
         this.graph.rebuildQuadtree();
         this.fitView();
@@ -208,16 +145,12 @@ class App {
 
     minimap.addEventListener('pointerdown', (e) => this.onMinimapDown(e));
     minimap.addEventListener('pointermove', (e) => this.onMinimapMove(e));
-    minimap.addEventListener('pointerup', () => {
-      this.minimapDragging = false;
-    });
-    minimap.addEventListener('pointerleave', () => {
-      this.minimapDragging = false;
-    });
+    minimap.addEventListener('pointerup', () => this.drag.onMinimapUp());
+    minimap.addEventListener('pointerleave', () => this.drag.onMinimapUp());
   }
 
   private onPointerDown(e: PointerEvent): void {
-    if (this.searchOpen) this.closeSearch();
+    if (this.selection.searchOpen) this.closeSearch();
     if (this.palette.isOpen) this.palette.close();
 
     const canvas = e.target as HTMLCanvasElement;
@@ -226,57 +159,64 @@ class App {
     const wy = this.camera.toWorldY(e.offsetY);
     const hit = this.graph.nodeAt(wx, wy);
 
-    if (hit) {
-      this.dragging = hit.name;
-      this.selected = hit.name;
-      this.clearFocus();
+    const hitName = this.drag.onPointerDown(hit, e.offsetX, e.offsetY);
+
+    if (hitName && hit) {
+      this.selection.select(hitName);
+      this.syncFocusClear();
       this.panel.showComponent(hit, this.graph);
-      this.announce(`Selected component: ${hit.name}`);
+      this.announce(`Selected component: ${hitName}`);
     } else {
-      this.panning = true;
-      this.selected = null;
-      this.clearFocus();
+      this.selection.select(null);
+      this.syncFocusClear();
       this.panel.showProject(this.graph);
     }
-    this.breadcrumb.update(this.graph.projectName, this.selected);
-    this.lastMouse = { x: e.offsetX, y: e.offsetY };
+    this.breadcrumb.update(this.graph.projectName, this.selection.selected);
     this.needsRender = true;
   }
 
   private onPointerMove(e: PointerEvent): void {
-    const dx = e.offsetX - this.lastMouse.x;
-    const dy = e.offsetY - this.lastMouse.y;
-    this.lastMouse = { x: e.offsetX, y: e.offsetY };
-
-    if (this.panning) {
-      this.camera.pan(dx, dy);
-      this.updateLOD();
+    const result = this.drag.onPointerMove(e.offsetX, e.offsetY, this.camera, this.graph);
+    if (result.needsRender) {
+      if (this.drag.panning) this.updateLOD();
       this.needsRender = true;
-    } else if (this.dragging) {
-      const node = this.graph.nodes.get(this.dragging);
-      if (node) {
-        node.x += dx / this.camera.zoom;
-        node.y += dy / this.camera.zoom;
-        node.pinned = true;
-        this.needsRender = true;
-      }
     }
   }
 
   private onPointerUp(): void {
-    if (this.dragging) {
+    const result = this.drag.onPointerUp();
+    if (result.nodePositionChanged) {
       this.graph.rebuildQuadtree();
       this.updateLOD();
-      this.scheduleLayoutSave();
+      this.drag.scheduleLayoutSave(() => this.saveLayout());
     }
-    this.dragging = null;
-    this.panning = false;
   }
 
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     this.camera.zoomAt(e.offsetX, e.offsetY, factor);
+    this.updateLOD();
+    this.needsRender = true;
+  }
+
+  // ── Minimap ─────────────────────────────────────────────────────────────
+
+  private onMinimapDown(e: PointerEvent): void {
+    this.drag.onMinimapDown(e.pointerId, e.target as HTMLCanvasElement);
+    this.jumpToMinimapPoint(e.offsetX, e.offsetY);
+  }
+
+  private onMinimapMove(e: PointerEvent): void {
+    if (!this.drag.minimapDragging) return;
+    this.jumpToMinimapPoint(e.offsetX, e.offsetY);
+  }
+
+  private jumpToMinimapPoint(sx: number, sy: number): void {
+    const world = this.drag.minimapToWorld(sx, sy);
+    if (!world) return;
+    this.camera.cx = world.wx;
+    this.camera.cy = world.wy;
     this.updateLOD();
     this.needsRender = true;
   }
@@ -313,12 +253,12 @@ class App {
           this.openSearch();
         },
       },
-      { match: () => this.searchOpen, run: () => {} }, // search handles its own keys
+      { match: () => this.selection.searchOpen, run: () => {} }, // search handles its own keys
       {
         match: Keys.undo,
         run: (e) => {
           e.preventDefault();
-          this.undoStack.undo().then((d) => {
+          this.undo.undo().then((d) => {
             if (d) {
               this.announce(`Undo: ${d}`);
               this.reloadGraph();
@@ -330,7 +270,7 @@ class App {
         match: Keys.redo,
         run: (e) => {
           e.preventDefault();
-          this.undoStack.redo().then((d) => {
+          this.undo.redo().then((d) => {
             if (d) {
               this.announce(`Redo: ${d}`);
               this.reloadGraph();
@@ -341,12 +281,12 @@ class App {
       {
         match: Keys.escape,
         run: () => {
-          if (this.focusSet) {
-            this.clearFocus();
+          if (this.selection.focusSet) {
+            this.syncFocusClear();
             this.needsRender = true;
-          } else if (this.selected) {
-            this.selected = null;
-            this.clearFocus();
+          } else if (this.selection.selected) {
+            this.selection.select(null);
+            this.syncFocusClear();
             this.panel.showProject(this.graph);
             this.announce('Selection cleared');
             this.breadcrumb.update(this.graph.projectName, null);
@@ -370,27 +310,24 @@ class App {
       {
         match: Keys.tab,
         run: (e) => {
-          if (this.componentNames.length === 0) return;
+          const next = this.selection.cycleComponent(e.shiftKey ? -1 : 1);
+          if (next === null) return;
           e.preventDefault();
-          const dir = e.shiftKey ? -1 : 1;
-          const curIdx = this.selected ? this.componentNames.indexOf(this.selected) : -1;
-          let next = curIdx + dir;
-          if (next < 0) next = this.componentNames.length - 1;
-          if (next >= this.componentNames.length) next = 0;
-          this.selectAndFocus(this.componentNames[next]);
+          this.selectAndFocus(next);
         },
       },
       {
-        match: (e) => Keys.enter(e) && this.selected !== null,
+        match: (e) => Keys.enter(e) && this.selection.selected !== null,
         run: () => {
-          this.setFocus(this.selected!);
-          this.zoomToNode(this.selected!);
+          this.syncFocusSet(this.selection.selected!);
+          this.nav.focusNode(this.selection.selected!, this.graph);
+          this.updateLOD();
           this.needsRender = true;
         },
       },
       {
         match: (e) => {
-          if (!Keys.del(e) || !this.selected) return false;
+          if (!Keys.del(e) || !this.selection.selected) return false;
           const tag = (document.activeElement as HTMLElement)?.tagName;
           if (tag === 'INPUT' || tag === 'TEXTAREA') return false;
           if ((document.activeElement as HTMLElement)?.isContentEditable) return false;
@@ -429,30 +366,30 @@ class App {
       },
     ];
 
-    if (this.undoStack.canUndo()) {
+    if (this.undo.canUndo()) {
       actions.push({
         label: 'Undo',
         shortcut: 'Ctrl+Z',
         run: () => {
-          this.undoStack.undo().then((d) => {
+          this.undo.undo().then((d) => {
             if (d) this.reloadGraph();
           });
         },
       });
     }
-    if (this.undoStack.canRedo()) {
+    if (this.undo.canRedo()) {
       actions.push({
         label: 'Redo',
         shortcut: 'Ctrl+Shift+Z',
         run: () => {
-          this.undoStack.redo().then((d) => {
+          this.undo.redo().then((d) => {
             if (d) this.reloadGraph();
           });
         },
       });
     }
 
-    for (const name of this.componentNames) {
+    for (const name of this.selection.componentNames) {
       actions.push({
         label: `Focus: ${name}`,
         run: () => this.selectAndFocus(name),
@@ -465,12 +402,11 @@ class App {
   // ── Filter state ─────────────────────────────────────────────────────────
 
   private onFilterChange(state: FilterState): void {
-    this.filters = state;
-    // Focus mode toggled on: activate neighborhood if a node is selected.
-    if (state.focusMode && this.selected) {
-      this.setFocus(this.selected);
+    this.filters.update(state);
+    if (state.focusMode && this.selection.selected) {
+      this.syncFocusSet(this.selection.selected);
     } else if (!state.focusMode) {
-      this.clearFocus();
+      this.syncFocusClear();
     }
     this.needsRender = true;
   }
@@ -478,7 +414,7 @@ class App {
   // ── Delete selected ─────────────────────────────────────────────────────
 
   private deleteSelected(): void {
-    const name = this.selected;
+    const name = this.selection.selected;
     if (!name) return;
     const node = this.graph.nodes.get(name);
     const decision = this.graph.decisions.get(name);
@@ -495,12 +431,12 @@ class App {
       this.api
         .deleteComponent(name)
         .then(() => {
-          this.undoStack.push({
+          this.undo.push({
             description: `delete component ${name}`,
             undo: () => this.api.createComponent(name, desc),
             redo: () => this.api.deleteComponent(name),
           });
-          this.selected = null;
+          this.selection.select(null);
           this.breadcrumb.update(this.graph.projectName, null);
           this.reloadGraph();
         })
@@ -510,13 +446,13 @@ class App {
       this.api
         .deleteDecision(name)
         .then(() => {
-          this.undoStack.push({
+          this.undo.push({
             description: `delete decision ${name}`,
             undo: () =>
               Promise.reject(new Error('Decision deletion cannot be undone via the map API')),
             redo: () => this.api.deleteDecision(name),
           });
-          this.selected = null;
+          this.selection.select(null);
           this.breadcrumb.update(this.graph.projectName, null);
           this.reloadGraph();
         })
@@ -531,8 +467,7 @@ class App {
     const results = document.getElementById('search-results')!;
 
     input.addEventListener('input', () => {
-      this.searchResults = search(this.graph, input.value);
-      this.searchActiveIndex = this.searchResults.length > 0 ? 0 : -1;
+      this.selection.setSearchResults(search(this.graph, input.value));
       this.renderSearchResults(results);
     });
 
@@ -543,25 +478,20 @@ class App {
       }
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        if (this.searchActiveIndex < this.searchResults.length - 1) {
-          this.searchActiveIndex++;
-          this.renderSearchResults(results);
-        }
+        this.selection.nextSearchResult();
+        this.renderSearchResults(results);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        if (this.searchActiveIndex > 0) {
-          this.searchActiveIndex--;
-          this.renderSearchResults(results);
-        }
+        this.selection.prevSearchResult();
+        this.renderSearchResults(results);
         return;
       }
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (this.searchActiveIndex >= 0 && this.searchActiveIndex < this.searchResults.length) {
-          this.selectSearchResult(this.searchResults[this.searchActiveIndex]);
-        }
+        const result = this.selection.activeSearchResult();
+        if (result) this.selectSearchResult(result);
         return;
       }
     });
@@ -573,27 +503,26 @@ class App {
     bar.classList.remove('hidden');
     input.value = '';
     input.focus();
-    this.searchOpen = true;
-    this.searchResults = [];
-    this.searchActiveIndex = -1;
+    this.selection.openSearch();
     document.getElementById('search-results')!.innerHTML = '';
   }
 
   private closeSearch(): void {
     document.getElementById('search-bar')!.classList.add('hidden');
-    this.searchOpen = false;
-    this.searchResults = [];
-    this.searchActiveIndex = -1;
+    this.selection.closeSearch();
   }
 
   private renderSearchResults(el: HTMLElement): void {
-    if (this.searchResults.length === 0) {
+    const results = this.selection.searchResults;
+    const activeIndex = this.selection.searchActiveIndex;
+
+    if (results.length === 0) {
       el.innerHTML = '';
       return;
     }
-    el.innerHTML = this.searchResults
+    el.innerHTML = results
       .map((r, i) => {
-        const active = i === this.searchActiveIndex ? ' active' : '';
+        const active = i === activeIndex ? ' active' : '';
         const kind = `<span class="search-result-kind">${esc(r.kind)}</span>`;
         return `<div class="search-result${active}" data-idx="${i}">${kind}${esc(r.label)}</div>`;
       })
@@ -602,8 +531,8 @@ class App {
     for (const child of el.children) {
       child.addEventListener('click', () => {
         const idx = parseInt((child as HTMLElement).dataset.idx ?? '-1', 10);
-        if (idx >= 0 && idx < this.searchResults.length) {
-          this.selectSearchResult(this.searchResults[idx]);
+        if (idx >= 0 && idx < results.length) {
+          this.selectSearchResult(results[idx]);
         }
       });
     }
@@ -614,79 +543,49 @@ class App {
 
     if (result.kind === 'component') {
       this.selectAndFocus(result.name);
-      this.setFocus(result.name);
+      this.syncFocusSet(result.name);
     } else if (result.kind === 'decision') {
       const dec = this.graph.decisions.get(result.name);
       if (dec) {
         this.selectAndFocus(dec.component);
-        this.setFocus(dec.component);
+        this.syncFocusSet(dec.component);
       }
     } else if (result.kind === 'pattern') {
       const pat = this.graph.patterns.get(result.name);
       if (pat && pat.components.length > 0) {
         this.selectAndFocus(pat.components[0]);
-        this.setFocus(pat.components[0]);
+        this.syncFocusSet(pat.components[0]);
       }
     }
 
     this.needsRender = true;
   }
 
-  // ── Minimap ─────────────────────────────────────────────────────────────
+  // ── Coordination helpers ────────────────────────────────────────────────
 
-  private onMinimapDown(e: PointerEvent): void {
-    (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
-    this.minimapDragging = true;
-    this.jumpToMinimapPoint(e.offsetX, e.offsetY);
-  }
-
-  private onMinimapMove(e: PointerEvent): void {
-    if (!this.minimapDragging) return;
-    this.jumpToMinimapPoint(e.offsetX, e.offsetY);
-  }
-
-  private jumpToMinimapPoint(sx: number, sy: number): void {
-    const t = this.minimapTransform;
-    if (!t) return;
-    const wx = t.minX + (sx - t.ox) / t.scale;
-    const wy = t.minY + (sy - t.oy) / t.scale;
-    this.camera.cx = wx;
-    this.camera.cy = wy;
+  /** Select a node, update panel/breadcrumb, and animate the camera to it. */
+  private selectAndFocus(name: string): void {
+    const node = this.graph.nodes.get(name);
+    if (!node) return;
+    this.selection.select(name);
+    this.panel.showComponent(node, this.graph);
+    this.announce(`Selected component: ${name}`);
+    this.breadcrumb.update(this.graph.projectName, name);
+    this.nav.focusNode(name, this.graph);
     this.updateLOD();
     this.needsRender = true;
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
-
-  /** Clear the focus set and sync the toolbar pill. */
-  private clearFocus(): void {
-    this.focusSet = null;
+  /** Clear focus and sync the toolbar pill. */
+  private syncFocusClear(): void {
+    this.selection.clearFocus();
     this.toolbar.setFocusActive(false);
   }
 
   /** Set focus to a node's neighborhood and sync the toolbar pill. */
-  private setFocus(name: string): void {
-    this.focusSet = neighborhood(this.graph, name);
+  private syncFocusSet(name: string): void {
+    this.selection.setFocus(name, this.graph);
     this.toolbar.setFocusActive(true);
-  }
-
-  private selectAndFocus(name: string): void {
-    const node = this.graph.nodes.get(name);
-    if (!node) return;
-    this.selected = name;
-    this.panel.showComponent(node, this.graph);
-    this.announce(`Selected component: ${name}`);
-    this.breadcrumb.update(this.graph.projectName, name);
-    this.zoomToNode(name);
-  }
-
-  private zoomToNode(name: string): void {
-    const node = this.graph.nodes.get(name);
-    if (!node) return;
-    const pad = 300;
-    this.camera.fitBounds(node.x - pad, node.y - pad, node.x + pad, node.y + pad);
-    this.updateLOD();
-    this.needsRender = true;
   }
 
   private announce(text: string): void {
@@ -701,12 +600,12 @@ class App {
         const name = event.name as string | undefined;
         if (!name) break;
         this.graph.removeNode(name);
-        if (this.selected === name) {
-          this.selected = null;
+        if (this.selection.selected === name) {
+          this.selection.select(null);
           this.breadcrumb.update(this.graph.projectName, null);
           this.panel.showProject(this.graph);
         }
-        this.componentNames = [...this.graph.nodes.keys()].sort();
+        this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
         this.toolbar.setAvailableTags(this.graph.allTags());
         this.updateLOD();
         this.needsRender = true;
@@ -731,8 +630,6 @@ class App {
         return;
       }
       default:
-        // node_added, node_updated, full_reload — event payload doesn't
-        // carry enough data for client-side apply. Full fetch required.
         this.reloadGraph();
         return;
     }
@@ -753,7 +650,7 @@ class App {
       .fetchGraph()
       .then((snap) => {
         this.graph.loadSnapshot(snap);
-        this.componentNames = [...this.graph.nodes.keys()].sort();
+        this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
         this.layout.run(this.graph.nodes, this.graph.edges, 50);
         this.graph.rebuildQuadtree();
         this.updateLOD();
@@ -765,26 +662,22 @@ class App {
   }
 
   private refreshPanel(): void {
-    if (!this.selected) {
+    const name = this.selection.selected;
+    if (!name) {
       this.panel.showProject(this.graph);
       return;
     }
-    const node = this.graph.nodes.get(this.selected);
+    const node = this.graph.nodes.get(name);
     if (node) {
       this.panel.showComponent(node, this.graph);
     } else {
-      this.selected = null;
+      this.selection.select(null);
       this.breadcrumb.update(this.graph.projectName, null);
       this.panel.showProject(this.graph);
     }
   }
 
   // ── Layout persistence ──────────────────────────────────────────────────
-
-  private scheduleLayoutSave(): void {
-    if (this.layoutSaveTimer != null) clearTimeout(this.layoutSaveTimer);
-    this.layoutSaveTimer = window.setTimeout(() => this.saveLayout(), 500);
-  }
 
   private saveLayout(): void {
     const positions: Record<string, { x: number; y: number; pinned: boolean }> = {};
@@ -808,14 +701,20 @@ class App {
     }
 
     if (this.needsRender) {
-      this.renderer.render(this.graph, this.selected, this.lod, this.focusSet, this.filters);
-      this.minimapTransform = this.renderMinimap();
+      this.renderer.render(
+        this.graph,
+        this.selection.selected,
+        this.lod,
+        this.selection.focusSet,
+        this.filters.state,
+      );
+      this.drag.setMinimapTransform(this.renderMinimap());
       this.needsRender = false;
     }
     requestAnimationFrame(this.renderLoop);
   };
 
-  private renderMinimap(): typeof this.minimapTransform {
+  private renderMinimap(): MinimapTransform | null {
     const mw = 180;
     const mh = 120;
     this.renderer.renderMinimap(this.miniCtx, mw, mh, this.graph);
@@ -845,20 +744,8 @@ class App {
   }
 
   private fitView(): void {
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    for (const n of this.graph.nodes.values()) {
-      minX = Math.min(minX, n.x - n.w / 2);
-      minY = Math.min(minY, n.y - n.h / 2);
-      maxX = Math.max(maxX, n.x + n.w / 2);
-      maxY = Math.max(maxY, n.y + n.h / 2);
-    }
-    if (this.graph.nodes.size > 0) {
-      this.camera.fitBounds(minX, minY, maxX, maxY);
-    }
-    this.clearFocus();
+    this.nav.fitAll(this.graph);
+    this.syncFocusClear();
     this.updateLOD();
     this.needsRender = true;
   }
