@@ -184,26 +184,6 @@ function sameEdge(a: HoverEdge | null, b: HoverEdge | null): boolean {
   return a.from === b.from && a.to === b.to && a.kind === b.kind;
 }
 
-// ── Edge hit-testing ───────────────────────────────────────────────────
+// ── Re-export for backward compatibility ───────────────────────────────
 
-/**
- * Squared distance from point P to the line segment AB.
- * Pure geometry — no allocations.
- */
-export function pointSegDistSq(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq < 1e-10) return (px - ax) ** 2 + (py - ay) ** 2;
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
-  const nx = ax + t * dx;
-  const ny = ay + t * dy;
-  return (px - nx) ** 2 + (py - ny) ** 2;
-}
+export { pointSegDistSq } from '../renderer/geometry';

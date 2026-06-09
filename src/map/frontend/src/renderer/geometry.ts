@@ -174,3 +174,63 @@ export function nodeCorners(
   }
   return pts;
 }
+
+// ── Distance helpers ───────────────────────────────────────────────────
+
+/**
+ * Squared distance from point P to the line segment AB.
+ * Pure geometry — no allocations.
+ */
+export function pointSegDistSq(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-10) return (px - ax) ** 2 + (py - ay) ** 2;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  const nx = ax + t * dx;
+  const ny = ay + t * dy;
+  return (px - nx) ** 2 + (py - ny) ** 2;
+}
+
+/**
+ * Squared distance from point P to a quadratic Bézier curve A→CP→B.
+ * Approximated by sampling the curve at {@link N} intervals and
+ * checking distance to each resulting line segment.
+ */
+export function pointBezierDistSq(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  cpx: number,
+  cpy: number,
+  bx: number,
+  by: number,
+): number {
+  const N = 5;
+  let prevX = ax;
+  let prevY = ay;
+  let minDist = Infinity;
+
+  for (let i = 1; i <= N; i++) {
+    const t = i / N;
+    const s = 1 - t;
+    const x = s * s * ax + 2 * s * t * cpx + t * t * bx;
+    const y = s * s * ay + 2 * s * t * cpy + t * t * by;
+
+    const d = pointSegDistSq(px, py, prevX, prevY, x, y);
+    if (d < minDist) minDist = d;
+
+    prevX = x;
+    prevY = y;
+  }
+
+  return minDist;
+}

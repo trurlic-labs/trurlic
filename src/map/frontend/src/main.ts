@@ -23,8 +23,10 @@ import { DragState } from './app/drag';
 import type { MinimapTransform } from './app/drag';
 import { Navigation } from './app/navigation';
 import { Filters } from './app/filters';
-import { HoverTracker, pointSegDistSq } from './app/hover';
+import { HoverTracker } from './app/hover';
 import type { HoverEdge } from './app/hover';
+import { pointBezierDistSq } from './renderer/geometry';
+import { edgeCurveCP, buildEdgePairSet } from './renderer/edges';
 
 // ── App ──────────────────────────────────────────────────────────────────
 
@@ -833,7 +835,9 @@ const EDGE_HIT_PX = 8;
 
 /**
  * Find the edge nearest to the cursor in world space.
- * Only checks edges visible at the current LOD and filter state.
+ * Hit-tests against the quadratic Bézier curve (not the straight
+ * chord) to match the rendered curvature. Only checks edges visible
+ * at the current LOD and filter state.
  * Returns null if no edge is within EDGE_HIT_PX screen pixels.
  */
 function findHoveredEdge(
@@ -844,13 +848,14 @@ function findHoveredEdge(
   lod: LOD,
   filters: FilterState | undefined,
 ): HoverEdge | null {
-  // Edge hover is LOD 1+ only per spec.
   if (lod < LOD.Component) return null;
 
   const threshold = EDGE_HIT_PX / zoom;
   const threshSq = threshold * threshold;
   let bestDistSq = threshSq;
   let best: HoverEdge | null = null;
+
+  const pairSet = buildEdgePairSet(graph.edges);
 
   for (const e of graph.edges) {
     if (e.kind === 'belongs_to') continue;
@@ -861,7 +866,11 @@ function findHoveredEdge(
     const b = graph.nodes.get(e.to);
     if (!a || !b) continue;
 
-    const d = pointSegDistSq(wx, wy, a.x, a.y, b.x, b.y);
+    const hasBi = pairSet.has(`${e.to}\0${e.from}`);
+    const reverse = hasBi && e.from > e.to;
+    const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, zoom, reverse);
+
+    const d = pointBezierDistSq(wx, wy, a.x, a.y, cpx, cpy, b.x, b.y);
     if (d < bestDistSq) {
       bestDistSq = d;
       best = { from: e.from, to: e.to, kind: e.kind };

@@ -3,7 +3,7 @@ import type { Graph } from '../state/graph';
 import type { RenderNode, FilterState, DecisionNode, ColorSnapshot } from '../types';
 import { LOD } from './lod';
 import type { AABB } from './culling';
-import { EDGE_DASH, edgeColor } from './edges';
+import { EDGE_DASH, edgeColor, edgeCurveCP, buildEdgePairSet } from './edges';
 import { convexHull, expandHull, roundedHullPath, nodeCorners } from './geometry';
 import type { HoverRenderState } from '../app/hover';
 
@@ -269,6 +269,9 @@ export class Renderer {
     const { ctx, cam, c, fh } = this;
     const baseWidth = 1.5 / cam.zoom;
 
+    // Build bidirectional pair index for O(1) look-up.
+    const pairSet = buildEdgePairSet(graph.edges);
+
     for (const e of graph.edges) {
       if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
       if (e.kind === 'belongs_to') continue;
@@ -294,18 +297,23 @@ export class Renderer {
       ctx.lineWidth = isHovered ? baseWidth * 2.5 : baseWidth;
       ctx.setLineDash((EDGE_DASH[e.kind] ?? []).map((v) => v / cam.zoom));
 
+      // Bezier control point — reverse offset for bidirectional pairs.
+      const hasBi = pairSet.has(`${e.to}\0${e.from}`);
+      const reverse = hasBi && e.from > e.to;
+      const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, cam.zoom, reverse);
+
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
+      ctx.quadraticCurveTo(cpx, cpy, b.x, b.y);
       ctx.stroke();
 
-      // Arrowhead.
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len < 1) continue;
-      const ux = dx / len;
-      const uy = dy / len;
+      // Arrowhead — aligned with the curve tangent at B.
+      const tdx = b.x - cpx;
+      const tdy = b.y - cpy;
+      const tlen = Math.sqrt(tdx * tdx + tdy * tdy);
+      if (tlen < 1e-10) continue;
+      const ux = tdx / tlen;
+      const uy = tdy / tlen;
       const headLen = 10 / cam.zoom;
       const tipX = b.x - ux * (b.w / 2 + 2);
       const tipY = b.y - uy * (b.h / 2 + 2);
@@ -327,14 +335,15 @@ export class Renderer {
       // Edge kind label at LOD 1+.
       // Always show for non-connects_to; show for connects_to only when hovered.
       if (lod >= LOD.Component && (e.kind !== 'connects_to' || isHovered)) {
-        const mx = (a.x + b.x) / 2;
-        const my = (a.y + b.y) / 2;
+        // Label at the curve midpoint: P(0.5) = 0.25A + 0.5CP + 0.25B.
+        const lx = 0.25 * a.x + 0.5 * cpx + 0.25 * b.x;
+        const ly = 0.25 * a.y + 0.5 * cpy + 0.25 * b.y;
         const labelSize = 9 / cam.zoom;
         ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
         ctx.fillStyle = isHovered ? c.text : c.textDim;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(e.kind.replace(/_/g, ' '), mx, my - 3 / cam.zoom);
+        ctx.fillText(e.kind.replace(/_/g, ' '), lx, ly - 3 / cam.zoom);
       }
     }
 
