@@ -4,6 +4,7 @@ import type { RenderNode, FilterState, DecisionNode, ColorSnapshot } from '../ty
 import { LOD } from './lod';
 import type { AABB } from './culling';
 import { EDGE_DASH, edgeColor } from './edges';
+import type { HoverRenderState } from '../app/hover';
 
 // ── Per-frame color snapshot ──────────────────────────────────────────────
 
@@ -57,6 +58,8 @@ export class Renderer {
   private dpr: number;
   /** Per-frame color snapshot — refreshed at the top of render(). */
   private c: ColorSnapshot;
+  /** Per-frame hover state — set at the top of render(), read by draw methods. */
+  private fh: HoverRenderState | null = null;
 
   constructor(canvas: HTMLCanvasElement, cam: Camera) {
     const ctx = canvas.getContext('2d');
@@ -88,8 +91,10 @@ export class Renderer {
     lod: LOD,
     focus: Set<string> | null = null,
     filters?: FilterState,
+    hover?: HoverRenderState,
   ): void {
     this.c = snapshotColors();
+    this.fh = hover ?? null;
     const { ctx, cam, dpr, c } = this;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -115,6 +120,13 @@ export class Renderer {
     this.drawNodes(graph, visibleNames, selected, lod, focus, filters);
 
     ctx.restore();
+
+    // Tooltip: rendered in screen space, LOD 0 only.
+    if (hover?.tooltipVisible && hover.tooltipText && lod === LOD.Overview) {
+      this.drawTooltip(hover.tooltipText, hover.tooltipX, hover.tooltipY);
+    }
+
+    this.fh = null;
   }
 
   // ── Edges ──────────────────────────────────────────────────────────────
@@ -126,7 +138,7 @@ export class Renderer {
     focus: Set<string> | null,
     filters?: FilterState,
   ): void {
-    const { ctx, cam, c } = this;
+    const { ctx, cam, c, fh } = this;
     const baseWidth = 1.5 / cam.zoom;
 
     for (const e of graph.edges) {
@@ -140,11 +152,18 @@ export class Renderer {
       if (!visible.has(e.from) && !visible.has(e.to)) continue;
 
       const dimmed = focus !== null && !focus.has(e.from) && !focus.has(e.to);
+      const isHovered =
+        fh?.edge !== null &&
+        fh?.edge !== undefined &&
+        fh.edge.from === e.from &&
+        fh.edge.to === e.to &&
+        fh.edge.kind === e.kind;
+
       ctx.globalAlpha = dimmed ? 0.15 : 1;
 
       const color = edgeColor(e.kind, c);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = baseWidth;
+      ctx.strokeStyle = isHovered ? c.accent : color;
+      ctx.lineWidth = isHovered ? baseWidth * 2.5 : baseWidth;
       ctx.setLineDash((EDGE_DASH[e.kind] ?? []).map((v) => v / cam.zoom));
 
       ctx.beginPath();
@@ -163,7 +182,7 @@ export class Renderer {
       const tipX = b.x - ux * (b.w / 2 + 2);
       const tipY = b.y - uy * (b.h / 2 + 2);
 
-      ctx.fillStyle = color;
+      ctx.fillStyle = isHovered ? c.accent : color;
       ctx.setLineDash([]);
       ctx.beginPath();
       ctx.moveTo(tipX, tipY);
@@ -178,12 +197,13 @@ export class Renderer {
       ctx.fill();
 
       // Edge kind label at LOD 1+.
-      if (lod >= LOD.Component && e.kind !== 'connects_to') {
+      // Always show for non-connects_to; show for connects_to only when hovered.
+      if (lod >= LOD.Component && (e.kind !== 'connects_to' || isHovered)) {
         const mx = (a.x + b.x) / 2;
         const my = (a.y + b.y) / 2;
         const labelSize = 9 / cam.zoom;
         ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
-        ctx.fillStyle = c.textDim;
+        ctx.fillStyle = isHovered ? c.text : c.textDim;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillText(e.kind.replace(/_/g, ' '), mx, my - 3 / cam.zoom);
@@ -241,9 +261,9 @@ export class Renderer {
     ctx.fillStyle = selected ? c.surfaceHi : c.surface;
     this.roundRect(node.x - node.w / 2, node.y - node.h / 2, node.w, node.h, 8);
     ctx.fill();
-    ctx.strokeStyle = c.border;
-    ctx.lineWidth = 1 / cam.zoom;
-    ctx.stroke();
+
+    // Border — brightens to accent-dim on hover.
+    this.drawNodeBorder(node);
 
     const fontSize = Math.max(12, 14 / Math.max(cam.zoom, 0.5));
     ctx.font = `600 ${fontSize}px system-ui, -apple-system, sans-serif`;
@@ -291,9 +311,9 @@ export class Renderer {
     ctx.fillStyle = selected ? c.surfaceHi : c.surface;
     this.roundRect(node.x - node.w / 2, node.y - expandedH / 2, node.w, expandedH, 8);
     ctx.fill();
-    ctx.strokeStyle = c.border;
-    ctx.lineWidth = 1 / cam.zoom;
-    ctx.stroke();
+
+    // Border — brightens on hover.
+    this.drawNodeBorder(node, expandedH);
 
     const fontSize = 14 / cam.zoom;
     let cursorY = node.y - expandedH / 2 + fontSize + 6 / cam.zoom;
@@ -358,9 +378,9 @@ export class Renderer {
     ctx.fillStyle = selected ? c.surfaceHi : c.surface;
     this.roundRect(node.x - node.w / 2, node.y - expandedH / 2, node.w, expandedH, 8);
     ctx.fill();
-    ctx.strokeStyle = c.border;
-    ctx.lineWidth = 1 / cam.zoom;
-    ctx.stroke();
+
+    // Border — brightens on hover.
+    this.drawNodeBorder(node, expandedH);
 
     const fontSize = 14 / cam.zoom;
     let cursorY = node.y - expandedH / 2 + fontSize + 6 / cam.zoom;
@@ -441,6 +461,24 @@ export class Renderer {
     }
   }
 
+  // ── Node border (with hover highlight) ────────────────────────────────
+
+  /**
+   * Draw the node border. When the node is hovered, blends toward
+   * --accent-dim with 1px extra width.
+   */
+  private drawNodeBorder(node: RenderNode, overrideH?: number): void {
+    const { ctx, cam, c, fh } = this;
+    const h = overrideH ?? node.h;
+    const isHovered = fh !== null && fh.node === node.name;
+    const alpha = isHovered ? fh.borderAlpha : 0;
+
+    ctx.strokeStyle = alpha > 0 ? c.accentDim : c.border;
+    ctx.lineWidth = (1 + alpha) / cam.zoom;
+    this.roundRect(node.x - node.w / 2, node.y - h / 2, node.w, h, 8);
+    ctx.stroke();
+  }
+
   // ── Selection ring ────────────────────────────────────────────────────
 
   private drawSelectRing(node: RenderNode, overrideH?: number): void {
@@ -450,6 +488,42 @@ export class Renderer {
     ctx.lineWidth = 3 / cam.zoom;
     this.roundRect(node.x - node.w / 2 - 4, node.y - h / 2 - 4, node.w + 8, h + 8, 12);
     ctx.stroke();
+  }
+
+  // ── Tooltip ───────────────────────────────────────────────────────────
+
+  /** Canvas-rendered tooltip in screen space. */
+  private drawTooltip(text: string, sx: number, sy: number): void {
+    const { ctx, c } = this;
+    const fontSize = 12;
+    const padding = 8;
+    const offsetY = 20;
+    const radius = 6;
+
+    ctx.font = `400 ${fontSize}px system-ui, sans-serif`;
+    const tw = ctx.measureText(text).width;
+    const boxW = tw + padding * 2;
+    const boxH = fontSize + padding * 2;
+
+    // Position: centered below cursor, clamped to canvas bounds.
+    let x = sx - boxW / 2;
+    let y = sy + offsetY;
+    const maxX = this.cam.screenW - boxW - 4;
+    const maxY = this.cam.screenH - boxH - 4;
+    if (x < 4) x = 4;
+    if (x > maxX) x = maxX;
+    if (y > maxY) y = sy - offsetY - boxH; // flip above cursor
+
+    // Background.
+    ctx.fillStyle = 'rgba(20, 22, 30, 0.92)';
+    this.roundRect(x, y, boxW, boxH, radius);
+    ctx.fill();
+
+    // Text.
+    ctx.fillStyle = c.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x + boxW / 2, y + boxH / 2, boxW - padding * 2);
   }
 
   // ── Minimap ────────────────────────────────────────────────────────────

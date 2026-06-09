@@ -106,13 +106,13 @@ export class Panel {
 
     this.el.innerHTML = `
       <div class="panel-kind">decision</div>
-      <h2 class="editable-heading" data-field="choice" data-dec="${esc(name)}">${esc(dec.choice)}</h2>
+      <h2 class="editable-heading" data-field="choice" data-dec="${esc(name)}" data-placeholder="Click to edit">${esc(dec.choice)}</h2>
       <p class="dim">
         <a class="nav-link" data-nav="${esc(dec.component)}" href="#">${esc(dec.component)}</a>
         · ${new Date(dec.created).toLocaleDateString()}
       </p>
       <h3>Reason</h3>
-      <div class="editable-block" data-field="reason" data-dec="${esc(name)}">${esc(dec.reason)}</div>
+      <div class="editable-block" data-field="reason" data-dec="${esc(name)}" data-placeholder="Click to add reason">${esc(dec.reason)}</div>
       ${
         dec.tags.length > 0
           ? `

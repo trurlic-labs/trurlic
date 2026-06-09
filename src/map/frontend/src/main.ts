@@ -23,6 +23,8 @@ import { DragState } from './app/drag';
 import type { MinimapTransform } from './app/drag';
 import { Navigation } from './app/navigation';
 import { Filters } from './app/filters';
+import { HoverTracker, pointSegDistSq } from './app/hover';
+import type { HoverEdge } from './app/hover';
 
 // ── App ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +41,7 @@ class App {
   private readonly toolbar: Toolbar;
   private readonly aria: HTMLElement;
   private readonly miniCtx: CanvasRenderingContext2D;
+  private readonly canvas: HTMLCanvasElement;
 
   // Domain modules — own all mutable application state.
   private readonly undo = new UndoStack();
@@ -46,6 +49,7 @@ class App {
   private readonly drag = new DragState();
   private readonly nav: Navigation;
   private readonly filters = new Filters();
+  private readonly hover = new HoverTracker();
 
   // Render-loop scheduling — derived per frame, not domain state.
   private needsRender = true;
@@ -57,6 +61,7 @@ class App {
     this.api = new ApiClient(token);
 
     const canvas = document.getElementById('canvas') as HTMLCanvasElement;
+    this.canvas = canvas;
     this.renderer = new Renderer(canvas, this.camera);
     this.nav = new Navigation(this.camera);
 
@@ -105,6 +110,7 @@ class App {
         this.breadcrumb.update(this.graph.projectName, null);
         this.toolbar.setAvailableTags(this.graph.allTags());
         this.needsRender = true;
+        this.showFirstVisitHint();
       })
       .catch((e) => {
         console.error('Failed to load graph:', e);
@@ -140,7 +146,12 @@ class App {
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
     canvas.addEventListener('pointerup', () => this.onPointerUp());
-    canvas.addEventListener('pointerleave', () => this.onPointerUp());
+    canvas.addEventListener('pointerleave', () => {
+      this.onPointerUp();
+      this.hover.clear();
+      this.canvas.style.cursor = '';
+      this.needsRender = true;
+    });
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
 
     minimap.addEventListener('pointerdown', (e) => this.onMinimapDown(e));
@@ -152,6 +163,10 @@ class App {
   private onPointerDown(e: PointerEvent): void {
     if (this.selection.searchOpen) this.closeSearch();
     if (this.palette.isOpen) this.palette.close();
+
+    // Clear hover — no hover effects during drag/pan.
+    this.hover.clear();
+    this.canvas.style.cursor = '';
 
     const canvas = e.target as HTMLCanvasElement;
     canvas.setPointerCapture(e.pointerId);
@@ -176,11 +191,33 @@ class App {
   }
 
   private onPointerMove(e: PointerEvent): void {
-    const result = this.drag.onPointerMove(e.offsetX, e.offsetY, this.camera, this.graph);
-    if (result.needsRender) {
-      if (this.drag.panning) this.updateLOD();
+    // During drag/pan: delegate to drag module, no hover tracking.
+    if (this.drag.dragging || this.drag.panning) {
+      const result = this.drag.onPointerMove(e.offsetX, e.offsetY, this.camera, this.graph);
+      if (result.needsRender) {
+        if (this.drag.panning) this.updateLOD();
+        this.needsRender = true;
+      }
+      return;
+    }
+
+    // Idle: track hover for visual feedback.
+    const wx = this.camera.toWorldX(e.offsetX);
+    const wy = this.camera.toWorldY(e.offsetY);
+    const hit = this.graph.nodeAt(wx, wy);
+    const hitName = hit?.name ?? null;
+    const hitDesc = hit?.description ?? '';
+    const hitEdge = hitName
+      ? null
+      : findHoveredEdge(this.graph, wx, wy, this.camera.zoom, this.lod, this.filters.state);
+
+    const now = performance.now();
+    if (this.hover.update(hitName, hitDesc, hitEdge, e.offsetX, e.offsetY, now)) {
       this.needsRender = true;
     }
+
+    // Cursor: pointer over interactive elements, otherwise default (CSS grab).
+    this.canvas.style.cursor = hitName || hitEdge ? 'pointer' : '';
   }
 
   private onPointerUp(): void {
@@ -245,7 +282,7 @@ class App {
           else this.palette.open(this.buildPaletteActions());
         },
       },
-      { match: () => this.palette.isOpen, run: () => {} }, // palette handles its own keys
+      { match: () => this.palette.isOpen, run: () => {} },
       {
         match: Keys.search,
         run: (e) => {
@@ -253,7 +290,7 @@ class App {
           this.openSearch();
         },
       },
-      { match: () => this.selection.searchOpen, run: () => {} }, // search handles its own keys
+      { match: () => this.selection.searchOpen, run: () => {} },
       {
         match: Keys.undo,
         run: (e) => {
@@ -563,7 +600,6 @@ class App {
 
   // ── Coordination helpers ────────────────────────────────────────────────
 
-  /** Select a node, update panel/breadcrumb, and animate the camera to it. */
   private selectAndFocus(name: string): void {
     const node = this.graph.nodes.get(name);
     if (!node) return;
@@ -576,13 +612,11 @@ class App {
     this.needsRender = true;
   }
 
-  /** Clear focus and sync the toolbar pill. */
   private syncFocusClear(): void {
     this.selection.clearFocus();
     this.toolbar.setFocusActive(false);
   }
 
-  /** Set focus to a node's neighborhood and sync the toolbar pill. */
   private syncFocusSet(name: string): void {
     this.selection.setFocus(name, this.graph);
     this.toolbar.setFocusActive(true);
@@ -590,6 +624,27 @@ class App {
 
   private announce(text: string): void {
     this.aria.textContent = text;
+  }
+
+  // ── First-visit hint ────────────────────────────────────────────────────
+
+  private showFirstVisitHint(): void {
+    const autoLayout = ![...this.graph.nodes.values()].some((n) => n.pinned);
+    if (!autoLayout) return;
+    try {
+      if (sessionStorage.getItem('trurlic-hint-shown')) return;
+      sessionStorage.setItem('trurlic-hint-shown', '1');
+    } catch {
+      return; // sessionStorage unavailable (privacy mode).
+    }
+
+    const hint = document.getElementById('hint-overlay');
+    if (!hint) return;
+    hint.classList.remove('hidden');
+    setTimeout(() => {
+      hint.classList.add('fade-out');
+      setTimeout(() => hint.classList.add('hidden'), 600);
+    }, 4000);
   }
 
   // ── WebSocket ───────────────────────────────────────────────────────────
@@ -695,8 +750,12 @@ class App {
   // ── Render loop ─────────────────────────────────────────────────────────
 
   private renderLoop = (): void => {
+    const now = performance.now();
     if (this.camera.tick()) {
       this.updateLOD();
+      this.needsRender = true;
+    }
+    if (this.hover.tick(now)) {
       this.needsRender = true;
     }
 
@@ -707,6 +766,7 @@ class App {
         this.lod,
         this.selection.focusSet,
         this.filters.state,
+        this.hover,
       );
       this.drag.setMinimapTransform(this.renderMinimap());
       this.needsRender = false;
@@ -764,6 +824,51 @@ class App {
     this.updateLOD();
     this.needsRender = true;
   }
+}
+
+// ── Edge hit-testing ──────────────────────────────────────────────────────
+
+/** Screen-pixel threshold for edge hover detection. */
+const EDGE_HIT_PX = 8;
+
+/**
+ * Find the edge nearest to the cursor in world space.
+ * Only checks edges visible at the current LOD and filter state.
+ * Returns null if no edge is within EDGE_HIT_PX screen pixels.
+ */
+function findHoveredEdge(
+  graph: Graph,
+  wx: number,
+  wy: number,
+  zoom: number,
+  lod: LOD,
+  filters: FilterState | undefined,
+): HoverEdge | null {
+  // Edge hover is LOD 1+ only per spec.
+  if (lod < LOD.Component) return null;
+
+  const threshold = EDGE_HIT_PX / zoom;
+  const threshSq = threshold * threshold;
+  let bestDistSq = threshSq;
+  let best: HoverEdge | null = null;
+
+  for (const e of graph.edges) {
+    if (e.kind === 'belongs_to') continue;
+    if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
+    if (filters && !filters.edgeKinds.has(e.kind)) continue;
+
+    const a = graph.nodes.get(e.from);
+    const b = graph.nodes.get(e.to);
+    if (!a || !b) continue;
+
+    const d = pointSegDistSq(wx, wy, a.x, a.y, b.x, b.y);
+    if (d < bestDistSq) {
+      bestDistSq = d;
+      best = { from: e.from, to: e.to, kind: e.kind };
+    }
+  }
+
+  return best;
 }
 
 function esc(s: string): string {

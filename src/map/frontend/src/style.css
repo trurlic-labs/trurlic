@@ -180,21 +180,51 @@ body {
   border-radius: 4px;
   padding: 2px 4px;
   margin: -2px -4px;
-  transition: background 0.15s;
+  position: relative;
+  border-bottom: 1px solid transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 .editable-heading:hover,
 .editable-block:hover {
   background: var(--surface);
+  border-bottom-color: var(--accent-dim);
 }
 .editable-heading:focus,
 .editable-block:focus {
   background: var(--surface);
+  border-bottom-color: transparent;
   box-shadow: 0 0 0 2px var(--accent-dim);
 }
 .editable-block {
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+/* Pencil icon on hover. */
+.editable-heading:hover::after,
+.editable-block:hover::after {
+  content: '✎';
+  position: absolute;
+  right: 4px;
+  top: 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.6;
+  pointer-events: none;
+}
+.editable-heading:focus::after,
+.editable-block:focus::after {
+  content: none;
+}
+/* Placeholder for empty fields. */
+.editable-heading:empty::before,
+.editable-block:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-dim);
+  font-style: italic;
+  pointer-events: none;
 }
 
 /* ── Panel actions ───────────────────────────────────────────────────── */
@@ -574,4 +604,37 @@ details li {
 }
 .toolbar-select:focus {
   outline: 1px solid var(--accent-dim);
+}
+
+/* ── First-visit hint overlay ──────────────────────────────────────── */
+.hint-overlay {
+  position: fixed;
+  top: 50%;
+  left: calc(50% - 160px);
+  transform: translate(-50%, -50%);
+  z-index: 20;
+  padding: 14px 28px;
+  background: rgba(15, 17, 23, 0.75);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.6s ease-out;
+  white-space: nowrap;
+}
+.hint-overlay.hidden {
+  display: none;
+}
+.hint-overlay.fade-out {
+  opacity: 0;
+}
+@media (prefers-color-scheme: light) {
+  .hint-overlay {
+    background: rgba(255, 255, 255, 0.88);
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.1);
+  }
 }
