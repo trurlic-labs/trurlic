@@ -9,6 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/trurlic-labs/trurlic/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/trurlic-labs/trurlic/ci.yml?style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://codspeed.io/trurlic-labs/trurlic"><img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json&style=flat-square" alt="CodSpeed"></a>
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/rust-1.88%2B-orange?style=flat-square" alt="Rust">
   <br>

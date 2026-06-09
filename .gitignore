@@ -12,8 +12,10 @@
 .DS_Store
 Thumbs.db
 
-# Trurlic machine-local state (in any .trurlic/ directory)
+# Trurlic artifacts
 .trurlic/.state/
+.trurlic/
+.mcp.json
 
 # Frontend
 src/map/frontend/node_modules/
