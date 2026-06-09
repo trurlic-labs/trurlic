@@ -215,7 +215,9 @@ fn deduce_step(
         TaskType::Feature => {
             deduce_feature(decisions, covered, uncovered, patterns, task, completed)
         }
-        TaskType::Fix => deduce_fix(decisions, graph, component, completed),
+        TaskType::Fix => deduce_fix(
+            decisions, covered, uncovered, graph, component, task, completed,
+        ),
         TaskType::Learn => deduce_learn(decisions, patterns),
         TaskType::Review => {
             deduce_review(decisions, stale, covered, uncovered, patterns, completed)
@@ -333,31 +335,59 @@ fn task_relevant_concerns<'a>(uncovered: &[&'a str], task: &str) -> Vec<&'a str>
         .collect()
 }
 
-/// Fix: VerifyConstraints → ImpactCheck → Ready
+/// Fix: VerifyConstraints → [CoverConcerns] → ImpactCheck → Ready
 ///
-/// Both steps run in sequence. VerifyConstraints ensures the fix doesn't
-/// break existing decisions. ImpactCheck verifies cross-component effects
-/// for connected components. Both lack verifiable graph postconditions —
-/// `completed_steps` handles progression when no decisions are updated.
+/// VerifyConstraints ensures the fix doesn't break existing decisions.
+/// Skipped when no decisions exist (nothing to verify).
+///
+/// CoverConcerns: conditional — fires only when the component has zero
+/// decisions AND the task description matches uncovered concern keywords.
+/// A bug fix in an undesigned concern area should not proceed without at
+/// least one recorded decision constraining it.
+///
+/// ImpactCheck: cross-component effects. Fires regardless of decision
+/// count — a fix on an undesigned component with connections still needs
+/// cross-component checking. Previously skipped when decisions were empty;
+/// now reachable.
+///
+/// VerifyConstraints and ImpactCheck lack verifiable graph postconditions —
+/// `completed_steps` handles progression.
 fn deduce_fix(
     decisions: &[(&Arc<str>, &DecisionFile)],
+    _covered: &[&str],
+    uncovered: &[&str],
     graph: &crate::store::graph::InMemoryGraph,
     component: &str,
+    task: Option<&str>,
     completed: &[&str],
 ) -> Step {
-    if decisions.is_empty() {
-        return Step::Ready;
-    }
-    // VerifyConstraints first, regardless of connections.
-    if !completed.contains(&"verify_constraints") {
+    // VerifyConstraints: existing decisions need checking against the fix.
+    if !decisions.is_empty() && !completed.contains(&"verify_constraints") {
         return Step::VerifyConstraints;
     }
-    // ImpactCheck: only meaningful for connected components.
+
+    // CoverConcerns: when no decisions exist and the task touches an
+    // uncovered concern area, force a focused design step before coding.
+    // This prevents unguarded fixes in concern areas that have never been
+    // designed (e.g. fixing a concurrency bug with zero concurrency
+    // decisions on record).
+    if decisions.is_empty()
+        && let Some(t) = task {
+            let relevant = task_relevant_concerns(uncovered, t);
+            if !relevant.is_empty() {
+                return Step::CoverConcerns {
+                    focus: top_n(&relevant, CONCERN_FOCUS_LIMIT),
+                };
+            }
+        }
+
+    // ImpactCheck: cross-component effects.
     let has_connections =
         !graph.connects_to(component).is_empty() || !graph.connects_from(component).is_empty();
     if has_connections && !completed.contains(&"impact_check") {
         return Step::ImpactCheck;
     }
+
     Step::Ready
 }
 
@@ -1403,6 +1433,130 @@ mod tests {
         let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
 
         assert_eq!(result["step"], "ready");
+    }
+
+    #[test]
+    fn fix_empty_with_relevant_task_covers_concerns() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Fix),
+            Some("fix concurrent write corruption"),
+            &[],
+        )
+        .unwrap();
+
+        // "concurrent" matches Concurrency & locking keywords → CoverConcerns.
+        assert_eq!(result["step"], "cover_concerns");
+        assert_eq!(result["ready"], false);
+        let focus = result["action"]["focus"].as_array().unwrap();
+        assert!(
+            focus
+                .iter()
+                .any(|f| f.as_str().unwrap().contains("Concurrency")),
+            "focus should include Concurrency for concurrent-related fix: {focus:?}"
+        );
+    }
+
+    #[test]
+    fn fix_empty_with_irrelevant_task_is_ready() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Fix),
+            Some("fix typo in log message"),
+            &[],
+        )
+        .unwrap();
+
+        // "typo" and "log" match no concern keywords → skip CoverConcerns.
+        // No connections → skip ImpactCheck → Ready.
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["ready"], true);
+    }
+
+    #[test]
+    fn fix_empty_with_connections_checks_impact() {
+        let mut state = build_state(&[("store", "Data store"), ("api", "API layer")], &[]);
+        state.graph_index.edges.push(EdgeEntry {
+            from: "api".into(),
+            to: "store".into(),
+            kind: EdgeKind::ConnectsTo,
+        });
+        state.rebuild_graph();
+
+        // No decisions, no task → skip CoverConcerns; but has connections → ImpactCheck.
+        let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
+
+        assert_eq!(result["step"], "impact_check");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn fix_empty_relevant_task_takes_priority_over_impact() {
+        let mut state = build_state(&[("store", "Data store"), ("api", "API layer")], &[]);
+        state.graph_index.edges.push(EdgeEntry {
+            from: "api".into(),
+            to: "store".into(),
+            kind: EdgeKind::ConnectsTo,
+        });
+        state.rebuild_graph();
+
+        // Empty, has connections AND a relevant task → CoverConcerns first.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Fix),
+            Some("fix encryption key rotation"),
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "cover_concerns");
+        let focus = result["action"]["focus"].as_array().unwrap();
+        assert!(
+            focus
+                .iter()
+                .any(|f| f.as_str().unwrap().contains("Security")),
+            "focus should include Security for encryption-related fix: {focus:?}"
+        );
+    }
+
+    #[test]
+    fn fix_empty_relevant_task_pipeline_contract() {
+        // Pipeline contract: cover_concerns returned by the fix workflow
+        // must be accepted by build_step_prompt.
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Fix),
+            Some("fix error handling crash"),
+            &[],
+        )
+        .unwrap();
+
+        let step_name = result["step"].as_str().unwrap();
+        assert_eq!(step_name, "cover_concerns");
+
+        let prompt = crate::workflow::steps::build_step_prompt(
+            &state,
+            "store",
+            step_name,
+            Some("fix error handling crash"),
+        )
+        .expect("build_step_prompt must accept cover_concerns from fix workflow");
+
+        assert!(
+            prompt.instructions.contains("source code"),
+            "missing source code preamble"
+        );
+        assert!(
+            !prompt.focus.is_empty(),
+            "cover_concerns must have a focus list"
+        );
     }
 
     // ── Learn step sequence ───────────────────────────────────────────

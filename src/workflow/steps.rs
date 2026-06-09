@@ -361,6 +361,8 @@ fn step_verify_constraints(graph: &InMemoryGraph, component: &str) -> String {
     for (name, d) in &decisions {
         out.push_str(&format!(
             "CONSTRAINT: {name} — {} ({})\n\
+             → Cite the specific source file and function where this \
+             constraint is enforced.\n\
              → Ask: \"Does your change respect this constraint, violate \
              it, or require changing it?\"\n\
              → STOP. Wait.\n\n",
@@ -371,7 +373,10 @@ fn step_verify_constraints(graph: &InMemoryGraph, component: &str) -> String {
 
     out.push_str(
         "If any constraint needs changing → call update_decision(mode=\"supersede\").\n\
-         If all constraints hold → report \"all constraints verified.\"\n\
+         If all constraints hold → report \"all constraints verified\" with \
+         the code locations checked.\n\
+         If you cannot locate a constraint in the source code, flag it as \
+         potentially drifted.\n\
          Also check whether the change impacts connected components.\n",
     );
     out
@@ -805,6 +810,20 @@ mod tests {
             result
                 .instructions
                 .contains("violate it, or require changing it")
+        );
+    }
+
+    #[test]
+    fn verify_constraints_requires_code_citation() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "verify_constraints", None).unwrap();
+        assert!(
+            result.instructions.contains("source file and function"),
+            "verify_constraints must require code citation"
+        );
+        assert!(
+            result.instructions.contains("cannot locate"),
+            "verify_constraints must flag unlocatable constraints as drifted"
         );
     }
 
