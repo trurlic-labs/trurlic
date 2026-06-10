@@ -397,48 +397,58 @@ export class Renderer {
       const dimmed = focus !== null && !focus.has(name);
       this.ctx.globalAlpha = dimmed ? 0.3 : 1;
 
-      switch (lod) {
-        case LOD.Overview:
-          this.drawNodeLOD0(node, isSelected, graph, filters);
-          break;
-        case LOD.Component:
-          this.drawNodeLOD1(node, isSelected, graph, filters);
-          break;
-        case LOD.Decision:
-          this.drawNodeLOD2(node, isSelected, graph, filters);
-          break;
-      }
+      this.drawNodeCompact(node, isSelected, lod >= LOD.Component, graph, filters);
     }
     this.ctx.globalAlpha = 1;
   }
 
-  /** LOD 0 — System Overview: labeled box + decision count badge. */
-  private drawNodeLOD0(
+  /**
+   * Compact node card — used at every LOD level.
+   *
+   * The canvas shows architecture (components + edges). Decision detail
+   * lives in the panel. At LOD ≥ Component, a one-line description is
+   * shown under the name for context while zoomed in.
+   */
+  private drawNodeCompact(
     node: RenderNode,
     selected: boolean,
+    showDescription: boolean,
     graph: Graph,
     filters?: FilterState,
   ): void {
     const { ctx, cam, c } = this;
 
     if (selected) this.drawSelectRing(node);
-
-    // Drop shadow.
     this.drawShadow(node);
 
     ctx.fillStyle = selected ? c.surfaceHi : c.surface;
-    this.roundRect(node.x - node.w / 2, node.y - node.h / 2, node.w, node.h, 8);
+    this.roundRect(node.x - node.w / 2, node.y - node.h / 2, node.w, node.h, NODE_RADIUS);
     ctx.fill();
 
-    // Border — brightens to accent-dim on hover.
     this.drawNodeBorder(node);
 
     const fontSize = Math.max(12, 14 / Math.max(cam.zoom, 0.5));
+    const hasDesc = showDescription && !!node.description;
+
+    // Vertical layout: name sits higher when description is present.
+    const nameY = hasDesc ? node.y - 10 : node.y - 4;
+
+    // Name — monospace, component identifier.
     ctx.font = `600 ${fontSize}px ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', monospace`;
     ctx.fillStyle = c.text;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(node.name, node.x, node.y - 4, node.w - 16);
+    ctx.fillText(node.name, node.x, nameY, node.w - 16);
+
+    // Description — shown at LOD ≥ Component for context while zoomed in.
+    if (hasDesc) {
+      const descSize = fontSize * 0.72;
+      ctx.font = `400 ${descSize}px system-ui, sans-serif`;
+      ctx.fillStyle = c.textDim;
+      const desc =
+        node.description!.length > 45 ? node.description!.slice(0, 42) + '…' : node.description!;
+      ctx.fillText(desc, node.x, node.y + 4, node.w - 16);
+    }
 
     // Decision count badge — reflects active filters.
     const rawCount = node.decisionCount ?? 0;
@@ -449,195 +459,14 @@ export class Renderer {
     if (count > 0) {
       const badge = `${count}`;
       const badgeFontSize = fontSize * 0.7;
+      const badgeY = hasDesc ? node.y + 18 : node.y + 8;
       ctx.font = `500 ${badgeFontSize}px system-ui, sans-serif`;
       ctx.fillStyle = c.badge;
       const bw = ctx.measureText(badge).width + 10;
-      this.roundRect(node.x - bw / 2, node.y + 8, bw, badgeFontSize + 6, 4);
+      this.roundRect(node.x - bw / 2, badgeY, bw, badgeFontSize + 6, 4);
       ctx.fill();
       ctx.fillStyle = c.textDim;
-      ctx.fillText(badge, node.x, node.y + 8 + (badgeFontSize + 6) / 2, bw);
-    }
-  }
-
-  /** LOD 1 — Component Detail: name, description, and decision list inside box. */
-  private drawNodeLOD1(
-    node: RenderNode,
-    selected: boolean,
-    graph: Graph,
-    filters?: FilterState,
-  ): void {
-    const { ctx, cam, c } = this;
-    const rawDecisions = graph.decisionsFor(node.name);
-    const decisions = filters ? filterDecisions(rawDecisions, filters) : rawDecisions;
-    const lineH = 16 / cam.zoom;
-    const expandedH = Math.max(node.h, 40 + decisions.length * lineH);
-
-    if (selected) {
-      this.drawSelectRing(node, expandedH);
-    }
-
-    // Drop shadow.
-    this.drawShadow(node, expandedH);
-
-    ctx.fillStyle = selected ? c.surfaceHi : c.surface;
-    this.roundRect(node.x - node.w / 2, node.y - expandedH / 2, node.w, expandedH, 8);
-    ctx.fill();
-
-    // Border — brightens on hover.
-    this.drawNodeBorder(node, expandedH);
-
-    const fontSize = 14 / cam.zoom;
-    let cursorY = node.y - expandedH / 2 + fontSize + 6 / cam.zoom;
-
-    // Name.
-    ctx.font = `600 ${fontSize}px ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', monospace`;
-    ctx.fillStyle = c.text;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(node.name, node.x, cursorY, node.w - 16);
-    cursorY += fontSize * 0.6;
-
-    // Description.
-    if (node.description) {
-      const descSize = fontSize * 0.75;
-      ctx.font = `400 ${descSize}px system-ui, sans-serif`;
-      ctx.fillStyle = c.textDim;
-      const desc =
-        node.description.length > 50 ? node.description.slice(0, 47) + '…' : node.description;
-      ctx.fillText(desc, node.x, cursorY + descSize, node.w - 16);
-      cursorY += descSize + 4 / cam.zoom;
-    }
-
-    // Decision rows — faded in during LOD transition.
-    if (decisions.length > 0) {
-      const prevAlpha = ctx.globalAlpha;
-      ctx.globalAlpha = prevAlpha * this.lodFadeAlpha;
-      cursorY += 6 / cam.zoom;
-      const rowSize = fontSize * 0.7;
-      ctx.font = `400 ${rowSize}px system-ui, sans-serif`;
-      ctx.textAlign = 'left';
-      const leftX = node.x - node.w / 2 + 10 / cam.zoom;
-      const maxW = node.w - 20 / cam.zoom;
-
-      for (const d of decisions) {
-        cursorY += lineH;
-        ctx.fillStyle = c.accent;
-        ctx.fillText('•', leftX, cursorY);
-        ctx.fillStyle = c.text;
-        const label = d.choice.length > 35 ? d.choice.slice(0, 32) + '…' : d.choice;
-        ctx.fillText(label, leftX + 10 / cam.zoom, cursorY, maxW - 10 / cam.zoom);
-      }
-      ctx.globalAlpha = prevAlpha;
-    }
-  }
-
-  /** LOD 2 — Decision Detail: full cards with choice, reason, tags, timestamp. */
-  private drawNodeLOD2(
-    node: RenderNode,
-    selected: boolean,
-    graph: Graph,
-    filters?: FilterState,
-  ): void {
-    const { ctx, cam, c } = this;
-    const rawDecisions = graph.decisionsFor(node.name);
-    const decisions = filters ? filterDecisions(rawDecisions, filters) : rawDecisions;
-    const cardH = 50 / cam.zoom;
-    const gap = 6 / cam.zoom;
-    const expandedH = Math.max(node.h, 50 + decisions.length * (cardH + gap));
-
-    if (selected) {
-      this.drawSelectRing(node, expandedH);
-    }
-
-    // Drop shadow.
-    this.drawShadow(node, expandedH);
-
-    ctx.fillStyle = selected ? c.surfaceHi : c.surface;
-    this.roundRect(node.x - node.w / 2, node.y - expandedH / 2, node.w, expandedH, 8);
-    ctx.fill();
-
-    // Border — brightens on hover.
-    this.drawNodeBorder(node, expandedH);
-
-    const fontSize = 14 / cam.zoom;
-    let cursorY = node.y - expandedH / 2 + fontSize + 6 / cam.zoom;
-
-    // Name.
-    ctx.font = `600 ${fontSize}px ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', monospace`;
-    ctx.fillStyle = c.text;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(node.name, node.x, cursorY, node.w - 16);
-    cursorY += fontSize * 0.5;
-
-    // Description.
-    if (node.description) {
-      const descSize = fontSize * 0.8;
-      ctx.font = `400 ${descSize}px system-ui, sans-serif`;
-      ctx.fillStyle = c.textDim;
-      ctx.fillText(node.description, node.x, cursorY + descSize, node.w - 16);
-      cursorY += descSize + 6 / cam.zoom;
-    }
-
-    // Decision cards — faded in during LOD transition.
-    if (decisions.length > 0) {
-      const prevAlpha = ctx.globalAlpha;
-      ctx.globalAlpha = prevAlpha * this.lodFadeAlpha;
-      cursorY += 4 / cam.zoom;
-      const leftX = node.x - node.w / 2 + 8 / cam.zoom;
-      const cardW = node.w - 16 / cam.zoom;
-
-      for (const d of decisions) {
-        cursorY += gap;
-        // Card background.
-        ctx.fillStyle = c.bg;
-        this.roundRect(leftX, cursorY, cardW, cardH, 4);
-        ctx.fill();
-
-        const cSize = fontSize * 0.72;
-        const rSize = fontSize * 0.6;
-        const pad = 6 / cam.zoom;
-
-        // Choice.
-        ctx.font = `600 ${cSize}px system-ui, sans-serif`;
-        ctx.fillStyle = c.text;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        const choiceLabel = d.choice.length > 45 ? d.choice.slice(0, 42) + '…' : d.choice;
-        ctx.fillText(choiceLabel, leftX + pad, cursorY + pad, cardW - pad * 2);
-
-        // Reason.
-        ctx.font = `400 ${rSize}px system-ui, sans-serif`;
-        ctx.fillStyle = c.textDim;
-        const reasonLabel = d.reason.length > 60 ? d.reason.slice(0, 57) + '…' : d.reason;
-        ctx.fillText(
-          reasonLabel,
-          leftX + pad,
-          cursorY + pad + cSize + 2 / cam.zoom,
-          cardW - pad * 2,
-        );
-
-        // Tags (small chips).
-        if (d.tags.length > 0) {
-          const tagSize = fontSize * 0.5;
-          ctx.font = `500 ${tagSize}px system-ui, sans-serif`;
-          let tagX = leftX + pad;
-          const tagY = cursorY + cardH - tagSize - pad;
-          for (const tag of d.tags.slice(0, 4)) {
-            const tw = ctx.measureText(tag).width + 6 / cam.zoom;
-            ctx.fillStyle = c.accentDim;
-            this.roundRect(tagX, tagY, tw, tagSize + 3 / cam.zoom, 2);
-            ctx.fill();
-            ctx.fillStyle = c.text;
-            ctx.textBaseline = 'middle';
-            ctx.fillText(tag, tagX + 3 / cam.zoom, tagY + (tagSize + 3 / cam.zoom) / 2);
-            tagX += tw + 3 / cam.zoom;
-          }
-        }
-
-        cursorY += cardH;
-      }
-      ctx.globalAlpha = prevAlpha;
+      ctx.fillText(badge, node.x, badgeY + (badgeFontSize + 6) / 2, bw);
     }
   }
 
