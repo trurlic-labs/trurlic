@@ -2112,7 +2112,7 @@ dependencies = [
  "fs2",
  "notify",
  "opener",
- "rand 0.8.6",
+ "rand 0.9.4",
  "rayon",
  "reqwest",
  "rust-embed",
