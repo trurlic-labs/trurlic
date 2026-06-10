@@ -120,6 +120,7 @@ pub(crate) async fn start(
         ))
     })?;
     let local_addr = listener.local_addr().map_err(crate::Error::Io)?;
+    listener.set_nonblocking(true).map_err(crate::Error::Io)?;
     let listener = tokio::net::TcpListener::from_std(listener).map_err(crate::Error::Io)?;
 
     // Build CSP with the actual bound port — no wildcard.
