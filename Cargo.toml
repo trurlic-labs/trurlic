@@ -58,7 +58,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "net", "signal", "sync"] }
 
 # HTTP server for map (WebSocket via `ws` feature)
-axum = { version = "0.7", features = ["ws"] }
+axum = { version = "0.8", features = ["ws"] }
 
 # HTTP middleware: security headers
 tower-http = { version = "0.5", features = ["cors", "set-header"] }
