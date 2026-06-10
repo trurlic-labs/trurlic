@@ -61,7 +61,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", 
 axum = { version = "0.7", features = ["ws"] }
 
 # HTTP middleware: security headers
-tower-http = { version = "0.5", features = ["cors", "set-header"] }
+tower-http = { version = "0.6", features = ["cors", "set-header"] }
 
 # Embed frontend assets in binary (map)
 rust-embed = "8"
