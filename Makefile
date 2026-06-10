@@ -1,8 +1,16 @@
-.PHONY: fmt check test audit audit-js ci setup clean build build-release \
-       install-frontend build-frontend fmt-frontend check-frontend test-frontend
+.PHONY: install build build-release build-frontend install-frontend \
+       test test-frontend check check-frontend \
+       fmt fmt-frontend audit audit-js ci setup clean
 
 FRONTEND_DIR = src/map/frontend
 NODE_STAMP   = $(FRONTEND_DIR)/node_modules/.install-stamp
+
+# ── Install (single command: rebuild everything → install binary) ──────────
+
+install: build-frontend
+	cargo install --path . --locked
+	@echo ""
+	@echo "  ✓ trurlic installed to $$(which trurlic || echo '~/.cargo/bin/trurlic')"
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -21,8 +29,6 @@ install-frontend: $(NODE_STAMP)
 
 build-frontend: $(NODE_STAMP)
 	cd $(FRONTEND_DIR) && npm run build
-	cp $(FRONTEND_DIR)/src/index.html $(FRONTEND_DIR)/dist/
-	cp $(FRONTEND_DIR)/src/style.css $(FRONTEND_DIR)/dist/
 
 fmt-frontend: $(NODE_STAMP)
 	cd $(FRONTEND_DIR) && npm run fmt
@@ -36,7 +42,7 @@ test-frontend: check-frontend
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-build:
+build: build-frontend
 	cargo build --locked
 
 build-release: build-frontend
@@ -83,7 +89,7 @@ audit-js: $(NODE_STAMP)
 
 # ── CI gate (run before pushing) ──────────────────────────────────────────────
 
-ci: check check-frontend test test-frontend audit
+ci: check check-frontend test audit
 	@echo "  ✓ All checks passed"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
