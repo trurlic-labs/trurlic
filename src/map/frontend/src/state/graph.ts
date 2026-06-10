@@ -126,14 +126,12 @@ export class Graph {
     this.nodes.delete(name);
     this.decisions.delete(name);
     this.byComponent.delete(name);
-    // Also remove decisions that belong to this component.
+    // Remove decisions that belong to this component from the global index.
     for (const [dName, d] of this.decisions) {
       if (d.component === name) {
         this.decisions.delete(dName);
       }
     }
-    // Rebuild the component index for affected entries.
-    this.byComponent.delete(name);
     // Remove edges involving this node.
     this.edges = this.edges.filter((e) => e.from !== name && e.to !== name);
     this.rebuildQuadtree();

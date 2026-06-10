@@ -161,12 +161,12 @@ export class Quadtree {
   }
 
   /** Return names of all nodes whose bounds intersect the viewport. */
-  queryViewport(viewport: AABB): string[] {
-    if (this.root === null) return [];
+  queryViewport(viewport: AABB): Set<string> {
+    if (this.root === null) return new Set();
     const results: string[] = [];
     this.root.query(viewport, results);
     // Deduplicate — a node near a cell boundary may appear in multiple cells.
-    return [...new Set(results)];
+    return new Set(results);
   }
 
   /** Return the name of the node at world-space point (wx, wy), or null. */

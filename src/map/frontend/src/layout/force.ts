@@ -9,101 +9,109 @@ import type { RenderNode, RenderEdge } from '../types';
  *   3. Gravity    — gentle pull toward the origin.
  *   4. Collision  — AABB overlap resolution (the key to no-overlap).
  *
- * Collision uses the actual rendered node dimensions (w × h), not a
- * fixed radius, so LOD-expanded cards are accounted for.
+ * Force accumulators use parallel arrays indexed by node position for
+ * O(1) access in the O(n²) inner loops, avoiding Map overhead.
  */
 export class ForceLayout {
-  /** Coulomb repulsion strength. Tuned for 5–50 node graphs. */
-  private repulsion = 18_000;
-  /** Hooke spring constant. */
-  private springK = 0.004;
-  /** Natural spring length (px). */
-  private springLen = 400;
-  /** Gravity strength (pull toward origin). */
-  private gravity = 0.008;
-  /** Velocity damping per tick. */
-  private damping = 0.88;
-  /** Padding between node AABBs during collision resolution (px). */
-  private collisionPad = 24;
+  private readonly repulsion = 18_000;
+  private readonly springK = 0.004;
+  private readonly springLen = 400;
+  private readonly gravity = 0.008;
+  private readonly damping = 0.88;
+  private readonly collisionPad = 24;
 
   private vx = new Map<string, number>();
   private vy = new Map<string, number>();
 
   run(nodes: Map<string, RenderNode>, edges: readonly RenderEdge[], iterations: number): void {
-    // Ensure velocity maps cover all current nodes.
+    // Prune stale velocity entries for removed nodes.
+    for (const name of this.vx.keys()) {
+      if (!nodes.has(name)) {
+        this.vx.delete(name);
+        this.vy.delete(name);
+      }
+    }
+    // Initialize velocity for new nodes.
     for (const name of nodes.keys()) {
       if (!this.vx.has(name)) {
         this.vx.set(name, 0);
         this.vy.set(name, 0);
       }
     }
+
+    // Hoist the values array — reused across all iterations.
+    const arr = [...nodes.values()];
+
     for (let i = 0; i < iterations; i++) {
-      this.tick(nodes, edges);
+      this.tick(arr, edges);
     }
   }
 
-  private tick(nodes: Map<string, RenderNode>, edges: readonly RenderEdge[]): void {
-    const fx = new Map<string, number>();
-    const fy = new Map<string, number>();
-    for (const name of nodes.keys()) {
-      fx.set(name, 0);
-      fy.set(name, 0);
-    }
+  private tick(arr: RenderNode[], edges: readonly RenderEdge[]): void {
+    const n = arr.length;
 
-    const arr = [...nodes.values()];
+    // Indexed parallel arrays for force accumulation — avoids Map
+    // lookups in the O(n²) repulsion loop.
+    const fxArr = new Float64Array(n);
+    const fyArr = new Float64Array(n);
 
     // ── 1. Repulsion ────────────────────────────────────────────────
-    for (let i = 0; i < arr.length; i++) {
-      for (let j = i + 1; j < arr.length; j++) {
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
         const a = arr[i];
         const b = arr[j];
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const ddx = b.x - a.x;
+        const ddy = b.y - a.y;
+        const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
         const force = this.repulsion / (dist * dist);
-        dx = (dx / dist) * force;
-        dy = (dy / dist) * force;
-        fx.set(a.name, (fx.get(a.name) ?? 0) - dx);
-        fy.set(a.name, (fy.get(a.name) ?? 0) - dy);
-        fx.set(b.name, (fx.get(b.name) ?? 0) + dx);
-        fy.set(b.name, (fy.get(b.name) ?? 0) + dy);
+        const fx = (ddx / dist) * force;
+        const fy = (ddy / dist) * force;
+        fxArr[i] -= fx;
+        fyArr[i] -= fy;
+        fxArr[j] += fx;
+        fyArr[j] += fy;
       }
     }
 
     // ── 2. Springs ──────────────────────────────────────────────────
+    // Build a name→index lookup for edge endpoints.
+    const idx = new Map<string, number>();
+    for (let i = 0; i < n; i++) idx.set(arr[i].name, i);
+
     for (const e of edges) {
-      const a = nodes.get(e.from);
-      const b = nodes.get(e.to);
-      if (!a || !b) continue;
-      let dx = b.x - a.x;
-      let dy = b.y - a.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ai = idx.get(e.from);
+      const bi = idx.get(e.to);
+      if (ai === undefined || bi === undefined) continue;
+      const a = arr[ai];
+      const b = arr[bi];
+      const ddx = b.x - a.x;
+      const ddy = b.y - a.y;
+      const dist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
       const force = this.springK * (dist - this.springLen);
-      dx = (dx / dist) * force;
-      dy = (dy / dist) * force;
-      fx.set(a.name, (fx.get(a.name) ?? 0) + dx);
-      fy.set(a.name, (fy.get(a.name) ?? 0) + dy);
-      fx.set(b.name, (fx.get(b.name) ?? 0) - dx);
-      fy.set(b.name, (fy.get(b.name) ?? 0) - dy);
+      const fx = (ddx / dist) * force;
+      const fy = (ddy / dist) * force;
+      fxArr[ai] += fx;
+      fyArr[ai] += fy;
+      fxArr[bi] -= fx;
+      fyArr[bi] -= fy;
     }
 
     // ── 3. Gravity ──────────────────────────────────────────────────
-    for (const n of arr) {
-      fx.set(n.name, (fx.get(n.name) ?? 0) - n.x * this.gravity);
-      fy.set(n.name, (fy.get(n.name) ?? 0) - n.y * this.gravity);
+    for (let i = 0; i < n; i++) {
+      fxArr[i] -= arr[i].x * this.gravity;
+      fyArr[i] -= arr[i].y * this.gravity;
     }
 
     // ── Apply forces ────────────────────────────────────────────────
-    for (const n of arr) {
-      if (n.pinned) continue;
-      let nvx = (this.vx.get(n.name) ?? 0) + (fx.get(n.name) ?? 0);
-      let nvy = (this.vy.get(n.name) ?? 0) + (fy.get(n.name) ?? 0);
-      nvx *= this.damping;
-      nvy *= this.damping;
-      this.vx.set(n.name, nvx);
-      this.vy.set(n.name, nvy);
-      n.x += nvx;
-      n.y += nvy;
+    for (let i = 0; i < n; i++) {
+      const node = arr[i];
+      if (node.pinned) continue;
+      let nvx = ((this.vx.get(node.name) ?? 0) + fxArr[i]) * this.damping;
+      let nvy = ((this.vy.get(node.name) ?? 0) + fyArr[i]) * this.damping;
+      this.vx.set(node.name, nvx);
+      this.vy.set(node.name, nvy);
+      node.x += nvx;
+      node.y += nvy;
     }
 
     // ── 4. Collision separation ──────────────────────────────────────
@@ -117,42 +125,49 @@ export class ForceLayout {
    */
   private separateOverlaps(nodes: RenderNode[]): void {
     const pad = this.collisionPad;
+    const len = nodes.length;
 
     for (let pass = 0; pass < 2; pass++) {
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
+      for (let i = 0; i < len; i++) {
+        for (let j = i + 1; j < len; j++) {
           const a = nodes[i];
           const b = nodes[j];
 
-          // Half-extents including padding.
-          const ahw = a.w / 2 + pad;
-          const ahh = a.h / 2 + pad;
-          const bhw = b.w / 2 + pad;
-          const bhh = b.h / 2 + pad;
-
           const dx = b.x - a.x;
           const dy = b.y - a.y;
-          const overlapX = ahw + bhw - Math.abs(dx);
-          const overlapY = ahh + bhh - Math.abs(dy);
+          const overlapX = a.w / 2 + b.w / 2 + pad - Math.abs(dx);
+          const overlapY = a.h / 2 + b.h / 2 + pad - Math.abs(dy);
 
           if (overlapX <= 0 || overlapY <= 0) continue;
 
           // Push along the axis with less overlap (more stable).
+          // When one node is pinned, the other takes the full shift.
+          const aPinned = a.pinned;
+          const bPinned = b.pinned;
+          if (aPinned && bPinned) continue;
+
           if (overlapX < overlapY) {
-            const shift = overlapX / 2;
             const sign = dx >= 0 ? 1 : -1;
-            if (!a.pinned) a.x -= sign * shift;
-            if (!b.pinned) b.x += sign * shift;
-            // If one is pinned the other takes the full shift.
-            if (a.pinned) b.x += sign * shift;
-            if (b.pinned) a.x -= sign * shift;
+            if (aPinned) {
+              b.x += sign * overlapX;
+            } else if (bPinned) {
+              a.x -= sign * overlapX;
+            } else {
+              const half = overlapX / 2;
+              a.x -= sign * half;
+              b.x += sign * half;
+            }
           } else {
-            const shift = overlapY / 2;
             const sign = dy >= 0 ? 1 : -1;
-            if (!a.pinned) a.y -= sign * shift;
-            if (!b.pinned) b.y += sign * shift;
-            if (a.pinned) b.y += sign * shift;
-            if (b.pinned) a.y -= sign * shift;
+            if (aPinned) {
+              b.y += sign * overlapY;
+            } else if (bPinned) {
+              a.y -= sign * overlapY;
+            } else {
+              const half = overlapY / 2;
+              a.y -= sign * half;
+              b.y += sign * half;
+            }
           }
         }
       }

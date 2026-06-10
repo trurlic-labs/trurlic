@@ -138,7 +138,7 @@ class App {
       hh: vp.h / 2,
     };
     const visible = this.graph.quadtree.queryViewport(vpAABB);
-    this.visibleCount = new Set(visible).size;
+    this.visibleCount = visible.size;
     this.lod = computeLOD(this.visibleCount, vp.w * vp.h);
   }
 

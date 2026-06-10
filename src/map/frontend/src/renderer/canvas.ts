@@ -9,10 +9,25 @@ import type { HoverRenderState } from '../app/hover';
 
 // ── Per-frame color snapshot ──────────────────────────────────────────────
 
+/** Cached snapshot — only refreshed when the color scheme changes. */
+let cachedColors: ColorSnapshot | null = null;
+
+function invalidateColors(): void {
+  cachedColors = null;
+}
+
+// Listen for system theme changes.
+if (typeof matchMedia !== 'undefined') {
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', invalidateColors);
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', invalidateColors);
+  matchMedia('(prefers-contrast: more)').addEventListener('change', invalidateColors);
+}
+
 function snapshotColors(): ColorSnapshot {
+  if (cachedColors !== null) return cachedColors;
   const s = getComputedStyle(document.documentElement);
   const v = (prop: string, fb: string) => s.getPropertyValue(prop).trim() || fb;
-  return {
+  cachedColors = {
     bg: v('--bg', '#0f1117'),
     surface: v('--surface', '#1a1d27'),
     surfaceHi: v('--surface-hi', '#252836'),
@@ -32,6 +47,7 @@ function snapshotColors(): ColorSnapshot {
     gridDot: v('--grid-dot', '#1e2130'),
     shadow: v('--shadow', 'rgba(0,0,0,0.35)'),
   };
+  return cachedColors;
 }
 
 // ── Decision filtering ─────────────────────────────────────────────────────
@@ -67,6 +83,9 @@ const HULL_EXPAND = 30;
 
 /** Pattern hull corner rounding radius (world units). */
 const HULL_RADIUS = 12;
+
+/** Node card corner radius (canvas units, scaled by 1/zoom in world space). */
+const NODE_RADIUS = 8;
 
 // ── Renderer ───────────────────────────────────────────────────────────────
 
@@ -136,7 +155,7 @@ export class Renderer {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = c.bg;
-    ctx.fillRect(0, 0, cam.screenW * dpr, cam.screenH * dpr);
+    ctx.fillRect(0, 0, cam.screenW, cam.screenH);
 
     const vp = cam.viewport();
     const vpAABB: AABB = {
@@ -151,7 +170,7 @@ export class Renderer {
       this.drawGrid(vp, c);
     }
 
-    const visibleNames = new Set(graph.quadtree.queryViewport(vpAABB));
+    const visibleNames = graph.quadtree.queryViewport(vpAABB);
 
     ctx.save();
     ctx.translate(cam.screenW / 2, cam.screenH / 2);
@@ -777,13 +796,17 @@ export class Renderer {
     const startY = Math.floor(vp.y / spacing) * spacing;
     const endX = vp.x + vp.w;
     const endY = vp.y + vp.h;
-    const dotSize = 1.2 / cam.zoom;
+    const halfDot = 0.6 / cam.zoom;
+    const dotSize = halfDot * 2;
 
+    // Batch all dots into a single path — one fill() call.
+    ctx.beginPath();
     for (let x = startX; x <= endX; x += spacing) {
       for (let y = startY; y <= endY; y += spacing) {
-        ctx.fillRect(x - dotSize / 2, y - dotSize / 2, dotSize, dotSize);
+        ctx.rect(x - halfDot, y - halfDot, dotSize, dotSize);
       }
     }
+    ctx.fill();
 
     ctx.globalAlpha = 1;
     ctx.restore();
@@ -797,7 +820,7 @@ export class Renderer {
     const h = overrideH ?? node.h;
     const offset = 3 / cam.zoom;
     ctx.fillStyle = c.shadow;
-    this.roundRect(node.x - node.w / 2 + offset, node.y - h / 2 + offset, node.w, h, 8);
+    this.roundRect(node.x - node.w / 2 + offset, node.y - h / 2 + offset, node.w, h, NODE_RADIUS);
     ctx.fill();
   }
 

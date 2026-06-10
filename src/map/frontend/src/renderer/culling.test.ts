@@ -12,7 +12,7 @@ describe('Quadtree', () => {
   it('returns nothing from an empty tree', () => {
     const qt = new Quadtree();
     qt.build(new Map());
-    expect(qt.queryViewport({ cx: 0, cy: 0, hw: 1000, hh: 1000 })).toEqual([]);
+    expect(qt.queryViewport({ cx: 0, cy: 0, hw: 1000, hh: 1000 })).toEqual(new Set());
   });
 
   it('returns a node inside the viewport', () => {
@@ -62,10 +62,8 @@ describe('Quadtree', () => {
 
     // Query the entire space.
     const results = qt.queryViewport({ cx: 500, cy: 500, hw: 2000, hh: 2000 });
-    // Every name must appear exactly once.
-    const unique = new Set(results);
-    expect(unique.size).toBe(results.length);
-    expect(unique.size).toBe(20);
+    // Every name must appear exactly once — Set handles dedup.
+    expect(results.size).toBe(20);
   });
 
   // ── Hit detection ─────────────────────────────────────────────────
@@ -124,8 +122,8 @@ describe('Quadtree', () => {
     // Viewport covering roughly a quarter of the grid.
     const results = qt.queryViewport({ cx: 2500, cy: 1000, hw: 2500, hh: 1000 });
     // Should return a subset, not all 1000.
-    expect(results.length).toBeGreaterThan(0);
-    expect(results.length).toBeLessThan(1000);
+    expect(results.size).toBeGreaterThan(0);
+    expect(results.size).toBeLessThan(1000);
   });
 
   // ── Rebuild ───────────────────────────────────────────────────────
