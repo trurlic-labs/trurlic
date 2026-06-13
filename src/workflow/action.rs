@@ -122,6 +122,15 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>) -> V
              intentional.",
         ),
 
+        Step::UserExplains => step_prompt_action(
+            component,
+            "user_explains",
+            task,
+            "Ask the user to describe this component's architecture from \
+             memory. Do not show decisions or code first. Compare their \
+             answer against recorded decisions afterward.",
+        ),
+
         // Bootstrap steps are handled in advance_project, never reached
         // from the per-component path. Present for match exhaustiveness.
         Step::ScanProject | Step::ProjectRules => {

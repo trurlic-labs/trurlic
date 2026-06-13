@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::store::graph::InMemoryGraph;
-use crate::store::schema::EdgeKind;
+use crate::store::schema::{Attribution, EdgeKind};
 use crate::store::{DecisionFile, PatternFile, ProjectState};
 use crate::workflow::concerns;
 
@@ -264,9 +264,10 @@ fn build_brief(p: &BriefParams<'_>) -> String {
         brief.push_str("- No decisions recorded yet.\n");
     } else {
         for (_, d) in p.component_decisions {
+            let suffix = attribution_suffix(d.decision.attribution);
             brief.push_str(&format!(
-                "- {} ({})\n",
-                d.decision.choice, d.decision.reason
+                "- {} ({}){}\n",
+                d.decision.choice, d.decision.reason, suffix
             ));
         }
     }
@@ -522,6 +523,7 @@ fn format_decisions(decisions: &[(&Arc<str>, &DecisionFile)]) -> Vec<Value> {
                 "name": name.as_ref(),
                 "choice": d.decision.choice,
                 "reason": d.decision.reason,
+                "attribution": attribution_str(d.decision.attribution),
             })
         })
         .collect()
@@ -599,11 +601,26 @@ fn build_brief_compact(
         brief.push_str("- (none)\n");
     } else {
         for (_, d) in component_decisions {
-            brief.push_str(&format!("- {}\n", d.decision.choice));
+            let suffix = attribution_suffix(d.decision.attribution);
+            brief.push_str(&format!("- {}{}\n", d.decision.choice, suffix));
         }
     }
 
     brief
+}
+
+fn attribution_str(attr: Attribution) -> &'static str {
+    match attr {
+        Attribution::User => "user",
+        Attribution::Agent => "agent",
+    }
+}
+
+fn attribution_suffix(attr: Attribution) -> &'static str {
+    match attr {
+        Attribution::User => "",
+        Attribution::Agent => " (agent \u{2014} unconfirmed)",
+    }
 }
 
 fn extract_words(text: &str) -> Vec<String> {
@@ -1326,5 +1343,64 @@ mod tests {
         let result = check_pattern(&state, "WebSocket notification streaming");
         assert_eq!(result["status"], "not_covered");
         assert!(result["suggested_component"].is_null());
+    }
+
+    // ── attribution in context ────────────────────────────────────────
+
+    #[test]
+    fn context_brief_flags_agent_attribution() {
+        use chrono::{TimeZone, Utc};
+
+        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap();
+
+        let mut state = test_state();
+        state.decisions.insert(
+            "agent-dec".into(),
+            Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "auth".into(),
+                    choice: "Agent suggested approach".into(),
+                    reason: "Automated".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::Agent,
+                    created: ts,
+                },
+            }),
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "agent-dec".into(),
+            kind: NodeKind::Decision,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "agent-dec".into(),
+            to: "auth".into(),
+            kind: EdgeKind::BelongsTo,
+        });
+        state.rebuild_graph();
+
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+        let brief = result["brief"].as_str().unwrap();
+
+        assert!(
+            brief.contains("unconfirmed"),
+            "agent decision must be flagged as unconfirmed in brief: {brief}"
+        );
+        // User decision must NOT have the unconfirmed marker.
+        let user_line = brief.lines().find(|l| l.contains("JWT with DPoP")).unwrap();
+        assert!(
+            !user_line.contains("unconfirmed"),
+            "user decision must NOT be flagged: {user_line}"
+        );
+
+        // JSON decisions include attribution field.
+        let decisions = result["decisions"].as_array().unwrap();
+        let agent_dec = decisions.iter().find(|d| d["name"] == "agent-dec").unwrap();
+        assert_eq!(agent_dec["attribution"], "agent");
+
+        let user_dec = decisions.iter().find(|d| d["name"] == "use-jwt").unwrap();
+        assert_eq!(user_dec["attribution"], "user");
     }
 }

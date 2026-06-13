@@ -113,13 +113,15 @@ pub fn build_step_prompt(
         "scan_project" => out.push_str(&step_scan_project()),
         "extract_decisions" => out.push_str(&step_extract_decisions(component)),
         "project_rules" => out.push_str(&step_project_rules()),
+        "user_explains" => out.push_str(&step_user_explains()),
         "ready" => out.push_str(&step_ready(component)),
         _ => {
             return Err(format!(
                 "unknown step `{step}` — expected: register, define_scope, \
              analyze_code, cover_concerns, walk_decisions, verify_constraints, \
              impact_check, pattern_detection, summary_gate, drift_check, \
-             coverage_audit, scan_project, extract_decisions, project_rules, ready"
+             coverage_audit, scan_project, extract_decisions, project_rules, \
+             user_explains, ready"
             ));
         }
     }
@@ -524,6 +526,19 @@ fn step_coverage_audit(covered: &[&str], uncovered: &[&str]) -> String {
         );
     }
     out
+}
+
+fn step_user_explains() -> String {
+    "STEP: User Explains\n\n\
+     Ask the user: \"From memory, describe this component's architecture \
+     — its responsibilities, key decisions, and how it connects to the \
+     rest of the system.\"\n\n\
+     Do NOT show them any decisions or code first. The user must recall \
+     from memory without looking at code or documentation.\n\n\
+     After they respond, compare their description against the recorded \
+     decisions. Note what they got right, what they missed, and any \
+     misconceptions. Use this as the foundation for the learning session.\n"
+        .into()
 }
 
 fn step_ready(component: &str) -> String {
@@ -1089,5 +1104,35 @@ mod tests {
         assert!(result.instructions.contains("cross-cutting"));
         assert!(result.instructions.contains("record_decision"));
         assert!(result.instructions.contains("project"));
+    }
+
+    // ── user_explains step ───────────────────────────────────────────
+
+    #[test]
+    fn build_step_prompt_accepts_user_explains() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "user_explains", None).unwrap();
+        assert!(result.instructions.contains("from memory"));
+    }
+
+    #[test]
+    fn step_as_str_round_trips_user_explains() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "user_explains", None);
+        assert!(
+            result.is_ok(),
+            "user_explains must be accepted: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn user_explains_includes_interaction_protocol() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "user_explains", None).unwrap();
+        assert!(
+            result.instructions.contains("ONE topic per message"),
+            "user_explains must include interaction protocol"
+        );
     }
 }

@@ -169,6 +169,12 @@ pub enum Step {
     /// Postcondition: project has ≥1 decision.
     ProjectRules,
 
+    /// User describes the component's architecture from memory before the
+    /// agent reads code. Learn-only. Postcondition: step evidence contains
+    /// the user's description.
+    #[allow(dead_code)]
+    UserExplains,
+
     /// All steps complete. Ready for implementation.
     Ready,
 }
@@ -190,7 +196,31 @@ impl Step {
             Self::ScanProject => "scan_project",
             Self::ExtractDecisions { .. } => "extract_decisions",
             Self::ProjectRules => "project_rules",
+            Self::UserExplains => "user_explains",
             Self::Ready => "ready",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub const fn is_gated(&self) -> bool {
+        match self {
+            Self::Register
+            | Self::ScanProject
+            | Self::ExtractDecisions { .. }
+            | Self::ProjectRules
+            | Self::Ready => false,
+
+            Self::DefineScope
+            | Self::AnalyzeCode
+            | Self::CoverConcerns { .. }
+            | Self::WalkDecisions
+            | Self::VerifyConstraints
+            | Self::ImpactCheck
+            | Self::PatternDetection
+            | Self::SummaryGate
+            | Self::DriftCheck
+            | Self::CoverageAudit
+            | Self::UserExplains => true,
         }
     }
 }
@@ -531,6 +561,7 @@ mod integration_tests {
             "scan_project",
             "extract_decisions",
             "project_rules",
+            "user_explains",
             "ready",
         ];
 
@@ -566,6 +597,7 @@ mod integration_tests {
                 component: "store".into(),
             },
             Step::ProjectRules,
+            Step::UserExplains,
             Step::Ready,
         ];
 
@@ -584,5 +616,56 @@ mod integration_tests {
                 result.err()
             );
         }
+    }
+
+    // ── is_gated classification ──────────────────────────────────────
+
+    #[test]
+    fn every_step_variant_has_gated_classification() {
+        let variants: Vec<Step> = vec![
+            Step::Register,
+            Step::DefineScope,
+            Step::AnalyzeCode,
+            Step::CoverConcerns {
+                focus: vec!["Security".into()],
+            },
+            Step::WalkDecisions,
+            Step::VerifyConstraints,
+            Step::ImpactCheck,
+            Step::PatternDetection,
+            Step::SummaryGate,
+            Step::DriftCheck,
+            Step::CoverageAudit,
+            Step::ScanProject,
+            Step::ExtractDecisions {
+                component: "store".into(),
+            },
+            Step::ProjectRules,
+            Step::UserExplains,
+            Step::Ready,
+        ];
+
+        for variant in &variants {
+            let _ = variant.is_gated();
+        }
+    }
+
+    #[test]
+    fn user_explains_is_gated() {
+        assert!(Step::UserExplains.is_gated());
+    }
+
+    #[test]
+    fn ungated_steps_classified_correctly() {
+        assert!(!Step::Register.is_gated());
+        assert!(!Step::ScanProject.is_gated());
+        assert!(
+            !Step::ExtractDecisions {
+                component: "x".into()
+            }
+            .is_gated()
+        );
+        assert!(!Step::ProjectRules.is_gated());
+        assert!(!Step::Ready.is_gated());
     }
 }
