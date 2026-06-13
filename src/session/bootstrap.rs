@@ -9,7 +9,7 @@
 //! Unlike the design session driver, bootstrap does not persist a session
 //! file — the graph IS the session state.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 
@@ -34,7 +34,7 @@ pub(crate) async fn run(
     project_root: &Path,
     state: &mut store::ProjectState,
 ) -> Result<()> {
-    let mut completed: HashSet<String> = HashSet::new();
+    let mut completed: BTreeSet<String> = BTreeSet::new();
 
     loop {
         let completed_refs: Vec<&str> = completed.iter().map(String::as_str).collect();
@@ -83,7 +83,7 @@ pub(crate) async fn run_component(
     state: &mut store::ProjectState,
     component: &str,
 ) -> Result<()> {
-    let mut completed: HashSet<String> = HashSet::new();
+    let mut completed: BTreeSet<String> = BTreeSet::new();
 
     loop {
         let completed_refs: Vec<&str> = completed.iter().map(String::as_str).collect();
