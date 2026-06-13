@@ -22,14 +22,6 @@ use super::action::{
 };
 use super::concerns;
 use super::{CONCERN_FOCUS_LIMIT, STALENESS_THRESHOLD_DAYS, Step, TaskType};
-// ── Observability ─────────────────────────────────────────────────────────
-
-/// Runtime debug flag. Checked once on first call (zero-cost after init).
-/// Enable via `TRURLIC_DEBUG=1` environment variable.
-fn is_debug() -> bool {
-    static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *DEBUG.get_or_init(|| std::env::var_os("TRURLIC_DEBUG").is_some())
-}
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -129,19 +121,6 @@ pub fn advance(
         task,
         completed_steps,
     );
-
-    if is_debug() {
-        eprintln!(
-            "trurlic: advance {component} → {} (type={}, decisions={}, coverage={}/{}, stale={}, patterns={})",
-            step.as_str(),
-            task_type.as_str(),
-            decisions.len(),
-            covered.len(),
-            covered.len() + uncovered.len(),
-            stale.len(),
-            patterns.len(),
-        );
-    }
 
     let ready = matches!(step, Step::Ready);
     let assessment = build_assessment(&decisions, &covered, &uncovered, &stale, &patterns);
@@ -644,16 +623,6 @@ fn advance_project(
         }
         TaskType::Bootstrap => deduce_bootstrap_project(state, task, completed_steps),
     };
-
-    if is_debug() {
-        eprintln!(
-            "trurlic: project → {} (type={}, decisions={}, patterns={})",
-            step.as_str(),
-            task_type.as_str(),
-            decisions.len(),
-            state.patterns.len(),
-        );
-    }
 
     build_response("project", task_type, &step, ready, assessment, action)
 }

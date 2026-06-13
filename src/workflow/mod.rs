@@ -72,7 +72,7 @@ pub enum TaskType {
 }
 
 impl TaskType {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::NewComponent => "new_component",
             Self::Feature => "feature",
@@ -194,12 +194,6 @@ impl Step {
         }
     }
 
-    /// Whether this step represents a terminal state (no more workflow
-    /// actions required).
-    #[allow(dead_code)]
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Ready)
-    }
 }
 
 // ── Integration tests ─────────────────────────────────────────────────────
