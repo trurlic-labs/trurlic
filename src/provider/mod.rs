@@ -92,10 +92,20 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
             openai::ApiVariant::OpenRouter,
         )),
         Provider::Custom => {
-            drop((key, model, base_url));
-            return Err(Error::ProviderConfig(
-                "custom provider is not yet implemented".into(),
-            ));
+            let url = base_url.ok_or_else(|| {
+                Error::ProviderConfig(
+                    "custom provider requires a base URL — set CUSTOM_BASE_URL \
+                     or add custom_base_url to ~/.config/trurlic/config.toml"
+                        .into(),
+                )
+            })?;
+            Box::new(openai::OpenAiClient::new(
+                client,
+                key,
+                model,
+                &url,
+                openai::ApiVariant::Custom,
+            ))
         }
         Provider::Ollama => {
             drop((key, model, base_url));
@@ -154,17 +164,29 @@ mod tests {
     }
 
     #[test]
-    fn create_provider_custom_not_yet_implemented() {
+    fn create_provider_custom() {
+        let config = ProviderConfig {
+            provider: Provider::Custom,
+            key: ApiKey::new("sk-test".into()),
+            model: "llama-3.3-70b".into(),
+            base_url: Some("http://localhost:8080/v1".into()),
+        };
+        let client = create_provider(config).unwrap();
+        assert_eq!(client.provider_name(), "openai-compatible/custom");
+    }
+
+    #[test]
+    fn create_provider_custom_missing_base_url() {
         let config = ProviderConfig {
             provider: Provider::Custom,
             key: ApiKey::new("sk-test".into()),
             model: "some-model".into(),
-            base_url: Some("http://localhost:8080/v1".into()),
+            base_url: None,
         };
         match create_provider(config) {
             Err(Error::ProviderConfig(msg)) => {
-                assert!(msg.contains("custom"), "{msg}");
-                assert!(msg.contains("not yet implemented"), "{msg}");
+                assert!(msg.contains("base URL"), "{msg}");
+                assert!(msg.contains("CUSTOM_BASE_URL"), "{msg}");
             }
             Err(other) => panic!("expected ProviderConfig, got: {other}"),
             Ok(_) => panic!("expected error, got Ok"),

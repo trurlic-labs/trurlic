@@ -23,6 +23,7 @@ struct OpenAiRequest<'a> {
 pub(super) enum ApiVariant {
     Standard,
     OpenRouter,
+    Custom,
 }
 
 pub(super) struct OpenAiClient {
@@ -109,6 +110,7 @@ impl LlmProvider for OpenAiClient {
         match self.variant {
             ApiVariant::OpenRouter => "openai-compatible/openrouter",
             ApiVariant::Standard => "openai",
+            ApiVariant::Custom => "openai-compatible/custom",
         }
     }
 
