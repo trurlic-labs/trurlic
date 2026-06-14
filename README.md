@@ -60,6 +60,22 @@ Or with Rust: `cargo install trurlic` (requires Rust 1.88+).
 
 Pre-built binaries for Linux, macOS, and Windows are on the [Releases](https://github.com/trurlic-labs/trurlic/releases) page.
 
+## IDE setup
+
+```bash
+trurlic install --ide cursor         # Cursor
+trurlic install --ide claude-code    # Claude Code
+trurlic install --ide windsurf       # Windsurf
+trurlic install --ide cline          # Cline
+trurlic install --ide copilot        # GitHub Copilot
+trurlic install --ide claude         # Claude Desktop
+trurlic install --ide codex          # Codex CLI (OpenAI)
+trurlic install --ide open-code      # OpenCode
+trurlic install --ide open-claw      # OpenClaw
+trurlic install --ide hermes-agent   # Hermes Agent
+trurlic install --ide antigravity    # Antigravity CLI (Google)
+```
+
 ## Quick start
 
 ```bash
@@ -113,13 +129,15 @@ Bootstrap a single component: `trurlic bootstrap auth`.
 
 ## MCP setup
 
-### Claude Code
+### Automatic (recommended)
 
 ```bash
-claude mcp add trurlic -- trurlic serve
+trurlic install --ide cursor
 ```
 
-### Cursor / Windsurf / other MCP clients
+See [IDE setup](#ide-setup) for all supported IDEs.
+
+### Manual
 
 Add to your MCP configuration:
 
@@ -161,7 +179,7 @@ See [CLAUDE.md](CLAUDE.md) for the full recommended instructions.
 | `get_context` | Architectural brief for a component: decisions, rules, related constraints |
 | `check_pattern` | Check if an approach is already covered by existing decisions |
 | `get_architecture` | Full system overview: components, connections, patterns |
-| `get_design_prompt` | Structured prompt for design conversations |
+| `get_step_prompt` | Structured prompt for a specific workflow step |
 | `add_component` | Add a component to the graph |
 | `add_connection` | Connect two components |
 | `record_decision` | Record a decision with edges, tags, and rejected alternatives |
@@ -169,6 +187,8 @@ See [CLAUDE.md](CLAUDE.md) for the full recommended instructions.
 | `update_decision` | Amend (typo fix) or supersede (substantive change) |
 | `remove_decision` | Remove with cascade analysis |
 | `validate_consistency` | Full graph integrity check |
+
+All tools include [annotations](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so MCP clients can make informed decisions about tool invocation.
 
 ## CLI reference
 
@@ -185,9 +205,10 @@ trurlic decide <component>                    Record a quick decision
       [--supersede <name>] [-a "alt"]
 trurlic design <component>                    Socratic design conversation
       [--continue] [--revisit] [-t <task>]
-      [-p anthropic|openai|openrouter]
+      [-p anthropic|openai|openrouter|gemini|ollama|custom]
       [-m <model>]
 trurlic bootstrap [<component>]               Bootstrap status and agent instructions
+trurlic install --ide <ide>                   Write MCP server config for an IDE
 trurlic serve                                 Start MCP server (stdio)
 trurlic map [--port N] [--no-open] [--detach] Interactive graph in browser
 trurlic status                                Show counts and health
@@ -196,13 +217,16 @@ trurlic check [--rebuild]                     Validate (or rebuild) graph
 
 ## Configuration
 
-API keys for `trurlic design` (environment variables, checked first):
+### Providers
 
-```
-ANTHROPIC_API_KEY
-OPENAI_API_KEY
-OPENROUTER_API_KEY
-```
+| Provider | Flag | Env var | Default model |
+|----------|------|---------|--------------|
+| Anthropic | `-p anthropic` | `ANTHROPIC_API_KEY` | claude-sonnet-4 |
+| OpenAI | `-p openai` | `OPENAI_API_KEY` | gpt-4o |
+| OpenRouter | `-p openrouter` | `OPENROUTER_API_KEY` | anthropic/claude-sonnet-4 |
+| Gemini | `-p gemini` | `GEMINI_API_KEY` | gemini-2.5-flash |
+| Ollama | `-p ollama` | _(none)_ | llama3.1 |
+| Custom | `-p custom` | `CUSTOM_API_KEY` + `CUSTOM_BASE_URL` | _(must specify)_ |
 
 Fallback config file — `~/.config/trurlic/config.toml` (must be `chmod 600`):
 
