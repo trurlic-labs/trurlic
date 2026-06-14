@@ -24,6 +24,7 @@ pub(super) enum ApiVariant {
     Standard,
     OpenRouter,
     Custom,
+    Ollama,
 }
 
 pub(super) struct OpenAiClient {
@@ -82,11 +83,15 @@ impl OpenAiClient {
 
         let url = format!("{}/chat/completions", self.base_url);
 
-        let bearer = Zeroizing::new(format!("Bearer {}", self.key.expose()));
-        let mut req = self
-            .client
-            .post(&url)
-            .header("authorization", bearer.as_str());
+        let mut req = self.client.post(&url);
+
+        match self.variant {
+            ApiVariant::Ollama => {}
+            ApiVariant::Standard | ApiVariant::OpenRouter | ApiVariant::Custom => {
+                let bearer = Zeroizing::new(format!("Bearer {}", self.key.expose()));
+                req = req.header("authorization", bearer.as_str());
+            }
+        }
 
         if self.variant == ApiVariant::OpenRouter {
             req = req
@@ -111,6 +116,7 @@ impl LlmProvider for OpenAiClient {
             ApiVariant::OpenRouter => "openai-compatible/openrouter",
             ApiVariant::Standard => "openai",
             ApiVariant::Custom => "openai-compatible/custom",
+            ApiVariant::Ollama => "ollama",
         }
     }
 

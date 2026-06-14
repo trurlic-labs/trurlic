@@ -108,10 +108,14 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
             ))
         }
         Provider::Ollama => {
-            drop((key, model, base_url));
-            return Err(Error::ProviderConfig(
-                "ollama provider is not yet implemented".into(),
-            ));
+            let url = base_url.unwrap_or_else(|| "http://localhost:11434/v1".into());
+            Box::new(openai::OpenAiClient::new(
+                client,
+                key,
+                model,
+                &url,
+                openai::ApiVariant::Ollama,
+            ))
         }
         Provider::Gemini => {
             drop((key, model, base_url));
@@ -194,21 +198,27 @@ mod tests {
     }
 
     #[test]
-    fn create_provider_ollama_not_yet_implemented() {
+    fn create_provider_ollama() {
         let config = ProviderConfig {
             provider: Provider::Ollama,
             key: ApiKey::new(String::new()),
             model: "llama3.1".into(),
-            base_url: Some("http://localhost:11434/v1".into()),
+            base_url: None,
         };
-        match create_provider(config) {
-            Err(Error::ProviderConfig(msg)) => {
-                assert!(msg.contains("ollama"), "{msg}");
-                assert!(msg.contains("not yet implemented"), "{msg}");
-            }
-            Err(other) => panic!("expected ProviderConfig, got: {other}"),
-            Ok(_) => panic!("expected error, got Ok"),
-        }
+        let client = create_provider(config).unwrap();
+        assert_eq!(client.provider_name(), "ollama");
+    }
+
+    #[test]
+    fn create_provider_ollama_custom_base_url() {
+        let config = ProviderConfig {
+            provider: Provider::Ollama,
+            key: ApiKey::new(String::new()),
+            model: "llama3.1".into(),
+            base_url: Some("http://myhost:9999/v1".into()),
+        };
+        let client = create_provider(config).unwrap();
+        assert_eq!(client.provider_name(), "ollama");
     }
 
     #[test]
