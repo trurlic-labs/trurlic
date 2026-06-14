@@ -3,6 +3,7 @@ use std::pin::Pin;
 
 use reqwest::Client;
 use serde::Serialize;
+use zeroize::Zeroizing;
 
 use crate::Result;
 use crate::config::ApiKey;
@@ -80,10 +81,11 @@ impl OpenAiClient {
 
         let url = format!("{}/chat/completions", self.base_url);
 
+        let bearer = Zeroizing::new(format!("Bearer {}", self.key.expose()));
         let mut req = self
             .client
             .post(&url)
-            .header("authorization", format!("Bearer {}", self.key.expose()));
+            .header("authorization", bearer.as_str());
 
         if self.variant == ApiVariant::OpenRouter {
             req = req
