@@ -95,8 +95,8 @@ impl InMemoryGraph {
             );
         }
 
-        let mut forward: HashMap<Arc<str>, Vec<Edge>> = HashMap::new();
-        let mut reverse: HashMap<Arc<str>, Vec<Edge>> = HashMap::new();
+        let mut forward: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.edges.len());
+        let mut reverse: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.edges.len());
         for edge in &index.edges {
             let from = intern(&edge.from);
             let to = intern(&edge.to);

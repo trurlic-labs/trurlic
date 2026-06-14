@@ -93,7 +93,8 @@ pub(crate) fn get_context(
                 uncovered_concerns: &uncovered_concerns,
             });
 
-            let mut seen: HashSet<&str> = HashSet::new();
+            let mut seen: HashSet<&str> =
+                HashSet::with_capacity(component_decisions.len() + related_decisions.len());
             for (name, _) in &component_decisions {
                 seen.insert(name);
             }
@@ -338,14 +339,14 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
         dec: &'a DecisionFile,
     }
 
-    let mut matches: Vec<Match<'_>> = Vec::new();
+    let mut matches: Vec<Match<'_>> = Vec::with_capacity(state.decisions.len());
 
     for (name, dec) in &state.decisions {
-        let haystack = format!(
-            "{} {} {}",
-            dec.decision.choice, dec.decision.reason, dec.decision.component
-        );
-        let decision_words = extract_words(&haystack);
+        let decision_words = extract_words_from(&[
+            &dec.decision.choice,
+            &dec.decision.reason,
+            &dec.decision.component,
+        ]);
 
         let keyword_hits = query_words
             .iter()
@@ -624,6 +625,16 @@ fn attribution_suffix(attr: Attribution) -> &'static str {
 
 fn extract_words(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3)
+        .map(|w| w.to_lowercase())
+        .filter(|w| !is_stop_word(w))
+        .collect()
+}
+
+fn extract_words_from(fields: &[&str]) -> Vec<String> {
+    fields
+        .iter()
+        .flat_map(|f| f.split(|c: char| !c.is_alphanumeric()))
         .filter(|w| w.len() >= 3)
         .map(|w| w.to_lowercase())
         .filter(|w| !is_stop_word(w))

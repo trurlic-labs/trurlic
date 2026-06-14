@@ -561,17 +561,19 @@ fn advance_project(
         "patterns": state.patterns.len(),
     });
 
-    let ready_action = serde_json::json!({
-        "tool": "get_context",
-        "args": { "component": "project", "task": task },
-        "instruction": "Project rules are established. \
-                        Call get_context for the brief.",
-    });
+    let ready_action = || {
+        serde_json::json!({
+            "tool": "get_context",
+            "args": { "component": "project", "task": task },
+            "instruction": "Project rules are established. \
+                            Call get_context for the brief.",
+        })
+    };
 
     let (step, ready, action) = match task_type {
         TaskType::NewComponent | TaskType::Harden => {
             if has_decisions {
-                (Step::Ready, true, ready_action)
+                (Step::Ready, true, ready_action())
             } else {
                 (
                     Step::DefineScope,
@@ -588,7 +590,7 @@ fn advance_project(
         }
         TaskType::Feature | TaskType::Fix => {
             if has_decisions {
-                (Step::Ready, true, ready_action)
+                (Step::Ready, true, ready_action())
             } else {
                 (
                     Step::DefineScope,
@@ -629,7 +631,7 @@ fn advance_project(
                     ),
                 )
             } else {
-                (Step::Ready, true, ready_action)
+                (Step::Ready, true, ready_action())
             }
         }
         TaskType::Review => {
@@ -657,7 +659,7 @@ fn advance_project(
                     ),
                 )
             } else {
-                (Step::Ready, true, ready_action)
+                (Step::Ready, true, ready_action())
             }
         }
         TaskType::Bootstrap => deduce_bootstrap_project(state, task, completed_steps),
