@@ -228,12 +228,12 @@ fn deduce_new_component(
     if !has_scope_decision(decisions) {
         return Step::DefineScope;
     }
-    if uncovered.len() > covered.len() {
+    if uncovered.len() > covered.len() && !completed.contains(&"cover_concerns") {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };
     }
-    if patterns.is_empty() {
+    if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
     if !completed.contains(&"summary_gate") {
@@ -484,8 +484,10 @@ fn deduce_harden(
     if !uncovered.is_empty() && !completed.contains(&"coverage_audit") {
         return Step::CoverageAudit;
     }
-    // CoverConcerns: fill the real gaps.
-    if !uncovered.is_empty() {
+    // CoverConcerns: fill the real gaps. Gated by completed_steps to
+    // prevent infinite loops when recorded decisions don't match concern
+    // keywords (the agent is asked once, then moves on).
+    if !uncovered.is_empty() && !completed.contains(&"cover_concerns") {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };

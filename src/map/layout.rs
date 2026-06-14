@@ -63,7 +63,9 @@ pub(crate) fn save(store_root: &Path, state: &LayoutState) -> Result<(), String>
         fs::create_dir_all(parent).map_err(|e| format!("layout dir: {e}"))?;
     }
     let json = serde_json::to_string_pretty(state).map_err(|e| format!("layout serialize: {e}"))?;
-    fs::write(&path, json).map_err(|e| format!("layout write: {e}"))
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &json).map_err(|e| format!("layout write tmp: {e}"))?;
+    fs::rename(&tmp, &path).map_err(|e| format!("layout rename: {e}"))
 }
 
 #[cfg(test)]

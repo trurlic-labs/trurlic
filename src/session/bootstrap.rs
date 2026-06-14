@@ -22,6 +22,8 @@ use crate::{Error, Result};
 use super::extract;
 use super::files;
 
+const MAX_BOOTSTRAP_ITERATIONS: usize = 200;
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /// Run a full bootstrap session: project-wide.
@@ -37,7 +39,7 @@ pub(crate) async fn run(
 ) -> Result<()> {
     let mut completed: BTreeMap<String, String> = BTreeMap::new();
 
-    loop {
+    for _ in 0..MAX_BOOTSTRAP_ITERATIONS {
         let evidence: BTreeMap<&str, &str> = completed
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
@@ -75,6 +77,9 @@ pub(crate) async fn run(
             completed.insert(step, String::new());
         }
     }
+    Err(Error::Validation(format!(
+        "bootstrap exceeded {MAX_BOOTSTRAP_ITERATIONS} iterations"
+    )))
 }
 
 /// Run a bootstrap session for a single component.
@@ -87,7 +92,7 @@ pub(crate) async fn run_component(
 ) -> Result<()> {
     let mut completed: BTreeMap<String, String> = BTreeMap::new();
 
-    loop {
+    for _ in 0..MAX_BOOTSTRAP_ITERATIONS {
         let evidence: BTreeMap<&str, &str> = completed
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
@@ -118,6 +123,9 @@ pub(crate) async fn run_component(
             completed.insert(step, String::new());
         }
     }
+    Err(Error::Validation(format!(
+        "bootstrap for [{component}] exceeded {MAX_BOOTSTRAP_ITERATIONS} iterations"
+    )))
 }
 
 // ── Step execution ──────────────────────────────────────────────────────────

@@ -180,6 +180,14 @@ pub(crate) async fn put_layout(
             format!("positions exceeds {MAX_LAYOUT_POSITIONS} entry limit"),
         ));
     }
+    for (name, pos) in &body.positions {
+        if !pos.x.is_finite() || !pos.y.is_finite() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                format!("non-finite position for `{name}`"),
+            ));
+        }
+    }
     let mut layout = state.write_layout();
     if body.layout_version != layout.version {
         return Err(api_err(
@@ -197,7 +205,10 @@ pub(crate) async fn put_layout(
 
     let root = state.store.root().to_path_buf();
     if let Err(e) = super::layout::save(&root, &snapshot) {
-        eprintln!("trurlic: layout save failed: {e}");
+        return Err(api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("layout save failed: {e}"),
+        ));
     }
 
     Ok(Json(json!({ "layout_version": snapshot.version })))
@@ -214,7 +225,10 @@ pub(crate) async fn reset_layout(State(state): State<Arc<MapState>>) -> ApiResul
 
     let root = state.store.root().to_path_buf();
     if let Err(e) = super::layout::save(&root, &snapshot) {
-        eprintln!("trurlic: layout save failed: {e}");
+        return Err(api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("layout save failed: {e}"),
+        ));
     }
 
     Ok(Json(json!({ "layout_version": snapshot.version })))

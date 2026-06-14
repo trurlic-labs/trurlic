@@ -42,7 +42,7 @@ pub enum Command {
         component: String,
 
         /// Resume a previously interrupted design session.
-        #[arg(long = "continue")]
+        #[arg(long = "continue", conflicts_with = "revisit")]
         continue_session: bool,
 
         /// Revisit and potentially revise existing decisions.
