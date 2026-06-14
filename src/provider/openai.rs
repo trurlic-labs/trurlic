@@ -83,8 +83,7 @@ impl OpenAiClient {
         let mut req = self
             .client
             .post(&url)
-            .header("authorization", format!("Bearer {}", self.key.expose()))
-            .header("content-type", "application/json");
+            .header("authorization", format!("Bearer {}", self.key.expose()));
 
         if self.variant == ApiVariant::OpenRouter {
             req = req

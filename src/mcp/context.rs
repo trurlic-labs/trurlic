@@ -479,8 +479,7 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
         })
         .collect();
 
-    let project_decisions: Vec<Value> = graph
-        .project_decisions()
+    let project_decisions: Vec<Value> = project_rules
         .iter()
         .map(|(name, d)| {
             serde_json::json!({

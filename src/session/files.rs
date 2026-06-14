@@ -334,7 +334,9 @@ fn is_source_file(name: &str) -> bool {
         Some(e) if e != name => e,
         _ => return false,
     };
-    SOURCE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
+    SOURCE_EXTENSIONS
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(ext))
 }
 
 fn is_config_name(name: &str) -> bool {

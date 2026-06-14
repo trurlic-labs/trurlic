@@ -176,7 +176,8 @@ impl InMemoryGraph {
             .collect();
         nodes.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let mut edges: Vec<EdgeEntry> = Vec::new();
+        let edge_count: usize = self.forward.values().map(Vec::len).sum();
+        let mut edges: Vec<EdgeEntry> = Vec::with_capacity(edge_count);
         for (from, edge_list) in &self.forward {
             for edge in edge_list {
                 edges.push(EdgeEntry {
