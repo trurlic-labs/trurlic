@@ -8,12 +8,14 @@
 //! every time. The function is a pure projection from graph contents to
 //! workflow step.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::Utc;
 use serde_json::Value;
 
 use crate::store::ProjectState;
+use crate::store::limits::MIN_STEP_EVIDENCE_BYTES;
 use crate::store::schema::DecisionFile;
 
 use super::action::{
@@ -22,14 +24,6 @@ use super::action::{
 };
 use super::concerns;
 use super::{CONCERN_FOCUS_LIMIT, STALENESS_THRESHOLD_DAYS, Step, TaskType};
-// ── Observability ─────────────────────────────────────────────────────────
-
-/// Runtime debug flag. Checked once on first call (zero-cost after init).
-/// Enable via `TRURLIC_DEBUG=1` environment variable.
-fn is_debug() -> bool {
-    static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *DEBUG.get_or_init(|| std::env::var_os("TRURLIC_DEBUG").is_some())
-}
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -44,11 +38,27 @@ pub fn advance(
     component: &str,
     task_type: Option<TaskType>,
     task: Option<&str>,
-    completed_steps: &[&str],
+    step_evidence: &BTreeMap<&str, &str>,
 ) -> Result<Value, String> {
+    // Validate evidence for gated steps before any deduction.
+    for (step_name, evidence) in step_evidence {
+        if let Some(true) = Step::is_gated_name(step_name)
+            && evidence.len() < MIN_STEP_EVIDENCE_BYTES
+        {
+            return Err(format!(
+                "step `{step_name}` is gated and requires evidence \
+                     of at least {MIN_STEP_EVIDENCE_BYTES} bytes, \
+                     but got {} bytes",
+                evidence.len()
+            ));
+        }
+    }
+
+    let completed: Vec<&str> = step_evidence.keys().copied().collect();
+
     // Project scope: simplified state machine.
     if component == "project" {
-        return Ok(advance_project(state, task_type, task, completed_steps));
+        return Ok(advance_project(state, task_type, task, &completed));
     }
 
     // Unregistered: component not in graph.
@@ -118,30 +128,9 @@ pub fn advance(
     // ── Deduce step ───────────────────────────────────────────────────
 
     let step = deduce_step(
-        task_type,
-        &decisions,
-        &covered,
-        &uncovered,
-        &stale,
-        &patterns,
-        graph,
-        component,
-        task,
-        completed_steps,
+        task_type, &decisions, &covered, &uncovered, &stale, &patterns, graph, component, task,
+        &completed,
     );
-
-    if is_debug() {
-        eprintln!(
-            "trurlic: advance {component} → {} (type={}, decisions={}, coverage={}/{}, stale={}, patterns={})",
-            step.as_str(),
-            task_type.as_str(),
-            decisions.len(),
-            covered.len(),
-            covered.len() + uncovered.len(),
-            stale.len(),
-            patterns.len(),
-        );
-    }
 
     let ready = matches!(step, Step::Ready);
     let assessment = build_assessment(&decisions, &covered, &uncovered, &stale, &patterns);
@@ -219,7 +208,7 @@ fn deduce_step(
             deduce_feature(decisions, covered, uncovered, patterns, task, completed)
         }
         TaskType::Fix => deduce_fix(decisions, uncovered, graph, component, task, completed),
-        TaskType::Learn => deduce_learn(decisions, patterns),
+        TaskType::Learn => deduce_learn(decisions, patterns, completed),
         TaskType::Review => {
             deduce_review(decisions, stale, covered, uncovered, patterns, completed)
         }
@@ -239,12 +228,12 @@ fn deduce_new_component(
     if !has_scope_decision(decisions) {
         return Step::DefineScope;
     }
-    if uncovered.len() > covered.len() {
+    if uncovered.len() > covered.len() && !completed.contains(&"cover_concerns") {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };
     }
-    if patterns.is_empty() {
+    if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
     if !completed.contains(&"summary_gate") {
@@ -253,7 +242,7 @@ fn deduce_new_component(
     Step::Ready
 }
 
-/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → Ready
+/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → SummaryGate → Ready
 ///
 /// VerifyConstraints: ensures existing decisions still hold for the new
 /// feature. Has no verifiable graph postcondition — uses `completed_steps`
@@ -267,6 +256,9 @@ fn deduce_new_component(
 ///
 /// PatternDetection: after concerns are covered, look for patterns across
 /// decisions. Has a verifiable postcondition (patterns recorded).
+///
+/// SummaryGate: comprehension check — user describes constraints their
+/// change must respect.
 fn deduce_feature(
     decisions: &[(&Arc<str>, &DecisionFile)],
     covered: &[&str],
@@ -302,6 +294,11 @@ fn deduce_feature(
     // PatternDetection: after concerns are covered.
     if patterns.is_empty() && !decisions.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
+    }
+
+    // SummaryGate: comprehension check before ready.
+    if !completed.contains(&"summary_gate") {
+        return Step::SummaryGate;
     }
 
     Step::Ready
@@ -393,25 +390,38 @@ fn deduce_fix(
     Step::Ready
 }
 
-/// Learn: AnalyzeCode → WalkDecisions → PatternDetection → Ready
+/// Learn: UserExplains → AnalyzeCode → WalkDecisions → SummaryGate → Ready
+///
+/// UserExplains: user describes the component from memory before seeing
+/// code. Postcondition: step evidence (not graph-verifiable).
 ///
 /// AnalyzeCode postcondition: decisions recorded (verifiable).
+///
 /// WalkDecisions postcondition: heuristic (patterns serve as proxy —
-/// if patterns exist, walkthrough + pattern detection are complete).
+/// if patterns exist, walkthrough is complete).
+///
+/// SummaryGate: comprehension check — user summarizes constraints.
 fn deduce_learn(
     decisions: &[(&Arc<str>, &DecisionFile)],
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
+    completed: &[&str],
 ) -> Step {
+    if !completed.contains(&"user_explains") {
+        return Step::UserExplains;
+    }
     if decisions.is_empty() {
         return Step::AnalyzeCode;
     }
     if patterns.is_empty() {
         return Step::WalkDecisions;
     }
+    if !completed.contains(&"summary_gate") {
+        return Step::SummaryGate;
+    }
     Step::Ready
 }
 
-/// Review: WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → Ready
+/// Review: WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → SummaryGate → Ready
 ///
 /// WalkDecisions: interactive walkthrough of all decisions, challenging
 /// each against current source code. No verifiable graph postcondition,
@@ -424,6 +434,8 @@ fn deduce_learn(
 ///
 /// CoverageAudit: surfaces coverage gaps. Agent may record intentional-
 /// gap decisions (graph change) or note gaps for future work.
+///
+/// SummaryGate: comprehension check — user summarizes review findings.
 fn deduce_review(
     decisions: &[(&Arc<str>, &DecisionFile)],
     stale: &[StaleDec],
@@ -448,6 +460,10 @@ fn deduce_review(
     if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
+    // SummaryGate: comprehension check before ready.
+    if !completed.contains(&"summary_gate") {
+        return Step::SummaryGate;
+    }
     Step::Ready
 }
 
@@ -468,8 +484,10 @@ fn deduce_harden(
     if !uncovered.is_empty() && !completed.contains(&"coverage_audit") {
         return Step::CoverageAudit;
     }
-    // CoverConcerns: fill the real gaps.
-    if !uncovered.is_empty() {
+    // CoverConcerns: fill the real gaps. Gated by completed_steps to
+    // prevent infinite loops when recorded decisions don't match concern
+    // keywords (the agent is asked once, then moves on).
+    if !uncovered.is_empty() && !completed.contains(&"cover_concerns") {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };
@@ -543,17 +561,19 @@ fn advance_project(
         "patterns": state.patterns.len(),
     });
 
-    let ready_action = serde_json::json!({
-        "tool": "get_context",
-        "args": { "component": "project", "task": task },
-        "instruction": "Project rules are established. \
-                        Call get_context for the brief.",
-    });
+    let ready_action = || {
+        serde_json::json!({
+            "tool": "get_context",
+            "args": { "component": "project", "task": task },
+            "instruction": "Project rules are established. \
+                            Call get_context for the brief.",
+        })
+    };
 
     let (step, ready, action) = match task_type {
         TaskType::NewComponent | TaskType::Harden => {
             if has_decisions {
-                (Step::Ready, true, ready_action)
+                (Step::Ready, true, ready_action())
             } else {
                 (
                     Step::DefineScope,
@@ -570,7 +590,7 @@ fn advance_project(
         }
         TaskType::Feature | TaskType::Fix => {
             if has_decisions {
-                (Step::Ready, true, ready_action)
+                (Step::Ready, true, ready_action())
             } else {
                 (
                     Step::DefineScope,
@@ -611,7 +631,7 @@ fn advance_project(
                     ),
                 )
             } else {
-                (Step::Ready, true, ready_action)
+                (Step::Ready, true, ready_action())
             }
         }
         TaskType::Review => {
@@ -639,21 +659,11 @@ fn advance_project(
                     ),
                 )
             } else {
-                (Step::Ready, true, ready_action)
+                (Step::Ready, true, ready_action())
             }
         }
         TaskType::Bootstrap => deduce_bootstrap_project(state, task, completed_steps),
     };
-
-    if is_debug() {
-        eprintln!(
-            "trurlic: project → {} (type={}, decisions={}, patterns={})",
-            step.as_str(),
-            task_type.as_str(),
-            decisions.len(),
-            state.patterns.len(),
-        );
-    }
 
     build_response("project", task_type, &step, ready, assessment, action)
 }
@@ -776,6 +786,17 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use std::collections::BTreeMap;
 
+    const SUFFICIENT_EVIDENCE: &str =
+        "User confirmed this step was completed thoroughly and correctly";
+
+    fn evidence<'a>(steps: &[&'a str]) -> BTreeMap<&'a str, &'static str> {
+        steps
+            .iter()
+            .copied()
+            .map(|s| (s, SUFFICIENT_EVIDENCE))
+            .collect()
+    }
+
     // ── Fixtures ──────────────────────────────────────────────────────
 
     fn build_state(
@@ -884,6 +905,7 @@ mod tests {
                 reason: reason.into(),
                 alternatives: vec![],
                 tags: tags.iter().map(|t| (*t).into()).collect(),
+                attribution: Attribution::User,
                 created: Utc::now(),
             },
         }
@@ -897,6 +919,7 @@ mod tests {
                 reason: reason.into(),
                 alternatives: vec![],
                 tags: tags.iter().map(|t| (*t).into()).collect(),
+                attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             },
         }
@@ -1001,7 +1024,7 @@ mod tests {
     #[test]
     fn unregistered_returns_register_step() {
         let state = build_state(&[], &[]);
-        let result = advance(&state, "rate-limiter", None, None, &[]).unwrap();
+        let result = advance(&state, "rate-limiter", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "register");
         assert_eq!(result["task_type"], "new_component");
@@ -1013,7 +1036,7 @@ mod tests {
     #[test]
     fn unregistered_suggests_kebab() {
         let state = build_state(&[], &[]);
-        let result = advance(&state, "Rate Limiter", None, None, &[]).unwrap();
+        let result = advance(&state, "Rate Limiter", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "register");
         assert_eq!(result["action"]["args"]["name"], "rate-limiter");
@@ -1024,16 +1047,23 @@ mod tests {
     #[test]
     fn infer_learn_when_empty_no_task() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", None, None, &[]).unwrap();
+        let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["task_type"], "learn");
-        assert_eq!(result["step"], "analyze_code");
+        assert_eq!(result["step"], "user_explains");
     }
 
     #[test]
     fn infer_new_component_when_empty_with_task() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", None, Some("build data layer"), &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            None,
+            Some("build data layer"),
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["task_type"], "new_component");
         assert_eq!(result["step"], "define_scope");
@@ -1048,7 +1078,7 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &["format"]),
             )],
         );
-        let result = advance(&state, "store", None, None, &[]).unwrap();
+        let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["task_type"], "harden");
         assert_eq!(result["step"], "coverage_audit");
@@ -1058,7 +1088,7 @@ mod tests {
     fn infer_review_when_stale() {
         let decisions = well_covered_decisions("store", false);
         let state = build_state(&[("store", "Data store")], &decisions);
-        let result = advance(&state, "store", None, None, &[]).unwrap();
+        let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["task_type"], "review");
         assert_eq!(result["step"], "walk_decisions");
@@ -1070,7 +1100,7 @@ mod tests {
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", None, Some("add caching"), &[]).unwrap();
+        let result = advance(&state, "store", None, Some("add caching"), &BTreeMap::new()).unwrap();
 
         assert_eq!(result["task_type"], "feature");
     }
@@ -1081,7 +1111,7 @@ mod tests {
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", None, None, &[]).unwrap();
+        let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1092,7 +1122,14 @@ mod tests {
     #[test]
     fn new_component_starts_with_define_scope() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::NewComponent),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "define_scope");
         assert_eq!(result["ready"], false);
@@ -1107,7 +1144,14 @@ mod tests {
                 fresh_decision("store", "Data layer", "Scope", &["scope"]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::NewComponent),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "cover_concerns");
         let focus = result["action"]["focus"].as_array().unwrap();
@@ -1122,7 +1166,14 @@ mod tests {
             fresh_decision("store", "Data layer", "Scope", &["scope"]),
         ));
         let state = build_state(&[("store", "Data store")], &decs);
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::NewComponent),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "pattern_detection");
     }
@@ -1139,7 +1190,14 @@ mod tests {
             &decs,
             &[("p1", "Integrity chain", &["store"])],
         );
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::NewComponent),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "summary_gate");
         assert_eq!(result["ready"], false);
@@ -1162,7 +1220,7 @@ mod tests {
             "store",
             Some(TaskType::NewComponent),
             None,
-            &["summary_gate"],
+            &evidence(&["summary_gate"]),
         )
         .unwrap();
 
@@ -1181,7 +1239,14 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &["format"]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Feature), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "verify_constraints");
     }
@@ -1200,7 +1265,7 @@ mod tests {
             "store",
             Some(TaskType::Feature),
             None,
-            &["verify_constraints"],
+            &evidence(&["verify_constraints"]),
         )
         .unwrap();
 
@@ -1214,7 +1279,14 @@ mod tests {
             &well_covered_decisions("store", true),
         );
         // First call: VerifyConstraints (decisions exist).
-        let result = advance(&state, "store", Some(TaskType::Feature), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(result["step"], "verify_constraints");
 
         // After verification: PatternDetection (no patterns yet).
@@ -1223,14 +1295,62 @@ mod tests {
             "store",
             Some(TaskType::Feature),
             None,
-            &["verify_constraints"],
+            &evidence(&["verify_constraints"]),
         )
         .unwrap();
         assert_eq!(result["step"], "pattern_detection");
     }
 
     #[test]
-    fn feature_fully_covered_with_patterns_is_ready() {
+    fn feature_reaches_summary_gate_after_pattern_detection() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints", "pattern_detection"]),
+        )
+        .unwrap();
+        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn feature_summary_gate_blocks_ready() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        // Without summary_gate evidence → stays at summary_gate.
+        let r1 = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+        assert_eq!(r1["step"], "summary_gate");
+
+        // Same call again → still summary_gate (idempotent).
+        let r2 = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+        assert_eq!(r2["step"], "summary_gate");
+    }
+
+    #[test]
+    fn feature_fully_covered_with_patterns_reaches_summary_gate() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
@@ -1241,7 +1361,26 @@ mod tests {
             "store",
             Some(TaskType::Feature),
             None,
-            &["verify_constraints"],
+            &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn feature_fully_covered_with_patterns_is_ready_after_summary_gate() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints", "summary_gate"]),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -1259,7 +1398,7 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &["format"]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Fix), None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "verify_constraints");
     }
@@ -1281,7 +1420,7 @@ mod tests {
         state.rebuild_graph();
 
         // First: VerifyConstraints (always first for Fix).
-        let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Fix), None, &BTreeMap::new()).unwrap();
         assert_eq!(result["step"], "verify_constraints");
 
         // After verification: ImpactCheck (connected component).
@@ -1290,7 +1429,7 @@ mod tests {
             "store",
             Some(TaskType::Fix),
             None,
-            &["verify_constraints"],
+            &evidence(&["verify_constraints"]),
         )
         .unwrap();
         assert_eq!(result["step"], "impact_check");
@@ -1301,7 +1440,7 @@ mod tests {
             "store",
             Some(TaskType::Fix),
             None,
-            &["verify_constraints", "impact_check"],
+            &evidence(&["verify_constraints", "impact_check"]),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -1323,7 +1462,7 @@ mod tests {
             "store",
             Some(TaskType::Fix),
             None,
-            &["verify_constraints"],
+            &evidence(&["verify_constraints"]),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -1332,7 +1471,7 @@ mod tests {
     #[test]
     fn fix_empty_component_is_ready() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Fix), None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "ready");
     }
@@ -1345,7 +1484,7 @@ mod tests {
             "store",
             Some(TaskType::Fix),
             Some("fix concurrent write corruption"),
-            &[],
+            &BTreeMap::new(),
         )
         .unwrap();
 
@@ -1369,7 +1508,7 @@ mod tests {
             "store",
             Some(TaskType::Fix),
             Some("fix typo in log message"),
-            &[],
+            &BTreeMap::new(),
         )
         .unwrap();
 
@@ -1390,7 +1529,7 @@ mod tests {
         state.rebuild_graph();
 
         // No decisions, no task → skip CoverConcerns; but has connections → ImpactCheck.
-        let result = advance(&state, "store", Some(TaskType::Fix), None, &[]).unwrap();
+        let result = advance(&state, "store", Some(TaskType::Fix), None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "impact_check");
         assert_eq!(result["ready"], false);
@@ -1412,7 +1551,7 @@ mod tests {
             "store",
             Some(TaskType::Fix),
             Some("fix encryption key rotation"),
-            &[],
+            &BTreeMap::new(),
         )
         .unwrap();
 
@@ -1436,7 +1575,7 @@ mod tests {
             "store",
             Some(TaskType::Fix),
             Some("fix error handling crash"),
-            &[],
+            &BTreeMap::new(),
         )
         .unwrap();
 
@@ -1448,6 +1587,7 @@ mod tests {
             "store",
             step_name,
             Some("fix error handling crash"),
+            Some("fix"),
         )
         .expect("build_step_prompt must accept cover_concerns from fix workflow");
 
@@ -1464,12 +1604,34 @@ mod tests {
     // ── Learn step sequence ───────────────────────────────────────────
 
     #[test]
-    fn learn_empty_starts_with_analyze_code() {
+    fn learn_starts_with_user_explains() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", Some(TaskType::Learn), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "user_explains");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn learn_user_explains_gates_analyze_code() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            &evidence(&["user_explains"]),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "analyze_code");
-        assert_eq!(result["ready"], false);
     }
 
     #[test]
@@ -1481,13 +1643,20 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Learn), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            &evidence(&["user_explains"]),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "walk_decisions");
     }
 
     #[test]
-    fn learn_with_patterns_is_ready() {
+    fn learn_reaches_summary_gate() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &[(
@@ -1496,7 +1665,37 @@ mod tests {
             )],
             &[("p1", "Integrity chain", &["store"])],
         );
-        let result = advance(&state, "store", Some(TaskType::Learn), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            &evidence(&["user_explains"]),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn learn_with_patterns_is_ready_after_summary_gate() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &[]),
+            )],
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            &evidence(&["user_explains", "summary_gate"]),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1508,7 +1707,14 @@ mod tests {
     fn review_starts_with_walk_decisions() {
         let decisions = well_covered_decisions("store", false);
         let state = build_state(&[("store", "Data store")], &decisions);
-        let result = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "walk_decisions");
         assert_eq!(result["ready"], false);
@@ -1523,7 +1729,7 @@ mod tests {
             "store",
             Some(TaskType::Review),
             None,
-            &["walk_decisions"],
+            &evidence(&["walk_decisions"]),
         )
         .unwrap();
 
@@ -1541,7 +1747,14 @@ mod tests {
             )],
         );
         // First: WalkDecisions (decisions exist).
-        let result = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(result["step"], "walk_decisions");
 
         // After walk: CoverageAudit (gaps, no stale).
@@ -1550,7 +1763,7 @@ mod tests {
             "store",
             Some(TaskType::Review),
             None,
-            &["walk_decisions"],
+            &evidence(&["walk_decisions"]),
         )
         .unwrap();
         assert_eq!(result["step"], "coverage_audit");
@@ -1563,7 +1776,14 @@ mod tests {
             &well_covered_decisions("store", true),
         );
         // First: WalkDecisions.
-        let result = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(result["step"], "walk_decisions");
 
         // After walk: PatternDetection (no stale, no gaps).
@@ -1572,31 +1792,73 @@ mod tests {
             "store",
             Some(TaskType::Review),
             None,
-            &["walk_decisions"],
+            &evidence(&["walk_decisions"]),
         )
         .unwrap();
         assert_eq!(result["step"], "pattern_detection");
     }
 
     #[test]
-    fn review_fully_healthy_is_ready_after_walk() {
+    fn review_reaches_summary_gate() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
             &[("p1", "Integrity chain", &["store"])],
         );
-        // With completed walk: Ready (no stale, no gaps, patterns exist).
+        // With completed walk: SummaryGate (no stale, no gaps, patterns exist).
         let result = advance(
             &state,
             "store",
             Some(TaskType::Review),
             None,
-            &["walk_decisions"],
+            &evidence(&["walk_decisions"]),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn review_fully_healthy_is_ready_after_summary_gate() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &evidence(&["walk_decisions", "summary_gate"]),
         )
         .unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
+    }
+
+    #[test]
+    fn review_stale_reaches_summary_gate() {
+        // Stale decisions: walk_decisions → drift_check → (stale cleared) →
+        // pattern_detection or summary_gate. Here, stale decisions exist,
+        // but after walk and with patterns, hits summary_gate.
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", false),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        // walk_decisions done, but stale → drift_check first.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &evidence(&["walk_decisions"]),
+        )
+        .unwrap();
+        assert_eq!(result["step"], "drift_check");
     }
 
     // ── Harden step sequence ──────────────────────────────────────────
@@ -1610,7 +1872,14 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Harden), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Harden),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "coverage_audit");
     }
@@ -1629,7 +1898,7 @@ mod tests {
             "store",
             Some(TaskType::Harden),
             None,
-            &["coverage_audit"],
+            &evidence(&["coverage_audit"]),
         )
         .unwrap();
 
@@ -1644,7 +1913,14 @@ mod tests {
             &[("store", "Data store")],
             &fully_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", Some(TaskType::Harden), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Harden),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "pattern_detection");
     }
@@ -1656,7 +1932,14 @@ mod tests {
             &fully_covered_decisions("store", true),
             &[("p1", "Integrity chain", &["store"])],
         );
-        let result = advance(&state, "store", Some(TaskType::Harden), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Harden),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1667,7 +1950,7 @@ mod tests {
     #[test]
     fn project_empty_defines_scope() {
         let state = build_state(&[], &[]);
-        let result = advance(&state, "project", None, None, &[]).unwrap();
+        let result = advance(&state, "project", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "define_scope");
         assert_eq!(result["ready"], false);
@@ -1682,7 +1965,7 @@ mod tests {
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
         );
-        let result = advance(&state, "project", None, Some("add auth"), &[]).unwrap();
+        let result = advance(&state, "project", None, Some("add auth"), &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1697,7 +1980,14 @@ mod tests {
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
         );
-        let result = advance(&state, "project", Some(TaskType::Learn), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Learn),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "walk_decisions");
         assert_eq!(result["task_type"], "learn");
@@ -1714,7 +2004,14 @@ mod tests {
             )],
             &[("p1", "Security posture", &["auth"])],
         );
-        let result = advance(&state, "project", Some(TaskType::Learn), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Learn),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1729,7 +2026,14 @@ mod tests {
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
         );
-        let result = advance(&state, "project", Some(TaskType::Review), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Review),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "drift_check");
         assert_eq!(result["ready"], false);
@@ -1745,7 +2049,14 @@ mod tests {
             )],
             &[("p1", "Security posture", &["auth"])],
         );
-        let result = advance(&state, "project", Some(TaskType::Review), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Review),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1761,7 +2072,7 @@ mod tests {
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
         );
-        let result = advance(&state, "project", None, None, &[]).unwrap();
+        let result = advance(&state, "project", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["task_type"], "learn");
         assert_eq!(result["step"], "walk_decisions");
@@ -1778,7 +2089,7 @@ mod tests {
             )],
             &[("p1", "Security posture", &["auth"])],
         );
-        let result = advance(&state, "project", None, None, &[]).unwrap();
+        let result = advance(&state, "project", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -1795,12 +2106,13 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", None, None, &[]).unwrap();
+        let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
 
         assert!(result.get("component").is_some());
         assert!(result.get("task_type").is_some());
         assert!(result.get("step").is_some());
         assert!(result.get("ready").is_some());
+        assert!(result.get("requires_user_input").is_some());
         assert!(result.get("assessment").is_some());
         assert!(result.get("action").is_some());
         assert!(result["action"].get("tool").is_some());
@@ -1816,7 +2128,7 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let result = advance(&state, "store", None, None, &[]).unwrap();
+        let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
         let assessment = &result["assessment"];
 
         assert!(assessment.get("decisions").is_some());
@@ -1837,8 +2149,8 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &[]),
             )],
         );
-        let a = advance(&state, "store", None, None, &[]).unwrap();
-        let b = advance(&state, "store", None, None, &[]).unwrap();
+        let a = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
+        let b = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
         assert_eq!(a, b);
     }
 
@@ -1848,8 +2160,22 @@ mod tests {
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let a = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
-        let b = advance(&state, "store", Some(TaskType::Review), None, &[]).unwrap();
+        let a = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let b = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(a, b);
     }
 
@@ -1883,7 +2209,7 @@ mod tests {
                 ),
             ],
         );
-        let result = advance(&state, "store", None, None, &[]).unwrap();
+        let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
 
         // 5 covered, 5 uncovered → not harden (5 is not > 5).
         assert_ne!(result["task_type"], "harden");
@@ -1906,7 +2232,14 @@ mod tests {
                 ),
             ],
         );
-        let result = advance(&state, "store", Some(TaskType::NewComponent), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::NewComponent),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
         let focus = result["action"]["focus"].as_array().unwrap();
 
         // Data format (priority 8) covered via "TOML"/"format"/"Schema".
@@ -1922,7 +2255,7 @@ mod tests {
     #[test]
     fn task_appears_in_action_args() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", None, Some("add caching"), &[]).unwrap();
+        let result = advance(&state, "store", None, Some("add caching"), &BTreeMap::new()).unwrap();
 
         assert_eq!(result["action"]["args"]["task"], "add caching");
     }
@@ -1933,7 +2266,7 @@ mod tests {
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
         );
-        let result = advance(&state, "store", None, Some("fix bug"), &[]).unwrap();
+        let result = advance(&state, "store", None, Some("fix bug"), &BTreeMap::new()).unwrap();
 
         assert_eq!(result["action"]["args"]["task"], "fix bug");
     }
@@ -1981,7 +2314,14 @@ mod tests {
     #[test]
     fn bootstrap_empty_project_starts_with_scan() {
         let state = build_state(&[], &[]);
-        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["task_type"], "bootstrap");
         assert_eq!(result["step"], "scan_project");
@@ -1992,7 +2332,14 @@ mod tests {
     #[test]
     fn bootstrap_with_components_extracts_first_undecided() {
         let state = build_state(&[("auth", "Auth"), ("store", "Data store")], &[]);
-        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "extract_decisions");
         assert_eq!(result["ready"], false);
@@ -2011,7 +2358,14 @@ mod tests {
                 fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
             )],
         );
-        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "extract_decisions");
         assert_eq!(result["action"]["target_component"], "store");
@@ -2026,7 +2380,14 @@ mod tests {
                 fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
             )],
         );
-        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "project_rules");
         assert_eq!(result["ready"], false);
@@ -2047,7 +2408,14 @@ mod tests {
                 ),
             ],
         );
-        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "pattern_detection");
         assert_eq!(result["ready"], false);
@@ -2069,7 +2437,14 @@ mod tests {
             ],
             &[("p1", "Security posture", &["auth"])],
         );
-        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -2078,15 +2453,36 @@ mod tests {
     #[test]
     fn bootstrap_is_idempotent() {
         let state = build_state(&[("auth", "Auth"), ("store", "Data store")], &[]);
-        let a = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
-        let b = advance(&state, "project", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let a = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let b = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(a, b);
     }
 
     #[test]
     fn bootstrap_at_component_level_extracts_decisions() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         // Component-level bootstrap: autonomous extraction, not Learn.
         assert_eq!(result["task_type"], "bootstrap");
@@ -2103,7 +2499,14 @@ mod tests {
                 fresh_decision("store", "TOML format", "Readable", &["format"]),
             )],
         );
-        let result = advance(&state, "store", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "pattern_detection");
     }
@@ -2118,7 +2521,14 @@ mod tests {
             )],
             &[("p1", "Data integrity", &["store"])],
         );
-        let result = advance(&state, "store", Some(TaskType::Bootstrap), None, &[]).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
@@ -2138,11 +2548,154 @@ mod tests {
             "project",
             Some(TaskType::Bootstrap),
             None,
-            &["project_rules"],
+            &evidence(&["project_rules"]),
         )
         .unwrap();
 
         // project_rules completed → moves to pattern_detection.
         assert_eq!(result["step"], "pattern_detection");
+    }
+
+    #[test]
+    fn bootstrap_pipeline_unaffected() {
+        // Full bootstrap pipeline: scan → extract → project_rules →
+        // pattern_detection → ready. No summary_gate, no user_explains.
+        let state = build_state_with_patterns(
+            &[("auth", "Auth")],
+            &[
+                (
+                    "d1",
+                    fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
+                ),
+                (
+                    "rule-1",
+                    fresh_decision("project", "Fail-closed", "Safety", &[]),
+                ),
+            ],
+            &[("p1", "Security posture", &["auth"])],
+        );
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["ready"], true);
+        // Bootstrap never returns summary_gate or user_explains.
+    }
+
+    // ── Step evidence validation ──────────────────────────────────
+
+    #[test]
+    fn gated_step_without_evidence_returns_error() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let mut ev = BTreeMap::new();
+        ev.insert("verify_constraints", "");
+        let result = advance(&state, "store", Some(TaskType::Feature), None, &ev);
+        let err = result.unwrap_err();
+        assert!(err.contains("gated"), "error should mention gated: {err}");
+        assert!(
+            err.contains("0 bytes"),
+            "error should mention byte count: {err}"
+        );
+    }
+
+    #[test]
+    fn gated_step_with_short_evidence_returns_error() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let mut ev = BTreeMap::new();
+        ev.insert("verify_constraints", "ok");
+        let result = advance(&state, "store", Some(TaskType::Feature), None, &ev);
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("2 bytes"),
+            "error should mention actual byte count: {err}"
+        );
+    }
+
+    #[test]
+    fn gated_step_with_sufficient_evidence_progresses() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+        assert_ne!(result["step"], "verify_constraints");
+    }
+
+    #[test]
+    fn ungated_step_with_empty_evidence_progresses() {
+        let state = build_state(
+            &[("auth", "Auth")],
+            &[(
+                "d1",
+                fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
+            )],
+        );
+        let mut ev = BTreeMap::new();
+        ev.insert("project_rules", "");
+        let result = advance(&state, "project", Some(TaskType::Bootstrap), None, &ev).unwrap();
+        assert_ne!(result["step"], "project_rules");
+    }
+
+    #[test]
+    fn unknown_step_in_evidence_ignored() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        let mut ev = BTreeMap::new();
+        ev.insert("nonexistent", "some evidence text that is long enough");
+        let result = advance(&state, "store", None, None, &ev);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn requires_user_input_true_for_gated_steps() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::NewComponent),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(result["step"], "define_scope");
+        assert_eq!(result["requires_user_input"], true);
+    }
+
+    #[test]
+    fn requires_user_input_false_for_ready() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+        );
+        let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["requires_user_input"], false);
     }
 }

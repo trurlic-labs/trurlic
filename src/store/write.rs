@@ -12,8 +12,8 @@ use crate::{Error, Result};
 
 use super::graph::Severity;
 use super::schema::{
-    Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind, GraphIndex, NodeEntry,
-    NodeKind, Pattern, PatternFile,
+    Attribution, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind, GraphIndex,
+    NodeEntry, NodeKind, Pattern, PatternFile,
 };
 use super::state::{
     ProjectState, is_reserved_node_name, is_valid_kebab_case, slugify, unique_decision_stem,
@@ -57,6 +57,7 @@ pub struct RecordDecisionParams<'a> {
     pub depends_on: &'a [String],
     pub constrains: &'a [String],
     pub tags: &'a [String],
+    pub attribution: Attribution,
 }
 
 // ── AmendDecisionParams ─────────────────────────────────────────────
@@ -192,10 +193,10 @@ impl Store {
         let mut all_writes = writes;
 
         if let Some(mut index) = graph_update {
-            index.nodes.sort_by(|a, b| a.name.cmp(&b.name));
+            index.nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
             index
                 .edges
-                .sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
+                .sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
             let content = toml::to_string_pretty(&index)?;
             toml::from_str::<GraphIndex>(&content).map_err(|e| {
                 Error::Validation(format!("graph index round-trip verification failed: {e}"))
@@ -382,6 +383,7 @@ impl Store {
                 reason: params.reason.into(),
                 alternatives: params.alternatives.to_vec(),
                 tags: params.tags.to_vec(),
+                attribution: params.attribution,
                 created: Utc::now(),
             },
         };

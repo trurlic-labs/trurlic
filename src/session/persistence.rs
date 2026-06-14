@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -15,12 +15,11 @@ pub(crate) struct Session {
     pub component: String,
     pub messages: Vec<SessionMessage>,
     pub decisions_recorded: Vec<String>,
-    /// Steps completed in this session. Used to break heuristic loops
-    /// when advance returns a step whose postcondition isn't verifiable
-    /// from the graph (e.g. PatternDetection with no patterns found).
-    /// Cleared when new decisions are recorded (graph changed).
-    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
-    pub completed_steps: HashSet<String>,
+    /// Evidence of user involvement for completed steps. Keys are step
+    /// names, values are the user's last input for that step. Cleared
+    /// when new decisions are recorded (graph changed).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub step_evidence: BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -35,7 +34,7 @@ impl Session {
             component: component.into(),
             messages: Vec::new(),
             decisions_recorded: Vec::new(),
-            completed_steps: HashSet::new(),
+            step_evidence: BTreeMap::new(),
         }
     }
 
@@ -78,9 +77,21 @@ pub(crate) fn save(store: &Store, session: &Session) -> Result<()> {
     let content = serde_json::to_string_pretty(session)
         .map_err(|e| Error::Validation(format!("session serialization failed: {e}")))?;
 
-    // Atomic write: tmp file then rename, so a crash never truncates the session.
+    // Atomic write: tmp → verify round-trip → rename.
     let tmp_path = path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, content)?;
+    std::fs::write(&tmp_path, &content)?;
+
+    let readback = std::fs::read_to_string(&tmp_path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        Error::Io(e)
+    })?;
+    if readback != content {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(Error::Validation(
+            "session round-trip verification failed: written content differs".into(),
+        ));
+    }
+
     if let Err(e) = std::fs::rename(&tmp_path, &path) {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(Error::Io(e));

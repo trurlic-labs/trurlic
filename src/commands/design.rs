@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::session::SessionMode;
 use crate::store::{self};
 use crate::{Error, Result};
 
@@ -10,8 +11,7 @@ use super::discover_store;
 pub fn design(
     cwd: &Path,
     component: &str,
-    continue_session: bool,
-    revisit: bool,
+    mode: SessionMode,
     task: Option<&str>,
     provider_flag: Option<&str>,
     model_flag: Option<&str>,
@@ -42,12 +42,7 @@ pub fn design(
         .map_err(|e| Error::Io(std::io::Error::other(e)))?;
 
     rt.block_on(crate::session::run_design(
-        &store,
-        &*client,
-        component,
-        continue_session,
-        revisit,
-        task,
+        &store, &*client, component, mode, task,
     ))
 }
 
@@ -62,10 +57,18 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = design(tmp.path(), "../escape", false, false, None, None, None).unwrap_err();
+        let err = design(
+            tmp.path(),
+            "../escape",
+            SessionMode::Fresh,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::InvalidName(_)));
 
-        let err = design(tmp.path(), "", false, false, None, None, None).unwrap_err();
+        let err = design(tmp.path(), "", SessionMode::Fresh, None, None, None).unwrap_err();
         assert!(matches!(err, Error::InvalidName(_)));
     }
 
@@ -74,7 +77,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = design(tmp.path(), "ghost", false, false, None, None, None).unwrap_err();
+        let err = design(tmp.path(), "ghost", SessionMode::Fresh, None, None, None).unwrap_err();
         assert!(matches!(err, Error::ComponentNotFound(ref n) if n == "ghost"));
     }
 }

@@ -9,17 +9,20 @@
 //! Unlike the design session driver, bootstrap does not persist a session
 //! file — the graph IS the session state.
 
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 
 use crate::provider::{LlmProvider, Message, Role};
+use crate::store::schema::Attribution;
 use crate::store::{self, RecordDecisionParams, RecordPatternParams, Store};
 use crate::workflow::{self, TaskType, steps};
 use crate::{Error, Result};
 
 use super::extract;
 use super::files;
+
+const MAX_BOOTSTRAP_ITERATIONS: usize = 200;
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -34,16 +37,19 @@ pub(crate) async fn run(
     project_root: &Path,
     state: &mut store::ProjectState,
 ) -> Result<()> {
-    let mut completed: HashSet<String> = HashSet::new();
+    let mut completed: BTreeMap<String, String> = BTreeMap::new();
 
-    loop {
-        let completed_refs: Vec<&str> = completed.iter().map(String::as_str).collect();
+    for _ in 0..MAX_BOOTSTRAP_ITERATIONS {
+        let evidence: BTreeMap<&str, &str> = completed
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
         let result = workflow::advance::advance(
             state,
             "project",
             Some(TaskType::Bootstrap),
             None,
-            &completed_refs,
+            &evidence,
         )
         .map_err(Error::Validation)?;
 
@@ -66,13 +72,14 @@ pub(crate) async fn run(
             run_step(store, client, project_root, state, &step, target.as_deref()).await?;
 
         if recorded {
-            // Graph changed — prior completions may no longer apply.
             completed.clear();
         } else {
-            // No graph change — mark step completed to avoid loops.
-            completed.insert(step);
+            completed.insert(step, String::new());
         }
     }
+    Err(Error::Validation(format!(
+        "bootstrap exceeded {MAX_BOOTSTRAP_ITERATIONS} iterations"
+    )))
 }
 
 /// Run a bootstrap session for a single component.
@@ -83,16 +90,19 @@ pub(crate) async fn run_component(
     state: &mut store::ProjectState,
     component: &str,
 ) -> Result<()> {
-    let mut completed: HashSet<String> = HashSet::new();
+    let mut completed: BTreeMap<String, String> = BTreeMap::new();
 
-    loop {
-        let completed_refs: Vec<&str> = completed.iter().map(String::as_str).collect();
+    for _ in 0..MAX_BOOTSTRAP_ITERATIONS {
+        let evidence: BTreeMap<&str, &str> = completed
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
         let result = workflow::advance::advance(
             state,
             component,
             Some(TaskType::Bootstrap),
             None,
-            &completed_refs,
+            &evidence,
         )
         .map_err(Error::Validation)?;
 
@@ -110,9 +120,12 @@ pub(crate) async fn run_component(
         if recorded {
             completed.clear();
         } else {
-            completed.insert(step);
+            completed.insert(step, String::new());
         }
     }
+    Err(Error::Validation(format!(
+        "bootstrap for [{component}] exceeded {MAX_BOOTSTRAP_ITERATIONS} iterations"
+    )))
 }
 
 // ── Step execution ──────────────────────────────────────────────────────────
@@ -142,8 +155,8 @@ async fn run_step(
 
     // ── Build system prompt ──────────────────────────────────────────
     let prompt_component = target.unwrap_or("project");
-    let prompt =
-        steps::build_step_prompt(state, prompt_component, step, None).map_err(Error::Validation)?;
+    let prompt = steps::build_step_prompt(state, prompt_component, step, None, Some("bootstrap"))
+        .map_err(Error::Validation)?;
 
     // ── LLM call ─────────────────────────────────────────────────────
     let messages = if context.is_empty() {
@@ -245,6 +258,7 @@ fn record_decisions(
                 depends_on: &[],
                 constrains: &[],
                 tags: &[],
+                attribution: Attribution::Agent,
             },
         ) {
             Ok(stem) => {

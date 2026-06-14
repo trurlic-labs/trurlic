@@ -9,6 +9,86 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Comprehension gates.** `SummaryGate` step added to Feature, Learn, and
+  Review workflows — the developer must summarize their understanding before
+  the workflow advances. `UserExplains` step added to Learn flow so the user
+  describes the component from memory before seeing code.
+- **Step evidence.** Gated (interactive) steps now require evidence of user
+  involvement (≥20 bytes) instead of bare step names. Prevents agents from
+  rubber-stamping design gates with empty strings. `advance()` accepts a
+  `step_evidence` object (key → evidence text) replacing the `completed_steps`
+  array. `requires_user_input` field in advance responses signals which steps
+  need human input.
+- **Decision attribution.** `Attribution` enum (`User` | `Agent`) on every
+  decision tracks whether it was authored by a human or autonomously.
+  Agent-attributed decisions display "(agent — unconfirmed)" in context briefs.
+  Store `FORMAT_VERSION` bumped to 0.3.0.
+
+### Fixed
+
+- **Provider security.** The intermediate `Bearer <token>` string in the OpenAI
+  client is now wrapped in `Zeroizing<String>`, matching the Anthropic client's
+  zero-on-drop guarantee.
+- **Bootstrap component targeting.** `ExtractDecisions` step now uses the
+  correct inner component field instead of always referencing "project".
+- **Advance loop termination.** Added completed-step guards in `deduce_harden`
+  and `deduce_new_component` to prevent infinite `CoverConcerns` loops when
+  decisions don't match concern keywords. Bootstrap loops bounded to 200
+  iterations.
+- **Control-char bypass.** Array parameters in MCP write tools (`alternatives`,
+  `depends_on`, `tags`) now validate for control characters, closing a bypass
+  that scalar fields already blocked.
+- **Panic path elimination.** `unreachable!()` calls in workflow action dispatch
+  and MCP tool dispatch replaced with safe fallbacks — server no longer crashes
+  on classification/dispatch desync.
+- **Session hardening.** Deterministic serialization via `BTreeSet` instead of
+  `HashSet` for completed steps. Round-trip verification on session save.
+  Symlink-safe file traversal. Message count warning at 80 messages. Session
+  context refactored out of nested loops.
+- **Exhaustive cascade matching.** Wildcard arms in `check_decision_cascade` and
+  `check_component_cascade` replaced with explicit `(EdgeKind, Direction)`
+  enumeration so the compiler catches new variants.
+- **Type-safe parameters.** Opaque `bool` parameters replaced with enums:
+  `SessionMode` (`Fresh` | `Continue` | `Revisit`) and `ApiVariant`
+  (`Standard` | `OpenRouter`).
+- **Advance purity.** Removed `env::var_os()` and `eprintln!()` debug calls
+  from `advance()`, restoring its documented pure-function contract.
+- Validation messages use `as_str()` instead of `{:?}` Debug formatting.
+- `sanitize()` no longer appends ellipsis on control-char removal (only on
+  truncation).
+- MCP `tool_result()` logs serialization failures to stderr instead of
+  silently returning empty JSON.
+- Map API validates NaN/Infinity in layout positions, returns 500 on layout
+  save failure, and uses atomic temp-file-then-rename for `layout.json`.
+- CLI `--continue` and `--revisit` flags marked mutually exclusive.
+- Added missing MIME types in map embed (ico, json, map, mjs, wasm, woff).
+
+### Performance
+
+- Pre-compute decision word sets once per decision in concern coverage instead
+  of per (decision × concern) pair (~10× fewer allocations).
+- Pre-size `HashMap`/`HashSet`/`Vec` collections across store, MCP, and
+  workflow modules. Replace `format!()` haystack allocation in `check_pattern`
+  with direct field splitting.
+- Borrow index strings in the intern pool instead of cloning into `HashMap`
+  keys. Move hash strings instead of cloning in `load_graph_index`.
+- Fix `HashMap` overallocation in `to_index()` — pre-size by node count
+  instead of edge count to avoid sparse tables.
+- Replace per-request `serde_json::json!({})` with static `LazyLock` in MCP
+  tool dispatch.
+- Inline edge lookups in `related_decisions` to avoid intermediate `Vec`s.
+- Lazy `ready_action` construction in `advance_project` — JSON only built
+  when needed.
+- Remove redundant `content-type` headers in provider HTTP clients.
+
+### Changed
+
+- `advance()` signature: `completed_steps: &[&str]` → `step_evidence:
+  BTreeMap<&str, &str>`.
+- Store `FORMAT_VERSION` bumped from 0.2.0 to 0.3.0 (attribution field).
+
 ## [0.1.0] — 2026-06-10
 
 First public release. The decision graph format and MCP tool surface may change

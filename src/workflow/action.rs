@@ -18,7 +18,12 @@ use super::{Step, TaskType};
 /// Map a deduced step to a concrete tool action the agent should execute.
 pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>) -> Value {
     match step {
-        Step::Register => unreachable!("handled before step deduction"),
+        Step::Register => serde_json::json!({
+            "tool": "add_component",
+            "args": { "name": component },
+            "instruction": "Component is not registered. Confirm the name \
+                            and description, then call add_component.",
+        }),
 
         Step::DefineScope => step_prompt_action(
             component,
@@ -122,18 +127,37 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>) -> V
              intentional.",
         ),
 
-        // Bootstrap steps are handled in advance_project, never reached
-        // from the per-component path. Present for match exhaustiveness.
-        Step::ScanProject | Step::ProjectRules => {
-            unreachable!("project-scope bootstrap steps handled in advance_project")
-        }
-
-        Step::ExtractDecisions { .. } => step_prompt_action(
+        Step::UserExplains => step_prompt_action(
             component,
+            "user_explains",
+            task,
+            "Ask the user to describe this component's architecture from \
+             memory. Do not show decisions or code first. Compare their \
+             answer against recorded decisions afterward.",
+        ),
+
+        Step::ScanProject => step_prompt_action(
+            "project",
+            "scan_project",
+            task,
+            "Read the project structure, identify major components, \
+             and register them with add_component and add_connection.",
+        ),
+
+        Step::ProjectRules => step_prompt_action(
+            "project",
+            "project_rules",
+            task,
+            "Identify cross-cutting project-level decisions and \
+             record them with component='project'.",
+        ),
+
+        Step::ExtractDecisions { component: target } => step_prompt_action(
+            target,
             "extract_decisions",
             task,
             &format!(
-                "Read every source file in [{component}] and record \
+                "Read every source file in [{target}] and record \
                  architectural decisions autonomously."
             ),
         ),
@@ -162,6 +186,7 @@ pub(super) fn build_response(
         "task_type": task_type.as_str(),
         "step": step.as_str(),
         "ready": ready,
+        "requires_user_input": step.is_gated(),
         "assessment": assessment,
         "action": action,
     })

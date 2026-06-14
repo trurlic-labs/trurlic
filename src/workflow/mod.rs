@@ -45,7 +45,7 @@ pub enum TaskType {
     NewComponent,
 
     /// Add a feature to an existing component.
-    /// VerifyConstraints → CoverConcerns(focused) → PatternDetection → Ready.
+    /// VerifyConstraints → CoverConcerns(focused) → PatternDetection → SummaryGate → Ready.
     Feature,
 
     /// Fix a bug or apply a hotfix.
@@ -53,11 +53,11 @@ pub enum TaskType {
     Fix,
 
     /// Study existing architecture.
-    /// AnalyzeCode → WalkDecisions → PatternDetection → Ready.
+    /// UserExplains → AnalyzeCode → WalkDecisions → SummaryGate → Ready.
     Learn,
 
     /// Challenge existing decisions for drift.
-    /// WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → Ready.
+    /// WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → SummaryGate → Ready.
     Review,
 
     /// Strengthen coverage of under-designed areas.
@@ -72,7 +72,7 @@ pub enum TaskType {
 }
 
 impl TaskType {
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::NewComponent => "new_component",
             Self::Feature => "feature",
@@ -169,6 +169,11 @@ pub enum Step {
     /// Postcondition: project has ≥1 decision.
     ProjectRules,
 
+    /// User describes the component's architecture from memory before the
+    /// agent reads code. Learn-only. Postcondition: step evidence contains
+    /// the user's description.
+    UserExplains,
+
     /// All steps complete. Ready for implementation.
     Ready,
 }
@@ -190,15 +195,45 @@ impl Step {
             Self::ScanProject => "scan_project",
             Self::ExtractDecisions { .. } => "extract_decisions",
             Self::ProjectRules => "project_rules",
+            Self::UserExplains => "user_explains",
             Self::Ready => "ready",
         }
     }
 
-    /// Whether this step represents a terminal state (no more workflow
-    /// actions required).
-    #[allow(dead_code)]
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Ready)
+    pub const fn is_gated(&self) -> bool {
+        match self {
+            Self::Register
+            | Self::ScanProject
+            | Self::ExtractDecisions { .. }
+            | Self::ProjectRules
+            | Self::Ready => false,
+
+            Self::DefineScope
+            | Self::AnalyzeCode
+            | Self::CoverConcerns { .. }
+            | Self::WalkDecisions
+            | Self::VerifyConstraints
+            | Self::ImpactCheck
+            | Self::PatternDetection
+            | Self::SummaryGate
+            | Self::DriftCheck
+            | Self::CoverageAudit
+            | Self::UserExplains => true,
+        }
+    }
+
+    /// Resolve a step name string to its gated status.
+    /// Returns `None` for unknown step names.
+    pub fn is_gated_name(name: &str) -> Option<bool> {
+        match name {
+            "register" | "scan_project" | "extract_decisions" | "project_rules" | "ready" => {
+                Some(false)
+            }
+            "define_scope" | "analyze_code" | "cover_concerns" | "walk_decisions"
+            | "verify_constraints" | "impact_check" | "pattern_detection" | "summary_gate"
+            | "drift_check" | "coverage_audit" | "user_explains" => Some(true),
+            _ => None,
+        }
     }
 }
 
@@ -215,6 +250,10 @@ mod integration_tests {
     use chrono::{TimeZone, Utc};
     use std::collections::BTreeMap;
     use std::sync::Arc;
+
+    fn empty_evidence() -> BTreeMap<&'static str, &'static str> {
+        BTreeMap::new()
+    }
 
     fn build_state(
         components: &[(&str, &str)],
@@ -288,6 +327,7 @@ mod integration_tests {
                 reason: reason.into(),
                 alternatives: vec![],
                 tags: tags.iter().map(|t| (*t).into()).collect(),
+                attribution: Attribution::User,
                 created: Utc::now(),
             },
         }
@@ -301,6 +341,7 @@ mod integration_tests {
                 reason: reason.into(),
                 alternatives: vec![],
                 tags: tags.iter().map(|t| (*t).into()).collect(),
+                attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             },
         }
@@ -313,7 +354,7 @@ mod integration_tests {
         component: &str,
         task_type: Option<TaskType>,
     ) {
-        let result = advance::advance(state, component, task_type, None, &[])
+        let result = advance::advance(state, component, task_type, None, &empty_evidence())
             .expect("advance should succeed");
 
         let step_name = result["step"]
@@ -338,7 +379,7 @@ mod integration_tests {
             .as_str()
             .unwrap_or(component);
 
-        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None)
+        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None, None)
             .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
 
         // Every prompt must include the source code preamble.
@@ -536,11 +577,12 @@ mod integration_tests {
             "scan_project",
             "extract_decisions",
             "project_rules",
+            "user_explains",
             "ready",
         ];
 
         for name in &step_names {
-            let result = steps::build_step_prompt(&state, "store", name, None);
+            let result = steps::build_step_prompt(&state, "store", name, None, None);
             assert!(
                 result.is_ok(),
                 "build_step_prompt must accept step `{name}`: {:?}",
@@ -571,6 +613,7 @@ mod integration_tests {
                 component: "store".into(),
             },
             Step::ProjectRules,
+            Step::UserExplains,
             Step::Ready,
         ];
 
@@ -581,7 +624,7 @@ mod integration_tests {
 
         for variant in &variants {
             let name = variant.as_str();
-            let result = steps::build_step_prompt(&state, "store", name, None);
+            let result = steps::build_step_prompt(&state, "store", name, None, None);
             assert!(
                 result.is_ok(),
                 "Step::{:?} as_str `{name}` rejected by build_step_prompt: {:?}",
@@ -589,5 +632,56 @@ mod integration_tests {
                 result.err()
             );
         }
+    }
+
+    // ── is_gated classification ──────────────────────────────────────
+
+    #[test]
+    fn every_step_variant_has_gated_classification() {
+        let variants: Vec<Step> = vec![
+            Step::Register,
+            Step::DefineScope,
+            Step::AnalyzeCode,
+            Step::CoverConcerns {
+                focus: vec!["Security".into()],
+            },
+            Step::WalkDecisions,
+            Step::VerifyConstraints,
+            Step::ImpactCheck,
+            Step::PatternDetection,
+            Step::SummaryGate,
+            Step::DriftCheck,
+            Step::CoverageAudit,
+            Step::ScanProject,
+            Step::ExtractDecisions {
+                component: "store".into(),
+            },
+            Step::ProjectRules,
+            Step::UserExplains,
+            Step::Ready,
+        ];
+
+        for variant in &variants {
+            let _ = variant.is_gated();
+        }
+    }
+
+    #[test]
+    fn user_explains_is_gated() {
+        assert!(Step::UserExplains.is_gated());
+    }
+
+    #[test]
+    fn ungated_steps_classified_correctly() {
+        assert!(!Step::Register.is_gated());
+        assert!(!Step::ScanProject.is_gated());
+        assert!(
+            !Step::ExtractDecisions {
+                component: "x".into()
+            }
+            .is_gated()
+        );
+        assert!(!Step::ProjectRules.is_gated());
+        assert!(!Step::Ready.is_gated());
     }
 }

@@ -12,8 +12,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use trurlic::store::graph::InMemoryGraph;
 use trurlic::store::schema::{
-    Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind, GraphIndex, NodeEntry,
-    NodeKind, Pattern, PatternFile,
+    Attribution, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind, GraphIndex,
+    NodeEntry, NodeKind, Pattern, PatternFile,
 };
 use trurlic::store::{has_control_chars, hash_bytes, is_valid_kebab_case, slugify};
 
@@ -85,6 +85,7 @@ fn generate_fixture(n_components: usize) -> Fixture {
                     reason: format!("Project-wide reason {i}"),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created,
                 },
             }),
@@ -165,6 +166,7 @@ fn generate_fixture(n_components: usize) -> Fixture {
                         reason: format!("Reason {d} for component {c}"),
                         alternatives: vec![format!("Alternative for comp-{c} dec-{d}")],
                         tags: dec_tags,
+                        attribution: Attribution::Agent,
                         created,
                     },
                 }),
@@ -246,6 +248,7 @@ fn sample_decision_toml() -> String {
                 "Opaque tokens — rejected: requires token introspection endpoint".into(),
             ],
             tags: vec!["security".into(), "auth".into()],
+            attribution: Attribution::User,
             created: ts(),
         },
     })

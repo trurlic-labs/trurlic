@@ -169,8 +169,8 @@ fn handle_tools_call(
         .and_then(Value::as_str)
         .ok_or_else(|| (INVALID_PARAMS, "missing or invalid tool name".to_string()))?;
 
-    let default_args = serde_json::json!({});
-    let arguments = params.get("arguments").unwrap_or(&default_args);
+    static EMPTY_ARGS: LazyLock<Value> = LazyLock::new(|| serde_json::json!({}));
+    let arguments = params.get("arguments").unwrap_or(&EMPTY_ARGS);
 
     // Write tools need &mut ProjectState; read tools (and unknown names)
     // only need &ProjectState. Acquiring only a read lock for reads avoids

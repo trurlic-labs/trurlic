@@ -16,9 +16,14 @@ use super::{discover_store, open_store};
 pub fn bootstrap(cwd: &Path) -> Result<()> {
     let (_store, state) = open_store(cwd)?;
 
-    let result =
-        workflow::advance::advance(&state, "project", Some(TaskType::Bootstrap), None, &[])
-            .map_err(Error::Validation)?;
+    let result = workflow::advance::advance(
+        &state,
+        "project",
+        Some(TaskType::Bootstrap),
+        None,
+        &std::collections::BTreeMap::new(),
+    )
+    .map_err(Error::Validation)?;
 
     let step = result["step"].as_str().unwrap_or("unknown");
     let ready = result["ready"].as_bool().unwrap_or(false);
@@ -46,9 +51,14 @@ pub fn bootstrap_component(cwd: &Path, component: &str) -> Result<()> {
         return Err(Error::ComponentNotFound(component.into()));
     }
 
-    let result =
-        workflow::advance::advance(&state, component, Some(TaskType::Bootstrap), None, &[])
-            .map_err(Error::Validation)?;
+    let result = workflow::advance::advance(
+        &state,
+        component,
+        Some(TaskType::Bootstrap),
+        None,
+        &std::collections::BTreeMap::new(),
+    )
+    .map_err(Error::Validation)?;
 
     let step = result["step"].as_str().unwrap_or("unknown");
     let ready = result["ready"].as_bool().unwrap_or(false);

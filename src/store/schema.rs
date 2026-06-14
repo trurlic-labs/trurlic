@@ -39,6 +39,13 @@ pub struct DecisionFile {
     pub decision: Decision,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Attribution {
+    User,
+    Agent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Decision {
     /// Component this decision belongs to, or `"project"` for project-wide.
@@ -55,6 +62,8 @@ pub struct Decision {
     /// Source of truth: stored here in the node file, mirrored to graph index.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+
+    pub attribution: Attribution,
 
     /// When this decision was recorded (UTC, ISO 8601 / RFC 3339).
     pub created: DateTime<Utc>,
@@ -157,7 +166,7 @@ pub struct GraphIndex {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-pub const FORMAT_VERSION: &str = "0.2.0";
+pub const FORMAT_VERSION: &str = "0.3.0";
 
 pub const STORE_DIR: &str = ".trurlic";
 
@@ -212,6 +221,7 @@ mod tests {
                 reason: "Stateless, no session store needed".into(),
                 alternatives: vec!["Session cookies — rejected: requires server-side state".into()],
                 tags: vec!["security".into(), "auth".into()],
+                attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
             },
         };
@@ -227,6 +237,7 @@ mod tests {
 component = "auth"
 choice = "JWT"
 reason = "Stateless"
+attribution = "user"
 created = "2025-06-01T10:30:00Z"
 "#;
         let file: DecisionFile = toml::from_str(toml_str).expect("deserialize");
@@ -242,6 +253,7 @@ created = "2025-06-01T10:30:00Z"
                 reason: "Stateless".into(),
                 alternatives: vec![],
                 tags: vec!["security".into(), "auth".into()],
+                attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
             },
         };
@@ -260,6 +272,7 @@ created = "2025-06-01T10:30:00Z"
                 reason: "Stateless".into(),
                 alternatives: vec![],
                 tags: vec![],
+                attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
             },
         };
@@ -388,6 +401,7 @@ created = "2025-06-01T10:30:00Z"
                 reason: "Stateless".into(),
                 alternatives: vec![],
                 tags: vec![],
+                attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
             },
         };
@@ -410,6 +424,7 @@ alternatives = [
     "Opaque tokens — rejected: requires token introspection endpoint",
 ]
 tags = ["security", "auth"]
+attribution = "user"
 created = "2025-06-01T10:30:00Z"
 "#;
         let file: DecisionFile = toml::from_str(toml_str).expect("deserialize spec format");
@@ -428,6 +443,7 @@ created = "2025-06-01T10:30:00Z"
 component = "auth"
 choice = "JWT"
 reason = "Stateless"
+attribution = "user"
 created = "not-a-timestamp"
 "#;
         let result = toml::from_str::<DecisionFile>(toml_str);
@@ -441,6 +457,7 @@ created = "not-a-timestamp"
 component = "auth"
 choice = "JWT"
 reason = "Stateless"
+attribution = "user"
 "#;
         let result = toml::from_str::<DecisionFile>(toml_str);
         assert!(result.is_err(), "missing created field must be rejected");
@@ -491,5 +508,75 @@ reason = "Stateless"
                 kind.as_str()
             );
         }
+    }
+
+    // ── attribution ────────────────────────────────────────────────────
+
+    #[test]
+    fn decision_with_attribution_round_trips() {
+        for attr in [Attribution::User, Attribution::Agent] {
+            let file = DecisionFile {
+                decision: Decision {
+                    component: "auth".into(),
+                    choice: "JWT".into(),
+                    reason: "Stateless".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: attr,
+                    created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                },
+            };
+            let serialized = toml::to_string_pretty(&file).expect("serialize");
+            let deserialized: DecisionFile = toml::from_str(&serialized).expect("deserialize");
+            assert_eq!(file, deserialized);
+        }
+    }
+
+    #[test]
+    fn decision_without_attribution_fails_deserialization() {
+        let toml_str = r#"
+[decision]
+component = "auth"
+choice = "JWT"
+reason = "Stateless"
+created = "2025-06-01T10:30:00Z"
+"#;
+        let result = toml::from_str::<DecisionFile>(toml_str);
+        assert!(
+            result.is_err(),
+            "missing attribution field must be rejected"
+        );
+    }
+
+    #[test]
+    fn attribution_serializes_snake_case() {
+        let file = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT".into(),
+                reason: "Stateless".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+            },
+        };
+        let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(
+            serialized.contains(r#"attribution = "user""#),
+            "Attribution::User must serialize as snake_case, got:\n{serialized}"
+        );
+
+        let agent_file = DecisionFile {
+            decision: Decision {
+                attribution: Attribution::Agent,
+                ..file.decision.clone()
+            },
+        };
+        let agent_serialized = toml::to_string_pretty(&agent_file).expect("serialize");
+        assert!(
+            agent_serialized.contains(r#"attribution = "agent""#),
+            "Attribution::Agent must serialize as snake_case, got:\n{agent_serialized}"
+        );
     }
 }

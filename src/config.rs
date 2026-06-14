@@ -16,7 +16,7 @@ pub enum Provider {
 }
 
 impl Provider {
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Anthropic => "anthropic",
             Self::OpenAi => "openai",
@@ -24,7 +24,7 @@ impl Provider {
         }
     }
 
-    pub fn env_var(self) -> &'static str {
+    pub const fn env_var(self) -> &'static str {
         match self {
             Self::Anthropic => "ANTHROPIC_API_KEY",
             Self::OpenAi => "OPENAI_API_KEY",

@@ -201,23 +201,31 @@ pub const CONCERNS: &[(&str, &[&str])] = &[
 
 // ── Matching ──────────────────────────────────────────────────────────────
 
-/// Check if a decision's content matches any keyword for a concern area.
-///
-/// Uses word-boundary matching to avoid substring false positives
-/// (e.g. "format" does not match inside "information").
-pub fn decision_covers_concern(dec: &DecisionFile, keywords: &[&str]) -> bool {
+/// Extract lowercased words from a decision for keyword matching.
+fn decision_words(dec: &DecisionFile) -> Vec<String> {
     let text = format!(
         "{} {} {}",
         dec.decision.choice,
         dec.decision.reason,
         dec.decision.tags.join(" "),
     );
-    let words: Vec<String> = text
-        .split(|c: char| !c.is_alphanumeric())
+    text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.len() >= 2)
         .map(|w| w.to_lowercase())
-        .collect();
+        .collect()
+}
+
+fn words_match_keywords(words: &[String], keywords: &[&str]) -> bool {
     keywords.iter().any(|kw| words.iter().any(|w| w == kw))
+}
+
+/// Check if a decision's content matches any keyword for a concern area.
+///
+/// Uses word-boundary matching to avoid substring false positives
+/// (e.g. "format" does not match inside "information").
+#[cfg(test)]
+pub fn decision_covers_concern(dec: &DecisionFile, keywords: &[&str]) -> bool {
+    words_match_keywords(&decision_words(dec), keywords)
 }
 
 // ── Coverage computation ──────────────────────────────────────────────────
@@ -230,13 +238,14 @@ pub fn decision_covers_concern(dec: &DecisionFile, keywords: &[&str]) -> bool {
 pub fn compute_concern_coverage(
     decisions: &[&DecisionFile],
 ) -> (Vec<&'static str>, Vec<&'static str>) {
+    let word_sets: Vec<Vec<String>> = decisions.iter().map(|d| decision_words(d)).collect();
     let mut covered = Vec::new();
     let mut uncovered = Vec::new();
 
     for &(name, keywords) in CONCERNS {
-        if decisions
+        if word_sets
             .iter()
-            .any(|d| decision_covers_concern(d, keywords))
+            .any(|words| words_match_keywords(words, keywords))
         {
             covered.push(name);
         } else {
@@ -252,14 +261,16 @@ pub fn compute_concern_coverage(
 /// Shows covered areas (with the decision choices that cover them) and
 /// uncovered areas (for the agent to systematically explore).
 pub fn concern_status(decisions: &[&DecisionFile]) -> String {
+    let word_sets: Vec<Vec<String>> = decisions.iter().map(|d| decision_words(d)).collect();
     let mut covered: Vec<(&str, Vec<&str>)> = Vec::new();
     let mut uncovered: Vec<&str> = Vec::new();
 
     for &(concern_name, keywords) in CONCERNS {
         let matching: Vec<&str> = decisions
             .iter()
-            .filter(|d| decision_covers_concern(d, keywords))
-            .map(|d| d.decision.choice.as_str())
+            .zip(&word_sets)
+            .filter(|(_, words)| words_match_keywords(words, keywords))
+            .map(|(d, _)| d.decision.choice.as_str())
             .collect();
 
         if matching.is_empty() {
@@ -269,7 +280,7 @@ pub fn concern_status(decisions: &[&DecisionFile]) -> String {
         }
     }
 
-    let mut out = String::new();
+    let mut out = String::with_capacity(512);
 
     if !covered.is_empty() {
         out.push_str("COVERED (decisions exist — do not re-ask):\n");
@@ -295,7 +306,7 @@ pub fn concern_status(decisions: &[&DecisionFile]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::schema::Decision;
+    use crate::store::schema::{Attribution, Decision};
     use chrono::{TimeZone, Utc};
 
     fn make_decision(component: &str, choice: &str, reason: &str, tags: &[&str]) -> DecisionFile {
@@ -306,6 +317,7 @@ mod tests {
                 reason: reason.into(),
                 alternatives: vec![],
                 tags: tags.iter().map(|t| (*t).into()).collect(),
+                attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             },
         }

@@ -3,6 +3,7 @@ use std::pin::Pin;
 
 use reqwest::Client;
 use serde::Serialize;
+use zeroize::Zeroizing;
 
 use crate::Result;
 use crate::config::ApiKey;
@@ -18,12 +19,18 @@ struct OpenAiRequest<'a> {
     messages: Vec<ApiMessage<'a>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ApiVariant {
+    Standard,
+    OpenRouter,
+}
+
 pub(super) struct OpenAiClient {
     client: Client,
     key: ApiKey,
     model: String,
     base_url: String,
-    is_openrouter: bool,
+    variant: ApiVariant,
 }
 
 impl OpenAiClient {
@@ -34,14 +41,14 @@ impl OpenAiClient {
         key: ApiKey,
         model: String,
         base_url: &str,
-        is_openrouter: bool,
+        variant: ApiVariant,
     ) -> Self {
         Self {
             client,
             key,
             model,
             base_url: base_url.into(),
-            is_openrouter,
+            variant,
         }
     }
 
@@ -74,13 +81,13 @@ impl OpenAiClient {
 
         let url = format!("{}/chat/completions", self.base_url);
 
+        let bearer = Zeroizing::new(format!("Bearer {}", self.key.expose()));
         let mut req = self
             .client
             .post(&url)
-            .header("authorization", format!("Bearer {}", self.key.expose()))
-            .header("content-type", "application/json");
+            .header("authorization", bearer.as_str());
 
-        if self.is_openrouter {
+        if self.variant == ApiVariant::OpenRouter {
             req = req
                 .header("http-referer", "https://github.com/trurlic-labs/trurlic")
                 .header("x-title", "trurlic");
@@ -99,10 +106,9 @@ impl OpenAiClient {
 
 impl LlmProvider for OpenAiClient {
     fn provider_name(&self) -> &'static str {
-        if self.is_openrouter {
-            "openai-compatible/openrouter"
-        } else {
-            "openai"
+        match self.variant {
+            ApiVariant::OpenRouter => "openai-compatible/openrouter",
+            ApiVariant::Standard => "openai",
         }
     }
 

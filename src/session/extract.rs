@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use crate::Result;
+use crate::store::schema::Attribution;
 use crate::store::{self, RecordDecisionParams, Store};
 
 // ── Extraction ──────────────────────────────────────────────────────────────
@@ -338,6 +339,7 @@ pub(crate) fn record_decision(
             depends_on: &[],
             constrains: &[],
             tags: &[],
+            attribution: Attribution::User,
         },
     )
 }

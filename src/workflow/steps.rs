@@ -13,6 +13,7 @@ use crate::store::graph::InMemoryGraph;
 use crate::store::schema::DecisionFile;
 
 use super::CONCERN_FOCUS_LIMIT;
+use super::action::top_n;
 use super::concerns;
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -31,11 +32,15 @@ pub struct StepPrompt {
 /// Returns the prompt text and optional metadata (like focus concerns).
 /// The caller (MCP tool dispatch) combines this with `get_context` output
 /// to form the full tool response.
+///
+/// `task_type` is optional context for steps that generate variant prompts
+/// (e.g. `summary_gate` varies by Feature vs Review vs NewComponent).
 pub fn build_step_prompt(
     state: &ProjectState,
     component: &str,
     step: &str,
     task: Option<&str>,
+    task_type: Option<&str>,
 ) -> Result<StepPrompt, String> {
     if component != "project" && !state.components.contains_key(component) {
         return Err(format!("component `{component}` does not exist"));
@@ -95,7 +100,7 @@ pub fn build_step_prompt(
     match step {
         "register" => out.push_str(&step_register(component)),
         "define_scope" => out.push_str(&step_define_scope()),
-        "analyze_code" => out.push_str(&step_analyze_code(component)),
+        "analyze_code" => out.push_str(&step_analyze_code(component, task_type)),
         "cover_concerns" => {
             focus = top_n(&uncovered, CONCERN_FOCUS_LIMIT);
             out.push_str(&step_cover_concerns(&focus, &all_decs));
@@ -104,7 +109,7 @@ pub fn build_step_prompt(
         "verify_constraints" => out.push_str(&step_verify_constraints(graph, component)),
         "impact_check" => out.push_str(&step_impact_check(graph, component)),
         "pattern_detection" => out.push_str(&step_pattern_detection(graph, component)),
-        "summary_gate" => out.push_str(&step_summary_gate()),
+        "summary_gate" => out.push_str(&step_summary_gate(task_type)),
         "drift_check" => out.push_str(&step_drift_check(graph, component)),
         "coverage_audit" => {
             focus = uncovered.iter().map(|s| (*s).to_string()).collect();
@@ -113,13 +118,15 @@ pub fn build_step_prompt(
         "scan_project" => out.push_str(&step_scan_project()),
         "extract_decisions" => out.push_str(&step_extract_decisions(component)),
         "project_rules" => out.push_str(&step_project_rules()),
+        "user_explains" => out.push_str(&step_user_explains()),
         "ready" => out.push_str(&step_ready(component)),
         _ => {
             return Err(format!(
                 "unknown step `{step}` — expected: register, define_scope, \
              analyze_code, cover_concerns, walk_decisions, verify_constraints, \
              impact_check, pattern_detection, summary_gate, drift_check, \
-             coverage_audit, scan_project, extract_decisions, project_rules, ready"
+             coverage_audit, scan_project, extract_decisions, project_rules, \
+             user_explains, ready"
             ));
         }
     }
@@ -276,8 +283,19 @@ fn step_define_scope() -> String {
         .into()
 }
 
-fn step_analyze_code(component: &str) -> String {
-    format!(
+fn step_analyze_code(component: &str, task_type: Option<&str>) -> String {
+    let mut out = String::with_capacity(512);
+
+    if task_type == Some("learn") {
+        out.push_str(
+            "CONTEXT: The user has already described this component from \
+             memory. Compare what you find in the source code to what the \
+             user described earlier — note what they got right, what they \
+             missed, and any misconceptions.\n\n",
+        );
+    }
+
+    out.push_str(&format!(
         "STEP: Analyze Code\n\n\
          Read every source file in [{component}]'s module. Build a \
          numbered list of all architectural decisions you identify:\n\
@@ -295,7 +313,9 @@ fn step_analyze_code(component: &str) -> String {
          code. Let me go through each one.\"\n\
          This list drives the session. Walk through each decision \
          one at a time.\n"
-    )
+    ));
+
+    out
 }
 
 fn step_cover_concerns(focus: &[String], all_decs: &[&DecisionFile]) -> String {
@@ -455,15 +475,30 @@ fn step_pattern_detection(graph: &InMemoryGraph, component: &str) -> String {
     out
 }
 
-fn step_summary_gate() -> String {
-    "STEP: Summary Gate\n\n\
-     Ask: \"Without looking at the list, describe in 3-5 sentences \
-     the constraints any code touching this component must respect.\"\n\n\
-     Do NOT help. Do NOT give hints. Do NOT break it into sub-questions.\n\n\
-     If the user cannot produce a coherent summary, revisit the \
-     decisions they couldn't explain.\n\
-     The session ends only when the user demonstrates ownership.\n"
-        .into()
+fn step_summary_gate(task_type: Option<&str>) -> String {
+    let question = match task_type {
+        Some("feature") => {
+            "\"Without looking at the list, what constraints does your \
+             change need to respect? Describe in 3-5 sentences.\""
+        }
+        Some("review") => {
+            "\"Summarize what you found in this review — which decisions \
+             still hold, which drifted, and what gaps remain. 3-5 sentences.\""
+        }
+        _ => {
+            "\"Without looking at the list, describe in 3-5 sentences \
+             the constraints any code touching this component must respect.\""
+        }
+    };
+
+    format!(
+        "STEP: Summary Gate\n\n\
+         Ask: {question}\n\n\
+         Do NOT help. Do NOT give hints. Do NOT break it into sub-questions.\n\n\
+         If the user cannot produce a coherent summary, revisit the \
+         decisions they couldn't explain.\n\
+         The session ends only when the user demonstrates ownership.\n"
+    )
 }
 
 fn step_drift_check(graph: &InMemoryGraph, component: &str) -> String {
@@ -524,6 +559,19 @@ fn step_coverage_audit(covered: &[&str], uncovered: &[&str]) -> String {
         );
     }
     out
+}
+
+fn step_user_explains() -> String {
+    "STEP: User Explains\n\n\
+     Ask the user: \"From memory, describe this component's architecture \
+     — its responsibilities, key decisions, and how it connects to the \
+     rest of the system.\"\n\n\
+     Do NOT show them any decisions or code first. The user must recall \
+     from memory without looking at code or documentation.\n\n\
+     After they respond, compare their description against the recorded \
+     decisions. Note what they got right, what they missed, and any \
+     misconceptions. Use this as the foundation for the learning session.\n"
+        .into()
 }
 
 fn step_ready(component: &str) -> String {
@@ -615,15 +663,12 @@ fn sanitize(s: &str) -> String {
         .filter(|c| !c.is_control() || *c == '\n')
         .take(MAX_PROMPT_VALUE_LEN)
         .collect();
-    if cleaned.len() < s.len() {
+    let printable_count = s.chars().filter(|c| !c.is_control() || *c == '\n').count();
+    if printable_count > MAX_PROMPT_VALUE_LEN {
         format!("{cleaned}…")
     } else {
         cleaned
     }
-}
-
-fn top_n(concerns: &[&str], n: usize) -> Vec<String> {
-    concerns.iter().take(n).map(|s| (*s).to_string()).collect()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -669,6 +714,7 @@ mod tests {
                     reason: "Proof-of-possession prevents token theft".into(),
                     alternatives: vec![],
                     tags: vec!["security".into(), "auth".into()],
+                    attribution: Attribution::User,
                     created: ts,
                 },
             }),
@@ -682,6 +728,7 @@ mod tests {
                     reason: "Clear boundary".into(),
                     alternatives: vec![],
                     tags: vec!["scope".into()],
+                    attribution: Attribution::User,
                     created: ts,
                 },
             }),
@@ -695,6 +742,7 @@ mod tests {
                     reason: "Consistent error propagation".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts,
                 },
             }),
@@ -791,7 +839,7 @@ mod tests {
             "drift_check",
             "coverage_audit",
         ] {
-            let result = build_step_prompt(&state, "auth", step, None).unwrap();
+            let result = build_step_prompt(&state, "auth", step, None, None).unwrap();
             assert!(
                 result.instructions.contains("Read the source code"),
                 "step `{step}` missing preamble"
@@ -810,7 +858,7 @@ mod tests {
             "verify_constraints",
             "summary_gate",
         ] {
-            let result = build_step_prompt(&state, "auth", step, None).unwrap();
+            let result = build_step_prompt(&state, "auth", step, None, None).unwrap();
             assert!(
                 result.instructions.contains("ONE topic per message"),
                 "step `{step}` missing interaction protocol"
@@ -825,10 +873,10 @@ mod tests {
     #[test]
     fn register_and_ready_skip_protocol() {
         let state = test_state();
-        let reg = build_step_prompt(&state, "auth", "register", None).unwrap();
+        let reg = build_step_prompt(&state, "auth", "register", None, None).unwrap();
         assert!(!reg.instructions.contains("ONE topic per message"));
 
-        let ready = build_step_prompt(&state, "auth", "ready", None).unwrap();
+        let ready = build_step_prompt(&state, "auth", "ready", None, None).unwrap();
         assert!(!ready.instructions.contains("ONE topic per message"));
     }
 
@@ -837,7 +885,7 @@ mod tests {
     #[test]
     fn define_scope_asks_scope_questions() {
         let state = test_state();
-        let result = build_step_prompt(&state, "store", "define_scope", None).unwrap();
+        let result = build_step_prompt(&state, "store", "define_scope", None, None).unwrap();
         assert!(result.instructions.contains("responsible for"));
         assert!(result.instructions.contains("NOT its responsibility"));
         assert!(result.instructions.contains("[\"scope\"]"));
@@ -846,7 +894,7 @@ mod tests {
     #[test]
     fn analyze_code_lists_what_to_look_for() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "analyze_code", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "analyze_code", None, None).unwrap();
         assert!(result.instructions.contains("Data structures"));
         assert!(result.instructions.contains("Error handling"));
         assert!(result.instructions.contains("Security measures"));
@@ -855,7 +903,7 @@ mod tests {
     #[test]
     fn cover_concerns_returns_focus() {
         let state = test_state();
-        let result = build_step_prompt(&state, "store", "cover_concerns", None).unwrap();
+        let result = build_step_prompt(&state, "store", "cover_concerns", None, None).unwrap();
         // store has no decisions → all 10 concerns uncovered, focus is top 3.
         assert_eq!(result.focus.len(), CONCERN_FOCUS_LIMIT);
         assert_eq!(result.focus[0], "Security boundaries");
@@ -864,7 +912,7 @@ mod tests {
     #[test]
     fn cover_concerns_shows_concern_status() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "cover_concerns", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "cover_concerns", None, None).unwrap();
         assert!(result.instructions.contains("COVERED"));
         assert!(result.instructions.contains("UNCOVERED"));
     }
@@ -872,7 +920,7 @@ mod tests {
     #[test]
     fn walk_decisions_lists_each_decision() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "walk_decisions", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "walk_decisions", None, None).unwrap();
         assert!(result.instructions.contains("auth-jwt"));
         assert!(result.instructions.contains("JWT with DPoP binding"));
         assert!(result.instructions.contains("STOP. Wait for response"));
@@ -881,7 +929,7 @@ mod tests {
     #[test]
     fn verify_constraints_lists_constraints() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "verify_constraints", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "verify_constraints", None, None).unwrap();
         assert!(result.instructions.contains("CONSTRAINT:"));
         assert!(result.instructions.contains("JWT with DPoP binding"));
         assert!(
@@ -894,7 +942,7 @@ mod tests {
     #[test]
     fn verify_constraints_requires_code_citation() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "verify_constraints", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "verify_constraints", None, None).unwrap();
         assert!(
             result.instructions.contains("source file and function"),
             "verify_constraints must require code citation"
@@ -908,14 +956,14 @@ mod tests {
     #[test]
     fn impact_check_shows_connections() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "impact_check", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "impact_check", None, None).unwrap();
         assert!(result.instructions.contains("store"));
     }
 
     #[test]
     fn pattern_detection_lists_decisions() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "pattern_detection", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "pattern_detection", None, None).unwrap();
         assert!(result.instructions.contains("auth-jwt"));
         assert!(result.instructions.contains("defense-in-depth"));
     }
@@ -923,7 +971,7 @@ mod tests {
     #[test]
     fn summary_gate_forbids_hints() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "summary_gate", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "summary_gate", None, None).unwrap();
         assert!(result.instructions.contains("Do NOT help"));
         assert!(result.instructions.contains("Do NOT give hints"));
     }
@@ -931,7 +979,7 @@ mod tests {
     #[test]
     fn coverage_audit_returns_full_focus() {
         let state = test_state();
-        let result = build_step_prompt(&state, "store", "coverage_audit", None).unwrap();
+        let result = build_step_prompt(&state, "store", "coverage_audit", None, None).unwrap();
         // store has 0 decisions → project-errors covers Error handling.
         // All remaining concern areas are in the focus list.
         assert!(!result.focus.is_empty());
@@ -943,21 +991,21 @@ mod tests {
     #[test]
     fn unknown_component_returns_error() {
         let state = test_state();
-        let err = build_step_prompt(&state, "ghost", "define_scope", None).unwrap_err();
+        let err = build_step_prompt(&state, "ghost", "define_scope", None, None).unwrap_err();
         assert!(err.contains("does not exist"));
     }
 
     #[test]
     fn unknown_step_returns_error() {
         let state = test_state();
-        let err = build_step_prompt(&state, "auth", "bogus_step", None).unwrap_err();
+        let err = build_step_prompt(&state, "auth", "bogus_step", None, None).unwrap_err();
         assert!(err.contains("unknown step"));
     }
 
     #[test]
     fn project_scope_accepted() {
         let state = test_state();
-        let result = build_step_prompt(&state, "project", "define_scope", None).unwrap();
+        let result = build_step_prompt(&state, "project", "define_scope", None, None).unwrap();
         assert!(result.instructions.contains("PROJECT LEVEL"));
     }
 
@@ -971,6 +1019,7 @@ mod tests {
             "auth",
             "verify_constraints",
             Some("add rate limiting"),
+            None,
         )
         .unwrap();
         assert!(result.instructions.contains("add rate limiting"));
@@ -981,14 +1030,14 @@ mod tests {
     #[test]
     fn component_scope_boundary() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "define_scope", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "define_scope", None, None).unwrap();
         assert!(result.instructions.contains("COMPONENT [auth]"));
     }
 
     #[test]
     fn project_scope_boundary() {
         let state = test_state();
-        let result = build_step_prompt(&state, "project", "define_scope", None).unwrap();
+        let result = build_step_prompt(&state, "project", "define_scope", None, None).unwrap();
         assert!(result.instructions.contains("PROJECT LEVEL"));
         assert!(result.instructions.contains("cross-cutting principles"));
     }
@@ -998,14 +1047,14 @@ mod tests {
     #[test]
     fn scan_project_includes_preamble() {
         let state = test_state();
-        let result = build_step_prompt(&state, "project", "scan_project", None).unwrap();
+        let result = build_step_prompt(&state, "project", "scan_project", None, None).unwrap();
         assert!(result.instructions.contains("source code"));
     }
 
     #[test]
     fn scan_project_skips_interaction_protocol() {
         let state = test_state();
-        let result = build_step_prompt(&state, "project", "scan_project", None).unwrap();
+        let result = build_step_prompt(&state, "project", "scan_project", None, None).unwrap();
         assert!(
             !result.instructions.contains("ONE topic per message"),
             "scan_project must skip interaction protocol"
@@ -1015,7 +1064,7 @@ mod tests {
     #[test]
     fn scan_project_instructs_autonomous_registration() {
         let state = test_state();
-        let result = build_step_prompt(&state, "project", "scan_project", None).unwrap();
+        let result = build_step_prompt(&state, "project", "scan_project", None, None).unwrap();
         assert!(result.instructions.contains("add_component"));
         assert!(result.instructions.contains("add_connection"));
         assert!(result.instructions.contains("Do NOT ask the user"));
@@ -1024,14 +1073,14 @@ mod tests {
     #[test]
     fn extract_decisions_includes_preamble() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None, None).unwrap();
         assert!(result.instructions.contains("source code"));
     }
 
     #[test]
     fn extract_decisions_skips_interaction_protocol() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None, None).unwrap();
         assert!(
             !result.instructions.contains("ONE topic per message"),
             "extract_decisions must skip interaction protocol"
@@ -1041,7 +1090,7 @@ mod tests {
     #[test]
     fn extract_decisions_targets_component() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None, None).unwrap();
         assert!(result.instructions.contains("[auth]"));
         assert!(result.instructions.contains("record_decision"));
     }
@@ -1049,7 +1098,7 @@ mod tests {
     #[test]
     fn extract_decisions_shows_existing_constraints() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None, None).unwrap();
         // auth has existing decisions → they appear as constraints context.
         assert!(result.instructions.contains("EXISTING DECISIONS"));
     }
@@ -1057,7 +1106,7 @@ mod tests {
     #[test]
     fn extract_decisions_shows_component_graph() {
         let state = test_state();
-        let result = build_step_prompt(&state, "auth", "extract_decisions", None).unwrap();
+        let result = build_step_prompt(&state, "auth", "extract_decisions", None, None).unwrap();
         // auth connects to store → graph context present.
         assert!(result.instructions.contains("store"));
     }
@@ -1065,14 +1114,14 @@ mod tests {
     #[test]
     fn project_rules_includes_preamble() {
         let state = test_state();
-        let result = build_step_prompt(&state, "project", "project_rules", None).unwrap();
+        let result = build_step_prompt(&state, "project", "project_rules", None, None).unwrap();
         assert!(result.instructions.contains("source code"));
     }
 
     #[test]
     fn project_rules_skips_interaction_protocol() {
         let state = test_state();
-        let result = build_step_prompt(&state, "project", "project_rules", None).unwrap();
+        let result = build_step_prompt(&state, "project", "project_rules", None, None).unwrap();
         assert!(
             !result.instructions.contains("ONE topic per message"),
             "project_rules must skip interaction protocol"
@@ -1082,9 +1131,99 @@ mod tests {
     #[test]
     fn project_rules_instructs_cross_cutting() {
         let state = test_state();
-        let result = build_step_prompt(&state, "project", "project_rules", None).unwrap();
+        let result = build_step_prompt(&state, "project", "project_rules", None, None).unwrap();
         assert!(result.instructions.contains("cross-cutting"));
         assert!(result.instructions.contains("record_decision"));
         assert!(result.instructions.contains("project"));
+    }
+
+    // ── user_explains step ───────────────────────────────────────────
+
+    #[test]
+    fn build_step_prompt_accepts_user_explains() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "user_explains", None, None).unwrap();
+        assert!(result.instructions.contains("from memory"));
+    }
+
+    #[test]
+    fn step_as_str_round_trips_user_explains() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "user_explains", None, None);
+        assert!(
+            result.is_ok(),
+            "user_explains must be accepted: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn user_explains_includes_interaction_protocol() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "user_explains", None, None).unwrap();
+        assert!(
+            result.instructions.contains("ONE topic per message"),
+            "user_explains must include interaction protocol"
+        );
+    }
+
+    // ── summary_gate task_type variants ──────────────────────────────
+
+    #[test]
+    fn summary_gate_feature_variant() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "summary_gate", None, Some("feature")).unwrap();
+        assert!(
+            result.instructions.contains("constraints does your change"),
+            "feature variant should ask about change constraints"
+        );
+    }
+
+    #[test]
+    fn summary_gate_review_variant() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "summary_gate", None, Some("review")).unwrap();
+        assert!(
+            result.instructions.contains("Summarize what you found"),
+            "review variant should ask for review summary"
+        );
+    }
+
+    #[test]
+    fn summary_gate_default_variant() {
+        let state = test_state();
+        let result = build_step_prompt(&state, "auth", "summary_gate", None, None).unwrap();
+        assert!(
+            result
+                .instructions
+                .contains("constraints any code touching"),
+            "default variant should ask about component constraints"
+        );
+    }
+
+    // ── analyze_code learn variant ──────────────────────────────────
+
+    #[test]
+    fn analyze_code_learn_preamble() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "analyze_code", None, Some("learn")).unwrap();
+        assert!(
+            result.instructions.contains("Compare what you find"),
+            "learn variant should reference user's earlier description"
+        );
+    }
+
+    #[test]
+    fn analyze_code_non_learn_no_preamble() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "analyze_code", None, Some("feature")).unwrap();
+        assert!(
+            !result.instructions.contains("Compare what you find"),
+            "non-learn variant should not include learn preamble"
+        );
     }
 }

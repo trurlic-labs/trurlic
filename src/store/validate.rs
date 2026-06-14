@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use super::graph::{Edge, InMemoryGraph, Issue, Severity};
+use super::graph::{InMemoryGraph, Issue, Severity};
 use super::schema::{EdgeKind, NodeKind};
 use super::state::is_valid_kebab_case;
 
@@ -45,8 +45,9 @@ impl InMemoryGraph {
                     issues.push(Issue {
                         severity: Severity::Error,
                         message: format!(
-                            "edge target `{}` (from `{from}`, {:?}) is not a known node",
-                            edge.target, edge.kind
+                            "edge target `{}` (from `{from}`, {}) is not a known node",
+                            edge.target,
+                            edge.kind.as_str()
                         ),
                         node: Some(edge.target.to_string()),
                     });
@@ -86,9 +87,12 @@ impl InMemoryGraph {
                     issues.push(Issue {
                         severity: Severity::Error,
                         message: format!(
-                            "{:?} edge `{from}` ({from_k:?}) → `{}` ({to_k:?}): \
+                            "{} edge `{from}` ({}) → `{}` ({}): \
                              invalid node kinds",
-                            edge.kind, edge.target
+                            edge.kind.as_str(),
+                            from_k.as_str(),
+                            edge.target,
+                            to_k.as_str()
                         ),
                         node: Some(from.to_string()),
                     });
@@ -104,7 +108,7 @@ impl InMemoryGraph {
                 if *from == edge.target {
                     issues.push(Issue {
                         severity: Severity::Error,
-                        message: format!("self-edge on `{from}` ({:?})", edge.kind),
+                        message: format!("self-edge on `{from}` ({})", edge.kind.as_str()),
                         node: Some(from.to_string()),
                     });
                 }
@@ -121,8 +125,9 @@ impl InMemoryGraph {
                     issues.push(Issue {
                         severity: Severity::Error,
                         message: format!(
-                            "duplicate {:?} edge `{from}` → `{}`",
-                            edge.kind, edge.target
+                            "duplicate {} edge `{from}` → `{}`",
+                            edge.kind.as_str(),
+                            edge.target
                         ),
                         node: Some(from.to_string()),
                     });
@@ -269,37 +274,29 @@ impl InMemoryGraph {
             if meta.kind != NodeKind::Decision {
                 continue;
             }
-            let belongs_to: Vec<&Edge> = self
-                .forward
-                .get(name)
-                .map(|edges| {
-                    edges
-                        .iter()
-                        .filter(|e| e.kind == EdgeKind::BelongsTo)
-                        .collect()
-                })
-                .unwrap_or_default();
+            let edges = self.forward.get(name);
+            let belongs_to_count = edges
+                .map(|el| el.iter().filter(|e| e.kind == EdgeKind::BelongsTo).count())
+                .unwrap_or(0);
 
-            if belongs_to.is_empty() {
+            if belongs_to_count == 0 {
                 issues.push(Issue {
                     severity: Severity::Error,
                     message: format!("decision `{name}` has no BelongsTo edge"),
                     node: Some(name.to_string()),
                 });
-            } else if belongs_to.len() > 1 {
+            } else if belongs_to_count > 1 {
                 issues.push(Issue {
                     severity: Severity::Error,
                     message: format!(
-                        "decision `{name}` has {} BelongsTo edges (must be exactly 1)",
-                        belongs_to.len()
+                        "decision `{name}` has {belongs_to_count} BelongsTo edges (must be exactly 1)",
                     ),
                     node: Some(name.to_string()),
                 });
             }
 
-            // Verify BelongsTo target matches the decision file's component field.
-            if let Some(dec) = self.decisions.get(name) {
-                for edge in &belongs_to {
+            if let (Some(el), Some(dec)) = (edges, self.decisions.get(name)) {
+                for edge in el.iter().filter(|e| e.kind == EdgeKind::BelongsTo) {
                     if edge.target.as_ref() != dec.decision.component {
                         issues.push(Issue {
                             severity: Severity::Error,
@@ -373,9 +370,9 @@ impl InMemoryGraph {
                 issues.push(Issue {
                     severity: Severity::Error,
                     message: format!(
-                        "{:?} node `{name}` exists in index but has no content \
+                        "{} node `{name}` exists in index but has no content \
                          (file may be missing or unparseable)",
-                        meta.kind
+                        meta.kind.as_str()
                     ),
                     node: Some(name.to_string()),
                 });
@@ -461,7 +458,7 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|i| i.severity == Severity::Error && i.message.contains("BelongsTo"))
+                .any(|i| i.severity == Severity::Error && i.message.contains("belongs_to"))
         );
     }
 
@@ -492,7 +489,7 @@ mod tests {
         };
         let g = InMemoryGraph::build(&index, &BTreeMap::new(), &BTreeMap::new(), &BTreeMap::new());
         let issues = g.validate();
-        assert!(issues.iter().any(|i| i.message.contains("ConnectsTo")));
+        assert!(issues.iter().any(|i| i.message.contains("connects_to")));
     }
 
     // ── validate: self-edge ──────────────────────────────────────────────
@@ -635,6 +632,7 @@ mod tests {
                         reason: n.into(),
                         alternatives: vec![],
                         tags: vec![],
+                        attribution: Attribution::User,
                         created: ts(),
                     },
                 },
@@ -675,6 +673,7 @@ mod tests {
                     reason: "ok".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },
@@ -712,6 +711,7 @@ mod tests {
                     reason: "   ".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },
@@ -826,6 +826,7 @@ mod tests {
                     reason: "test".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },
@@ -898,6 +899,7 @@ mod tests {
                     reason: "test".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },
@@ -976,6 +978,7 @@ mod tests {
                     reason: "test".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },
@@ -1113,6 +1116,7 @@ mod tests {
                         reason: n.into(),
                         alternatives: vec![],
                         tags: vec![],
+                        attribution: Attribution::User,
                         created: ts(),
                     },
                 },
@@ -1239,6 +1243,7 @@ mod tests {
                     reason: "test".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },

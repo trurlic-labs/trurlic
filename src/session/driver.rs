@@ -10,6 +10,8 @@
 
 use std::io::Write;
 
+use std::collections::BTreeMap;
+
 use crate::provider::{LlmProvider, Message, Role};
 use crate::store::{self, Store};
 use crate::workflow::{self, TaskType};
@@ -17,6 +19,19 @@ use crate::{Error, Result};
 
 use super::extract::{self, extract_decisions};
 use super::persistence::{self, Session};
+
+/// Warn when message count exceeds this threshold.
+const MESSAGE_COUNT_WARNING: usize = 80;
+
+// ── Context bundle ───────────────────────────────────────────────────────
+
+struct SessionContext<'a> {
+    store: &'a Store,
+    client: &'a dyn LlmProvider,
+    component: &'a str,
+    task_type: Option<TaskType>,
+    task: Option<&'a str>,
+}
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -41,22 +56,36 @@ pub(crate) async fn run(
     session: &mut Session,
     state: &mut store::ProjectState,
 ) -> Result<()> {
+    let ctx = SessionContext {
+        store,
+        client,
+        component,
+        task_type,
+        task,
+    };
     let mut messages = session.to_provider_messages();
 
     loop {
         // ── Advance: determine current step ───────────────────────────
-        // Clone into owned strings so `completed` does not borrow `session`,
+        // Clone into owned strings so `evidence` does not borrow `session`,
         // which must remain mutably accessible for add_message / persist.
-        let completed_owned: Vec<String> = session.completed_steps.iter().cloned().collect();
-        let completed: Vec<&str> = completed_owned.iter().map(|s| s.as_str()).collect();
+        let evidence_owned: BTreeMap<String, String> = session
+            .step_evidence
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let evidence: BTreeMap<&str, &str> = evidence_owned
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
         let advance_result =
-            workflow::advance::advance(state, component, task_type, task, &completed)
+            workflow::advance::advance(state, ctx.component, ctx.task_type, ctx.task, &evidence)
                 .map_err(Error::Validation)?;
 
         let ready = advance_result["ready"].as_bool().unwrap_or(false);
         if ready {
             eprintln!("\nDesign session complete — component is ready.");
-            persistence::cleanup(store, component);
+            persistence::cleanup(ctx.store, ctx.component);
             return Ok(());
         }
 
@@ -66,108 +95,159 @@ pub(crate) async fn run(
             .to_string();
 
         // ── Loop detection: skip already-completed steps ──────────────
-        if session.completed_steps.contains(&step) {
+        if session.step_evidence.contains_key(&step) {
             eprintln!("\nAll reachable steps complete.");
-            persistence::cleanup(store, component);
+            persistence::cleanup(ctx.store, ctx.component);
             return Ok(());
         }
 
         // ── Build step prompt ─────────────────────────────────────────
-        let prompt = workflow::steps::build_step_prompt(state, component, &step, task)
-            .map_err(Error::Validation)?;
+        let tt_str = ctx.task_type.map(|tt| tt.as_str());
+        let prompt =
+            workflow::steps::build_step_prompt(state, ctx.component, &step, ctx.task, tt_str)
+                .map_err(Error::Validation)?;
 
         let step_label = step.replace('_', " ");
         eprintln!("\n── {step_label} ──");
 
-        // ── Step dialogue loop ────────────────────────────────────────
+        // ── Run dialogue for this step ────────────────────────────────
         let decisions_before = session.decisions_recorded.len();
+        let step_result = run_step_dialogue(
+            &ctx,
+            session,
+            state,
+            &mut messages,
+            &step,
+            &evidence,
+            &prompt.instructions,
+        )
+        .await?;
 
-        loop {
-            let response = {
-                let result = client
-                    .stream_completion(&messages, &prompt.instructions, &mut |chunk| {
-                        print!("{chunk}");
-                        let _ = std::io::stdout().flush();
-                    })
-                    .await;
-                println!();
-                result?
-            };
-
-            // ── Extract and record decisions ──────────────────────────
-            for dec in extract_decisions(&response) {
-                let stem = extract::record_decision(
-                    store,
-                    state,
-                    component,
-                    &dec.choice,
-                    &dec.reason,
-                    &dec.alternatives,
-                )?;
-                session.decisions_recorded.push(stem.clone());
-                eprintln!("  ✓ recorded: {stem}");
-            }
-
-            // ── DESIGN_COMPLETE signal ────────────────────────────────
-            if extract::is_design_complete(&response) {
-                eprintln!("\nDesign session complete.");
-                persistence::cleanup(store, component);
-                return Ok(());
-            }
-
-            // ── Persist ───────────────────────────────────────────────
-            session.add_message(Role::Assistant, &response);
-            messages.push(Message {
-                role: Role::Assistant,
-                content: response,
-            });
-            persistence::save(store, session)?;
-
-            // ── Check if step changed ─────────────────────────────────
-            let re_advance =
-                workflow::advance::advance(state, component, task_type, task, &completed)
-                    .map_err(Error::Validation)?;
-
-            let new_ready = re_advance["ready"].as_bool().unwrap_or(false);
-            if new_ready {
-                eprintln!("\nDesign session complete — component is ready.");
-                persistence::cleanup(store, component);
-                return Ok(());
-            }
-            let new_step = re_advance["step"].as_str().unwrap_or("ready");
-            if new_step != step {
-                break; // Step changed — outer loop picks up new step.
-            }
-
-            // ── User input ────────────────────────────────────────────
-            print!("\n> ");
-            let _ = std::io::stdout().flush();
-
-            let input = match read_input()? {
-                Some(text) => text,
-                None => {
-                    persistence::save(store, session)?;
-                    eprintln!("Session saved. Resume with: trurlic design {component} --continue");
-                    return Ok(());
+        match step_result {
+            StepOutcome::Complete => return Ok(()),
+            StepOutcome::StepChanged { last_user_input } => {
+                // ── Step completed ────────────────────────────────────
+                let graph_changed = session.decisions_recorded.len() > decisions_before;
+                if graph_changed {
+                    session.step_evidence.clear();
                 }
-            };
+                session.step_evidence.insert(step, last_user_input);
+                persistence::save(ctx.store, session)?;
+            }
+        }
+    }
+}
 
-            messages.push(Message {
-                role: Role::User,
-                content: input.clone(),
-            });
-            session.add_message(Role::User, &input);
-            persistence::save(store, session)?;
+// ── Step dialogue ────────────────────────────────────────────────────────
+
+enum StepOutcome {
+    Complete,
+    StepChanged { last_user_input: String },
+}
+
+async fn run_step_dialogue(
+    ctx: &SessionContext<'_>,
+    session: &mut Session,
+    state: &mut store::ProjectState,
+    messages: &mut Vec<Message>,
+    step: &str,
+    step_evidence: &BTreeMap<&str, &str>,
+    system_prompt: &str,
+) -> Result<StepOutcome> {
+    let mut last_user_input = String::new();
+    loop {
+        if messages.len() >= MESSAGE_COUNT_WARNING && messages.len().is_multiple_of(20) {
+            eprintln!(
+                "warning: session has {} messages — consider saving and starting fresh",
+                messages.len(),
+            );
         }
 
-        // ── Step completed ────────────────────────────────────────────
-        let graph_changed = session.decisions_recorded.len() > decisions_before;
-        if graph_changed {
-            // Graph changed — prior step completions may no longer apply.
-            session.completed_steps.clear();
+        let response = {
+            let result = ctx
+                .client
+                .stream_completion(messages, system_prompt, &mut |chunk| {
+                    print!("{chunk}");
+                    let _ = std::io::stdout().flush();
+                })
+                .await;
+            println!();
+            result?
+        };
+
+        // ── Extract and record decisions ──────────────────────────
+        for dec in extract_decisions(&response) {
+            let stem = extract::record_decision(
+                ctx.store,
+                state,
+                ctx.component,
+                &dec.choice,
+                &dec.reason,
+                &dec.alternatives,
+            )?;
+            session.decisions_recorded.push(stem.clone());
+            eprintln!("  ✓ recorded: {stem}");
         }
-        session.completed_steps.insert(step);
-        persistence::save(store, session)?;
+
+        // ── DESIGN_COMPLETE signal ────────────────────────────────
+        if extract::is_design_complete(&response) {
+            eprintln!("\nDesign session complete.");
+            persistence::cleanup(ctx.store, ctx.component);
+            return Ok(StepOutcome::Complete);
+        }
+
+        // ── Persist ───────────────────────────────────────────────
+        session.add_message(Role::Assistant, &response);
+        messages.push(Message {
+            role: Role::Assistant,
+            content: response,
+        });
+        persistence::save(ctx.store, session)?;
+
+        // ── Check if step changed ─────────────────────────────────
+        let re_advance = workflow::advance::advance(
+            state,
+            ctx.component,
+            ctx.task_type,
+            ctx.task,
+            step_evidence,
+        )
+        .map_err(Error::Validation)?;
+
+        let new_ready = re_advance["ready"].as_bool().unwrap_or(false);
+        if new_ready {
+            eprintln!("\nDesign session complete — component is ready.");
+            persistence::cleanup(ctx.store, ctx.component);
+            return Ok(StepOutcome::Complete);
+        }
+        let new_step = re_advance["step"].as_str().unwrap_or("ready");
+        if new_step != step {
+            return Ok(StepOutcome::StepChanged { last_user_input });
+        }
+
+        // ── User input ────────────────────────────────────────────
+        print!("\n> ");
+        let _ = std::io::stdout().flush();
+
+        let input = match read_input()? {
+            Some(text) => text,
+            None => {
+                persistence::save(ctx.store, session)?;
+                eprintln!(
+                    "Session saved. Resume with: trurlic design {} --continue",
+                    ctx.component,
+                );
+                return Ok(StepOutcome::Complete);
+            }
+        };
+
+        last_user_input = input.clone();
+        messages.push(Message {
+            role: Role::User,
+            content: input.clone(),
+        });
+        session.add_message(Role::User, &input);
+        persistence::save(ctx.store, session)?;
     }
 }
 

@@ -79,14 +79,14 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
             config.key,
             config.model,
             "https://api.openai.com/v1",
-            false,
+            openai::ApiVariant::Standard,
         )),
         Provider::OpenRouter => Box::new(openai::OpenAiClient::new(
             client,
             config.key,
             config.model,
             "https://openrouter.ai/api/v1",
-            true,
+            openai::ApiVariant::OpenRouter,
         )),
     })
 }

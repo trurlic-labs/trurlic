@@ -17,6 +17,17 @@ use crate::{Error, Result};
 
 use persistence::Session;
 
+/// How the design session should start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionMode {
+    /// Start a fresh session, inferring the task type from graph state.
+    Fresh,
+    /// Resume a previously saved session.
+    Continue,
+    /// Start fresh but force the Review task type to challenge existing decisions.
+    Revisit,
+}
+
 /// Run a design session for a component.
 ///
 /// The session is step-driven: `advance()` determines the current step,
@@ -30,8 +41,7 @@ pub async fn run_design(
     store: &Store,
     client: &dyn LlmProvider,
     component: &str,
-    continue_session: bool,
-    revisit: bool,
+    mode: SessionMode,
     task: Option<&str>,
 ) -> Result<()> {
     if component != "project" && !store::is_valid_kebab_case(component) {
@@ -41,7 +51,7 @@ pub async fn run_design(
     // ── Exclusive session lock ────────────────────────────────────────
     persistence::try_acquire_lock(store, component)?;
 
-    let result = run_design_inner(store, client, component, continue_session, revisit, task).await;
+    let result = run_design_inner(store, client, component, mode, task).await;
 
     // Always release the lock, whether we succeeded or failed.
     persistence::release_lock(store, component);
@@ -52,11 +62,10 @@ async fn run_design_inner(
     store: &Store,
     client: &dyn LlmProvider,
     component: &str,
-    continue_session: bool,
-    revisit: bool,
+    mode: SessionMode,
     task: Option<&str>,
 ) -> Result<()> {
-    let mut session = if continue_session {
+    let mut session = if mode == SessionMode::Continue {
         let s = persistence::load(store, component)?;
         eprintln!(
             "Resuming session ({} messages, {} decisions recorded)",
@@ -85,11 +94,9 @@ async fn run_design_inner(
         return Err(Error::ComponentNotFound(component.into()));
     }
 
-    // Map CLI flags to task type.
-    let task_type = if revisit {
-        Some(TaskType::Review)
-    } else {
-        None // Let advance infer from graph state.
+    let task_type = match mode {
+        SessionMode::Revisit => Some(TaskType::Review),
+        _ => None,
     };
 
     eprintln!("(Ctrl+D or empty line to save and exit)\n");

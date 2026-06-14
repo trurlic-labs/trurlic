@@ -362,7 +362,7 @@ impl Store {
             patterns.insert(name, Arc::new(file));
         }
 
-        let graph_index = self.load_graph_index(&components, &decisions, &patterns, &hashes)?;
+        let graph_index = self.load_graph_index(&components, &decisions, &patterns, hashes)?;
 
         Ok(ProjectState::new(
             project,
@@ -386,7 +386,7 @@ impl Store {
         components: &BTreeMap<String, Arc<ComponentFile>>,
         decisions: &BTreeMap<String, Arc<DecisionFile>>,
         patterns: &BTreeMap<String, Arc<PatternFile>>,
-        hashes: &HashMap<String, String>,
+        mut hashes: HashMap<String, String>,
     ) -> Result<schema::GraphIndex> {
         let graph_path = self.graph_path();
 
@@ -413,7 +413,7 @@ impl Store {
         let mut nodes = Vec::new();
 
         // Project virtual node — hash pre-computed during load_state.
-        let project_hash = hashes.get("project").cloned().unwrap_or_default();
+        let project_hash = hashes.remove("project").unwrap_or_default();
         let project_tags = existing_tags
             .get("project")
             .map(|t| t.to_vec())
@@ -426,7 +426,7 @@ impl Store {
         });
 
         for name in components.keys() {
-            let hash = hashes.get(name.as_str()).cloned().unwrap_or_default();
+            let hash = hashes.remove(name.as_str()).unwrap_or_default();
             let tags = existing_tags
                 .get(name.as_str())
                 .map(|t| t.to_vec())
@@ -440,7 +440,7 @@ impl Store {
         }
 
         for (name, dec) in decisions {
-            let hash = hashes.get(name.as_str()).cloned().unwrap_or_default();
+            let hash = hashes.remove(name.as_str()).unwrap_or_default();
             // Decision file tags are the source of truth — they survive --rebuild.
             let tags = dec.decision.tags.clone();
             nodes.push(NodeEntry {
@@ -452,7 +452,7 @@ impl Store {
         }
 
         for name in patterns.keys() {
-            let hash = hashes.get(name.as_str()).cloned().unwrap_or_default();
+            let hash = hashes.remove(name.as_str()).unwrap_or_default();
             let tags = existing_tags
                 .get(name.as_str())
                 .map(|t| t.to_vec())
@@ -495,8 +495,8 @@ impl Store {
         }
 
         // Sort for deterministic output.
-        nodes.sort_by(|a, b| a.name.cmp(&b.name));
-        edges.sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
+        nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        edges.sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
 
         Ok(GraphIndex {
             version: 1,
@@ -616,8 +616,8 @@ fn compare_versions(a: &str, b: &str) -> Ordering {
 pub(crate) mod testing {
     use super::*;
     use crate::store::schema::{
-        Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind, GraphIndex,
-        NodeEntry, NodeKind, Project, ProjectFile,
+        Attribution, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
+        GraphIndex, NodeEntry, NodeKind, Project, ProjectFile,
     };
     use chrono::{TimeZone, Utc};
 
@@ -680,6 +680,7 @@ pub(crate) mod testing {
                 reason: format!("Reason for {name}"),
                 alternatives: vec![],
                 tags: vec![],
+                attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
             },
         }
@@ -746,6 +747,7 @@ pub(crate) mod testing {
                     reason: "Stateless, no session store needed".into(),
                     alternatives: vec!["Session cookies — rejected: server state".into()],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts,
                 },
             }),
@@ -759,6 +761,7 @@ pub(crate) mod testing {
                     reason: "Consistent error propagation".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts,
                 },
             }),
@@ -772,6 +775,7 @@ pub(crate) mod testing {
                     reason: "Avoid per-request connection overhead".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts,
                 },
             }),
@@ -1011,6 +1015,7 @@ pub(crate) mod testing {
                     reason: "Stateless".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },
@@ -1024,6 +1029,7 @@ pub(crate) mod testing {
                     reason: "Consistent errors".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },
@@ -1037,6 +1043,7 @@ pub(crate) mod testing {
                     reason: "Avoid per-request overhead".into(),
                     alternatives: vec![],
                     tags: vec![],
+                    attribution: Attribution::User,
                     created: ts(),
                 },
             },

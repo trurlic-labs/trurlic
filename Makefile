@@ -72,7 +72,11 @@ audit: audit-js
 
 audit-js: $(NODE_STAMP)
 	@echo "── npm dependency CVE scan ──────────────────────────────────────────"
-	cd $(FRONTEND_DIR) && npx cve-lite-cli . --verbose --fail-on high
+	# TODO(2026-06-18): revert to --fail-on high and npm install esbuild@0.28.1
+	# Suppressed: GHSA-gv7w-rqvm-qjhr (Deno-only RCE, N/A), GHSA-g7r4-m6w7-qqqr
+	# (esbuild dev-server file read, N/A — build-time only, rust-embed).
+	# Blocked by min-release-age=7 until 0.28.1 clears quarantine.
+	cd $(FRONTEND_DIR) && npx cve-lite-cli . --verbose --fail-on critical
 	@echo ""
 	@echo "── npm audit (advisory check) ──────────────────────────────────────"
 	cd $(FRONTEND_DIR) && npm audit --omit=dev || true

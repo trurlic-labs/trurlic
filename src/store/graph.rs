@@ -68,16 +68,18 @@ impl InMemoryGraph {
         decisions: &BTreeMap<String, Arc<DecisionFile>>,
         patterns: &BTreeMap<String, Arc<PatternFile>>,
     ) -> Self {
-        // Intern every name that appears in nodes or edges.
-        let mut pool: HashMap<String, Arc<str>> = HashMap::with_capacity(index.nodes.len());
+        // Intern every name that appears in nodes or edges. Borrow keys
+        // from `index` (which outlives this function) to avoid cloning
+        // Strings into the pool map.
+        let mut pool: HashMap<&str, Arc<str>> = HashMap::with_capacity(index.nodes.len());
         for node in &index.nodes {
-            pool.entry(node.name.clone())
+            pool.entry(node.name.as_str())
                 .or_insert_with(|| Arc::from(node.name.as_str()));
         }
         for edge in &index.edges {
-            pool.entry(edge.from.clone())
+            pool.entry(edge.from.as_str())
                 .or_insert_with(|| Arc::from(edge.from.as_str()));
-            pool.entry(edge.to.clone())
+            pool.entry(edge.to.as_str())
                 .or_insert_with(|| Arc::from(edge.to.as_str()));
         }
         let intern =
@@ -95,8 +97,8 @@ impl InMemoryGraph {
             );
         }
 
-        let mut forward: HashMap<Arc<str>, Vec<Edge>> = HashMap::new();
-        let mut reverse: HashMap<Arc<str>, Vec<Edge>> = HashMap::new();
+        let mut forward: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.nodes.len());
+        let mut reverse: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.nodes.len());
         for edge in &index.edges {
             let from = intern(&edge.from);
             let to = intern(&edge.to);
@@ -174,9 +176,10 @@ impl InMemoryGraph {
                 hash: meta.hash.clone(),
             })
             .collect();
-        nodes.sort_by(|a, b| a.name.cmp(&b.name));
+        nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
-        let mut edges: Vec<EdgeEntry> = Vec::new();
+        let edge_count: usize = self.forward.values().map(Vec::len).sum();
+        let mut edges: Vec<EdgeEntry> = Vec::with_capacity(edge_count);
         for (from, edge_list) in &self.forward {
             for edge in edge_list {
                 edges.push(EdgeEntry {
@@ -186,7 +189,7 @@ impl InMemoryGraph {
                 });
             }
         }
-        edges.sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
+        edges.sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
 
         GraphIndex {
             version: 1,

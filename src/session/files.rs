@@ -237,8 +237,8 @@ fn append_source_files(out: &mut String, dir: &Path, mut budget: usize) -> Resul
 
 fn append_single_file(out: &mut String, root: &Path, path: &Path, budget: usize) -> Result<usize> {
     let rel = path.strip_prefix(root).unwrap_or(path);
-    let meta = fs::metadata(path)?;
-    let size = meta.len() as usize;
+    let meta = fs::symlink_metadata(path)?;
+    let size = usize::try_from(meta.len()).unwrap_or(usize::MAX);
 
     if size > MAX_FILE_BYTES {
         let _ = writeln!(
@@ -334,7 +334,9 @@ fn is_source_file(name: &str) -> bool {
         Some(e) if e != name => e,
         _ => return false,
     };
-    SOURCE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
+    SOURCE_EXTENSIONS
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(ext))
 }
 
 fn is_config_name(name: &str) -> bool {

@@ -61,7 +61,6 @@ impl AnthropicClient {
             .post(Self::API_URL)
             .header("x-api-key", self.key.expose())
             .header("anthropic-version", Self::API_VERSION)
-            .header("content-type", "application/json")
             .json(&body)
             .send()
             .await

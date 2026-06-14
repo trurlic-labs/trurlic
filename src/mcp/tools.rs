@@ -58,14 +58,16 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                             "description": "Optional task context passed through to \
                                 design prompts."
                         },
-                        "completed_steps": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Steps already completed without graph \
-                                changes. The state machine skips these to progress \
-                                through steps whose postconditions are not verifiable \
-                                from the graph alone (e.g. verify_constraints, \
-                                walk_decisions, coverage_audit, summary_gate)."
+                        "step_evidence": {
+                            "type": "object",
+                            "additionalProperties": { "type": "string" },
+                            "description": "Evidence of user involvement for completed \
+                                steps. Keys are step names, values are evidence strings. \
+                                Gated (interactive) steps require evidence of at least \
+                                20 bytes. Ungated steps accept any value including empty \
+                                string. The state machine skips steps present in this \
+                                map to progress through steps whose postconditions are \
+                                not verifiable from the graph alone."
                         }
                     },
                     "required": ["component"]
@@ -171,9 +173,14 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         "supersedes": {
                             "type": "string",
                             "description": "Decision name being replaced."
+                        },
+                        "attribution": {
+                            "type": "string",
+                            "enum": ["user", "agent"],
+                            "description": "Who authored this decision: \"user\" (human present) or \"agent\" (autonomous)."
                         }
                     },
-                    "required": ["component", "choice", "reason"]
+                    "required": ["component", "choice", "reason", "attribution"]
                 }
             },
             {
@@ -286,6 +293,7 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                                 "scan_project",
                                 "extract_decisions",
                                 "project_rules",
+                                "user_explains",
                                 "ready"
                             ],
                             "description": "Workflow step to get the prompt for."
@@ -293,6 +301,19 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         "task": {
                             "type": "string",
                             "description": "Optional task context."
+                        },
+                        "task_type": {
+                            "type": "string",
+                            "enum": [
+                                "new_component",
+                                "feature",
+                                "fix",
+                                "learn",
+                                "review",
+                                "harden",
+                                "bootstrap"
+                            ],
+                            "description": "Optional task type for variant prompts."
                         }
                     },
                     "required": ["component", "step"]
@@ -394,7 +415,7 @@ pub(crate) fn call_write_tool(
         "update_decision" => update::update_decision(store, state, args),
         "add_component" => write::add_component(store, state, args),
         "add_connection" => write::add_connection(store, state, args),
-        _ => unreachable!("is_write_tool gate prevents unknown tools here"),
+        _ => return tool_error(&format!("unhandled write tool: {name}")),
     };
     match result {
         Ok(v) => tool_result(&v),
@@ -439,7 +460,9 @@ fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope 
     };
     let task = args.get("task").and_then(|v| v.as_str());
 
-    let prompt = match workflow::steps::build_step_prompt(state, component, step, task) {
+    let task_type = args.get("task_type").and_then(|v| v.as_str());
+
+    let prompt = match workflow::steps::build_step_prompt(state, component, step, task, task_type) {
         Ok(p) => p,
         Err(msg) => return tool_error(&msg),
     };
@@ -474,18 +497,17 @@ fn dispatch_advance(state: &ProjectState, args: &Value) -> ToolEnvelope {
     };
     let task = args.get("task").and_then(|v| v.as_str());
 
-    let completed_owned: Vec<String> = args
-        .get("completed_steps")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
+    let evidence_refs: std::collections::BTreeMap<&str, &str> = args
+        .get("step_evidence")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.as_str(), s)))
                 .collect()
         })
         .unwrap_or_default();
-    let completed_refs: Vec<&str> = completed_owned.iter().map(|s| s.as_str()).collect();
 
-    match workflow::advance::advance(state, component, task_type, task, &completed_refs) {
+    match workflow::advance::advance(state, component, task_type, task, &evidence_refs) {
         Ok(result) => tool_result(&result),
         Err(msg) => tool_error(&msg),
     }
@@ -521,7 +543,10 @@ struct TextBlock {
 /// no `serde_json::to_value` intermediate. Callers pass it to
 /// `protocol::write_success`, which serializes the full response in one pass.
 pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
-    let text = serde_json::to_string(payload).unwrap_or_else(|_| "{}".into());
+    let text = serde_json::to_string(payload).unwrap_or_else(|e| {
+        eprintln!("trurlic: tool result serialization error: {e}");
+        "{}".into()
+    });
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",

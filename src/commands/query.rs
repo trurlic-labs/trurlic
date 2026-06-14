@@ -335,6 +335,7 @@ mod tests {
                     depends_on: &[],
                     constrains: &[],
                     tags: &["security".into(), "auth".into()],
+                    attribution: crate::store::schema::Attribution::User,
                 },
             )
             .unwrap();

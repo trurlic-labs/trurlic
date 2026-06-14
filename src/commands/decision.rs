@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::store::schema::Attribution;
 use crate::store::{self, RecordDecisionParams};
 use crate::{Error, Result};
 
@@ -41,6 +42,7 @@ pub fn decide(
             depends_on: &[],
             constrains: &[],
             tags: &[],
+            attribution: Attribution::User,
         },
     )?;
 
