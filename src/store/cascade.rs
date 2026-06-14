@@ -142,8 +142,10 @@ impl InMemoryGraph {
                         target: other.to_string(),
                     });
                 }
-                // Other reverse edges: no action needed.
-                _ => {}
+                // Reverse edges not relevant to decision removal.
+                (EdgeKind::BelongsTo, Direction::Reverse)
+                | (EdgeKind::ConnectsTo, Direction::Reverse)
+                | (EdgeKind::AppliesTo, Direction::Reverse) => {}
             }
         }
 
@@ -202,8 +204,11 @@ impl InMemoryGraph {
                         target: other.to_string(),
                     });
                 }
-                // Other reverse edges: no action needed.
-                _ => {}
+                // Reverse edges not relevant to component removal.
+                (EdgeKind::DependsOn, Direction::Reverse)
+                | (EdgeKind::Constrains, Direction::Reverse)
+                | (EdgeKind::Supersedes, Direction::Reverse)
+                | (EdgeKind::MemberOf, Direction::Reverse) => {}
             }
         }
 
