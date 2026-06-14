@@ -143,6 +143,13 @@ pub(crate) fn extract_openai_text(data: &str) -> Option<String> {
         .map(String::from)
 }
 
+pub(crate) fn extract_gemini_text(data: &str) -> Option<String> {
+    let json: Value = serde_json::from_str(data).ok()?;
+    json.pointer("/candidates/0/content/parts/0/text")?
+        .as_str()
+        .map(String::from)
+}
+
 // ── Error helpers ────────────────────────────────────────────────────────────
 
 pub(crate) async fn check_status(response: reqwest::Response) -> Result<reqwest::Response> {
@@ -290,6 +297,35 @@ mod tests {
     #[test]
     fn openai_ignores_invalid_json() {
         assert_eq!(extract_openai_text("{malformed"), None);
+    }
+
+    // ── gemini extraction ─────────────────────────────────────────────
+
+    #[test]
+    fn gemini_extracts_text_delta() {
+        let data = r#"{"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}"#;
+        assert_eq!(extract_gemini_text(data), Some("Hello".into()));
+    }
+
+    #[test]
+    fn gemini_ignores_non_candidate_events() {
+        let safety = r#"{"promptFeedback":{"safetyRatings":[{"category":"HARM_CATEGORY_SEXUALLY_EXPLICIT","probability":"NEGLIGIBLE"}]}}"#;
+        assert_eq!(extract_gemini_text(safety), None);
+
+        let usage = r#"{"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}"#;
+        assert_eq!(extract_gemini_text(usage), None);
+    }
+
+    #[test]
+    fn gemini_ignores_invalid_json() {
+        assert_eq!(extract_gemini_text("not json at all"), None);
+    }
+
+    #[test]
+    fn gemini_extracts_multiline_text() {
+        let data =
+            r#"{"candidates":[{"content":{"parts":[{"text":"line1\nline2"}],"role":"model"}}]}"#;
+        assert_eq!(extract_gemini_text(data), Some("line1\nline2".into()));
     }
 
     // ── SSE buffer processing ───────────────────────────────────────────

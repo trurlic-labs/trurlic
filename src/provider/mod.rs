@@ -1,4 +1,5 @@
 mod anthropic;
+mod gemini;
 mod openai;
 pub(crate) mod sse;
 
@@ -117,12 +118,7 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
                 openai::ApiVariant::Ollama,
             ))
         }
-        Provider::Gemini => {
-            drop((key, model, base_url));
-            return Err(Error::ProviderConfig(
-                "gemini provider is not yet implemented".into(),
-            ));
-        }
+        Provider::Gemini => Box::new(gemini::GeminiClient::new(client, key, model)),
     })
 }
 
@@ -222,21 +218,15 @@ mod tests {
     }
 
     #[test]
-    fn create_provider_gemini_not_yet_implemented() {
+    fn create_provider_gemini() {
         let config = ProviderConfig {
             provider: Provider::Gemini,
-            key: ApiKey::new("sk-test".into()),
+            key: ApiKey::new("test-key".into()),
             model: "gemini-2.5-flash".into(),
             base_url: None,
         };
-        match create_provider(config) {
-            Err(Error::ProviderConfig(msg)) => {
-                assert!(msg.contains("gemini"), "{msg}");
-                assert!(msg.contains("not yet implemented"), "{msg}");
-            }
-            Err(other) => panic!("expected ProviderConfig, got: {other}"),
-            Ok(_) => panic!("expected error, got Ok"),
-        }
+        let client = create_provider(config).unwrap();
+        assert_eq!(client.provider_name(), "gemini");
     }
 
     #[test]
