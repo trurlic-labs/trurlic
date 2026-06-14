@@ -362,7 +362,7 @@ impl Store {
             patterns.insert(name, Arc::new(file));
         }
 
-        let graph_index = self.load_graph_index(&components, &decisions, &patterns, &hashes)?;
+        let graph_index = self.load_graph_index(&components, &decisions, &patterns, hashes)?;
 
         Ok(ProjectState::new(
             project,
@@ -386,7 +386,7 @@ impl Store {
         components: &BTreeMap<String, Arc<ComponentFile>>,
         decisions: &BTreeMap<String, Arc<DecisionFile>>,
         patterns: &BTreeMap<String, Arc<PatternFile>>,
-        hashes: &HashMap<String, String>,
+        mut hashes: HashMap<String, String>,
     ) -> Result<schema::GraphIndex> {
         let graph_path = self.graph_path();
 
@@ -413,7 +413,7 @@ impl Store {
         let mut nodes = Vec::new();
 
         // Project virtual node — hash pre-computed during load_state.
-        let project_hash = hashes.get("project").cloned().unwrap_or_default();
+        let project_hash = hashes.remove("project").unwrap_or_default();
         let project_tags = existing_tags
             .get("project")
             .map(|t| t.to_vec())
@@ -426,7 +426,7 @@ impl Store {
         });
 
         for name in components.keys() {
-            let hash = hashes.get(name.as_str()).cloned().unwrap_or_default();
+            let hash = hashes.remove(name.as_str()).unwrap_or_default();
             let tags = existing_tags
                 .get(name.as_str())
                 .map(|t| t.to_vec())
@@ -440,7 +440,7 @@ impl Store {
         }
 
         for (name, dec) in decisions {
-            let hash = hashes.get(name.as_str()).cloned().unwrap_or_default();
+            let hash = hashes.remove(name.as_str()).unwrap_or_default();
             // Decision file tags are the source of truth — they survive --rebuild.
             let tags = dec.decision.tags.clone();
             nodes.push(NodeEntry {
@@ -452,7 +452,7 @@ impl Store {
         }
 
         for name in patterns.keys() {
-            let hash = hashes.get(name.as_str()).cloned().unwrap_or_default();
+            let hash = hashes.remove(name.as_str()).unwrap_or_default();
             let tags = existing_tags
                 .get(name.as_str())
                 .map(|t| t.to_vec())

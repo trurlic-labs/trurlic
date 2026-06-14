@@ -48,19 +48,27 @@ impl InMemoryGraph {
     /// Decisions from directly connected components (both directions, depth 1).
     pub fn related_decisions(&self, component: &str) -> Vec<(&Arc<str>, &DecisionFile)> {
         let mut connected: HashSet<&str> = HashSet::new();
-        for arc in self.connects_to(component) {
-            connected.insert(arc);
+        if let Some(edges) = self.forward.get(component) {
+            for e in edges.iter().filter(|e| e.kind == EdgeKind::ConnectsTo) {
+                connected.insert(e.target.as_ref());
+            }
         }
-        for arc in self.connects_from(component) {
-            connected.insert(arc);
+        if let Some(edges) = self.reverse.get(component) {
+            for e in edges.iter().filter(|e| e.kind == EdgeKind::ConnectsTo) {
+                connected.insert(e.target.as_ref());
+            }
         }
 
         let mut seen: HashSet<&str> = HashSet::new();
         let mut result = Vec::new();
         for conn in connected {
-            for (name, dec) in self.decisions_for(conn) {
-                if seen.insert(name) {
-                    result.push((name, dec));
+            if let Some(edges) = self.reverse.get(conn) {
+                for e in edges.iter().filter(|e| e.kind == EdgeKind::BelongsTo) {
+                    if seen.insert(e.target.as_ref())
+                        && let Some(dec) = self.decisions.get(&e.target)
+                    {
+                        result.push((&e.target, dec.as_ref()));
+                    }
                 }
             }
         }

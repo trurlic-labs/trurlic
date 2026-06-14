@@ -68,16 +68,18 @@ impl InMemoryGraph {
         decisions: &BTreeMap<String, Arc<DecisionFile>>,
         patterns: &BTreeMap<String, Arc<PatternFile>>,
     ) -> Self {
-        // Intern every name that appears in nodes or edges.
-        let mut pool: HashMap<String, Arc<str>> = HashMap::with_capacity(index.nodes.len());
+        // Intern every name that appears in nodes or edges. Borrow keys
+        // from `index` (which outlives this function) to avoid cloning
+        // Strings into the pool map.
+        let mut pool: HashMap<&str, Arc<str>> = HashMap::with_capacity(index.nodes.len());
         for node in &index.nodes {
-            pool.entry(node.name.clone())
+            pool.entry(node.name.as_str())
                 .or_insert_with(|| Arc::from(node.name.as_str()));
         }
         for edge in &index.edges {
-            pool.entry(edge.from.clone())
+            pool.entry(edge.from.as_str())
                 .or_insert_with(|| Arc::from(edge.from.as_str()));
-            pool.entry(edge.to.clone())
+            pool.entry(edge.to.as_str())
                 .or_insert_with(|| Arc::from(edge.to.as_str()));
         }
         let intern =
@@ -176,10 +178,8 @@ impl InMemoryGraph {
             .collect();
         nodes.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // Rough estimate: ~1.5 edges per forward-map entry avoids both
-        // realloc churn and the cost of an extra HashMap iteration to sum
-        // exact lengths.
-        let mut edges: Vec<EdgeEntry> = Vec::with_capacity(self.forward.len() * 2);
+        let edge_count: usize = self.forward.values().map(Vec::len).sum();
+        let mut edges: Vec<EdgeEntry> = Vec::with_capacity(edge_count);
         for (from, edge_list) in &self.forward {
             for edge in edge_list {
                 edges.push(EdgeEntry {
