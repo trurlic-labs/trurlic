@@ -193,10 +193,10 @@ impl Store {
         let mut all_writes = writes;
 
         if let Some(mut index) = graph_update {
-            index.nodes.sort_by(|a, b| a.name.cmp(&b.name));
+            index.nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
             index
                 .edges
-                .sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
+                .sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
             let content = toml::to_string_pretty(&index)?;
             toml::from_str::<GraphIndex>(&content).map_err(|e| {
                 Error::Validation(format!("graph index round-trip verification failed: {e}"))

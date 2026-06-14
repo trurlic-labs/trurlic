@@ -495,8 +495,8 @@ impl Store {
         }
 
         // Sort for deterministic output.
-        nodes.sort_by(|a, b| a.name.cmp(&b.name));
-        edges.sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
+        nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        edges.sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
 
         Ok(GraphIndex {
             version: 1,

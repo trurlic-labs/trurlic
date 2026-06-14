@@ -176,7 +176,7 @@ impl InMemoryGraph {
                 hash: meta.hash.clone(),
             })
             .collect();
-        nodes.sort_by(|a, b| a.name.cmp(&b.name));
+        nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
         let edge_count: usize = self.forward.values().map(Vec::len).sum();
         let mut edges: Vec<EdgeEntry> = Vec::with_capacity(edge_count);
@@ -189,7 +189,7 @@ impl InMemoryGraph {
                 });
             }
         }
-        edges.sort_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
+        edges.sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
 
         GraphIndex {
             version: 1,
