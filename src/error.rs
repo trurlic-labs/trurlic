@@ -68,4 +68,28 @@ pub enum Error {
     /// failures (timeout, DNS, TLS, stream stall).
     #[error("API error ({status}): {detail}")]
     Api { status: u16, detail: String },
+
+    #[error("cannot determine home directory — set $HOME")]
+    HomeNotFound,
+
+    #[error("cannot determine trurlic binary path — use --binary-path")]
+    BinaryNotFound,
+
+    #[error("existing config at {path} is not valid JSON: {detail}")]
+    InvalidInstallConfig { path: PathBuf, detail: String },
+
+    #[error("existing config at {path} has unexpected structure")]
+    InvalidInstallStructure { path: PathBuf },
+
+    #[error("existing config at {path} is not valid TOML: {detail}")]
+    InvalidInstallToml { path: PathBuf, detail: String },
+
+    #[error("existing config at {path} is not valid YAML: {detail}")]
+    InvalidInstallYaml { path: PathBuf, detail: String },
+
+    #[error("`claude` CLI not found in PATH — install Claude Code first")]
+    ClaudeCliNotFound,
+
+    #[error("`claude mcp add` failed: {0}")]
+    ClaudeCliExec(String),
 }

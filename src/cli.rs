@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::session::SessionMode;
@@ -114,6 +116,22 @@ pub enum Command {
         rebuild: bool,
     },
 
+    /// Write MCP server configuration for an IDE.
+    Install {
+        /// Target IDE.
+        #[arg(long, value_enum)]
+        ide: InstallIde,
+
+        /// Path to the trurlic binary to embed in the config.
+        /// Defaults to the currently running executable.
+        #[arg(long)]
+        binary_path: Option<PathBuf>,
+
+        /// Print the config snippet to stdout without writing to disk.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Show bootstrap progress and agent instructions for autonomous
     /// architecture extraction from an existing codebase.
     /// With -p/--provider, runs the bootstrap directly using the LLM API.
@@ -131,6 +149,32 @@ pub enum Command {
         #[arg(long, short = 'm')]
         model: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum InstallIde {
+    /// Claude Desktop (Anthropic)
+    Claude,
+    /// Claude Code (Anthropic) — uses `claude mcp add`
+    ClaudeCode,
+    /// Cursor IDE
+    Cursor,
+    /// Cline (VS Code extension)
+    Cline,
+    /// Windsurf (Codeium)
+    Windsurf,
+    /// GitHub Copilot (VS Code agent mode)
+    Copilot,
+    /// Codex CLI (OpenAI)
+    Codex,
+    /// OpenCode
+    OpenCode,
+    /// OpenClaw (via MCPorter)
+    OpenClaw,
+    /// Hermes Agent (NousResearch)
+    HermesAgent,
+    /// Antigravity CLI (Google)
+    Antigravity,
 }
 
 #[derive(Subcommand, Debug)]
@@ -247,6 +291,11 @@ pub fn run(cli: Cli) -> Result<()> {
             supersedes.as_deref(),
             &alternatives,
         ),
+        Command::Install {
+            ide,
+            binary_path,
+            dry_run,
+        } => commands::install(ide, binary_path.as_deref(), dry_run),
         Command::Serve => commands::serve(&cwd),
         Command::Map {
             port,
