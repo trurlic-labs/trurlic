@@ -13,6 +13,7 @@ use crate::store::graph::InMemoryGraph;
 use crate::store::schema::DecisionFile;
 
 use super::CONCERN_FOCUS_LIMIT;
+use super::action::top_n;
 use super::concerns;
 
 // ── Public API ────────────────────────────────────────────────────────────
@@ -662,15 +663,12 @@ fn sanitize(s: &str) -> String {
         .filter(|c| !c.is_control() || *c == '\n')
         .take(MAX_PROMPT_VALUE_LEN)
         .collect();
-    if cleaned.len() < s.len() {
+    let printable_count = s.chars().filter(|c| !c.is_control() || *c == '\n').count();
+    if printable_count > MAX_PROMPT_VALUE_LEN {
         format!("{cleaned}…")
     } else {
         cleaned
     }
-}
-
-fn top_n(concerns: &[&str], n: usize) -> Vec<String> {
-    concerns.iter().take(n).map(|s| (*s).to_string()).collect()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

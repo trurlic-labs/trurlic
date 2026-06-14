@@ -45,8 +45,9 @@ impl InMemoryGraph {
                     issues.push(Issue {
                         severity: Severity::Error,
                         message: format!(
-                            "edge target `{}` (from `{from}`, {:?}) is not a known node",
-                            edge.target, edge.kind
+                            "edge target `{}` (from `{from}`, {}) is not a known node",
+                            edge.target,
+                            edge.kind.as_str()
                         ),
                         node: Some(edge.target.to_string()),
                     });
@@ -86,9 +87,12 @@ impl InMemoryGraph {
                     issues.push(Issue {
                         severity: Severity::Error,
                         message: format!(
-                            "{:?} edge `{from}` ({from_k:?}) → `{}` ({to_k:?}): \
+                            "{} edge `{from}` ({}) → `{}` ({}): \
                              invalid node kinds",
-                            edge.kind, edge.target
+                            edge.kind.as_str(),
+                            from_k.as_str(),
+                            edge.target,
+                            to_k.as_str()
                         ),
                         node: Some(from.to_string()),
                     });
@@ -104,7 +108,7 @@ impl InMemoryGraph {
                 if *from == edge.target {
                     issues.push(Issue {
                         severity: Severity::Error,
-                        message: format!("self-edge on `{from}` ({:?})", edge.kind),
+                        message: format!("self-edge on `{from}` ({})", edge.kind.as_str()),
                         node: Some(from.to_string()),
                     });
                 }
@@ -121,8 +125,9 @@ impl InMemoryGraph {
                     issues.push(Issue {
                         severity: Severity::Error,
                         message: format!(
-                            "duplicate {:?} edge `{from}` → `{}`",
-                            edge.kind, edge.target
+                            "duplicate {} edge `{from}` → `{}`",
+                            edge.kind.as_str(),
+                            edge.target
                         ),
                         node: Some(from.to_string()),
                     });
@@ -373,9 +378,9 @@ impl InMemoryGraph {
                 issues.push(Issue {
                     severity: Severity::Error,
                     message: format!(
-                        "{:?} node `{name}` exists in index but has no content \
+                        "{} node `{name}` exists in index but has no content \
                          (file may be missing or unparseable)",
-                        meta.kind
+                        meta.kind.as_str()
                     ),
                     node: Some(name.to_string()),
                 });
@@ -461,7 +466,7 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|i| i.severity == Severity::Error && i.message.contains("BelongsTo"))
+                .any(|i| i.severity == Severity::Error && i.message.contains("belongs_to"))
         );
     }
 
@@ -492,7 +497,7 @@ mod tests {
         };
         let g = InMemoryGraph::build(&index, &BTreeMap::new(), &BTreeMap::new(), &BTreeMap::new());
         let issues = g.validate();
-        assert!(issues.iter().any(|i| i.message.contains("ConnectsTo")));
+        assert!(issues.iter().any(|i| i.message.contains("connects_to")));
     }
 
     // ── validate: self-edge ──────────────────────────────────────────────

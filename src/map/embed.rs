@@ -44,10 +44,14 @@ pub(crate) async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
 fn mime_for(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
-        Some("js") => "application/javascript; charset=utf-8",
+        Some("js" | "mjs") => "application/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
+        Some("ico") => "image/x-icon",
+        Some("json" | "map") => "application/json",
+        Some("wasm") => "application/wasm",
+        Some("woff") => "font/woff",
         Some("woff2") => "font/woff2",
         _ => "application/octet-stream",
     }
