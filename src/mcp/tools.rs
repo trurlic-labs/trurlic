@@ -23,6 +23,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                     component and after completing each action. The returned \
                     `ready` field is the only signal that implementation \
                     can proceed.",
+                "annotations": {
+                    "title": "Advance workflow",
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -80,6 +87,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                     components, and an authoritative brief for coding agents. \
                     Use depth=\"constraints\" for token-efficient mid-implementation \
                     checks (~60-70% fewer tokens).",
+                "annotations": {
+                    "title": "Get context",
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -107,6 +121,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "description": "Check whether a pattern or approach is covered by \
                     existing decisions. Returns matching decisions sorted by \
                     relevance, or suggested_component if not covered.",
+                "annotations": {
+                    "title": "Check pattern",
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -123,11 +144,25 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "description": "Full architectural overview: components, connections, \
                     decision counts, patterns, and project-wide decisions. \
                     Lists components with zero decisions as needing design.",
+                "annotations": {
+                    "title": "Get architecture",
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
                 "inputSchema": { "type": "object", "properties": {} }
             },
             {
                 "name": "validate_consistency",
                 "description": "Full graph integrity check. Same validation as `trurlic check`.",
+                "annotations": {
+                    "title": "Validate consistency",
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
                 "inputSchema": { "type": "object", "properties": {} }
             },
             {
@@ -135,6 +170,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "description": "Record a single architectural decision. Validates all \
                     edges before writing. Atomic commit. Returns the decision name, \
                     path, warnings, and any detected pattern opportunities.",
+                "annotations": {
+                    "title": "Record decision",
+                    "readOnlyHint": false,
+                    "destructiveHint": false,
+                    "idempotentHint": false,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -188,6 +230,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "description": "Record a pattern — a synthesis of multiple decisions \
                     into a reusable rule. Requires at least 2 decisions. Returns the \
                     pattern name (slug) for reference.",
+                "annotations": {
+                    "title": "Record pattern",
+                    "readOnlyHint": false,
+                    "destructiveHint": false,
+                    "idempotentHint": false,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -223,6 +272,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "description": "Remove a decision with cascade awareness. Refuses if \
                     other decisions depend on it or a pattern would shrink below \
                     2 members. Reports affected patterns and edges.",
+                "annotations": {
+                    "title": "Remove decision",
+                    "readOnlyHint": false,
+                    "destructiveHint": true,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -240,6 +296,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                     (typo, clarification). 'supersede' creates a new decision \
                     replacing the old one (substantive change). Reports affected \
                     patterns and decisions.",
+                "annotations": {
+                    "title": "Update decision",
+                    "readOnlyHint": false,
+                    "destructiveHint": false,
+                    "idempotentHint": false,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -269,6 +332,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "description": "Get the prompt for a specific workflow step. \
                     Called as directed by advance. Returns system instructions, \
                     component context, and step metadata.",
+                "annotations": {
+                    "title": "Get step prompt",
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -322,6 +392,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
             {
                 "name": "add_component",
                 "description": "Add a new component to the architecture graph.",
+                "annotations": {
+                    "title": "Add component",
+                    "readOnlyHint": false,
+                    "destructiveHint": false,
+                    "idempotentHint": false,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -342,6 +419,13 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "description": "Add a directional connection between two components. \
                     Represents data or control flow. Connections provide context \
                     to get_context and get_step_prompt.",
+                "annotations": {
+                    "title": "Add connection",
+                    "readOnlyHint": false,
+                    "destructiveHint": false,
+                    "idempotentHint": false,
+                    "openWorldHint": false
+                },
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -702,6 +786,84 @@ mod tests {
         let state = empty_state();
         let envelope = call_read_tool(&state, "check_pattern", &serde_json::json!({}));
         assert_eq!(envelope.is_error, Some(true));
+    }
+
+    #[test]
+    fn tool_list_has_annotations() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        for tool in tools {
+            let name = tool["name"].as_str().unwrap();
+            assert!(
+                tool.get("annotations").is_some(),
+                "tool `{name}` missing annotations"
+            );
+            let ann = &tool["annotations"];
+            assert!(ann.get("title").is_some(), "tool `{name}` missing title");
+            assert!(
+                ann.get("readOnlyHint").is_some(),
+                "tool `{name}` missing readOnlyHint"
+            );
+            assert!(
+                ann.get("destructiveHint").is_some(),
+                "tool `{name}` missing destructiveHint"
+            );
+            assert!(
+                ann.get("idempotentHint").is_some(),
+                "tool `{name}` missing idempotentHint"
+            );
+            assert!(
+                ann.get("openWorldHint").is_some(),
+                "tool `{name}` missing openWorldHint"
+            );
+        }
+    }
+
+    #[test]
+    fn read_tools_have_readonly_true() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let read_tools = [
+            "advance",
+            "get_context",
+            "check_pattern",
+            "get_architecture",
+            "validate_consistency",
+            "get_step_prompt",
+        ];
+        for tool in tools {
+            let name = tool["name"].as_str().unwrap();
+            if read_tools.contains(&name) {
+                assert_eq!(
+                    tool["annotations"]["readOnlyHint"], true,
+                    "tool `{name}` should have readOnlyHint: true"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn remove_decision_is_destructive() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "remove_decision")
+            .unwrap();
+        assert_eq!(tool["annotations"]["destructiveHint"], true);
+    }
+
+    #[test]
+    fn all_tools_closed_world() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        for tool in tools {
+            let name = tool["name"].as_str().unwrap();
+            assert_eq!(
+                tool["annotations"]["openWorldHint"], false,
+                "tool `{name}` should have openWorldHint: false"
+            );
+        }
     }
 
     fn empty_state() -> ProjectState {
