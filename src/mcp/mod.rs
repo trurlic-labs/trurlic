@@ -15,7 +15,7 @@ use crate::store::{ProjectState, Store};
 
 use protocol::{INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Request};
 
-const PROTOCOL_VERSION: &str = "2024-11-05";
+const PROTOCOL_VERSION: &str = "2025-11-25";
 
 // ── Public entry point ────────────────────────────────────────────────────
 
