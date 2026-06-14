@@ -1198,7 +1198,9 @@ mod tests {
         let state = test_state();
         let result = build_step_prompt(&state, "auth", "summary_gate", None, None).unwrap();
         assert!(
-            result.instructions.contains("constraints any code touching"),
+            result
+                .instructions
+                .contains("constraints any code touching"),
             "default variant should ask about component constraints"
         );
     }
@@ -1211,9 +1213,7 @@ mod tests {
         let result =
             build_step_prompt(&state, "auth", "analyze_code", None, Some("learn")).unwrap();
         assert!(
-            result
-                .instructions
-                .contains("Compare what you find"),
+            result.instructions.contains("Compare what you find"),
             "learn variant should reference user's earlier description"
         );
     }
@@ -1224,9 +1224,7 @@ mod tests {
         let result =
             build_step_prompt(&state, "auth", "analyze_code", None, Some("feature")).unwrap();
         assert!(
-            !result
-                .instructions
-                .contains("Compare what you find"),
+            !result.instructions.contains("Compare what you find"),
             "non-learn variant should not include learn preamble"
         );
     }

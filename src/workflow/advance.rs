@@ -43,14 +43,15 @@ pub fn advance(
     // Validate evidence for gated steps before any deduction.
     for (step_name, evidence) in step_evidence {
         if let Some(true) = Step::is_gated_name(step_name)
-            && evidence.len() < MIN_STEP_EVIDENCE_BYTES {
-                return Err(format!(
-                    "step `{step_name}` is gated and requires evidence \
+            && evidence.len() < MIN_STEP_EVIDENCE_BYTES
+        {
+            return Err(format!(
+                "step `{step_name}` is gated and requires evidence \
                      of at least {MIN_STEP_EVIDENCE_BYTES} bytes, \
                      but got {} bytes",
-                    evidence.len()
-                ));
-            }
+                evidence.len()
+            ));
+        }
     }
 
     let completed: Vec<&str> = step_evidence.keys().copied().collect();

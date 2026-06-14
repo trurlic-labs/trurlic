@@ -73,17 +73,34 @@ Step prompts: transport-agnostic instructions generated from graph state. MCP an
 
 ### Trurlic
 
-This project uses Trurlic for its own architectural decisions.
+This project uses Trurlic for its own architectural decisions. Two modes.
 
-Before implementing any task:
-1. Call `advance` with the component name and task_type.
-2. Follow the returned action exactly.
-3. Call `advance` again after completing each action.
-4. Repeat until `ready: true`.
-5. Call `get_context` for the authoritative brief. Implement constrained by every decision in it.
+**Design mode — advance loop.** Use when the task requires new architectural decisions: new component, new concern area, design change. The advance loop is interactive — gated steps require user involvement.
 
-During implementation:
-- If you encounter a pattern not covered by the brief, STOP. Call `check_pattern`.
+```
+1. advance(component, task_type) → { step, action, requires_user_input }
+2. follow the action (get_step_prompt, add_component, etc.)
+3. if requires_user_input: ask the user, wait, pass their response
+4. advance again
+5. repeat until ready: true
+6. get_context → implement constrained by the brief
+```
+
+**Implementation mode — get_context directly.** Use when implementing within existing constraints. No advance, no gates, fully autonomous.
+
+```
+1. get_context(component) → brief with all decisions and constraints
+2. implement within the brief
+3. if undecided pattern encountered:
+   check_pattern(description) → if uncovered:
+     record_decision(component, choice, reason, attribution="agent")
+     continue — the decision is flagged ⚠ for human review
+4. get_context(component, depth="constraints") → verify compliance
+```
+
+When to use which: if the task says "add a feature," "fix a bug," or "implement X" and the component has existing decisions that cover the work, use implementation mode. If the task says "design," "architect," "add a new component," or you realize the existing decisions don't cover what you need to do, switch to design mode.
+
+During implementation in either mode:
 - When touching a second module, call `get_context` for that module's component too.
 - After implementation, re-read the brief and verify no decision was silently violated.
 
