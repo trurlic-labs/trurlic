@@ -60,6 +60,13 @@ pub trait LlmProvider {
 }
 
 pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
+    let ProviderConfig {
+        provider,
+        key,
+        model,
+        base_url,
+    } = config;
+
     let client = Client::builder()
         .user_agent(concat!("trurlic/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(30))
@@ -68,26 +75,40 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
         .build()
         .map_err(|e| Error::ProviderConfig(format!("failed to create HTTP client: {e}")))?;
 
-    Ok(match config.provider {
-        Provider::Anthropic => Box::new(anthropic::AnthropicClient::new(
-            client,
-            config.key,
-            config.model,
-        )),
+    Ok(match provider {
+        Provider::Anthropic => Box::new(anthropic::AnthropicClient::new(client, key, model)),
         Provider::OpenAi => Box::new(openai::OpenAiClient::new(
             client,
-            config.key,
-            config.model,
+            key,
+            model,
             "https://api.openai.com/v1",
             openai::ApiVariant::Standard,
         )),
         Provider::OpenRouter => Box::new(openai::OpenAiClient::new(
             client,
-            config.key,
-            config.model,
+            key,
+            model,
             "https://openrouter.ai/api/v1",
             openai::ApiVariant::OpenRouter,
         )),
+        Provider::Custom => {
+            drop((key, model, base_url));
+            return Err(Error::ProviderConfig(
+                "custom provider is not yet implemented".into(),
+            ));
+        }
+        Provider::Ollama => {
+            drop((key, model, base_url));
+            return Err(Error::ProviderConfig(
+                "ollama provider is not yet implemented".into(),
+            ));
+        }
+        Provider::Gemini => {
+            drop((key, model, base_url));
+            return Err(Error::ProviderConfig(
+                "gemini provider is not yet implemented".into(),
+            ));
+        }
     })
 }
 
@@ -102,6 +123,7 @@ mod tests {
             provider: Provider::Anthropic,
             key: ApiKey::new("sk-test".into()),
             model: "claude-sonnet-4-20250514".into(),
+            base_url: None,
         };
         let client = create_provider(config).unwrap();
         assert_eq!(client.provider_name(), "anthropic");
@@ -113,6 +135,7 @@ mod tests {
             provider: Provider::OpenAi,
             key: ApiKey::new("sk-test".into()),
             model: "gpt-4o".into(),
+            base_url: None,
         };
         let client = create_provider(config).unwrap();
         assert_eq!(client.provider_name(), "openai");
@@ -124,9 +147,64 @@ mod tests {
             provider: Provider::OpenRouter,
             key: ApiKey::new("sk-test".into()),
             model: "anthropic/claude-sonnet-4-20250514".into(),
+            base_url: None,
         };
         let client = create_provider(config).unwrap();
         assert!(client.provider_name().starts_with("openai-compatible"));
+    }
+
+    #[test]
+    fn create_provider_custom_not_yet_implemented() {
+        let config = ProviderConfig {
+            provider: Provider::Custom,
+            key: ApiKey::new("sk-test".into()),
+            model: "some-model".into(),
+            base_url: Some("http://localhost:8080/v1".into()),
+        };
+        match create_provider(config) {
+            Err(Error::ProviderConfig(msg)) => {
+                assert!(msg.contains("custom"), "{msg}");
+                assert!(msg.contains("not yet implemented"), "{msg}");
+            }
+            Err(other) => panic!("expected ProviderConfig, got: {other}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[test]
+    fn create_provider_ollama_not_yet_implemented() {
+        let config = ProviderConfig {
+            provider: Provider::Ollama,
+            key: ApiKey::new(String::new()),
+            model: "llama3.1".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+        };
+        match create_provider(config) {
+            Err(Error::ProviderConfig(msg)) => {
+                assert!(msg.contains("ollama"), "{msg}");
+                assert!(msg.contains("not yet implemented"), "{msg}");
+            }
+            Err(other) => panic!("expected ProviderConfig, got: {other}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[test]
+    fn create_provider_gemini_not_yet_implemented() {
+        let config = ProviderConfig {
+            provider: Provider::Gemini,
+            key: ApiKey::new("sk-test".into()),
+            model: "gemini-2.5-flash".into(),
+            base_url: None,
+        };
+        match create_provider(config) {
+            Err(Error::ProviderConfig(msg)) => {
+                assert!(msg.contains("gemini"), "{msg}");
+                assert!(msg.contains("not yet implemented"), "{msg}");
+            }
+            Err(other) => panic!("expected ProviderConfig, got: {other}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
     }
 
     #[test]
