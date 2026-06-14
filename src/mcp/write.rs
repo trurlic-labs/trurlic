@@ -79,6 +79,9 @@ pub(super) fn opt_str_array(args: &Value, key: &str) -> Result<Vec<String>, Stri
                 "`{key}` item exceeds {MAX_TEXT_FIELD_BYTES} byte limit"
             ));
         }
+        if has_control_chars(s) {
+            return Err(format!("`{key}` item contains invalid control characters"));
+        }
     }
     Ok(items)
 }
@@ -108,6 +111,9 @@ pub(super) fn require_str_array(args: &Value, key: &str) -> Result<Vec<String>, 
             return Err(format!(
                 "`{key}` item exceeds {MAX_TEXT_FIELD_BYTES} byte limit"
             ));
+        }
+        if has_control_chars(s) {
+            return Err(format!("`{key}` item contains invalid control characters"));
         }
     }
     Ok(strings)

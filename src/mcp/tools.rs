@@ -415,7 +415,7 @@ pub(crate) fn call_write_tool(
         "update_decision" => update::update_decision(store, state, args),
         "add_component" => write::add_component(store, state, args),
         "add_connection" => write::add_connection(store, state, args),
-        _ => unreachable!("is_write_tool gate prevents unknown tools here"),
+        _ => return tool_error(&format!("unhandled write tool: {name}")),
     };
     match result {
         Ok(v) => tool_result(&v),
@@ -497,19 +497,15 @@ fn dispatch_advance(state: &ProjectState, args: &Value) -> ToolEnvelope {
     };
     let task = args.get("task").and_then(|v| v.as_str());
 
-    let evidence_owned: std::collections::BTreeMap<String, String> = args
+    let evidence_refs: std::collections::BTreeMap<&str, &str> = args
         .get("step_evidence")
         .and_then(|v| v.as_object())
         .map(|obj| {
             obj.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.as_str(), s)))
                 .collect()
         })
         .unwrap_or_default();
-    let evidence_refs: std::collections::BTreeMap<&str, &str> = evidence_owned
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
 
     match workflow::advance::advance(state, component, task_type, task, &evidence_refs) {
         Ok(result) => tool_result(&result),

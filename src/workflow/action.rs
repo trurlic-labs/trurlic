@@ -18,7 +18,12 @@ use super::{Step, TaskType};
 /// Map a deduced step to a concrete tool action the agent should execute.
 pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>) -> Value {
     match step {
-        Step::Register => unreachable!("handled before step deduction"),
+        Step::Register => serde_json::json!({
+            "tool": "add_component",
+            "args": { "name": component },
+            "instruction": "Component is not registered. Confirm the name \
+                            and description, then call add_component.",
+        }),
 
         Step::DefineScope => step_prompt_action(
             component,
@@ -131,11 +136,21 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>) -> V
              answer against recorded decisions afterward.",
         ),
 
-        // Bootstrap steps are handled in advance_project, never reached
-        // from the per-component path. Present for match exhaustiveness.
-        Step::ScanProject | Step::ProjectRules => {
-            unreachable!("project-scope bootstrap steps handled in advance_project")
-        }
+        Step::ScanProject => step_prompt_action(
+            "project",
+            "scan_project",
+            task,
+            "Read the project structure, identify major components, \
+             and register them with add_component and add_connection.",
+        ),
+
+        Step::ProjectRules => step_prompt_action(
+            "project",
+            "project_rules",
+            task,
+            "Identify cross-cutting project-level decisions and \
+             record them with component='project'.",
+        ),
 
         Step::ExtractDecisions { .. } => step_prompt_action(
             component,
