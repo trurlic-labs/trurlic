@@ -148,7 +148,8 @@ async fn run_step(
     // ── Build system prompt ──────────────────────────────────────────
     let prompt_component = target.unwrap_or("project");
     let prompt =
-        steps::build_step_prompt(state, prompt_component, step, None).map_err(Error::Validation)?;
+        steps::build_step_prompt(state, prompt_component, step, None, Some("bootstrap"))
+            .map_err(Error::Validation)?;
 
     // ── LLM call ─────────────────────────────────────────────────────
     let messages = if context.is_empty() {

@@ -102,8 +102,10 @@ pub(crate) async fn run(
         }
 
         // ── Build step prompt ─────────────────────────────────────────
-        let prompt = workflow::steps::build_step_prompt(state, ctx.component, &step, ctx.task)
-            .map_err(Error::Validation)?;
+        let tt_str = ctx.task_type.map(|tt| tt.as_str());
+        let prompt =
+            workflow::steps::build_step_prompt(state, ctx.component, &step, ctx.task, tt_str)
+                .map_err(Error::Validation)?;
 
         let step_label = step.replace('_', " ");
         eprintln!("\n── {step_label} ──");

@@ -45,7 +45,7 @@ pub enum TaskType {
     NewComponent,
 
     /// Add a feature to an existing component.
-    /// VerifyConstraints → CoverConcerns(focused) → PatternDetection → Ready.
+    /// VerifyConstraints → CoverConcerns(focused) → PatternDetection → SummaryGate → Ready.
     Feature,
 
     /// Fix a bug or apply a hotfix.
@@ -53,11 +53,11 @@ pub enum TaskType {
     Fix,
 
     /// Study existing architecture.
-    /// AnalyzeCode → WalkDecisions → PatternDetection → Ready.
+    /// UserExplains → AnalyzeCode → WalkDecisions → SummaryGate → Ready.
     Learn,
 
     /// Challenge existing decisions for drift.
-    /// WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → Ready.
+    /// WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → SummaryGate → Ready.
     Review,
 
     /// Strengthen coverage of under-designed areas.
@@ -172,7 +172,6 @@ pub enum Step {
     /// User describes the component's architecture from memory before the
     /// agent reads code. Learn-only. Postcondition: step evidence contains
     /// the user's description.
-    #[allow(dead_code)]
     UserExplains,
 
     /// All steps complete. Ready for implementation.
@@ -380,7 +379,7 @@ mod integration_tests {
             .as_str()
             .unwrap_or(component);
 
-        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None)
+        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None, None)
             .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
 
         // Every prompt must include the source code preamble.
@@ -583,7 +582,7 @@ mod integration_tests {
         ];
 
         for name in &step_names {
-            let result = steps::build_step_prompt(&state, "store", name, None);
+            let result = steps::build_step_prompt(&state, "store", name, None, None);
             assert!(
                 result.is_ok(),
                 "build_step_prompt must accept step `{name}`: {:?}",
@@ -625,7 +624,7 @@ mod integration_tests {
 
         for variant in &variants {
             let name = variant.as_str();
-            let result = steps::build_step_prompt(&state, "store", name, None);
+            let result = steps::build_step_prompt(&state, "store", name, None, None);
             assert!(
                 result.is_ok(),
                 "Step::{:?} as_str `{name}` rejected by build_step_prompt: {:?}",

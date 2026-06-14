@@ -207,7 +207,7 @@ fn deduce_step(
             deduce_feature(decisions, covered, uncovered, patterns, task, completed)
         }
         TaskType::Fix => deduce_fix(decisions, uncovered, graph, component, task, completed),
-        TaskType::Learn => deduce_learn(decisions, patterns),
+        TaskType::Learn => deduce_learn(decisions, patterns, completed),
         TaskType::Review => {
             deduce_review(decisions, stale, covered, uncovered, patterns, completed)
         }
@@ -241,7 +241,7 @@ fn deduce_new_component(
     Step::Ready
 }
 
-/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → Ready
+/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → SummaryGate → Ready
 ///
 /// VerifyConstraints: ensures existing decisions still hold for the new
 /// feature. Has no verifiable graph postcondition — uses `completed_steps`
@@ -255,6 +255,9 @@ fn deduce_new_component(
 ///
 /// PatternDetection: after concerns are covered, look for patterns across
 /// decisions. Has a verifiable postcondition (patterns recorded).
+///
+/// SummaryGate: comprehension check — user describes constraints their
+/// change must respect.
 fn deduce_feature(
     decisions: &[(&Arc<str>, &DecisionFile)],
     covered: &[&str],
@@ -290,6 +293,11 @@ fn deduce_feature(
     // PatternDetection: after concerns are covered.
     if patterns.is_empty() && !decisions.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
+    }
+
+    // SummaryGate: comprehension check before ready.
+    if !completed.contains(&"summary_gate") {
+        return Step::SummaryGate;
     }
 
     Step::Ready
@@ -381,25 +389,38 @@ fn deduce_fix(
     Step::Ready
 }
 
-/// Learn: AnalyzeCode → WalkDecisions → PatternDetection → Ready
+/// Learn: UserExplains → AnalyzeCode → WalkDecisions → SummaryGate → Ready
+///
+/// UserExplains: user describes the component from memory before seeing
+/// code. Postcondition: step evidence (not graph-verifiable).
 ///
 /// AnalyzeCode postcondition: decisions recorded (verifiable).
+///
 /// WalkDecisions postcondition: heuristic (patterns serve as proxy —
-/// if patterns exist, walkthrough + pattern detection are complete).
+/// if patterns exist, walkthrough is complete).
+///
+/// SummaryGate: comprehension check — user summarizes constraints.
 fn deduce_learn(
     decisions: &[(&Arc<str>, &DecisionFile)],
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
+    completed: &[&str],
 ) -> Step {
+    if !completed.contains(&"user_explains") {
+        return Step::UserExplains;
+    }
     if decisions.is_empty() {
         return Step::AnalyzeCode;
     }
     if patterns.is_empty() {
         return Step::WalkDecisions;
     }
+    if !completed.contains(&"summary_gate") {
+        return Step::SummaryGate;
+    }
     Step::Ready
 }
 
-/// Review: WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → Ready
+/// Review: WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → SummaryGate → Ready
 ///
 /// WalkDecisions: interactive walkthrough of all decisions, challenging
 /// each against current source code. No verifiable graph postcondition,
@@ -412,6 +433,8 @@ fn deduce_learn(
 ///
 /// CoverageAudit: surfaces coverage gaps. Agent may record intentional-
 /// gap decisions (graph change) or note gaps for future work.
+///
+/// SummaryGate: comprehension check — user summarizes review findings.
 fn deduce_review(
     decisions: &[(&Arc<str>, &DecisionFile)],
     stale: &[StaleDec],
@@ -435,6 +458,10 @@ fn deduce_review(
     // PatternDetection: find patterns across fresh decisions.
     if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
+    }
+    // SummaryGate: comprehension check before ready.
+    if !completed.contains(&"summary_gate") {
+        return Step::SummaryGate;
     }
     Step::Ready
 }
@@ -1018,7 +1045,7 @@ mod tests {
         let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
 
         assert_eq!(result["task_type"], "learn");
-        assert_eq!(result["step"], "analyze_code");
+        assert_eq!(result["step"], "user_explains");
     }
 
     #[test]
@@ -1270,7 +1297,55 @@ mod tests {
     }
 
     #[test]
-    fn feature_fully_covered_with_patterns_is_ready() {
+    fn feature_reaches_summary_gate_after_pattern_detection() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints", "pattern_detection"]),
+        )
+        .unwrap();
+        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn feature_summary_gate_blocks_ready() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        // Without summary_gate evidence → stays at summary_gate.
+        let r1 = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+        assert_eq!(r1["step"], "summary_gate");
+
+        // Same call again → still summary_gate (idempotent).
+        let r2 = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+        assert_eq!(r2["step"], "summary_gate");
+    }
+
+    #[test]
+    fn feature_fully_covered_with_patterns_reaches_summary_gate() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
@@ -1282,6 +1357,25 @@ mod tests {
             Some(TaskType::Feature),
             None,
             &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn feature_fully_covered_with_patterns_is_ready_after_summary_gate() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            &evidence(&["verify_constraints", "summary_gate"]),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -1488,6 +1582,7 @@ mod tests {
             "store",
             step_name,
             Some("fix error handling crash"),
+            Some("fix"),
         )
         .expect("build_step_prompt must accept cover_concerns from fix workflow");
 
@@ -1504,7 +1599,7 @@ mod tests {
     // ── Learn step sequence ───────────────────────────────────────────
 
     #[test]
-    fn learn_empty_starts_with_analyze_code() {
+    fn learn_starts_with_user_explains() {
         let state = build_state(&[("store", "Data store")], &[]);
         let result = advance(
             &state,
@@ -1515,8 +1610,23 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result["step"], "analyze_code");
+        assert_eq!(result["step"], "user_explains");
         assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn learn_user_explains_gates_analyze_code() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            &evidence(&["user_explains"]),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "analyze_code");
     }
 
     #[test]
@@ -1533,7 +1643,7 @@ mod tests {
             "store",
             Some(TaskType::Learn),
             None,
-            &BTreeMap::new(),
+            &evidence(&["user_explains"]),
         )
         .unwrap();
 
@@ -1541,7 +1651,7 @@ mod tests {
     }
 
     #[test]
-    fn learn_with_patterns_is_ready() {
+    fn learn_reaches_summary_gate() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &[(
@@ -1555,7 +1665,30 @@ mod tests {
             "store",
             Some(TaskType::Learn),
             None,
-            &BTreeMap::new(),
+            &evidence(&["user_explains"]),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn learn_with_patterns_is_ready_after_summary_gate() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &[]),
+            )],
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            &evidence(&["user_explains", "summary_gate"]),
         )
         .unwrap();
 
@@ -1661,13 +1794,13 @@ mod tests {
     }
 
     #[test]
-    fn review_fully_healthy_is_ready_after_walk() {
+    fn review_reaches_summary_gate() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
             &[("p1", "Integrity chain", &["store"])],
         );
-        // With completed walk: Ready (no stale, no gaps, patterns exist).
+        // With completed walk: SummaryGate (no stale, no gaps, patterns exist).
         let result = advance(
             &state,
             "store",
@@ -1677,8 +1810,50 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn review_fully_healthy_is_ready_after_summary_gate() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &evidence(&["walk_decisions", "summary_gate"]),
+        )
+        .unwrap();
+
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
+    }
+
+    #[test]
+    fn review_stale_reaches_summary_gate() {
+        // Stale decisions: walk_decisions → drift_check → (stale cleared) →
+        // pattern_detection or summary_gate. Here, stale decisions exist,
+        // but after walk and with patterns, hits summary_gate.
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", false),
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        // walk_decisions done, but stale → drift_check first.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            &evidence(&["walk_decisions"]),
+        )
+        .unwrap();
+        assert_eq!(result["step"], "drift_check");
     }
 
     // ── Harden step sequence ──────────────────────────────────────────
@@ -2374,6 +2549,38 @@ mod tests {
 
         // project_rules completed → moves to pattern_detection.
         assert_eq!(result["step"], "pattern_detection");
+    }
+
+    #[test]
+    fn bootstrap_pipeline_unaffected() {
+        // Full bootstrap pipeline: scan → extract → project_rules →
+        // pattern_detection → ready. No summary_gate, no user_explains.
+        let state = build_state_with_patterns(
+            &[("auth", "Auth")],
+            &[
+                (
+                    "d1",
+                    fresh_decision("auth", "JWT tokens", "Stateless auth", &[]),
+                ),
+                (
+                    "rule-1",
+                    fresh_decision("project", "Fail-closed", "Safety", &[]),
+                ),
+            ],
+            &[("p1", "Security posture", &["auth"])],
+        );
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Bootstrap),
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["ready"], true);
+        // Bootstrap never returns summary_gate or user_explains.
     }
 
     // ── Step evidence validation ──────────────────────────────────

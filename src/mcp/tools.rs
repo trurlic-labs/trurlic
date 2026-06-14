@@ -301,6 +301,19 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         "task": {
                             "type": "string",
                             "description": "Optional task context."
+                        },
+                        "task_type": {
+                            "type": "string",
+                            "enum": [
+                                "new_component",
+                                "feature",
+                                "fix",
+                                "learn",
+                                "review",
+                                "harden",
+                                "bootstrap"
+                            ],
+                            "description": "Optional task type for variant prompts."
                         }
                     },
                     "required": ["component", "step"]
@@ -447,7 +460,9 @@ fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope 
     };
     let task = args.get("task").and_then(|v| v.as_str());
 
-    let prompt = match workflow::steps::build_step_prompt(state, component, step, task) {
+    let task_type = args.get("task_type").and_then(|v| v.as_str());
+
+    let prompt = match workflow::steps::build_step_prompt(state, component, step, task, task_type) {
         Ok(p) => p,
         Err(msg) => return tool_error(&msg),
     };
