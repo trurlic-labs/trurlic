@@ -95,8 +95,8 @@ impl InMemoryGraph {
             );
         }
 
-        let mut forward: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.edges.len());
-        let mut reverse: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.edges.len());
+        let mut forward: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.nodes.len());
+        let mut reverse: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.nodes.len());
         for edge in &index.edges {
             let from = intern(&edge.from);
             let to = intern(&edge.to);
@@ -176,8 +176,10 @@ impl InMemoryGraph {
             .collect();
         nodes.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let edge_count: usize = self.forward.values().map(Vec::len).sum();
-        let mut edges: Vec<EdgeEntry> = Vec::with_capacity(edge_count);
+        // Rough estimate: ~1.5 edges per forward-map entry avoids both
+        // realloc churn and the cost of an extra HashMap iteration to sum
+        // exact lengths.
+        let mut edges: Vec<EdgeEntry> = Vec::with_capacity(self.forward.len() * 2);
         for (from, edge_list) in &self.forward {
             for edge in edge_list {
                 edges.push(EdgeEntry {
