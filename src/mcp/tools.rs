@@ -543,7 +543,10 @@ struct TextBlock {
 /// no `serde_json::to_value` intermediate. Callers pass it to
 /// `protocol::write_success`, which serializes the full response in one pass.
 pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
-    let text = serde_json::to_string(payload).unwrap_or_else(|_| "{}".into());
+    let text = serde_json::to_string(payload).unwrap_or_else(|e| {
+        eprintln!("trurlic: tool result serialization error: {e}");
+        "{}".into()
+    });
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",

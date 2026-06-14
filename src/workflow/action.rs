@@ -152,12 +152,12 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>) -> V
              record them with component='project'.",
         ),
 
-        Step::ExtractDecisions { .. } => step_prompt_action(
-            component,
+        Step::ExtractDecisions { component: target } => step_prompt_action(
+            target,
             "extract_decisions",
             task,
             &format!(
-                "Read every source file in [{component}] and record \
+                "Read every source file in [{target}] and record \
                  architectural decisions autonomously."
             ),
         ),
