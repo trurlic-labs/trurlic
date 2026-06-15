@@ -1,4 +1,4 @@
-.PHONY: install build build-release build-frontend install-frontend \
+.PHONY: install build build-debug build-release build-frontend install-frontend \
        test test-frontend check check-frontend \
        fmt fmt-frontend audit audit-js ci setup clean
 
@@ -41,8 +41,12 @@ test-frontend: check-frontend
 	cd $(FRONTEND_DIR) && npm test
 
 # ── Build ─────────────────────────────────────────────────────────────────────
+# `make build` is the default dev workflow: build frontend + install binary
+# so `trurlic` always points to the latest version.
 
-build: build-frontend
+build: install
+
+build-debug: build-frontend
 	cargo build --locked
 
 build-release: build-frontend
