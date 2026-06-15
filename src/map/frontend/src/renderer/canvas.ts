@@ -178,7 +178,7 @@ export class Renderer {
     ctx.translate(-cam.cx, -cam.cy);
 
     if (lod <= LOD.Component) {
-      this.drawPatternRegions(graph, visibleNames, focus, filters);
+      this.drawPatternRegions(graph, visibleNames, focus, lod, filters);
     }
     this.drawEdges(graph, visibleNames, lod, focus, filters);
     this.drawNodes(graph, visibleNames, selected, lod, focus, filters);
@@ -204,6 +204,7 @@ export class Renderer {
     graph: Graph,
     visible: Set<string>,
     focus: Set<string> | null,
+    lod: LOD,
     filters?: FilterState,
   ): void {
     if (graph.patterns.size === 0) return;
@@ -270,14 +271,40 @@ export class Renderer {
       ctx.lineWidth = 1.5 / cam.zoom;
       ctx.stroke();
 
-      // Label: centered in region.
-      const cx = expanded.reduce((s, p) => s + p.x, 0) / expanded.length;
-      const cy = expanded.reduce((s, p) => s + p.y, 0) / expanded.length;
-      ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
-      ctx.fillStyle = c.textDim;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(pat.name, cx, cy);
+      // Label: LOD-gated.
+      // Overview: no label (the hull communicates grouping).
+      // Component: truncated description with background pill for legibility.
+      // Decision: full description.
+      if (lod >= LOD.Component) {
+        const cx = expanded.reduce((s, p) => s + p.x, 0) / expanded.length;
+        const cy = expanded.reduce((s, p) => s + p.y, 0) / expanded.length;
+
+        const rawLabel = pat.description || pat.name;
+        const maxLen = lod >= LOD.Decision ? 80 : 30;
+        const label = rawLabel.length > maxLen ? rawLabel.slice(0, maxLen - 1) + '…' : rawLabel;
+
+        ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+        const tw = ctx.measureText(label).width;
+
+        const px = 6 / cam.zoom;
+        const py = 3 / cam.zoom;
+        ctx.fillStyle = c.bg;
+        ctx.globalAlpha = (dimmedByFocus ? 0.15 : 1) * 0.7;
+        this.roundRect(
+          cx - tw / 2 - px,
+          cy - labelSize / 2 - py,
+          tw + px * 2,
+          labelSize + py * 2,
+          4 / cam.zoom,
+        );
+        ctx.fill();
+
+        ctx.globalAlpha = dimmedByFocus ? 0.15 : 1;
+        ctx.fillStyle = c.textDim;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, cx, cy);
+      }
 
       patIdx++;
     }
