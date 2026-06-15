@@ -24,6 +24,9 @@ export class Toolbar {
   private state: FilterState;
   private onChange: (state: FilterState) => void;
   private tags: string[] = [];
+  private popoverOpen = false;
+  private tagFilter = '';
+  private documentPointerHandler: ((e: PointerEvent) => void) | null = null;
 
   constructor(onChange: (state: FilterState) => void) {
     this.el = document.getElementById('toolbar')!;
@@ -70,14 +73,32 @@ export class Toolbar {
     }
     parts.push('</div>');
 
-    // ── Tag pills (only when tags exist) ───────────────────────────────
+    // ── Tag popover toggle (only when tags exist) ──────────────────────
     if (this.tags.length > 0) {
-      parts.push('<div class="toolbar-group">');
+      const activeCount = this.state.activeTags.size;
+      const label = activeCount > 0 ? `Tags (${activeCount})` : 'Tags';
+      const on = activeCount > 0 ? ' on' : '';
+      parts.push('<div class="toolbar-group has-popover">');
       parts.push('<span class="toolbar-label">Tags</span>');
+      parts.push(`<button class="toolbar-pill${on}" data-role="tag-toggle">${esc(label)}</button>`);
+
+      const hidden = this.popoverOpen ? '' : ' hidden';
+      parts.push(`<div class="tag-popover${hidden}">`);
+      parts.push('<input type="text" placeholder="Filter tags…" data-role="tag-filter">');
+      parts.push('<div class="tag-popover-list">');
+      const lowerFilter = this.tagFilter.toLowerCase();
       for (const tag of this.tags) {
-        const on = this.state.activeTags.has(tag) ? ' on' : '';
-        parts.push(`<button class="toolbar-pill${on}" data-tag="${esc(tag)}">${esc(tag)}</button>`);
+        if (lowerFilter && !tag.toLowerCase().includes(lowerFilter)) continue;
+        const checked = this.state.activeTags.has(tag) ? ' checked' : '';
+        parts.push(
+          `<label class="tag-popover-item" data-tag="${esc(tag)}">` +
+            `<input type="checkbox"${checked} data-tag-check="${esc(tag)}">` +
+            `${esc(tag)}</label>`,
+        );
       }
+      parts.push('</div>');
+      parts.push('</div>');
+
       parts.push('</div>');
     }
 
@@ -118,18 +139,56 @@ export class Toolbar {
       });
     }
 
-    // Tag toggles.
-    for (const btn of this.el.querySelectorAll<HTMLButtonElement>('[data-tag]')) {
-      btn.addEventListener('click', () => {
-        const tag = btn.dataset.tag!;
+    // Tag popover toggle.
+    const tagToggle = this.el.querySelector<HTMLButtonElement>('[data-role="tag-toggle"]');
+    if (tagToggle) {
+      tagToggle.addEventListener('click', () => {
+        if (this.popoverOpen) {
+          this.closePopover();
+        } else {
+          this.openPopover();
+        }
+      });
+    }
+
+    // Tag filter input.
+    const tagFilterInput = this.el.querySelector<HTMLInputElement>('[data-role="tag-filter"]');
+    if (tagFilterInput) {
+      tagFilterInput.value = this.tagFilter;
+      tagFilterInput.addEventListener('input', () => {
+        this.tagFilter = tagFilterInput.value;
+        this.render();
+        this.restorePopoverFocus();
+      });
+    }
+
+    // Tag checkboxes.
+    for (const cb of this.el.querySelectorAll<HTMLInputElement>('[data-tag-check]')) {
+      cb.addEventListener('change', () => {
+        const tag = cb.dataset.tagCheck!;
         if (this.state.activeTags.has(tag)) {
           this.state.activeTags.delete(tag);
         } else {
           this.state.activeTags.add(tag);
         }
         this.render();
+        this.restorePopoverFocus();
         this.emit();
       });
+    }
+
+    // Close popover on outside click.
+    this.removeDocumentHandler();
+    if (this.popoverOpen) {
+      this.documentPointerHandler = (e: PointerEvent) => {
+        const popover = this.el.querySelector('.tag-popover');
+        const toggle = this.el.querySelector('[data-role="tag-toggle"]');
+        const target = e.target as Node;
+        if (popover && !popover.contains(target) && toggle && !toggle.contains(target)) {
+          this.closePopover();
+        }
+      };
+      document.addEventListener('pointerdown', this.documentPointerHandler);
     }
 
     // Age select.
@@ -149,6 +208,39 @@ export class Toolbar {
         this.render();
         this.emit();
       });
+    }
+
+    // Escape closes popover.
+    this.el.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && this.popoverOpen) {
+        this.closePopover();
+      }
+    });
+  }
+
+  private openPopover(): void {
+    this.popoverOpen = true;
+    this.tagFilter = '';
+    this.render();
+    this.restorePopoverFocus();
+  }
+
+  private closePopover(): void {
+    this.popoverOpen = false;
+    this.tagFilter = '';
+    this.removeDocumentHandler();
+    this.render();
+  }
+
+  private restorePopoverFocus(): void {
+    const input = this.el.querySelector<HTMLInputElement>('[data-role="tag-filter"]');
+    if (input) input.focus();
+  }
+
+  private removeDocumentHandler(): void {
+    if (this.documentPointerHandler) {
+      document.removeEventListener('pointerdown', this.documentPointerHandler);
+      this.documentPointerHandler = null;
     }
   }
 }

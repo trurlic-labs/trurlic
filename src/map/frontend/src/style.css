@@ -601,6 +601,56 @@ details li {
   background: var(--accent-dim);
   color: var(--text);
 }
+.toolbar-group.has-popover {
+  position: relative;
+}
+.tag-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  width: 220px;
+  max-height: 240px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tag-popover.hidden {
+  display: none;
+}
+.tag-popover input {
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.tag-popover-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 0;
+}
+.tag-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.tag-popover-item:hover {
+  background: var(--surface-hi);
+}
 .toolbar-select {
   font-size: 11px;
   font-family: inherit;
