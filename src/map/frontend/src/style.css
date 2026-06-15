@@ -371,6 +371,15 @@ details li {
 body.panel-collapsed .panel-toggle {
   right: 0;
 }
+body.panel-collapsed .search-bar {
+  right: 0;
+}
+body.panel-collapsed .ws-status {
+  right: 0;
+}
+body.panel-collapsed .hint-overlay {
+  right: 0;
+}
 
 /* ── Reduced motion ───────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
@@ -408,16 +417,20 @@ body.panel-collapsed .panel-toggle {
 .search-bar {
   position: fixed;
   top: 12px;
-  left: 50%;
-  transform: translateX(calc(-50% - var(--panel-width) / 2));
+  left: 0;
+  right: var(--panel-width);
   z-index: 20;
-  width: 420px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
 }
 .search-bar.hidden {
   display: none;
 }
 .search-bar input {
-  width: 100%;
+  pointer-events: auto;
+  width: 420px;
+  max-width: calc(100% - 24px);
   padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -432,6 +445,7 @@ body.panel-collapsed .panel-toggle {
   box-shadow: 0 0 0 2px var(--accent-dim);
 }
 .search-results {
+  pointer-events: auto;
   margin-top: 4px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
@@ -716,9 +730,17 @@ body.panel-collapsed .panel-toggle {
 .hint-overlay {
   position: fixed;
   top: 50%;
-  left: calc((100vw - var(--panel-width)) / 2);
-  transform: translate(-50%, -50%);
+  left: 0;
+  right: var(--panel-width);
+  transform: translateY(-50%);
   z-index: 20;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.6s ease-out;
+}
+.hint-pill {
   padding: 14px 28px;
   background: rgba(15, 17, 23, 0.75);
   color: var(--text);
@@ -727,9 +749,6 @@ body.panel-collapsed .panel-toggle {
   letter-spacing: 0.2px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  pointer-events: none;
-  opacity: 1;
-  transition: opacity 0.6s ease-out;
   white-space: nowrap;
 }
 .hint-overlay.hidden {
@@ -739,7 +758,7 @@ body.panel-collapsed .panel-toggle {
   opacity: 0;
 }
 @media (prefers-color-scheme: light) {
-  .hint-overlay {
+  .hint-pill {
     background: rgba(255, 255, 255, 0.88);
     box-shadow: 0 2px 16px rgba(0, 0, 0, 0.1);
   }
