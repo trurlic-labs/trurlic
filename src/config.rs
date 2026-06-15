@@ -255,6 +255,13 @@ fn resolve_from_sources(
     let model = model_flag
         .map(String::from)
         .or_else(|| config.and_then(|c| c.default_model.clone()))
+        .or_else(|| {
+            if provider == Provider::Custom {
+                config.and_then(|c| c.custom_model.clone())
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| provider.default_model().into());
 
     Ok(ProviderConfig {
@@ -990,5 +997,40 @@ gemini_api_key = "AIza-gemini-test"
         cfg.ollama_base_url = Some("http://config-ollama:11434/v1".into());
         let r = resolve_from_sources(Some("ollama"), None, Some(&cfg), &env).unwrap();
         assert_eq!(r.base_url.as_deref(), Some("http://env-ollama:9999/v1"));
+    }
+
+    #[test]
+    fn resolve_custom_uses_config_model() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: Some("http://server/v1".into()),
+            ollama_base_url: None,
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.custom_model = Some("my-custom-model".into());
+        let r = resolve_from_sources(Some("custom"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.model, "my-custom-model");
+    }
+
+    #[test]
+    fn resolve_custom_model_flag_overrides_config() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: Some("http://server/v1".into()),
+            ollama_base_url: None,
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.custom_model = Some("config-model".into());
+        let r =
+            resolve_from_sources(Some("custom"), Some("flag-model"), Some(&cfg), &env).unwrap();
+        assert_eq!(r.model, "flag-model");
     }
 }

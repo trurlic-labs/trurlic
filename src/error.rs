@@ -78,8 +78,11 @@ pub enum Error {
     #[error("existing config at {path} is not valid JSON: {detail}")]
     InvalidInstallConfig { path: PathBuf, detail: String },
 
-    #[error("existing config at {path} has unexpected structure")]
-    InvalidInstallStructure { path: PathBuf },
+    #[error("existing config at {path} has unexpected structure: {detail}")]
+    InvalidInstallStructure { path: PathBuf, detail: String },
+
+    #[error("binary path is not valid UTF-8: {}", .0.display())]
+    InvalidBinaryPath(PathBuf),
 
     #[error("existing config at {path} is not valid TOML: {detail}")]
     InvalidInstallToml { path: PathBuf, detail: String },

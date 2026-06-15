@@ -151,7 +151,7 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, Clone, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum InstallIde {
     /// Claude Desktop (Anthropic)
     Claude,

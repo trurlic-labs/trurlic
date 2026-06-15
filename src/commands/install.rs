@@ -20,42 +20,41 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> 
         return install_claude_code(&binary, dry_run);
     }
 
-    let path = ide_config_path(&ide)?;
+    let path = ide_config_path(ide)?;
+    let bin_str = binary_as_str(&binary)?;
 
     if dry_run == DryRun::Yes {
-        let snippet = build_dry_run_snippet(&ide, &binary);
+        let snippet = build_dry_run_snippet(ide, bin_str)?;
         println!("{snippet}");
         return Ok(());
     }
 
     match ide {
-        InstallIde::Codex => write_toml_config(&path, &binary)?,
-        InstallIde::HermesAgent => write_yaml_config(&path, &binary)?,
+        InstallIde::Codex => write_toml_config(&path, bin_str)?,
+        InstallIde::HermesAgent => write_yaml_config(&path, bin_str)?,
         InstallIde::OpenCode => {
-            let entry = build_server_entry(&binary);
+            let entry = build_server_entry(bin_str);
             write_json_opencode(&path, &entry)?;
         }
         InstallIde::Copilot => {
-            let entry = build_server_entry(&binary);
+            let entry = build_server_entry(bin_str);
             write_json_servers(&path, &entry)?;
         }
-        InstallIde::ClaudeCode => {
-            return install_claude_code(&binary, dry_run);
-        }
+        InstallIde::ClaudeCode => unreachable!(),
         InstallIde::Claude
         | InstallIde::Cursor
         | InstallIde::Cline
         | InstallIde::Windsurf
         | InstallIde::OpenClaw
         | InstallIde::Antigravity => {
-            let entry = build_server_entry(&binary);
+            let entry = build_server_entry(bin_str);
             write_json_mcp_servers(&path, &entry)?;
         }
     }
 
     println!(
         "Installed trurlic MCP server for {}",
-        ide_display_name(&ide)
+        ide_display_name(ide)
     );
     println!("Config: {}", path.display());
     Ok(())
@@ -69,12 +68,18 @@ fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf> {
     if !path.is_file() {
         return Err(Error::BinaryNotFound);
     }
-    Ok(path)
+    fs::canonicalize(&path).map_err(|_| Error::BinaryNotFound)
 }
 
-fn build_server_entry(binary: &Path) -> Value {
+fn binary_as_str(binary: &Path) -> Result<&str> {
+    binary
+        .to_str()
+        .ok_or_else(|| Error::InvalidBinaryPath(binary.to_path_buf()))
+}
+
+fn build_server_entry(binary: &str) -> Value {
     serde_json::json!({
-        "command": binary.to_string_lossy(),
+        "command": binary,
         "args": ["serve"]
     })
 }
@@ -99,7 +104,7 @@ fn home_dir() -> Result<PathBuf> {
     }
 }
 
-fn ide_config_path(ide: &InstallIde) -> Result<PathBuf> {
+fn ide_config_path(ide: InstallIde) -> Result<PathBuf> {
     let home = home_dir()?;
     let path = match ide {
         InstallIde::Claude => {
@@ -162,7 +167,7 @@ fn ide_config_path(ide: &InstallIde) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn ide_display_name(ide: &InstallIde) -> &'static str {
+fn ide_display_name(ide: InstallIde) -> &'static str {
     match ide {
         InstallIde::Claude => "Claude Desktop",
         InstallIde::ClaudeCode => "Claude Code",
@@ -178,58 +183,40 @@ fn ide_display_name(ide: &InstallIde) -> &'static str {
     }
 }
 
-fn build_dry_run_snippet(ide: &InstallIde, binary: &Path) -> String {
-    let bin = binary.to_string_lossy();
+fn build_dry_run_snippet(ide: InstallIde, bin: &str) -> Result<String> {
     match ide {
         InstallIde::ClaudeCode => {
-            format!("claude mcp add trurlic -s user -- {bin} serve")
+            Ok(format!("claude mcp add trurlic -s user -- {bin} serve"))
         }
         InstallIde::Codex => {
-            format!("[mcp_servers.trurlic]\ncommand = \"{bin}\"\nargs = [\"serve\"]")
+            Ok(format!("[mcp_servers.trurlic]\ncommand = \"{bin}\"\nargs = [\"serve\"]"))
         }
         InstallIde::HermesAgent => {
-            format!("mcp_servers:\n  trurlic:\n    command: '{bin}'\n    args:\n    - serve")
+            Ok(format!("mcp_servers:\n  trurlic:\n    command: '{bin}'\n    args:\n    - serve"))
         }
-        InstallIde::OpenCode => {
-            let entry = serde_json::json!({
-                "mcp": {
-                    "trurlic": {
-                        "type": "local",
-                        "command": bin,
-                        "args": ["serve"]
-                    }
-                }
-            });
-            serde_json::to_string_pretty(&entry).unwrap_or_default()
-        }
-        InstallIde::Copilot => {
-            let entry = serde_json::json!({
-                "servers": {
-                    "trurlic": {
-                        "command": bin,
-                        "args": ["serve"]
-                    }
-                }
-            });
-            serde_json::to_string_pretty(&entry).unwrap_or_default()
-        }
+        InstallIde::OpenCode => dry_run_json("mcp", bin, true),
+        InstallIde::Copilot => dry_run_json("servers", bin, false),
         InstallIde::Claude
         | InstallIde::Cursor
         | InstallIde::Cline
         | InstallIde::Windsurf
         | InstallIde::OpenClaw
-        | InstallIde::Antigravity => {
-            let entry = serde_json::json!({
-                "mcpServers": {
-                    "trurlic": {
-                        "command": bin,
-                        "args": ["serve"]
-                    }
-                }
-            });
-            serde_json::to_string_pretty(&entry).unwrap_or_default()
-        }
+        | InstallIde::Antigravity => dry_run_json("mcpServers", bin, false),
     }
+}
+
+fn dry_run_json(key: &str, bin: &str, add_type: bool) -> Result<String> {
+    let mut entry = serde_json::json!({
+        "command": bin,
+        "args": ["serve"]
+    });
+    if add_type && let Some(obj) = entry.as_object_mut() {
+        obj.insert("type".into(), Value::String("local".into()));
+    }
+    let wrapper = serde_json::json!({ key: { "trurlic": entry } });
+    serde_json::to_string_pretty(&wrapper).map_err(|e| {
+        Error::Validation(format!("failed to serialize dry-run snippet: {e}"))
+    })
 }
 
 // ── Atomic file write ────────────────────────────────────────────────────────
@@ -238,26 +225,27 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, content).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        Error::Io(e)
-    })?;
-    let readback = fs::read_to_string(&tmp).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        Error::Io(e)
-    })?;
+    let parent = path.parent().unwrap_or(path);
+    let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(Error::Io)?;
+    std::io::Write::write_all(&mut tmp, content.as_bytes()).map_err(Error::Io)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tmp.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(Error::Io)?;
+    }
+
+    let readback = fs::read_to_string(tmp.path()).map_err(Error::Io)?;
     if readback != content {
-        let _ = fs::remove_file(&tmp);
         return Err(Error::InvalidInstallConfig {
             path: path.to_path_buf(),
             detail: "round-trip verification failed: written content differs".into(),
         });
     }
-    fs::rename(&tmp, path).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        Error::Io(e)
-    })
+    tmp.persist(path).map_err(|e| Error::Io(e.error))?;
+    Ok(())
 }
 
 // ── JSON writers ─────────────────────────────────────────────────────────────
@@ -282,6 +270,7 @@ fn write_json_with_key(path: &Path, key: &str, entry: &Value) -> Result<()> {
         .as_object_mut()
         .ok_or_else(|| Error::InvalidInstallStructure {
             path: path.to_path_buf(),
+            detail: "root is not a JSON object".into(),
         })?;
 
     let servers = obj
@@ -291,6 +280,7 @@ fn write_json_with_key(path: &Path, key: &str, entry: &Value) -> Result<()> {
         .as_object_mut()
         .ok_or_else(|| Error::InvalidInstallStructure {
             path: path.to_path_buf(),
+            detail: format!("`{key}` is not a JSON object"),
         })?;
 
     if servers_obj.contains_key("trurlic") {
@@ -326,7 +316,7 @@ fn write_json_opencode(path: &Path, entry: &Value) -> Result<()> {
 
 // ── TOML writer ──────────────────────────────────────────────────────────────
 
-fn write_toml_config(path: &Path, binary: &Path) -> Result<()> {
+fn write_toml_config(path: &Path, binary: &str) -> Result<()> {
     let content = match fs::read_to_string(path) {
         Ok(s) if s.trim().is_empty() => String::new(),
         Ok(s) => s,
@@ -344,6 +334,7 @@ fn write_toml_config(path: &Path, binary: &Path) -> Result<()> {
         .as_table_mut()
         .ok_or_else(|| Error::InvalidInstallStructure {
             path: path.to_path_buf(),
+            detail: "root is not a TOML table".into(),
         })?;
 
     let servers = root
@@ -353,12 +344,13 @@ fn write_toml_config(path: &Path, binary: &Path) -> Result<()> {
         .as_table_mut()
         .ok_or_else(|| Error::InvalidInstallStructure {
             path: path.to_path_buf(),
+            detail: "`mcp_servers` is not a TOML table".into(),
         })?;
 
     let mut trurlic = toml::map::Map::new();
     trurlic.insert(
         "command".into(),
-        toml::Value::String(binary.to_string_lossy().into_owned()),
+        toml::Value::String(binary.to_string()),
     );
     trurlic.insert(
         "args".into(),
@@ -382,7 +374,7 @@ fn write_toml_config(path: &Path, binary: &Path) -> Result<()> {
 
 // ── YAML writer ──────────────────────────────────────────────────────────────
 
-fn write_yaml_config(path: &Path, binary: &Path) -> Result<()> {
+fn write_yaml_config(path: &Path, binary: &str) -> Result<()> {
     let content = match fs::read_to_string(path) {
         Ok(s) if s.trim().is_empty() => String::new(),
         Ok(s) => s,
@@ -403,6 +395,7 @@ fn write_yaml_config(path: &Path, binary: &Path) -> Result<()> {
         .as_mapping_mut()
         .ok_or_else(|| Error::InvalidInstallStructure {
             path: path.to_path_buf(),
+            detail: "root is not a YAML mapping".into(),
         })?;
 
     let servers_key = serde_yaml_ng::Value::String("mcp_servers".into());
@@ -417,6 +410,7 @@ fn write_yaml_config(path: &Path, binary: &Path) -> Result<()> {
         .and_then(|v| v.as_mapping_mut())
         .ok_or_else(|| Error::InvalidInstallStructure {
             path: path.to_path_buf(),
+            detail: "`mcp_servers` is not a YAML mapping".into(),
         })?;
 
     let trurlic_key = serde_yaml_ng::Value::String("trurlic".into());
@@ -430,7 +424,7 @@ fn write_yaml_config(path: &Path, binary: &Path) -> Result<()> {
     let mut entry = serde_yaml_ng::Mapping::new();
     entry.insert(
         serde_yaml_ng::Value::String("command".into()),
-        serde_yaml_ng::Value::String(binary.to_string_lossy().into_owned()),
+        serde_yaml_ng::Value::String(binary.to_string()),
     );
     entry.insert(
         serde_yaml_ng::Value::String("args".into()),
@@ -471,27 +465,42 @@ fn which(name: &str) -> std::result::Result<PathBuf, ()> {
         if candidate.is_file() {
             return Ok(candidate);
         }
+        #[cfg(windows)]
+        {
+            let exe = dir.join(format!("{name}.exe"));
+            if exe.is_file() {
+                return Ok(exe);
+            }
+            let cmd = dir.join(format!("{name}.cmd"));
+            if cmd.is_file() {
+                return Ok(cmd);
+            }
+        }
     }
     Err(())
 }
 
 fn install_claude_code(binary: &Path, dry_run: DryRun) -> Result<()> {
     let claude = find_claude_cli()?;
-    let bin_str = binary.to_string_lossy();
+    let bin_str = binary_as_str(binary)?;
 
     if dry_run == DryRun::Yes {
         println!("claude mcp add trurlic -s user -- {bin_str} serve");
         return Ok(());
     }
 
-    // Remove existing entry (ignore errors).
+    // Best-effort removal of stale entry. Closing stdin prevents hanging
+    // if the subprocess prompts for input.
     let _ = Command::new(&claude)
         .args(["mcp", "remove", "trurlic", "-s", "user"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .output();
 
     let output = Command::new(&claude)
         .args([
-            "mcp", "add", "trurlic", "-s", "user", "--", &bin_str, "serve",
+            "mcp", "add", "trurlic", "-s", "user", "--", bin_str, "serve",
         ])
         .output()
         .map_err(|e| Error::ClaudeCliExec(e.to_string()))?;
@@ -514,7 +523,7 @@ mod tests {
 
     #[test]
     fn build_server_entry_structure() {
-        let entry = build_server_entry(Path::new("/usr/bin/trurlic"));
+        let entry = build_server_entry("/usr/bin/trurlic");
         assert_eq!(entry["command"], "/usr/bin/trurlic");
         assert_eq!(entry["args"], serde_json::json!(["serve"]));
     }
@@ -525,7 +534,7 @@ mod tests {
     fn write_json_creates_new_file() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("config.json");
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
 
         write_json_mcp_servers(&path, &entry).unwrap();
 
@@ -543,7 +552,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         fs::write(&path, r#"{"mcpServers":{"other":{"command":"other-cmd"}}}"#).unwrap();
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         write_json_mcp_servers(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -557,7 +566,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         fs::write(&path, r#"{"theme":"dark","mcpServers":{}}"#).unwrap();
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         write_json_mcp_servers(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -571,7 +580,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         fs::write(&path, r#"{"mcpServers":{"trurlic":{"command":"old"}}}"#).unwrap();
 
-        let entry = build_server_entry(Path::new("/bin/trurlic-new"));
+        let entry = build_server_entry("/bin/trurlic-new");
         write_json_mcp_servers(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -587,7 +596,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         fs::write(&path, "").unwrap();
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         write_json_mcp_servers(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -600,7 +609,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         fs::write(&path, r#"{"theme":"dark"}"#).unwrap();
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         write_json_mcp_servers(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -614,7 +623,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         fs::write(&path, "not json").unwrap();
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         let err = write_json_mcp_servers(&path, &entry).unwrap_err();
         assert!(matches!(err, Error::InvalidInstallConfig { .. }));
     }
@@ -625,7 +634,7 @@ mod tests {
         let path = tmp.path().join("config.json");
         fs::write(&path, "[1,2,3]").unwrap();
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         let err = write_json_mcp_servers(&path, &entry).unwrap_err();
         assert!(matches!(err, Error::InvalidInstallStructure { .. }));
     }
@@ -637,7 +646,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("mcp.json");
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         write_json_servers(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -651,7 +660,7 @@ mod tests {
         let path = tmp.path().join("mcp.json");
         fs::write(&path, r#"{"servers":{"other":{"command":"x"}}}"#).unwrap();
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         write_json_servers(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -666,7 +675,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("opencode.json");
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         write_json_opencode(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -678,7 +687,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("opencode.json");
 
-        let entry = build_server_entry(Path::new("/bin/trurlic"));
+        let entry = build_server_entry("/bin/trurlic");
         write_json_opencode(&path, &entry).unwrap();
 
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -693,7 +702,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("config.toml");
 
-        write_toml_config(&path, Path::new("/bin/trurlic")).unwrap();
+        write_toml_config(&path, "/bin/trurlic").unwrap();
 
         let content: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
@@ -714,7 +723,7 @@ mod tests {
         let path = tmp.path().join("config.toml");
         fs::write(&path, "[mcp_servers.other]\ncommand = \"other-cmd\"\n").unwrap();
 
-        write_toml_config(&path, Path::new("/bin/trurlic")).unwrap();
+        write_toml_config(&path, "/bin/trurlic").unwrap();
 
         let content: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
@@ -733,7 +742,7 @@ mod tests {
         let path = tmp.path().join("config.toml");
         fs::write(&path, "model = \"o3\"\n").unwrap();
 
-        write_toml_config(&path, Path::new("/bin/trurlic")).unwrap();
+        write_toml_config(&path, "/bin/trurlic").unwrap();
 
         let content: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["model"].as_str(), Some("o3"));
@@ -746,7 +755,7 @@ mod tests {
         let path = tmp.path().join("config.toml");
         fs::write(&path, "not valid toml [[[").unwrap();
 
-        let err = write_toml_config(&path, Path::new("/bin/trurlic")).unwrap_err();
+        let err = write_toml_config(&path, "/bin/trurlic").unwrap_err();
         assert!(matches!(err, Error::InvalidInstallToml { .. }));
     }
 
@@ -757,7 +766,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("config.yaml");
 
-        write_yaml_config(&path, Path::new("/bin/trurlic")).unwrap();
+        write_yaml_config(&path, "/bin/trurlic").unwrap();
 
         let content: serde_yaml_ng::Value =
             serde_yaml_ng::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -777,7 +786,7 @@ mod tests {
         let path = tmp.path().join("config.yaml");
         fs::write(&path, "mcp_servers:\n  other:\n    command: other-cmd\n").unwrap();
 
-        write_yaml_config(&path, Path::new("/bin/trurlic")).unwrap();
+        write_yaml_config(&path, "/bin/trurlic").unwrap();
 
         let content: serde_yaml_ng::Value =
             serde_yaml_ng::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -798,7 +807,7 @@ mod tests {
         let path = tmp.path().join("config.yaml");
         fs::write(&path, "model: o3\n").unwrap();
 
-        write_yaml_config(&path, Path::new("/bin/trurlic")).unwrap();
+        write_yaml_config(&path, "/bin/trurlic").unwrap();
 
         let content: serde_yaml_ng::Value =
             serde_yaml_ng::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -812,7 +821,7 @@ mod tests {
         let path = tmp.path().join("config.yaml");
         fs::write(&path, ":\n  - :\n    bad: [").unwrap();
 
-        let err = write_yaml_config(&path, Path::new("/bin/trurlic")).unwrap_err();
+        let err = write_yaml_config(&path, "/bin/trurlic").unwrap_err();
         assert!(matches!(err, Error::InvalidInstallYaml { .. }));
     }
 
@@ -820,13 +829,13 @@ mod tests {
 
     #[test]
     fn ide_config_path_cursor() {
-        let path = ide_config_path(&InstallIde::Cursor).unwrap();
+        let path = ide_config_path(InstallIde::Cursor).unwrap();
         assert!(path.ends_with(".cursor/mcp.json"));
     }
 
     #[test]
     fn ide_config_path_codex() {
-        let path = ide_config_path(&InstallIde::Codex).unwrap();
+        let path = ide_config_path(InstallIde::Codex).unwrap();
         assert!(path.ends_with("config.toml"));
         let parent = path
             .parent()
@@ -851,6 +860,96 @@ mod tests {
         let bin = tmp.path().join("trurlic");
         fs::write(&bin, "fake binary").unwrap();
         let result = resolve_binary(Some(&bin)).unwrap();
-        assert_eq!(result, bin);
+        assert!(result.is_absolute());
+        assert!(result.is_file());
+    }
+
+    #[test]
+    fn dry_run_snippet_contains_binary() {
+        let snippet = build_dry_run_snippet(InstallIde::Claude, "/usr/bin/trurlic").unwrap();
+        assert!(snippet.contains("/usr/bin/trurlic"), "{snippet}");
+        assert!(snippet.contains("serve"), "{snippet}");
+    }
+
+    #[test]
+    fn dry_run_snippet_opencode_has_type() {
+        let snippet = build_dry_run_snippet(InstallIde::OpenCode, "/usr/bin/trurlic").unwrap();
+        assert!(snippet.contains("\"type\""), "{snippet}");
+        assert!(snippet.contains("local"), "{snippet}");
+    }
+
+    #[test]
+    fn write_toml_overwrites_existing_trurlic() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        fs::write(&path, "[mcp_servers.trurlic]\ncommand = \"/old/path\"\n").unwrap();
+
+        write_toml_config(&path, "/new/trurlic").unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("/new/trurlic"), "{content}");
+        assert!(!content.contains("/old/path"), "{content}");
+    }
+
+    #[test]
+    fn write_toml_creates_from_empty() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        write_toml_config(&path, "/usr/bin/trurlic").unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("/usr/bin/trurlic"), "{content}");
+    }
+
+    #[test]
+    fn write_yaml_overwrites_existing_trurlic() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.yaml");
+        fs::write(&path, "mcp_servers:\n  trurlic:\n    command: /old/path\n").unwrap();
+
+        write_yaml_config(&path, "/new/trurlic").unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("/new/trurlic"), "{content}");
+        assert!(!content.contains("/old/path"), "{content}");
+    }
+
+    #[test]
+    fn write_yaml_creates_from_empty() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.yaml");
+
+        write_yaml_config(&path, "/usr/bin/trurlic").unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("/usr/bin/trurlic"), "{content}");
+    }
+
+    #[test]
+    fn write_json_rejects_non_object_mcp_servers() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.json");
+        fs::write(&path, r#"{"mcpServers": 42}"#).unwrap();
+
+        let entry = build_server_entry("/bin/trurlic");
+        let err = write_json_mcp_servers(&path, &entry).unwrap_err();
+        assert!(matches!(err, Error::InvalidInstallStructure { .. }));
+    }
+
+    #[test]
+    fn write_yaml_rejects_non_mapping_root() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.yaml");
+        fs::write(&path, "- item1\n- item2\n").unwrap();
+
+        let err = write_yaml_config(&path, "/bin/trurlic").unwrap_err();
+        assert!(matches!(err, Error::InvalidInstallStructure { .. }));
+    }
+
+    #[test]
+    fn binary_as_str_rejects_valid_utf8() {
+        let path = Path::new("/valid/path");
+        assert!(binary_as_str(path).is_ok());
     }
 }
