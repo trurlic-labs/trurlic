@@ -1,6 +1,7 @@
 import type { Camera } from './camera';
 import type { Graph } from '../state/graph';
 import type { RenderNode, FilterState, DecisionNode, ColorSnapshot } from '../types';
+import type { MinimapTransform } from '../app/drag';
 import { LOD } from './lod';
 import type { AABB } from './culling';
 import { EDGE_DASH, EDGE_OPACITY, edgeColor, edgeCurveCP } from './edges';
@@ -602,13 +603,18 @@ export class Renderer {
 
   // ── Minimap ────────────────────────────────────────────────────────────
 
-  renderMinimap(miniCtx: CanvasRenderingContext2D, mw: number, mh: number, graph: Graph): void {
+  renderMinimap(
+    miniCtx: CanvasRenderingContext2D,
+    mw: number,
+    mh: number,
+    graph: Graph,
+  ): MinimapTransform | null {
     const { dpr, colors: c } = this;
     miniCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     miniCtx.fillStyle = c.minimap;
     miniCtx.fillRect(0, 0, mw, mh);
 
-    if (graph.nodes.size === 0) return;
+    if (graph.nodes.size === 0) return null;
 
     let minX = Infinity,
       minY = Infinity,
@@ -664,6 +670,8 @@ export class Renderer {
     miniCtx.strokeRect(vx, vy, vw, vh);
     miniCtx.fillStyle = c.minimapVp;
     miniCtx.fillRect(vx, vy, vw, vh);
+
+    return { minX, minY, scale, ox, oy, mw, mh };
   }
 
   // ── Dot grid ──────────────────────────────────────────────────────────

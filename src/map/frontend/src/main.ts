@@ -25,9 +25,7 @@ import type { MinimapTransform } from './app/drag';
 import { Navigation } from './app/navigation';
 import { Filters } from './app/filters';
 import { HoverTracker } from './app/hover';
-import type { HoverEdge } from './app/hover';
-import { pointBezierDistSq } from './renderer/geometry';
-import { edgeCurveCP } from './renderer/edges';
+import { findHoveredEdge } from './app/edge-hit';
 
 // ── App ──────────────────────────────────────────────────────────────────
 
@@ -862,32 +860,7 @@ class App {
   };
 
   private renderMinimap(): MinimapTransform | null {
-    const mw = 220;
-    const mh = 150;
-    this.renderer.renderMinimap(this.miniCtx, mw, mh, this.graph);
-
-    if (this.graph.nodes.size === 0) return null;
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    for (const n of this.graph.nodes.values()) {
-      minX = Math.min(minX, n.x - n.w / 2);
-      minY = Math.min(minY, n.y - n.h / 2);
-      maxX = Math.max(maxX, n.x + n.w / 2);
-      maxY = Math.max(maxY, n.y + n.h / 2);
-    }
-    const pad = 40;
-    minX -= pad;
-    minY -= pad;
-    maxX += pad;
-    maxY += pad;
-    const bw = maxX - minX;
-    const bh = maxY - minY;
-    const scale = Math.min(mw / bw, mh / bh);
-    const ox = (mw - bw * scale) / 2;
-    const oy = (mh - bh * scale) / 2;
-    return { minX, minY, scale, ox, oy, mw, mh };
+    return this.renderer.renderMinimap(this.miniCtx, 220, 150, this.graph);
   }
 
   private fitView(): void {
@@ -959,54 +932,6 @@ class App {
       }
     });
   }
-}
-
-// ── Edge hit-testing ──────────────────────────────────────────────────────
-
-/** Screen-pixel threshold for edge hover detection. */
-const EDGE_HIT_PX = 8;
-
-/**
- * Find the edge nearest to the cursor in world space.
- * Hit-tests against the quadratic Bézier curve (not the straight
- * chord) to match the rendered curvature. Only checks edges visible
- * at the current LOD and filter state.
- * Returns null if no edge is within EDGE_HIT_PX screen pixels.
- */
-function findHoveredEdge(
-  graph: Graph,
-  wx: number,
-  wy: number,
-  zoom: number,
-  lod: LOD,
-  filters: FilterState | undefined,
-): HoverEdge | null {
-  if (lod < LOD.Component) return null;
-
-  const threshold = EDGE_HIT_PX / zoom;
-  const threshSq = threshold * threshold;
-  let bestDistSq = threshSq;
-  let best: HoverEdge | null = null;
-
-  for (const e of graph.edges) {
-    if (e.kind === 'belongs_to') continue;
-    if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
-    if (filters && !filters.edgeKinds.has(e.kind)) continue;
-
-    const a = graph.nodes.get(e.from);
-    const b = graph.nodes.get(e.to);
-    if (!a || !b) continue;
-
-    const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, zoom, e.isReverse === true);
-
-    const d = pointBezierDistSq(wx, wy, a.x, a.y, cpx, cpy, b.x, b.y);
-    if (d < bestDistSq) {
-      bestDistSq = d;
-      best = { from: e.from, to: e.to, kind: e.kind };
-    }
-  }
-
-  return best;
 }
 
 new App();
