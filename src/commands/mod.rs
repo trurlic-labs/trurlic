@@ -27,6 +27,12 @@ use std::path::Path;
 use crate::Result;
 use crate::store::{self, ProjectState, Store};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DryRun {
+    Yes,
+    No,
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 pub(crate) fn discover_store(cwd: &Path) -> Result<Store> {

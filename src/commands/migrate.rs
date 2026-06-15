@@ -9,11 +9,7 @@ use crate::store::schema::{
 };
 use crate::{Error, Result};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DryRun {
-    Yes,
-    No,
-}
+use super::DryRun;
 
 pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     let store = Store::discover(cwd)?;
@@ -56,9 +52,25 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
         .parent()
         .ok_or_else(|| Error::Validation("store root has no parent directory".into()))?;
     let backup_path = project_root.join(&backup_name);
-    copy_dir_recursive(root, &backup_path)?;
+    if let Err(e) = copy_dir_recursive(root, &backup_path) {
+        let _ = fs::remove_dir_all(&backup_path);
+        return Err(e);
+    }
 
     let lock = store.lock()?;
+
+    // Re-check version under lock to close the TOCTOU window: another
+    // process could have migrated between our initial unlocked read and
+    // lock acquisition.
+    let project_locked = store.read_project()?;
+    if crate::store::compare_versions(&project_locked.trurlic_version, FORMAT_VERSION)
+        != Ordering::Less
+    {
+        drop(lock);
+        let _ = fs::remove_dir_all(&backup_path);
+        println!("Already up to date (format version {FORMAT_VERSION}).");
+        return Ok(());
+    }
 
     round_trip_project(root, &lock, &store)?;
     round_trip_dir::<ComponentFile>(root, COMPONENTS_DIR, &lock, &store)?;

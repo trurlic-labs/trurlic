@@ -304,9 +304,9 @@ pub fn run(cli: Cli) -> Result<()> {
             dry_run,
         } => {
             let mode = if dry_run {
-                commands::install::DryRun::Yes
+                commands::DryRun::Yes
             } else {
-                commands::install::DryRun::No
+                commands::DryRun::No
             };
             commands::install(ide, binary_path.as_deref(), mode)
         }
@@ -320,9 +320,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Check { rebuild } => commands::check(&cwd, rebuild),
         Command::Migrate { dry_run } => {
             let mode = if dry_run {
-                commands::migrate::DryRun::Yes
+                commands::DryRun::Yes
             } else {
-                commands::migrate::DryRun::No
+                commands::DryRun::No
             };
             commands::migrate(&cwd, mode)
         }

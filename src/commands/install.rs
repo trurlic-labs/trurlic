@@ -7,11 +7,7 @@ use serde_json::Value;
 use crate::cli::InstallIde;
 use crate::{Error, Result};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DryRun {
-    Yes,
-    No,
-}
+use super::DryRun;
 
 pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> Result<()> {
     let binary = resolve_binary(binary_path)?;
