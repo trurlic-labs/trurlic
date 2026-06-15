@@ -6,12 +6,13 @@ FRONTEND_DIR = src/map/frontend
 NODE_STAMP   = $(FRONTEND_DIR)/node_modules/.install-stamp
 
 # ── Install (single command: rebuild everything → install binary) ──────────
+# Installs to ~/.local/bin/ — same location as install.sh for end users.
 
 install: build-frontend
 	@touch src/map/embed.rs
-	cargo install --path . --locked
+	cargo install --path . --locked --root ~/.local
 	@echo ""
-	@echo "  ✓ trurlic installed to $$(which trurlic || echo '~/.cargo/bin/trurlic')"
+	@echo "  ✓ trurlic installed to ~/.local/bin/trurlic"
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -105,4 +106,4 @@ ci: check check-frontend test audit
 
 clean:
 	cargo clean
-	rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/dist/app.js
+	rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/dist
