@@ -107,6 +107,7 @@ class App {
     this.setupSearch();
     this.installKeyboard();
     this.handleResize();
+    this.setupPanelResize();
     window.addEventListener('resize', () => this.handleResize());
 
     this.panel.showLoading();
@@ -856,6 +857,53 @@ class App {
 
     this.updateLOD();
     this.needsRender = true;
+  }
+
+  // ── Panel resize ──────────────────────────────────────────────────────
+
+  private setupPanelResize(): void {
+    const handle = document.getElementById('panel-resize')!;
+    const root = document.documentElement;
+    const MIN_W = 220;
+    const MAX_W = 560;
+
+    try {
+      const saved = sessionStorage.getItem('trurlic-panel-width');
+      if (saved) {
+        const w = Math.max(MIN_W, Math.min(MAX_W, parseInt(saved, 10)));
+        if (!isNaN(w)) root.style.setProperty('--panel-width', `${w}px`);
+      }
+    } catch {
+      /* sessionStorage unavailable */
+    }
+
+    let dragging = false;
+
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      handle.classList.add('active');
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    handle.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const w = Math.max(MIN_W, Math.min(MAX_W, window.innerWidth - e.clientX));
+      root.style.setProperty('--panel-width', `${w}px`);
+      this.handleResize();
+    });
+
+    handle.addEventListener('pointerup', () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('active');
+      const current = getComputedStyle(root).getPropertyValue('--panel-width').trim();
+      try {
+        sessionStorage.setItem('trurlic-panel-width', parseInt(current, 10).toString());
+      } catch {
+        /* sessionStorage unavailable */
+      }
+    });
   }
 }
 

@@ -737,6 +737,26 @@ body.panel-collapsed .hint-overlay {
   outline: 1px solid var(--accent-dim);
 }
 
+/* ── Panel resize handle ─────────────────────────────────────────── */
+.panel-resize {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  right: var(--panel-width);
+  width: 5px;
+  cursor: col-resize;
+  z-index: 11;
+  background: transparent;
+  transition: background 0.15s;
+}
+.panel-resize:hover,
+.panel-resize.active {
+  background: var(--accent-dim);
+}
+body.panel-collapsed .panel-resize {
+  display: none;
+}
+
 /* ── First-visit hint overlay ──────────────────────────────────────── */
 .hint-overlay {
   position: fixed;
