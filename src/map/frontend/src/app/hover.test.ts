@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { HoverTracker } from './hover';
-import { pointSegDistSq } from '../renderer/geometry';
 
 describe('HoverTracker', () => {
   it('starts with nothing hovered', () => {
@@ -172,6 +171,17 @@ describe('HoverTracker', () => {
     expect(h.tooltipVisible).toBe(true);
   });
 
+  it('tick with pattern only: borderAlpha stays 0, tooltip appears after dwell', () => {
+    const h = new HoverTracker();
+    h.update(null, '', 'fail-closed', 'All mutations validate', null, 0, 0, 1000);
+    h.tick(1050);
+    expect(h.borderAlpha).toBe(0);
+    expect(h.tooltipVisible).toBe(false);
+    h.tick(1400);
+    expect(h.borderAlpha).toBe(0);
+    expect(h.tooltipVisible).toBe(true);
+  });
+
   // ── Clear ─────────────────────────────────────────────────────────
 
   it('clear resets all state', () => {
@@ -184,35 +194,5 @@ describe('HoverTracker', () => {
     expect(h.edge).toBeNull();
     expect(h.borderAlpha).toBe(0);
     expect(h.tooltipVisible).toBe(false);
-  });
-});
-
-describe('pointSegDistSq', () => {
-  it('returns 0 for a point on the segment', () => {
-    expect(pointSegDistSq(5, 5, 0, 0, 10, 10)).toBeCloseTo(0);
-  });
-
-  it('returns squared distance for a point off the segment', () => {
-    // Point (0, 5), segment from (0,0) to (10,0).
-    // Nearest point is (0,0)... wait no, nearest point on segment is (0,0).
-    // Actually, perpendicular from (0,5) to horizontal line y=0 hits (0,0).
-    // Distance = 5, squared = 25.
-    expect(pointSegDistSq(0, 5, 0, 0, 10, 0)).toBeCloseTo(25);
-  });
-
-  it('clamps to segment endpoints', () => {
-    // Point far beyond endpoint B.
-    // Segment (0,0)→(10,0), point (20,0). Nearest = (10,0), dist = 10.
-    expect(pointSegDistSq(20, 0, 0, 0, 10, 0)).toBeCloseTo(100);
-  });
-
-  it('handles zero-length segment', () => {
-    // Degenerate segment: both endpoints at (5,5). Distance to (8,5) = 3.
-    expect(pointSegDistSq(8, 5, 5, 5, 5, 5)).toBeCloseTo(9);
-  });
-
-  it('midpoint perpendicular distance', () => {
-    // Segment (0,0)→(10,0), point (5,3). Nearest = (5,0), dist = 3.
-    expect(pointSegDistSq(5, 3, 0, 0, 10, 0)).toBeCloseTo(9);
   });
 });

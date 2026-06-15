@@ -143,6 +143,14 @@ describe('Graph', () => {
       expect(g.edges).toHaveLength(edgesBefore);
       expect(g.nodes.size).toBe(2);
     });
+
+    it('rebuilds edgePairSet after removing a node', () => {
+      const g = new Graph();
+      g.loadSnapshot(makeSnapshot());
+      expect(g.edgePairSet.has('api\0auth')).toBe(true);
+      g.removeNode('auth');
+      expect(g.edgePairSet.has('api\0auth')).toBe(false);
+    });
   });
 
   describe('addEdge', () => {
@@ -315,6 +323,21 @@ describe('Graph', () => {
       expect(g.edgePairSet.has('api\0auth')).toBe(true);
       // Both edges share from='api' to='auth', so only one pair key.
       expect(g.edgePairSet.size).toBe(1);
+    });
+  });
+
+  describe('connectionsFor', () => {
+    it('returns connected component names', () => {
+      const g = new Graph();
+      g.loadSnapshot(makeSnapshot());
+      const conns = g.connectionsFor('api');
+      expect(conns).toContain('auth');
+    });
+
+    it('returns empty for isolated node', () => {
+      const g = new Graph();
+      g.loadSnapshot(makeSnapshot({ edges: [] }));
+      expect(g.connectionsFor('auth')).toHaveLength(0);
     });
   });
 

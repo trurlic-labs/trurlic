@@ -136,6 +136,22 @@ describe('expandHull', () => {
     expect(exp).toHaveLength(2);
     expect(exp).not.toBe(pts); // should be a new array
   });
+
+  it('handles acute angles without producing extreme coordinates', () => {
+    const thin: Point[] = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 50, y: 1 },
+    ];
+    const hull = convexHull(thin);
+    const exp = expandHull(hull, 20);
+    for (const p of exp) {
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+      expect(Math.abs(p.x)).toBeLessThan(500);
+      expect(Math.abs(p.y)).toBeLessThan(500);
+    }
+  });
 });
 
 describe('rayRectIntersect', () => {
@@ -338,5 +354,14 @@ describe('pointBezierDistSq', () => {
   it('returns large distance for point far from curve', () => {
     const d = pointBezierDistSq(1000, 1000, 0, 0, 5, 5, 10, 0);
     expect(d).toBeGreaterThan(1e6);
+  });
+
+  it('detects near-zero distance at curve apex', () => {
+    // Curve: A=(0,0), CP=(5,20), B=(10,0). Apex near (5, 10).
+    const d = pointBezierDistSq(5, 10, 0, 0, 5, 20, 10, 0);
+    expect(d).toBeLessThan(4);
+    // Point on the chord should be farther from the curved path.
+    const dChord = pointBezierDistSq(5, 0, 0, 0, 5, 20, 10, 0);
+    expect(dChord).toBeGreaterThan(d);
   });
 });
