@@ -8,27 +8,27 @@
 }
 
 :root {
-  --bg: #110f0d;
-  --surface: #1c1916;
-  --surface-hi: #282420;
-  --border: #362f28;
-  --text: #e8e2d9;
-  --text-dim: #9b9285;
-  --accent: #d4882b;
-  --accent-dim: #8b5a1b;
-  --edge: #463d34;
-  --select: #d4882b;
-  --badge: #564d42;
-  --minimap-bg: #16130f;
-  --minimap-vp: rgba(212, 136, 43, 0.25);
-  --panel-bg: #171411;
-  --panel-border: #362f28;
-  --edge-dep: #6a8a5a;
-  --edge-con: #a07838;
-  --edge-sup: #8a6878;
-  --grid-dot: #241f1a;
+  --bg: #1c1c26;
+  --surface: #282832;
+  --surface-hi: #32323c;
+  --border: #3d3d48;
+  --text: #e4e4ec;
+  --text-dim: #8b8b9a;
+  --accent: #e8993a;
+  --accent-dim: #a06828;
+  --edge: #4a4a56;
+  --select: #e8993a;
+  --badge: #4a4a56;
+  --minimap-bg: #1c1c26;
+  --minimap-vp: rgba(232, 153, 58, 0.25);
+  --panel-bg: #1e1e28;
+  --panel-border: #3d3d48;
+  --edge-dep: #7aad6a;
+  --edge-con: #c09040;
+  --edge-sup: #a07890;
+  --grid-dot: #28283230;
   --panel-width: 320px;
-  --shadow: rgba(0, 0, 0, 0.4);
+  --shadow: rgba(0, 0, 0, 0.25);
   color-scheme: dark;
 }
 
@@ -99,8 +99,8 @@ body {
   position: fixed;
   bottom: 12px;
   left: 12px;
-  width: 180px;
-  height: 120px;
+  width: 220px;
+  height: 150px;
   border-radius: 8px;
   border: 1px solid var(--accent-dim);
   box-shadow: 0 2px 8px var(--shadow);
@@ -395,11 +395,11 @@ body.panel-collapsed .hint-overlay {
 /* ── High contrast ───────────────────────────────────────────────────── */
 @media (prefers-contrast: more) {
   :root {
-    --border: #999080;
-    --text-dim: #c0b8a8;
-    --edge: #706050;
-    --edge-dep: #7ab07a;
-    --edge-con: #c09040;
+    --border: #8888a0;
+    --text-dim: #c0c0d0;
+    --edge: #686878;
+    --edge-dep: #8ac08a;
+    --edge-con: #d0a050;
   }
 }
 
@@ -691,13 +691,15 @@ body.panel-collapsed .hint-overlay {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 .tag-popover.hidden {
   display: none;
 }
-.tag-popover input {
+.tag-popover input[type='text'] {
   width: 100%;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border: none;
   border-bottom: 1px solid var(--border);
   background: transparent;
@@ -714,11 +716,42 @@ body.panel-collapsed .hint-overlay {
 .tag-popover-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: 8px;
+  padding: 5px 10px;
   font-size: 12px;
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 28px;
+}
+.tag-popover-item input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+}
+.tag-popover-item input[type='checkbox']:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.tag-popover-item input[type='checkbox']:checked::after {
+  content: '\2713';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  color: #fff;
+  font-weight: 700;
 }
 .tag-popover-item:hover {
   background: var(--surface-hi);
@@ -782,7 +815,7 @@ body.panel-collapsed .panel-resize {
 }
 .hint-pill {
   padding: 14px 28px;
-  background: rgba(17, 15, 13, 0.75);
+  background: rgba(28, 28, 38, 0.75);
   color: var(--text);
   font-size: 14px;
   font-weight: 500;
