@@ -37,4 +37,16 @@ describe('esc', () => {
   it('handles empty string', () => {
     expect(esc('')).toBe('');
   });
+
+  it('escapes double quotes for attribute safety', () => {
+    expect(esc('a"b')).toBe('a&quot;b');
+  });
+
+  it('escapes single quotes for attribute safety', () => {
+    expect(esc("a'b")).toBe('a&#39;b');
+  });
+
+  it('escapes combined injection payload', () => {
+    expect(esc('" onmouseover="alert(1)')).toBe('&quot; onmouseover=&quot;alert(1)');
+  });
 });
