@@ -29,9 +29,11 @@
   --grid-dot: #28283230;
   --panel-width: 320px;
   --shadow: rgba(0, 0, 0, 0.25);
+  --tooltip-bg: rgba(17, 15, 13, 0.92);
   --success: #6cb86c;
   --error: #e55;
   --error-bg: rgba(238, 85, 85, 0.08);
+  --check-fg: #fff;
   --ws-status-bg: #e8a735;
   --ws-status-text: #1a1d27;
   color-scheme: dark;
@@ -58,11 +60,12 @@
     --edge-con: #a07830;
     --edge-sup: #8a6a8a;
     --grid-dot: #e0e2e8;
-    --panel-width: 320px;
     --shadow: rgba(0, 0, 0, 0.1);
+    --tooltip-bg: rgba(255, 255, 255, 0.94);
     --success: #2d8a2d;
     --error: #c42b2b;
     --error-bg: rgba(196, 43, 43, 0.08);
+    --check-fg: #fff;
     --ws-status-bg: #e8a735;
     --ws-status-text: #1a1d27;
     color-scheme: light;
@@ -271,11 +274,11 @@ body {
   background: var(--surface-hi);
 }
 .btn-danger {
-  color: #e55;
-  border-color: #e5555540;
+  color: var(--error);
+  border-color: var(--error-bg);
 }
 .btn-danger:hover {
-  background: #e5555520;
+  background: var(--error-bg);
 }
 
 /* ── Alternatives list ───────────────────────────────────────────────── */
@@ -485,9 +488,9 @@ body.panel-collapsed .hint-overlay {
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
-  overflow: hidden;
-  max-height: 400px;
+  overflow-x: hidden;
   overflow-y: auto;
+  max-height: 400px;
 }
 .search-results:empty {
   display: none;
@@ -558,6 +561,9 @@ body.panel-collapsed .hint-overlay {
   color: var(--text);
   font-weight: 500;
   white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .breadcrumb-seg:hover {
   background: var(--surface-hi);
@@ -583,6 +589,7 @@ body.panel-collapsed .hint-overlay {
 }
 .palette {
   width: 480px;
+  max-width: calc(100vw - 24px);
   max-height: 400px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
@@ -709,8 +716,6 @@ body.panel-collapsed .hint-overlay {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 .tag-popover.hidden {
   display: none;
@@ -768,7 +773,7 @@ body.panel-collapsed .hint-overlay {
   left: 50%;
   transform: translate(-50%, -50%);
   font-size: 11px;
-  color: #fff;
+  color: var(--check-fg);
   font-weight: 700;
 }
 .tag-popover-item:hover {

@@ -83,9 +83,7 @@ export class Panel {
     this.currentView = { type: 'component', name: node.name };
     this.history = [];
     const decs = graph.decisionsFor(node.name);
-    const outgoing = graph.edges.filter((e) => e.from === node.name && e.kind === 'connects_to');
-    const incoming = graph.edges.filter((e) => e.to === node.name && e.kind === 'connects_to');
-    const allConns = [...new Set([...outgoing.map((e) => e.to), ...incoming.map((e) => e.from)])];
+    const allConns = graph.connectionsFor(node.name);
 
     const patterns: PatternNode[] = [];
     for (const [, p] of graph.patterns) {
@@ -166,8 +164,8 @@ export class Panel {
     `;
     this.bindBackLink(graph);
     this.bindNavLinks();
-    this.bindEditableFields(name, graph);
-    this.bindDeleteDecision(name, graph);
+    this.bindEditableFields(name);
+    this.bindDeleteDecision(name);
   }
 
   // ── Pattern view ────────────────────────────────────────────────────
@@ -292,7 +290,7 @@ export class Panel {
     }
   }
 
-  private bindEditableFields(decName: string, _graph: Graph): void {
+  private bindEditableFields(decName: string): void {
     for (const el of this.el.querySelectorAll<HTMLElement>('.editable-heading, .editable-block')) {
       el.contentEditable = 'true';
       el.addEventListener('blur', () => {
@@ -310,7 +308,7 @@ export class Panel {
     }
   }
 
-  private bindDeleteDecision(name: string, _graph: Graph): void {
+  private bindDeleteDecision(name: string): void {
     const btn = this.el.querySelector<HTMLElement>(`[data-delete-dec="${CSS.escape(name)}"]`);
     if (!btn) return;
     btn.addEventListener('click', () => {

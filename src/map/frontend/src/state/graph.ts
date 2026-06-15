@@ -3,6 +3,13 @@ import { Quadtree } from '../renderer/culling';
 import { convexHull, expandHull, pointInConvexPoly } from '../renderer/geometry';
 import type { Point } from '../renderer/geometry';
 
+/** Precomputed hull metadata — avoids per-frame centroid/minY recomputation. */
+export interface PatternHullMeta {
+  hull: Point[];
+  centroidX: number;
+  minY: number;
+}
+
 /** Shared empty array — avoids allocation on `decisionsFor` misses. */
 const NO_DECISIONS: readonly DecisionNode[] = Object.freeze([]);
 
@@ -30,17 +37,20 @@ export class Graph {
   layoutVersion = 0;
   quadtree = new Quadtree();
 
-  /** Pattern name -> expanded convex hull points (computed after layout). */
-  patternHulls: Map<string, Point[]> = new Map();
+  /** Pattern name -> expanded convex hull with precomputed label metadata. */
+  patternHulls: Map<string, PatternHullMeta> = new Map();
 
   /** Edge pair set for bidirectional detection — rebuilt on snapshot load. */
   edgePairSet: Set<string> = new Set();
 
   /** Sorted pattern hulls for hit-testing (smallest first). Cached between layout changes. */
-  private sortedPatternHulls: [string, Point[]][] = [];
+  private sortedPatternHulls: [string, PatternHullMeta][] = [];
 
   /** Component name → decisions index. O(1) lookup. */
   private byComponent = new Map<string, DecisionNode[]>();
+
+  /** Adjacency index: component name → set of connected component names. */
+  private adjacency = new Map<string, Set<string>>();
 
   loadSnapshot(snap: GraphSnapshot): void {
     this.nodes.clear();
@@ -48,6 +58,7 @@ export class Graph {
     this.decisions.clear();
     this.patterns.clear();
     this.byComponent.clear();
+    this.adjacency.clear();
     this.projectName = snap.project.name;
     this.projectDescription = snap.project.description;
     this.layoutVersion = snap.layout_version;
@@ -70,7 +81,6 @@ export class Graph {
     for (const d of snap.decisions) {
       this.decisions.set(d.name, d);
 
-      // Build component → decisions index.
       const list = this.byComponent.get(d.component);
       if (list) list.push(d);
       else this.byComponent.set(d.component, [d]);
@@ -86,15 +96,21 @@ export class Graph {
 
     this.assignMissingPositions();
     this.rebuildEdgePairSet();
+    this.rebuildAdjacency();
     this.rebuildQuadtree();
     this.rebuildPatternHulls();
   }
 
-  /** Rebuild the bidirectional edge pair set. Call after edges change. */
+  /** Rebuild the bidirectional edge pair set and per-edge flags. Call after edges change. */
   rebuildEdgePairSet(): void {
     this.edgePairSet.clear();
     for (const e of this.edges) {
       this.edgePairSet.add(`${e.from}\0${e.to}`);
+    }
+    for (const e of this.edges) {
+      const bi = this.edgePairSet.has(`${e.to}\0${e.from}`);
+      e.hasBi = bi;
+      e.isReverse = bi && e.from > e.to;
     }
   }
 
@@ -124,17 +140,24 @@ export class Graph {
       const hull = convexHull(corners);
       if (hull.length < 3) continue;
       const expanded = expandHull(hull, 50);
-      this.patternHulls.set(name, expanded);
+      let cx = 0;
+      let minY = Infinity;
+      for (const p of expanded) {
+        cx += p.x;
+        if (p.y < minY) minY = p.y;
+      }
+      cx /= expanded.length;
+      this.patternHulls.set(name, { hull: expanded, centroidX: cx, minY });
     }
     this.sortedPatternHulls = [...this.patternHulls.entries()].sort(
-      (a, b) => a[1].length - b[1].length,
+      (a, b) => a[1].hull.length - b[1].hull.length,
     );
   }
 
   /** Hit-test pattern regions. Returns the pattern name if (wx, wy) is inside any hull. Smaller patterns (fewer components) win over broad ones. */
   patternAt(wx: number, wy: number): string | null {
-    for (const [name, hull] of this.sortedPatternHulls) {
-      if (pointInConvexPoly(wx, wy, hull)) return name;
+    for (const [name, meta] of this.sortedPatternHulls) {
+      if (pointInConvexPoly(wx, wy, meta.hull)) return name;
     }
     return null;
   }
@@ -188,6 +211,8 @@ export class Graph {
     }
     for (const dName of toRemove) this.decisions.delete(dName);
     this.edges = this.edges.filter((e) => e.from !== name && e.to !== name);
+    this.rebuildEdgePairSet();
+    this.rebuildAdjacency();
     this.rebuildQuadtree();
     this.rebuildPatternHulls();
   }
@@ -201,6 +226,32 @@ export class Graph {
   removeEdge(from: string, to: string, kind: string): void {
     const idx = this.edges.findIndex((e) => e.from === from && e.to === to && e.kind === kind);
     if (idx !== -1) this.edges.splice(idx, 1);
+  }
+
+  /** Rebuild adjacency index from connects_to edges. */
+  rebuildAdjacency(): void {
+    this.adjacency.clear();
+    for (const e of this.edges) {
+      if (e.kind !== 'connects_to') continue;
+      let fromSet = this.adjacency.get(e.from);
+      if (!fromSet) {
+        fromSet = new Set();
+        this.adjacency.set(e.from, fromSet);
+      }
+      fromSet.add(e.to);
+      let toSet = this.adjacency.get(e.to);
+      if (!toSet) {
+        toSet = new Set();
+        this.adjacency.set(e.to, toSet);
+      }
+      toSet.add(e.from);
+    }
+  }
+
+  /** O(1) lookup of connected component names via adjacency index. */
+  connectionsFor(name: string): string[] {
+    const set = this.adjacency.get(name);
+    return set ? [...set] : [];
   }
 }
 

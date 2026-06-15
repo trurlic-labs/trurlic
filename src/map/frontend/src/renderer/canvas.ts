@@ -50,6 +50,7 @@ function snapshotColors(): ColorSnapshot {
     minimapVp: v('--minimap-vp', 'rgba(232,153,58,0.25)'),
     gridDot: v('--grid-dot', '#28283230'),
     shadow: v('--shadow', 'rgba(0,0,0,0.25)'),
+    tooltipBg: v('--tooltip-bg', 'rgba(17,15,13,0.92)'),
   };
   return cachedColors;
 }
@@ -180,7 +181,7 @@ export class Renderer {
     if (lod <= LOD.Component) {
       this.drawPatternRegions(graph, visibleNames, focus, lod, filters);
     }
-    this.drawEdges(graph, visibleNames, lod, focus, filters);
+    this.drawEdges(graph, visibleNames, lod, focus, filters, cam.zoom);
     this.drawNodes(graph, visibleNames, selected, lod, focus, filters);
 
     ctx.restore();
@@ -228,18 +229,18 @@ export class Renderer {
 
     let patIdx = 0;
     for (const [patName, pat] of graph.patterns) {
-      // Skip patterns with no visible components.
       const memberNames = pat.components.filter((name) => visible.has(name));
       if (memberNames.length === 0) {
         patIdx++;
         continue;
       }
 
-      const expanded = graph.patternHulls.get(patName);
-      if (!expanded || expanded.length < 3) {
+      const meta = graph.patternHulls.get(patName);
+      if (!meta || meta.hull.length < 3) {
         patIdx++;
         continue;
       }
+      const expanded = meta.hull;
 
       // Focus dimming.
       const dimmedByFocus = focus !== null && !pat.components.some((n) => focus.has(n));
@@ -275,9 +276,8 @@ export class Renderer {
 
       // Label — always visible at all LOD levels, positioned above the hull.
       {
-        const cx = expanded.reduce((s, p) => s + p.x, 0) / expanded.length;
-        const minY = Math.min(...expanded.map((p) => p.y));
-        const labelY = minY - 8 / cam.zoom;
+        const cx = meta.centroidX;
+        const labelY = meta.minY - 8 / cam.zoom;
 
         const rawLabel = pat.description || pat.name;
         const maxLen = lod >= LOD.Decision ? 60 : lod >= LOD.Component ? 40 : 25;
@@ -320,12 +320,20 @@ export class Renderer {
     visible: Set<string>,
     lod: LOD,
     focus: Set<string> | null,
-    filters?: FilterState,
+    filters: FilterState | undefined,
+    zoom: number,
   ): void {
     const { ctx, cam, colors: c, frameHover: fh } = this;
     const baseWidth = 1.5 / cam.zoom;
 
-    const pairSet = graph.edgePairSet;
+    const dashCache = new Map<string, number[]>();
+    for (const [kind, pattern] of Object.entries(EDGE_DASH)) {
+      dashCache.set(
+        kind,
+        pattern.map((v) => v / zoom),
+      );
+    }
+    const emptyDash: number[] = [];
 
     for (const e of graph.edges) {
       if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
@@ -351,12 +359,9 @@ export class Renderer {
       const color = edgeColor(e.kind, c);
       ctx.strokeStyle = isHovered ? c.accent : color;
       ctx.lineWidth = isHovered ? baseWidth * 2.5 : baseWidth;
-      ctx.setLineDash((EDGE_DASH[e.kind] ?? []).map((v) => v / cam.zoom));
+      ctx.setLineDash(dashCache.get(e.kind) ?? emptyDash);
 
-      // Bezier control point — reverse offset for bidirectional pairs.
-      const hasBi = pairSet.has(`${e.to}\0${e.from}`);
-      const reverse = hasBi && e.from > e.to;
-      const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, cam.zoom, reverse);
+      const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, cam.zoom, e.isReverse === true);
 
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -584,8 +589,7 @@ export class Renderer {
     if (x > maxX) x = maxX;
     if (y > maxY) y = sy - offsetY - boxH; // flip above cursor
 
-    // Background.
-    ctx.fillStyle = 'rgba(17, 15, 13, 0.92)';
+    ctx.fillStyle = c.tooltipBg;
     this.roundRect(x, y, boxW, boxH, radius);
     ctx.fill();
 

@@ -67,6 +67,9 @@ class App {
 
   constructor() {
     const token = new URLSearchParams(location.search).get('token') ?? '';
+    if (token) {
+      history.replaceState(null, '', location.pathname);
+    }
     this.api = new ApiClient(token);
 
     const canvas = document.getElementById('canvas') as HTMLCanvasElement;
@@ -252,15 +255,7 @@ class App {
     const hitEdge =
       hitName || hitPattern
         ? null
-        : findHoveredEdge(
-            this.graph,
-            wx,
-            wy,
-            this.camera.zoom,
-            this.lod,
-            this.filters.state,
-            this.graph.edgePairSet,
-          );
+        : findHoveredEdge(this.graph, wx, wy, this.camera.zoom, this.lod, this.filters.state);
 
     const now = performance.now();
     if (
@@ -359,6 +354,15 @@ class App {
       },
       { match: () => this.selection.searchOpen, run: () => {} },
       {
+        match: () => {
+          const el = document.activeElement as HTMLElement | null;
+          if (!el) return false;
+          const tag = el.tagName;
+          return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+        },
+        run: () => {},
+      },
+      {
         match: Keys.undo,
         run: (e) => {
           e.preventDefault();
@@ -436,13 +440,7 @@ class App {
         },
       },
       {
-        match: (e) => {
-          if (!Keys.del(e) || !this.selection.selected) return false;
-          const tag = (document.activeElement as HTMLElement)?.tagName;
-          if (tag === 'INPUT' || tag === 'TEXTAREA') return false;
-          if ((document.activeElement as HTMLElement)?.isContentEditable) return false;
-          return true;
-        },
+        match: (e) => Keys.del(e) && this.selection.selected !== null,
         run: (e) => {
           e.preventDefault();
           this.deleteSelected();
@@ -557,12 +555,6 @@ class App {
       this.api
         .deleteDecision(name)
         .then(() => {
-          this.undo.push({
-            description: `delete decision ${name}`,
-            undo: () =>
-              Promise.reject(new Error('Decision deletion cannot be undone via the map API')),
-            redo: () => this.api.deleteDecision(name),
-          });
           this.selection.select(null);
           this.breadcrumb.update(this.graph.projectName, null);
           this.reloadGraph();
@@ -987,7 +979,6 @@ function findHoveredEdge(
   zoom: number,
   lod: LOD,
   filters: FilterState | undefined,
-  pairSet: Set<string>,
 ): HoverEdge | null {
   if (lod < LOD.Component) return null;
 
@@ -1005,9 +996,7 @@ function findHoveredEdge(
     const b = graph.nodes.get(e.to);
     if (!a || !b) continue;
 
-    const hasBi = pairSet.has(`${e.to}\0${e.from}`);
-    const reverse = hasBi && e.from > e.to;
-    const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, zoom, reverse);
+    const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, zoom, e.isReverse === true);
 
     const d = pointBezierDistSq(wx, wy, a.x, a.y, cpx, cpy, b.x, b.y);
     if (d < bestDistSq) {

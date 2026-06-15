@@ -66,6 +66,8 @@ export interface RenderEdge {
   from: string;
   to: string;
   kind: string;
+  hasBi?: boolean;
+  isReverse?: boolean;
 }
 
 // ── WebSocket events ───────────────────────────────────────────────────────
@@ -110,6 +112,7 @@ export interface ColorSnapshot {
   minimapVp: string;
   gridDot: string;
   shadow: string;
+  tooltipBg: string;
 }
 
 // ── Filtering ──────────────────────────────────────────────────────────────
