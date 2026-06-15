@@ -413,6 +413,20 @@ body.panel-collapsed .hint-overlay {
   border: 0;
 }
 
+/* ── Focus-visible ──────────────────────────────────────────────────── */
+.toolbar-pill:focus-visible,
+.btn:focus-visible,
+.panel-toggle:focus-visible,
+.breadcrumb-seg:focus-visible,
+.chip:focus-visible,
+.dec-card.dec-link:focus-visible {
+  outline: 2px solid var(--accent-dim);
+  outline-offset: 2px;
+}
+#canvas:focus-visible {
+  outline: none;
+}
+
 /* ── Search overlay ──────────────────────────────────────────────────── */
 .search-bar {
   position: fixed;

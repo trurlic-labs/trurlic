@@ -178,7 +178,10 @@ class App {
 
   private onPointerDown(e: PointerEvent): void {
     if (this.selection.searchOpen) this.closeSearch();
-    if (this.palette.isOpen) this.palette.close();
+    if (this.palette.isOpen) {
+      this.palette.close();
+      this.canvas.focus();
+    }
 
     // Clear hover — no hover effects during drag/pan.
     this.hover.clear();
@@ -294,8 +297,12 @@ class App {
         match: Keys.cmdK,
         run: (e) => {
           e.preventDefault();
-          if (this.palette.isOpen) this.palette.close();
-          else this.palette.open(this.buildPaletteActions());
+          if (this.palette.isOpen) {
+            this.palette.close();
+            this.canvas.focus();
+          } else {
+            this.palette.open(this.buildPaletteActions());
+          }
         },
       },
       { match: () => this.palette.isOpen, run: () => {} },
@@ -563,6 +570,7 @@ class App {
   private closeSearch(): void {
     document.getElementById('search-bar')!.classList.add('hidden');
     this.selection.closeSearch();
+    this.canvas.focus();
   }
 
   private renderSearchResults(el: HTMLElement): void {
