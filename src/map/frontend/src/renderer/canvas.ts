@@ -190,6 +190,11 @@ export class Renderer {
       this.drawTooltip(hover.tooltipText, hover.tooltipX, hover.tooltipY);
     }
 
+    // Edge tooltip: screen-space, immediate (no dwell delay).
+    if (hover?.edge && hover.edgeTooltipText && !hover?.tooltipVisible) {
+      this.drawTooltip(hover.edgeTooltipText, hover.tooltipX, hover.tooltipY);
+    }
+
     this.fh = null;
     return this.lodFadeAlpha < 1;
   }

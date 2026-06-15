@@ -19,6 +19,7 @@ export interface HoverRenderState {
   readonly tooltipX: number;
   readonly tooltipY: number;
   readonly edge: HoverEdge | null;
+  readonly edgeTooltipText: string;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ export class HoverTracker {
 
   // Edge hover.
   private _edge: HoverEdge | null = null;
+  private _edgeTooltipText = '';
 
   // Cursor position (screen-space).
   private _tooltipX = 0;
@@ -78,6 +80,9 @@ export class HoverTracker {
   }
   get edge(): HoverEdge | null {
     return this._edge;
+  }
+  get edgeTooltipText(): string {
+    return this._edgeTooltipText;
   }
 
   // ── Update (called on pointer move) ────────────────────────────────
@@ -110,6 +115,7 @@ export class HoverTracker {
     const effectiveEdge = nodeName ? null : hitEdge;
     if (!sameEdge(effectiveEdge, this._edge)) {
       this._edge = effectiveEdge;
+      this._edgeTooltipText = effectiveEdge ? `${effectiveEdge.from} → ${effectiveEdge.to}` : '';
       changed = true;
     }
 
@@ -165,6 +171,7 @@ export class HoverTracker {
   clear(): void {
     this._node = null;
     this._edge = null;
+    this._edgeTooltipText = '';
     this._borderAlpha = 0;
     this._tooltipVisible = false;
     this._tooltipText = '';
