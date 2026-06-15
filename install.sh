@@ -3,13 +3,13 @@
 #
 # Usage (recommended — verify before running):
 #
-#   curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/main/install.sh -o install.sh
+#   curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/master/install.sh -o install.sh
 #   sha256sum install.sh            # compare against install.sh.sha256 from the GitHub Release
 #   bash install.sh
 #
 # Usage (convenience one-liner — not recommended for production):
 #
-#   curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/master/install.sh | bash
 #
 # Options (via environment):
 #   TRURLIC_VERSION          Pin to a specific version (default: latest)

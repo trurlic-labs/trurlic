@@ -53,7 +53,7 @@ Every decision came from a human. The agent generates code; the graph constrains
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/master/install.sh | bash
 ```
 
 Or with Rust: `cargo install trurlic` (requires Rust 1.88+).
