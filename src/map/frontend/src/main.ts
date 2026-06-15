@@ -17,6 +17,7 @@ import type { AABB } from './renderer/culling';
 import type { SearchResult } from './ui/search';
 import type { FilterState } from './types';
 
+import { esc } from './util';
 import { UndoStack } from './app/undo';
 import { Selection } from './app/selection';
 import { DragState } from './app/drag';
@@ -878,12 +879,6 @@ function findHoveredEdge(
   }
 
   return best;
-}
-
-function esc(s: string): string {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
 }
 
 new App();

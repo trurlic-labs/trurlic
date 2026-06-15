@@ -1,3 +1,5 @@
+import { esc } from '../util';
+
 /** A single action in the command palette. */
 export interface PaletteAction {
   label: string;
@@ -132,10 +134,4 @@ export class CommandPalette {
     const active = el.querySelector('.active') as HTMLElement | null;
     if (active) active.scrollIntoView({ block: 'nearest' });
   }
-}
-
-function esc(s: string): string {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
 }

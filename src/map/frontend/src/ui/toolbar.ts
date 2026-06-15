@@ -1,5 +1,6 @@
 import type { FilterState } from '../types';
 import { defaultFilterState } from '../types';
+import { esc } from '../util';
 
 const AGE_OPTIONS: { label: string; days: number | null }[] = [
   { label: 'All', days: null },
@@ -150,10 +151,4 @@ export class Toolbar {
       });
     }
   }
-}
-
-function esc(s: string): string {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
 }

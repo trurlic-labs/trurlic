@@ -1,6 +1,7 @@
 import type { RenderNode, DecisionNode, PatternNode } from '../types';
 import type { Graph } from '../state/graph';
 import type { ApiClient } from '../state/api';
+import { esc } from '../util';
 
 // ── Callbacks ──────────────────────────────────────────────────────────────
 
@@ -299,10 +300,4 @@ function recentDecisions(graph: Graph): string {
   `,
     )
     .join('');
-}
-
-function esc(s: string): string {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
 }
