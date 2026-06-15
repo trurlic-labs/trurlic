@@ -1,4 +1,4 @@
-import type { ColorSnapshot, RenderEdge } from '../types';
+import type { ColorSnapshot } from '../types';
 
 /** Dash patterns per edge kind (empty array = solid). */
 export const EDGE_DASH: Record<string, number[]> = {
@@ -63,18 +63,4 @@ export function edgeCurveCP(
     cpx: mx + px * offset,
     cpy: my + py * offset,
   };
-}
-
-/**
- * Build a set of directed edge pair keys for O(1) bidirectional
- * look-up. Each entry is `"from\0to"` (NUL-separated).
- * Excludes `belongs_to` edges (not rendered).
- */
-export function buildEdgePairSet(edges: readonly RenderEdge[]): Set<string> {
-  const set = new Set<string>();
-  for (const e of edges) {
-    if (e.kind === 'belongs_to') continue;
-    set.add(`${e.from}\0${e.to}`);
-  }
-  return set;
 }

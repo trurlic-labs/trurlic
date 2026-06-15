@@ -1,6 +1,6 @@
 import type { GraphSnapshot, DecisionNode, PatternNode, RenderNode, RenderEdge } from '../types';
 import { Quadtree } from '../renderer/culling';
-import { convexHull, expandHull, pointInConvexPoly } from '../renderer/geometry';
+import { convexHull, expandHull, pointInConvexPoly, nodeCorners } from '../renderer/geometry';
 import type { Point } from '../renderer/geometry';
 
 /** Precomputed hull metadata — avoids per-frame centroid/minY recomputation. */
@@ -123,19 +123,7 @@ export class Graph {
   rebuildPatternHulls(): void {
     this.patternHulls.clear();
     for (const [name, pat] of this.patterns) {
-      const corners: Point[] = [];
-      for (const cName of pat.components) {
-        const n = this.nodes.get(cName);
-        if (!n) continue;
-        const hw = n.w / 2;
-        const hh = n.h / 2;
-        corners.push(
-          { x: n.x - hw, y: n.y - hh },
-          { x: n.x + hw, y: n.y - hh },
-          { x: n.x + hw, y: n.y + hh },
-          { x: n.x - hw, y: n.y + hh },
-        );
-      }
+      const corners = nodeCorners(pat.components, this.nodes);
       if (corners.length < 3) continue;
       const hull = convexHull(corners);
       if (hull.length < 3) continue;
@@ -211,6 +199,10 @@ export class Graph {
     }
     for (const dName of toRemove) this.decisions.delete(dName);
     this.edges = this.edges.filter((e) => e.from !== name && e.to !== name);
+    for (const pat of this.patterns.values()) {
+      const idx = pat.components.indexOf(name);
+      if (idx !== -1) pat.components.splice(idx, 1);
+    }
     this.rebuildEdgePairSet();
     this.rebuildAdjacency();
     this.rebuildQuadtree();

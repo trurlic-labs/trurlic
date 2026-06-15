@@ -151,6 +151,28 @@ describe('Graph', () => {
       g.removeNode('auth');
       expect(g.edgePairSet.has('api\0auth')).toBe(false);
     });
+
+    it('removes the node from pattern component lists', () => {
+      const g = new Graph();
+      g.loadSnapshot(
+        makeSnapshot({
+          patterns: [
+            {
+              name: 'auth-pattern',
+              description: 'Auth services',
+              components: ['auth', 'api'],
+              decisions: [],
+            },
+          ],
+        }),
+      );
+      expect(g.patterns.get('auth-pattern')!.components).toContain('auth');
+
+      g.removeNode('auth');
+
+      expect(g.patterns.get('auth-pattern')!.components).not.toContain('auth');
+      expect(g.patterns.get('auth-pattern')!.components).toContain('api');
+    });
   });
 
   describe('addEdge', () => {
