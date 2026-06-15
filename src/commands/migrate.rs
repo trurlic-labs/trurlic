@@ -34,7 +34,10 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
                  (expected `{FORMAT_VERSION}`). Please upgrade trurlic."
             )));
         }
-        Ordering::Equal => unreachable!(),
+        Ordering::Equal => {
+            println!("Already up to date (format version {FORMAT_VERSION}).");
+            return Ok(());
+        }
         Ordering::Less => {}
     }
 
@@ -415,5 +418,93 @@ mod tests {
         );
         let state = store.load_state().unwrap();
         assert!(state.decisions.contains_key("use-jwt-tokens"));
+    }
+
+    #[test]
+    fn migrate_handles_semantically_equal_version() {
+        // VERSION "0.3" is textually different from "0.3.0" but semantically
+        // equivalent via compare_versions. This must not panic.
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let mut project = store.read_project().unwrap();
+        // Truncate to just major.minor — semantically equal to FORMAT_VERSION.
+        let parts: Vec<&str> = FORMAT_VERSION.split('.').collect();
+        if parts.len() >= 2 && parts.get(2) == Some(&"0") {
+            project.trurlic_version = format!("{}.{}", parts[0], parts[1]);
+        } else {
+            project.trurlic_version = FORMAT_VERSION.to_string();
+        }
+        let lock = store.lock().unwrap();
+        store
+            .write_atomic(&lock, &store.root().join("project.toml"), &project)
+            .unwrap();
+        drop(lock);
+
+        // Must not panic — should treat as "already up to date".
+        let result = migrate(tmp.path(), DryRun::No);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn migrate_empty_store() {
+        // A store with zero components/decisions/patterns should migrate cleanly.
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let mut project = store.read_project().unwrap();
+        project.trurlic_version = "0.1.0".into();
+        let lock = store.lock().unwrap();
+        store
+            .write_atomic(&lock, &store.root().join("project.toml"), &project)
+            .unwrap();
+        drop(lock);
+
+        migrate(tmp.path(), DryRun::No).unwrap();
+
+        store.check_version().unwrap();
+        let hash_issues = store.verify_hashes().unwrap();
+        assert!(
+            hash_issues.is_empty(),
+            "graph.toml hashes must match: {hash_issues:?}"
+        );
+    }
+
+    #[test]
+    fn migrate_with_patterns() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", Some("Auth module")).unwrap();
+        add_component(tmp.path(), "api", Some("API module")).unwrap();
+        decide(tmp.path(), "auth", "JWT tokens", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "api", "REST API", "Standard", None, &[]).unwrap();
+
+        // Create a pattern file directly (store::record_pattern is pub(crate)
+        // in the private `write` module, so we write TOML by hand).
+        let store = Store::discover(tmp.path()).unwrap();
+        let pat_dir = store.root().join(PATTERNS_DIR);
+        fs::create_dir_all(&pat_dir).unwrap();
+        let pat_content = r#"[pattern]
+name = "auth-pattern"
+description = "Authentication pattern"
+"#;
+        fs::write(pat_dir.join("auth-pattern.toml"), pat_content).unwrap();
+
+        // Downgrade version to force migration.
+        let mut project = store.read_project().unwrap();
+        project.trurlic_version = "0.1.0".into();
+        let lock = store.lock().unwrap();
+        store
+            .write_atomic(&lock, &store.root().join("project.toml"), &project)
+            .unwrap();
+        drop(lock);
+
+        migrate(tmp.path(), DryRun::No).unwrap();
+
+        store.check_version().unwrap();
+        let state = store.load_state().unwrap();
+        assert!(state.patterns.contains_key("auth-pattern"));
     }
 }

@@ -124,9 +124,10 @@ export class CommandPalette {
     for (const child of el.children) {
       child.addEventListener('click', () => {
         const idx = parseInt((child as HTMLElement).dataset.idx ?? '-1', 10);
-        if (idx >= 0 && idx < this.filtered.length) {
+        const action = this.filtered[idx];
+        if (action) {
           this.close();
-          this.filtered[idx].run();
+          action.run();
         }
       });
     }
