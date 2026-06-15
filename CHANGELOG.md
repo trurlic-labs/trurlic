@@ -11,6 +11,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **Pattern regions on the map.** Convex-hull regions drawn around related
+  decisions, with hit-testing, hover tooltips, click selection, and panel
+  discoverability. LOD-aware labels that truncate at small zoom levels. Warm
+  amber hue palette for visual distinction.
+- **Edge tooltips.** Hovering an edge shows an instant tooltip with the
+  connection kind label, rendered as a background pill for legibility.
+- **Resizable detail panel.** Drag handle on the panel edge, back-navigation
+  breadcrumb, and a collapse toggle. Tag pills replaced with a collapsible
+  popover dropdown.
+- **Loading and error states.** The map now shows a spinner during initial graph
+  fetch and a clear error message on failure, instead of a blank canvas.
+- **`trurlic migrate` CLI command.** Upgrades `.trurlic/` stores across format
+  versions. Atomic backup, dry-run preview, symlink-safe traversal, and
+  TOCTOU-resistant file operations. Graph hashes rebuilt after migration
+  round-trips.
 - **Gemini provider.** Google Gemini support via the native
   `generativelanguage.googleapis.com` API. Uses Gemini's native request format
   (not OpenAI-compatible). Default model: `gemini-2.5-flash`. Configure with
@@ -47,6 +62,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Map dark mode.** Shifted from warm brown to neutral blue-gray palette.
+  Fixed stale color references, badge contrast, edge label shadows, and
+  minimap sizing.
+- **Arrowhead alignment.** Edge arrowheads now intersect rectangular node
+  borders correctly via ray-rect intersection, instead of pointing at the
+  center.
+- **Frontend XSS hardening.** `esc()` utility now escapes quotes to prevent
+  attribute injection. Extracted into a shared module with test coverage.
+- **Command palette crash.** Fixed a crash when opening the command palette
+  with no prior selection, along with `removeNode` bugs and a migrate panic.
+- **Map layout polish.** Search bar and hint overlay positioned relative to the
+  canvas area. Focus-visible styles restored on overlay close. Tag popover
+  checkboxes and viewport clamping fixed.
+- **Migrate safety.** Closed a TOCTOU race in backup creation, partial backups
+  cleaned on failure, symlinks skipped during backup traversal, and dry-run
+  reporting for `graph.toml` fixed.
 - **Provider security.** The intermediate `Bearer <token>` string in the OpenAI
   client is now wrapped in `Zeroizing<String>`, matching the Anthropic client's
   zero-on-drop guarantee.
@@ -86,6 +117,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Performance
 
+- Cache edge pair set per frame and pattern convex hulls to avoid recomputing
+  on every render. Cache theme media-query result instead of polling.
 - Pre-compute decision word sets once per decision in concern coverage instead
   of per (decision × concern) pair (~10× fewer allocations).
 - Pre-size `HashMap`/`HashSet`/`Vec` collections across store, MCP, and
