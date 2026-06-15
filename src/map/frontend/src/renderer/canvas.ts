@@ -389,17 +389,35 @@ export class Renderer {
       ctx.fill();
 
       // Edge kind label at LOD 1+.
-      // Always show for non-connects_to; show for connects_to only when hovered.
+      // connects_to: hover only (already gated). Others: always at LOD Component+.
       if (lod >= LOD.Component && (e.kind !== 'connects_to' || isHovered)) {
-        // Label at the curve midpoint: P(0.5) = 0.25A + 0.5CP + 0.25B.
         const lx = 0.25 * a.x + 0.5 * cpx + 0.25 * b.x;
         const ly = 0.25 * a.y + 0.5 * cpy + 0.25 * b.y;
         const labelSize = 9 / cam.zoom;
+        const label = e.kind.replace(/_/g, ' ');
         ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+        const tw = ctx.measureText(label).width;
+
+        // Background pill for legibility.
+        const px = 4 / cam.zoom;
+        const py = 2 / cam.zoom;
+        const savedAlpha = ctx.globalAlpha;
+        ctx.globalAlpha = savedAlpha * 0.75;
+        ctx.fillStyle = c.bg;
+        this.roundRect(
+          lx - tw / 2 - px,
+          ly - labelSize - py * 2,
+          tw + px * 2,
+          labelSize + py * 2,
+          3 / cam.zoom,
+        );
+        ctx.fill();
+        ctx.globalAlpha = savedAlpha;
+
         ctx.fillStyle = isHovered ? c.text : c.textDim;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(e.kind.replace(/_/g, ' '), lx, ly - 3 / cam.zoom);
+        ctx.fillText(label, lx, ly - 3 / cam.zoom);
       }
     }
 
