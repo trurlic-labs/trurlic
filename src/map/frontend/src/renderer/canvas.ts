@@ -3,21 +3,25 @@ import type { Graph } from '../state/graph';
 import type { RenderNode, FilterState, DecisionNode, ColorSnapshot } from '../types';
 import { LOD } from './lod';
 import type { AABB } from './culling';
-import { EDGE_DASH, EDGE_OPACITY, edgeColor, edgeCurveCP, buildEdgePairSet } from './edges';
-import { convexHull, expandHull, roundedHullPath, nodeCorners, rayRectIntersect } from './geometry';
+import { EDGE_DASH, EDGE_OPACITY, edgeColor, edgeCurveCP } from './edges';
+import { roundedHullPath, rayRectIntersect } from './geometry';
 import type { HoverRenderState } from '../app/hover';
 
 // ── Per-frame color snapshot ──────────────────────────────────────────────
 
 /** Cached snapshot — only refreshed when the color scheme changes. */
 let cachedColors: ColorSnapshot | null = null;
+let cachedPrefersLight = false;
 
 function invalidateColors(): void {
   cachedColors = null;
+  cachedPrefersLight =
+    typeof matchMedia !== 'undefined' ? matchMedia('(prefers-color-scheme: light)').matches : false;
 }
 
 // Listen for system theme changes.
 if (typeof matchMedia !== 'undefined') {
+  cachedPrefersLight = matchMedia('(prefers-color-scheme: light)').matches;
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', invalidateColors);
   matchMedia('(prefers-color-scheme: light)').addEventListener('change', invalidateColors);
   matchMedia('(prefers-contrast: more)').addEventListener('change', invalidateColors);
@@ -78,9 +82,6 @@ const PATTERN_HUES = [30, 200, 150, 340, 60, 270, 100, 310];
 /** LOD label fade duration (ms). */
 const LOD_FADE_MS = 150;
 
-/** Pattern hull expansion (world units). */
-const HULL_EXPAND = 50;
-
 /** Pattern hull corner rounding radius (world units). */
 const HULL_RADIUS = 20;
 
@@ -93,12 +94,8 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private cam: Camera;
   private dpr: number;
-  /** Per-frame color snapshot — refreshed at the top of render(). */
-  private c: ColorSnapshot;
-  /** Per-frame hover state — set at the top of render(), read by draw methods. */
-  private fh: HoverRenderState | null = null;
-  /** Cached edge pair set — rebuilt per render frame. */
-  private edgePairSet: Set<string> = new Set();
+  private colors: ColorSnapshot;
+  private frameHover: HoverRenderState | null = null;
 
   // LOD transition fade state.
   private prevLod: LOD = LOD.Overview;
@@ -111,11 +108,7 @@ export class Renderer {
     this.ctx = ctx;
     this.cam = cam;
     this.dpr = window.devicePixelRatio || 1;
-    this.c = snapshotColors();
-  }
-
-  get cachedEdgePairSet(): Set<string> {
-    return this.edgePairSet;
+    this.colors = snapshotColors();
   }
 
   resize(w: number, h: number): void {
@@ -144,10 +137,10 @@ export class Renderer {
     filters?: FilterState,
     hover?: HoverRenderState,
   ): boolean {
-    this.c = snapshotColors();
-    this.fh = hover ?? null;
-    this.edgePairSet = buildEdgePairSet(graph.edges);
-    const { ctx, cam, dpr, c } = this;
+    this.colors = snapshotColors();
+    this.frameHover = hover ?? null;
+    const { ctx, cam, dpr } = this;
+    const c = this.colors;
 
     // LOD transition fade.
     const now = performance.now();
@@ -207,7 +200,7 @@ export class Renderer {
       this.drawTooltip(hover.patternDesc, hover.tooltipX, hover.tooltipY);
     }
 
-    this.fh = null;
+    this.frameHover = null;
     return this.lodFadeAlpha < 1;
   }
 
@@ -226,10 +219,7 @@ export class Renderer {
   ): void {
     if (graph.patterns.size === 0) return;
     const { ctx, cam } = this;
-    const prefersLight =
-      typeof matchMedia !== 'undefined'
-        ? matchMedia('(prefers-color-scheme: light)').matches
-        : false;
+    const prefersLight = cachedPrefersLight;
     const lightness = prefersLight ? 48 : 55;
     const saturation = prefersLight ? 40 : 45;
     const baseFill = prefersLight ? 0.1 : 0.14;
@@ -245,20 +235,11 @@ export class Renderer {
         continue;
       }
 
-      // Collect bounding-box corners of member components.
-      const corners = nodeCorners(pat.components, graph.nodes);
-      if (corners.length < 3) {
+      const expanded = graph.patternHulls.get(patName);
+      if (!expanded || expanded.length < 3) {
         patIdx++;
         continue;
       }
-
-      const hull = convexHull(corners);
-      if (hull.length < 3) {
-        patIdx++;
-        continue;
-      }
-
-      const expanded = expandHull(hull, HULL_EXPAND);
 
       // Focus dimming.
       const dimmedByFocus = focus !== null && !pat.components.some((n) => focus.has(n));
@@ -273,7 +254,7 @@ export class Renderer {
         });
       }
 
-      const isHovered = this.fh?.pattern === patName;
+      const isHovered = this.frameHover?.pattern === patName;
       const hoverFillBoost = isHovered ? 1.5 : 1.0;
       const hoverStrokeBoost = isHovered ? 1.3 : 1.0;
       const fillAlpha = (dimmedByFilter ? dimFill : baseFill) * hoverFillBoost;
@@ -341,10 +322,10 @@ export class Renderer {
     focus: Set<string> | null,
     filters?: FilterState,
   ): void {
-    const { ctx, cam, c, fh } = this;
+    const { ctx, cam, colors: c, frameHover: fh } = this;
     const baseWidth = 1.5 / cam.zoom;
 
-    const pairSet = this.edgePairSet;
+    const pairSet = graph.edgePairSet;
 
     for (const e of graph.edges) {
       if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
@@ -483,7 +464,7 @@ export class Renderer {
     graph: Graph,
     filters?: FilterState,
   ): void {
-    const { ctx, cam, c } = this;
+    const { ctx, cam, colors: c } = this;
 
     if (selected) this.drawSelectRing(node);
     this.drawShadow(node);
@@ -551,26 +532,31 @@ export class Renderer {
    * Draw the node border. When the node is hovered, blends toward
    * --accent-dim with 1px extra width.
    */
-  private drawNodeBorder(node: RenderNode, overrideH?: number): void {
-    const { ctx, cam, c, fh } = this;
-    const h = overrideH ?? node.h;
+  private drawNodeBorder(node: RenderNode): void {
+    const { ctx, cam, colors: c, frameHover: fh } = this;
     const isHovered = fh !== null && fh.node === node.name;
     const alpha = isHovered ? fh.borderAlpha : 0;
 
     ctx.strokeStyle = alpha > 0 ? c.accentDim : c.border;
     ctx.lineWidth = (1 + alpha) / cam.zoom;
-    this.roundRect(node.x - node.w / 2, node.y - h / 2, node.w, h, 8);
+    this.roundRect(node.x - node.w / 2, node.y - node.h / 2, node.w, node.h, NODE_RADIUS);
     ctx.stroke();
   }
 
   // ── Selection ring ────────────────────────────────────────────────────
 
-  private drawSelectRing(node: RenderNode, overrideH?: number): void {
-    const { ctx, cam, c } = this;
-    const h = overrideH ?? node.h;
+  private drawSelectRing(node: RenderNode): void {
+    const { ctx, cam, colors: c } = this;
+    const gap = 4;
     ctx.strokeStyle = c.selectRing;
     ctx.lineWidth = 3 / cam.zoom;
-    this.roundRect(node.x - node.w / 2 - 4, node.y - h / 2 - 4, node.w + 8, h + 8, 12);
+    this.roundRect(
+      node.x - node.w / 2 - gap,
+      node.y - node.h / 2 - gap,
+      node.w + gap * 2,
+      node.h + gap * 2,
+      NODE_RADIUS + gap,
+    );
     ctx.stroke();
   }
 
@@ -578,7 +564,7 @@ export class Renderer {
 
   /** Canvas-rendered tooltip in screen space. */
   private drawTooltip(text: string, sx: number, sy: number): void {
-    const { ctx, c } = this;
+    const { ctx, colors: c } = this;
     const fontSize = 12;
     const padding = 8;
     const offsetY = 20;
@@ -613,7 +599,7 @@ export class Renderer {
   // ── Minimap ────────────────────────────────────────────────────────────
 
   renderMinimap(miniCtx: CanvasRenderingContext2D, mw: number, mh: number, graph: Graph): void {
-    const { dpr, c } = this;
+    const { dpr, colors: c } = this;
     miniCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     miniCtx.fillStyle = c.minimap;
     miniCtx.fillRect(0, 0, mw, mh);
@@ -718,10 +704,8 @@ export class Renderer {
 
   // ── Drop shadow ─────────────────────────────────────────────────────
 
-  /** Soft shadow behind node cards for depth. */
-  private drawShadow(node: RenderNode, overrideH?: number): void {
-    const { ctx, cam, c } = this;
-    const h = overrideH ?? node.h;
+  private drawShadow(node: RenderNode): void {
+    const { ctx, cam, colors: c } = this;
 
     const softOffset = 4 / cam.zoom;
     const savedAlpha = ctx.globalAlpha;
@@ -729,9 +713,9 @@ export class Renderer {
     ctx.fillStyle = c.shadow;
     this.roundRect(
       node.x - node.w / 2 + softOffset,
-      node.y - h / 2 + softOffset,
+      node.y - node.h / 2 + softOffset,
       node.w,
-      h,
+      node.h,
       NODE_RADIUS,
     );
     ctx.fill();
@@ -739,13 +723,20 @@ export class Renderer {
 
     const offset = 2 / cam.zoom;
     ctx.fillStyle = c.shadow;
-    this.roundRect(node.x - node.w / 2 + offset, node.y - h / 2 + offset, node.w, h, NODE_RADIUS);
+    this.roundRect(
+      node.x - node.w / 2 + offset,
+      node.y - node.h / 2 + offset,
+      node.w,
+      node.h,
+      NODE_RADIUS,
+    );
     ctx.fill();
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
   private roundRect(x: number, y: number, w: number, h: number, r: number): void {
+    r = Math.min(r, w / 2, h / 2);
     const ctx = this.ctx;
     ctx.beginPath();
     ctx.moveTo(x + r, y);

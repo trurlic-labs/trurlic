@@ -33,6 +33,12 @@ export class Graph {
   /** Pattern name -> expanded convex hull points (computed after layout). */
   patternHulls: Map<string, Point[]> = new Map();
 
+  /** Edge pair set for bidirectional detection — rebuilt on snapshot load. */
+  edgePairSet: Set<string> = new Set();
+
+  /** Sorted pattern hulls for hit-testing (smallest first). Cached between layout changes. */
+  private sortedPatternHulls: [string, Point[]][] = [];
+
   /** Component name → decisions index. O(1) lookup. */
   private byComponent = new Map<string, DecisionNode[]>();
 
@@ -79,8 +85,17 @@ export class Graph {
     }
 
     this.assignMissingPositions();
+    this.rebuildEdgePairSet();
     this.rebuildQuadtree();
     this.rebuildPatternHulls();
+  }
+
+  /** Rebuild the bidirectional edge pair set. Call after edges change. */
+  rebuildEdgePairSet(): void {
+    this.edgePairSet.clear();
+    for (const e of this.edges) {
+      this.edgePairSet.add(`${e.from}\0${e.to}`);
+    }
   }
 
   /** Rebuild the spatial index. Call after layout changes or drag. */
@@ -111,12 +126,14 @@ export class Graph {
       const expanded = expandHull(hull, 50);
       this.patternHulls.set(name, expanded);
     }
+    this.sortedPatternHulls = [...this.patternHulls.entries()].sort(
+      (a, b) => a[1].length - b[1].length,
+    );
   }
 
   /** Hit-test pattern regions. Returns the pattern name if (wx, wy) is inside any hull. Smaller patterns (fewer components) win over broad ones. */
   patternAt(wx: number, wy: number): string | null {
-    const sorted = [...this.patternHulls.entries()].sort((a, b) => a[1].length - b[1].length);
-    for (const [name, hull] of sorted) {
+    for (const [name, hull] of this.sortedPatternHulls) {
       if (pointInConvexPoly(wx, wy, hull)) return name;
     }
     return null;
@@ -164,17 +181,15 @@ export class Graph {
    */
   removeNode(name: string): void {
     this.nodes.delete(name);
-    this.decisions.delete(name);
     this.byComponent.delete(name);
-    // Remove decisions that belong to this component from the global index.
+    const toRemove: string[] = [];
     for (const [dName, d] of this.decisions) {
-      if (d.component === name) {
-        this.decisions.delete(dName);
-      }
+      if (d.component === name) toRemove.push(dName);
     }
-    // Remove edges involving this node.
+    for (const dName of toRemove) this.decisions.delete(dName);
     this.edges = this.edges.filter((e) => e.from !== name && e.to !== name);
     this.rebuildQuadtree();
+    this.rebuildPatternHulls();
   }
 
   /** Add an edge. Used for `edge_added` WS events. */
