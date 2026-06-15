@@ -8,27 +8,27 @@
 }
 
 :root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --surface-hi: #252836;
-  --border: #2e3244;
-  --text: #e1e4ed;
-  --text-dim: #8b90a0;
+  --bg: #110f0d;
+  --surface: #1c1916;
+  --surface-hi: #282420;
+  --border: #362f28;
+  --text: #e8e2d9;
+  --text-dim: #9b9285;
   --accent: #d4882b;
   --accent-dim: #8b5a1b;
-  --edge: #3a3f52;
+  --edge: #463d34;
   --select: #d4882b;
-  --badge: #4a5068;
-  --minimap-bg: #13151d;
+  --badge: #564d42;
+  --minimap-bg: #16130f;
   --minimap-vp: rgba(212, 136, 43, 0.25);
-  --panel-bg: #14161e;
-  --panel-border: #2e3244;
-  --edge-dep: #5a7f5a;
-  --edge-con: #8f6c3a;
-  --edge-sup: #7a5a7a;
-  --grid-dot: #1e2130;
+  --panel-bg: #171411;
+  --panel-border: #362f28;
+  --edge-dep: #6a8a5a;
+  --edge-con: #a07838;
+  --edge-sup: #8a6878;
+  --grid-dot: #241f1a;
   --panel-width: 320px;
-  --shadow: rgba(0, 0, 0, 0.35);
+  --shadow: rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }
 
@@ -336,9 +336,9 @@ details li {
 /* ── High contrast ───────────────────────────────────────────────────── */
 @media (prefers-contrast: more) {
   :root {
-    --border: #888;
-    --text-dim: #bbb;
-    --edge: #666;
+    --border: #999080;
+    --text-dim: #c0b8a8;
+    --edge: #706050;
     --edge-dep: #7ab07a;
     --edge-con: #c09040;
   }
