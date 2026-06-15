@@ -226,6 +226,20 @@ export class Toolbar {
     this.tagFilter = '';
     this.render();
     this.restorePopoverFocus();
+    this.clampPopoverPosition();
+  }
+
+  private clampPopoverPosition(): void {
+    const popover = this.el.querySelector<HTMLElement>('.tag-popover');
+    if (!popover) return;
+    const rect = popover.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight) {
+      popover.style.maxHeight = `${window.innerHeight - rect.top - 20}px`;
+    }
+    if (rect.right > window.innerWidth) {
+      popover.style.left = 'auto';
+      popover.style.right = '0';
+    }
   }
 
   private closePopover(): void {
