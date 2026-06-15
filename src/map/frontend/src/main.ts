@@ -248,9 +248,10 @@ class App {
     const hitDesc = hit?.description ?? '';
 
     const hitPattern = hitName ? null : this.graph.patternAt(wx, wy);
-    const hitPatternDesc = hitPattern
+    const rawPatDesc = hitPattern
       ? (this.graph.patterns.get(hitPattern)?.description ?? hitPattern)
       : '';
+    const hitPatternDesc = rawPatDesc.length > 100 ? rawPatDesc.slice(0, 97) + '…' : rawPatDesc;
 
     const hitEdge =
       hitName || hitPattern

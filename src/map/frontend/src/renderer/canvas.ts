@@ -279,8 +279,8 @@ export class Renderer {
         const cx = meta.centroidX;
         const labelY = meta.minY - 8 / cam.zoom;
 
-        const rawLabel = pat.description || pat.name;
-        const maxLen = lod >= LOD.Decision ? 60 : lod >= LOD.Component ? 40 : 25;
+        const rawLabel = pat.name;
+        const maxLen = 30;
         const label = rawLabel.length > maxLen ? rawLabel.slice(0, maxLen - 1) + '…' : rawLabel;
 
         const labelFontSize = lod >= LOD.Component ? 13 / cam.zoom : 12 / cam.zoom;
