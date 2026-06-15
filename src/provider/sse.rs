@@ -35,7 +35,7 @@ pub(crate) async fn stream_sse(
             Ok(Err(e)) => {
                 return Err(Error::Api {
                     status: 0,
-                    detail: format!("stream interrupted: {e}"),
+                    detail: format!("stream interrupted: {}", e.without_url()),
                 });
             }
             Err(_) => {

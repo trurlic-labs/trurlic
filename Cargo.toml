@@ -73,6 +73,9 @@ opener = "0.8"
 # Cryptographic random token generation (map)
 rand = "0.8"
 
+# Atomic file writes (install command)
+tempfile = "3"
+
 # Security: zero API keys from memory on drop
 zeroize = { version = "1", features = ["derive"] }
 

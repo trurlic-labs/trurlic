@@ -85,7 +85,8 @@ impl GeminiClient {
         };
 
         // Key in URL query parameter — Gemini's auth model.
-        // Wrapped in Zeroizing so the URL is zeroed from memory after use.
+        // Zeroizing zeroes our local copy on drop; reqwest's internal
+        // Url copy persists until the response is dropped.
         let url = Zeroizing::new(format!(
             "{BASE_URL}/models/{}:streamGenerateContent?alt=sse&key={}",
             self.model,
