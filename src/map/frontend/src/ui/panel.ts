@@ -31,6 +31,7 @@ export class Panel {
   private cb: PanelCallbacks | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private history: PanelView[] = [];
+  private currentView: PanelView = { type: 'project' };
 
   constructor(el: HTMLElement) {
     this.el = el;
@@ -42,9 +43,18 @@ export class Panel {
     this.cb = cb;
   }
 
+  private clearPendingSave(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+  }
+
   // ── Project view ────────────────────────────────────────────────────
 
   showProject(graph: Graph): void {
+    this.clearPendingSave();
+    this.currentView = { type: 'project' };
     this.history = [];
     const dc = graph.decisions.size;
     const cc = graph.nodes.size;
@@ -69,6 +79,8 @@ export class Panel {
   // ── Component view ──────────────────────────────────────────────────
 
   showComponent(node: RenderNode, graph: Graph): void {
+    this.clearPendingSave();
+    this.currentView = { type: 'component', name: node.name };
     this.history = [];
     const decs = graph.decisionsFor(node.name);
     const outgoing = graph.edges.filter((e) => e.from === node.name && e.kind === 'connects_to');
@@ -111,6 +123,7 @@ export class Panel {
   // ── Decision view ───────────────────────────────────────────────────
 
   showDecision(name: string, graph: Graph): void {
+    this.clearPendingSave();
     const dec = graph.decisions.get(name);
     if (!dec) {
       this.showProject(graph);
@@ -118,6 +131,7 @@ export class Panel {
     }
 
     this.pushCurrentView();
+    this.currentView = { type: 'decision', name };
     const backHtml = this.history.length > 0 ? '<a href="#" class="panel-back">← back</a>' : '';
 
     this.el.innerHTML = `
@@ -159,6 +173,7 @@ export class Panel {
   // ── Pattern view ────────────────────────────────────────────────────
 
   showPattern(name: string, graph: Graph): void {
+    this.clearPendingSave();
     const pat = graph.patterns.get(name);
     if (!pat) {
       this.showProject(graph);
@@ -166,6 +181,7 @@ export class Panel {
     }
 
     this.pushCurrentView();
+    this.currentView = { type: 'pattern', name };
     const backHtml = this.history.length > 0 ? '<a href="#" class="panel-back">← back</a>' : '';
 
     const memberDecs = pat.decisions
@@ -194,10 +210,12 @@ export class Panel {
   }
 
   showEmpty(): void {
+    this.clearPendingSave();
     this.el.innerHTML = `<p class="dim" style="padding:24px">Click a component to inspect</p>`;
   }
 
   showLoading(): void {
+    this.clearPendingSave();
     this.el.innerHTML = '<p class="dim" style="padding:24px">Loading…</p>';
   }
 
@@ -214,27 +232,7 @@ export class Panel {
   // ── Navigation history ───────────────────────────────────────────────
 
   private pushCurrentView(): void {
-    const kind = this.el.querySelector('.panel-kind');
-    if (!kind) {
-      this.history.push({ type: 'project' });
-      return;
-    }
-    const kindText = kind.textContent?.trim().toLowerCase();
-    if (kindText === 'component') {
-      const heading = this.el.querySelector<HTMLElement>('h2');
-      const name = heading?.dataset.component ?? heading?.textContent?.trim() ?? '';
-      if (name) this.history.push({ type: 'component', name });
-    } else if (kindText === 'decision') {
-      const heading = this.el.querySelector<HTMLElement>('.editable-heading');
-      const decName = heading?.dataset.dec ?? '';
-      if (decName) this.history.push({ type: 'decision', name: decName });
-    } else if (kindText === 'pattern') {
-      const slug = this.el.querySelector('p.dim');
-      const name = slug?.textContent?.trim() ?? '';
-      if (name) this.history.push({ type: 'pattern', name });
-    } else {
-      this.history.push({ type: 'project' });
-    }
+    this.history.push(this.currentView);
   }
 
   private bindBackLink(graph: Graph): void {
@@ -313,7 +311,7 @@ export class Panel {
   }
 
   private bindDeleteDecision(name: string, _graph: Graph): void {
-    const btn = this.el.querySelector<HTMLElement>(`[data-delete-dec="${name}"]`);
+    const btn = this.el.querySelector<HTMLElement>(`[data-delete-dec="${CSS.escape(name)}"]`);
     if (!btn) return;
     btn.addEventListener('click', () => {
       if (!confirm(`Delete decision "${name}"? This cannot be undone.`)) return;

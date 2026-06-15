@@ -6,6 +6,8 @@ import {
   nodeCorners,
   rayRectIntersect,
   pointInConvexPoly,
+  pointBezierDistSq,
+  pointSegDistSq,
 } from './geometry';
 import type { Point } from './geometry';
 
@@ -66,9 +68,7 @@ describe('convexHull', () => {
       { x: 3, y: 0 },
     ];
     const hull = convexHull(pts);
-    // Collinear → degenerate hull with 2 endpoints.
-    expect(hull.length).toBeLessThanOrEqual(4);
-    expect(hull.length).toBeGreaterThanOrEqual(2);
+    expect(hull).toHaveLength(2);
   });
 
   it('handles duplicate points', () => {
@@ -234,9 +234,8 @@ describe('pointInConvexPoly', () => {
     expect(pointInConvexPoly(5, 5, square)).toBe(true);
   });
 
-  it('handles point on edge without crashing', () => {
-    const result = pointInConvexPoly(2, 0, triangle);
-    expect(typeof result).toBe('boolean');
+  it('treats point on edge as inside', () => {
+    expect(pointInConvexPoly(2, 0, triangle)).toBe(true);
   });
 
   it('detects point far away', () => {
@@ -256,13 +255,17 @@ describe('pointInConvexPoly', () => {
 });
 
 describe('nodeCorners', () => {
-  it('collects 4 corners per node', () => {
+  it('collects 4 corners per node with correct coordinates', () => {
     const nodes = new Map([
       ['a', { x: 0, y: 0, w: 100, h: 60 }],
       ['b', { x: 200, y: 100, w: 100, h: 60 }],
     ]);
     const pts = nodeCorners(['a', 'b'], nodes);
-    expect(pts).toHaveLength(8); // 4 per node
+    expect(pts).toHaveLength(8);
+    expect(pts).toContainEqual({ x: -50, y: -30 });
+    expect(pts).toContainEqual({ x: 50, y: -30 });
+    expect(pts).toContainEqual({ x: 50, y: 30 });
+    expect(pts).toContainEqual({ x: -50, y: 30 });
   });
 
   it('skips missing nodes', () => {
@@ -274,5 +277,66 @@ describe('nodeCorners', () => {
   it('returns empty for no matches', () => {
     const pts = nodeCorners(['x'], new Map());
     expect(pts).toHaveLength(0);
+  });
+});
+
+describe('convexHull edge cases', () => {
+  it('returns degenerate hull for all-identical points', () => {
+    const pts: Point[] = [
+      { x: 5, y: 5 },
+      { x: 5, y: 5 },
+      { x: 5, y: 5 },
+    ];
+    const hull = convexHull(pts);
+    expect(hull.length).toBeLessThanOrEqual(2);
+    for (const p of hull) {
+      expect(p.x).toBe(5);
+      expect(p.y).toBe(5);
+    }
+  });
+});
+
+describe('pointSegDistSq', () => {
+  it('returns 0 for point on segment start', () => {
+    expect(pointSegDistSq(0, 0, 0, 0, 10, 0)).toBe(0);
+  });
+
+  it('returns 0 for point on segment end', () => {
+    expect(pointSegDistSq(10, 0, 0, 0, 10, 0)).toBe(0);
+  });
+
+  it('returns squared perpendicular distance for midpoint offset', () => {
+    expect(pointSegDistSq(5, 3, 0, 0, 10, 0)).toBeCloseTo(9);
+  });
+
+  it('returns distance to nearest endpoint when past segment', () => {
+    expect(pointSegDistSq(15, 0, 0, 0, 10, 0)).toBeCloseTo(25);
+  });
+
+  it('handles degenerate zero-length segment', () => {
+    expect(pointSegDistSq(3, 4, 0, 0, 0, 0)).toBeCloseTo(25);
+  });
+});
+
+describe('pointBezierDistSq', () => {
+  it('returns near-zero for point on start of curve', () => {
+    const d = pointBezierDistSq(0, 0, 0, 0, 5, 5, 10, 0);
+    expect(d).toBeLessThan(1);
+  });
+
+  it('returns near-zero for point on end of curve', () => {
+    const d = pointBezierDistSq(10, 0, 0, 0, 5, 5, 10, 0);
+    expect(d).toBeLessThan(1);
+  });
+
+  it('matches pointSegDistSq for a straight-line Bezier', () => {
+    const d = pointBezierDistSq(5, 3, 0, 0, 5, 0, 10, 0);
+    const seg = pointSegDistSq(5, 3, 0, 0, 10, 0);
+    expect(d).toBeCloseTo(seg, 0);
+  });
+
+  it('returns large distance for point far from curve', () => {
+    const d = pointBezierDistSq(1000, 1000, 0, 0, 5, 5, 10, 0);
+    expect(d).toBeGreaterThan(1e6);
   });
 });

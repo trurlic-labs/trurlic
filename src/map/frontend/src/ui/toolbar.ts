@@ -211,14 +211,17 @@ export class Toolbar {
       });
     }
 
-    // Escape closes popover — single listener, swapped on each render.
-    if (this.escapeHandler) this.el.removeEventListener('keydown', this.escapeHandler);
-    this.escapeHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && this.popoverOpen) {
-        this.closePopover();
-      }
-    };
-    this.el.addEventListener('keydown', this.escapeHandler);
+    if (this.escapeHandler) document.removeEventListener('keydown', this.escapeHandler);
+    if (this.popoverOpen) {
+      this.escapeHandler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          this.closePopover();
+        }
+      };
+      document.addEventListener('keydown', this.escapeHandler);
+    } else {
+      this.escapeHandler = null;
+    }
   }
 
   private openPopover(): void {
@@ -246,6 +249,10 @@ export class Toolbar {
     this.popoverOpen = false;
     this.tagFilter = '';
     this.removeDocumentHandler();
+    if (this.escapeHandler) {
+      document.removeEventListener('keydown', this.escapeHandler);
+      this.escapeHandler = null;
+    }
     this.render();
   }
 

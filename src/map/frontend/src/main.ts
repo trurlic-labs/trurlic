@@ -54,10 +54,16 @@ class App {
   private readonly filters = new Filters();
   private readonly hover = new HoverTracker();
 
+  // Stored to prevent GC; the WS holds callbacks that close over `this`.
+  // @ts-expect-error retained for side-effect, not read
+  private readonly ws: WsConnection;
+
   // Render-loop scheduling — derived per frame, not domain state.
   private needsRender = true;
   private lod: LOD = LOD.Overview;
   private visibleCount = 0;
+  private initialLoadDone = false;
+  private reloadPending = false;
 
   constructor() {
     const token = new URLSearchParams(location.search).get('token') ?? '';
@@ -127,6 +133,7 @@ class App {
         this.breadcrumb.update(this.graph.projectName, null);
         this.toolbar.setAvailableTags(this.graph.allTags());
         this.needsRender = true;
+        this.initialLoadDone = true;
         this.showFirstVisitHint();
       })
       .catch((e) => {
@@ -135,7 +142,7 @@ class App {
         this.panel.showLoadError(() => this.reloadGraph());
       });
 
-    new WsConnection(
+    this.ws = new WsConnection(
       token,
       (ev) => this.handleWsEvent(ev),
       (state) => this.handleWsState(state),
@@ -252,7 +259,7 @@ class App {
             this.camera.zoom,
             this.lod,
             this.filters.state,
-            this.renderer.cachedEdgePairSet,
+            this.graph.edgePairSet,
           );
 
     const now = performance.now();
@@ -355,24 +362,30 @@ class App {
         match: Keys.undo,
         run: (e) => {
           e.preventDefault();
-          this.undo.undo().then((d) => {
-            if (d) {
-              this.announce(`Undo: ${d}`);
-              this.reloadGraph();
-            }
-          });
+          this.undo
+            .undo()
+            .then((d) => {
+              if (d) {
+                this.announce(`Undo: ${d}`);
+                this.reloadGraph();
+              }
+            })
+            .catch((err) => this.announce(`Undo failed: ${err.message}`));
         },
       },
       {
         match: Keys.redo,
         run: (e) => {
           e.preventDefault();
-          this.undo.redo().then((d) => {
-            if (d) {
-              this.announce(`Redo: ${d}`);
-              this.reloadGraph();
-            }
-          });
+          this.undo
+            .redo()
+            .then((d) => {
+              if (d) {
+                this.announce(`Redo: ${d}`);
+                this.reloadGraph();
+              }
+            })
+            .catch((err) => this.announce(`Redo failed: ${err.message}`));
         },
       },
       {
@@ -714,8 +727,8 @@ class App {
   private handleWsEvent(event: { type: string; [k: string]: unknown }): void {
     switch (event.type) {
       case 'node_removed': {
-        const name = event.name as string | undefined;
-        if (!name) break;
+        const name = event.name;
+        if (typeof name !== 'string') break;
         this.graph.removeNode(name);
         if (this.selection.selected === name) {
           this.selection.select(null);
@@ -729,19 +742,28 @@ class App {
         return;
       }
       case 'edge_added': {
-        const edge = event.edge as { from: string; to: string; kind: string } | undefined;
-        if (edge) {
-          this.graph.addEdge(edge.from, edge.to, edge.kind);
+        const edge = event.edge;
+        if (
+          edge &&
+          typeof edge === 'object' &&
+          typeof (edge as Record<string, unknown>).from === 'string' &&
+          typeof (edge as Record<string, unknown>).to === 'string' &&
+          typeof (edge as Record<string, unknown>).kind === 'string'
+        ) {
+          const { from, to, kind } = edge as { from: string; to: string; kind: string };
+          this.graph.addEdge(from, to, kind);
+          this.graph.rebuildEdgePairSet();
           this.needsRender = true;
         }
         return;
       }
       case 'edge_removed': {
-        const from = event.from as string | undefined;
-        const to = event.to as string | undefined;
-        const kind = event.kind as string | undefined;
-        if (from && to && kind) {
+        const from = event.from;
+        const to = event.to;
+        const kind = event.kind;
+        if (typeof from === 'string' && typeof to === 'string' && typeof kind === 'string') {
           this.graph.removeEdge(from, to, kind);
+          this.graph.rebuildEdgePairSet();
           this.needsRender = true;
         }
         return;
@@ -758,25 +780,30 @@ class App {
       el.classList.remove('hidden');
     } else {
       el.classList.add('hidden');
-      this.reloadGraph();
+      if (this.initialLoadDone) this.reloadGraph();
     }
   }
 
   private reloadGraph(): void {
-    this.api
-      .fetchGraph()
-      .then((snap) => {
-        this.graph.loadSnapshot(snap);
-        this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
-        this.layout.run(this.graph.nodes, this.graph.edges, 50);
-        this.graph.rebuildQuadtree();
-        this.graph.rebuildPatternHulls();
-        this.updateLOD();
-        this.needsRender = true;
-        this.toolbar.setAvailableTags(this.graph.allTags());
-        this.refreshPanel();
-      })
-      .catch((e) => console.error('Reload failed:', e));
+    if (this.reloadPending) return;
+    this.reloadPending = true;
+    queueMicrotask(() => {
+      this.reloadPending = false;
+      this.api
+        .fetchGraph()
+        .then((snap) => {
+          this.graph.loadSnapshot(snap);
+          this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
+          this.layout.run(this.graph.nodes, this.graph.edges, 50);
+          this.graph.rebuildQuadtree();
+          this.graph.rebuildPatternHulls();
+          this.updateLOD();
+          this.needsRender = true;
+          this.toolbar.setAvailableTags(this.graph.allTags());
+          this.refreshPanel();
+        })
+        .catch((e) => console.error('Reload failed:', e));
+    });
   }
 
   private refreshPanel(): void {
@@ -813,26 +840,30 @@ class App {
   // ── Render loop ─────────────────────────────────────────────────────────
 
   private renderLoop = (): void => {
-    const now = performance.now();
-    if (this.camera.tick()) {
-      this.updateLOD();
-      this.needsRender = true;
-    }
-    if (this.hover.tick(now)) {
-      this.needsRender = true;
-    }
+    try {
+      const now = performance.now();
+      if (this.camera.tick()) {
+        this.updateLOD();
+        this.needsRender = true;
+      }
+      if (this.hover.tick(now)) {
+        this.needsRender = true;
+      }
 
-    if (this.needsRender) {
-      const fading = this.renderer.render(
-        this.graph,
-        this.selection.selected,
-        this.lod,
-        this.selection.focusSet,
-        this.filters.state,
-        this.hover,
-      );
-      this.drag.setMinimapTransform(this.renderMinimap());
-      this.needsRender = fading;
+      if (this.needsRender) {
+        const fading = this.renderer.render(
+          this.graph,
+          this.selection.selected,
+          this.lod,
+          this.selection.focusSet,
+          this.filters.state,
+          this.hover,
+        );
+        this.drag.setMinimapTransform(this.renderMinimap());
+        this.needsRender = fading;
+      }
+    } catch (e) {
+      console.error('Render error:', e);
     }
     requestAnimationFrame(this.renderLoop);
   };

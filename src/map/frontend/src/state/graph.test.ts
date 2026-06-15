@@ -229,6 +229,153 @@ describe('Graph', () => {
     });
   });
 
+  describe('removeNode with multiple decisions on same component', () => {
+    it('removes all decisions belonging to the deleted component', () => {
+      const g = new Graph();
+      g.loadSnapshot(
+        makeSnapshot({
+          decisions: [
+            {
+              name: 'use-jwt',
+              component: 'auth',
+              choice: 'JWT',
+              reason: 'Stateless',
+              tags: [],
+              created: '',
+              alternatives: [],
+            },
+            {
+              name: 'use-bcrypt',
+              component: 'auth',
+              choice: 'bcrypt',
+              reason: 'Secure hashing',
+              tags: [],
+              created: '',
+              alternatives: [],
+            },
+            {
+              name: 'use-rest',
+              component: 'api',
+              choice: 'REST',
+              reason: 'Standard',
+              tags: [],
+              created: '',
+              alternatives: [],
+            },
+          ],
+        }),
+      );
+
+      expect(g.decisions.size).toBe(3);
+      g.removeNode('auth');
+
+      expect(g.decisions.size).toBe(1);
+      expect(g.decisions.has('use-rest')).toBe(true);
+      expect(g.decisions.has('use-jwt')).toBe(false);
+      expect(g.decisions.has('use-bcrypt')).toBe(false);
+    });
+  });
+
+  describe('loadSnapshot idempotency', () => {
+    it('clears previous state on second load', () => {
+      const g = new Graph();
+      g.loadSnapshot(makeSnapshot());
+      expect(g.nodes.has('auth')).toBe(true);
+
+      g.loadSnapshot(
+        makeSnapshot({
+          components: [
+            {
+              name: 'db',
+              description: '',
+              position: null,
+              pinned: false,
+              decision_count: 0,
+              pattern_count: 0,
+            },
+          ],
+          decisions: [],
+          edges: [],
+        }),
+      );
+
+      expect(g.nodes.has('auth')).toBe(false);
+      expect(g.nodes.has('api')).toBe(false);
+      expect(g.nodes.has('db')).toBe(true);
+      expect(g.nodes.size).toBe(1);
+      expect(g.decisions.size).toBe(0);
+      expect(g.edges).toHaveLength(0);
+    });
+  });
+
+  describe('edgePairSet', () => {
+    it('is populated on load and updated on rebuild', () => {
+      const g = new Graph();
+      g.loadSnapshot(makeSnapshot());
+      expect(g.edgePairSet.has('api\0auth')).toBe(true);
+      // Both edges share from='api' to='auth', so only one pair key.
+      expect(g.edgePairSet.size).toBe(1);
+    });
+  });
+
+  describe('patternAt', () => {
+    it('returns pattern name when point is inside hull', () => {
+      const g = new Graph();
+      g.loadSnapshot(
+        makeSnapshot({
+          components: [
+            {
+              name: 'auth',
+              description: '',
+              position: { x: 0, y: 0 },
+              pinned: true,
+              decision_count: 0,
+              pattern_count: 1,
+            },
+            {
+              name: 'api',
+              description: '',
+              position: { x: 300, y: 0 },
+              pinned: true,
+              decision_count: 0,
+              pattern_count: 1,
+            },
+          ],
+          patterns: [
+            {
+              name: 'auth-pattern',
+              description: 'Auth services',
+              components: ['auth', 'api'],
+              decisions: [],
+            },
+          ],
+        }),
+      );
+
+      const hit = g.patternAt(150, 0);
+      expect(hit).toBe('auth-pattern');
+    });
+
+    it('returns null when point is outside all hulls', () => {
+      const g = new Graph();
+      g.loadSnapshot(
+        makeSnapshot({
+          patterns: [
+            {
+              name: 'auth-pattern',
+              description: 'Auth',
+              components: ['auth', 'api'],
+              decisions: [],
+            },
+          ],
+        }),
+      );
+
+      const hit = g.patternAt(99999, 99999);
+      expect(hit).toBeNull();
+    });
+  });
+
   describe('dynamic node width', () => {
     it('assigns wider boxes to longer component names', () => {
       const g = new Graph();
