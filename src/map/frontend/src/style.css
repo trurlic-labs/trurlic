@@ -753,7 +753,7 @@ body.panel-collapsed .hint-overlay {
 }
 .hint-pill {
   padding: 14px 28px;
-  background: rgba(15, 17, 23, 0.75);
+  background: rgba(17, 15, 13, 0.75);
   color: var(--text);
   font-size: 14px;
   font-weight: 500;

@@ -28,24 +28,24 @@ function snapshotColors(): ColorSnapshot {
   const s = getComputedStyle(document.documentElement);
   const v = (prop: string, fb: string) => s.getPropertyValue(prop).trim() || fb;
   cachedColors = {
-    bg: v('--bg', '#0f1117'),
-    surface: v('--surface', '#1a1d27'),
-    surfaceHi: v('--surface-hi', '#252836'),
-    border: v('--border', '#2e3244'),
-    text: v('--text', '#e1e4ed'),
-    textDim: v('--text-dim', '#8b90a0'),
+    bg: v('--bg', '#110f0d'),
+    surface: v('--surface', '#1c1916'),
+    surfaceHi: v('--surface-hi', '#282420'),
+    border: v('--border', '#362f28'),
+    text: v('--text', '#e8e2d9'),
+    textDim: v('--text-dim', '#9b9285'),
     accent: v('--accent', '#d4882b'),
     accentDim: v('--accent-dim', '#8b5a1b'),
-    edge: v('--edge', '#3a3f52'),
-    edgeDep: v('--edge-dep', '#5a7f5a'),
-    edgeCon: v('--edge-con', '#8f6c3a'),
-    edgeSup: v('--edge-sup', '#7a5a7a'),
+    edge: v('--edge', '#463d34'),
+    edgeDep: v('--edge-dep', '#6a8a5a'),
+    edgeCon: v('--edge-con', '#a07838'),
+    edgeSup: v('--edge-sup', '#8a6878'),
     selectRing: v('--select', '#d4882b'),
-    badge: v('--badge', '#4a5068'),
-    minimap: v('--minimap-bg', '#13151d'),
+    badge: v('--badge', '#564d42'),
+    minimap: v('--minimap-bg', '#16130f'),
     minimapVp: v('--minimap-vp', 'rgba(212,136,43,0.25)'),
-    gridDot: v('--grid-dot', '#1e2130'),
-    shadow: v('--shadow', 'rgba(0,0,0,0.35)'),
+    gridDot: v('--grid-dot', '#241f1a'),
+    shadow: v('--shadow', 'rgba(0,0,0,0.4)'),
   };
   return cachedColors;
 }
@@ -581,7 +581,7 @@ export class Renderer {
     if (y > maxY) y = sy - offsetY - boxH; // flip above cursor
 
     // Background.
-    ctx.fillStyle = 'rgba(20, 22, 30, 0.92)';
+    ctx.fillStyle = 'rgba(17, 15, 13, 0.92)';
     this.roundRect(x, y, boxW, boxH, radius);
     ctx.fill();
 

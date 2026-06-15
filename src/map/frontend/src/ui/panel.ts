@@ -79,7 +79,7 @@ export class Panel {
 
     this.el.innerHTML = `
       <div class="panel-kind">component</div>
-      <h2>${esc(node.name)}</h2>
+      <h2 data-component="${esc(node.name)}">${esc(node.name)}</h2>
       ${node.description ? `<p class="dim">${esc(node.description)}</p>` : ''}
       ${
         allConns.length > 0
@@ -218,8 +218,8 @@ export class Panel {
     }
     const kindText = kind.textContent?.trim().toLowerCase();
     if (kindText === 'component') {
-      const heading = this.el.querySelector('h2');
-      const name = heading?.textContent?.trim() ?? '';
+      const heading = this.el.querySelector<HTMLElement>('h2');
+      const name = heading?.dataset.component ?? heading?.textContent?.trim() ?? '';
       if (name) this.history.push({ type: 'component', name });
     } else if (kindText === 'decision') {
       const heading = this.el.querySelector<HTMLElement>('.editable-heading');

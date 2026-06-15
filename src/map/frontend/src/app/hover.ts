@@ -190,7 +190,3 @@ function sameEdge(a: HoverEdge | null, b: HoverEdge | null): boolean {
   if (!a || !b) return false;
   return a.from === b.from && a.to === b.to && a.kind === b.kind;
 }
-
-// ── Re-export for backward compatibility ───────────────────────────────
-
-export { pointSegDistSq } from '../renderer/geometry';

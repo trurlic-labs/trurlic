@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { HoverTracker, pointSegDistSq } from './hover';
+import { HoverTracker } from './hover';
+import { pointSegDistSq } from '../renderer/geometry';
 
 describe('HoverTracker', () => {
   it('starts with nothing hovered', () => {
@@ -117,6 +118,16 @@ describe('HoverTracker', () => {
     const changed = h.update(null, '', edge, 0, 0, 0);
     expect(changed).toBe(true);
     expect(h.edge).toEqual(edge);
+    expect(h.edgeTooltipText).toBe('auth → db');
+  });
+
+  it('edge tooltip text clears when edge is deselected', () => {
+    const h = new HoverTracker();
+    const edge = { from: 'auth', to: 'db', kind: 'connects_to' };
+    h.update(null, '', edge, 0, 0, 0);
+    expect(h.edgeTooltipText).toBe('auth → db');
+    h.update(null, '', null, 0, 0, 0);
+    expect(h.edgeTooltipText).toBe('');
   });
 
   it('edge is suppressed when a node is hovered', () => {
@@ -124,6 +135,7 @@ describe('HoverTracker', () => {
     const edge = { from: 'auth', to: 'db', kind: 'connects_to' };
     h.update('auth', 'desc', edge, 0, 0, 0);
     expect(h.edge).toBeNull();
+    expect(h.edgeTooltipText).toBe('');
   });
 
   // ── Clear ─────────────────────────────────────────────────────────

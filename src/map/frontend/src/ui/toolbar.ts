@@ -27,6 +27,7 @@ export class Toolbar {
   private popoverOpen = false;
   private tagFilter = '';
   private documentPointerHandler: ((e: PointerEvent) => void) | null = null;
+  private escapeHandler: ((e: KeyboardEvent) => void) | null = null;
 
   constructor(onChange: (state: FilterState) => void) {
     this.el = document.getElementById('toolbar')!;
@@ -210,12 +211,14 @@ export class Toolbar {
       });
     }
 
-    // Escape closes popover.
-    this.el.addEventListener('keydown', (e: KeyboardEvent) => {
+    // Escape closes popover — single listener, swapped on each render.
+    if (this.escapeHandler) this.el.removeEventListener('keydown', this.escapeHandler);
+    this.escapeHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && this.popoverOpen) {
         this.closePopover();
       }
-    });
+    };
+    this.el.addEventListener('keydown', this.escapeHandler);
   }
 
   private openPopover(): void {
