@@ -33,8 +33,15 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: bool) -> Re
             let entry = build_server_entry(&binary);
             write_json_servers(&path, &entry)?;
         }
-        InstallIde::ClaudeCode => unreachable!(),
-        _ => {
+        InstallIde::ClaudeCode => {
+            return install_claude_code(&binary, dry_run);
+        }
+        InstallIde::Claude
+        | InstallIde::Cursor
+        | InstallIde::Cline
+        | InstallIde::Windsurf
+        | InstallIde::OpenClaw
+        | InstallIde::Antigravity => {
             let entry = build_server_entry(&binary);
             write_json_mcp_servers(&path, &entry)?;
         }
@@ -49,10 +56,14 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: bool) -> Re
 }
 
 fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf> {
-    if let Some(p) = explicit {
-        return Ok(p.to_path_buf());
+    let path = match explicit {
+        Some(p) => p.to_path_buf(),
+        None => std::env::current_exe().map_err(|_| Error::BinaryNotFound)?,
+    };
+    if !path.is_file() {
+        return Err(Error::BinaryNotFound);
     }
-    std::env::current_exe().map_err(|_| Error::BinaryNotFound)
+    Ok(path)
 }
 
 fn build_server_entry(binary: &Path) -> Value {
@@ -210,6 +221,23 @@ fn build_dry_run_snippet(ide: &InstallIde, binary: &Path) -> String {
     }
 }
 
+// ── Atomic file write ────────────────────────────────────────────────────────
+
+fn atomic_write(path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, content).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        Error::Io(e)
+    })?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        Error::Io(e)
+    })
+}
+
 // ── JSON writers ─────────────────────────────────────────────────────────────
 
 fn read_or_empty_json(path: &Path) -> Result<Value> {
@@ -251,15 +279,11 @@ fn write_json_with_key(path: &Path, key: &str, entry: &Value) -> Result<()> {
     }
     servers_obj.insert("trurlic".into(), entry.clone());
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let out = serde_json::to_string_pretty(&root).map_err(|e| Error::InvalidInstallConfig {
         path: path.to_path_buf(),
         detail: e.to_string(),
     })?;
-    fs::write(path, out + "\n")?;
-    Ok(())
+    atomic_write(path, &format!("{out}\n"))
 }
 
 fn write_json_mcp_servers(path: &Path, entry: &Value) -> Result<()> {
@@ -327,15 +351,11 @@ fn write_toml_config(path: &Path, binary: &Path) -> Result<()> {
     }
     servers_table.insert("trurlic".into(), toml::Value::Table(trurlic));
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let out = toml::to_string_pretty(&table).map_err(|e| Error::InvalidInstallToml {
         path: path.to_path_buf(),
         detail: e.to_string(),
     })?;
-    fs::write(path, out)?;
-    Ok(())
+    atomic_write(path, &out)
 }
 
 // ── YAML writer ──────────────────────────────────────────────────────────────
@@ -396,15 +416,11 @@ fn write_yaml_config(path: &Path, binary: &Path) -> Result<()> {
     );
     servers.insert(trurlic_key, serde_yaml_ng::Value::Mapping(entry));
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let out = serde_yaml_ng::to_string(&root).map_err(|e| Error::InvalidInstallYaml {
         path: path.to_path_buf(),
         detail: e.to_string(),
     })?;
-    fs::write(path, out)?;
-    Ok(())
+    atomic_write(path, &out)
 }
 
 // ── Claude Code handler ──────────────────────────────────────────────────────

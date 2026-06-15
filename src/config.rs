@@ -58,7 +58,10 @@ impl Provider {
     }
 }
 
-const ALL_PROVIDERS: [Provider; 3] = [Provider::Anthropic, Provider::OpenAi, Provider::OpenRouter];
+/// Providers eligible for auto-detection when no `--provider` flag is given.
+/// Custom, Ollama, and Gemini require explicit `--provider`.
+const AUTO_DETECT_PROVIDERS: [Provider; 3] =
+    [Provider::Anthropic, Provider::OpenAi, Provider::OpenRouter];
 
 impl std::fmt::Display for Provider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -282,7 +285,7 @@ fn auto_detect_provider(config: Option<&ConfigFile>, env_keys: &EnvKeys) -> Resu
         env_keys.get(p).is_some() || config.and_then(|c| c.key_for(p)).is_some()
     };
 
-    let found: Vec<Provider> = ALL_PROVIDERS
+    let found: Vec<Provider> = AUTO_DETECT_PROVIDERS
         .iter()
         .copied()
         .filter(|&p| has_key(p))

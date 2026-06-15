@@ -98,7 +98,7 @@ impl GeminiClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| connection_error(&e))?;
+            .map_err(connection_error)?;
 
         let response = check_status(response).await?;
         stream_sse(response, super::sse::extract_gemini_text, on_text).await

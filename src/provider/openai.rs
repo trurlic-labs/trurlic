@@ -99,11 +99,7 @@ impl OpenAiClient {
                 .header("x-title", "trurlic");
         }
 
-        let response = req
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| connection_error(&e))?;
+        let response = req.json(&body).send().await.map_err(connection_error)?;
 
         let response = check_status(response).await?;
         stream_sse(response, super::sse::extract_openai_text, on_text).await

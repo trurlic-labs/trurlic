@@ -39,9 +39,10 @@ pub struct DecisionFile {
     pub decision: Decision,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Attribution {
+    #[default]
     User,
     Agent,
 }
@@ -63,6 +64,7 @@ pub struct Decision {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
 
+    #[serde(default)]
     pub attribution: Attribution,
 
     /// When this decision was recorded (UTC, ISO 8601 / RFC 3339).
@@ -533,7 +535,7 @@ attribution = "user"
     }
 
     #[test]
-    fn decision_without_attribution_fails_deserialization() {
+    fn decision_without_attribution_defaults_to_user() {
         let toml_str = r#"
 [decision]
 component = "auth"
@@ -541,10 +543,11 @@ choice = "JWT"
 reason = "Stateless"
 created = "2025-06-01T10:30:00Z"
 "#;
-        let result = toml::from_str::<DecisionFile>(toml_str);
-        assert!(
-            result.is_err(),
-            "missing attribution field must be rejected"
+        let file: DecisionFile = toml::from_str(toml_str).expect("should parse with default");
+        assert_eq!(
+            file.decision.attribution,
+            Attribution::User,
+            "missing attribution must default to User for 0.2.0 compatibility"
         );
     }
 

@@ -197,13 +197,18 @@ pub(crate) async fn check_status(response: reqwest::Response) -> Result<reqwest:
     })
 }
 
-pub(crate) fn connection_error(err: &reqwest::Error) -> Error {
-    if err.is_connect() {
+pub(crate) fn connection_error(err: reqwest::Error) -> Error {
+    let is_connect = err.is_connect();
+    let is_timeout = err.is_timeout();
+    // Strip the request URL from the error — Gemini puts the API key
+    // in the URL query parameter, and reqwest's Display includes it.
+    let safe = err.without_url();
+    if is_connect {
         Error::Api {
             status: 0,
-            detail: format!("could not connect to API — check your internet connection ({err})"),
+            detail: format!("could not connect to API — check your internet connection ({safe})"),
         }
-    } else if err.is_timeout() {
+    } else if is_timeout {
         Error::Api {
             status: 0,
             detail: "connection timed out — the API may be overloaded".into(),
@@ -211,7 +216,7 @@ pub(crate) fn connection_error(err: &reqwest::Error) -> Error {
     } else {
         Error::Api {
             status: 0,
-            detail: format!("API request failed: {err}"),
+            detail: format!("API request failed: {safe}"),
         }
     }
 }
