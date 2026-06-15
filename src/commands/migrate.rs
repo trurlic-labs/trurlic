@@ -2,11 +2,11 @@ use std::cmp::Ordering;
 use std::fs;
 use std::path::Path;
 
-use crate::store::schema::{
-    ComponentFile, DecisionFile, GraphIndex, PatternFile, ProjectFile, COMPONENTS_DIR,
-    DECISIONS_DIR, FORMAT_VERSION, GRAPH_FILE, PATTERNS_DIR,
-};
 use crate::store::Store;
+use crate::store::schema::{
+    COMPONENTS_DIR, ComponentFile, DECISIONS_DIR, DecisionFile, FORMAT_VERSION, GRAPH_FILE,
+    GraphIndex, PATTERNS_DIR, PatternFile, ProjectFile,
+};
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,21 +61,20 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     round_trip_dir::<ComponentFile>(root, COMPONENTS_DIR, &lock, &store)?;
     round_trip_dir::<DecisionFile>(root, DECISIONS_DIR, &lock, &store)?;
     round_trip_dir::<PatternFile>(root, PATTERNS_DIR, &lock, &store)?;
-    round_trip_graph(root, &lock, &store)?;
+
+    // Rebuild graph.toml with fresh BLAKE3 hashes from the updated node
+    // files. A plain round-trip of the old graph.toml would leave stale
+    // hashes for any file whose content changed (e.g. new default fields).
+    let state = store.load_state()?;
+    store.write_atomic(&lock, &store.graph_path(), &state.graph_index)?;
 
     drop(lock);
 
-    println!(
-        "Migrated from {old_version} \u{2192} {FORMAT_VERSION}, backup at {backup_name}/"
-    );
+    println!("Migrated from {old_version} \u{2192} {FORMAT_VERSION}, backup at {backup_name}/");
     Ok(())
 }
 
-fn round_trip_project(
-    root: &Path,
-    lock: &crate::store::StoreLock,
-    store: &Store,
-) -> Result<()> {
+fn round_trip_project(root: &Path, lock: &crate::store::StoreLock, store: &Store) -> Result<()> {
     let path = root.join("project.toml");
     let content = fs::read_to_string(&path)?;
     let mut project: ProjectFile = toml::from_str(&content)?;
@@ -110,21 +109,6 @@ where
         let value: T = toml::from_str(&content)?;
         store.write_atomic(lock, &path, &value)?;
     }
-    Ok(())
-}
-
-fn round_trip_graph(
-    root: &Path,
-    lock: &crate::store::StoreLock,
-    store: &Store,
-) -> Result<()> {
-    let path = root.join(GRAPH_FILE);
-    if !path.exists() {
-        return Ok(());
-    }
-    let content = fs::read_to_string(&path)?;
-    let index: GraphIndex = toml::from_str(&content)?;
-    store.write_atomic(lock, &path, &index)?;
     Ok(())
 }
 
@@ -191,10 +175,7 @@ where
         let value: T = toml::from_str(&content)?;
         let new_content = toml::to_string_pretty(&value)?;
         if content != new_content {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?");
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
             println!("  would update: {subdir}/{name}");
             count += 1;
         }
@@ -327,7 +308,13 @@ mod tests {
         assert_eq!(backup_project.trurlic_version, "0.1.0");
 
         // Backup should contain the component file.
-        assert!(backups[0].path().join("components").join("auth.toml").exists());
+        assert!(
+            backups[0]
+                .path()
+                .join("components")
+                .join("auth.toml")
+                .exists()
+        );
 
         // Backup should NOT contain .state/ (transient data).
         assert!(!backups[0].path().join(".state").exists());
@@ -412,8 +399,13 @@ mod tests {
             "migration should fill in default attribution field"
         );
 
-        // Should load cleanly.
+        // Should load cleanly with correct hashes.
         store.check_version().unwrap();
+        let hash_issues = store.verify_hashes().unwrap();
+        assert!(
+            hash_issues.is_empty(),
+            "graph.toml hashes must match updated files: {hash_issues:?}"
+        );
         let state = store.load_state().unwrap();
         assert!(state.decisions.contains_key("use-jwt-tokens"));
     }
