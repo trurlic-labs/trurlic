@@ -40,7 +40,6 @@ pub fn advance(
     task: Option<&str>,
     step_evidence: &BTreeMap<&str, &str>,
 ) -> Result<Value, String> {
-    // Validate evidence for gated steps before any deduction.
     for (step_name, evidence) in step_evidence {
         if let Some(true) = Step::is_gated_name(step_name)
             && evidence.len() < MIN_STEP_EVIDENCE_BYTES
@@ -56,12 +55,10 @@ pub fn advance(
 
     let completed: Vec<&str> = step_evidence.keys().copied().collect();
 
-    // Project scope: simplified state machine.
     if component == "project" {
         return Ok(advance_project(state, task_type, task, &completed));
     }
 
-    // Unregistered: component not in graph.
     if !state.components.contains_key(component) {
         let suggested = crate::store::slugify(component);
         return Ok(build_response(
@@ -476,23 +473,18 @@ fn deduce_review(
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
     completed: &[&str],
 ) -> Step {
-    // WalkDecisions: review starts with interactive walkthrough.
     if !decisions.is_empty() && !completed.contains(&"walk_decisions") {
         return Step::WalkDecisions;
     }
-    // DriftCheck: stale decisions need verification against current code.
     if !stale.is_empty() {
         return Step::DriftCheck;
     }
-    // CoverageAudit: check for coverage gaps.
     if uncovered.len() > covered.len() {
         return Step::CoverageAudit;
     }
-    // PatternDetection: find patterns across fresh decisions.
     if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
-    // SummaryGate: comprehension check before ready.
     if !completed.contains(&"summary_gate") {
         return Step::SummaryGate;
     }
@@ -512,19 +504,16 @@ fn deduce_harden(
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
     completed: &[&str],
 ) -> Step {
-    // CoverageAudit: entry step, assess gaps before filling.
     if !uncovered.is_empty() && !completed.contains(&"coverage_audit") {
         return Step::CoverageAudit;
     }
-    // CoverConcerns: fill the real gaps. Gated by completed_steps to
-    // prevent infinite loops when recorded decisions don't match concern
-    // keywords (the agent is asked once, then moves on).
+    // Gated by completed_steps to prevent infinite loops when recorded
+    // decisions don't match concern keywords.
     if !uncovered.is_empty() && !completed.contains(&"cover_concerns") {
         return Step::CoverConcerns {
             focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
         };
     }
-    // PatternDetection: final pass.
     if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
@@ -810,6 +799,7 @@ fn has_scope_decision(decisions: &[(&Arc<str>, &DecisionFile)]) -> bool {
         .iter()
         .any(|(_, d)| d.decision.tags.iter().any(|t| t == "scope"))
 }
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -11,12 +11,6 @@ use crate::store::schema::DecisionFile;
 
 // ── Concern areas ─────────────────────────────────────────────────────────
 
-/// Architectural concern areas and keywords for matching against decision
-/// content.
-///
-/// Array order IS priority order. Security-critical gaps surface before
-/// stylistic ones. This ordering drives the `focus` list in advance
-/// responses so the agent addresses the most dangerous gaps first.
 pub const CONCERNS: &[(&str, &[&str])] = &[
     (
         "Security boundaries",

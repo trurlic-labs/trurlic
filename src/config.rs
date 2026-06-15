@@ -140,15 +140,14 @@ pub struct ProviderConfig {
 
 // ── ConfigFile (on-disk format) ──────────────────────────────────────────────
 
-/// Deserialized `~/.config/trurlic/config.toml`.
-/// All fields optional — an empty file is valid.
-/// ```toml
-/// default_provider = "anthropic"
-/// default_model = "claude-sonnet-4-20250514"
-/// anthropic_api_key = "sk-ant-..."
-/// openai_api_key = "sk-..."
-/// openrouter_api_key = "sk-or-..."
-/// ```
+// All fields optional — an empty file is valid.
+// ```toml
+// default_provider = "anthropic"
+// default_model = "claude-sonnet-4-20250514"
+// anthropic_api_key = "sk-ant-..."
+// openai_api_key = "sk-..."
+// openrouter_api_key = "sk-or-..."
+// ```
 #[derive(Deserialize, Default, Zeroize, ZeroizeOnDrop)]
 struct ConfigFile {
     #[zeroize(skip)]
@@ -184,8 +183,7 @@ impl ConfigFile {
 
 // ── EnvKeys ──────────────────────────────────────────────────────────────────
 
-/// Snapshot of all provider environment variables, zeroed on drop.
-/// Read once at resolution time to decouple I/O from logic (testability).
+// Read once at resolution time to decouple I/O from logic (testability).
 #[derive(Zeroize, ZeroizeOnDrop)]
 struct EnvKeys {
     anthropic: Option<String>,
@@ -390,8 +388,7 @@ fn resolve_base_url(
 
 // ── Config file loading ──────────────────────────────────────────────────────
 
-/// Load and parse the config file. Returns `None` if the file doesn't exist.
-/// Enforces 0600 permissions on Unix. Zeros the raw TOML content after parsing.
+// Enforces 0600 permissions on Unix. Zeros the raw TOML content after parsing.
 fn load_config_file() -> Result<Option<ConfigFile>> {
     let path = match config_file_path() {
         Some(p) => p,

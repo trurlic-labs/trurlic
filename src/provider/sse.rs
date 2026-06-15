@@ -88,13 +88,8 @@ pub(crate) async fn stream_sse(
     Ok(full)
 }
 
-/// Parse complete SSE lines from `buffer`, pass extracted text directly to
-/// `sink`, and drain consumed bytes. Incomplete trailing lines are preserved
-/// in the buffer for the next call.
-///
-/// Uses a callback instead of returning `Vec<String>` — the intermediate
-/// collection is unnecessary since each text chunk is immediately forwarded
-/// to `on_text` and appended to the accumulator.
+// Callback instead of Vec<String> — each chunk is forwarded to on_text
+// and appended to the accumulator immediately, no intermediate collection.
 fn drain_sse_text(
     buffer: &mut String,
     extract: fn(&str) -> Option<String>,

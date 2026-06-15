@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::session::SessionMode;
-use crate::store::{self};
+use crate::store;
 use crate::{Error, Result};
 
 use super::discover_store;

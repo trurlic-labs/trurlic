@@ -39,7 +39,6 @@ impl Role {
 
 // ── Shared request types ────────────────────────────────────────────────────
 
-/// A message in an API request body (shared across providers).
 #[derive(Serialize)]
 pub(super) struct ApiMessage<'a> {
     pub role: &'a str,

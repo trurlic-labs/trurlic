@@ -204,10 +204,6 @@ fn collect_tree(dir: &Path, depth: usize, entries: &mut Vec<String>) -> Result<(
             None => continue,
         };
 
-        if name.starts_with('.') && SKIP_DIRS.contains(&name) {
-            continue;
-        }
-
         if child.is_dir() {
             if SKIP_DIRS.contains(&name) {
                 continue;

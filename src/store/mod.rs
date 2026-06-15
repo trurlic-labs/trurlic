@@ -339,7 +339,6 @@ impl Store {
             })
             .collect::<Result<_>>()?;
 
-        // Assemble the maps from parallel results.
         let mut hashes =
             HashMap::with_capacity(1 + comp_items.len() + dec_items.len() + pat_items.len());
         hashes.insert("project".to_string(), project_hash);
@@ -403,7 +402,7 @@ impl Store {
         };
 
         // Build lookup from existing index for O(1) tag preservation.
-        let existing_tags: std::collections::HashMap<&str, &[String]> = existing
+        let existing_tags: HashMap<&str, &[String]> = existing
             .nodes
             .iter()
             .map(|n| (n.name.as_str(), n.tags.as_slice()))
@@ -494,7 +493,6 @@ impl Store {
             }
         }
 
-        // Sort for deterministic output.
         nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         edges.sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
 
