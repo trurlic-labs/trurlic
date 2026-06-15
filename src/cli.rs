@@ -132,6 +132,13 @@ pub enum Command {
         dry_run: bool,
     },
 
+    /// Migrate `.trurlic/` to the current format version.
+    Migrate {
+        /// Show what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Show bootstrap progress and agent instructions for autonomous
     /// architecture extraction from an existing codebase.
     /// With -p/--provider, runs the bootstrap directly using the LLM API.
@@ -297,9 +304,9 @@ pub fn run(cli: Cli) -> Result<()> {
             dry_run,
         } => {
             let mode = if dry_run {
-                commands::install::DryRun::Yes
+                commands::DryRun::Yes
             } else {
-                commands::install::DryRun::No
+                commands::DryRun::No
             };
             commands::install(ide, binary_path.as_deref(), mode)
         }
@@ -311,6 +318,14 @@ pub fn run(cli: Cli) -> Result<()> {
         } => commands::map(&cwd, port, no_open, detach),
         Command::Status => commands::status(&cwd),
         Command::Check { rebuild } => commands::check(&cwd, rebuild),
+        Command::Migrate { dry_run } => {
+            let mode = if dry_run {
+                commands::DryRun::Yes
+            } else {
+                commands::DryRun::No
+            };
+            commands::migrate(&cwd, mode)
+        }
         Command::Bootstrap {
             component,
             provider,

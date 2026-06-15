@@ -1,23 +1,28 @@
 import type { Camera } from './camera';
 import type { Graph } from '../state/graph';
 import type { RenderNode, FilterState, DecisionNode, ColorSnapshot } from '../types';
+import type { MinimapTransform } from '../app/drag';
 import { LOD } from './lod';
 import type { AABB } from './culling';
-import { EDGE_DASH, EDGE_OPACITY, edgeColor, edgeCurveCP, buildEdgePairSet } from './edges';
-import { convexHull, expandHull, roundedHullPath, nodeCorners } from './geometry';
+import { EDGE_DASH, EDGE_OPACITY, edgeColor, edgeCurveCP } from './edges';
+import { roundedHullPath, rayRectIntersect } from './geometry';
 import type { HoverRenderState } from '../app/hover';
 
 // ── Per-frame color snapshot ──────────────────────────────────────────────
 
 /** Cached snapshot — only refreshed when the color scheme changes. */
 let cachedColors: ColorSnapshot | null = null;
+let cachedPrefersLight = false;
 
 function invalidateColors(): void {
   cachedColors = null;
+  cachedPrefersLight =
+    typeof matchMedia !== 'undefined' ? matchMedia('(prefers-color-scheme: light)').matches : false;
 }
 
 // Listen for system theme changes.
 if (typeof matchMedia !== 'undefined') {
+  cachedPrefersLight = matchMedia('(prefers-color-scheme: light)').matches;
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', invalidateColors);
   matchMedia('(prefers-color-scheme: light)').addEventListener('change', invalidateColors);
   matchMedia('(prefers-contrast: more)').addEventListener('change', invalidateColors);
@@ -28,24 +33,25 @@ function snapshotColors(): ColorSnapshot {
   const s = getComputedStyle(document.documentElement);
   const v = (prop: string, fb: string) => s.getPropertyValue(prop).trim() || fb;
   cachedColors = {
-    bg: v('--bg', '#0f1117'),
-    surface: v('--surface', '#1a1d27'),
-    surfaceHi: v('--surface-hi', '#252836'),
-    border: v('--border', '#2e3244'),
-    text: v('--text', '#e1e4ed'),
-    textDim: v('--text-dim', '#8b90a0'),
-    accent: v('--accent', '#d4882b'),
-    accentDim: v('--accent-dim', '#8b5a1b'),
-    edge: v('--edge', '#3a3f52'),
-    edgeDep: v('--edge-dep', '#5a7f5a'),
-    edgeCon: v('--edge-con', '#8f6c3a'),
-    edgeSup: v('--edge-sup', '#7a5a7a'),
-    selectRing: v('--select', '#d4882b'),
-    badge: v('--badge', '#4a5068'),
-    minimap: v('--minimap-bg', '#13151d'),
-    minimapVp: v('--minimap-vp', 'rgba(212,136,43,0.25)'),
-    gridDot: v('--grid-dot', '#1e2130'),
-    shadow: v('--shadow', 'rgba(0,0,0,0.35)'),
+    bg: v('--bg', '#1c1c26'),
+    surface: v('--surface', '#282832'),
+    surfaceHi: v('--surface-hi', '#32323c'),
+    border: v('--border', '#3d3d48'),
+    text: v('--text', '#e4e4ec'),
+    textDim: v('--text-dim', '#8b8b9a'),
+    accent: v('--accent', '#e8993a'),
+    accentDim: v('--accent-dim', '#a06828'),
+    edge: v('--edge', '#4a4a56'),
+    edgeDep: v('--edge-dep', '#7aad6a'),
+    edgeCon: v('--edge-con', '#c09040'),
+    edgeSup: v('--edge-sup', '#a07890'),
+    selectRing: v('--select', '#e8993a'),
+    badge: v('--badge', '#4a4a56'),
+    minimap: v('--minimap-bg', '#1c1c26'),
+    minimapVp: v('--minimap-vp', 'rgba(232,153,58,0.25)'),
+    gridDot: v('--grid-dot', '#28283230'),
+    shadow: v('--shadow', 'rgba(0,0,0,0.25)'),
+    tooltipBg: v('--tooltip-bg', 'rgba(17,15,13,0.92)'),
   };
   return cachedColors;
 }
@@ -72,17 +78,14 @@ function filterDecisions(
 
 // ── Pattern region colors ──────────────────────────────────────────────────
 
-/** Fixed hue palette for pattern regions (degrees). */
-const PATTERN_HUES = [210, 150, 30, 330, 270, 90, 0, 60];
+/** Diverse palette for pattern regions (hue degrees). */
+const PATTERN_HUES = [30, 200, 150, 340, 60, 270, 100, 310];
 
 /** LOD label fade duration (ms). */
 const LOD_FADE_MS = 150;
 
-/** Pattern hull expansion (world units). */
-const HULL_EXPAND = 30;
-
 /** Pattern hull corner rounding radius (world units). */
-const HULL_RADIUS = 12;
+const HULL_RADIUS = 20;
 
 /** Node card corner radius (canvas units, scaled by 1/zoom in world space). */
 const NODE_RADIUS = 8;
@@ -93,10 +96,8 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private cam: Camera;
   private dpr: number;
-  /** Per-frame color snapshot — refreshed at the top of render(). */
-  private c: ColorSnapshot;
-  /** Per-frame hover state — set at the top of render(), read by draw methods. */
-  private fh: HoverRenderState | null = null;
+  private colors: ColorSnapshot;
+  private frameHover: HoverRenderState | null = null;
 
   // LOD transition fade state.
   private prevLod: LOD = LOD.Overview;
@@ -109,7 +110,7 @@ export class Renderer {
     this.ctx = ctx;
     this.cam = cam;
     this.dpr = window.devicePixelRatio || 1;
-    this.c = snapshotColors();
+    this.colors = snapshotColors();
   }
 
   resize(w: number, h: number): void {
@@ -138,9 +139,10 @@ export class Renderer {
     filters?: FilterState,
     hover?: HoverRenderState,
   ): boolean {
-    this.c = snapshotColors();
-    this.fh = hover ?? null;
-    const { ctx, cam, dpr, c } = this;
+    this.colors = snapshotColors();
+    this.frameHover = hover ?? null;
+    const { ctx, cam, dpr } = this;
+    const c = this.colors;
 
     // LOD transition fade.
     const now = performance.now();
@@ -178,9 +180,9 @@ export class Renderer {
     ctx.translate(-cam.cx, -cam.cy);
 
     if (lod <= LOD.Component) {
-      this.drawPatternRegions(graph, visibleNames, focus, filters);
+      this.drawPatternRegions(graph, visibleNames, focus, lod, filters);
     }
-    this.drawEdges(graph, visibleNames, lod, focus, filters);
+    this.drawEdges(graph, visibleNames, lod, focus, filters, cam.zoom);
     this.drawNodes(graph, visibleNames, selected, lod, focus, filters);
 
     ctx.restore();
@@ -190,7 +192,17 @@ export class Renderer {
       this.drawTooltip(hover.tooltipText, hover.tooltipX, hover.tooltipY);
     }
 
-    this.fh = null;
+    // Edge tooltip: screen-space, immediate (no dwell delay).
+    if (hover?.edge && hover.edgeTooltipText && !hover?.tooltipVisible) {
+      this.drawTooltip(hover.edgeTooltipText, hover.tooltipX, hover.tooltipY);
+    }
+
+    // Pattern tooltip: screen-space, after dwell delay.
+    if (hover?.pattern && hover.patternDesc && hover.tooltipVisible && !hover.node) {
+      this.drawTooltip(hover.patternDesc, hover.tooltipX, hover.tooltipY);
+    }
+
+    this.frameHover = null;
     return this.lodFadeAlpha < 1;
   }
 
@@ -204,43 +216,32 @@ export class Renderer {
     graph: Graph,
     visible: Set<string>,
     focus: Set<string> | null,
+    lod: LOD,
     filters?: FilterState,
   ): void {
     if (graph.patterns.size === 0) return;
-    const { ctx, cam, c } = this;
-    const prefersLight =
-      typeof matchMedia !== 'undefined'
-        ? matchMedia('(prefers-color-scheme: light)').matches
-        : false;
-    const lightness = prefersLight ? 45 : 55;
-    const baseFill = prefersLight ? 0.06 : 0.08;
-    const baseStroke = 0.25;
+    const { ctx, cam } = this;
+    const prefersLight = cachedPrefersLight;
+    const lightness = prefersLight ? 48 : 55;
+    const saturation = prefersLight ? 40 : 45;
+    const baseFill = prefersLight ? 0.1 : 0.14;
+    const baseStroke = 0.45;
     const dimFill = 0.03;
-    const labelSize = 11 / cam.zoom;
 
     let patIdx = 0;
-    for (const [, pat] of graph.patterns) {
-      // Skip patterns with no visible components.
+    for (const [patName, pat] of graph.patterns) {
       const memberNames = pat.components.filter((name) => visible.has(name));
       if (memberNames.length === 0) {
         patIdx++;
         continue;
       }
 
-      // Collect bounding-box corners of member components.
-      const corners = nodeCorners(pat.components, graph.nodes);
-      if (corners.length < 3) {
+      const meta = graph.patternHulls.get(patName);
+      if (!meta || meta.hull.length < 3) {
         patIdx++;
         continue;
       }
-
-      const hull = convexHull(corners);
-      if (hull.length < 3) {
-        patIdx++;
-        continue;
-      }
-
-      const expanded = expandHull(hull, HULL_EXPAND);
+      const expanded = meta.hull;
 
       // Focus dimming.
       const dimmedByFocus = focus !== null && !pat.components.some((n) => focus.has(n));
@@ -255,29 +256,58 @@ export class Renderer {
         });
       }
 
-      const fillAlpha = dimmedByFilter ? dimFill : baseFill;
+      const isHovered = this.frameHover?.pattern === patName;
+      const hoverFillBoost = isHovered ? 1.5 : 1.0;
+      const hoverStrokeBoost = isHovered ? 1.3 : 1.0;
+      const fillAlpha = (dimmedByFilter ? dimFill : baseFill) * hoverFillBoost;
+      const strokeAlpha = baseStroke * hoverStrokeBoost;
       const hue = PATTERN_HUES[patIdx % PATTERN_HUES.length];
 
       ctx.globalAlpha = dimmedByFocus ? 0.15 : 1;
 
       // Fill.
-      ctx.fillStyle = `hsla(${hue}, 60%, ${lightness}%, ${fillAlpha})`;
+      ctx.fillStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${fillAlpha})`;
       roundedHullPath(ctx, expanded, HULL_RADIUS);
       ctx.fill();
 
       // Stroke.
-      ctx.strokeStyle = `hsla(${hue}, 60%, ${lightness}%, ${baseStroke})`;
-      ctx.lineWidth = 1.5 / cam.zoom;
+      ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${strokeAlpha})`;
+      ctx.lineWidth = (isHovered ? 2.5 : 2.0) / cam.zoom;
       ctx.stroke();
 
-      // Label: centered in region.
-      const cx = expanded.reduce((s, p) => s + p.x, 0) / expanded.length;
-      const cy = expanded.reduce((s, p) => s + p.y, 0) / expanded.length;
-      ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
-      ctx.fillStyle = c.textDim;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(pat.name, cx, cy);
+      // Label — always visible at all LOD levels, positioned above the hull.
+      {
+        const cx = meta.centroidX;
+        const labelY = meta.minY - 8 / cam.zoom;
+
+        const rawLabel = pat.name;
+        const maxLen = 30;
+        const label = rawLabel.length > maxLen ? rawLabel.slice(0, maxLen - 1) + '…' : rawLabel;
+
+        const labelFontSize = lod >= LOD.Component ? 13 / cam.zoom : 12 / cam.zoom;
+        ctx.font = `600 ${labelFontSize}px system-ui, sans-serif`;
+        const tw = ctx.measureText(label).width;
+
+        const px = 8 / cam.zoom;
+        const py = 4 / cam.zoom;
+        const pillW = tw + px * 2;
+        const pillH = labelFontSize + py * 2;
+
+        ctx.globalAlpha = (dimmedByFocus ? 0.15 : 1) * 0.92;
+        ctx.fillStyle = `hsla(${hue}, ${saturation}%, ${prefersLight ? 95 : 15}%, 0.95)`;
+        this.roundRect(cx - pillW / 2, labelY - pillH, pillW, pillH, 6 / cam.zoom);
+        ctx.fill();
+
+        ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, 0.5)`;
+        ctx.lineWidth = 1 / cam.zoom;
+        ctx.stroke();
+
+        ctx.globalAlpha = dimmedByFocus ? 0.15 : 1;
+        ctx.fillStyle = `hsla(${hue}, ${saturation + 10}%, ${prefersLight ? 35 : 75}%, 1)`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(label, cx, labelY - py);
+      }
 
       patIdx++;
     }
@@ -291,13 +321,20 @@ export class Renderer {
     visible: Set<string>,
     lod: LOD,
     focus: Set<string> | null,
-    filters?: FilterState,
+    filters: FilterState | undefined,
+    zoom: number,
   ): void {
-    const { ctx, cam, c, fh } = this;
+    const { ctx, cam, colors: c, frameHover: fh } = this;
     const baseWidth = 1.5 / cam.zoom;
 
-    // Build bidirectional pair index for O(1) look-up.
-    const pairSet = buildEdgePairSet(graph.edges);
+    const dashCache = new Map<string, number[]>();
+    for (const [kind, pattern] of Object.entries(EDGE_DASH)) {
+      dashCache.set(
+        kind,
+        pattern.map((v) => v / zoom),
+      );
+    }
+    const emptyDash: number[] = [];
 
     for (const e of graph.edges) {
       if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
@@ -323,12 +360,9 @@ export class Renderer {
       const color = edgeColor(e.kind, c);
       ctx.strokeStyle = isHovered ? c.accent : color;
       ctx.lineWidth = isHovered ? baseWidth * 2.5 : baseWidth;
-      ctx.setLineDash((EDGE_DASH[e.kind] ?? []).map((v) => v / cam.zoom));
+      ctx.setLineDash(dashCache.get(e.kind) ?? emptyDash);
 
-      // Bezier control point — reverse offset for bidirectional pairs.
-      const hasBi = pairSet.has(`${e.to}\0${e.from}`);
-      const reverse = hasBi && e.from > e.to;
-      const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, cam.zoom, reverse);
+      const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, cam.zoom, e.isReverse === true);
 
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -343,8 +377,10 @@ export class Renderer {
       const ux = tdx / tlen;
       const uy = tdy / tlen;
       const headLen = 10 / cam.zoom;
-      const tipX = b.x - ux * (b.w / 2 + 2);
-      const tipY = b.y - uy * (b.h / 2 + 2);
+      const margin = 3 / cam.zoom;
+      const inter = rayRectIntersect(b.x, b.y, b.w / 2 + margin, b.h / 2 + margin, -ux, -uy);
+      const tipX = inter.x;
+      const tipY = inter.y;
 
       ctx.fillStyle = isHovered ? c.accent : color;
       ctx.setLineDash([]);
@@ -361,17 +397,35 @@ export class Renderer {
       ctx.fill();
 
       // Edge kind label at LOD 1+.
-      // Always show for non-connects_to; show for connects_to only when hovered.
+      // connects_to: hover only (already gated). Others: always at LOD Component+.
       if (lod >= LOD.Component && (e.kind !== 'connects_to' || isHovered)) {
-        // Label at the curve midpoint: P(0.5) = 0.25A + 0.5CP + 0.25B.
         const lx = 0.25 * a.x + 0.5 * cpx + 0.25 * b.x;
         const ly = 0.25 * a.y + 0.5 * cpy + 0.25 * b.y;
-        const labelSize = 9 / cam.zoom;
+        const labelSize = 10 / cam.zoom;
+        const label = e.kind.replace(/_/g, ' ');
         ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
-        ctx.fillStyle = isHovered ? c.text : c.textDim;
+        const tw = ctx.measureText(label).width;
+
+        // Background pill for legibility.
+        const px = 4 / cam.zoom;
+        const py = 2 / cam.zoom;
+        const savedAlpha = ctx.globalAlpha;
+        ctx.globalAlpha = savedAlpha * 0.75;
+        ctx.fillStyle = c.bg;
+        this.roundRect(
+          lx - tw / 2 - px,
+          ly - labelSize - py * 2,
+          tw + px * 2,
+          labelSize + py * 2,
+          3 / cam.zoom,
+        );
+        ctx.fill();
+        ctx.globalAlpha = savedAlpha;
+
+        ctx.fillStyle = c.text;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        ctx.fillText(e.kind.replace(/_/g, ' '), lx, ly - 3 / cam.zoom);
+        ctx.fillText(label, lx, ly - 3 / cam.zoom);
       }
     }
 
@@ -416,7 +470,7 @@ export class Renderer {
     graph: Graph,
     filters?: FilterState,
   ): void {
-    const { ctx, cam, c } = this;
+    const { ctx, cam, colors: c } = this;
 
     if (selected) this.drawSelectRing(node);
     this.drawShadow(node);
@@ -446,27 +500,35 @@ export class Renderer {
       ctx.font = `400 ${descSize}px system-ui, sans-serif`;
       ctx.fillStyle = c.textDim;
       const desc =
-        node.description!.length > 45 ? node.description!.slice(0, 42) + '…' : node.description!;
+        node.description!.length > 55 ? node.description!.slice(0, 52) + '…' : node.description!;
       ctx.fillText(desc, node.x, node.y + 4, node.w - 16);
     }
 
-    // Decision count badge — reflects active filters.
+    // Decision count badge — reflects active filters. Shows pattern count too.
     const rawCount = node.decisionCount ?? 0;
     const count =
       filters && rawCount > 0
         ? filterDecisions(graph.decisionsFor(node.name), filters).length
         : rawCount;
-    if (count > 0) {
-      const badge = `${count}`;
+    const patCount = node.patternCount ?? 0;
+    let badgeText = '';
+    if (count > 0 && patCount > 0) badgeText = `${count} · ${patCount}P`;
+    else if (count > 0) badgeText = `${count}`;
+    else if (patCount > 0) badgeText = `${patCount}P`;
+    if (badgeText) {
       const badgeFontSize = fontSize * 0.7;
       const badgeY = hasDesc ? node.y + 18 : node.y + 8;
       ctx.font = `500 ${badgeFontSize}px system-ui, sans-serif`;
       ctx.fillStyle = c.badge;
-      const bw = ctx.measureText(badge).width + 10;
+      const bw = ctx.measureText(badgeText).width + 10;
       this.roundRect(node.x - bw / 2, badgeY, bw, badgeFontSize + 6, 4);
       ctx.fill();
-      ctx.fillStyle = c.textDim;
-      ctx.fillText(badge, node.x, badgeY + (badgeFontSize + 6) / 2, bw);
+      ctx.strokeStyle = c.border;
+      ctx.lineWidth = 1 / cam.zoom;
+      this.roundRect(node.x - bw / 2, badgeY, bw, badgeFontSize + 6, 4);
+      ctx.stroke();
+      ctx.fillStyle = c.text;
+      ctx.fillText(badgeText, node.x, badgeY + (badgeFontSize + 6) / 2, bw);
     }
   }
 
@@ -476,26 +538,31 @@ export class Renderer {
    * Draw the node border. When the node is hovered, blends toward
    * --accent-dim with 1px extra width.
    */
-  private drawNodeBorder(node: RenderNode, overrideH?: number): void {
-    const { ctx, cam, c, fh } = this;
-    const h = overrideH ?? node.h;
+  private drawNodeBorder(node: RenderNode): void {
+    const { ctx, cam, colors: c, frameHover: fh } = this;
     const isHovered = fh !== null && fh.node === node.name;
     const alpha = isHovered ? fh.borderAlpha : 0;
 
     ctx.strokeStyle = alpha > 0 ? c.accentDim : c.border;
     ctx.lineWidth = (1 + alpha) / cam.zoom;
-    this.roundRect(node.x - node.w / 2, node.y - h / 2, node.w, h, 8);
+    this.roundRect(node.x - node.w / 2, node.y - node.h / 2, node.w, node.h, NODE_RADIUS);
     ctx.stroke();
   }
 
   // ── Selection ring ────────────────────────────────────────────────────
 
-  private drawSelectRing(node: RenderNode, overrideH?: number): void {
-    const { ctx, cam, c } = this;
-    const h = overrideH ?? node.h;
+  private drawSelectRing(node: RenderNode): void {
+    const { ctx, cam, colors: c } = this;
+    const gap = 4;
     ctx.strokeStyle = c.selectRing;
     ctx.lineWidth = 3 / cam.zoom;
-    this.roundRect(node.x - node.w / 2 - 4, node.y - h / 2 - 4, node.w + 8, h + 8, 12);
+    this.roundRect(
+      node.x - node.w / 2 - gap,
+      node.y - node.h / 2 - gap,
+      node.w + gap * 2,
+      node.h + gap * 2,
+      NODE_RADIUS + gap,
+    );
     ctx.stroke();
   }
 
@@ -503,7 +570,7 @@ export class Renderer {
 
   /** Canvas-rendered tooltip in screen space. */
   private drawTooltip(text: string, sx: number, sy: number): void {
-    const { ctx, c } = this;
+    const { ctx, colors: c } = this;
     const fontSize = 12;
     const padding = 8;
     const offsetY = 20;
@@ -523,8 +590,7 @@ export class Renderer {
     if (x > maxX) x = maxX;
     if (y > maxY) y = sy - offsetY - boxH; // flip above cursor
 
-    // Background.
-    ctx.fillStyle = 'rgba(20, 22, 30, 0.92)';
+    ctx.fillStyle = c.tooltipBg;
     this.roundRect(x, y, boxW, boxH, radius);
     ctx.fill();
 
@@ -537,13 +603,18 @@ export class Renderer {
 
   // ── Minimap ────────────────────────────────────────────────────────────
 
-  renderMinimap(miniCtx: CanvasRenderingContext2D, mw: number, mh: number, graph: Graph): void {
-    const { dpr, c } = this;
+  renderMinimap(
+    miniCtx: CanvasRenderingContext2D,
+    mw: number,
+    mh: number,
+    graph: Graph,
+  ): MinimapTransform | null {
+    const { dpr, colors: c } = this;
     miniCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     miniCtx.fillStyle = c.minimap;
     miniCtx.fillRect(0, 0, mw, mh);
 
-    if (graph.nodes.size === 0) return;
+    if (graph.nodes.size === 0) return null;
 
     let minX = Infinity,
       minY = Infinity,
@@ -599,6 +670,8 @@ export class Renderer {
     miniCtx.strokeRect(vx, vy, vw, vh);
     miniCtx.fillStyle = c.minimapVp;
     miniCtx.fillRect(vx, vy, vw, vh);
+
+    return { minX, minY, scale, ox, oy, mw, mh };
   }
 
   // ── Dot grid ──────────────────────────────────────────────────────────
@@ -606,7 +679,7 @@ export class Renderer {
   /** Subtle dot grid for spatial grounding. Drawn in camera space. */
   private drawGrid(vp: { x: number; y: number; w: number; h: number }, c: ColorSnapshot): void {
     const { ctx, cam, dpr } = this;
-    const spacing = 60;
+    const spacing = 80;
 
     // Fade grid when zoomed out.
     const alpha = Math.min(1, (cam.zoom - 0.15) / 0.35);
@@ -643,19 +716,39 @@ export class Renderer {
 
   // ── Drop shadow ─────────────────────────────────────────────────────
 
-  /** Soft shadow behind node cards for depth. */
-  private drawShadow(node: RenderNode, overrideH?: number): void {
-    const { ctx, cam, c } = this;
-    const h = overrideH ?? node.h;
-    const offset = 3 / cam.zoom;
+  private drawShadow(node: RenderNode): void {
+    const { ctx, cam, colors: c } = this;
+
+    const softOffset = 4 / cam.zoom;
+    const savedAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = savedAlpha * 0.3;
     ctx.fillStyle = c.shadow;
-    this.roundRect(node.x - node.w / 2 + offset, node.y - h / 2 + offset, node.w, h, NODE_RADIUS);
+    this.roundRect(
+      node.x - node.w / 2 + softOffset,
+      node.y - node.h / 2 + softOffset,
+      node.w,
+      node.h,
+      NODE_RADIUS,
+    );
+    ctx.fill();
+    ctx.globalAlpha = savedAlpha;
+
+    const offset = 2 / cam.zoom;
+    ctx.fillStyle = c.shadow;
+    this.roundRect(
+      node.x - node.w / 2 + offset,
+      node.y - node.h / 2 + offset,
+      node.w,
+      node.h,
+      NODE_RADIUS,
+    );
     ctx.fill();
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
   private roundRect(x: number, y: number, w: number, h: number, r: number): void {
+    r = Math.min(r, w / 2, h / 2);
     const ctx = this.ctx;
     ctx.beginPath();
     ctx.moveTo(x + r, y);

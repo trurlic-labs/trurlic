@@ -1,3 +1,5 @@
+import { esc } from '../util';
+
 /** A single action in the command palette. */
 export interface PaletteAction {
   label: string;
@@ -122,9 +124,10 @@ export class CommandPalette {
     for (const child of el.children) {
       child.addEventListener('click', () => {
         const idx = parseInt((child as HTMLElement).dataset.idx ?? '-1', 10);
-        if (idx >= 0 && idx < this.filtered.length) {
+        const action = this.filtered[idx];
+        if (action) {
           this.close();
-          this.filtered[idx].run();
+          action.run();
         }
       });
     }
@@ -132,10 +135,4 @@ export class CommandPalette {
     const active = el.querySelector('.active') as HTMLElement | null;
     if (active) active.scrollIntoView({ block: 'nearest' });
   }
-}
-
-function esc(s: string): string {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
 }

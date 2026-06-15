@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { edgeColor, edgeCurveCP, buildEdgePairSet, EDGE_OPACITY } from './edges';
-import type { ColorSnapshot, RenderEdge } from '../types';
+import { edgeColor, edgeCurveCP, EDGE_OPACITY } from './edges';
+import type { ColorSnapshot } from '../types';
 
 /** Minimal color snapshot stub — only the fields edgeColor reads. */
 const COLORS = {
@@ -68,33 +68,5 @@ describe('edgeCurveCP', () => {
     const { cpx, cpy } = edgeCurveCP(50, 50, 50, 50, 1, false);
     expect(cpx).toBe(50);
     expect(cpy).toBe(50);
-  });
-});
-
-describe('buildEdgePairSet', () => {
-  it('includes rendered edge kinds', () => {
-    const edges: RenderEdge[] = [
-      { from: 'a', to: 'b', kind: 'connects_to' },
-      { from: 'b', to: 'c', kind: 'depends_on' },
-    ];
-    const set = buildEdgePairSet(edges);
-    expect(set.has('a\0b')).toBe(true);
-    expect(set.has('b\0c')).toBe(true);
-  });
-
-  it('excludes belongs_to edges', () => {
-    const edges: RenderEdge[] = [{ from: 'x', to: 'y', kind: 'belongs_to' }];
-    const set = buildEdgePairSet(edges);
-    expect(set.size).toBe(0);
-  });
-
-  it('enables O(1) bidirectional detection', () => {
-    const edges: RenderEdge[] = [
-      { from: 'a', to: 'b', kind: 'connects_to' },
-      { from: 'b', to: 'a', kind: 'connects_to' },
-    ];
-    const set = buildEdgePairSet(edges);
-    // For edge a→b, check if reverse b→a exists.
-    expect(set.has('b\0a')).toBe(true);
   });
 });

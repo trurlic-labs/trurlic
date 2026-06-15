@@ -17,6 +17,7 @@ import type { AABB } from './renderer/culling';
 import type { SearchResult } from './ui/search';
 import type { FilterState } from './types';
 
+import { esc } from './util';
 import { UndoStack } from './app/undo';
 import { Selection } from './app/selection';
 import { DragState } from './app/drag';
@@ -24,9 +25,7 @@ import type { MinimapTransform } from './app/drag';
 import { Navigation } from './app/navigation';
 import { Filters } from './app/filters';
 import { HoverTracker } from './app/hover';
-import type { HoverEdge } from './app/hover';
-import { pointBezierDistSq } from './renderer/geometry';
-import { edgeCurveCP, buildEdgePairSet } from './renderer/edges';
+import { findHoveredEdge } from './app/edge-hit';
 
 // ── App ──────────────────────────────────────────────────────────────────
 
@@ -53,13 +52,22 @@ class App {
   private readonly filters = new Filters();
   private readonly hover = new HoverTracker();
 
+  // Stored to prevent GC; the WS holds callbacks that close over `this`.
+  // @ts-expect-error retained for side-effect, not read
+  private readonly ws: WsConnection;
+
   // Render-loop scheduling — derived per frame, not domain state.
   private needsRender = true;
   private lod: LOD = LOD.Overview;
   private visibleCount = 0;
+  private initialLoadDone = false;
+  private reloadPending = false;
 
   constructor() {
     const token = new URLSearchParams(location.search).get('token') ?? '';
+    if (token) {
+      history.replaceState(null, '', location.pathname);
+    }
     this.api = new ApiClient(token);
 
     const canvas = document.getElementById('canvas') as HTMLCanvasElement;
@@ -88,6 +96,15 @@ class App {
 
     this.toolbar = new Toolbar((state) => this.onFilterChange(state));
 
+    const panelToggle = document.getElementById('panel-toggle')!;
+    panelToggle.addEventListener('click', () => {
+      const panel = document.getElementById('panel')!;
+      const collapsed = panel.classList.toggle('collapsed');
+      document.body.classList.toggle('panel-collapsed', collapsed);
+      panelToggle.textContent = collapsed ? '›' : '‹';
+      this.handleResize();
+    });
+
     const minimap = document.getElementById('minimap') as HTMLCanvasElement;
     const mctx = minimap.getContext('2d');
     if (!mctx) throw new Error('minimap context');
@@ -97,29 +114,36 @@ class App {
     this.setupSearch();
     this.installKeyboard();
     this.handleResize();
+    this.setupPanelResize();
     window.addEventListener('resize', () => this.handleResize());
+
+    this.panel.showLoading();
 
     this.api
       .fetchGraph()
       .then((snap) => {
+        document.getElementById('loading-overlay')!.classList.add('hidden');
         this.graph.loadSnapshot(snap);
         this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
         this.layout.run(this.graph.nodes, this.graph.edges, 200);
         this.graph.rebuildQuadtree();
+        this.graph.rebuildPatternHulls();
         this.fitView();
         this.updateLOD();
         this.panel.showProject(this.graph);
         this.breadcrumb.update(this.graph.projectName, null);
         this.toolbar.setAvailableTags(this.graph.allTags());
         this.needsRender = true;
+        this.initialLoadDone = true;
         this.showFirstVisitHint();
       })
       .catch((e) => {
         console.error('Failed to load graph:', e);
-        this.panel.showEmpty();
+        document.getElementById('loading-overlay')!.classList.add('hidden');
+        this.panel.showLoadError(() => this.reloadGraph());
       });
 
-    new WsConnection(
+    this.ws = new WsConnection(
       token,
       (ev) => this.handleWsEvent(ev),
       (state) => this.handleWsState(state),
@@ -164,7 +188,10 @@ class App {
 
   private onPointerDown(e: PointerEvent): void {
     if (this.selection.searchOpen) this.closeSearch();
-    if (this.palette.isOpen) this.palette.close();
+    if (this.palette.isOpen) {
+      this.palette.close();
+      this.canvas.focus();
+    }
 
     // Clear hover — no hover effects during drag/pan.
     this.hover.clear();
@@ -184,9 +211,17 @@ class App {
       this.panel.showComponent(hit, this.graph);
       this.announce(`Selected component: ${hitName}`);
     } else {
-      this.selection.select(null);
-      this.syncFocusClear();
-      this.panel.showProject(this.graph);
+      const patHit = this.graph.patternAt(wx, wy);
+      if (patHit) {
+        this.selection.select(null);
+        this.syncFocusClear();
+        this.panel.showPattern(patHit, this.graph);
+        this.announce(`Selected pattern: ${patHit}`);
+      } else {
+        this.selection.select(null);
+        this.syncFocusClear();
+        this.panel.showProject(this.graph);
+      }
     }
     this.breadcrumb.update(this.graph.projectName, this.selection.selected);
     this.needsRender = true;
@@ -209,23 +244,43 @@ class App {
     const hit = this.graph.nodeAt(wx, wy);
     const hitName = hit?.name ?? null;
     const hitDesc = hit?.description ?? '';
-    const hitEdge = hitName
-      ? null
-      : findHoveredEdge(this.graph, wx, wy, this.camera.zoom, this.lod, this.filters.state);
+
+    const hitPattern = hitName ? null : this.graph.patternAt(wx, wy);
+    const rawPatDesc = hitPattern
+      ? (this.graph.patterns.get(hitPattern)?.description ?? hitPattern)
+      : '';
+    const hitPatternDesc = rawPatDesc.length > 100 ? rawPatDesc.slice(0, 97) + '…' : rawPatDesc;
+
+    const hitEdge =
+      hitName || hitPattern
+        ? null
+        : findHoveredEdge(this.graph, wx, wy, this.camera.zoom, this.lod, this.filters.state);
 
     const now = performance.now();
-    if (this.hover.update(hitName, hitDesc, hitEdge, e.offsetX, e.offsetY, now)) {
+    if (
+      this.hover.update(
+        hitName,
+        hitDesc,
+        hitPattern,
+        hitPatternDesc,
+        hitEdge,
+        e.offsetX,
+        e.offsetY,
+        now,
+      )
+    ) {
       this.needsRender = true;
     }
 
     // Cursor: pointer over interactive elements, otherwise default (CSS grab).
-    this.canvas.style.cursor = hitName || hitEdge ? 'pointer' : '';
+    this.canvas.style.cursor = hitName || hitPattern || hitEdge ? 'pointer' : '';
   }
 
   private onPointerUp(): void {
     const result = this.drag.onPointerUp();
     if (result.nodePositionChanged) {
       this.graph.rebuildQuadtree();
+      this.graph.rebuildPatternHulls();
       this.updateLOD();
       this.drag.scheduleLayoutSave(() => this.saveLayout());
     }
@@ -280,8 +335,12 @@ class App {
         match: Keys.cmdK,
         run: (e) => {
           e.preventDefault();
-          if (this.palette.isOpen) this.palette.close();
-          else this.palette.open(this.buildPaletteActions());
+          if (this.palette.isOpen) {
+            this.palette.close();
+            this.canvas.focus();
+          } else {
+            this.palette.open(this.buildPaletteActions());
+          }
         },
       },
       { match: () => this.palette.isOpen, run: () => {} },
@@ -294,27 +353,42 @@ class App {
       },
       { match: () => this.selection.searchOpen, run: () => {} },
       {
+        match: () => {
+          const el = document.activeElement as HTMLElement | null;
+          if (!el) return false;
+          const tag = el.tagName;
+          return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+        },
+        run: () => {},
+      },
+      {
         match: Keys.undo,
         run: (e) => {
           e.preventDefault();
-          this.undo.undo().then((d) => {
-            if (d) {
-              this.announce(`Undo: ${d}`);
-              this.reloadGraph();
-            }
-          });
+          this.undo
+            .undo()
+            .then((d) => {
+              if (d) {
+                this.announce(`Undo: ${d}`);
+                this.reloadGraph();
+              }
+            })
+            .catch((err) => this.announce(`Undo failed: ${err.message}`));
         },
       },
       {
         match: Keys.redo,
         run: (e) => {
           e.preventDefault();
-          this.undo.redo().then((d) => {
-            if (d) {
-              this.announce(`Redo: ${d}`);
-              this.reloadGraph();
-            }
-          });
+          this.undo
+            .redo()
+            .then((d) => {
+              if (d) {
+                this.announce(`Redo: ${d}`);
+                this.reloadGraph();
+              }
+            })
+            .catch((err) => this.announce(`Redo failed: ${err.message}`));
         },
       },
       {
@@ -365,13 +439,7 @@ class App {
         },
       },
       {
-        match: (e) => {
-          if (!Keys.del(e) || !this.selection.selected) return false;
-          const tag = (document.activeElement as HTMLElement)?.tagName;
-          if (tag === 'INPUT' || tag === 'TEXTAREA') return false;
-          if ((document.activeElement as HTMLElement)?.isContentEditable) return false;
-          return true;
-        },
+        match: (e) => Keys.del(e) && this.selection.selected !== null,
         run: (e) => {
           e.preventDefault();
           this.deleteSelected();
@@ -398,6 +466,7 @@ class App {
               for (const n of this.graph.nodes.values()) n.pinned = false;
               this.layout.run(this.graph.nodes, this.graph.edges, 200);
               this.graph.rebuildQuadtree();
+              this.graph.rebuildPatternHulls();
               this.fitView();
             })
             .catch((e) => console.error('Reset layout failed:', e));
@@ -485,12 +554,6 @@ class App {
       this.api
         .deleteDecision(name)
         .then(() => {
-          this.undo.push({
-            description: `delete decision ${name}`,
-            undo: () =>
-              Promise.reject(new Error('Decision deletion cannot be undone via the map API')),
-            redo: () => this.api.deleteDecision(name),
-          });
           this.selection.select(null);
           this.breadcrumb.update(this.graph.projectName, null);
           this.reloadGraph();
@@ -549,6 +612,7 @@ class App {
   private closeSearch(): void {
     document.getElementById('search-bar')!.classList.add('hidden');
     this.selection.closeSearch();
+    this.canvas.focus();
   }
 
   private renderSearchResults(el: HTMLElement): void {
@@ -654,8 +718,8 @@ class App {
   private handleWsEvent(event: { type: string; [k: string]: unknown }): void {
     switch (event.type) {
       case 'node_removed': {
-        const name = event.name as string | undefined;
-        if (!name) break;
+        const name = event.name;
+        if (typeof name !== 'string') break;
         this.graph.removeNode(name);
         if (this.selection.selected === name) {
           this.selection.select(null);
@@ -669,19 +733,28 @@ class App {
         return;
       }
       case 'edge_added': {
-        const edge = event.edge as { from: string; to: string; kind: string } | undefined;
-        if (edge) {
-          this.graph.addEdge(edge.from, edge.to, edge.kind);
+        const edge = event.edge;
+        if (
+          edge &&
+          typeof edge === 'object' &&
+          typeof (edge as Record<string, unknown>).from === 'string' &&
+          typeof (edge as Record<string, unknown>).to === 'string' &&
+          typeof (edge as Record<string, unknown>).kind === 'string'
+        ) {
+          const { from, to, kind } = edge as { from: string; to: string; kind: string };
+          this.graph.addEdge(from, to, kind);
+          this.graph.rebuildEdgePairSet();
           this.needsRender = true;
         }
         return;
       }
       case 'edge_removed': {
-        const from = event.from as string | undefined;
-        const to = event.to as string | undefined;
-        const kind = event.kind as string | undefined;
-        if (from && to && kind) {
+        const from = event.from;
+        const to = event.to;
+        const kind = event.kind;
+        if (typeof from === 'string' && typeof to === 'string' && typeof kind === 'string') {
           this.graph.removeEdge(from, to, kind);
+          this.graph.rebuildEdgePairSet();
           this.needsRender = true;
         }
         return;
@@ -698,24 +771,30 @@ class App {
       el.classList.remove('hidden');
     } else {
       el.classList.add('hidden');
-      this.reloadGraph();
+      if (this.initialLoadDone) this.reloadGraph();
     }
   }
 
   private reloadGraph(): void {
-    this.api
-      .fetchGraph()
-      .then((snap) => {
-        this.graph.loadSnapshot(snap);
-        this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
-        this.layout.run(this.graph.nodes, this.graph.edges, 50);
-        this.graph.rebuildQuadtree();
-        this.updateLOD();
-        this.needsRender = true;
-        this.toolbar.setAvailableTags(this.graph.allTags());
-        this.refreshPanel();
-      })
-      .catch((e) => console.error('Reload failed:', e));
+    if (this.reloadPending) return;
+    this.reloadPending = true;
+    queueMicrotask(() => {
+      this.reloadPending = false;
+      this.api
+        .fetchGraph()
+        .then((snap) => {
+          this.graph.loadSnapshot(snap);
+          this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
+          this.layout.run(this.graph.nodes, this.graph.edges, 50);
+          this.graph.rebuildQuadtree();
+          this.graph.rebuildPatternHulls();
+          this.updateLOD();
+          this.needsRender = true;
+          this.toolbar.setAvailableTags(this.graph.allTags());
+          this.refreshPanel();
+        })
+        .catch((e) => console.error('Reload failed:', e));
+    });
   }
 
   private refreshPanel(): void {
@@ -752,57 +831,36 @@ class App {
   // ── Render loop ─────────────────────────────────────────────────────────
 
   private renderLoop = (): void => {
-    const now = performance.now();
-    if (this.camera.tick()) {
-      this.updateLOD();
-      this.needsRender = true;
-    }
-    if (this.hover.tick(now)) {
-      this.needsRender = true;
-    }
+    try {
+      const now = performance.now();
+      if (this.camera.tick()) {
+        this.updateLOD();
+        this.needsRender = true;
+      }
+      if (this.hover.tick(now)) {
+        this.needsRender = true;
+      }
 
-    if (this.needsRender) {
-      const fading = this.renderer.render(
-        this.graph,
-        this.selection.selected,
-        this.lod,
-        this.selection.focusSet,
-        this.filters.state,
-        this.hover,
-      );
-      this.drag.setMinimapTransform(this.renderMinimap());
-      this.needsRender = fading;
+      if (this.needsRender) {
+        const fading = this.renderer.render(
+          this.graph,
+          this.selection.selected,
+          this.lod,
+          this.selection.focusSet,
+          this.filters.state,
+          this.hover,
+        );
+        this.drag.setMinimapTransform(this.renderMinimap());
+        this.needsRender = fading;
+      }
+    } catch (e) {
+      console.error('Render error:', e);
     }
     requestAnimationFrame(this.renderLoop);
   };
 
   private renderMinimap(): MinimapTransform | null {
-    const mw = 180;
-    const mh = 120;
-    this.renderer.renderMinimap(this.miniCtx, mw, mh, this.graph);
-
-    if (this.graph.nodes.size === 0) return null;
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    for (const n of this.graph.nodes.values()) {
-      minX = Math.min(minX, n.x - n.w / 2);
-      minY = Math.min(minY, n.y - n.h / 2);
-      maxX = Math.max(maxX, n.x + n.w / 2);
-      maxY = Math.max(maxY, n.y + n.h / 2);
-    }
-    const pad = 40;
-    minX -= pad;
-    minY -= pad;
-    maxX += pad;
-    maxY += pad;
-    const bw = maxX - minX;
-    const bh = maxY - minY;
-    const scale = Math.min(mw / bw, mh / bh);
-    const ox = (mw - bw * scale) / 2;
-    const oy = (mh - bh * scale) / 2;
-    return { minX, minY, scale, ox, oy, mw, mh };
+    return this.renderer.renderMinimap(this.miniCtx, 220, 150, this.graph);
   }
 
   private fitView(): void {
@@ -814,76 +872,66 @@ class App {
 
   private handleResize(): void {
     const panel = document.getElementById('panel')!;
-    const w = window.innerWidth - panel.offsetWidth;
+    const panelVisible = !panel.classList.contains('collapsed');
+    const w = panelVisible ? window.innerWidth - panel.offsetWidth : window.innerWidth;
     const h = window.innerHeight;
     this.renderer.resize(w, h);
 
     const minimap = document.getElementById('minimap') as HTMLCanvasElement;
     const dpr = window.devicePixelRatio || 1;
-    minimap.width = 180 * dpr;
-    minimap.height = 120 * dpr;
+    minimap.width = 220 * dpr;
+    minimap.height = 150 * dpr;
 
     this.updateLOD();
     this.needsRender = true;
   }
-}
 
-// ── Edge hit-testing ──────────────────────────────────────────────────────
+  // ── Panel resize ──────────────────────────────────────────────────────
 
-/** Screen-pixel threshold for edge hover detection. */
-const EDGE_HIT_PX = 8;
+  private setupPanelResize(): void {
+    const handle = document.getElementById('panel-resize')!;
+    const root = document.documentElement;
+    const MIN_W = 220;
+    const MAX_W = 560;
 
-/**
- * Find the edge nearest to the cursor in world space.
- * Hit-tests against the quadratic Bézier curve (not the straight
- * chord) to match the rendered curvature. Only checks edges visible
- * at the current LOD and filter state.
- * Returns null if no edge is within EDGE_HIT_PX screen pixels.
- */
-function findHoveredEdge(
-  graph: Graph,
-  wx: number,
-  wy: number,
-  zoom: number,
-  lod: LOD,
-  filters: FilterState | undefined,
-): HoverEdge | null {
-  if (lod < LOD.Component) return null;
-
-  const threshold = EDGE_HIT_PX / zoom;
-  const threshSq = threshold * threshold;
-  let bestDistSq = threshSq;
-  let best: HoverEdge | null = null;
-
-  const pairSet = buildEdgePairSet(graph.edges);
-
-  for (const e of graph.edges) {
-    if (e.kind === 'belongs_to') continue;
-    if (lod === LOD.Overview && e.kind !== 'connects_to') continue;
-    if (filters && !filters.edgeKinds.has(e.kind)) continue;
-
-    const a = graph.nodes.get(e.from);
-    const b = graph.nodes.get(e.to);
-    if (!a || !b) continue;
-
-    const hasBi = pairSet.has(`${e.to}\0${e.from}`);
-    const reverse = hasBi && e.from > e.to;
-    const { cpx, cpy } = edgeCurveCP(a.x, a.y, b.x, b.y, zoom, reverse);
-
-    const d = pointBezierDistSq(wx, wy, a.x, a.y, cpx, cpy, b.x, b.y);
-    if (d < bestDistSq) {
-      bestDistSq = d;
-      best = { from: e.from, to: e.to, kind: e.kind };
+    try {
+      const saved = sessionStorage.getItem('trurlic-panel-width');
+      if (saved) {
+        const w = Math.max(MIN_W, Math.min(MAX_W, parseInt(saved, 10)));
+        if (!isNaN(w)) root.style.setProperty('--panel-width', `${w}px`);
+      }
+    } catch {
+      /* sessionStorage unavailable */
     }
+
+    let dragging = false;
+
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      handle.classList.add('active');
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    handle.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const w = Math.max(MIN_W, Math.min(MAX_W, window.innerWidth - e.clientX));
+      root.style.setProperty('--panel-width', `${w}px`);
+      this.handleResize();
+    });
+
+    handle.addEventListener('pointerup', () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('active');
+      const current = getComputedStyle(root).getPropertyValue('--panel-width').trim();
+      try {
+        sessionStorage.setItem('trurlic-panel-width', parseInt(current, 10).toString());
+      } catch {
+        /* sessionStorage unavailable */
+      }
+    });
   }
-
-  return best;
-}
-
-function esc(s: string): string {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
 }
 
 new App();

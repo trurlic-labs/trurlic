@@ -149,6 +149,31 @@ export function roundedHullPath(
   ctx.closePath();
 }
 
+// ── Ray–rectangle intersection ────────────────────────────────────────
+
+/**
+ * Intersection of a ray from (cx,cy) in direction (dx,dy) with an
+ * axis-aligned rectangle centered at (cx,cy) with half-extents hw, hh.
+ */
+export function rayRectIntersect(
+  cx: number,
+  cy: number,
+  hw: number,
+  hh: number,
+  dx: number,
+  dy: number,
+): Point {
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+  if (absDx < 1e-10 && absDy < 1e-10) return { x: cx, y: cy };
+
+  const tx = absDx > 1e-10 ? hw / absDx : Infinity;
+  const ty = absDy > 1e-10 ? hh / absDy : Infinity;
+  const t = Math.min(tx, ty);
+
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
 // ── Bounding-box helpers ───────────────────────────────────────────────
 
 /**
@@ -173,6 +198,29 @@ export function nodeCorners(
     );
   }
   return pts;
+}
+
+// ── Point-in-polygon ──────────────────────────────────────────────────
+
+/**
+ * Test whether point (px, py) is inside a convex polygon.
+ * Uses the cross-product winding method. Polygon vertices
+ * must be in consistent winding order (CW or CCW).
+ */
+export function pointInConvexPoly(px: number, py: number, poly: readonly Point[]): boolean {
+  const n = poly.length;
+  if (n < 3) return false;
+  let positive = 0;
+  let negative = 0;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    const cp = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+    if (cp > 0) positive++;
+    else if (cp < 0) negative++;
+    if (positive > 0 && negative > 0) return false;
+  }
+  return true;
 }
 
 // ── Distance helpers ───────────────────────────────────────────────────

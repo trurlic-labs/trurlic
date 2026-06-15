@@ -4,11 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>trurlic map</title>
+    <meta name="description" content="Interactive architecture graph visualization" />
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <canvas id="canvas"></canvas>
-    <canvas id="minimap" width="360" height="240"></canvas>
+    <canvas id="canvas" tabindex="0">Architecture graph visualization</canvas>
+    <canvas id="minimap">Minimap overview</canvas>
     <!-- Reconnecting indicator -->
     <div id="ws-status" class="ws-status hidden">Reconnecting…</div>
     <!-- Breadcrumb trail -->
@@ -16,7 +18,7 @@
     <!-- Toolbar: edge toggles, tag filter, age filter, focus mode -->
     <div id="toolbar" class="toolbar"></div>
     <!-- Search overlay -->
-    <div id="search-bar" class="search-bar hidden">
+    <div id="search-bar" class="search-bar hidden" role="search">
       <input
         id="search-input"
         type="text"
@@ -41,9 +43,17 @@
     </div>
     <!-- First-visit hint (shown once, fades after 4s) -->
     <div id="hint-overlay" class="hint-overlay hidden">
-      Scroll to zoom · Drag to pan · Click a component to explore
+      <span class="hint-pill">Scroll to zoom · Drag to pan · Click a component to explore</span>
     </div>
-    <div id="panel"></div>
+    <!-- Loading overlay (shown while graph is being fetched) -->
+    <div id="loading-overlay" class="loading-overlay">
+      <div class="loading-text">Loading architecture graph…</div>
+    </div>
+    <button id="panel-toggle" class="panel-toggle" aria-label="Toggle panel" title="Toggle panel">
+      ‹
+    </button>
+    <div id="panel-resize" class="panel-resize"></div>
+    <div id="panel" role="complementary" aria-label="Inspector panel"></div>
     <!-- ARIA live region: announces selected node for screen readers. -->
     <div id="aria-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
     <script src="app.js"></script>

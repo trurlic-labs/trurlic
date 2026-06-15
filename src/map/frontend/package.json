@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --outfile=dist/app.js --format=iife --target=es2020 --minify",
+    "build": "esbuild src/main.ts --bundle --outfile=dist/app.js --format=iife --target=es2020 --minify && cp src/style.css dist/style.css && cp src/index.html dist/index.html",
+    "dev": "cp src/style.css dist/style.css && cp src/index.html dist/index.html && esbuild src/main.ts --bundle --outfile=dist/app.js --format=iife --target=es2020",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

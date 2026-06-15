@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { convexHull, expandHull, cross, nodeCorners } from './geometry';
+import {
+  convexHull,
+  expandHull,
+  cross,
+  nodeCorners,
+  rayRectIntersect,
+  pointInConvexPoly,
+  pointBezierDistSq,
+  pointSegDistSq,
+} from './geometry';
 import type { Point } from './geometry';
 
 describe('cross', () => {
@@ -59,9 +68,7 @@ describe('convexHull', () => {
       { x: 3, y: 0 },
     ];
     const hull = convexHull(pts);
-    // Collinear → degenerate hull with 2 endpoints.
-    expect(hull.length).toBeLessThanOrEqual(4);
-    expect(hull.length).toBeGreaterThanOrEqual(2);
+    expect(hull).toHaveLength(2);
   });
 
   it('handles duplicate points', () => {
@@ -129,16 +136,152 @@ describe('expandHull', () => {
     expect(exp).toHaveLength(2);
     expect(exp).not.toBe(pts); // should be a new array
   });
+
+  it('handles acute angles without producing extreme coordinates', () => {
+    const thin: Point[] = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 50, y: 1 },
+    ];
+    const hull = convexHull(thin);
+    const exp = expandHull(hull, 20);
+    for (const p of exp) {
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+      expect(Math.abs(p.x)).toBeLessThan(500);
+      expect(Math.abs(p.y)).toBeLessThan(500);
+    }
+  });
+});
+
+describe('rayRectIntersect', () => {
+  const cx = 100;
+  const cy = 50;
+  const hw = 60;
+  const hh = 30;
+
+  it('ray pointing right hits the right edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 1, 0);
+    expect(p.x).toBeCloseTo(cx + hw);
+    expect(p.y).toBeCloseTo(cy);
+  });
+
+  it('ray pointing left hits the left edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, -1, 0);
+    expect(p.x).toBeCloseTo(cx - hw);
+    expect(p.y).toBeCloseTo(cy);
+  });
+
+  it('ray pointing down hits the bottom edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 0, 1);
+    expect(p.x).toBeCloseTo(cx);
+    expect(p.y).toBeCloseTo(cy + hh);
+  });
+
+  it('ray pointing up hits the top edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 0, -1);
+    expect(p.x).toBeCloseTo(cx);
+    expect(p.y).toBeCloseTo(cy - hh);
+  });
+
+  it('45° diagonal on a square hits the corner', () => {
+    const p = rayRectIntersect(0, 0, 50, 50, 1, 1);
+    expect(p.x).toBeCloseTo(50);
+    expect(p.y).toBeCloseTo(50);
+  });
+
+  it('45° diagonal on a rectangle hits the shorter edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 1, 1);
+    // hh < hw, so the horizontal edge (top/bottom) is hit first
+    expect(p.y).toBeCloseTo(cy + hh);
+    expect(p.x).toBeCloseTo(cx + hh); // dx == dy, so x offset == y offset
+  });
+
+  it('steep diagonal hits the top/bottom edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 0.5, 2);
+    // ty = hh / 2 = 15, tx = hw / 0.5 = 120 → hits horizontal edge
+    expect(p.y).toBeCloseTo(cy + hh);
+    expect(p.x).toBeCloseTo(cx + 0.5 * (hh / 2));
+  });
+
+  it('shallow diagonal hits the left/right edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 2, 0.5);
+    // tx = hw / 2 = 30, ty = hh / 0.5 = 60 → hits vertical edge
+    expect(p.x).toBeCloseTo(cx + hw);
+    expect(p.y).toBeCloseTo(cy + 0.5 * (hw / 2));
+  });
+
+  it('zero direction returns the center', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 0, 0);
+    expect(p.x).toBe(cx);
+    expect(p.y).toBe(cy);
+  });
+
+  it('negative diagonal hits the opposite corner region', () => {
+    const p = rayRectIntersect(0, 0, 50, 50, -1, -1);
+    expect(p.x).toBeCloseTo(-50);
+    expect(p.y).toBeCloseTo(-50);
+  });
+});
+
+describe('pointInConvexPoly', () => {
+  const triangle: Point[] = [
+    { x: 0, y: 0 },
+    { x: 4, y: 0 },
+    { x: 2, y: 3 },
+  ];
+
+  const square: Point[] = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+    { x: 0, y: 10 },
+  ];
+
+  it('detects point inside a triangle', () => {
+    expect(pointInConvexPoly(2, 1, triangle)).toBe(true);
+  });
+
+  it('detects point outside a triangle', () => {
+    expect(pointInConvexPoly(5, 5, triangle)).toBe(false);
+  });
+
+  it('detects point inside a square', () => {
+    expect(pointInConvexPoly(5, 5, square)).toBe(true);
+  });
+
+  it('treats point on edge as inside', () => {
+    expect(pointInConvexPoly(2, 0, triangle)).toBe(true);
+  });
+
+  it('detects point far away', () => {
+    expect(pointInConvexPoly(1000, 1000, triangle)).toBe(false);
+  });
+
+  it('returns false for degenerate polygon with fewer than 3 points', () => {
+    expect(pointInConvexPoly(0, 0, [])).toBe(false);
+    expect(pointInConvexPoly(0, 0, [{ x: 0, y: 0 }])).toBe(false);
+    expect(
+      pointInConvexPoly(0, 0, [
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+      ]),
+    ).toBe(false);
+  });
 });
 
 describe('nodeCorners', () => {
-  it('collects 4 corners per node', () => {
+  it('collects 4 corners per node with correct coordinates', () => {
     const nodes = new Map([
       ['a', { x: 0, y: 0, w: 100, h: 60 }],
       ['b', { x: 200, y: 100, w: 100, h: 60 }],
     ]);
     const pts = nodeCorners(['a', 'b'], nodes);
-    expect(pts).toHaveLength(8); // 4 per node
+    expect(pts).toHaveLength(8);
+    expect(pts).toContainEqual({ x: -50, y: -30 });
+    expect(pts).toContainEqual({ x: 50, y: -30 });
+    expect(pts).toContainEqual({ x: 50, y: 30 });
+    expect(pts).toContainEqual({ x: -50, y: 30 });
   });
 
   it('skips missing nodes', () => {
@@ -150,5 +293,75 @@ describe('nodeCorners', () => {
   it('returns empty for no matches', () => {
     const pts = nodeCorners(['x'], new Map());
     expect(pts).toHaveLength(0);
+  });
+});
+
+describe('convexHull edge cases', () => {
+  it('returns degenerate hull for all-identical points', () => {
+    const pts: Point[] = [
+      { x: 5, y: 5 },
+      { x: 5, y: 5 },
+      { x: 5, y: 5 },
+    ];
+    const hull = convexHull(pts);
+    expect(hull.length).toBeLessThanOrEqual(2);
+    for (const p of hull) {
+      expect(p.x).toBe(5);
+      expect(p.y).toBe(5);
+    }
+  });
+});
+
+describe('pointSegDistSq', () => {
+  it('returns 0 for point on segment start', () => {
+    expect(pointSegDistSq(0, 0, 0, 0, 10, 0)).toBe(0);
+  });
+
+  it('returns 0 for point on segment end', () => {
+    expect(pointSegDistSq(10, 0, 0, 0, 10, 0)).toBe(0);
+  });
+
+  it('returns squared perpendicular distance for midpoint offset', () => {
+    expect(pointSegDistSq(5, 3, 0, 0, 10, 0)).toBeCloseTo(9);
+  });
+
+  it('returns distance to nearest endpoint when past segment', () => {
+    expect(pointSegDistSq(15, 0, 0, 0, 10, 0)).toBeCloseTo(25);
+  });
+
+  it('handles degenerate zero-length segment', () => {
+    expect(pointSegDistSq(3, 4, 0, 0, 0, 0)).toBeCloseTo(25);
+  });
+});
+
+describe('pointBezierDistSq', () => {
+  it('returns near-zero for point on start of curve', () => {
+    const d = pointBezierDistSq(0, 0, 0, 0, 5, 5, 10, 0);
+    expect(d).toBeLessThan(1);
+  });
+
+  it('returns near-zero for point on end of curve', () => {
+    const d = pointBezierDistSq(10, 0, 0, 0, 5, 5, 10, 0);
+    expect(d).toBeLessThan(1);
+  });
+
+  it('matches pointSegDistSq for a straight-line Bezier', () => {
+    const d = pointBezierDistSq(5, 3, 0, 0, 5, 0, 10, 0);
+    const seg = pointSegDistSq(5, 3, 0, 0, 10, 0);
+    expect(d).toBeCloseTo(seg, 0);
+  });
+
+  it('returns large distance for point far from curve', () => {
+    const d = pointBezierDistSq(1000, 1000, 0, 0, 5, 5, 10, 0);
+    expect(d).toBeGreaterThan(1e6);
+  });
+
+  it('detects near-zero distance at curve apex', () => {
+    // Curve: A=(0,0), CP=(5,20), B=(10,0). Apex near (5, 10).
+    const d = pointBezierDistSq(5, 10, 0, 0, 5, 20, 10, 0);
+    expect(d).toBeLessThan(4);
+    // Point on the chord should be farther from the curved path.
+    const dChord = pointBezierDistSq(5, 0, 0, 0, 5, 20, 10, 0);
+    expect(dChord).toBeGreaterThan(d);
   });
 });

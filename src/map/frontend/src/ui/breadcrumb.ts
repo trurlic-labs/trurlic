@@ -1,3 +1,5 @@
+import { esc } from '../util';
+
 /**
  * Breadcrumb trail: Project → Component.
  *
@@ -36,10 +38,4 @@ export class Breadcrumb {
       });
     }
   }
-}
-
-function esc(s: string): string {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
 }

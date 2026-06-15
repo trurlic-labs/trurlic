@@ -1,4 +1,4 @@
-.PHONY: install build build-release build-frontend install-frontend \
+.PHONY: install build build-debug build-release build-frontend install-frontend \
        test test-frontend check check-frontend \
        fmt fmt-frontend audit audit-js ci setup clean
 
@@ -6,11 +6,13 @@ FRONTEND_DIR = src/map/frontend
 NODE_STAMP   = $(FRONTEND_DIR)/node_modules/.install-stamp
 
 # ── Install (single command: rebuild everything → install binary) ──────────
+# Installs to ~/.local/bin/ — same location as install.sh for end users.
 
 install: build-frontend
-	cargo install --path . --locked
+	@touch src/map/embed.rs
+	cargo install --path . --locked --root ~/.local
 	@echo ""
-	@echo "  ✓ trurlic installed to $$(which trurlic || echo '~/.cargo/bin/trurlic')"
+	@echo "  ✓ trurlic installed to ~/.local/bin/trurlic"
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -41,8 +43,12 @@ test-frontend: check-frontend
 	cd $(FRONTEND_DIR) && npm test
 
 # ── Build ─────────────────────────────────────────────────────────────────────
+# `make build` is the default dev workflow: build frontend + install binary
+# so `trurlic` always points to the latest version.
 
-build: build-frontend
+build: install
+
+build-debug: build-frontend
 	cargo build --locked
 
 build-release: build-frontend
@@ -100,4 +106,4 @@ ci: check check-frontend test audit
 
 clean:
 	cargo clean
-	rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/dist/app.js
+	rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/dist

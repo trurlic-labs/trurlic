@@ -1,6 +1,7 @@
 import type { RenderNode, DecisionNode, PatternNode } from '../types';
 import type { Graph } from '../state/graph';
 import type { ApiClient } from '../state/api';
+import { esc } from '../util';
 
 // ── Callbacks ──────────────────────────────────────────────────────────────
 
@@ -18,11 +19,19 @@ const SAVE_DEBOUNCE = 1000;
  * serves as the primary content surface while the canvas provides
  * spatial context. Inline edits auto-save on blur with debounce.
  */
+type PanelView =
+  | { type: 'project' }
+  | { type: 'component'; name: string }
+  | { type: 'decision'; name: string }
+  | { type: 'pattern'; name: string };
+
 export class Panel {
   private el: HTMLElement;
   private api: ApiClient | null = null;
   private cb: PanelCallbacks | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private history: PanelView[] = [];
+  private currentView: PanelView = { type: 'project' };
 
   constructor(el: HTMLElement) {
     this.el = el;
@@ -34,9 +43,19 @@ export class Panel {
     this.cb = cb;
   }
 
+  private clearPendingSave(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+  }
+
   // ── Project view ────────────────────────────────────────────────────
 
   showProject(graph: Graph): void {
+    this.clearPendingSave();
+    this.currentView = { type: 'project' };
+    this.history = [];
     const dc = graph.decisions.size;
     const cc = graph.nodes.size;
     const pc = graph.patterns.size;
@@ -50,17 +69,21 @@ export class Panel {
       </div>
       <h3>Recent decisions</h3>
       ${recentDecisions(graph)}
+      <h3>Patterns <span class="dim">(${pc})</span></h3>
+      ${patternList(graph)}
     `;
     this.bindDecisionLinks(graph);
+    this.bindPatternLinks(graph);
   }
 
   // ── Component view ──────────────────────────────────────────────────
 
   showComponent(node: RenderNode, graph: Graph): void {
+    this.clearPendingSave();
+    this.currentView = { type: 'component', name: node.name };
+    this.history = [];
     const decs = graph.decisionsFor(node.name);
-    const outgoing = graph.edges.filter((e) => e.from === node.name && e.kind === 'connects_to');
-    const incoming = graph.edges.filter((e) => e.to === node.name && e.kind === 'connects_to');
-    const allConns = [...new Set([...outgoing.map((e) => e.to), ...incoming.map((e) => e.from)])];
+    const allConns = graph.connectionsFor(node.name);
 
     const patterns: PatternNode[] = [];
     for (const [, p] of graph.patterns) {
@@ -69,7 +92,7 @@ export class Panel {
 
     this.el.innerHTML = `
       <div class="panel-kind">component</div>
-      <h2>${esc(node.name)}</h2>
+      <h2 data-component="${esc(node.name)}">${esc(node.name)}</h2>
       ${node.description ? `<p class="dim">${esc(node.description)}</p>` : ''}
       ${
         allConns.length > 0
@@ -98,13 +121,19 @@ export class Panel {
   // ── Decision view ───────────────────────────────────────────────────
 
   showDecision(name: string, graph: Graph): void {
+    this.clearPendingSave();
     const dec = graph.decisions.get(name);
     if (!dec) {
       this.showProject(graph);
       return;
     }
 
+    this.pushCurrentView();
+    this.currentView = { type: 'decision', name };
+    const backHtml = this.history.length > 0 ? '<a href="#" class="panel-back">← back</a>' : '';
+
     this.el.innerHTML = `
+      ${backHtml}
       <div class="panel-kind">decision</div>
       <h2 class="editable-heading" data-field="choice" data-dec="${esc(name)}" data-placeholder="Click to edit">${esc(dec.choice)}</h2>
       <p class="dim">
@@ -133,25 +162,32 @@ export class Panel {
         <button class="btn btn-danger" data-delete-dec="${esc(name)}">Delete decision</button>
       </div>
     `;
+    this.bindBackLink(graph);
     this.bindNavLinks();
-    this.bindEditableFields(name, graph);
-    this.bindDeleteDecision(name, graph);
+    this.bindEditableFields(name);
+    this.bindDeleteDecision(name);
   }
 
   // ── Pattern view ────────────────────────────────────────────────────
 
   showPattern(name: string, graph: Graph): void {
+    this.clearPendingSave();
     const pat = graph.patterns.get(name);
     if (!pat) {
       this.showProject(graph);
       return;
     }
 
+    this.pushCurrentView();
+    this.currentView = { type: 'pattern', name };
+    const backHtml = this.history.length > 0 ? '<a href="#" class="panel-back">← back</a>' : '';
+
     const memberDecs = pat.decisions
       .map((d) => graph.decisions.get(d))
       .filter((d): d is DecisionNode => d != null);
 
     this.el.innerHTML = `
+      ${backHtml}
       <div class="panel-kind">pattern</div>
       <h2>${esc(pat.description)}</h2>
       <p class="dim">${esc(name)}</p>
@@ -166,12 +202,62 @@ export class Panel {
       <h3>Decisions <span class="dim">(${memberDecs.length})</span></h3>
       ${memberDecs.map((d) => decisionRow(d)).join('')}
     `;
+    this.bindBackLink(graph);
     this.bindNavLinks();
     this.bindDecisionLinks(graph);
   }
 
   showEmpty(): void {
+    this.clearPendingSave();
     this.el.innerHTML = `<p class="dim" style="padding:24px">Click a component to inspect</p>`;
+  }
+
+  showLoading(): void {
+    this.clearPendingSave();
+    this.el.innerHTML = '<p class="dim" style="padding:24px">Loading…</p>';
+  }
+
+  showLoadError(retry: () => void): void {
+    this.el.innerHTML = `
+      <div style="padding: 24px;">
+        <p style="margin-bottom: 12px; color: var(--text);">Could not load the architecture graph.</p>
+        <button class="btn" id="retry-btn">Retry</button>
+      </div>
+    `;
+    this.el.querySelector('#retry-btn')?.addEventListener('click', retry);
+  }
+
+  // ── Navigation history ───────────────────────────────────────────────
+
+  private pushCurrentView(): void {
+    this.history.push(this.currentView);
+  }
+
+  private bindBackLink(graph: Graph): void {
+    const link = this.el.querySelector<HTMLElement>('.panel-back');
+    if (!link) return;
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const prev = this.history.pop();
+      if (!prev) return;
+      switch (prev.type) {
+        case 'project':
+          this.showProject(graph);
+          break;
+        case 'component': {
+          const node = graph.nodes.get(prev.name);
+          if (node) this.showComponent(node, graph);
+          else this.showProject(graph);
+          break;
+        }
+        case 'decision':
+          this.showDecision(prev.name, graph);
+          break;
+        case 'pattern':
+          this.showPattern(prev.name, graph);
+          break;
+      }
+    });
   }
 
   // ── Event binding ───────────────────────────────────────────────────
@@ -204,7 +290,7 @@ export class Panel {
     }
   }
 
-  private bindEditableFields(decName: string, _graph: Graph): void {
+  private bindEditableFields(decName: string): void {
     for (const el of this.el.querySelectorAll<HTMLElement>('.editable-heading, .editable-block')) {
       el.contentEditable = 'true';
       el.addEventListener('blur', () => {
@@ -222,8 +308,8 @@ export class Panel {
     }
   }
 
-  private bindDeleteDecision(name: string, _graph: Graph): void {
-    const btn = this.el.querySelector<HTMLElement>(`[data-delete-dec="${name}"]`);
+  private bindDeleteDecision(name: string): void {
+    const btn = this.el.querySelector<HTMLElement>(`[data-delete-dec="${CSS.escape(name)}"]`);
     if (!btn) return;
     btn.addEventListener('click', () => {
       if (!confirm(`Delete decision "${name}"? This cannot be undone.`)) return;
@@ -284,6 +370,21 @@ function decisionRow(d: DecisionNode): string {
   `;
 }
 
+function patternList(graph: Graph): string {
+  const patterns = [...graph.patterns.values()];
+  if (patterns.length === 0) return '<p class="dim">None yet</p>';
+  return patterns
+    .map(
+      (p) => `
+    <div class="dec-card pattern-link" data-pattern="${esc(p.name)}" style="cursor:pointer">
+      <div class="dec-choice">${esc(p.description || p.name)}</div>
+      <div class="dim" style="font-size:12px">${p.components.length} components · ${p.decisions.length} decisions</div>
+    </div>
+  `,
+    )
+    .join('');
+}
+
 function recentDecisions(graph: Graph): string {
   const sorted = [...graph.decisions.values()]
     .sort((a, b) => b.created.localeCompare(a.created))
@@ -299,10 +400,4 @@ function recentDecisions(graph: Graph): string {
   `,
     )
     .join('');
-}
-
-function esc(s: string): string {
-  const el = document.createElement('span');
-  el.textContent = s;
-  return el.innerHTML;
 }

@@ -31,7 +31,7 @@ export class WsConnection {
 
   private connect(): void {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${location.host}/ws?token=${this.token}`;
+    const url = `${proto}//${location.host}/ws?token=${encodeURIComponent(this.token)}`;
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
