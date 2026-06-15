@@ -225,7 +225,7 @@ export class Renderer {
     filters?: FilterState,
   ): void {
     if (graph.patterns.size === 0) return;
-    const { ctx, cam, c } = this;
+    const { ctx, cam } = this;
     const prefersLight =
       typeof matchMedia !== 'undefined'
         ? matchMedia('(prefers-color-scheme: light)').matches
@@ -235,7 +235,6 @@ export class Renderer {
     const baseFill = prefersLight ? 0.1 : 0.14;
     const baseStroke = 0.45;
     const dimFill = 0.03;
-    const labelSize = 13 / cam.zoom;
 
     let patIdx = 0;
     for (const [patName, pat] of graph.patterns) {
@@ -293,42 +292,39 @@ export class Renderer {
       ctx.lineWidth = (isHovered ? 2.5 : 2.0) / cam.zoom;
       ctx.stroke();
 
-      // Label: shown at all LOD levels.
-      // Overview: shortened name (max 20 chars), bold, larger font.
-      // Component: truncated description with background pill.
-      // Decision: full description.
+      // Label — always visible at all LOD levels, positioned above the hull.
       {
         const cx = expanded.reduce((s, p) => s + p.x, 0) / expanded.length;
-        const cy = expanded.reduce((s, p) => s + p.y, 0) / expanded.length;
+        const minY = Math.min(...expanded.map((p) => p.y));
+        const labelY = minY - 8 / cam.zoom;
 
-        const isOverview = lod < LOD.Component;
-        const rawLabel = isOverview ? pat.name : pat.description || pat.name;
-        const maxLen = isOverview ? 20 : lod >= LOD.Decision ? 80 : 30;
+        const rawLabel = pat.description || pat.name;
+        const maxLen = lod >= LOD.Decision ? 60 : lod >= LOD.Component ? 40 : 25;
         const label = rawLabel.length > maxLen ? rawLabel.slice(0, maxLen - 1) + '…' : rawLabel;
-        const size = isOverview ? 14 / cam.zoom : labelSize;
-        const weight = isOverview ? 600 : 400;
 
-        ctx.font = `${weight} ${size}px system-ui, sans-serif`;
+        const labelFontSize = lod >= LOD.Component ? 13 / cam.zoom : 12 / cam.zoom;
+        ctx.font = `600 ${labelFontSize}px system-ui, sans-serif`;
         const tw = ctx.measureText(label).width;
 
-        const px = 6 / cam.zoom;
-        const py = 3 / cam.zoom;
-        ctx.fillStyle = c.bg;
-        ctx.globalAlpha = (dimmedByFocus ? 0.15 : 1) * 0.88;
-        this.roundRect(
-          cx - tw / 2 - px,
-          cy - size / 2 - py,
-          tw + px * 2,
-          size + py * 2,
-          4 / cam.zoom,
-        );
+        const px = 8 / cam.zoom;
+        const py = 4 / cam.zoom;
+        const pillW = tw + px * 2;
+        const pillH = labelFontSize + py * 2;
+
+        ctx.globalAlpha = (dimmedByFocus ? 0.15 : 1) * 0.92;
+        ctx.fillStyle = `hsla(${hue}, ${saturation}%, ${prefersLight ? 95 : 15}%, 0.95)`;
+        this.roundRect(cx - pillW / 2, labelY - pillH, pillW, pillH, 6 / cam.zoom);
         ctx.fill();
 
+        ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, 0.5)`;
+        ctx.lineWidth = 1 / cam.zoom;
+        ctx.stroke();
+
         ctx.globalAlpha = dimmedByFocus ? 0.15 : 1;
-        ctx.fillStyle = c.textDim;
+        ctx.fillStyle = `hsla(${hue}, ${saturation + 10}%, ${prefersLight ? 35 : 75}%, 1)`;
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, cx, cy);
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(label, cx, labelY - py);
       }
 
       patIdx++;
@@ -521,19 +517,23 @@ export class Renderer {
       ctx.fillText(desc, node.x, node.y + 4, node.w - 16);
     }
 
-    // Decision count badge — reflects active filters.
+    // Decision count badge — reflects active filters. Shows pattern count too.
     const rawCount = node.decisionCount ?? 0;
     const count =
       filters && rawCount > 0
         ? filterDecisions(graph.decisionsFor(node.name), filters).length
         : rawCount;
-    if (count > 0) {
-      const badge = `${count}`;
+    const patCount = node.patternCount ?? 0;
+    let badgeText = '';
+    if (count > 0 && patCount > 0) badgeText = `${count} · ${patCount}P`;
+    else if (count > 0) badgeText = `${count}`;
+    else if (patCount > 0) badgeText = `${patCount}P`;
+    if (badgeText) {
       const badgeFontSize = fontSize * 0.7;
       const badgeY = hasDesc ? node.y + 18 : node.y + 8;
       ctx.font = `500 ${badgeFontSize}px system-ui, sans-serif`;
       ctx.fillStyle = c.badge;
-      const bw = ctx.measureText(badge).width + 10;
+      const bw = ctx.measureText(badgeText).width + 10;
       this.roundRect(node.x - bw / 2, badgeY, bw, badgeFontSize + 6, 4);
       ctx.fill();
       ctx.strokeStyle = c.border;
@@ -541,7 +541,7 @@ export class Renderer {
       this.roundRect(node.x - bw / 2, badgeY, bw, badgeFontSize + 6, 4);
       ctx.stroke();
       ctx.fillStyle = c.text;
-      ctx.fillText(badge, node.x, badgeY + (badgeFontSize + 6) / 2, bw);
+      ctx.fillText(badgeText, node.x, badgeY + (badgeFontSize + 6) / 2, bw);
     }
   }
 

@@ -59,8 +59,11 @@ export class Panel {
       </div>
       <h3>Recent decisions</h3>
       ${recentDecisions(graph)}
+      <h3>Patterns <span class="dim">(${pc})</span></h3>
+      ${patternList(graph)}
     `;
     this.bindDecisionLinks(graph);
+    this.bindPatternLinks(graph);
   }
 
   // ── Component view ──────────────────────────────────────────────────
@@ -369,6 +372,21 @@ function decisionRow(d: DecisionNode): string {
       ${d.tags.length > 0 ? `<div class="chip-list">${d.tags.map((t) => `<span class="chip tag">${esc(t)}</span>`).join('')}</div>` : ''}
     </div>
   `;
+}
+
+function patternList(graph: Graph): string {
+  const patterns = [...graph.patterns.values()];
+  if (patterns.length === 0) return '<p class="dim">None yet</p>';
+  return patterns
+    .map(
+      (p) => `
+    <div class="dec-card pattern-link" data-pattern="${esc(p.name)}" style="cursor:pointer">
+      <div class="dec-choice">${esc(p.description || p.name)}</div>
+      <div class="dim" style="font-size:12px">${p.components.length} components · ${p.decisions.length} decisions</div>
+    </div>
+  `,
+    )
+    .join('');
 }
 
 function recentDecisions(graph: Graph): string {
