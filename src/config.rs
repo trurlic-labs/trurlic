@@ -13,6 +13,9 @@ pub enum Provider {
     Anthropic,
     OpenAi,
     OpenRouter,
+    Custom,
+    Ollama,
+    Gemini,
 }
 
 impl Provider {
@@ -21,6 +24,9 @@ impl Provider {
             Self::Anthropic => "anthropic",
             Self::OpenAi => "openai",
             Self::OpenRouter => "openrouter",
+            Self::Custom => "custom",
+            Self::Ollama => "ollama",
+            Self::Gemini => "gemini",
         }
     }
 
@@ -29,6 +35,9 @@ impl Provider {
             Self::Anthropic => "ANTHROPIC_API_KEY",
             Self::OpenAi => "OPENAI_API_KEY",
             Self::OpenRouter => "OPENROUTER_API_KEY",
+            Self::Custom => "CUSTOM_API_KEY",
+            Self::Ollama => "",
+            Self::Gemini => "GEMINI_API_KEY",
         }
     }
 
@@ -37,11 +46,22 @@ impl Provider {
             Self::Anthropic => "claude-sonnet-4-20250514",
             Self::OpenAi => "gpt-4o",
             Self::OpenRouter => "anthropic/claude-sonnet-4-20250514",
+            Self::Custom => "",
+            Self::Ollama => "llama3.1",
+            Self::Gemini => "gemini-2.5-flash",
         }
+    }
+
+    /// Whether this provider requires an API key to function.
+    pub const fn requires_key(self) -> bool {
+        !matches!(self, Self::Ollama)
     }
 }
 
-const ALL_PROVIDERS: [Provider; 3] = [Provider::Anthropic, Provider::OpenAi, Provider::OpenRouter];
+/// Providers eligible for auto-detection when no `--provider` flag is given.
+/// Custom, Ollama, and Gemini require explicit `--provider`.
+const AUTO_DETECT_PROVIDERS: [Provider; 3] =
+    [Provider::Anthropic, Provider::OpenAi, Provider::OpenRouter];
 
 impl std::fmt::Display for Provider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -54,8 +74,12 @@ fn parse_provider(name: &str) -> Result<Provider> {
         "anthropic" | "claude" => Ok(Provider::Anthropic),
         "openai" | "gpt" => Ok(Provider::OpenAi),
         "openrouter" => Ok(Provider::OpenRouter),
+        "custom" | "openai-compatible" => Ok(Provider::Custom),
+        "ollama" | "local" => Ok(Provider::Ollama),
+        "gemini" | "google" => Ok(Provider::Gemini),
         _ => Err(Error::ProviderConfig(format!(
-            "unknown provider `{name}` — expected: anthropic, openai, openrouter"
+            "unknown provider `{name}` — expected: anthropic, openai, openrouter, \
+             custom, ollama, gemini"
         ))),
     }
 }
@@ -111,19 +135,19 @@ pub struct ProviderConfig {
     pub provider: Provider,
     pub key: ApiKey,
     pub model: String,
+    pub base_url: Option<String>,
 }
 
 // ── ConfigFile (on-disk format) ──────────────────────────────────────────────
 
-/// Deserialized `~/.config/trurlic/config.toml`.
-/// All fields optional — an empty file is valid.
-/// ```toml
-/// default_provider = "anthropic"
-/// default_model = "claude-sonnet-4-20250514"
-/// anthropic_api_key = "sk-ant-..."
-/// openai_api_key = "sk-..."
-/// openrouter_api_key = "sk-or-..."
-/// ```
+// All fields optional — an empty file is valid.
+// ```toml
+// default_provider = "anthropic"
+// default_model = "claude-sonnet-4-20250514"
+// anthropic_api_key = "sk-ant-..."
+// openai_api_key = "sk-..."
+// openrouter_api_key = "sk-or-..."
+// ```
 #[derive(Deserialize, Default, Zeroize, ZeroizeOnDrop)]
 struct ConfigFile {
     #[zeroize(skip)]
@@ -133,6 +157,14 @@ struct ConfigFile {
     anthropic_api_key: Option<String>,
     openai_api_key: Option<String>,
     openrouter_api_key: Option<String>,
+    custom_api_key: Option<String>,
+    #[zeroize(skip)]
+    custom_base_url: Option<String>,
+    #[zeroize(skip)]
+    custom_model: Option<String>,
+    #[zeroize(skip)]
+    ollama_base_url: Option<String>,
+    gemini_api_key: Option<String>,
 }
 
 impl ConfigFile {
@@ -141,6 +173,9 @@ impl ConfigFile {
             Provider::Anthropic => self.anthropic_api_key.as_deref(),
             Provider::OpenAi => self.openai_api_key.as_deref(),
             Provider::OpenRouter => self.openrouter_api_key.as_deref(),
+            Provider::Custom => self.custom_api_key.as_deref(),
+            Provider::Ollama => None,
+            Provider::Gemini => self.gemini_api_key.as_deref(),
         };
         val.filter(|s| !s.is_empty())
     }
@@ -148,13 +183,18 @@ impl ConfigFile {
 
 // ── EnvKeys ──────────────────────────────────────────────────────────────────
 
-/// Snapshot of API key environment variables, zeroed on drop.
-/// Read once at resolution time to decouple I/O from logic (testability).
+// Read once at resolution time to decouple I/O from logic (testability).
 #[derive(Zeroize, ZeroizeOnDrop)]
 struct EnvKeys {
     anthropic: Option<String>,
     openai: Option<String>,
     openrouter: Option<String>,
+    custom: Option<String>,
+    gemini: Option<String>,
+    #[zeroize(skip)]
+    custom_base_url: Option<String>,
+    #[zeroize(skip)]
+    ollama_base_url: Option<String>,
 }
 
 impl EnvKeys {
@@ -164,6 +204,10 @@ impl EnvKeys {
             anthropic: read("ANTHROPIC_API_KEY"),
             openai: read("OPENAI_API_KEY"),
             openrouter: read("OPENROUTER_API_KEY"),
+            custom: read("CUSTOM_API_KEY"),
+            gemini: read("GEMINI_API_KEY"),
+            custom_base_url: read("CUSTOM_BASE_URL"),
+            ollama_base_url: read("OLLAMA_BASE_URL"),
         }
     }
 
@@ -172,6 +216,9 @@ impl EnvKeys {
             Provider::Anthropic => self.anthropic.as_deref(),
             Provider::OpenAi => self.openai.as_deref(),
             Provider::OpenRouter => self.openrouter.as_deref(),
+            Provider::Custom => self.custom.as_deref(),
+            Provider::Ollama => None,
+            Provider::Gemini => self.gemini.as_deref(),
         }
     }
 }
@@ -201,16 +248,25 @@ fn resolve_from_sources(
 ) -> Result<ProviderConfig> {
     let provider = resolve_provider_choice(provider_flag, config, env_keys)?;
     let key = resolve_key(provider, env_keys, config)?;
+    let base_url = resolve_base_url(provider, env_keys, config)?;
 
     let model = model_flag
         .map(String::from)
         .or_else(|| config.and_then(|c| c.default_model.clone()))
+        .or_else(|| {
+            if provider == Provider::Custom {
+                config.and_then(|c| c.custom_model.clone())
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| provider.default_model().into());
 
     Ok(ProviderConfig {
         provider,
         key,
         model,
+        base_url,
     })
 }
 
@@ -240,7 +296,7 @@ fn auto_detect_provider(config: Option<&ConfigFile>, env_keys: &EnvKeys) -> Resu
         env_keys.get(p).is_some() || config.and_then(|c| c.key_for(p)).is_some()
     };
 
-    let found: Vec<Provider> = ALL_PROVIDERS
+    let found: Vec<Provider> = AUTO_DETECT_PROVIDERS
         .iter()
         .copied()
         .filter(|&p| has_key(p))
@@ -272,6 +328,10 @@ fn resolve_key(
     env_keys: &EnvKeys,
     config: Option<&ConfigFile>,
 ) -> Result<ApiKey> {
+    if !provider.requires_key() {
+        return Ok(ApiKey::new(String::new()));
+    }
+
     if let Some(val) = env_keys.get(provider) {
         return Ok(ApiKey::new(val.to_string()));
     }
@@ -293,10 +353,42 @@ fn resolve_key(
     )))
 }
 
+fn resolve_base_url(
+    provider: Provider,
+    env_keys: &EnvKeys,
+    config: Option<&ConfigFile>,
+) -> Result<Option<String>> {
+    match provider {
+        Provider::Custom => {
+            let url = env_keys
+                .custom_base_url
+                .clone()
+                .or_else(|| config.and_then(|c| c.custom_base_url.clone()));
+            match url {
+                Some(u) => Ok(Some(u)),
+                None => Err(Error::ProviderConfig(
+                    "custom provider requires CUSTOM_BASE_URL environment variable \
+                     or `custom_base_url` in config file"
+                        .into(),
+                )),
+            }
+        }
+        Provider::Ollama => Ok(Some(
+            env_keys
+                .ollama_base_url
+                .clone()
+                .or_else(|| config.and_then(|c| c.ollama_base_url.clone()))
+                .unwrap_or_else(|| "http://localhost:11434/v1".into()),
+        )),
+        Provider::Anthropic | Provider::OpenAi | Provider::OpenRouter | Provider::Gemini => {
+            Ok(None)
+        }
+    }
+}
+
 // ── Config file loading ──────────────────────────────────────────────────────
 
-/// Load and parse the config file. Returns `None` if the file doesn't exist.
-/// Enforces 0600 permissions on Unix. Zeros the raw TOML content after parsing.
+// Enforces 0600 permissions on Unix. Zeros the raw TOML content after parsing.
 fn load_config_file() -> Result<Option<ConfigFile>> {
     let path = match config_file_path() {
         Some(p) => p,
@@ -437,10 +529,10 @@ mod tests {
 
     #[test]
     fn parse_provider_rejects_unknown() {
-        let err = parse_provider("gemini").unwrap_err();
+        let err = parse_provider("deepseek").unwrap_err();
         match err {
-            Error::ProviderConfig(msg) => assert!(msg.contains("gemini")),
-            other => panic!("expected Validation, got: {other}"),
+            Error::ProviderConfig(msg) => assert!(msg.contains("deepseek")),
+            other => panic!("expected ProviderConfig, got: {other}"),
         }
     }
 
@@ -449,6 +541,44 @@ mod tests {
         assert_eq!(Provider::Anthropic.env_var(), "ANTHROPIC_API_KEY");
         assert_eq!(Provider::OpenAi.env_var(), "OPENAI_API_KEY");
         assert_eq!(Provider::OpenRouter.env_var(), "OPENROUTER_API_KEY");
+        assert_eq!(Provider::Custom.env_var(), "CUSTOM_API_KEY");
+        assert_eq!(Provider::Ollama.env_var(), "");
+        assert_eq!(Provider::Gemini.env_var(), "GEMINI_API_KEY");
+    }
+
+    #[test]
+    fn parse_provider_custom_aliases() {
+        assert_eq!(parse_provider("custom").unwrap(), Provider::Custom);
+        assert_eq!(
+            parse_provider("openai-compatible").unwrap(),
+            Provider::Custom
+        );
+    }
+
+    #[test]
+    fn parse_provider_ollama_aliases() {
+        assert_eq!(parse_provider("ollama").unwrap(), Provider::Ollama);
+        assert_eq!(parse_provider("local").unwrap(), Provider::Ollama);
+    }
+
+    #[test]
+    fn parse_provider_gemini_aliases() {
+        assert_eq!(parse_provider("gemini").unwrap(), Provider::Gemini);
+        assert_eq!(parse_provider("google").unwrap(), Provider::Gemini);
+    }
+
+    #[test]
+    fn ollama_does_not_require_key() {
+        assert!(!Provider::Ollama.requires_key());
+    }
+
+    #[test]
+    fn all_other_providers_require_key() {
+        assert!(Provider::Anthropic.requires_key());
+        assert!(Provider::OpenAi.requires_key());
+        assert!(Provider::OpenRouter.requires_key());
+        assert!(Provider::Custom.requires_key());
+        assert!(Provider::Gemini.requires_key());
     }
 
     // ── resolve_from_sources ─────────────────────────────────────────────
@@ -462,6 +592,10 @@ mod tests {
             anthropic: anthropic.map(String::from),
             openai: openai.map(String::from),
             openrouter: openrouter.map(String::from),
+            custom: None,
+            gemini: None,
+            custom_base_url: None,
+            ollama_base_url: None,
         }
     }
 
@@ -475,6 +609,9 @@ mod tests {
             Provider::Anthropic => cfg.anthropic_api_key = Some(key.into()),
             Provider::OpenAi => cfg.openai_api_key = Some(key.into()),
             Provider::OpenRouter => cfg.openrouter_api_key = Some(key.into()),
+            Provider::Custom => cfg.custom_api_key = Some(key.into()),
+            Provider::Ollama => {}
+            Provider::Gemini => cfg.gemini_api_key = Some(key.into()),
         }
         Some(cfg)
     }
@@ -688,5 +825,208 @@ openrouter_api_key = "sk-or-test"
         let tmp = tempfile::NamedTempFile::new().unwrap();
         fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o400)).unwrap();
         check_config_permissions(tmp.path()).unwrap();
+    }
+
+    // ── New provider resolution ─────────────────────────────────────────
+
+    #[test]
+    fn resolve_ollama_no_key_ok() {
+        let env = env_with(None, None, None);
+        let r = resolve_from_sources(Some("ollama"), None, None, &env).unwrap();
+        assert_eq!(r.provider, Provider::Ollama);
+        assert_eq!(r.key.expose(), "");
+        assert_eq!(r.base_url.as_deref(), Some("http://localhost:11434/v1"));
+    }
+
+    #[test]
+    fn resolve_custom_requires_base_url() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: None,
+            ollama_base_url: None,
+        };
+        let err = resolve_from_sources(Some("custom"), None, None, &env).unwrap_err();
+        match err {
+            Error::ProviderConfig(msg) => {
+                assert!(msg.contains("CUSTOM_BASE_URL"), "{msg}");
+            }
+            other => panic!("expected ProviderConfig, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn resolve_custom_with_base_url() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: None,
+            ollama_base_url: None,
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.custom_base_url = Some("http://my-server:8080/v1".into());
+        let r = resolve_from_sources(Some("custom"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.provider, Provider::Custom);
+        assert_eq!(r.key.expose(), "sk-custom-key");
+        assert_eq!(r.base_url.as_deref(), Some("http://my-server:8080/v1"));
+    }
+
+    #[test]
+    fn resolve_gemini_uses_gemini_key() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: None,
+            gemini: Some("AIza-gemini-key".into()),
+            custom_base_url: None,
+            ollama_base_url: None,
+        };
+        let r = resolve_from_sources(Some("gemini"), None, None, &env).unwrap();
+        assert_eq!(r.provider, Provider::Gemini);
+        assert_eq!(r.key.expose(), "AIza-gemini-key");
+        assert_eq!(r.model, "gemini-2.5-flash");
+        assert!(r.base_url.is_none());
+    }
+
+    #[test]
+    fn auto_detect_excludes_new_providers() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom".into()),
+            gemini: Some("AIza-gemini".into()),
+            custom_base_url: None,
+            ollama_base_url: None,
+        };
+        let err = resolve_from_sources(None, None, None, &env).unwrap_err();
+        match err {
+            Error::ProviderConfig(msg) => assert!(msg.contains("no API key found"), "{msg}"),
+            other => panic!("expected ProviderConfig, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn config_file_parses_new_fields() {
+        let toml = r#"
+default_provider = "custom"
+custom_api_key = "sk-custom-test"
+custom_base_url = "http://my-server/v1"
+custom_model = "my-model"
+ollama_base_url = "http://ollama:11434/v1"
+gemini_api_key = "AIza-gemini-test"
+"#;
+        let cfg: ConfigFile = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.default_provider.as_deref(), Some("custom"));
+        assert_eq!(cfg.key_for(Provider::Custom), Some("sk-custom-test"));
+        assert_eq!(cfg.custom_base_url.as_deref(), Some("http://my-server/v1"));
+        assert_eq!(cfg.custom_model.as_deref(), Some("my-model"));
+        assert_eq!(
+            cfg.ollama_base_url.as_deref(),
+            Some("http://ollama:11434/v1")
+        );
+        assert_eq!(cfg.key_for(Provider::Gemini), Some("AIza-gemini-test"));
+        assert!(cfg.key_for(Provider::Ollama).is_none());
+    }
+
+    #[test]
+    fn resolve_custom_base_url_from_config() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: None,
+            ollama_base_url: None,
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.custom_base_url = Some("http://config-server/v1".into());
+        let r = resolve_from_sources(Some("custom"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.base_url.as_deref(), Some("http://config-server/v1"));
+    }
+
+    #[test]
+    fn resolve_ollama_base_url_from_config() {
+        let env = env_with(None, None, None);
+        let mut cfg = ConfigFile::default();
+        cfg.ollama_base_url = Some("http://custom-ollama:11434/v1".into());
+        let r = resolve_from_sources(Some("ollama"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.base_url.as_deref(), Some("http://custom-ollama:11434/v1"));
+    }
+
+    #[test]
+    fn custom_base_url_env_overrides_config() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: Some("http://env-server/v1".into()),
+            ollama_base_url: None,
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.custom_base_url = Some("http://config-server/v1".into());
+        let r = resolve_from_sources(Some("custom"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.base_url.as_deref(), Some("http://env-server/v1"));
+    }
+
+    #[test]
+    fn ollama_base_url_env_overrides_config() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: None,
+            gemini: None,
+            custom_base_url: None,
+            ollama_base_url: Some("http://env-ollama:9999/v1".into()),
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.ollama_base_url = Some("http://config-ollama:11434/v1".into());
+        let r = resolve_from_sources(Some("ollama"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.base_url.as_deref(), Some("http://env-ollama:9999/v1"));
+    }
+
+    #[test]
+    fn resolve_custom_uses_config_model() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: Some("http://server/v1".into()),
+            ollama_base_url: None,
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.custom_model = Some("my-custom-model".into());
+        let r = resolve_from_sources(Some("custom"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.model, "my-custom-model");
+    }
+
+    #[test]
+    fn resolve_custom_model_flag_overrides_config() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: Some("http://server/v1".into()),
+            ollama_base_url: None,
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.custom_model = Some("config-model".into());
+        let r = resolve_from_sources(Some("custom"), Some("flag-model"), Some(&cfg), &env).unwrap();
+        assert_eq!(r.model, "flag-model");
     }
 }

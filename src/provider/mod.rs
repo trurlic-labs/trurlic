@@ -1,4 +1,5 @@
 mod anthropic;
+mod gemini;
 mod openai;
 pub(crate) mod sse;
 
@@ -38,7 +39,6 @@ impl Role {
 
 // ── Shared request types ────────────────────────────────────────────────────
 
-/// A message in an API request body (shared across providers).
 #[derive(Serialize)]
 pub(super) struct ApiMessage<'a> {
     pub role: &'a str,
@@ -60,6 +60,13 @@ pub trait LlmProvider {
 }
 
 pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
+    let ProviderConfig {
+        provider,
+        key,
+        model,
+        base_url,
+    } = config;
+
     let client = Client::builder()
         .user_agent(concat!("trurlic/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(30))
@@ -68,26 +75,34 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
         .build()
         .map_err(|e| Error::ProviderConfig(format!("failed to create HTTP client: {e}")))?;
 
-    Ok(match config.provider {
-        Provider::Anthropic => Box::new(anthropic::AnthropicClient::new(
-            client,
-            config.key,
-            config.model,
-        )),
+    Ok(match provider {
+        Provider::Anthropic => Box::new(anthropic::AnthropicClient::new(client, key, model)),
         Provider::OpenAi => Box::new(openai::OpenAiClient::new(
             client,
-            config.key,
-            config.model,
+            key,
+            model,
             "https://api.openai.com/v1",
             openai::ApiVariant::Standard,
         )),
         Provider::OpenRouter => Box::new(openai::OpenAiClient::new(
             client,
-            config.key,
-            config.model,
+            key,
+            model,
             "https://openrouter.ai/api/v1",
             openai::ApiVariant::OpenRouter,
         )),
+        Provider::Custom | Provider::Ollama => {
+            let variant = match provider {
+                Provider::Custom => openai::ApiVariant::Custom,
+                Provider::Ollama => openai::ApiVariant::Ollama,
+                _ => unreachable!(),
+            };
+            let url = base_url.ok_or_else(|| {
+                Error::ProviderConfig(format!("{} provider requires a base URL", provider.name(),))
+            })?;
+            Box::new(openai::OpenAiClient::new(client, key, model, &url, variant))
+        }
+        Provider::Gemini => Box::new(gemini::GeminiClient::new(client, key, model)),
     })
 }
 
@@ -102,6 +117,7 @@ mod tests {
             provider: Provider::Anthropic,
             key: ApiKey::new("sk-test".into()),
             model: "claude-sonnet-4-20250514".into(),
+            base_url: None,
         };
         let client = create_provider(config).unwrap();
         assert_eq!(client.provider_name(), "anthropic");
@@ -113,6 +129,7 @@ mod tests {
             provider: Provider::OpenAi,
             key: ApiKey::new("sk-test".into()),
             model: "gpt-4o".into(),
+            base_url: None,
         };
         let client = create_provider(config).unwrap();
         assert_eq!(client.provider_name(), "openai");
@@ -124,9 +141,75 @@ mod tests {
             provider: Provider::OpenRouter,
             key: ApiKey::new("sk-test".into()),
             model: "anthropic/claude-sonnet-4-20250514".into(),
+            base_url: None,
         };
         let client = create_provider(config).unwrap();
         assert!(client.provider_name().starts_with("openai-compatible"));
+    }
+
+    #[test]
+    fn create_provider_custom() {
+        let config = ProviderConfig {
+            provider: Provider::Custom,
+            key: ApiKey::new("sk-test".into()),
+            model: "llama-3.3-70b".into(),
+            base_url: Some("http://localhost:8080/v1".into()),
+        };
+        let client = create_provider(config).unwrap();
+        assert_eq!(client.provider_name(), "openai-compatible/custom");
+    }
+
+    #[test]
+    fn create_provider_custom_missing_base_url() {
+        let config = ProviderConfig {
+            provider: Provider::Custom,
+            key: ApiKey::new("sk-test".into()),
+            model: "some-model".into(),
+            base_url: None,
+        };
+        match create_provider(config) {
+            Err(Error::ProviderConfig(msg)) => {
+                assert!(msg.contains("base URL"), "{msg}");
+            }
+            Err(other) => panic!("expected ProviderConfig, got: {other}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[test]
+    fn create_provider_ollama() {
+        let config = ProviderConfig {
+            provider: Provider::Ollama,
+            key: ApiKey::new(String::new()),
+            model: "llama3.1".into(),
+            base_url: Some("http://localhost:11434/v1".into()),
+        };
+        let client = create_provider(config).unwrap();
+        assert_eq!(client.provider_name(), "ollama");
+    }
+
+    #[test]
+    fn create_provider_ollama_custom_base_url() {
+        let config = ProviderConfig {
+            provider: Provider::Ollama,
+            key: ApiKey::new(String::new()),
+            model: "llama3.1".into(),
+            base_url: Some("http://myhost:9999/v1".into()),
+        };
+        let client = create_provider(config).unwrap();
+        assert_eq!(client.provider_name(), "ollama");
+    }
+
+    #[test]
+    fn create_provider_gemini() {
+        let config = ProviderConfig {
+            provider: Provider::Gemini,
+            key: ApiKey::new("test-key".into()),
+            model: "gemini-2.5-flash".into(),
+            base_url: None,
+        };
+        let client = create_provider(config).unwrap();
+        assert_eq!(client.provider_name(), "gemini");
     }
 
     #[test]

@@ -23,6 +23,8 @@ struct OpenAiRequest<'a> {
 pub(super) enum ApiVariant {
     Standard,
     OpenRouter,
+    Custom,
+    Ollama,
 }
 
 pub(super) struct OpenAiClient {
@@ -81,11 +83,15 @@ impl OpenAiClient {
 
         let url = format!("{}/chat/completions", self.base_url);
 
-        let bearer = Zeroizing::new(format!("Bearer {}", self.key.expose()));
-        let mut req = self
-            .client
-            .post(&url)
-            .header("authorization", bearer.as_str());
+        let mut req = self.client.post(&url);
+
+        match self.variant {
+            ApiVariant::Ollama => {}
+            ApiVariant::Standard | ApiVariant::OpenRouter | ApiVariant::Custom => {
+                let bearer = Zeroizing::new(format!("Bearer {}", self.key.expose()));
+                req = req.header("authorization", bearer.as_str());
+            }
+        }
 
         if self.variant == ApiVariant::OpenRouter {
             req = req
@@ -93,11 +99,7 @@ impl OpenAiClient {
                 .header("x-title", "trurlic");
         }
 
-        let response = req
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| connection_error(&e))?;
+        let response = req.json(&body).send().await.map_err(connection_error)?;
 
         let response = check_status(response).await?;
         stream_sse(response, super::sse::extract_openai_text, on_text).await
@@ -109,6 +111,8 @@ impl LlmProvider for OpenAiClient {
         match self.variant {
             ApiVariant::OpenRouter => "openai-compatible/openrouter",
             ApiVariant::Standard => "openai",
+            ApiVariant::Custom => "openai-compatible/custom",
+            ApiVariant::Ollama => "ollama",
         }
     }
 
@@ -119,5 +123,58 @@ impl LlmProvider for OpenAiClient {
         on_text: &'a mut dyn FnMut(&str),
     ) -> Pin<Box<dyn Future<Output = Result<String>> + 'a>> {
         Box::pin(self.do_stream(messages, system, on_text))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_name_standard() {
+        let client = OpenAiClient::new(
+            reqwest::Client::new(),
+            crate::config::ApiKey::new("sk-test".into()),
+            "gpt-4o".into(),
+            "https://api.openai.com/v1",
+            ApiVariant::Standard,
+        );
+        assert_eq!(client.provider_name(), "openai");
+    }
+
+    #[test]
+    fn provider_name_openrouter() {
+        let client = OpenAiClient::new(
+            reqwest::Client::new(),
+            crate::config::ApiKey::new("sk-test".into()),
+            "model".into(),
+            "https://openrouter.ai/api/v1",
+            ApiVariant::OpenRouter,
+        );
+        assert_eq!(client.provider_name(), "openai-compatible/openrouter");
+    }
+
+    #[test]
+    fn provider_name_custom() {
+        let client = OpenAiClient::new(
+            reqwest::Client::new(),
+            crate::config::ApiKey::new("sk-test".into()),
+            "model".into(),
+            "http://localhost:8080/v1",
+            ApiVariant::Custom,
+        );
+        assert_eq!(client.provider_name(), "openai-compatible/custom");
+    }
+
+    #[test]
+    fn provider_name_ollama() {
+        let client = OpenAiClient::new(
+            reqwest::Client::new(),
+            crate::config::ApiKey::new(String::new()),
+            "llama3.1".into(),
+            "http://localhost:11434/v1",
+            ApiVariant::Ollama,
+        );
+        assert_eq!(client.provider_name(), "ollama");
     }
 }

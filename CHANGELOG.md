@@ -11,6 +11,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **Gemini provider.** Google Gemini support via the native
+  `generativelanguage.googleapis.com` API. Uses Gemini's native request format
+  (not OpenAI-compatible). Default model: `gemini-2.5-flash`. Configure with
+  `-p gemini` and `GEMINI_API_KEY`.
+- **Ollama provider.** Local LLM support via Ollama's OpenAI-compatible API.
+  No API key required — connects to `http://localhost:11434` by default.
+  Default model: `llama3.1`. Configure with `-p ollama`.
+- **Custom provider.** Any OpenAI-compatible endpoint via `CUSTOM_BASE_URL`
+  and `CUSTOM_API_KEY`. Configure with `-p custom`.
+- **MCP protocol version `2025-11-25`.** Upgraded from `2024-11-05`.
+- **MCP tool annotations.** All tools now include `readOnlyHint`,
+  `destructiveHint`, and `openWorldHint` annotations per the MCP 2025-11-25
+  specification, enabling clients to make informed decisions about tool
+  invocation.
+- **`trurlic install --ide <ide>`.** Writes MCP server configuration for 11
+  IDEs: Cursor, Claude Code, Windsurf, Cline, GitHub Copilot, Claude Desktop,
+  Codex CLI, OpenCode, OpenClaw, Hermes Agent, and Antigravity CLI. Supports
+  `--dry-run` to preview config and `--binary-path` to override the embedded
+  binary path.
 - **Comprehension gates.** `SummaryGate` step added to Feature, Learn, and
   Review workflows — the developer must summarize their understanding before
   the workflow advances. `UserExplains` step added to Learn flow so the user

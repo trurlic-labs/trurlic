@@ -17,11 +17,13 @@ mcp         → store, workflow             MCP server: JSON-RPC stdio, tool dis
                                           context assembly, file watcher
 session     → store, workflow, provider   CLI design sessions, bootstrap driver,
                                           LLM extraction, session persistence
-commands    → store, session, config      CLI command handlers
+commands    → store, session, config      CLI command handlers (including
+                                          `install` for IDE MCP config)
 map         → store                       Interactive graph visualization,
                                           WebSocket live sync, REST API
 provider    → (no internal deps)          LLM API clients (Anthropic, OpenAI,
-                                          OpenRouter), SSE streaming
+                                          OpenRouter, Gemini, Ollama, Custom),
+                                          SSE streaming
 config      → (no internal deps)          Provider resolution, API key handling
 ```
 

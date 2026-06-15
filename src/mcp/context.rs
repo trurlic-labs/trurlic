@@ -71,8 +71,6 @@ pub(crate) fn get_context(
         "not_covered"
     };
 
-    // Full depth: include related decisions, reasoning, verbose brief.
-    // Constraints depth: compact for mid-implementation checks.
     match depth {
         ContextDepth::Full => {
             let related_decisions = graph.related_decisions(component);
@@ -202,8 +200,6 @@ fn project_context(
 
 // ── build_brief ──────────────────────────────────────────────────────────
 
-/// Collected inputs for brief assembly. Replaces the 8-parameter
-/// `build_brief` signature with a single typed bundle.
 struct BriefParams<'a> {
     component: &'a str,
     task: Option<&'a str>,

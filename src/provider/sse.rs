@@ -35,7 +35,7 @@ pub(crate) async fn stream_sse(
             Ok(Err(e)) => {
                 return Err(Error::Api {
                     status: 0,
-                    detail: format!("stream interrupted: {e}"),
+                    detail: format!("stream interrupted: {}", e.without_url()),
                 });
             }
             Err(_) => {
@@ -88,13 +88,8 @@ pub(crate) async fn stream_sse(
     Ok(full)
 }
 
-/// Parse complete SSE lines from `buffer`, pass extracted text directly to
-/// `sink`, and drain consumed bytes. Incomplete trailing lines are preserved
-/// in the buffer for the next call.
-///
-/// Uses a callback instead of returning `Vec<String>` — the intermediate
-/// collection is unnecessary since each text chunk is immediately forwarded
-/// to `on_text` and appended to the accumulator.
+// Callback instead of Vec<String> — each chunk is forwarded to on_text
+// and appended to the accumulator immediately, no intermediate collection.
 fn drain_sse_text(
     buffer: &mut String,
     extract: fn(&str) -> Option<String>,
@@ -139,6 +134,13 @@ pub(crate) fn extract_anthropic_text(data: &str) -> Option<String> {
 pub(crate) fn extract_openai_text(data: &str) -> Option<String> {
     let json: Value = serde_json::from_str(data).ok()?;
     json.pointer("/choices/0/delta/content")?
+        .as_str()
+        .map(String::from)
+}
+
+pub(crate) fn extract_gemini_text(data: &str) -> Option<String> {
+    let json: Value = serde_json::from_str(data).ok()?;
+    json.pointer("/candidates/0/content/parts/0/text")?
         .as_str()
         .map(String::from)
 }
@@ -190,13 +192,18 @@ pub(crate) async fn check_status(response: reqwest::Response) -> Result<reqwest:
     })
 }
 
-pub(crate) fn connection_error(err: &reqwest::Error) -> Error {
-    if err.is_connect() {
+pub(crate) fn connection_error(err: reqwest::Error) -> Error {
+    let is_connect = err.is_connect();
+    let is_timeout = err.is_timeout();
+    // Strip the request URL from the error — Gemini puts the API key
+    // in the URL query parameter, and reqwest's Display includes it.
+    let safe = err.without_url();
+    if is_connect {
         Error::Api {
             status: 0,
-            detail: format!("could not connect to API — check your internet connection ({err})"),
+            detail: format!("could not connect to API — check your internet connection ({safe})"),
         }
-    } else if err.is_timeout() {
+    } else if is_timeout {
         Error::Api {
             status: 0,
             detail: "connection timed out — the API may be overloaded".into(),
@@ -204,7 +211,7 @@ pub(crate) fn connection_error(err: &reqwest::Error) -> Error {
     } else {
         Error::Api {
             status: 0,
-            detail: format!("API request failed: {err}"),
+            detail: format!("API request failed: {safe}"),
         }
     }
 }
@@ -290,6 +297,35 @@ mod tests {
     #[test]
     fn openai_ignores_invalid_json() {
         assert_eq!(extract_openai_text("{malformed"), None);
+    }
+
+    // ── gemini extraction ─────────────────────────────────────────────
+
+    #[test]
+    fn gemini_extracts_text_delta() {
+        let data = r#"{"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}"#;
+        assert_eq!(extract_gemini_text(data), Some("Hello".into()));
+    }
+
+    #[test]
+    fn gemini_ignores_non_candidate_events() {
+        let safety = r#"{"promptFeedback":{"safetyRatings":[{"category":"HARM_CATEGORY_SEXUALLY_EXPLICIT","probability":"NEGLIGIBLE"}]}}"#;
+        assert_eq!(extract_gemini_text(safety), None);
+
+        let usage = r#"{"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}"#;
+        assert_eq!(extract_gemini_text(usage), None);
+    }
+
+    #[test]
+    fn gemini_ignores_invalid_json() {
+        assert_eq!(extract_gemini_text("not json at all"), None);
+    }
+
+    #[test]
+    fn gemini_extracts_multiline_text() {
+        let data =
+            r#"{"candidates":[{"content":{"parts":[{"text":"line1\nline2"}],"role":"model"}}]}"#;
+        assert_eq!(extract_gemini_text(data), Some("line1\nline2".into()));
     }
 
     // ── SSE buffer processing ───────────────────────────────────────────

@@ -189,7 +189,10 @@ fn collect_tree(dir: &Path, depth: usize, entries: &mut Vec<String>) -> Result<(
 
     let mut children: Vec<PathBuf> = match fs::read_dir(dir) {
         Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).collect(),
-        Err(_) => return Ok(()),
+        Err(e) => {
+            eprintln!("warning: cannot read directory {}: {e}", dir.display());
+            return Ok(());
+        }
     };
     children.sort();
 
@@ -201,15 +204,13 @@ fn collect_tree(dir: &Path, depth: usize, entries: &mut Vec<String>) -> Result<(
             None => continue,
         };
 
-        if name.starts_with('.') && SKIP_DIRS.contains(&name) {
-            continue;
-        }
-
         if child.is_dir() {
             if SKIP_DIRS.contains(&name) {
                 continue;
             }
-            let _ = writeln!(entries.last_mut().unwrap_or(&mut String::new()),);
+            if let Some(last) = entries.last_mut() {
+                let _ = writeln!(last);
+            }
             entries.push(format!("{indent}{name}/"));
             collect_tree(child, depth + 1, entries)?;
         } else if is_source_file(name) || is_config_name(name) {
@@ -262,7 +263,10 @@ fn append_single_file(out: &mut String, root: &Path, path: &Path, budget: usize)
             }
             String::from_utf8_lossy(&bytes).into_owned()
         }
-        Err(_) => return Ok(0),
+        Err(e) => {
+            eprintln!("warning: cannot read file {}: {e}", path.display());
+            return Ok(0);
+        }
     };
 
     let _ = writeln!(out, "--- {} ---", rel.display());
