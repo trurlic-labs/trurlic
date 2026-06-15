@@ -72,17 +72,17 @@ function filterDecisions(
 
 // ── Pattern region colors ──────────────────────────────────────────────────
 
-/** Warm amber palette for pattern regions (hue degrees). */
-const PATTERN_HUES = [30, 35, 25, 40, 20, 45, 15, 50];
+/** Diverse palette for pattern regions (hue degrees). */
+const PATTERN_HUES = [30, 200, 150, 340, 60, 270, 100, 310];
 
 /** LOD label fade duration (ms). */
 const LOD_FADE_MS = 150;
 
 /** Pattern hull expansion (world units). */
-const HULL_EXPAND = 30;
+const HULL_EXPAND = 50;
 
 /** Pattern hull corner rounding radius (world units). */
-const HULL_RADIUS = 12;
+const HULL_RADIUS = 20;
 
 /** Node card corner radius (canvas units, scaled by 1/zoom in world space). */
 const NODE_RADIUS = 8;
@@ -225,12 +225,12 @@ export class Renderer {
       typeof matchMedia !== 'undefined'
         ? matchMedia('(prefers-color-scheme: light)').matches
         : false;
-    const lightness = prefersLight ? 42 : 50;
-    const saturation = 55;
-    const baseFill = prefersLight ? 0.06 : 0.08;
-    const baseStroke = 0.25;
+    const lightness = prefersLight ? 48 : 55;
+    const saturation = prefersLight ? 40 : 45;
+    const baseFill = prefersLight ? 0.10 : 0.14;
+    const baseStroke = 0.45;
     const dimFill = 0.03;
-    const labelSize = 11 / cam.zoom;
+    const labelSize = 13 / cam.zoom;
 
     let patIdx = 0;
     for (const [, pat] of graph.patterns) {
@@ -281,33 +281,36 @@ export class Renderer {
 
       // Stroke.
       ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${baseStroke})`;
-      ctx.lineWidth = 1.5 / cam.zoom;
+      ctx.lineWidth = 2.0 / cam.zoom;
       ctx.stroke();
 
-      // Label: LOD-gated.
-      // Overview: no label (the hull communicates grouping).
-      // Component: truncated description with background pill for legibility.
+      // Label: shown at all LOD levels.
+      // Overview: shortened name (max 20 chars), bold, larger font.
+      // Component: truncated description with background pill.
       // Decision: full description.
-      if (lod >= LOD.Component) {
+      {
         const cx = expanded.reduce((s, p) => s + p.x, 0) / expanded.length;
         const cy = expanded.reduce((s, p) => s + p.y, 0) / expanded.length;
 
-        const rawLabel = pat.description || pat.name;
-        const maxLen = lod >= LOD.Decision ? 80 : 30;
+        const isOverview = lod < LOD.Component;
+        const rawLabel = isOverview ? pat.name : (pat.description || pat.name);
+        const maxLen = isOverview ? 20 : lod >= LOD.Decision ? 80 : 30;
         const label = rawLabel.length > maxLen ? rawLabel.slice(0, maxLen - 1) + '…' : rawLabel;
+        const size = isOverview ? 14 / cam.zoom : labelSize;
+        const weight = isOverview ? 600 : 400;
 
-        ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+        ctx.font = `${weight} ${size}px system-ui, sans-serif`;
         const tw = ctx.measureText(label).width;
 
         const px = 6 / cam.zoom;
         const py = 3 / cam.zoom;
         ctx.fillStyle = c.bg;
-        ctx.globalAlpha = (dimmedByFocus ? 0.15 : 1) * 0.7;
+        ctx.globalAlpha = (dimmedByFocus ? 0.15 : 1) * 0.88;
         this.roundRect(
           cx - tw / 2 - px,
-          cy - labelSize / 2 - py,
+          cy - size / 2 - py,
           tw + px * 2,
-          labelSize + py * 2,
+          size + py * 2,
           4 / cam.zoom,
         );
         ctx.fill();
