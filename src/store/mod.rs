@@ -519,7 +519,7 @@ impl Store {
             ))),
             _ => Err(Error::Validation(format!(
                 ".trurlic/ format version `{stored}` is older than this CLI \
-                 (expected `{FORMAT_VERSION}`). A format migration may be needed."
+                 (expected `{FORMAT_VERSION}`). Run `trurlic migrate` to upgrade."
             ))),
         }
     }
@@ -597,7 +597,7 @@ pub struct StoreLock {
 
 // ── Version comparison ──────────────────────────────────────────────────────
 
-fn compare_versions(a: &str, b: &str) -> Ordering {
+pub(crate) fn compare_versions(a: &str, b: &str) -> Ordering {
     let parse = |v: &str| -> (u32, u32, u32) {
         let mut parts = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
         let major = parts.next().unwrap_or(0);
@@ -1401,7 +1401,7 @@ mod tests {
             Error::Validation(msg) => {
                 assert!(msg.contains("0.0.1"));
                 assert!(msg.contains("older"), "should mention 'older': {msg}");
-                assert!(msg.contains("migration"), "should mention migration: {msg}");
+                assert!(msg.contains("trurlic migrate"), "should mention trurlic migrate: {msg}");
             }
             other => panic!("expected Validation, got: {other}"),
         }

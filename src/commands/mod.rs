@@ -5,6 +5,7 @@ mod design;
 mod init;
 pub(crate) mod install;
 mod map;
+pub(crate) mod migrate;
 mod query;
 mod serve;
 
@@ -17,6 +18,7 @@ pub use design::design;
 pub use init::init;
 pub use install::install;
 pub use map::map;
+pub use migrate::migrate;
 pub use query::{check, status};
 pub use serve::serve;
 
