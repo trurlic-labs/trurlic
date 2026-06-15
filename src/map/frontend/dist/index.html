@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <canvas id="canvas"></canvas>
+    <canvas id="canvas" tabindex="0"></canvas>
     <canvas id="minimap" width="360" height="240"></canvas>
     <!-- Reconnecting indicator -->
     <div id="ws-status" class="ws-status hidden">Reconnecting…</div>
@@ -41,8 +41,16 @@
     </div>
     <!-- First-visit hint (shown once, fades after 4s) -->
     <div id="hint-overlay" class="hint-overlay hidden">
-      Scroll to zoom · Drag to pan · Click a component to explore
+      <span class="hint-pill">Scroll to zoom · Drag to pan · Click a component to explore</span>
     </div>
+    <!-- Loading overlay (shown while graph is being fetched) -->
+    <div id="loading-overlay" class="loading-overlay">
+      <div class="loading-text">Loading architecture graph…</div>
+    </div>
+    <button id="panel-toggle" class="panel-toggle" aria-label="Toggle panel" title="Toggle panel">
+      ‹
+    </button>
+    <div id="panel-resize" class="panel-resize"></div>
     <div id="panel"></div>
     <!-- ARIA live region: announces selected node for screen readers. -->
     <div id="aria-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
