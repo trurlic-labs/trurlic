@@ -571,7 +571,6 @@ mod tests {
         assert!(err.contains("ghost"));
     }
 
-
     // ── record_pattern ──────────────────────────────────────────────────
 
     #[test]
