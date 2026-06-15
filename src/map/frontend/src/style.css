@@ -102,8 +102,11 @@ body {
   width: 180px;
   height: 120px;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent-dim);
+  box-shadow: 0 2px 8px var(--shadow);
   z-index: 10;
+  pointer-events: auto;
+  cursor: crosshair;
 }
 
 /* ── Panel typography ─────────────────────────────────────────────────── */
@@ -490,12 +493,6 @@ body.panel-collapsed .hint-overlay {
   letter-spacing: 0.5px;
   color: var(--accent);
   margin-right: 6px;
-}
-
-/* ── Minimap interactive ─────────────────────────────────────────────── */
-#minimap {
-  pointer-events: auto;
-  cursor: crosshair;
 }
 
 /* ── Reconnecting indicator ─────────────────────────────────────────── */

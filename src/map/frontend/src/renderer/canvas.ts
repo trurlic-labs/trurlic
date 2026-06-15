@@ -97,6 +97,8 @@ export class Renderer {
   private c: ColorSnapshot;
   /** Per-frame hover state — set at the top of render(), read by draw methods. */
   private fh: HoverRenderState | null = null;
+  /** Cached edge pair set — rebuilt per render frame. */
+  private edgePairSet: Set<string> = new Set();
 
   // LOD transition fade state.
   private prevLod: LOD = LOD.Overview;
@@ -110,6 +112,10 @@ export class Renderer {
     this.cam = cam;
     this.dpr = window.devicePixelRatio || 1;
     this.c = snapshotColors();
+  }
+
+  get cachedEdgePairSet(): Set<string> {
+    return this.edgePairSet;
   }
 
   resize(w: number, h: number): void {
@@ -140,6 +146,7 @@ export class Renderer {
   ): boolean {
     this.c = snapshotColors();
     this.fh = hover ?? null;
+    this.edgePairSet = buildEdgePairSet(graph.edges);
     const { ctx, cam, dpr, c } = this;
 
     // LOD transition fade.
@@ -329,8 +336,7 @@ export class Renderer {
     const { ctx, cam, c, fh } = this;
     const baseWidth = 1.5 / cam.zoom;
 
-    // Build bidirectional pair index for O(1) look-up.
-    const pairSet = buildEdgePairSet(graph.edges);
+    const pairSet = this.edgePairSet;
 
     for (const e of graph.edges) {
       if (lod === LOD.Overview && e.kind !== 'connects_to') continue;

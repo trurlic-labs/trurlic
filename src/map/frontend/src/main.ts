@@ -27,7 +27,7 @@ import { Filters } from './app/filters';
 import { HoverTracker } from './app/hover';
 import type { HoverEdge } from './app/hover';
 import { pointBezierDistSq } from './renderer/geometry';
-import { edgeCurveCP, buildEdgePairSet } from './renderer/edges';
+import { edgeCurveCP } from './renderer/edges';
 
 // ── App ──────────────────────────────────────────────────────────────────
 
@@ -228,7 +228,15 @@ class App {
     const hitDesc = hit?.description ?? '';
     const hitEdge = hitName
       ? null
-      : findHoveredEdge(this.graph, wx, wy, this.camera.zoom, this.lod, this.filters.state);
+      : findHoveredEdge(
+          this.graph,
+          wx,
+          wy,
+          this.camera.zoom,
+          this.lod,
+          this.filters.state,
+          this.renderer.cachedEdgePairSet,
+        );
 
     const now = performance.now();
     if (this.hover.update(hitName, hitDesc, hitEdge, e.offsetX, e.offsetY, now)) {
@@ -870,6 +878,7 @@ function findHoveredEdge(
   zoom: number,
   lod: LOD,
   filters: FilterState | undefined,
+  pairSet: Set<string>,
 ): HoverEdge | null {
   if (lod < LOD.Component) return null;
 
@@ -877,8 +886,6 @@ function findHoveredEdge(
   const threshSq = threshold * threshold;
   let bestDistSq = threshSq;
   let best: HoverEdge | null = null;
-
-  const pairSet = buildEdgePairSet(graph.edges);
 
   for (const e of graph.edges) {
     if (e.kind === 'belongs_to') continue;
