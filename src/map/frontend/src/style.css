@@ -325,6 +325,53 @@ details li {
   margin-bottom: 2px;
 }
 
+/* ── Panel back link ─────────────────────────────────────────────────── */
+.panel-back {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-decoration: none;
+  margin-bottom: 8px;
+}
+.panel-back:hover {
+  color: var(--accent);
+}
+
+/* ── Panel collapse toggle ───────────────────────────────────────────── */
+.panel-toggle {
+  position: fixed;
+  top: 50%;
+  right: var(--panel-width);
+  transform: translateY(-50%);
+  z-index: 11;
+  width: 20px;
+  height: 48px;
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+  background: var(--panel-bg);
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: right 0.2s ease;
+}
+.panel-toggle:hover {
+  color: var(--text);
+  background: var(--surface-hi);
+}
+#panel {
+  transition: transform 0.2s ease;
+}
+#panel.collapsed {
+  transform: translateX(100%);
+}
+body.panel-collapsed .panel-toggle {
+  right: 0;
+}
+
 /* ── Reduced motion ───────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   * {

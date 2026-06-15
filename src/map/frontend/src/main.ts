@@ -89,6 +89,15 @@ class App {
 
     this.toolbar = new Toolbar((state) => this.onFilterChange(state));
 
+    const panelToggle = document.getElementById('panel-toggle')!;
+    panelToggle.addEventListener('click', () => {
+      const panel = document.getElementById('panel')!;
+      const collapsed = panel.classList.toggle('collapsed');
+      document.body.classList.toggle('panel-collapsed', collapsed);
+      panelToggle.textContent = collapsed ? '›' : '‹';
+      this.handleResize();
+    });
+
     const minimap = document.getElementById('minimap') as HTMLCanvasElement;
     const mctx = minimap.getContext('2d');
     if (!mctx) throw new Error('minimap context');
@@ -815,7 +824,8 @@ class App {
 
   private handleResize(): void {
     const panel = document.getElementById('panel')!;
-    const w = window.innerWidth - panel.offsetWidth;
+    const panelVisible = !panel.classList.contains('collapsed');
+    const w = panelVisible ? window.innerWidth - panel.offsetWidth : window.innerWidth;
     const h = window.innerHeight;
     this.renderer.resize(w, h);
 

@@ -19,11 +19,18 @@ const SAVE_DEBOUNCE = 1000;
  * serves as the primary content surface while the canvas provides
  * spatial context. Inline edits auto-save on blur with debounce.
  */
+type PanelView =
+  | { type: 'project' }
+  | { type: 'component'; name: string }
+  | { type: 'decision'; name: string }
+  | { type: 'pattern'; name: string };
+
 export class Panel {
   private el: HTMLElement;
   private api: ApiClient | null = null;
   private cb: PanelCallbacks | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private history: PanelView[] = [];
 
   constructor(el: HTMLElement) {
     this.el = el;
@@ -38,6 +45,7 @@ export class Panel {
   // ── Project view ────────────────────────────────────────────────────
 
   showProject(graph: Graph): void {
+    this.history = [];
     const dc = graph.decisions.size;
     const cc = graph.nodes.size;
     const pc = graph.patterns.size;
@@ -58,6 +66,7 @@ export class Panel {
   // ── Component view ──────────────────────────────────────────────────
 
   showComponent(node: RenderNode, graph: Graph): void {
+    this.history = [];
     const decs = graph.decisionsFor(node.name);
     const outgoing = graph.edges.filter((e) => e.from === node.name && e.kind === 'connects_to');
     const incoming = graph.edges.filter((e) => e.to === node.name && e.kind === 'connects_to');
@@ -105,7 +114,11 @@ export class Panel {
       return;
     }
 
+    this.pushCurrentView();
+    const backHtml = this.history.length > 0 ? '<a href="#" class="panel-back">← back</a>' : '';
+
     this.el.innerHTML = `
+      ${backHtml}
       <div class="panel-kind">decision</div>
       <h2 class="editable-heading" data-field="choice" data-dec="${esc(name)}" data-placeholder="Click to edit">${esc(dec.choice)}</h2>
       <p class="dim">
@@ -134,6 +147,7 @@ export class Panel {
         <button class="btn btn-danger" data-delete-dec="${esc(name)}">Delete decision</button>
       </div>
     `;
+    this.bindBackLink(graph);
     this.bindNavLinks();
     this.bindEditableFields(name, graph);
     this.bindDeleteDecision(name, graph);
@@ -148,11 +162,15 @@ export class Panel {
       return;
     }
 
+    this.pushCurrentView();
+    const backHtml = this.history.length > 0 ? '<a href="#" class="panel-back">← back</a>' : '';
+
     const memberDecs = pat.decisions
       .map((d) => graph.decisions.get(d))
       .filter((d): d is DecisionNode => d != null);
 
     this.el.innerHTML = `
+      ${backHtml}
       <div class="panel-kind">pattern</div>
       <h2>${esc(pat.description)}</h2>
       <p class="dim">${esc(name)}</p>
@@ -167,12 +185,66 @@ export class Panel {
       <h3>Decisions <span class="dim">(${memberDecs.length})</span></h3>
       ${memberDecs.map((d) => decisionRow(d)).join('')}
     `;
+    this.bindBackLink(graph);
     this.bindNavLinks();
     this.bindDecisionLinks(graph);
   }
 
   showEmpty(): void {
     this.el.innerHTML = `<p class="dim" style="padding:24px">Click a component to inspect</p>`;
+  }
+
+  // ── Navigation history ───────────────────────────────────────────────
+
+  private pushCurrentView(): void {
+    const kind = this.el.querySelector('.panel-kind');
+    if (!kind) {
+      this.history.push({ type: 'project' });
+      return;
+    }
+    const kindText = kind.textContent?.trim().toLowerCase();
+    if (kindText === 'component') {
+      const heading = this.el.querySelector('h2');
+      const name = heading?.textContent?.trim() ?? '';
+      if (name) this.history.push({ type: 'component', name });
+    } else if (kindText === 'decision') {
+      const heading = this.el.querySelector<HTMLElement>('.editable-heading');
+      const decName = heading?.dataset.dec ?? '';
+      if (decName) this.history.push({ type: 'decision', name: decName });
+    } else if (kindText === 'pattern') {
+      const slug = this.el.querySelector('p.dim');
+      const name = slug?.textContent?.trim() ?? '';
+      if (name) this.history.push({ type: 'pattern', name });
+    } else {
+      this.history.push({ type: 'project' });
+    }
+  }
+
+  private bindBackLink(graph: Graph): void {
+    const link = this.el.querySelector<HTMLElement>('.panel-back');
+    if (!link) return;
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const prev = this.history.pop();
+      if (!prev) return;
+      switch (prev.type) {
+        case 'project':
+          this.showProject(graph);
+          break;
+        case 'component': {
+          const node = graph.nodes.get(prev.name);
+          if (node) this.showComponent(node, graph);
+          else this.showProject(graph);
+          break;
+        }
+        case 'decision':
+          this.showDecision(prev.name, graph);
+          break;
+        case 'pattern':
+          this.showPattern(prev.name, graph);
+          break;
+      }
+    });
   }
 
   // ── Event binding ───────────────────────────────────────────────────
