@@ -4,7 +4,7 @@ import type { RenderNode, FilterState, DecisionNode, ColorSnapshot } from '../ty
 import { LOD } from './lod';
 import type { AABB } from './culling';
 import { EDGE_DASH, EDGE_OPACITY, edgeColor, edgeCurveCP, buildEdgePairSet } from './edges';
-import { convexHull, expandHull, roundedHullPath, nodeCorners } from './geometry';
+import { convexHull, expandHull, roundedHullPath, nodeCorners, rayRectIntersect } from './geometry';
 import type { HoverRenderState } from '../app/hover';
 
 // ── Per-frame color snapshot ──────────────────────────────────────────────
@@ -385,8 +385,10 @@ export class Renderer {
       const ux = tdx / tlen;
       const uy = tdy / tlen;
       const headLen = 10 / cam.zoom;
-      const tipX = b.x - ux * (b.w / 2 + 2);
-      const tipY = b.y - uy * (b.h / 2 + 2);
+      const margin = 3 / cam.zoom;
+      const inter = rayRectIntersect(b.x, b.y, b.w / 2 + margin, b.h / 2 + margin, -ux, -uy);
+      const tipX = inter.x;
+      const tipY = inter.y;
 
       ctx.fillStyle = isHovered ? c.accent : color;
       ctx.setLineDash([]);

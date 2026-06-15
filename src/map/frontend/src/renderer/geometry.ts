@@ -149,6 +149,31 @@ export function roundedHullPath(
   ctx.closePath();
 }
 
+// ── Ray–rectangle intersection ────────────────────────────────────────
+
+/**
+ * Intersection of a ray from (cx,cy) in direction (dx,dy) with an
+ * axis-aligned rectangle centered at (cx,cy) with half-extents hw, hh.
+ */
+export function rayRectIntersect(
+  cx: number,
+  cy: number,
+  hw: number,
+  hh: number,
+  dx: number,
+  dy: number,
+): Point {
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+  if (absDx < 1e-10 && absDy < 1e-10) return { x: cx, y: cy };
+
+  const tx = absDx > 1e-10 ? hw / absDx : Infinity;
+  const ty = absDy > 1e-10 ? hh / absDy : Infinity;
+  const t = Math.min(tx, ty);
+
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
 // ── Bounding-box helpers ───────────────────────────────────────────────
 
 /**

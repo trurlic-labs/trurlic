@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { convexHull, expandHull, cross, nodeCorners } from './geometry';
+import { convexHull, expandHull, cross, nodeCorners, rayRectIntersect } from './geometry';
 import type { Point } from './geometry';
 
 describe('cross', () => {
@@ -128,6 +128,76 @@ describe('expandHull', () => {
     const exp = expandHull(pts, 10);
     expect(exp).toHaveLength(2);
     expect(exp).not.toBe(pts); // should be a new array
+  });
+});
+
+describe('rayRectIntersect', () => {
+  const cx = 100;
+  const cy = 50;
+  const hw = 60;
+  const hh = 30;
+
+  it('ray pointing right hits the right edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 1, 0);
+    expect(p.x).toBeCloseTo(cx + hw);
+    expect(p.y).toBeCloseTo(cy);
+  });
+
+  it('ray pointing left hits the left edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, -1, 0);
+    expect(p.x).toBeCloseTo(cx - hw);
+    expect(p.y).toBeCloseTo(cy);
+  });
+
+  it('ray pointing down hits the bottom edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 0, 1);
+    expect(p.x).toBeCloseTo(cx);
+    expect(p.y).toBeCloseTo(cy + hh);
+  });
+
+  it('ray pointing up hits the top edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 0, -1);
+    expect(p.x).toBeCloseTo(cx);
+    expect(p.y).toBeCloseTo(cy - hh);
+  });
+
+  it('45° diagonal on a square hits the corner', () => {
+    const p = rayRectIntersect(0, 0, 50, 50, 1, 1);
+    expect(p.x).toBeCloseTo(50);
+    expect(p.y).toBeCloseTo(50);
+  });
+
+  it('45° diagonal on a rectangle hits the shorter edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 1, 1);
+    // hh < hw, so the horizontal edge (top/bottom) is hit first
+    expect(p.y).toBeCloseTo(cy + hh);
+    expect(p.x).toBeCloseTo(cx + hh); // dx == dy, so x offset == y offset
+  });
+
+  it('steep diagonal hits the top/bottom edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 0.5, 2);
+    // ty = hh / 2 = 15, tx = hw / 0.5 = 120 → hits horizontal edge
+    expect(p.y).toBeCloseTo(cy + hh);
+    expect(p.x).toBeCloseTo(cx + 0.5 * (hh / 2));
+  });
+
+  it('shallow diagonal hits the left/right edge', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 2, 0.5);
+    // tx = hw / 2 = 30, ty = hh / 0.5 = 60 → hits vertical edge
+    expect(p.x).toBeCloseTo(cx + hw);
+    expect(p.y).toBeCloseTo(cy + 0.5 * (hw / 2));
+  });
+
+  it('zero direction returns the center', () => {
+    const p = rayRectIntersect(cx, cy, hw, hh, 0, 0);
+    expect(p.x).toBe(cx);
+    expect(p.y).toBe(cy);
+  });
+
+  it('negative diagonal hits the opposite corner region', () => {
+    const p = rayRectIntersect(0, 0, 50, 50, -1, -1);
+    expect(p.x).toBeCloseTo(-50);
+    expect(p.y).toBeCloseTo(-50);
   });
 });
 
