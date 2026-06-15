@@ -316,7 +316,7 @@ impl Store {
         // Pre-check: duplicate node names in the index would cause silent
         // data loss during InMemoryGraph construction (HashMap overwrite).
         {
-            let mut seen = std::collections::HashSet::with_capacity(state.graph_index.nodes.len());
+            let mut seen = HashSet::with_capacity(state.graph_index.nodes.len());
             for node in &state.graph_index.nodes {
                 if !seen.insert(&node.name) {
                     return Err(Error::GraphIntegrity(format!(

@@ -15,7 +15,7 @@ use crate::store::{ProjectState, Store};
 
 use protocol::{INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Request};
 
-const PROTOCOL_VERSION: &str = "2024-11-05";
+const PROTOCOL_VERSION: &str = "2025-11-25";
 
 // ── Public entry point ────────────────────────────────────────────────────
 
@@ -76,15 +76,11 @@ pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()
 
 // ── Request dispatch ──────────────────────────────────────────────────────
 
-/// Dispatch a JSON-RPC request and write the response directly to `writer`.
-///
-/// Writing inline avoids boxing or enum-wrapping different result types:
-/// cold-path responses (initialize, ping, tools/list) write `Value`
-/// results via `write_success`, while tool-call responses write the typed
-/// `ToolEnvelope` directly — single serialization pass, zero intermediate
-/// `Value` allocation.
-///
-/// Notifications produce no output (the writer is untouched).
+// Writing inline avoids boxing or enum-wrapping different result types:
+// cold-path responses (initialize, ping, tools/list) write `Value`
+// results via `write_success`, while tool-call responses write the typed
+// `ToolEnvelope` directly — single serialization pass, zero intermediate
+// `Value` allocation.
 fn handle(
     store: &Store,
     state: &Arc<RwLock<ProjectState>>,

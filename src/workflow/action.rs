@@ -171,6 +171,7 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>) -> V
         }),
     }
 }
+
 // ── Response builders ─────────────────────────────────────────────────────
 
 pub(super) fn build_response(
@@ -276,7 +277,6 @@ pub(super) fn top_n(concerns: &[&str], n: usize) -> Vec<String> {
     concerns.iter().take(n).map(|s| (*s).to_string()).collect()
 }
 
-/// Internal representation of a stale decision.
 pub(super) struct StaleDec {
     pub(super) name: Arc<str>,
     pub(super) created: String,

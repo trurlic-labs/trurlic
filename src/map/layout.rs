@@ -65,7 +65,21 @@ pub(crate) fn save(store_root: &Path, state: &LayoutState) -> Result<(), String>
     let json = serde_json::to_string_pretty(state).map_err(|e| format!("layout serialize: {e}"))?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, &json).map_err(|e| format!("layout write tmp: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("layout rename: {e}"))
+
+    // Round-trip verification: read back and compare before committing.
+    let readback = fs::read_to_string(&tmp).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("layout readback: {e}")
+    })?;
+    if readback != json {
+        let _ = fs::remove_file(&tmp);
+        return Err("layout round-trip verification failed: written content differs".into());
+    }
+
+    fs::rename(&tmp, &path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("layout rename: {e}")
+    })
 }
 
 #[cfg(test)]

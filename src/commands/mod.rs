@@ -3,6 +3,7 @@ mod component;
 mod decision;
 mod design;
 mod init;
+pub(crate) mod install;
 mod map;
 mod query;
 mod serve;
@@ -14,6 +15,7 @@ pub use component::{
 pub use decision::{decide, remove_decision};
 pub use design::design;
 pub use init::init;
+pub use install::install;
 pub use map::map;
 pub use query::{check, status};
 pub use serve::serve;

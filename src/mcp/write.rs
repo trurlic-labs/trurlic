@@ -46,11 +46,6 @@ pub(super) fn opt_str<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>,
     }
 }
 
-/// Reject ASCII control characters that could corrupt TOML files.
-/// Allows common whitespace (newline, carriage return, tab).
-///
-/// Delegates to the shared store-level function so the same rules apply
-/// regardless of mutation entry point (MCP, map REST API, CLI).
 fn has_control_chars(s: &str) -> bool {
     crate::store::has_control_chars(s)
 }
@@ -574,31 +569,6 @@ mod tests {
         });
         let err = record_decision(&store, &mut state, &args).unwrap_err();
         assert!(err.contains("ghost"));
-    }
-
-    #[test]
-    fn record_decision_rejects_cycle() {
-        let (_tmp, store, mut state) = setup();
-
-        let a = json!({ "component": "auth", "choice": "A", "reason": "cycle dependency test", "attribution": "user" });
-        record_decision(&store, &mut state, &a).unwrap();
-
-        let b = json!({
-            "component": "auth", "choice": "B", "reason": "cycle dependency test",
-            "depends_on": ["a"],
-            "attribution": "user",
-        });
-        record_decision(&store, &mut state, &b).unwrap();
-
-        // C depends on B, which depends on A. Now try A depending on C.
-        // Actually, cycle detection is: the NEW decision depends on existing
-        // ones, so the cycle would be if we create C that depends on B,
-        // then try to make A depend on C. But record_decision only creates
-        // NEW decisions. We can't create a cycle with forward depends_on
-        // on a NEW node since nothing can depend on it yet.
-        // A cycle requires adding DependsOn from existing→new which can't
-        // happen via record_decision. Cycles are caught by graph validation.
-        // Let's test via direct graph manipulation instead.
     }
 
     // ── record_pattern ──────────────────────────────────────────────────

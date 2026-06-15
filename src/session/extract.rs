@@ -166,7 +166,7 @@ pub(crate) fn extract_components(response: &str) -> Vec<ExtractedComponent> {
 }
 
 fn try_parse_component(json_str: &str) -> Option<ExtractedComponent> {
-    let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let json: Value = serde_json::from_str(json_str).ok()?;
 
     // Must have "name", must NOT have "choice" (that's a decision).
     if json.get("choice").is_some() {
@@ -226,7 +226,7 @@ pub(crate) fn extract_connections(response: &str) -> Vec<ExtractedConnection> {
 }
 
 fn try_parse_connection(json_str: &str) -> Option<ExtractedConnection> {
-    let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let json: Value = serde_json::from_str(json_str).ok()?;
     let from = json.get("from")?.as_str().filter(|s| !s.is_empty())?;
     let to = json.get("to")?.as_str().filter(|s| !s.is_empty())?;
 
@@ -280,7 +280,7 @@ pub(crate) fn extract_patterns(response: &str) -> Vec<ExtractedPattern> {
 }
 
 fn try_parse_pattern(json_str: &str) -> Option<ExtractedPattern> {
-    let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let json: Value = serde_json::from_str(json_str).ok()?;
 
     let name = json
         .get("name")
