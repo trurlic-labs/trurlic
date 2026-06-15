@@ -939,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_as_str_rejects_valid_utf8() {
+    fn binary_as_str_accepts_valid_utf8() {
         let path = Path::new("/valid/path");
         assert!(binary_as_str(path).is_ok());
     }
