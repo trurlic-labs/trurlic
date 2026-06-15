@@ -210,19 +210,42 @@ struct DeduceContext<'a> {
 /// The machine errs on the side of returning `Ready` rather than looping.
 fn deduce_step(task_type: TaskType, ctx: &DeduceContext<'_>) -> Step {
     match task_type {
-        TaskType::NewComponent => {
-            deduce_new_component(ctx.decisions, ctx.covered, ctx.uncovered, ctx.patterns, ctx.completed)
-        }
-        TaskType::Feature => {
-            deduce_feature(ctx.decisions, ctx.covered, ctx.uncovered, ctx.patterns, ctx.task, ctx.completed)
-        }
-        TaskType::Fix => deduce_fix(ctx.decisions, ctx.uncovered, ctx.graph, ctx.component, ctx.task, ctx.completed),
+        TaskType::NewComponent => deduce_new_component(
+            ctx.decisions,
+            ctx.covered,
+            ctx.uncovered,
+            ctx.patterns,
+            ctx.completed,
+        ),
+        TaskType::Feature => deduce_feature(
+            ctx.decisions,
+            ctx.covered,
+            ctx.uncovered,
+            ctx.patterns,
+            ctx.task,
+            ctx.completed,
+        ),
+        TaskType::Fix => deduce_fix(
+            ctx.decisions,
+            ctx.uncovered,
+            ctx.graph,
+            ctx.component,
+            ctx.task,
+            ctx.completed,
+        ),
         TaskType::Learn => deduce_learn(ctx.decisions, ctx.patterns, ctx.completed),
-        TaskType::Review => {
-            deduce_review(ctx.decisions, ctx.stale, ctx.covered, ctx.uncovered, ctx.patterns, ctx.completed)
-        }
+        TaskType::Review => deduce_review(
+            ctx.decisions,
+            ctx.stale,
+            ctx.covered,
+            ctx.uncovered,
+            ctx.patterns,
+            ctx.completed,
+        ),
         TaskType::Harden => deduce_harden(ctx.uncovered, ctx.patterns, ctx.completed),
-        TaskType::Bootstrap => deduce_bootstrap_component(ctx.decisions, ctx.patterns, ctx.component),
+        TaskType::Bootstrap => {
+            deduce_bootstrap_component(ctx.decisions, ctx.patterns, ctx.component)
+        }
     }
 }
 

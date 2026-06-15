@@ -1029,8 +1029,7 @@ gemini_api_key = "AIza-gemini-test"
         };
         let mut cfg = ConfigFile::default();
         cfg.custom_model = Some("config-model".into());
-        let r =
-            resolve_from_sources(Some("custom"), Some("flag-model"), Some(&cfg), &env).unwrap();
+        let r = resolve_from_sources(Some("custom"), Some("flag-model"), Some(&cfg), &env).unwrap();
         assert_eq!(r.model, "flag-model");
     }
 }

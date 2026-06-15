@@ -52,10 +52,7 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> 
         }
     }
 
-    println!(
-        "Installed trurlic MCP server for {}",
-        ide_display_name(ide)
-    );
+    println!("Installed trurlic MCP server for {}", ide_display_name(ide));
     println!("Config: {}", path.display());
     Ok(())
 }
@@ -185,15 +182,13 @@ fn ide_display_name(ide: InstallIde) -> &'static str {
 
 fn build_dry_run_snippet(ide: InstallIde, bin: &str) -> Result<String> {
     match ide {
-        InstallIde::ClaudeCode => {
-            Ok(format!("claude mcp add trurlic -s user -- {bin} serve"))
-        }
-        InstallIde::Codex => {
-            Ok(format!("[mcp_servers.trurlic]\ncommand = \"{bin}\"\nargs = [\"serve\"]"))
-        }
-        InstallIde::HermesAgent => {
-            Ok(format!("mcp_servers:\n  trurlic:\n    command: '{bin}'\n    args:\n    - serve"))
-        }
+        InstallIde::ClaudeCode => Ok(format!("claude mcp add trurlic -s user -- {bin} serve")),
+        InstallIde::Codex => Ok(format!(
+            "[mcp_servers.trurlic]\ncommand = \"{bin}\"\nargs = [\"serve\"]"
+        )),
+        InstallIde::HermesAgent => Ok(format!(
+            "mcp_servers:\n  trurlic:\n    command: '{bin}'\n    args:\n    - serve"
+        )),
         InstallIde::OpenCode => dry_run_json("mcp", bin, true),
         InstallIde::Copilot => dry_run_json("servers", bin, false),
         InstallIde::Claude
@@ -214,9 +209,8 @@ fn dry_run_json(key: &str, bin: &str, add_type: bool) -> Result<String> {
         obj.insert("type".into(), Value::String("local".into()));
     }
     let wrapper = serde_json::json!({ key: { "trurlic": entry } });
-    serde_json::to_string_pretty(&wrapper).map_err(|e| {
-        Error::Validation(format!("failed to serialize dry-run snippet: {e}"))
-    })
+    serde_json::to_string_pretty(&wrapper)
+        .map_err(|e| Error::Validation(format!("failed to serialize dry-run snippet: {e}")))
 }
 
 // ── Atomic file write ────────────────────────────────────────────────────────
@@ -348,10 +342,7 @@ fn write_toml_config(path: &Path, binary: &str) -> Result<()> {
         })?;
 
     let mut trurlic = toml::map::Map::new();
-    trurlic.insert(
-        "command".into(),
-        toml::Value::String(binary.to_string()),
-    );
+    trurlic.insert("command".into(), toml::Value::String(binary.to_string()));
     trurlic.insert(
         "args".into(),
         toml::Value::Array(vec![toml::Value::String("serve".into())]),
