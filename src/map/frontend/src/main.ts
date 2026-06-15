@@ -203,9 +203,17 @@ class App {
       this.panel.showComponent(hit, this.graph);
       this.announce(`Selected component: ${hitName}`);
     } else {
-      this.selection.select(null);
-      this.syncFocusClear();
-      this.panel.showProject(this.graph);
+      const patHit = this.graph.patternAt(wx, wy);
+      if (patHit) {
+        this.selection.select(null);
+        this.syncFocusClear();
+        this.panel.showPattern(patHit, this.graph);
+        this.announce(`Selected pattern: ${patHit}`);
+      } else {
+        this.selection.select(null);
+        this.syncFocusClear();
+        this.panel.showProject(this.graph);
+      }
     }
     this.breadcrumb.update(this.graph.projectName, this.selection.selected);
     this.needsRender = true;
@@ -228,25 +236,43 @@ class App {
     const hit = this.graph.nodeAt(wx, wy);
     const hitName = hit?.name ?? null;
     const hitDesc = hit?.description ?? '';
-    const hitEdge = hitName
-      ? null
-      : findHoveredEdge(
-          this.graph,
-          wx,
-          wy,
-          this.camera.zoom,
-          this.lod,
-          this.filters.state,
-          this.renderer.cachedEdgePairSet,
-        );
+
+    const hitPattern = hitName ? null : this.graph.patternAt(wx, wy);
+    const hitPatternDesc = hitPattern
+      ? (this.graph.patterns.get(hitPattern)?.description ?? hitPattern)
+      : '';
+
+    const hitEdge =
+      hitName || hitPattern
+        ? null
+        : findHoveredEdge(
+            this.graph,
+            wx,
+            wy,
+            this.camera.zoom,
+            this.lod,
+            this.filters.state,
+            this.renderer.cachedEdgePairSet,
+          );
 
     const now = performance.now();
-    if (this.hover.update(hitName, hitDesc, hitEdge, e.offsetX, e.offsetY, now)) {
+    if (
+      this.hover.update(
+        hitName,
+        hitDesc,
+        hitPattern,
+        hitPatternDesc,
+        hitEdge,
+        e.offsetX,
+        e.offsetY,
+        now,
+      )
+    ) {
       this.needsRender = true;
     }
 
     // Cursor: pointer over interactive elements, otherwise default (CSS grab).
-    this.canvas.style.cursor = hitName || hitEdge ? 'pointer' : '';
+    this.canvas.style.cursor = hitName || hitPattern || hitEdge ? 'pointer' : '';
   }
 
   private onPointerUp(): void {

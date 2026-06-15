@@ -202,6 +202,11 @@ export class Renderer {
       this.drawTooltip(hover.edgeTooltipText, hover.tooltipX, hover.tooltipY);
     }
 
+    // Pattern tooltip: screen-space, after dwell delay.
+    if (hover?.pattern && hover.patternDesc && hover.tooltipVisible && !hover.node) {
+      this.drawTooltip(hover.patternDesc, hover.tooltipX, hover.tooltipY);
+    }
+
     this.fh = null;
     return this.lodFadeAlpha < 1;
   }
@@ -233,7 +238,7 @@ export class Renderer {
     const labelSize = 13 / cam.zoom;
 
     let patIdx = 0;
-    for (const [, pat] of graph.patterns) {
+    for (const [patName, pat] of graph.patterns) {
       // Skip patterns with no visible components.
       const memberNames = pat.components.filter((name) => visible.has(name));
       if (memberNames.length === 0) {
@@ -269,7 +274,11 @@ export class Renderer {
         });
       }
 
-      const fillAlpha = dimmedByFilter ? dimFill : baseFill;
+      const isHovered = this.fh?.pattern === patName;
+      const hoverFillBoost = isHovered ? 1.5 : 1.0;
+      const hoverStrokeBoost = isHovered ? 1.3 : 1.0;
+      const fillAlpha = (dimmedByFilter ? dimFill : baseFill) * hoverFillBoost;
+      const strokeAlpha = baseStroke * hoverStrokeBoost;
       const hue = PATTERN_HUES[patIdx % PATTERN_HUES.length];
 
       ctx.globalAlpha = dimmedByFocus ? 0.15 : 1;
@@ -280,8 +289,8 @@ export class Renderer {
       ctx.fill();
 
       // Stroke.
-      ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${baseStroke})`;
-      ctx.lineWidth = 2.0 / cam.zoom;
+      ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${strokeAlpha})`;
+      ctx.lineWidth = (isHovered ? 2.5 : 2.0) / cam.zoom;
       ctx.stroke();
 
       // Label: shown at all LOD levels.

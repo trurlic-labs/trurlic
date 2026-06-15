@@ -13,6 +13,8 @@ export interface HoverEdge {
  */
 export interface HoverRenderState {
   readonly node: string | null;
+  readonly pattern: string | null;
+  readonly patternDesc: string;
   readonly borderAlpha: number;
   readonly tooltipVisible: boolean;
   readonly tooltipText: string;
@@ -50,6 +52,10 @@ export class HoverTracker {
   private _tooltipText = '';
   private enterTime = 0;
 
+  // Pattern hover.
+  private _pattern: string | null = null;
+  private _patternDesc = '';
+
   // Edge hover.
   private _edge: HoverEdge | null = null;
   private _edgeTooltipText = '';
@@ -62,6 +68,12 @@ export class HoverTracker {
 
   get node(): string | null {
     return this._node;
+  }
+  get pattern(): string | null {
+    return this._pattern;
+  }
+  get patternDesc(): string {
+    return this._patternDesc;
   }
   get borderAlpha(): number {
     return this._borderAlpha;
@@ -89,18 +101,23 @@ export class HoverTracker {
 
   /**
    * Update hover targets based on hit-test results.
+   * Priority: node > pattern > edge.
    *
-   * @param nodeName  Hit-tested node name, or null.
-   * @param nodeDesc  Node description (for tooltip text).
-   * @param hitEdge   Hit-tested edge, or null (only when no node hit).
-   * @param sx        Screen-space cursor X.
-   * @param sy        Screen-space cursor Y.
-   * @param now       Current timestamp (performance.now()).
-   * @returns         True if the hover target changed (caller should re-render).
+   * @param nodeName     Hit-tested node name, or null.
+   * @param nodeDesc     Node description (for tooltip text).
+   * @param patternName  Hit-tested pattern name, or null.
+   * @param patternDesc  Pattern description (for tooltip text).
+   * @param hitEdge      Hit-tested edge, or null (only when no node hit).
+   * @param sx           Screen-space cursor X.
+   * @param sy           Screen-space cursor Y.
+   * @param now          Current timestamp (performance.now()).
+   * @returns            True if the hover target changed (caller should re-render).
    */
   update(
     nodeName: string | null,
     nodeDesc: string,
+    patternName: string | null,
+    patternDesc: string,
     hitEdge: HoverEdge | null,
     sx: number,
     sy: number,
@@ -111,20 +128,33 @@ export class HoverTracker {
 
     let changed = false;
 
-    // Edge activates only when no node is hovered.
-    const effectiveEdge = nodeName ? null : hitEdge;
-    if (!sameEdge(effectiveEdge, this._edge)) {
-      this._edge = effectiveEdge;
-      this._edgeTooltipText = effectiveEdge ? `${effectiveEdge.from} → ${effectiveEdge.to}` : '';
-      changed = true;
-    }
-
+    // Node hover.
     if (nodeName !== this._node) {
       this._node = nodeName;
       this._tooltipText = nodeName ? truncate(nodeDesc, TOOLTIP_MAX_CHARS) : '';
       this._borderAlpha = 0;
       this._tooltipVisible = false;
       this.enterTime = nodeName ? now : 0;
+      changed = true;
+    }
+
+    // Pattern hover — only when no node is hovered.
+    const effectivePattern = nodeName ? null : patternName;
+    if (effectivePattern !== this._pattern) {
+      this._pattern = effectivePattern;
+      this._patternDesc = patternDesc;
+      if (!this._node) {
+        this._tooltipVisible = false;
+        this.enterTime = effectivePattern ? now : 0;
+      }
+      changed = true;
+    }
+
+    // Edge activates only when both node and pattern are null.
+    const effectiveEdge = nodeName || effectivePattern ? null : hitEdge;
+    if (!sameEdge(effectiveEdge, this._edge)) {
+      this._edge = effectiveEdge;
+      this._edgeTooltipText = effectiveEdge ? `${effectiveEdge.from} → ${effectiveEdge.to}` : '';
       changed = true;
     }
 
@@ -138,25 +168,37 @@ export class HoverTracker {
    * (caller should set needsRender).
    */
   tick(now: number): boolean {
-    if (!this._node) {
+    const hasTarget = this._node || this._pattern;
+
+    if (!hasTarget) {
+      let changed = false;
       if (this._borderAlpha > 0) {
         this._borderAlpha = 0;
-        return true;
+        changed = true;
       }
-      return false;
+      if (this._tooltipVisible) {
+        this._tooltipVisible = false;
+        changed = true;
+      }
+      return changed;
     }
 
     const elapsed = now - this.enterTime;
     let changed = false;
 
-    // Border alpha: linear ramp over BORDER_RAMP_MS.
-    const targetAlpha = Math.min(1, elapsed / BORDER_RAMP_MS);
-    if (targetAlpha !== this._borderAlpha) {
-      this._borderAlpha = targetAlpha;
+    // Border alpha: linear ramp over BORDER_RAMP_MS (node only).
+    if (this._node) {
+      const targetAlpha = Math.min(1, elapsed / BORDER_RAMP_MS);
+      if (targetAlpha !== this._borderAlpha) {
+        this._borderAlpha = targetAlpha;
+        changed = true;
+      }
+    } else if (this._borderAlpha > 0) {
+      this._borderAlpha = 0;
       changed = true;
     }
 
-    // Tooltip: visible after TOOLTIP_DWELL_MS.
+    // Tooltip: visible after TOOLTIP_DWELL_MS (node or pattern).
     const shouldShow = elapsed >= TOOLTIP_DWELL_MS;
     if (shouldShow !== this._tooltipVisible) {
       this._tooltipVisible = shouldShow;
@@ -170,6 +212,8 @@ export class HoverTracker {
 
   clear(): void {
     this._node = null;
+    this._pattern = null;
+    this._patternDesc = '';
     this._edge = null;
     this._edgeTooltipText = '';
     this._borderAlpha = 0;
