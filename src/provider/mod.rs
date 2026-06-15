@@ -92,31 +92,16 @@ pub fn create_provider(config: ProviderConfig) -> Result<Box<dyn LlmProvider>> {
             "https://openrouter.ai/api/v1",
             openai::ApiVariant::OpenRouter,
         )),
-        Provider::Custom => {
+        Provider::Custom | Provider::Ollama => {
+            let variant = match provider {
+                Provider::Custom => openai::ApiVariant::Custom,
+                Provider::Ollama => openai::ApiVariant::Ollama,
+                _ => unreachable!(),
+            };
             let url = base_url.ok_or_else(|| {
-                Error::ProviderConfig(
-                    "custom provider requires a base URL — set CUSTOM_BASE_URL \
-                     or add custom_base_url to ~/.config/trurlic/config.toml"
-                        .into(),
-                )
+                Error::ProviderConfig(format!("{} provider requires a base URL", provider.name(),))
             })?;
-            Box::new(openai::OpenAiClient::new(
-                client,
-                key,
-                model,
-                &url,
-                openai::ApiVariant::Custom,
-            ))
-        }
-        Provider::Ollama => {
-            let url = base_url.unwrap_or_else(|| "http://localhost:11434/v1".into());
-            Box::new(openai::OpenAiClient::new(
-                client,
-                key,
-                model,
-                &url,
-                openai::ApiVariant::Ollama,
-            ))
+            Box::new(openai::OpenAiClient::new(client, key, model, &url, variant))
         }
         Provider::Gemini => Box::new(gemini::GeminiClient::new(client, key, model)),
     })
@@ -186,7 +171,6 @@ mod tests {
         match create_provider(config) {
             Err(Error::ProviderConfig(msg)) => {
                 assert!(msg.contains("base URL"), "{msg}");
-                assert!(msg.contains("CUSTOM_BASE_URL"), "{msg}");
             }
             Err(other) => panic!("expected ProviderConfig, got: {other}"),
             Ok(_) => panic!("expected error, got Ok"),
@@ -199,7 +183,7 @@ mod tests {
             provider: Provider::Ollama,
             key: ApiKey::new(String::new()),
             model: "llama3.1".into(),
-            base_url: None,
+            base_url: Some("http://localhost:11434/v1".into()),
         };
         let client = create_provider(config).unwrap();
         assert_eq!(client.provider_name(), "ollama");

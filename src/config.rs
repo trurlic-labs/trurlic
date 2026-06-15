@@ -184,7 +184,7 @@ impl ConfigFile {
 
 // ── EnvKeys ──────────────────────────────────────────────────────────────────
 
-/// Snapshot of API key environment variables, zeroed on drop.
+/// Snapshot of all provider environment variables, zeroed on drop.
 /// Read once at resolution time to decouple I/O from logic (testability).
 #[derive(Zeroize, ZeroizeOnDrop)]
 struct EnvKeys {
@@ -193,6 +193,10 @@ struct EnvKeys {
     openrouter: Option<String>,
     custom: Option<String>,
     gemini: Option<String>,
+    #[zeroize(skip)]
+    custom_base_url: Option<String>,
+    #[zeroize(skip)]
+    ollama_base_url: Option<String>,
 }
 
 impl EnvKeys {
@@ -204,6 +208,8 @@ impl EnvKeys {
             openrouter: read("OPENROUTER_API_KEY"),
             custom: read("CUSTOM_API_KEY"),
             gemini: read("GEMINI_API_KEY"),
+            custom_base_url: read("CUSTOM_BASE_URL"),
+            ollama_base_url: read("OLLAMA_BASE_URL"),
         }
     }
 
@@ -244,7 +250,7 @@ fn resolve_from_sources(
 ) -> Result<ProviderConfig> {
     let provider = resolve_provider_choice(provider_flag, config, env_keys)?;
     let key = resolve_key(provider, env_keys, config)?;
-    let base_url = resolve_base_url(provider, config)?;
+    let base_url = resolve_base_url(provider, env_keys, config)?;
 
     let model = model_flag
         .map(String::from)
@@ -342,12 +348,16 @@ fn resolve_key(
     )))
 }
 
-fn resolve_base_url(provider: Provider, config: Option<&ConfigFile>) -> Result<Option<String>> {
+fn resolve_base_url(
+    provider: Provider,
+    env_keys: &EnvKeys,
+    config: Option<&ConfigFile>,
+) -> Result<Option<String>> {
     match provider {
         Provider::Custom => {
-            let url = std::env::var("CUSTOM_BASE_URL")
-                .ok()
-                .filter(|s| !s.is_empty())
+            let url = env_keys
+                .custom_base_url
+                .clone()
                 .or_else(|| config.and_then(|c| c.custom_base_url.clone()));
             match url {
                 Some(u) => Ok(Some(u)),
@@ -359,9 +369,9 @@ fn resolve_base_url(provider: Provider, config: Option<&ConfigFile>) -> Result<O
             }
         }
         Provider::Ollama => Ok(Some(
-            std::env::var("OLLAMA_BASE_URL")
-                .ok()
-                .filter(|s| !s.is_empty())
+            env_keys
+                .ollama_base_url
+                .clone()
                 .or_else(|| config.and_then(|c| c.ollama_base_url.clone()))
                 .unwrap_or_else(|| "http://localhost:11434/v1".into()),
         )),
@@ -580,6 +590,8 @@ mod tests {
             openrouter: openrouter.map(String::from),
             custom: None,
             gemini: None,
+            custom_base_url: None,
+            ollama_base_url: None,
         }
     }
 
@@ -830,6 +842,8 @@ openrouter_api_key = "sk-or-test"
             openrouter: None,
             custom: Some("sk-custom-key".into()),
             gemini: None,
+            custom_base_url: None,
+            ollama_base_url: None,
         };
         let err = resolve_from_sources(Some("custom"), None, None, &env).unwrap_err();
         match err {
@@ -848,6 +862,8 @@ openrouter_api_key = "sk-or-test"
             openrouter: None,
             custom: Some("sk-custom-key".into()),
             gemini: None,
+            custom_base_url: None,
+            ollama_base_url: None,
         };
         let mut cfg = ConfigFile::default();
         cfg.custom_base_url = Some("http://my-server:8080/v1".into());
@@ -865,6 +881,8 @@ openrouter_api_key = "sk-or-test"
             openrouter: None,
             custom: None,
             gemini: Some("AIza-gemini-key".into()),
+            custom_base_url: None,
+            ollama_base_url: None,
         };
         let r = resolve_from_sources(Some("gemini"), None, None, &env).unwrap();
         assert_eq!(r.provider, Provider::Gemini);
@@ -881,6 +899,8 @@ openrouter_api_key = "sk-or-test"
             openrouter: None,
             custom: Some("sk-custom".into()),
             gemini: Some("AIza-gemini".into()),
+            custom_base_url: None,
+            ollama_base_url: None,
         };
         let err = resolve_from_sources(None, None, None, &env).unwrap_err();
         match err {
@@ -920,6 +940,8 @@ gemini_api_key = "AIza-gemini-test"
             openrouter: None,
             custom: Some("sk-custom-key".into()),
             gemini: None,
+            custom_base_url: None,
+            ollama_base_url: None,
         };
         let mut cfg = ConfigFile::default();
         cfg.custom_base_url = Some("http://config-server/v1".into());
@@ -934,5 +956,39 @@ gemini_api_key = "AIza-gemini-test"
         cfg.ollama_base_url = Some("http://custom-ollama:11434/v1".into());
         let r = resolve_from_sources(Some("ollama"), None, Some(&cfg), &env).unwrap();
         assert_eq!(r.base_url.as_deref(), Some("http://custom-ollama:11434/v1"));
+    }
+
+    #[test]
+    fn custom_base_url_env_overrides_config() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: Some("sk-custom-key".into()),
+            gemini: None,
+            custom_base_url: Some("http://env-server/v1".into()),
+            ollama_base_url: None,
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.custom_base_url = Some("http://config-server/v1".into());
+        let r = resolve_from_sources(Some("custom"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.base_url.as_deref(), Some("http://env-server/v1"));
+    }
+
+    #[test]
+    fn ollama_base_url_env_overrides_config() {
+        let env = EnvKeys {
+            anthropic: None,
+            openai: None,
+            openrouter: None,
+            custom: None,
+            gemini: None,
+            custom_base_url: None,
+            ollama_base_url: Some("http://env-ollama:9999/v1".into()),
+        };
+        let mut cfg = ConfigFile::default();
+        cfg.ollama_base_url = Some("http://config-ollama:11434/v1".into());
+        let r = resolve_from_sources(Some("ollama"), None, Some(&cfg), &env).unwrap();
+        assert_eq!(r.base_url.as_deref(), Some("http://env-ollama:9999/v1"));
     }
 }

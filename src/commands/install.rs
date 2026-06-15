@@ -7,7 +7,13 @@ use serde_json::Value;
 use crate::cli::InstallIde;
 use crate::{Error, Result};
 
-pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: bool) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DryRun {
+    Yes,
+    No,
+}
+
+pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> Result<()> {
     let binary = resolve_binary(binary_path)?;
 
     if matches!(ide, InstallIde::ClaudeCode) {
@@ -16,7 +22,7 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: bool) -> Re
 
     let path = ide_config_path(&ide)?;
 
-    if dry_run {
+    if dry_run == DryRun::Yes {
         let snippet = build_dry_run_snippet(&ide, &binary);
         println!("{snippet}");
         return Ok(());
@@ -207,7 +213,12 @@ fn build_dry_run_snippet(ide: &InstallIde, binary: &Path) -> String {
             });
             serde_json::to_string_pretty(&entry).unwrap_or_default()
         }
-        _ => {
+        InstallIde::Claude
+        | InstallIde::Cursor
+        | InstallIde::Cline
+        | InstallIde::Windsurf
+        | InstallIde::OpenClaw
+        | InstallIde::Antigravity => {
             let entry = serde_json::json!({
                 "mcpServers": {
                     "trurlic": {
@@ -232,6 +243,17 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
         let _ = fs::remove_file(&tmp);
         Error::Io(e)
     })?;
+    let readback = fs::read_to_string(&tmp).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        Error::Io(e)
+    })?;
+    if readback != content {
+        let _ = fs::remove_file(&tmp);
+        return Err(Error::InvalidInstallConfig {
+            path: path.to_path_buf(),
+            detail: "round-trip verification failed: written content differs".into(),
+        });
+    }
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         Error::Io(e)
@@ -453,11 +475,11 @@ fn which(name: &str) -> std::result::Result<PathBuf, ()> {
     Err(())
 }
 
-fn install_claude_code(binary: &Path, dry_run: bool) -> Result<()> {
+fn install_claude_code(binary: &Path, dry_run: DryRun) -> Result<()> {
     let claude = find_claude_cli()?;
     let bin_str = binary.to_string_lossy();
 
-    if dry_run {
+    if dry_run == DryRun::Yes {
         println!("claude mcp add trurlic -s user -- {bin_str} serve");
         return Ok(());
     }
@@ -815,5 +837,20 @@ mod tests {
             .unwrap();
         // Either ~/.codex/ (default) or $CODEX_HOME/.
         assert!(parent == ".codex" || std::env::var("CODEX_HOME").is_ok());
+    }
+
+    #[test]
+    fn resolve_binary_rejects_nonexistent() {
+        let err = resolve_binary(Some(Path::new("/nonexistent/trurlic"))).unwrap_err();
+        assert!(matches!(err, Error::BinaryNotFound));
+    }
+
+    #[test]
+    fn resolve_binary_accepts_real_file() {
+        let tmp = TempDir::new().unwrap();
+        let bin = tmp.path().join("trurlic");
+        fs::write(&bin, "fake binary").unwrap();
+        let result = resolve_binary(Some(&bin)).unwrap();
+        assert_eq!(result, bin);
     }
 }

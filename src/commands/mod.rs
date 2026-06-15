@@ -3,7 +3,7 @@ mod component;
 mod decision;
 mod design;
 mod init;
-mod install;
+pub(crate) mod install;
 mod map;
 mod query;
 mod serve;

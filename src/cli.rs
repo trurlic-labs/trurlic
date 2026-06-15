@@ -295,7 +295,14 @@ pub fn run(cli: Cli) -> Result<()> {
             ide,
             binary_path,
             dry_run,
-        } => commands::install(ide, binary_path.as_deref(), dry_run),
+        } => {
+            let mode = if dry_run {
+                commands::install::DryRun::Yes
+            } else {
+                commands::install::DryRun::No
+            };
+            commands::install(ide, binary_path.as_deref(), mode)
+        }
         Command::Serve => commands::serve(&cwd),
         Command::Map {
             port,
