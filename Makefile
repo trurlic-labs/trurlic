@@ -8,6 +8,7 @@ NODE_STAMP   = $(FRONTEND_DIR)/node_modules/.install-stamp
 # ── Install (single command: rebuild everything → install binary) ──────────
 
 install: build-frontend
+	@touch src/map/embed.rs
 	cargo install --path . --locked
 	@echo ""
 	@echo "  ✓ trurlic installed to $$(which trurlic || echo '~/.cargo/bin/trurlic')"
