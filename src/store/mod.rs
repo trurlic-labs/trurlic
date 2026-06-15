@@ -1401,7 +1401,10 @@ mod tests {
             Error::Validation(msg) => {
                 assert!(msg.contains("0.0.1"));
                 assert!(msg.contains("older"), "should mention 'older': {msg}");
-                assert!(msg.contains("trurlic migrate"), "should mention trurlic migrate: {msg}");
+                assert!(
+                    msg.contains("trurlic migrate"),
+                    "should mention trurlic migrate: {msg}"
+                );
             }
             other => panic!("expected Validation, got: {other}"),
         }
