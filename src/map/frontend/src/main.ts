@@ -120,6 +120,7 @@ class App {
         this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
         this.layout.run(this.graph.nodes, this.graph.edges, 200);
         this.graph.rebuildQuadtree();
+        this.graph.rebuildPatternHulls();
         this.fitView();
         this.updateLOD();
         this.panel.showProject(this.graph);
@@ -252,6 +253,7 @@ class App {
     const result = this.drag.onPointerUp();
     if (result.nodePositionChanged) {
       this.graph.rebuildQuadtree();
+      this.graph.rebuildPatternHulls();
       this.updateLOD();
       this.drag.scheduleLayoutSave(() => this.saveLayout());
     }
@@ -428,6 +430,7 @@ class App {
               for (const n of this.graph.nodes.values()) n.pinned = false;
               this.layout.run(this.graph.nodes, this.graph.edges, 200);
               this.graph.rebuildQuadtree();
+              this.graph.rebuildPatternHulls();
               this.fitView();
             })
             .catch((e) => console.error('Reset layout failed:', e));
@@ -741,6 +744,7 @@ class App {
         this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
         this.layout.run(this.graph.nodes, this.graph.edges, 50);
         this.graph.rebuildQuadtree();
+        this.graph.rebuildPatternHulls();
         this.updateLOD();
         this.needsRender = true;
         this.toolbar.setAvailableTags(this.graph.allTags());

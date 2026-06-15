@@ -200,6 +200,29 @@ export function nodeCorners(
   return pts;
 }
 
+// ── Point-in-polygon ──────────────────────────────────────────────────
+
+/**
+ * Test whether point (px, py) is inside a convex polygon.
+ * Uses the cross-product winding method. Polygon vertices
+ * must be in consistent winding order (CW or CCW).
+ */
+export function pointInConvexPoly(px: number, py: number, poly: readonly Point[]): boolean {
+  const n = poly.length;
+  if (n < 3) return false;
+  let positive = 0;
+  let negative = 0;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    const cp = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+    if (cp > 0) positive++;
+    else if (cp < 0) negative++;
+    if (positive > 0 && negative > 0) return false;
+  }
+  return true;
+}
+
 // ── Distance helpers ───────────────────────────────────────────────────
 
 /**

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { convexHull, expandHull, cross, nodeCorners, rayRectIntersect } from './geometry';
+import {
+  convexHull,
+  expandHull,
+  cross,
+  nodeCorners,
+  rayRectIntersect,
+  pointInConvexPoly,
+} from './geometry';
 import type { Point } from './geometry';
 
 describe('cross', () => {
@@ -198,6 +205,53 @@ describe('rayRectIntersect', () => {
     const p = rayRectIntersect(0, 0, 50, 50, -1, -1);
     expect(p.x).toBeCloseTo(-50);
     expect(p.y).toBeCloseTo(-50);
+  });
+});
+
+describe('pointInConvexPoly', () => {
+  const triangle: Point[] = [
+    { x: 0, y: 0 },
+    { x: 4, y: 0 },
+    { x: 2, y: 3 },
+  ];
+
+  const square: Point[] = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+    { x: 0, y: 10 },
+  ];
+
+  it('detects point inside a triangle', () => {
+    expect(pointInConvexPoly(2, 1, triangle)).toBe(true);
+  });
+
+  it('detects point outside a triangle', () => {
+    expect(pointInConvexPoly(5, 5, triangle)).toBe(false);
+  });
+
+  it('detects point inside a square', () => {
+    expect(pointInConvexPoly(5, 5, square)).toBe(true);
+  });
+
+  it('handles point on edge without crashing', () => {
+    const result = pointInConvexPoly(2, 0, triangle);
+    expect(typeof result).toBe('boolean');
+  });
+
+  it('detects point far away', () => {
+    expect(pointInConvexPoly(1000, 1000, triangle)).toBe(false);
+  });
+
+  it('returns false for degenerate polygon with fewer than 3 points', () => {
+    expect(pointInConvexPoly(0, 0, [])).toBe(false);
+    expect(pointInConvexPoly(0, 0, [{ x: 0, y: 0 }])).toBe(false);
+    expect(
+      pointInConvexPoly(0, 0, [
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+      ]),
+    ).toBe(false);
   });
 });
 

@@ -1,5 +1,7 @@
 import type { GraphSnapshot, DecisionNode, PatternNode, RenderNode, RenderEdge } from '../types';
 import { Quadtree } from '../renderer/culling';
+import { convexHull, expandHull, pointInConvexPoly } from '../renderer/geometry';
+import type { Point } from '../renderer/geometry';
 
 /** Shared empty array — avoids allocation on `decisionsFor` misses. */
 const NO_DECISIONS: readonly DecisionNode[] = Object.freeze([]);
@@ -27,6 +29,9 @@ export class Graph {
   projectDescription = '';
   layoutVersion = 0;
   quadtree = new Quadtree();
+
+  /** Pattern name -> expanded convex hull points (computed after layout). */
+  patternHulls: Map<string, Point[]> = new Map();
 
   /** Component name → decisions index. O(1) lookup. */
   private byComponent = new Map<string, DecisionNode[]>();
@@ -75,11 +80,46 @@ export class Graph {
 
     this.assignMissingPositions();
     this.rebuildQuadtree();
+    this.rebuildPatternHulls();
   }
 
   /** Rebuild the spatial index. Call after layout changes or drag. */
   rebuildQuadtree(): void {
     this.quadtree.build(this.nodes);
+  }
+
+  /** Rebuild expanded convex hulls for all patterns. Call after layout. */
+  rebuildPatternHulls(): void {
+    this.patternHulls.clear();
+    for (const [name, pat] of this.patterns) {
+      const corners: Point[] = [];
+      for (const cName of pat.components) {
+        const n = this.nodes.get(cName);
+        if (!n) continue;
+        const hw = n.w / 2;
+        const hh = n.h / 2;
+        corners.push(
+          { x: n.x - hw, y: n.y - hh },
+          { x: n.x + hw, y: n.y - hh },
+          { x: n.x + hw, y: n.y + hh },
+          { x: n.x - hw, y: n.y + hh },
+        );
+      }
+      if (corners.length < 3) continue;
+      const hull = convexHull(corners);
+      if (hull.length < 3) continue;
+      const expanded = expandHull(hull, 50);
+      this.patternHulls.set(name, expanded);
+    }
+  }
+
+  /** Hit-test pattern regions. Returns the pattern name if (wx, wy) is inside any hull. Smaller patterns (fewer components) win over broad ones. */
+  patternAt(wx: number, wy: number): string | null {
+    const sorted = [...this.patternHulls.entries()].sort((a, b) => a[1].length - b[1].length);
+    for (const [name, hull] of sorted) {
+      if (pointInConvexPoly(wx, wy, hull)) return name;
+    }
+    return null;
   }
 
   private assignMissingPositions(): void {
