@@ -658,17 +658,24 @@ const MAX_PROMPT_VALUE_LEN: usize = 512;
 /// and ensures the value cannot be used for prompt injection via embedded
 /// directives in compromised `.toml` files.
 fn sanitize(s: &str) -> String {
-    let cleaned: String = s
-        .chars()
-        .filter(|c| !c.is_control() || *c == '\n')
-        .take(MAX_PROMPT_VALUE_LEN)
-        .collect();
-    let printable_count = s.chars().filter(|c| !c.is_control() || *c == '\n').count();
-    if printable_count > MAX_PROMPT_VALUE_LEN {
-        format!("{cleaned}…")
-    } else {
-        cleaned
+    let mut cleaned = String::with_capacity(MAX_PROMPT_VALUE_LEN.min(s.len()));
+    let mut taken = 0;
+    let mut truncated = false;
+    for c in s.chars() {
+        if c.is_control() && c != '\n' {
+            continue;
+        }
+        if taken >= MAX_PROMPT_VALUE_LEN {
+            truncated = true;
+            break;
+        }
+        cleaned.push(c);
+        taken += 1;
     }
+    if truncated {
+        cleaned.push('\u{2026}'); // …
+    }
+    cleaned
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

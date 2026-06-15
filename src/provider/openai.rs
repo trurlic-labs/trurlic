@@ -125,3 +125,56 @@ impl LlmProvider for OpenAiClient {
         Box::pin(self.do_stream(messages, system, on_text))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_name_standard() {
+        let client = OpenAiClient::new(
+            reqwest::Client::new(),
+            crate::config::ApiKey::new("sk-test".into()),
+            "gpt-4o".into(),
+            "https://api.openai.com/v1",
+            ApiVariant::Standard,
+        );
+        assert_eq!(client.provider_name(), "openai");
+    }
+
+    #[test]
+    fn provider_name_openrouter() {
+        let client = OpenAiClient::new(
+            reqwest::Client::new(),
+            crate::config::ApiKey::new("sk-test".into()),
+            "model".into(),
+            "https://openrouter.ai/api/v1",
+            ApiVariant::OpenRouter,
+        );
+        assert_eq!(client.provider_name(), "openai-compatible/openrouter");
+    }
+
+    #[test]
+    fn provider_name_custom() {
+        let client = OpenAiClient::new(
+            reqwest::Client::new(),
+            crate::config::ApiKey::new("sk-test".into()),
+            "model".into(),
+            "http://localhost:8080/v1",
+            ApiVariant::Custom,
+        );
+        assert_eq!(client.provider_name(), "openai-compatible/custom");
+    }
+
+    #[test]
+    fn provider_name_ollama() {
+        let client = OpenAiClient::new(
+            reqwest::Client::new(),
+            crate::config::ApiKey::new(String::new()),
+            "llama3.1".into(),
+            "http://localhost:11434/v1",
+            ApiVariant::Ollama,
+        );
+        assert_eq!(client.provider_name(), "ollama");
+    }
+}

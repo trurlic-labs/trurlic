@@ -239,8 +239,8 @@ pub fn compute_concern_coverage(
     decisions: &[&DecisionFile],
 ) -> (Vec<&'static str>, Vec<&'static str>) {
     let word_sets: Vec<Vec<String>> = decisions.iter().map(|d| decision_words(d)).collect();
-    let mut covered = Vec::new();
-    let mut uncovered = Vec::new();
+    let mut covered = Vec::with_capacity(CONCERNS.len());
+    let mut uncovered = Vec::with_capacity(CONCERNS.len());
 
     for &(name, keywords) in CONCERNS {
         if word_sets
@@ -262,8 +262,8 @@ pub fn compute_concern_coverage(
 /// uncovered areas (for the agent to systematically explore).
 pub fn concern_status(decisions: &[&DecisionFile]) -> String {
     let word_sets: Vec<Vec<String>> = decisions.iter().map(|d| decision_words(d)).collect();
-    let mut covered: Vec<(&str, Vec<&str>)> = Vec::new();
-    let mut uncovered: Vec<&str> = Vec::new();
+    let mut covered: Vec<(&str, Vec<&str>)> = Vec::with_capacity(CONCERNS.len());
+    let mut uncovered: Vec<&str> = Vec::with_capacity(CONCERNS.len());
 
     for &(concern_name, keywords) in CONCERNS {
         let matching: Vec<&str> = decisions

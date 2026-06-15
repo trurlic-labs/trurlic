@@ -127,10 +127,18 @@ pub fn advance(
 
     // ── Deduce step ───────────────────────────────────────────────────
 
-    let step = deduce_step(
-        task_type, &decisions, &covered, &uncovered, &stale, &patterns, graph, component, task,
-        &completed,
-    );
+    let ctx = DeduceContext {
+        decisions: &decisions,
+        covered: &covered,
+        uncovered: &uncovered,
+        stale: &stale,
+        patterns: &patterns,
+        graph,
+        component,
+        task,
+        completed: &completed,
+    };
+    let step = deduce_step(task_type, &ctx);
 
     let ready = matches!(step, Step::Ready);
     let assessment = build_assessment(&decisions, &covered, &uncovered, &stale, &patterns);
@@ -181,39 +189,40 @@ fn infer_task_type(
 
 // ── Step deduction ────────────────────────────────────────────────────────
 
+/// All state needed to deduce the next step for a component.
+struct DeduceContext<'a> {
+    decisions: &'a [(&'a Arc<str>, &'a DecisionFile)],
+    covered: &'a [&'a str],
+    uncovered: &'a [&'a str],
+    stale: &'a [StaleDec],
+    patterns: &'a [(&'a Arc<str>, &'a crate::store::schema::PatternFile)],
+    graph: &'a crate::store::graph::InMemoryGraph,
+    component: &'a str,
+    task: Option<&'a str>,
+    completed: &'a [&'a str],
+}
+
 /// Deduce the next step from graph state for a given task type.
 ///
 /// Each task type defines a sequence of steps. The state machine walks
 /// the sequence by checking postconditions. Some postconditions are
 /// heuristic (e.g. `PatternDetection` — checked via pattern count).
 /// The machine errs on the side of returning `Ready` rather than looping.
-#[allow(clippy::too_many_arguments)]
-fn deduce_step(
-    task_type: TaskType,
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    covered: &[&str],
-    uncovered: &[&str],
-    stale: &[StaleDec],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    graph: &crate::store::graph::InMemoryGraph,
-    component: &str,
-    task: Option<&str>,
-    completed: &[&str],
-) -> Step {
+fn deduce_step(task_type: TaskType, ctx: &DeduceContext<'_>) -> Step {
     match task_type {
         TaskType::NewComponent => {
-            deduce_new_component(decisions, covered, uncovered, patterns, completed)
+            deduce_new_component(ctx.decisions, ctx.covered, ctx.uncovered, ctx.patterns, ctx.completed)
         }
         TaskType::Feature => {
-            deduce_feature(decisions, covered, uncovered, patterns, task, completed)
+            deduce_feature(ctx.decisions, ctx.covered, ctx.uncovered, ctx.patterns, ctx.task, ctx.completed)
         }
-        TaskType::Fix => deduce_fix(decisions, uncovered, graph, component, task, completed),
-        TaskType::Learn => deduce_learn(decisions, patterns, completed),
+        TaskType::Fix => deduce_fix(ctx.decisions, ctx.uncovered, ctx.graph, ctx.component, ctx.task, ctx.completed),
+        TaskType::Learn => deduce_learn(ctx.decisions, ctx.patterns, ctx.completed),
         TaskType::Review => {
-            deduce_review(decisions, stale, covered, uncovered, patterns, completed)
+            deduce_review(ctx.decisions, ctx.stale, ctx.covered, ctx.uncovered, ctx.patterns, ctx.completed)
         }
-        TaskType::Harden => deduce_harden(uncovered, patterns, completed),
-        TaskType::Bootstrap => deduce_bootstrap_component(decisions, patterns, component),
+        TaskType::Harden => deduce_harden(ctx.uncovered, ctx.patterns, ctx.completed),
+        TaskType::Bootstrap => deduce_bootstrap_component(ctx.decisions, ctx.patterns, ctx.component),
     }
 }
 
@@ -538,7 +547,7 @@ fn advance_project(
     let graph = state.graph();
     let decisions = graph.project_decisions();
     let has_decisions = !decisions.is_empty();
-    let has_patterns = !state.patterns.is_empty();
+    let has_patterns = !graph.patterns_for("project").is_empty();
 
     let task_type = task_type.unwrap_or(if has_decisions {
         if task.is_some() {
@@ -553,12 +562,13 @@ fn advance_project(
         TaskType::NewComponent
     });
 
+    let project_patterns = graph.patterns_for("project");
     let assessment = serde_json::json!({
         "decisions": decisions.len(),
         "concerns_covered": Value::Array(vec![]),
         "concerns_uncovered": Value::Array(vec![]),
         "stale_decisions": Value::Array(vec![]),
-        "patterns": state.patterns.len(),
+        "patterns": project_patterns.len(),
     });
 
     let ready_action = || {
@@ -741,8 +751,8 @@ fn deduce_bootstrap_project(
         );
     }
 
-    // Phase 4: no patterns → detect them.
-    if state.patterns.is_empty() && !completed.contains(&"pattern_detection") {
+    // Phase 4: no project-scoped patterns → detect them.
+    if graph.patterns_for("project").is_empty() && !completed.contains(&"pattern_detection") {
         return (
             Step::PatternDetection,
             false,
@@ -2002,7 +2012,7 @@ mod tests {
                 "rule-1",
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
-            &[("p1", "Security posture", &["auth"])],
+            &[("p1", "Security posture", &["auth", "project"])],
         );
         let result = advance(
             &state,
@@ -2047,7 +2057,7 @@ mod tests {
                 "rule-1",
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
-            &[("p1", "Security posture", &["auth"])],
+            &[("p1", "Security posture", &["auth", "project"])],
         );
         let result = advance(
             &state,
@@ -2087,7 +2097,7 @@ mod tests {
                 "rule-1",
                 fresh_decision("project", "Fail-closed", "Safety", &[]),
             )],
-            &[("p1", "Security posture", &["auth"])],
+            &[("p1", "Security posture", &["auth", "project"])],
         );
         let result = advance(&state, "project", None, None, &BTreeMap::new()).unwrap();
 
@@ -2435,7 +2445,7 @@ mod tests {
                     fresh_decision("project", "Fail-closed", "Safety", &[]),
                 ),
             ],
-            &[("p1", "Security posture", &["auth"])],
+            &[("p1", "Security posture", &["auth", "project"])],
         );
         let result = advance(
             &state,
@@ -2572,7 +2582,7 @@ mod tests {
                     fresh_decision("project", "Fail-closed", "Safety", &[]),
                 ),
             ],
-            &[("p1", "Security posture", &["auth"])],
+            &[("p1", "Security posture", &["auth", "project"])],
         );
         let result = advance(
             &state,
@@ -2697,5 +2707,86 @@ mod tests {
         let result = advance(&state, "store", None, None, &BTreeMap::new()).unwrap();
         assert_eq!(result["step"], "ready");
         assert_eq!(result["requires_user_input"], false);
+    }
+
+    // ── Feature task-relevant concerns ────────────────────────────────
+
+    #[test]
+    fn feature_with_task_covers_relevant_concerns() {
+        // Setup: component with one decision (so VerifyConstraints applies),
+        // most concerns uncovered, and a task whose keywords match
+        // "Performance constraints" via the "cache"/"caching" keyword.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+
+        // First call: VerifyConstraints (decisions exist).
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            Some("add caching layer"),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(result["step"], "verify_constraints");
+
+        // After verification: CoverConcerns with task-relevant focus.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            Some("add caching layer"),
+            &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "cover_concerns");
+        assert_eq!(result["ready"], false);
+        let focus = result["action"]["focus"].as_array().unwrap();
+        assert!(
+            focus
+                .iter()
+                .any(|f| f.as_str().unwrap().contains("Performance")),
+            "focus should include Performance for caching-related task: {focus:?}"
+        );
+    }
+
+    #[test]
+    fn feature_with_task_irrelevant_to_concerns_uses_majority_threshold() {
+        // Task words that don't match any concern keywords → fall back to
+        // majority threshold (uncovered > covered).
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+
+        // After verification: task "add widget support" has no concern
+        // keyword matches, but uncovered > covered → CoverConcerns with
+        // top N uncovered by priority.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            Some("add widget support"),
+            &evidence(&["verify_constraints"]),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "cover_concerns");
+        let focus = result["action"]["focus"].as_array().unwrap();
+        // Should be priority-ordered: Security first.
+        assert_eq!(
+            focus[0].as_str().unwrap(),
+            "Security boundaries",
+            "fallback focus should follow priority order: {focus:?}"
+        );
     }
 }
