@@ -72,8 +72,8 @@ function filterDecisions(
 
 // ── Pattern region colors ──────────────────────────────────────────────────
 
-/** Fixed hue palette for pattern regions (degrees). */
-const PATTERN_HUES = [210, 150, 30, 330, 270, 90, 0, 60];
+/** Warm amber palette for pattern regions (hue degrees). */
+const PATTERN_HUES = [30, 35, 25, 40, 20, 45, 15, 50];
 
 /** LOD label fade duration (ms). */
 const LOD_FADE_MS = 150;
@@ -213,7 +213,8 @@ export class Renderer {
       typeof matchMedia !== 'undefined'
         ? matchMedia('(prefers-color-scheme: light)').matches
         : false;
-    const lightness = prefersLight ? 45 : 55;
+    const lightness = prefersLight ? 42 : 50;
+    const saturation = 55;
     const baseFill = prefersLight ? 0.06 : 0.08;
     const baseStroke = 0.25;
     const dimFill = 0.03;
@@ -262,12 +263,12 @@ export class Renderer {
       ctx.globalAlpha = dimmedByFocus ? 0.15 : 1;
 
       // Fill.
-      ctx.fillStyle = `hsla(${hue}, 60%, ${lightness}%, ${fillAlpha})`;
+      ctx.fillStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${fillAlpha})`;
       roundedHullPath(ctx, expanded, HULL_RADIUS);
       ctx.fill();
 
       // Stroke.
-      ctx.strokeStyle = `hsla(${hue}, 60%, ${lightness}%, ${baseStroke})`;
+      ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${baseStroke})`;
       ctx.lineWidth = 1.5 / cam.zoom;
       ctx.stroke();
 
