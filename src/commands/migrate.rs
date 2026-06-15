@@ -128,16 +128,19 @@ fn print_dry_run(root: &Path, old_version: &str) -> Result<()> {
         count += 1;
     }
 
-    count += count_changed_files::<ComponentFile>(root, COMPONENTS_DIR)?;
-    count += count_changed_files::<DecisionFile>(root, DECISIONS_DIR)?;
-    count += count_changed_files::<PatternFile>(root, PATTERNS_DIR)?;
+    let node_changes = count_changed_files::<ComponentFile>(root, COMPONENTS_DIR)?
+        + count_changed_files::<DecisionFile>(root, DECISIONS_DIR)?
+        + count_changed_files::<PatternFile>(root, PATTERNS_DIR)?;
+    count += node_changes;
 
     let graph_path = root.join(GRAPH_FILE);
     if graph_path.exists() {
         let content = fs::read_to_string(&graph_path)?;
         let index: GraphIndex = toml::from_str(&content)?;
         let new_content = toml::to_string_pretty(&index)?;
-        if content != new_content {
+        // Node file content changes cause hash updates in graph.toml,
+        // even when the GraphIndex structure itself is unchanged.
+        if content != new_content || node_changes > 0 {
             println!("  would update: {GRAPH_FILE}");
             count += 1;
         }
@@ -189,7 +192,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
+        let ft = entry.file_type()?;
+        if ft.is_symlink() {
+            continue;
+        }
+        if ft.is_dir() {
             // Skip .state/ — it contains transient data (tmp files, locks, sessions).
             if entry.file_name() == ".state" {
                 continue;
