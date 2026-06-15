@@ -99,8 +99,8 @@ body {
   position: fixed;
   bottom: 12px;
   left: 12px;
-  width: 180px;
-  height: 120px;
+  width: 220px;
+  height: 150px;
   border-radius: 8px;
   border: 1px solid var(--accent-dim);
   box-shadow: 0 2px 8px var(--shadow);
@@ -697,7 +697,7 @@ body.panel-collapsed .hint-overlay {
 .tag-popover.hidden {
   display: none;
 }
-.tag-popover input[type="text"] {
+.tag-popover input[type='text'] {
   width: 100%;
   padding: 8px 12px;
   border: none;
@@ -726,7 +726,7 @@ body.panel-collapsed .hint-overlay {
   text-overflow: ellipsis;
   min-height: 28px;
 }
-.tag-popover-item input[type="checkbox"] {
+.tag-popover-item input[type='checkbox'] {
   appearance: none;
   -webkit-appearance: none;
   width: 16px;
@@ -739,11 +739,11 @@ body.panel-collapsed .hint-overlay {
   position: relative;
   flex-shrink: 0;
 }
-.tag-popover-item input[type="checkbox"]:checked {
+.tag-popover-item input[type='checkbox']:checked {
   background: var(--accent);
   border-color: var(--accent);
 }
-.tag-popover-item input[type="checkbox"]:checked::after {
+.tag-popover-item input[type='checkbox']:checked::after {
   content: '\2713';
   position: absolute;
   top: 50%;

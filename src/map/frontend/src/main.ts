@@ -808,8 +808,8 @@ class App {
   };
 
   private renderMinimap(): MinimapTransform | null {
-    const mw = 180;
-    const mh = 120;
+    const mw = 220;
+    const mh = 150;
     this.renderer.renderMinimap(this.miniCtx, mw, mh, this.graph);
 
     if (this.graph.nodes.size === 0) return null;
@@ -852,8 +852,8 @@ class App {
 
     const minimap = document.getElementById('minimap') as HTMLCanvasElement;
     const dpr = window.devicePixelRatio || 1;
-    minimap.width = 180 * dpr;
-    minimap.height = 120 * dpr;
+    minimap.width = 220 * dpr;
+    minimap.height = 150 * dpr;
 
     this.updateLOD();
     this.needsRender = true;

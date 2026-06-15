@@ -227,7 +227,7 @@ export class Renderer {
         : false;
     const lightness = prefersLight ? 48 : 55;
     const saturation = prefersLight ? 40 : 45;
-    const baseFill = prefersLight ? 0.10 : 0.14;
+    const baseFill = prefersLight ? 0.1 : 0.14;
     const baseStroke = 0.45;
     const dimFill = 0.03;
     const labelSize = 13 / cam.zoom;
@@ -293,7 +293,7 @@ export class Renderer {
         const cy = expanded.reduce((s, p) => s + p.y, 0) / expanded.length;
 
         const isOverview = lod < LOD.Component;
-        const rawLabel = isOverview ? pat.name : (pat.description || pat.name);
+        const rawLabel = isOverview ? pat.name : pat.description || pat.name;
         const maxLen = isOverview ? 20 : lod >= LOD.Decision ? 80 : 30;
         const label = rawLabel.length > maxLen ? rawLabel.slice(0, maxLen - 1) + '…' : rawLabel;
         const size = isOverview ? 14 / cam.zoom : labelSize;
@@ -409,7 +409,7 @@ export class Renderer {
       if (lod >= LOD.Component && (e.kind !== 'connects_to' || isHovered)) {
         const lx = 0.25 * a.x + 0.5 * cpx + 0.25 * b.x;
         const ly = 0.25 * a.y + 0.5 * cpy + 0.25 * b.y;
-        const labelSize = 9 / cam.zoom;
+        const labelSize = 10 / cam.zoom;
         const label = e.kind.replace(/_/g, ' ');
         ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
         const tw = ctx.measureText(label).width;
@@ -430,7 +430,7 @@ export class Renderer {
         ctx.fill();
         ctx.globalAlpha = savedAlpha;
 
-        ctx.fillStyle = isHovered ? c.text : c.textDim;
+        ctx.fillStyle = c.text;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillText(label, lx, ly - 3 / cam.zoom);
@@ -508,7 +508,7 @@ export class Renderer {
       ctx.font = `400 ${descSize}px system-ui, sans-serif`;
       ctx.fillStyle = c.textDim;
       const desc =
-        node.description!.length > 45 ? node.description!.slice(0, 42) + '…' : node.description!;
+        node.description!.length > 55 ? node.description!.slice(0, 52) + '…' : node.description!;
       ctx.fillText(desc, node.x, node.y + 4, node.w - 16);
     }
 
@@ -527,7 +527,11 @@ export class Renderer {
       const bw = ctx.measureText(badge).width + 10;
       this.roundRect(node.x - bw / 2, badgeY, bw, badgeFontSize + 6, 4);
       ctx.fill();
-      ctx.fillStyle = c.textDim;
+      ctx.strokeStyle = c.border;
+      ctx.lineWidth = 1 / cam.zoom;
+      this.roundRect(node.x - bw / 2, badgeY, bw, badgeFontSize + 6, 4);
+      ctx.stroke();
+      ctx.fillStyle = c.text;
       ctx.fillText(badge, node.x, badgeY + (badgeFontSize + 6) / 2, bw);
     }
   }
@@ -668,7 +672,7 @@ export class Renderer {
   /** Subtle dot grid for spatial grounding. Drawn in camera space. */
   private drawGrid(vp: { x: number; y: number; w: number; h: number }, c: ColorSnapshot): void {
     const { ctx, cam, dpr } = this;
-    const spacing = 60;
+    const spacing = 80;
 
     // Fade grid when zoomed out.
     const alpha = Math.min(1, (cam.zoom - 0.15) / 0.35);
@@ -709,7 +713,22 @@ export class Renderer {
   private drawShadow(node: RenderNode, overrideH?: number): void {
     const { ctx, cam, c } = this;
     const h = overrideH ?? node.h;
-    const offset = 3 / cam.zoom;
+
+    const softOffset = 4 / cam.zoom;
+    const savedAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = savedAlpha * 0.3;
+    ctx.fillStyle = c.shadow;
+    this.roundRect(
+      node.x - node.w / 2 + softOffset,
+      node.y - h / 2 + softOffset,
+      node.w,
+      h,
+      NODE_RADIUS,
+    );
+    ctx.fill();
+    ctx.globalAlpha = savedAlpha;
+
+    const offset = 2 / cam.zoom;
     ctx.fillStyle = c.shadow;
     this.roundRect(node.x - node.w / 2 + offset, node.y - h / 2 + offset, node.w, h, NODE_RADIUS);
     ctx.fill();
