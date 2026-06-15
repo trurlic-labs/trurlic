@@ -757,6 +757,33 @@ body.panel-collapsed .hint-overlay {
 .hint-overlay.fade-out {
   opacity: 0;
 }
+
+/* ── Loading overlay ─────────────────────────────────────────────────── */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: var(--panel-width);
+  bottom: 0;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.loading-overlay.hidden {
+  display: none;
+}
+.loading-text {
+  font-size: 14px;
+  color: var(--text-dim);
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+body.panel-collapsed .loading-overlay {
+  right: 0;
+}
+
 @media (prefers-color-scheme: light) {
   .hint-pill {
     background: rgba(255, 255, 255, 0.88);

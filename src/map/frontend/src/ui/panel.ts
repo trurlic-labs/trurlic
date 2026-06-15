@@ -194,6 +194,20 @@ export class Panel {
     this.el.innerHTML = `<p class="dim" style="padding:24px">Click a component to inspect</p>`;
   }
 
+  showLoading(): void {
+    this.el.innerHTML = '<p class="dim" style="padding:24px">Loading…</p>';
+  }
+
+  showLoadError(retry: () => void): void {
+    this.el.innerHTML = `
+      <div style="padding: 24px;">
+        <p style="margin-bottom: 12px; color: var(--text);">Could not load the architecture graph.</p>
+        <button class="btn" id="retry-btn">Retry</button>
+      </div>
+    `;
+    this.el.querySelector('#retry-btn')?.addEventListener('click', retry);
+  }
+
   // ── Navigation history ───────────────────────────────────────────────
 
   private pushCurrentView(): void {

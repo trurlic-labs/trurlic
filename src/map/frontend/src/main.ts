@@ -109,9 +109,12 @@ class App {
     this.handleResize();
     window.addEventListener('resize', () => this.handleResize());
 
+    this.panel.showLoading();
+
     this.api
       .fetchGraph()
       .then((snap) => {
+        document.getElementById('loading-overlay')!.classList.add('hidden');
         this.graph.loadSnapshot(snap);
         this.selection.setComponentNames([...this.graph.nodes.keys()].sort());
         this.layout.run(this.graph.nodes, this.graph.edges, 200);
@@ -126,7 +129,8 @@ class App {
       })
       .catch((e) => {
         console.error('Failed to load graph:', e);
-        this.panel.showEmpty();
+        document.getElementById('loading-overlay')!.classList.add('hidden');
+        this.panel.showLoadError(() => this.reloadGraph());
       });
 
     new WsConnection(
