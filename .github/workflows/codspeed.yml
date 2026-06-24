@@ -29,7 +29,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo install cargo-codspeed --locked
       - run: cargo codspeed build
-      - uses: CodSpeedHQ/action@c145068895e045cc725ee76fcd2307624b65c3af # v4
+      - uses: CodSpeedHQ/action@a4a36bb07c0638b0b4ca52bf1f3dad1b4289e52f # v4
         with:
           mode: simulation
           run: cargo codspeed run
