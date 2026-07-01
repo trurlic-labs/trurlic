@@ -16,7 +16,7 @@ use std::path::Path;
 use crate::provider::{LlmProvider, Message, Role};
 use crate::store::schema::Attribution;
 use crate::store::{self, RecordDecisionParams, RecordPatternParams, Store};
-use crate::workflow::{self, TaskType, steps};
+use crate::workflow::{self, Mode, TaskType, steps};
 use crate::{Error, Result};
 
 use super::extract;
@@ -49,6 +49,7 @@ pub(crate) async fn run(
             "project",
             Some(TaskType::Bootstrap),
             None,
+            Some(Mode::Agent),
             &evidence,
         )
         .map_err(Error::Validation)?;
@@ -102,6 +103,7 @@ pub(crate) async fn run_component(
             component,
             Some(TaskType::Bootstrap),
             None,
+            Some(Mode::Agent),
             &evidence,
         )
         .map_err(Error::Validation)?;
@@ -155,8 +157,9 @@ async fn run_step(
 
     // ── Build system prompt ──────────────────────────────────────────
     let prompt_component = target.unwrap_or("project");
-    let prompt = steps::build_step_prompt(state, prompt_component, step, None, Some("bootstrap"))
-        .map_err(Error::Validation)?;
+    let prompt =
+        steps::build_step_prompt(state, prompt_component, step, None, Some("bootstrap"), Mode::Agent)
+            .map_err(Error::Validation)?;
 
     // ── LLM call ─────────────────────────────────────────────────────
     let messages = if context.is_empty() {

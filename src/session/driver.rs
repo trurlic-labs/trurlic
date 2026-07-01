@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use crate::provider::{LlmProvider, Message, Role};
 use crate::store::{self, Store};
-use crate::workflow::{self, TaskType};
+use crate::workflow::{self, Mode, TaskType};
 use crate::{Error, Result};
 
 use super::extract::{self, extract_decisions};
@@ -78,9 +78,15 @@ pub(crate) async fn run(
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
-        let advance_result =
-            workflow::advance::advance(state, ctx.component, ctx.task_type, ctx.task, &evidence)
-                .map_err(Error::Validation)?;
+        let advance_result = workflow::advance::advance(
+            state,
+            ctx.component,
+            ctx.task_type,
+            ctx.task,
+            Some(Mode::Interactive),
+            &evidence,
+        )
+        .map_err(Error::Validation)?;
 
         let ready = advance_result["ready"].as_bool().unwrap_or(false);
         if ready {
@@ -103,9 +109,15 @@ pub(crate) async fn run(
 
         // ── Build step prompt ─────────────────────────────────────────
         let tt_str = ctx.task_type.map(|tt| tt.as_str());
-        let prompt =
-            workflow::steps::build_step_prompt(state, ctx.component, &step, ctx.task, tt_str)
-                .map_err(Error::Validation)?;
+        let prompt = workflow::steps::build_step_prompt(
+            state,
+            ctx.component,
+            &step,
+            ctx.task,
+            tt_str,
+            Mode::Interactive,
+        )
+        .map_err(Error::Validation)?;
 
         let step_label = step.replace('_', " ");
         eprintln!("\n── {step_label} ──");
@@ -210,6 +222,7 @@ async fn run_step_dialogue(
             ctx.component,
             ctx.task_type,
             ctx.task,
+            Some(Mode::Interactive),
             step_evidence,
         )
         .map_err(Error::Validation)?;
