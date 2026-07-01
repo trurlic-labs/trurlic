@@ -34,6 +34,64 @@ pub const STALENESS_THRESHOLD_DAYS: i64 = 90;
 /// Maximum concerns in `CoverConcerns` focus list.
 pub const CONCERN_FOCUS_LIMIT: usize = 3;
 
+// ── Mode ─────────────────────────────────────────────────────────────────
+
+/// Operating mode for the advance loop. Per-call parameter, not session state.
+///
+/// `Agent` mode removes all gating, skips user-only steps, and uses
+/// autonomous prompt variants. `Interactive` mode is the Socratic design
+/// dialogue with comprehension gates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// AI analyzes code and makes decisions autonomously.
+    /// Decisions recorded with `attribution=agent` for human review.
+    Agent,
+    /// User participates in design through guided discussion.
+    /// Each decision requires user input.
+    Interactive,
+}
+
+impl Mode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::Interactive => "interactive",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "agent" => Ok(Self::Agent),
+            "interactive" => Ok(Self::Interactive),
+            _ => Err(format!(
+                "invalid mode `{s}` — expected: agent, interactive"
+            )),
+        }
+    }
+}
+
+/// Validate a mode × task_type combination.
+///
+/// Learn requires interactive (it exists to build the user's understanding).
+/// Bootstrap requires agent (it's autonomous source code extraction).
+pub fn validate_mode_task(mode: Mode, task_type: TaskType) -> Result<(), String> {
+    match (mode, task_type) {
+        (Mode::Agent, TaskType::Learn) => Err(
+            "task_type=learn requires mode=interactive — Learn exists to build \
+             the user's understanding. For agent context retrieval, use \
+             get_context() or get_architecture() instead."
+                .into(),
+        ),
+        (Mode::Interactive, TaskType::Bootstrap) => Err(
+            "task_type=bootstrap requires mode=agent — Bootstrap is autonomous \
+             source code extraction. For interactive design, use \
+             task_type=new_component with mode=interactive."
+                .into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
 // ── TaskType ──────────────────────────────────────────────────────────────
 
 /// What the developer wants to accomplish. Determines which workflow
