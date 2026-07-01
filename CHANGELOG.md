@@ -9,6 +9,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Agent / interactive mode separation.** `advance()` and `get_step_prompt`
+  accept a `mode` parameter (`agent` | `interactive`). When omitted, `advance`
+  returns `requires_mode: true` so the caller can present the choice. Agent mode
+  removes comprehension gates (`SummaryGate`, `UserExplains`), skips step
+  evidence validation, sets `requires_user_input: false` on every step, and uses
+  autonomous prompt variants that instruct the AI to read source code and record
+  decisions with `attribution="agent"`. Interactive mode preserves the existing
+  Socratic design flow unchanged. Mode × task-type validation enforces that
+  `learn` requires interactive (it builds user understanding) and `bootstrap`
+  requires agent (it's autonomous extraction).
+- **Agent protocol.** `AGENT_PROTOCOL` block replaces `INTERACTION_PROTOCOL` in
+  agent mode — instructs the AI to analyze source code as primary evidence,
+  record with `attribution="agent"`, flag domain-knowledge gaps with
+  `[needs-review]`, and never wait for user input.
+- **Mode-aware step prompts.** Every substantive step (`define_scope`,
+  `analyze_code`, `cover_concerns`, `walk_decisions`, `verify_constraints`,
+  `impact_check`, `pattern_detection`, `drift_check`, `coverage_audit`) now
+  generates mode-specific instructions. Agent variants emphasize code reading
+  and autonomous recording; interactive variants preserve the existing
+  ask-then-record dialogue.
+
+### Changed
+
+- `advance()` signature: added `mode: Option<Mode>` parameter.
+- `build_step_prompt()` signature: added `mode: Mode` parameter.
+- `get_step_prompt` MCP tool: `mode` is now a required parameter.
+- `advance` MCP tool: `mode` is optional — omitting it triggers the mode gate.
+- Response JSON includes `mode` field alongside `step`, `ready`, and
+  `requires_user_input`.
+
 ## [0.2.0] — 2026-06-15
 
 ### Added
