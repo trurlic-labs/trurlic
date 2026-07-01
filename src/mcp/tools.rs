@@ -65,6 +65,15 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                             "description": "Optional task context passed through to \
                                 design prompts."
                         },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["agent", "interactive"],
+                            "description": "Operating mode. agent: AI makes decisions \
+                                autonomously from source code analysis. interactive: \
+                                user participates in design through guided discussion. \
+                                If omitted, advance returns requires_mode=true — present \
+                                the choice to the user."
+                        },
                         "step_evidence": {
                             "type": "object",
                             "additionalProperties": { "type": "string" },
@@ -384,9 +393,14 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                                 "bootstrap"
                             ],
                             "description": "Optional task type for variant prompts."
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["agent", "interactive"],
+                            "description": "Operating mode — determines prompt variant."
                         }
                     },
-                    "required": ["component", "step"]
+                    "required": ["component", "step", "mode"]
                 }
             },
             {
@@ -546,10 +560,19 @@ fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope 
 
     let task_type = args.get("task_type").and_then(|v| v.as_str());
 
-    let prompt = match workflow::steps::build_step_prompt(state, component, step, task, task_type) {
-        Ok(p) => p,
-        Err(msg) => return tool_error(&msg),
+    let mode = match args.get("mode").and_then(|v| v.as_str()) {
+        Some(s) => match workflow::Mode::parse(s) {
+            Ok(m) => m,
+            Err(msg) => return tool_error(&msg),
+        },
+        None => return tool_error("missing required parameter: mode"),
     };
+
+    let prompt =
+        match workflow::steps::build_step_prompt(state, component, step, task, task_type, mode) {
+            Ok(p) => p,
+            Err(msg) => return tool_error(&msg),
+        };
 
     let ctx = match context::get_context(state, component, task, context::ContextDepth::Full) {
         Ok(c) => c,
@@ -580,6 +603,13 @@ fn dispatch_advance(state: &ProjectState, args: &Value) -> ToolEnvelope {
         None => None,
     };
     let task = args.get("task").and_then(|v| v.as_str());
+    let mode = match args.get("mode").and_then(|v| v.as_str()) {
+        Some(s) => match workflow::Mode::parse(s) {
+            Ok(m) => Some(m),
+            Err(msg) => return tool_error(&msg),
+        },
+        None => None,
+    };
 
     let evidence_refs: std::collections::BTreeMap<&str, &str> = args
         .get("step_evidence")
@@ -591,7 +621,7 @@ fn dispatch_advance(state: &ProjectState, args: &Value) -> ToolEnvelope {
         })
         .unwrap_or_default();
 
-    match workflow::advance::advance(state, component, task_type, task, &evidence_refs) {
+    match workflow::advance::advance(state, component, task_type, task, mode, &evidence_refs) {
         Ok(result) => tool_result(&result),
         Err(msg) => tool_error(&msg),
     }
@@ -858,6 +888,100 @@ mod tests {
                 "tool `{name}` should have openWorldHint: false"
             );
         }
+    }
+
+    // ── Mode parameter schema tests ────────────────────────────────
+
+    #[test]
+    fn advance_schema_includes_mode_parameter() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let advance = tools.iter().find(|t| t["name"] == "advance").unwrap();
+        let props = &advance["inputSchema"]["properties"];
+        assert!(
+            props.get("mode").is_some(),
+            "advance should have mode parameter"
+        );
+        let mode = &props["mode"];
+        assert_eq!(mode["type"], "string");
+        let enums = mode["enum"].as_array().unwrap();
+        assert!(enums.iter().any(|v| v == "agent"));
+        assert!(enums.iter().any(|v| v == "interactive"));
+    }
+
+    #[test]
+    fn advance_schema_mode_not_required() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let advance = tools.iter().find(|t| t["name"] == "advance").unwrap();
+        let required = advance["inputSchema"]["required"].as_array().unwrap();
+        assert!(
+            !required.iter().any(|v| v == "mode"),
+            "mode should not be in advance's required array"
+        );
+    }
+
+    #[test]
+    fn get_step_prompt_schema_includes_mode_parameter() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "get_step_prompt")
+            .unwrap();
+        let props = &tool["inputSchema"]["properties"];
+        assert!(
+            props.get("mode").is_some(),
+            "get_step_prompt should have mode parameter"
+        );
+        let mode = &props["mode"];
+        assert_eq!(mode["type"], "string");
+    }
+
+    #[test]
+    fn get_step_prompt_schema_mode_required() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "get_step_prompt")
+            .unwrap();
+        let required = tool["inputSchema"]["required"].as_array().unwrap();
+        assert!(
+            required.iter().any(|v| v == "mode"),
+            "mode should be in get_step_prompt's required array"
+        );
+    }
+
+    #[test]
+    fn get_step_prompt_rejects_missing_mode() {
+        let mut state = empty_state();
+        state.components.insert(
+            "auth".into(),
+            std::sync::Arc::new(crate::store::schema::ComponentFile {
+                component: crate::store::schema::Component {
+                    name: "auth".into(),
+                    description: "Auth".into(),
+                },
+            }),
+        );
+        state.rebuild_graph();
+
+        let args = serde_json::json!({
+            "component": "auth",
+            "step": "define_scope",
+        });
+        let envelope = call_read_tool(&state, "get_step_prompt", &args);
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "get_step_prompt without mode should return error"
+        );
+        assert!(
+            envelope.content[0].text.contains("mode"),
+            "error should mention mode: {}",
+            envelope.content[0].text,
+        );
     }
 
     fn empty_state() -> ProjectState {

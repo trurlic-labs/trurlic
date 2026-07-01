@@ -75,18 +75,23 @@ Step prompts: transport-agnostic instructions generated from graph state. MCP an
 
 ### Trurlic
 
-This project uses Trurlic for its own architectural decisions. Two modes.
+This project uses Trurlic for its own architectural decisions.
 
-**Design mode — advance loop.** Use when the task requires new architectural decisions: new component, new concern area, design change. The advance loop is interactive — gated steps require user involvement.
+**Before any task**, call `advance(component, task_type)`. If you haven't
+specified a mode, advance will ask — present the choice to the user:
 
-```
-1. advance(component, task_type) → { step, action, requires_user_input }
-2. follow the action (get_step_prompt, add_component, etc.)
-3. if requires_user_input: ask the user, wait, pass their response
-4. advance again
-5. repeat until ready: true
-6. get_context → implement constrained by the brief
-```
+- **agent**: AI reads code and makes decisions autonomously. Fast,
+  no user interaction needed. Decisions flagged for later review.
+- **interactive**: User participates in design discussion. Slower,
+  but builds shared understanding.
+
+Then follow the returned action. Call advance again after each step.
+Repeat until `ready: true`. Then get_context → implement.
+
+When to suggest which mode:
+- "implement X" / "fix Y" / "add feature Z" → suggest agent
+- "design" / "architect" / "let's think about" → suggest interactive
+- When uncertain → ask
 
 **Implementation mode — get_context directly.** Use when implementing within existing constraints. No advance, no gates, fully autonomous.
 

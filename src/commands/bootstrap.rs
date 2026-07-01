@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::store::ProjectState;
-use crate::workflow::{self, TaskType};
+use crate::workflow::{self, Mode, TaskType};
 use crate::{Error, Result};
 
 use super::{discover_store, open_store};
@@ -21,6 +21,7 @@ pub fn bootstrap(cwd: &Path) -> Result<()> {
         "project",
         Some(TaskType::Bootstrap),
         None,
+        Some(Mode::Agent),
         &std::collections::BTreeMap::new(),
     )
     .map_err(Error::Validation)?;
@@ -56,6 +57,7 @@ pub fn bootstrap_component(cwd: &Path, component: &str) -> Result<()> {
         component,
         Some(TaskType::Bootstrap),
         None,
+        Some(Mode::Agent),
         &std::collections::BTreeMap::new(),
     )
     .map_err(Error::Validation)?;
