@@ -63,9 +63,7 @@ impl Mode {
         match s {
             "agent" => Ok(Self::Agent),
             "interactive" => Ok(Self::Interactive),
-            _ => Err(format!(
-                "invalid mode `{s}` — expected: agent, interactive"
-            )),
+            _ => Err(format!("invalid mode `{s}` — expected: agent, interactive")),
         }
     }
 }
@@ -421,9 +419,15 @@ mod integration_tests {
         task_type: Option<TaskType>,
         mode: Mode,
     ) {
-        let result =
-            advance::advance(state, component, task_type, None, Some(mode), &empty_evidence())
-                .expect("advance should succeed");
+        let result = advance::advance(
+            state,
+            component,
+            task_type,
+            None,
+            Some(mode),
+            &empty_evidence(),
+        )
+        .expect("advance should succeed");
 
         let step_name = result["step"]
             .as_str()
@@ -447,9 +451,8 @@ mod integration_tests {
             .as_str()
             .unwrap_or(component);
 
-        let prompt =
-            steps::build_step_prompt(state, prompt_component, step_name, None, None, mode)
-                .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
+        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None, None, mode)
+            .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
 
         // Every prompt must include the source code preamble.
         assert!(

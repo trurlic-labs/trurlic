@@ -31,11 +31,15 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             task,
             mode,
             match mode {
-                Mode::Agent => "Read source code and determine this component's \
+                Mode::Agent => {
+                    "Read source code and determine this component's \
                      responsibilities and boundaries. Record scope decisions \
-                     with tags: [\"scope\"] and attribution=\"agent\".",
-                Mode::Interactive => "Define what the component is and isn't responsible for. \
-                     Record each answer as a decision with tags: [\"scope\"].",
+                     with tags: [\"scope\"] and attribution=\"agent\"."
+                }
+                Mode::Interactive => {
+                    "Define what the component is and isn't responsible for. \
+                     Record each answer as a decision with tags: [\"scope\"]."
+                }
             },
         ),
 
@@ -45,12 +49,16 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             task,
             mode,
             match mode {
-                Mode::Agent => "Read every source file in this component. Identify \
+                Mode::Agent => {
+                    "Read every source file in this component. Identify \
                      all architectural decisions and record each immediately \
-                     with attribution=\"agent\".",
-                Mode::Interactive => "Read every source file in this component. Build a numbered \
+                     with attribution=\"agent\"."
+                }
+                Mode::Interactive => {
+                    "Read every source file in this component. Build a numbered \
                      list of all architectural decisions you identify. Present \
-                     the list, then walk through each one.",
+                     the list, then walk through each one."
+                }
             },
         ),
 
@@ -69,13 +77,8 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
                     focus.join(", "),
                 ),
             };
-            let mut action = step_prompt_action(
-                component,
-                "cover_concerns",
-                task,
-                mode,
-                &instruction,
-            );
+            let mut action =
+                step_prompt_action(component, "cover_concerns", task, mode, &instruction);
             action["focus"] = serde_json::json!(focus);
             action
         }
@@ -86,12 +89,16 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             task,
             mode,
             match mode {
-                Mode::Agent => "Verify each recorded decision against the current \
+                Mode::Agent => {
+                    "Verify each recorded decision against the current \
                      source code. Update any that have drifted. Record \
-                     unrecorded decisions with attribution=\"agent\".",
-                Mode::Interactive => "Walk through each recorded decision with the user. Present \
+                     unrecorded decisions with attribution=\"agent\"."
+                }
+                Mode::Interactive => {
+                    "Walk through each recorded decision with the user. Present \
                      one per message. After each, STOP and wait for the user's \
-                     response. Then identify patterns across decisions.",
+                     response. Then identify patterns across decisions."
+                }
             },
         ),
 
@@ -101,14 +108,18 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             task,
             mode,
             match mode {
-                Mode::Agent => "Verify each existing constraint against the source code. \
+                Mode::Agent => {
+                    "Verify each existing constraint against the source code. \
                      Check if the current task conflicts with any constraint. \
-                     Update any that have drifted.",
-                Mode::Interactive => "Present each existing constraint that the task may affect. \
+                     Update any that have drifted."
+                }
+                Mode::Interactive => {
+                    "Present each existing constraint that the task may affect. \
                      For each, ask: \"Does your change respect this constraint, \
                      violate it, or require changing it?\" STOP and wait. If \
                      any constraint needs changing, call update_decision. Also \
-                     check whether this change impacts connected components.",
+                     check whether this change impacts connected components."
+                }
             },
         ),
 
@@ -118,10 +129,14 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             task,
             mode,
             match mode {
-                Mode::Agent => "Read the interface code for connected components and \
-                     determine whether the current task affects them.",
-                Mode::Interactive => "Check whether this change impacts connected components. \
-                     Review the architecture brief for cross-component effects.",
+                Mode::Agent => {
+                    "Read the interface code for connected components and \
+                     determine whether the current task affects them."
+                }
+                Mode::Interactive => {
+                    "Check whether this change impacts connected components. \
+                     Review the architecture brief for cross-component effects."
+                }
             },
         ),
 
@@ -131,14 +146,18 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             task,
             mode,
             match mode {
-                Mode::Agent => "Review all recorded decisions. For groups of 2+ that \
+                Mode::Agent => {
+                    "Review all recorded decisions. For groups of 2+ that \
                      reinforce the same invariant or form a defense-in-depth \
-                     chain, call record_pattern with attribution=\"agent\".",
-                Mode::Interactive => "Review all recorded decisions for this component and project \
+                     chain, call record_pattern with attribution=\"agent\"."
+                }
+                Mode::Interactive => {
+                    "Review all recorded decisions for this component and project \
                      rules. Look for groups of 2+ decisions that reinforce the \
                      same invariant, form a defense-in-depth chain, or share a \
                      common constraint. For each candidate, ask the user to \
-                     confirm, then call record_pattern.",
+                     confirm, then call record_pattern."
+                }
             },
         ),
 
@@ -160,11 +179,15 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             task,
             mode,
             match mode {
-                Mode::Agent => "Compare each recorded decision against the current source \
-                     code. Supersede any that have drifted. Proceed autonomously.",
-                Mode::Interactive => "Compare each recorded decision against the current source \
+                Mode::Agent => {
+                    "Compare each recorded decision against the current source \
+                     code. Supersede any that have drifted. Proceed autonomously."
+                }
+                Mode::Interactive => {
+                    "Compare each recorded decision against the current source \
                      code. Flag any that have drifted from the implementation. \
-                     For drifted decisions, call update_decision(supersede).",
+                     For drifted decisions, call update_decision(supersede)."
+                }
             },
         ),
 
@@ -174,12 +197,16 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             task,
             mode,
             match mode {
-                Mode::Agent => "Audit concern coverage. Read source code for each gap \
-                     and report which are real vs intentional.",
-                Mode::Interactive => "Audit concern coverage. The assessment shows which areas \
+                Mode::Agent => {
+                    "Audit concern coverage. Read source code for each gap \
+                     and report which are real vs intentional."
+                }
+                Mode::Interactive => {
+                    "Audit concern coverage. The assessment shows which areas \
                      lack decisions. For each gap, determine whether the \
                      component needs a decision there or if the gap is \
-                     intentional.",
+                     intentional."
+                }
             },
         ),
 

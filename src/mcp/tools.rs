@@ -898,7 +898,10 @@ mod tests {
         let tools = list["tools"].as_array().unwrap();
         let advance = tools.iter().find(|t| t["name"] == "advance").unwrap();
         let props = &advance["inputSchema"]["properties"];
-        assert!(props.get("mode").is_some(), "advance should have mode parameter");
+        assert!(
+            props.get("mode").is_some(),
+            "advance should have mode parameter"
+        );
         let mode = &props["mode"];
         assert_eq!(mode["type"], "string");
         let enums = mode["enum"].as_array().unwrap();
