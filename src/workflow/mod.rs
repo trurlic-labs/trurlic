@@ -412,8 +412,18 @@ mod integration_tests {
         component: &str,
         task_type: Option<TaskType>,
     ) {
-        let result = advance::advance(state, component, task_type, None, &empty_evidence())
-            .expect("advance should succeed");
+        assert_pipeline_mode(state, component, task_type, Mode::Interactive);
+    }
+
+    fn assert_pipeline_mode(
+        state: &crate::store::ProjectState,
+        component: &str,
+        task_type: Option<TaskType>,
+        mode: Mode,
+    ) {
+        let result =
+            advance::advance(state, component, task_type, None, Some(mode), &empty_evidence())
+                .expect("advance should succeed");
 
         let step_name = result["step"]
             .as_str()
@@ -437,8 +447,9 @@ mod integration_tests {
             .as_str()
             .unwrap_or(component);
 
-        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None, None)
-            .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
+        let prompt =
+            steps::build_step_prompt(state, prompt_component, step_name, None, None, mode)
+                .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
 
         // Every prompt must include the source code preamble.
         assert!(
@@ -590,13 +601,13 @@ mod integration_tests {
     #[test]
     fn pipeline_bootstrap_empty() {
         let state = build_state(&[], &[]);
-        assert_pipeline(&state, "project", Some(TaskType::Bootstrap));
+        assert_pipeline_mode(&state, "project", Some(TaskType::Bootstrap), Mode::Agent);
     }
 
     #[test]
     fn pipeline_bootstrap_with_components() {
         let state = build_state(&[("auth", "Auth"), ("store", "Data store")], &[]);
-        assert_pipeline(&state, "project", Some(TaskType::Bootstrap));
+        assert_pipeline_mode(&state, "project", Some(TaskType::Bootstrap), Mode::Agent);
     }
 
     #[test]
@@ -605,7 +616,63 @@ mod integration_tests {
             &[("auth", "Auth")],
             &[("d1", fresh_decision("auth", "JWT tokens", "Stateless", &[]))],
         );
-        assert_pipeline(&state, "project", Some(TaskType::Bootstrap));
+        assert_pipeline_mode(&state, "project", Some(TaskType::Bootstrap), Mode::Agent);
+    }
+
+    // ── Agent mode pipeline tests ────────────────────────────────────
+
+    #[test]
+    fn pipeline_agent_new_component_empty() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        assert_pipeline_mode(&state, "store", Some(TaskType::NewComponent), Mode::Agent);
+    }
+
+    #[test]
+    fn pipeline_agent_feature() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        assert_pipeline_mode(&state, "store", Some(TaskType::Feature), Mode::Agent);
+    }
+
+    #[test]
+    fn pipeline_agent_fix() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        assert_pipeline_mode(&state, "store", Some(TaskType::Fix), Mode::Agent);
+    }
+
+    #[test]
+    fn pipeline_agent_review() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &[]),
+            )],
+        );
+        assert_pipeline_mode(&state, "store", Some(TaskType::Review), Mode::Agent);
+    }
+
+    #[test]
+    fn pipeline_agent_harden() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        assert_pipeline_mode(&state, "store", Some(TaskType::Harden), Mode::Agent);
     }
 
     // ── Exhaustive step name coverage ─────────────────────────────────
@@ -640,18 +707,20 @@ mod integration_tests {
         ];
 
         for name in &step_names {
-            let result = steps::build_step_prompt(&state, "store", name, None, None);
-            assert!(
-                result.is_ok(),
-                "build_step_prompt must accept step `{name}`: {:?}",
-                result.err()
-            );
+            for mode in [Mode::Interactive, Mode::Agent] {
+                let result = steps::build_step_prompt(&state, "store", name, None, None, mode);
+                assert!(
+                    result.is_ok(),
+                    "build_step_prompt must accept step `{name}` in {:?}: {:?}",
+                    mode,
+                    result.err()
+                );
+            }
         }
     }
 
     #[test]
     fn step_as_str_round_trips_through_pipeline() {
-        // Verify Step::as_str() values match what build_step_prompt accepts.
         let variants: Vec<Step> = vec![
             Step::Register,
             Step::DefineScope,
@@ -682,13 +751,16 @@ mod integration_tests {
 
         for variant in &variants {
             let name = variant.as_str();
-            let result = steps::build_step_prompt(&state, "store", name, None, None);
-            assert!(
-                result.is_ok(),
-                "Step::{:?} as_str `{name}` rejected by build_step_prompt: {:?}",
-                variant,
-                result.err()
-            );
+            for mode in [Mode::Interactive, Mode::Agent] {
+                let result = steps::build_step_prompt(&state, "store", name, None, None, mode);
+                assert!(
+                    result.is_ok(),
+                    "Step::{:?} as_str `{name}` rejected by build_step_prompt in {:?}: {:?}",
+                    variant,
+                    mode,
+                    result.err()
+                );
+            }
         }
     }
 
@@ -741,5 +813,71 @@ mod integration_tests {
         );
         assert!(!Step::ProjectRules.is_gated());
         assert!(!Step::Ready.is_gated());
+    }
+
+    // ── Mode parsing ─────────────────────────────────────────────────
+
+    #[test]
+    fn mode_parse_agent() {
+        assert_eq!(Mode::parse("agent").unwrap(), Mode::Agent);
+    }
+
+    #[test]
+    fn mode_parse_interactive() {
+        assert_eq!(Mode::parse("interactive").unwrap(), Mode::Interactive);
+    }
+
+    #[test]
+    fn mode_parse_invalid() {
+        assert!(Mode::parse("auto").is_err());
+        assert!(Mode::parse("").is_err());
+        assert!(Mode::parse("Agent").is_err());
+    }
+
+    #[test]
+    fn mode_as_str_round_trips() {
+        assert_eq!(Mode::parse(Mode::Agent.as_str()).unwrap(), Mode::Agent);
+        assert_eq!(
+            Mode::parse(Mode::Interactive.as_str()).unwrap(),
+            Mode::Interactive
+        );
+    }
+
+    // ── Mode × task_type validation ──────────────────────────────────
+
+    #[test]
+    fn validate_agent_learn_rejected() {
+        assert!(validate_mode_task(Mode::Agent, TaskType::Learn).is_err());
+    }
+
+    #[test]
+    fn validate_interactive_bootstrap_rejected() {
+        assert!(validate_mode_task(Mode::Interactive, TaskType::Bootstrap).is_err());
+    }
+
+    #[test]
+    fn validate_all_valid_combos() {
+        let valid = [
+            (Mode::Agent, TaskType::NewComponent),
+            (Mode::Agent, TaskType::Feature),
+            (Mode::Agent, TaskType::Fix),
+            (Mode::Agent, TaskType::Review),
+            (Mode::Agent, TaskType::Harden),
+            (Mode::Agent, TaskType::Bootstrap),
+            (Mode::Interactive, TaskType::NewComponent),
+            (Mode::Interactive, TaskType::Feature),
+            (Mode::Interactive, TaskType::Fix),
+            (Mode::Interactive, TaskType::Learn),
+            (Mode::Interactive, TaskType::Review),
+            (Mode::Interactive, TaskType::Harden),
+        ];
+        for (mode, tt) in &valid {
+            assert!(
+                validate_mode_task(*mode, *tt).is_ok(),
+                "({:?}, {:?}) should be valid",
+                mode,
+                tt
+            );
+        }
     }
 }

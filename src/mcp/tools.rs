@@ -890,6 +890,97 @@ mod tests {
         }
     }
 
+    // ── Mode parameter schema tests ────────────────────────────────
+
+    #[test]
+    fn advance_schema_includes_mode_parameter() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let advance = tools.iter().find(|t| t["name"] == "advance").unwrap();
+        let props = &advance["inputSchema"]["properties"];
+        assert!(props.get("mode").is_some(), "advance should have mode parameter");
+        let mode = &props["mode"];
+        assert_eq!(mode["type"], "string");
+        let enums = mode["enum"].as_array().unwrap();
+        assert!(enums.iter().any(|v| v == "agent"));
+        assert!(enums.iter().any(|v| v == "interactive"));
+    }
+
+    #[test]
+    fn advance_schema_mode_not_required() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let advance = tools.iter().find(|t| t["name"] == "advance").unwrap();
+        let required = advance["inputSchema"]["required"].as_array().unwrap();
+        assert!(
+            !required.iter().any(|v| v == "mode"),
+            "mode should not be in advance's required array"
+        );
+    }
+
+    #[test]
+    fn get_step_prompt_schema_includes_mode_parameter() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "get_step_prompt")
+            .unwrap();
+        let props = &tool["inputSchema"]["properties"];
+        assert!(
+            props.get("mode").is_some(),
+            "get_step_prompt should have mode parameter"
+        );
+        let mode = &props["mode"];
+        assert_eq!(mode["type"], "string");
+    }
+
+    #[test]
+    fn get_step_prompt_schema_mode_required() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "get_step_prompt")
+            .unwrap();
+        let required = tool["inputSchema"]["required"].as_array().unwrap();
+        assert!(
+            required.iter().any(|v| v == "mode"),
+            "mode should be in get_step_prompt's required array"
+        );
+    }
+
+    #[test]
+    fn get_step_prompt_rejects_missing_mode() {
+        let mut state = empty_state();
+        state.components.insert(
+            "auth".into(),
+            std::sync::Arc::new(crate::store::schema::ComponentFile {
+                component: crate::store::schema::Component {
+                    name: "auth".into(),
+                    description: "Auth".into(),
+                },
+            }),
+        );
+        state.rebuild_graph();
+
+        let args = serde_json::json!({
+            "component": "auth",
+            "step": "define_scope",
+        });
+        let envelope = call_read_tool(&state, "get_step_prompt", &args);
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "get_step_prompt without mode should return error"
+        );
+        assert!(
+            envelope.content[0].text.contains("mode"),
+            "error should mention mode: {}",
+            envelope.content[0].text,
+        );
+    }
+
     fn empty_state() -> ProjectState {
         crate::store::testing::empty_project_state()
     }
