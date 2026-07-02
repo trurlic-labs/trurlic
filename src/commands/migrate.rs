@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::store::schema::{
     COMPONENTS_DIR, ComponentFile, DECISIONS_DIR, DecisionFile, EdgeEntry, FORMAT_VERSION,
-    GRAPH_FILE, GraphIndex, PATTERNS_DIR, PatternFile, ProjectFile,
+    GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile,
 };
 use crate::store::{Store, StoreLock};
 use crate::{Error, Result};
@@ -15,15 +15,9 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     let store = Store::discover(cwd)?;
     store.clean_stale_tmp()?;
 
-    let project = store.read_project()?;
-    let old_version = &project.trurlic_version;
+    let old_version = store.read_project()?.trurlic_version;
 
-    if old_version == FORMAT_VERSION {
-        println!("Already up to date (format version {FORMAT_VERSION}).");
-        return Ok(());
-    }
-
-    match crate::store::compare_versions(old_version, FORMAT_VERSION) {
+    match crate::store::compare_versions(&old_version, FORMAT_VERSION) {
         Ordering::Greater => {
             return Err(Error::Validation(format!(
                 ".trurlic/ format version `{old_version}` is newer than this CLI \
@@ -40,95 +34,136 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     let root = store.root();
 
     if dry_run == DryRun::Yes {
-        print_dry_run(root, old_version)?;
+        return print_dry_run(root, &old_version);
+    }
+
+    let lock = store.lock()?;
+
+    // Re-check version under lock to close the TOCTOU window: another process
+    // could have migrated between the initial unlocked read and lock
+    // acquisition. Doing it before the backup avoids a wasted copy on that race.
+    if crate::store::compare_versions(&store.read_project()?.trurlic_version, FORMAT_VERSION)
+        != Ordering::Less
+    {
+        drop(lock);
+        println!("Already up to date (format version {FORMAT_VERSION}).");
         return Ok(());
     }
 
+    // Snapshot under the lock so no concurrent CLI/MCP/map write can tear the
+    // backup — a copy taken without the lock could pair a freshly written node
+    // file with a pre-write graph.toml, defeating its purpose as a recovery point.
     let backup_name = format!(
         ".trurlic-backup-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%S")
     );
-    let project_root = root
+    let backup_path = root
         .parent()
-        .ok_or_else(|| Error::Validation("store root has no parent directory".into()))?;
-    let backup_path = project_root.join(&backup_name);
+        .ok_or_else(|| Error::Validation("store root has no parent directory".into()))?
+        .join(&backup_name);
     if let Err(e) = copy_dir_recursive(root, &backup_path) {
         let _ = fs::remove_dir_all(&backup_path);
         return Err(e);
     }
 
-    let lock = store.lock()?;
-
-    // Re-check version under lock to close the TOCTOU window: another
-    // process could have migrated between our initial unlocked read and
-    // lock acquisition.
-    let project_locked = store.read_project()?;
-    if crate::store::compare_versions(&project_locked.trurlic_version, FORMAT_VERSION)
-        != Ordering::Less
-    {
-        drop(lock);
-        let _ = fs::remove_dir_all(&backup_path);
-        println!("Already up to date (format version {FORMAT_VERSION}).");
-        return Ok(());
-    }
-
-    round_trip_project(root, &lock, &store)?;
-    round_trip_dir::<ComponentFile>(root, COMPONENTS_DIR, &lock, &store)?;
-    round_trip_dir::<DecisionFile>(root, DECISIONS_DIR, &lock, &store)?;
-    round_trip_dir::<PatternFile>(root, PATTERNS_DIR, &lock, &store)?;
-
-    // Drop edges whose kind no longer exists in the schema (e.g. `supersedes`,
-    // retired in 0.4.0). These edges live only in the compiled index, never in
-    // node files, and a typed read rejects the whole graph on one unknown
-    // variant — so this loose pre-pass is the entirety of their migration and
-    // must run before the typed rebuild below can parse graph.toml.
-    sanitize_graph_edges(root, &lock, &store)?;
-
-    // Rebuild graph.toml with fresh BLAKE3 hashes from the updated node
-    // files. A plain round-trip of the old graph.toml would leave stale
-    // hashes for any file whose content changed (e.g. new default fields).
-    let state = store.load_state()?;
-    store.write_atomic(&lock, &store.graph_path(), &state.graph_index)?;
-
+    let stripped_edges = apply_migration(root, &lock, &store)?;
     drop(lock);
 
+    if stripped_edges > 0 {
+        println!("Removed {stripped_edges} graph edge(s) not recognized by the current schema.");
+    }
     println!("Migrated from {old_version} \u{2192} {FORMAT_VERSION}, backup at {backup_name}/");
     Ok(())
 }
 
+/// Rewrite every node file into the current schema, strip graph edges the
+/// current schema can no longer parse, stamp the new format version into
+/// `project.toml`, and rebuild `graph.toml` last as the commit point. Returns
+/// the number of retired edges removed.
+///
+/// Ordering is load-bearing:
+/// 1. Node files (and `project.toml`) are rewritten into the current format
+///    *before* graph.toml is rebuilt, because graph.toml stores a content hash
+///    per node — including `project`. Bumping the version after the rebuild
+///    would leave that hash stale.
+/// 2. Retired edges are stripped *before* the version bump, so even if the run
+///    is interrupted right after the bump the graph still parses with a typed
+///    read: the store stays loadable (at worst with stale hashes a later write
+///    refreshes) rather than bricked on an unknown edge kind.
+/// 3. graph.toml is written last, per the storage spec's commit-point rule.
+fn apply_migration(root: &Path, lock: &StoreLock, store: &Store) -> Result<usize> {
+    round_trip_dir::<ComponentFile>(root, COMPONENTS_DIR, lock, store)?;
+    round_trip_dir::<DecisionFile>(root, DECISIONS_DIR, lock, store)?;
+    round_trip_dir::<PatternFile>(root, PATTERNS_DIR, lock, store)?;
+
+    // Drop edges whose kind no longer exists in the schema (e.g. `supersedes`,
+    // retired in 0.4.0). These live only in the compiled index, never in node
+    // files, and a typed read rejects the whole graph on one unknown variant —
+    // so this loose pre-pass must run before the typed rebuild below.
+    let stripped = sanitize_graph_edges(root, lock, store)?;
+
+    write_migrated_version(root, lock, store)?;
+
+    // Rebuild graph.toml with fresh BLAKE3 hashes from the finalized node files
+    // (project.toml included). A plain round-trip of the old graph.toml would
+    // leave stale hashes for any file whose content changed (new default fields,
+    // the version bump).
+    let state = store.load_state()?;
+    store.write_atomic(lock, &store.graph_path(), &state.graph_index)?;
+
+    Ok(stripped)
+}
+
 /// Remove edges from graph.toml whose `kind` no longer deserializes into a
-/// current [`EdgeEntry`].
+/// current [`EdgeEntry`], returning how many were dropped.
 ///
 /// A typed `GraphIndex` read rejects the entire file on a single unknown edge
 /// variant, so this parses loosely as a `toml::Table`, keeps only the edges the
 /// current schema understands, and rewrites the file when any were dropped.
-/// No-op when graph.toml is absent or already clean.
-fn sanitize_graph_edges(root: &Path, lock: &StoreLock, store: &Store) -> Result<()> {
+/// Returns `0` when graph.toml is absent or already clean.
+fn sanitize_graph_edges(root: &Path, lock: &StoreLock, store: &Store) -> Result<usize> {
     let path = root.join(GRAPH_FILE);
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(e) => return Err(Error::Io(e)),
     };
 
     let mut index: toml::Table = toml::from_str(&content)?;
     let Some(toml::Value::Array(edges)) = index.get_mut("edges") else {
-        return Ok(());
+        return Ok(0);
     };
 
     let before = edges.len();
     edges.retain(|edge| edge.clone().try_into::<EdgeEntry>().is_ok());
-    if edges.len() == before {
-        return Ok(());
+    let stripped = before - edges.len();
+    if stripped == 0 {
+        return Ok(0);
     }
 
-    store.write_atomic(lock, &path, &index)
+    store.write_atomic(lock, &path, &index)?;
+    Ok(stripped)
 }
 
-fn round_trip_project(root: &Path, lock: &crate::store::StoreLock, store: &Store) -> Result<()> {
+/// Count graph edges the current schema can no longer parse, without a typed
+/// read that a single retired edge would reject outright. Used by the dry-run
+/// preview, which must not mutate the store.
+fn count_retired_edges(graph_content: &str) -> Result<usize> {
+    let index: toml::Table = toml::from_str(graph_content)?;
+    let Some(toml::Value::Array(edges)) = index.get("edges") else {
+        return Ok(0);
+    };
+    Ok(edges
+        .iter()
+        .filter(|edge| (*edge).clone().try_into::<EdgeEntry>().is_err())
+        .count())
+}
+
+/// Stamp the current [`FORMAT_VERSION`] into `project.toml`. This is the
+/// migration commit point — see [`apply_migration`] for why it runs last.
+fn write_migrated_version(root: &Path, lock: &StoreLock, store: &Store) -> Result<()> {
     let path = root.join("project.toml");
-    let content = fs::read_to_string(&path)?;
-    let mut project: ProjectFile = toml::from_str(&content)?;
+    let mut project: ProjectFile = toml::from_str(&fs::read_to_string(&path)?)?;
     project.trurlic_version = FORMAT_VERSION.into();
     store.write_atomic(lock, &path, &project)?;
     Ok(())
@@ -187,11 +222,16 @@ fn print_dry_run(root: &Path, old_version: &str) -> Result<()> {
     let graph_path = root.join(GRAPH_FILE);
     if graph_path.exists() {
         let content = fs::read_to_string(&graph_path)?;
-        let index: GraphIndex = toml::from_str(&content)?;
-        let new_content = toml::to_string_pretty(&index)?;
-        // Node file content changes cause hash updates in graph.toml,
-        // even when the GraphIndex structure itself is unchanged.
-        if content != new_content || node_changes > 0 {
+        // Parse loosely: a retired edge (e.g. `supersedes`) makes a typed read
+        // fail on the very store this command exists to repair, so the dry-run
+        // must not attempt one.
+        let retired = count_retired_edges(&content)?;
+        // graph.toml is rewritten whenever a node file changed (hash refresh) or
+        // a retired edge is stripped.
+        if retired > 0 {
+            println!("  would strip {retired} retired graph edge(s) and rewrite: {GRAPH_FILE}");
+            count += 1;
+        } else if node_changes > 0 {
             println!("  would update: {GRAPH_FILE}");
             count += 1;
         }
@@ -245,6 +285,12 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         let dst_path = dst.join(entry.file_name());
         let ft = entry.file_type()?;
         if ft.is_symlink() {
+            // Skip symlinks rather than follow them out of the store tree; warn
+            // so an incomplete backup is never silent.
+            eprintln!(
+                "warning: backup skipped symlink {} — copy its target manually if needed",
+                src_path.display()
+            );
             continue;
         }
         if ft.is_dir() {
@@ -565,6 +611,51 @@ mod tests {
         assert!(state.decisions.contains_key("new-choice"));
         let hash_issues = store.verify_hashes().unwrap();
         assert!(hash_issues.is_empty(), "hashes must match: {hash_issues:?}");
+    }
+
+    #[test]
+    fn migrate_dry_run_previews_retired_edge_without_crashing_or_mutating() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
+        decide(tmp.path(), "auth", "Old choice", "Superseded later", &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "New choice",
+            "Replaces the old one",
+            &[],
+        )
+        .unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let graph_path = store.graph_path();
+        let mut graph = fs::read_to_string(&graph_path).unwrap();
+        graph.push_str(
+            "\n[[edges]]\nfrom = \"new-choice\"\nto = \"old-choice\"\nkind = \"supersedes\"\n",
+        );
+        fs::write(&graph_path, &graph).unwrap();
+
+        let mut project = store.read_project().unwrap();
+        project.trurlic_version = "0.3.0".into();
+        let lock = store.lock().unwrap();
+        store
+            .write_atomic(&lock, &store.root().join("project.toml"), &project)
+            .unwrap();
+        drop(lock);
+
+        // A typed dry-run parse would choke on the retired edge — the very store
+        // migrate exists to repair. The loose preview must succeed instead.
+        migrate(tmp.path(), DryRun::Yes).unwrap();
+
+        // A dry run writes nothing: the version and the retired edge both remain.
+        assert_eq!(store.read_project().unwrap().trurlic_version, "0.3.0");
+        assert!(
+            fs::read_to_string(&graph_path)
+                .unwrap()
+                .contains("supersedes"),
+            "dry run must not mutate the store"
+        );
     }
 
     #[test]
