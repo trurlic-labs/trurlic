@@ -93,11 +93,10 @@ pub struct RemovalPartition<'a> {
 impl InMemoryGraph {
     /// Cascade pre-flight for removing a single decision.
     pub fn check_decision_cascade(&self, name: &str) -> CascadeResult {
-        // A lone removal is the batch `{name}`: the decision removes only
-        // itself, so its own membership and incident edges are the only ones
-        // that vanish.
-        let removing = BTreeSet::from([name]);
-        self.check_decision_cascade_batch(name, &removing)
+        // A lone removal is the batch `{name}`: only `name` leaves, so a node
+        // "is being removed" iff it *is* `name`. Test that with a direct
+        // comparison — no set allocation on this hot, per-decision path.
+        self.decision_cascade(name, |other| other == name)
     }
 
     /// Cascade pre-flight for removing `name` as one member of a batch that
@@ -109,6 +108,15 @@ impl InMemoryGraph {
     /// makes atomic batch removal safe — the per-decision check in isolation
     /// would see the pre-batch graph and miss a sibling that is also leaving.
     fn check_decision_cascade_batch(&self, name: &str, removing: &BTreeSet<&str>) -> CascadeResult {
+        self.decision_cascade(name, |other| removing.contains(other))
+    }
+
+    /// Shared cascade body. `is_removing(node)` reports whether `node` leaves in
+    /// the same commit as `name`; co-removed dependents and pattern members are
+    /// stripped atomically and so never block. Monomorphized per caller: the
+    /// single-decision path inlines a string comparison, the batch path a set
+    /// lookup — neither pays for the other's machinery.
+    fn decision_cascade<F: Fn(&str) -> bool>(&self, name: &str, is_removing: F) -> CascadeResult {
         let involved = self.edges_involving(name);
         let mut blockers = Vec::new();
         let mut warnings = Vec::new();
@@ -120,7 +128,7 @@ impl InMemoryGraph {
                 // this one. A co-removed dependent loses its edge in the same
                 // commit, so it does not block.
                 (EdgeKind::DependsOn, Direction::Reverse) => {
-                    if !removing.contains(other) {
+                    if !is_removing(other) {
                         blockers.push(CascadeBlocker {
                             node: other.to_string(),
                             edge: EdgeKind::DependsOn,
@@ -134,7 +142,7 @@ impl InMemoryGraph {
                 // Block or warn: pattern membership. Count only the members
                 // that survive the batch — those not in `removing`.
                 (EdgeKind::MemberOf, Direction::Reverse) => {
-                    if self.surviving_member_count(other, removing) < 2 {
+                    if self.surviving_member_count(other, &is_removing) < 2 {
                         blockers.push(CascadeBlocker {
                             node: other.to_string(),
                             edge: EdgeKind::MemberOf,
@@ -182,17 +190,15 @@ impl InMemoryGraph {
         }
     }
 
-    /// Count the members a pattern retains once every decision in `removing`
-    /// is gone: its forward `MemberOf` targets minus those being removed.
-    fn surviving_member_count(&self, pattern: &str, removing: &BTreeSet<&str>) -> usize {
+    /// Count the members a pattern retains once every co-removed decision is
+    /// gone: its forward `MemberOf` targets minus those `is_removing` marks.
+    fn surviving_member_count<F: Fn(&str) -> bool>(&self, pattern: &str, is_removing: &F) -> usize {
         self.forward
             .get(pattern)
             .map(|edges| {
                 edges
                     .iter()
-                    .filter(|e| {
-                        e.kind == EdgeKind::MemberOf && !removing.contains(&e.target.as_ref())
-                    })
+                    .filter(|e| e.kind == EdgeKind::MemberOf && !is_removing(e.target.as_ref()))
                     .count()
             })
             .unwrap_or(0)
