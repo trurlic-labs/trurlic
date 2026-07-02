@@ -952,6 +952,7 @@ mod tests {
                     attribution: Attribution::User,
                     created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -1390,6 +1391,7 @@ mod tests {
                     attribution: Attribution::Agent,
                     created: ts,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -1453,6 +1455,7 @@ mod tests {
                         symbol: None,
                     },
                 ],
+                history: vec![],
             },
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
@@ -1488,6 +1491,7 @@ mod tests {
                 attribution: Attribution::User,
                 created: Utc::now(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
@@ -1526,6 +1530,7 @@ mod tests {
                     file: "src/store/write.rs".into(),
                     symbol: Some("commit_with_graph".into()),
                 }],
+                history: vec![],
             },
         };
         let name: Arc<str> = Arc::from("atomic-writes");
@@ -1552,6 +1557,7 @@ mod tests {
                 attribution: Attribution::User,
                 created: Utc::now(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let name: Arc<str> = Arc::from("atomic-writes");

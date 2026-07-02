@@ -406,6 +406,7 @@ mod tests {
                         attribution: Attribution::User,
                         created: ts(),
                         code_refs: vec![],
+                        history: vec![],
                     },
                 },
             );
@@ -585,6 +586,7 @@ mod tests {
                         attribution: Attribution::User,
                         created: ts(),
                         code_refs: vec![],
+                        history: vec![],
                     },
                 },
             );
@@ -740,6 +742,7 @@ mod tests {
                         attribution: Attribution::User,
                         created: ts(),
                         code_refs: vec![],
+                        history: vec![],
                     },
                 },
             );

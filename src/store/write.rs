@@ -392,6 +392,7 @@ impl Store {
                 attribution: params.attribution,
                 created: Utc::now(),
                 code_refs: params.code_refs.to_vec(),
+                history: Vec::new(),
             },
         };
 

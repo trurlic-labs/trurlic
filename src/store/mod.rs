@@ -791,6 +791,7 @@ pub(crate) mod testing {
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         }
     }
@@ -859,6 +860,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -874,6 +876,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -889,6 +892,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -1130,6 +1134,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -1145,6 +1150,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -1160,6 +1166,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
