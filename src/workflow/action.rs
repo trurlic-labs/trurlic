@@ -181,12 +181,12 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             match mode {
                 Mode::Agent => {
                     "Compare each recorded decision against the current source \
-                     code. Supersede any that have drifted. Proceed autonomously."
+                     code. Revise any that have drifted. Proceed autonomously."
                 }
                 Mode::Interactive => {
                     "Compare each recorded decision against the current source \
                      code. Flag any that have drifted from the implementation. \
-                     For drifted decisions, call update_decision(supersede)."
+                     For drifted decisions, call update_decision(revise)."
                 }
             },
         ),

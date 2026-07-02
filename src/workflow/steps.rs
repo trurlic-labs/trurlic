@@ -480,7 +480,7 @@ fn step_walk_decisions(graph: &InMemoryGraph, component: &str, mode: Mode) -> St
                 }
                 out.push_str(
                     "→ Locate in source code and verify accuracy\n\
-                     → If drifted, call update_decision(mode=\"supersede\")\n\n",
+                     → If drifted, call update_decision(mode=\"revise\")\n\n",
                 );
             }
 
@@ -538,7 +538,7 @@ fn step_verify_constraints(graph: &InMemoryGraph, component: &str, mode: Mode) -
     match mode {
         Mode::Interactive => {
             out.push_str(
-                "If any constraint needs changing → call update_decision(mode=\"supersede\").\n\
+                "If any constraint needs changing → call update_decision(mode=\"revise\").\n\
                  If all constraints hold → report \"all constraints verified\" with \
                  the code locations checked.\n\
                  If you cannot locate a constraint in the source code, flag it as \
@@ -548,7 +548,7 @@ fn step_verify_constraints(graph: &InMemoryGraph, component: &str, mode: Mode) -
         }
         Mode::Agent => {
             out.push_str(
-                "If any constraint has drifted → call update_decision(mode=\"supersede\").\n\
+                "If any constraint has drifted → call update_decision(mode=\"revise\").\n\
                  If any constraint conflicts with the task → note the conflict \
                  and call update_decision.\n\
                  If you cannot locate a constraint in the source code, flag it as \
@@ -707,14 +707,14 @@ fn step_drift_check(graph: &InMemoryGraph, component: &str, mode: Mode) -> Strin
         }
         out.push_str(
             "→ Verify this matches the current implementation\n\
-             → If drifted, call update_decision(mode=\"supersede\")\n\n",
+             → If drifted, call update_decision(mode=\"revise\")\n\n",
         );
     }
 
     if mode == Mode::Agent {
         out.push_str(
             "Verify each decision automatically against source code. \
-             Supersede any that have drifted. Call advance again when done.\n",
+             Revise any that have drifted. Call advance again when done.\n",
         );
     }
     out
@@ -1854,7 +1854,7 @@ mod tests {
                 .instructions
                 .contains("Verify each recorded decision")
         );
-        assert!(result.instructions.contains("supersede"));
+        assert!(result.instructions.contains("revise"));
     }
 
     #[test]
