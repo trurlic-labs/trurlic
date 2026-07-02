@@ -127,6 +127,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the same baseline as `get_context` (component decisions **plus** project
   rules), so a concern a project rule still covers is never falsely reported as
   lost.
+- **Project-level `advance` ready responses carry the agent-review hint.** A
+  ready `component="project"` response now includes `agent_decisions_unreviewed`
+  and `hint`, matching component-level responses, so unreviewed agent-authored
+  project rules aren't silently exempt from review.
+- **Duplicate-decision detection is whitespace-insensitive.** The hard block on
+  restating an existing decision's choice normalizes whitespace as well as case,
+  so a trailing or doubled space can't slip a near-duplicate past it.
 - **Map `PUT /api/decision/:name` returns 404**, not 500, for an unknown
   decision, and 400 for invalid input.
 
@@ -134,6 +141,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - `ReviseDecisionParams` no longer carries a `writes_history` flag — whether a
   revision versions history is derived from whether `choice`/`reason` changed.
+- `get_context` computes decision staleness (a per-`code_ref` filesystem stat)
+  only for the full brief, not the lightweight `constraints` depth.
 
 ## [0.2.0] — 2026-06-15
 

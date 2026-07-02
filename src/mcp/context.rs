@@ -72,12 +72,13 @@ pub(crate) fn get_context(
         "not_covered"
     };
 
-    // Decisions whose code_refs all point at deleted files. Computed once
-    // and shared between the health summary and the brief's stale flags.
-    let stale_names = stale_decision_names(&state.project_root, &component_decisions);
-
     match depth {
         ContextDepth::Full => {
+            // Decisions whose code_refs all point at deleted files — each ref is
+            // stat'd on disk, so this runs only on the full brief that consumes
+            // it (health summary + stale flags), never the light constraints path.
+            let stale_names = stale_decision_names(&state.project_root, &component_decisions);
+
             let related_decisions = graph.related_decisions(component);
             let seeds: Vec<&str> = component_decisions
                 .iter()

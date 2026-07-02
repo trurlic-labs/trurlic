@@ -160,6 +160,17 @@ pub(crate) fn validate_consistency(state: &store::ProjectState) -> Value {
 
 // ── record_decision ─────────────────────────────────────────────────────────
 
+/// Normalize a choice for duplicate detection: lowercased with every run of
+/// whitespace collapsed to a single space and the ends trimmed. Two choices
+/// that differ only in case or spacing normalize to the same key.
+fn normalize_choice(choice: &str) -> String {
+    choice
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
 pub(crate) fn record_decision(
     store: &Store,
     state: &mut store::ProjectState,
@@ -219,13 +230,15 @@ pub(crate) fn record_decision(
         }
     }
 
-    // Reject an exact restatement of an existing decision in the same
-    // component (case-insensitive). Forking the graph with a duplicate node
-    // loses the original's history and edges — revising it in place keeps both.
-    let choice_lower = choice.to_ascii_lowercase();
+    // Reject a restatement of an existing decision in the same component,
+    // comparing on normalized text (case-insensitive, whitespace-collapsed) so
+    // a trailing space or doubled gap can't sneak a near-duplicate past the
+    // guard. Forking the graph with a duplicate node loses the original's
+    // history and edges — revising it in place keeps both.
+    let choice_key = normalize_choice(choice);
     for (existing_name, existing_dec) in &state.decisions {
         if existing_dec.decision.component == component
-            && existing_dec.decision.choice.to_ascii_lowercase() == choice_lower
+            && normalize_choice(&existing_dec.decision.choice) == choice_key
         {
             return Err(format!(
                 "decision `{existing_name}` in [{component}] has identical choice text — \

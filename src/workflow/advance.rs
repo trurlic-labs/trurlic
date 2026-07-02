@@ -753,9 +753,18 @@ fn advance_project(
         TaskType::Bootstrap => deduce_bootstrap_project(state, task, mode, completed_steps),
     };
 
-    Ok(build_response(
-        "project", task_type, &step, ready, mode, assessment, action,
-    ))
+    let response = build_response("project", task_type, &step, ready, mode, assessment, action);
+    if ready {
+        // Match component-level ready: surface unreviewed agent-authored project
+        // rules so the schema is uniform and project rules aren't silently exempt
+        // from review.
+        Ok(with_agent_review_hint(
+            response,
+            agent_unreviewed_count(&decisions),
+        ))
+    } else {
+        Ok(response)
+    }
 }
 
 // ── Bootstrap (project scope) ─────────────────────────────────────────────
@@ -1363,6 +1372,29 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["step"], "ready");
+        assert_eq!(result["agent_decisions_unreviewed"], 1);
+    }
+
+    #[test]
+    fn project_ready_carries_agent_review_count() {
+        // A ready project response must carry the same review hint as a
+        // component's, so agent-authored project rules aren't silently exempt.
+        let decs = vec![(
+            "d-agent",
+            agent_decision("project", "Deny unsafe code project-wide", "Inferred", &[]),
+        )];
+        let state = build_state(&[], &decs);
+        let result = advance(
+            &state,
+            "project",
+            Some(TaskType::Harden),
+            None,
+            Some(Mode::Agent),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(result["ready"], true);
         assert_eq!(result["agent_decisions_unreviewed"], 1);
     }
 
