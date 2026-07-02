@@ -5,8 +5,7 @@ use crate::store::limits::{MAX_CHOICE_BYTES, MIN_REASON_BYTES};
 use crate::store::schema::EdgeKind;
 use crate::store::{self, Store};
 
-use super::write::{opt_str, parse_code_refs, record_decision, require_str};
-use crate::store::schema::Attribution;
+use super::write::{opt_str, parse_code_refs, require_str};
 
 // ── remove_decision ─────────────────────────────────────────────────────────
 
@@ -91,10 +90,7 @@ pub(crate) fn update_decision(
 
     match mode {
         "amend" => amend_decision(store, state, name, args),
-        "supersede" => supersede_decision(store, state, name, args),
-        _ => Err(format!(
-            "invalid mode `{mode}` — expected \"amend\" or \"supersede\""
-        )),
+        _ => Err(format!("invalid mode `{mode}` — expected \"amend\"")),
     }
 }
 
@@ -163,71 +159,6 @@ fn amend_decision(
     }))
 }
 
-/// Substantive change: create a new decision that supersedes the old one.
-fn supersede_decision(
-    store: &Store,
-    state: &mut store::ProjectState,
-    old_name: &str,
-    args: &Value,
-) -> Result<Value, String> {
-    let old_dec = state
-        .decisions
-        .get(old_name)
-        .ok_or_else(|| format!("decision `{old_name}` does not exist"))?;
-
-    let new_choice = opt_str(args, "choice")?;
-    let new_reason = opt_str(args, "reason")?;
-
-    if new_choice.is_none() && new_reason.is_none() {
-        return Err("supersede requires at least one of `choice` or `reason`".into());
-    }
-
-    let choice = new_choice.unwrap_or(&old_dec.decision.choice);
-    let reason = new_reason.unwrap_or(&old_dec.decision.reason);
-
-    let component = old_dec.decision.component.clone();
-    let tags = old_dec.decision.tags.clone();
-    let old_code_refs = old_dec.decision.code_refs.clone();
-    let attribution = match old_dec.decision.attribution {
-        Attribution::User => "user",
-        Attribution::Agent => "agent",
-    };
-
-    // Resolve code_refs: inherit from old decision, override if explicitly provided.
-    let new_code_refs = parse_code_refs(args)?;
-    let resolved_refs =
-        if new_code_refs.is_empty() && !args.get("code_refs").is_some_and(|v| v.is_array()) {
-            store::code_refs_to_json(&old_code_refs)
-        } else {
-            store::code_refs_to_json(&new_code_refs)
-        };
-
-    // Delegate to record_decision with supersedes set.
-    let record_args = serde_json::json!({
-        "component": component,
-        "choice": choice,
-        "reason": reason,
-        "supersedes": old_name,
-        "tags": tags,
-        "attribution": attribution,
-        "code_refs": resolved_refs,
-    });
-
-    let result = record_decision(store, state, &record_args)?;
-    let new_name = result["name"].as_str().unwrap_or_default();
-
-    // Collect affected info from the OLD decision.
-    let (affected_patterns, affected_decisions) = collect_affected(state.graph(), old_name);
-
-    Ok(serde_json::json!({
-        "name": new_name,
-        "superseded": old_name,
-        "path": result["path"],
-        "affected_patterns": affected_patterns,
-        "affected_decisions": affected_decisions,
-    }))
-}
-
 /// Collect pattern and decision names affected by edges involving a decision.
 fn collect_affected(
     graph: &crate::store::graph::InMemoryGraph,
@@ -244,10 +175,7 @@ fn collect_affected(
     let decisions: Vec<String> = involved
         .iter()
         .filter(|(_, e, d)| {
-            matches!(
-                e.kind,
-                EdgeKind::DependsOn | EdgeKind::Constrains | EdgeKind::Supersedes
-            ) && *d == Direction::Reverse
+            matches!(e.kind, EdgeKind::DependsOn | EdgeKind::Constrains) && *d == Direction::Reverse
         })
         .map(|(other, _, _)| other.to_string())
         .collect();
@@ -407,82 +335,6 @@ mod tests {
     }
 
     #[test]
-    fn update_decision_supersede_creates_new() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Session cookies", "reason": "Simple session-based model", "attribution": "user" });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "session-cookies",
-            "mode": "supersede",
-            "choice": "JWT tokens",
-            "reason": "Stateless, no server session",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-        assert_ne!(new_name, "session-cookies");
-
-        // Old decision still exists.
-        assert!(state.decisions.contains_key("session-cookies"));
-        // New decision exists.
-        assert!(state.decisions.contains_key(new_name));
-        // Supersedes edge exists.
-        assert!(state.graph_index.edges.iter().any(|e| e.from == new_name
-            && e.to == "session-cookies"
-            && e.kind == EdgeKind::Supersedes));
-    }
-
-    #[test]
-    fn update_decision_supersede_inherits_component() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "use-jwt",
-            "mode": "supersede",
-            "choice": "Use PASETO",
-            "reason": "Better defaults",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-        let new_dec = state.decisions.get(new_name).unwrap();
-        assert_eq!(new_dec.decision.component, "auth");
-    }
-
-    #[test]
-    fn update_decision_supersede_carries_tags() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({
-            "component": "auth",
-            "choice": "Use JWT",
-            "reason": "Stateless, no server session",
-            "tags": ["security", "auth"],
-            "attribution": "user",
-        });
-        record_decision(&store, &mut state, &d).unwrap();
-        assert_eq!(
-            state.decisions["use-jwt"].decision.tags,
-            vec!["security", "auth"]
-        );
-
-        let args = json!({
-            "name": "use-jwt",
-            "mode": "supersede",
-            "choice": "Use PASETO",
-            "reason": "Better defaults",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-        let new_dec = state.decisions.get(new_name).unwrap();
-        assert_eq!(
-            new_dec.decision.tags,
-            vec!["security", "auth"],
-            "supersede must carry tags forward"
-        );
-    }
-
-    #[test]
     fn update_decision_rejects_invalid_mode() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "X", "reason": "test reason placeholder", "attribution": "user" });
@@ -523,23 +375,6 @@ mod tests {
         let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "Use JWT v2" });
         let result = update_decision(&store, &mut state, &args).unwrap();
         assert!(result.get("workflow").is_none());
-    }
-
-    #[test]
-    fn supersede_no_workflow() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "use-jwt",
-            "mode": "supersede",
-            "choice": "Use PASETO",
-            "reason": "Better defaults",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        assert!(result.get("workflow").is_none());
-        assert!(result.get("superseded").is_some());
     }
 
     // ── amend quality floor ───────────────────────────────────────────
@@ -671,64 +506,5 @@ mod tests {
         let dec = state.decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.code_refs.len(), 1);
         assert_eq!(dec.decision.code_refs[0].file, "src/keep.rs");
-    }
-
-    #[test]
-    fn supersede_inherits_code_refs() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({
-            "component": "auth",
-            "choice": "Session cookies",
-            "reason": "Simple session-based model",
-            "attribution": "user",
-            "code_refs": [
-                { "file": "src/auth/session.rs", "symbol": "create_session" },
-            ],
-        });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "session-cookies",
-            "mode": "supersede",
-            "choice": "JWT tokens",
-            "reason": "Stateless, no server session",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-
-        let new_dec = state.decisions.get(new_name).unwrap();
-        assert_eq!(
-            new_dec.decision.code_refs.len(),
-            1,
-            "supersede must inherit code_refs"
-        );
-        assert_eq!(new_dec.decision.code_refs[0].file, "src/auth/session.rs");
-    }
-
-    #[test]
-    fn supersede_explicit_code_refs_override() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({
-            "component": "auth",
-            "choice": "Session cookies",
-            "reason": "Simple session-based model",
-            "attribution": "user",
-            "code_refs": [{ "file": "src/old.rs" }],
-        });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "session-cookies",
-            "mode": "supersede",
-            "choice": "JWT tokens",
-            "reason": "Stateless, no server session",
-            "code_refs": [{ "file": "src/new.rs", "symbol": "verify" }],
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-
-        let new_dec = state.decisions.get(new_name).unwrap();
-        assert_eq!(new_dec.decision.code_refs.len(), 1);
-        assert_eq!(new_dec.decision.code_refs[0].file, "src/new.rs");
     }
 }
