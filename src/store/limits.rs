@@ -26,3 +26,12 @@ pub const MAX_CHOICE_BYTES: usize = 200;
 /// Catches empty strings and trivial rubber stamps without requiring
 /// semantic analysis of user input.
 pub const MIN_STEP_EVIDENCE_BYTES: usize = 20;
+
+/// Maximum number of code references per decision.
+pub const MAX_CODE_REFS: usize = 20;
+
+/// Maximum byte length for a code reference file path.
+pub const MAX_CODE_REF_PATH_BYTES: usize = 500;
+
+/// Maximum byte length for a code reference symbol name.
+pub const MAX_CODE_REF_SYMBOL_BYTES: usize = 200;

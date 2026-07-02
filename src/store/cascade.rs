@@ -353,6 +353,7 @@ mod tests {
                         tags: vec![],
                         attribution: Attribution::User,
                         created: ts(),
+                        code_refs: vec![],
                     },
                 },
             );
