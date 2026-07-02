@@ -11,9 +11,10 @@ use serde::de::DeserializeOwned;
 use crate::{Error, Result};
 
 use super::graph::Severity;
+use super::limits::MAX_HISTORY_ENTRIES;
 use super::schema::{
     Attribution, CodeRef, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
-    GraphIndex, NodeEntry, NodeKind, Pattern, PatternFile,
+    GraphIndex, HistoryEntry, NodeEntry, NodeKind, Pattern, PatternFile,
 };
 use super::state::{
     ProjectState, is_reserved_node_name, is_valid_kebab_case, slugify, unique_decision_stem,
@@ -73,6 +74,23 @@ pub struct AmendDecisionParams<'a> {
     pub reason: Option<&'a str>,
     pub tags: Option<&'a [String]>,
     pub code_refs: Option<&'a [CodeRef]>,
+}
+
+// ── ReviseDecisionParams ────────────────────────────────────────────
+
+/// Parameters for [`Store::revise_decision`].
+///
+/// All fields are optional; the method requires at least one `Some`.
+/// `writes_history` is decided by the caller: set it whenever the revision
+/// touches a substantive field (choice or reason) so the pre-edit values are
+/// versioned into history. Tag and code-ref edits update in place and leave
+/// no history, so they carry `writes_history = false`.
+pub struct ReviseDecisionParams<'a> {
+    pub choice: Option<&'a str>,
+    pub reason: Option<&'a str>,
+    pub tags: Option<Vec<String>>,
+    pub code_refs: Option<Vec<CodeRef>>,
+    pub writes_history: bool,
 }
 
 // ── RecordPatternParams ─────────────────────────────────────────────
@@ -733,6 +751,123 @@ impl Store {
                 .iter_mut()
                 .find(|n| n.name == name)
                 .map(|n| std::mem::replace(&mut n.tags, t.to_vec()))
+        } else {
+            None
+        };
+
+        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
+            state.decisions.insert(name.into(), old_dec);
+            if let Some(h) = old_hash {
+                state.update_node_hash(name, h);
+            }
+            if let Some(t) = old_tags
+                && let Some(n) = state.graph_index.nodes.iter_mut().find(|n| n.name == name)
+            {
+                n.tags = t;
+            }
+            return Err(e);
+        }
+
+        Ok(())
+    }
+
+    // ── Revise decision (shared write path) ───────────────────────────
+
+    /// Revise an existing decision in place, versioning the prior choice and
+    /// reason into history.
+    ///
+    /// Single write path for MCP `update_decision(mode=revise)` and map
+    /// `PUT /api/decision/:name`. When `params.writes_history` is set, the
+    /// pre-edit choice and reason are appended to the decision's history as a
+    /// [`HistoryEntry`] before the new values overwrite them. History is a
+    /// ring buffer capped at [`MAX_HISTORY_ENTRIES`]: once full, pushing a new
+    /// entry drops the oldest. Tag and code-ref edits apply without leaving
+    /// history.
+    ///
+    /// The decision's name, `created` timestamp, and every graph edge survive
+    /// unchanged — revision never creates a new node, so no edge is ever
+    /// orphaned.
+    ///
+    /// **Callers** validate transport-specific quality constraints (field
+    /// lengths, reason minimums) before calling. This method enforces baseline
+    /// correctness only (non-empty fields, at least one change).
+    pub fn revise_decision(
+        &self,
+        lock: &StoreLock,
+        state: &mut ProjectState,
+        name: &str,
+        params: ReviseDecisionParams<'_>,
+    ) -> Result<()> {
+        if params.choice.is_none()
+            && params.reason.is_none()
+            && params.tags.is_none()
+            && params.code_refs.is_none()
+        {
+            return Err(Error::Validation(
+                "at least one of choice, reason, tags, or code_refs is required".into(),
+            ));
+        }
+        if let Some(c) = params.choice
+            && c.trim().is_empty()
+        {
+            return Err(Error::Validation("choice must not be empty".into()));
+        }
+        if let Some(r) = params.reason
+            && r.trim().is_empty()
+        {
+            return Err(Error::Validation("reason must not be empty".into()));
+        }
+        if let Some(refs) = &params.code_refs {
+            super::validate_code_refs(refs)?;
+        }
+
+        let old_dec = state
+            .decisions
+            .get(name)
+            .ok_or_else(|| Error::DecisionNotFound(name.into()))?
+            .clone();
+
+        let mut revised = DecisionFile::clone(&old_dec);
+
+        // Version the pre-edit substantive fields before overwriting them.
+        if params.writes_history {
+            revised.decision.history.push(HistoryEntry {
+                choice: revised.decision.choice.clone(),
+                reason: revised.decision.reason.clone(),
+                changed_at: Utc::now(),
+            });
+            // Ring buffer: the oldest entry falls off once the cap is exceeded.
+            if revised.decision.history.len() > MAX_HISTORY_ENTRIES {
+                revised.decision.history.remove(0);
+            }
+        }
+
+        if let Some(c) = params.choice {
+            revised.decision.choice = c.into();
+        }
+        if let Some(r) = params.reason {
+            revised.decision.reason = r.into();
+        }
+        if let Some(t) = &params.tags {
+            revised.decision.tags = t.clone();
+        }
+        if let Some(refs) = params.code_refs {
+            revised.decision.code_refs = refs;
+        }
+
+        let write = self.prepare_write(&self.decision_path(name), &revised)?;
+        let hash = write.content_hash();
+
+        // Mutate state. Save only the affected fields for rollback.
+        state.decisions.insert(name.into(), Arc::new(revised));
+        let old_hash = state.update_node_hash(name, hash);
+        let old_tags = if let Some(t) = &params.tags {
+            state
+                .graph_index
+                .nodes
+                .iter_mut()
+                .find(|n| n.name == name)
+                .map(|n| std::mem::replace(&mut n.tags, t.clone()))
         } else {
             None
         };
@@ -1507,5 +1642,326 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, Error::Validation(_)), "{err}");
+    }
+
+    // ── revise decision ──────────────────────────────────────────────────
+
+    /// Record a single decision under `auth` and return the store, its state,
+    /// and the decision's stem — the shared starting point for revise tests.
+    fn setup_one_decision(dir: &Path) -> (Store, ProjectState, String) {
+        let (store, mut state) = setup_store_with_components(dir, &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let stem = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless auth",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+        drop(lock);
+        (store, state, stem)
+    }
+
+    fn revise_params<'a>(
+        choice: Option<&'a str>,
+        reason: Option<&'a str>,
+        tags: Option<Vec<String>>,
+        code_refs: Option<Vec<CodeRef>>,
+    ) -> ReviseDecisionParams<'a> {
+        let writes_history = choice.is_some() || reason.is_some();
+        ReviseDecisionParams {
+            choice,
+            reason,
+            tags,
+            code_refs,
+            writes_history,
+        }
+    }
+
+    #[test]
+    fn revise_pushes_old_choice_and_reason_to_history() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(Some("Use OAuth"), Some("Delegated auth"), None, None),
+            )
+            .unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.choice, "Use OAuth");
+        assert_eq!(dec.reason, "Delegated auth");
+        assert_eq!(dec.history.len(), 1);
+        // The entry captures the values as they stood *before* the revision.
+        assert_eq!(dec.history[0].choice, "Use JWT");
+        assert_eq!(dec.history[0].reason, "Stateless auth");
+    }
+
+    #[test]
+    fn revise_preserves_name_and_all_edges() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let base = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Base decision",
+                    reason: "Foundation",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+        let dependent = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Dependent decision",
+                    reason: "Builds on base",
+                    depends_on: std::slice::from_ref(&base),
+                    alternatives: &[],
+                    constrains: std::slice::from_ref(&base),
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+
+        let edges_before = state.graph_index.edges.clone();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &dependent,
+                revise_params(Some("Revised dependent"), None, None, None),
+            )
+            .unwrap();
+
+        // The node keeps its name and every edge survives — revision never
+        // rewires the graph.
+        assert!(state.decisions.contains_key(&dependent));
+        assert_eq!(state.graph_index.edges, edges_before);
+        assert!(
+            state
+                .graph_index
+                .edges
+                .iter()
+                .any(|e| e.from == dependent && e.to == base && e.kind == EdgeKind::DependsOn)
+        );
+        assert!(
+            state
+                .graph_index
+                .edges
+                .iter()
+                .any(|e| e.from == dependent && e.to == base && e.kind == EdgeKind::Constrains)
+        );
+    }
+
+    #[test]
+    fn revise_tags_only_writes_no_history() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(None, None, Some(vec!["security".into()]), None),
+            )
+            .unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.tags, vec!["security".to_string()]);
+        assert!(dec.history.is_empty());
+        // Metadata edits mirror to the graph-index node tags.
+        let node = state
+            .graph_index
+            .nodes
+            .iter()
+            .find(|n| n.name == stem)
+            .unwrap();
+        assert_eq!(node.tags, vec!["security".to_string()]);
+    }
+
+    #[test]
+    fn revise_code_refs_only_writes_no_history() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let refs = vec![CodeRef {
+            file: "src/auth/token.rs".into(),
+            symbol: Some("validate".into()),
+        }];
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(None, None, None, Some(refs)),
+            )
+            .unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.code_refs.len(), 1);
+        assert!(dec.history.is_empty());
+    }
+
+    #[test]
+    fn revise_choice_and_tags_writes_exactly_one_entry() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(
+                    Some("New choice"),
+                    None,
+                    Some(vec!["security".into()]),
+                    None,
+                ),
+            )
+            .unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        // History versions substantive fields only — one entry, not one per
+        // changed field.
+        assert_eq!(dec.history.len(), 1);
+        assert_eq!(dec.history[0].choice, "Use JWT");
+        assert_eq!(dec.tags, vec!["security".to_string()]);
+    }
+
+    #[test]
+    fn revise_ring_buffer_drops_oldest_past_limit() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // MAX_HISTORY_ENTRIES + 1 revisions overflow the ring buffer by one.
+        for i in 0..=MAX_HISTORY_ENTRIES {
+            let choice = format!("choice-{i}");
+            store
+                .revise_decision(
+                    &lock,
+                    &mut state,
+                    &stem,
+                    revise_params(Some(&choice), None, None, None),
+                )
+                .unwrap();
+        }
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.history.len(), MAX_HISTORY_ENTRIES);
+        // The original "Use JWT" (pushed by the first revise) has fallen off;
+        // the oldest surviving entry is the pre-edit value of the second revise.
+        assert_eq!(dec.history[0].choice, "choice-0");
+    }
+
+    #[test]
+    fn revise_history_stays_chronological() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        for choice in ["one", "two", "three"] {
+            store
+                .revise_decision(
+                    &lock,
+                    &mut state,
+                    &stem,
+                    revise_params(Some(choice), None, None, None),
+                )
+                .unwrap();
+        }
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.history.len(), 3);
+        // Oldest first: choices are appended in revision order and timestamps
+        // never decrease.
+        let choices: Vec<&str> = dec.history.iter().map(|h| h.choice.as_str()).collect();
+        assert_eq!(choices, vec!["Use JWT", "one", "two"]);
+        for pair in dec.history.windows(2) {
+            assert!(pair[0].changed_at <= pair[1].changed_at);
+        }
+    }
+
+    #[test]
+    fn revise_with_no_fields_errors() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let err = store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(None, None, None, None),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Validation(_)), "{err}");
+    }
+
+    #[test]
+    fn revise_survives_reload_from_disk() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(
+                    Some("Persisted choice"),
+                    Some("Persisted reason"),
+                    None,
+                    None,
+                ),
+            )
+            .unwrap();
+        drop(lock);
+
+        // The history must round-trip through the TOML node file, not just
+        // live in memory.
+        let reloaded = store.load_state().unwrap();
+        let dec = &reloaded.decisions[&stem].decision;
+        assert_eq!(dec.choice, "Persisted choice");
+        assert_eq!(dec.history.len(), 1);
+        assert_eq!(dec.history[0].choice, "Use JWT");
     }
 }

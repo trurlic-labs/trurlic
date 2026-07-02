@@ -33,7 +33,9 @@ pub use schema::{
     GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile, STATE_DIR, STORE_DIR,
 };
 pub use state::{ProjectState, has_control_chars, is_valid_kebab_case, slugify};
-pub use write::{AmendDecisionParams, RecordDecisionParams, RecordPatternParams};
+pub use write::{
+    AmendDecisionParams, RecordDecisionParams, RecordPatternParams, ReviseDecisionParams,
+};
 
 /// Syntactic validation for a code reference.
 ///
