@@ -8,9 +8,9 @@
 //! Prompts are transport-agnostic. The MCP tool `get_step_prompt` calls
 //! `build_step_prompt` and combines the result with `get_context` output.
 
-use crate::store::ProjectState;
 use crate::store::graph::InMemoryGraph;
 use crate::store::schema::DecisionFile;
+use crate::store::{self, ProjectState};
 
 use super::CONCERN_FOCUS_LIMIT;
 use super::Mode;
@@ -277,7 +277,9 @@ const AGENT_PROTOCOL: &str = "\
 ---\n\
 AGENT PROTOCOL:\n\n\
 You are operating autonomously. Analyze source code as primary evidence.\n\
-Record each decision with attribution=\"agent\".\n\n\
+Record each decision with attribution=\"agent\".\n\
+Include code_refs for every decision — file paths and symbol names where \
+the decision manifests in source code.\n\n\
 If a decision requires domain knowledge not evident from the code, note \
 this in the reason field: \"[needs-review] <reasoning from code evidence>\".\n\n\
 Do not ask the user. Do not wait for input. Complete each step and call \
@@ -362,9 +364,11 @@ fn step_analyze_code(component: &str, task_type: Option<&str>, mode: Mode) -> St
                  - Storage strategy\n\
                  - Dependency choices\n\
                  - Explicit scope boundaries\n\n\
-                 Record each decision immediately with record_decision \
-                 and attribution=\"agent\". Do not discuss — proceed \
-                 through all decisions and call advance again.\n"
+                 Record each decision immediately with record_decision, \
+                 attribution=\"agent\", and code_refs pointing to the \
+                 source files and symbols where each decision manifests. \
+                 Do not discuss — proceed through all decisions and call \
+                 advance again.\n"
             ));
         }
     }
@@ -428,13 +432,21 @@ fn step_walk_decisions(graph: &InMemoryGraph, component: &str, mode: Mode) -> St
             for (name, d) in &decisions {
                 out.push_str(&format!(
                     "DECISION: {name} — {}\n\
-                     Reason: {}\n\
-                     → Cite the specific file/function where this manifests\n\
-                     → Ask the user to confirm or correct\n\
-                     → STOP. Wait for response.\n\n",
+                     Reason: {}\n",
                     sanitize(&d.decision.choice),
                     sanitize(&d.decision.reason),
                 ));
+                if !d.decision.code_refs.is_empty() {
+                    out.push_str(&format!(
+                        "Code: {}\n",
+                        store::format_code_refs(&d.decision.code_refs)
+                    ));
+                }
+                out.push_str(
+                    "→ Cite the specific file/function where this manifests\n\
+                     → Ask the user to confirm or correct\n\
+                     → STOP. Wait for response.\n\n",
+                );
             }
 
             out.push_str(
@@ -456,12 +468,20 @@ fn step_walk_decisions(graph: &InMemoryGraph, component: &str, mode: Mode) -> St
             for (name, d) in &decisions {
                 out.push_str(&format!(
                     "DECISION: {name} — {}\n\
-                     Reason: {}\n\
-                     → Locate in source code and verify accuracy\n\
-                     → If drifted, call update_decision(mode=\"supersede\")\n\n",
+                     Reason: {}\n",
                     sanitize(&d.decision.choice),
                     sanitize(&d.decision.reason),
                 ));
+                if !d.decision.code_refs.is_empty() {
+                    out.push_str(&format!(
+                        "Code: {}\n",
+                        store::format_code_refs(&d.decision.code_refs)
+                    ));
+                }
+                out.push_str(
+                    "→ Locate in source code and verify accuracy\n\
+                     → If drifted, call update_decision(mode=\"supersede\")\n\n",
+                );
             }
 
             out.push_str(
@@ -674,13 +694,21 @@ fn step_drift_check(graph: &InMemoryGraph, component: &str, mode: Mode) -> Strin
         out.push_str(&format!(
             "DECISION: {name} (created {})\n\
              Choice: {}\n\
-             Reason: {}\n\
-             → Verify this matches the current implementation\n\
-             → If drifted, call update_decision(mode=\"supersede\")\n\n",
+             Reason: {}\n",
             d.decision.created.format("%Y-%m-%d"),
             sanitize(&d.decision.choice),
             sanitize(&d.decision.reason),
         ));
+        if !d.decision.code_refs.is_empty() {
+            out.push_str(&format!(
+                "Code: {}\n",
+                store::format_code_refs(&d.decision.code_refs)
+            ));
+        }
+        out.push_str(
+            "→ Verify this matches the current implementation\n\
+             → If drifted, call update_decision(mode=\"supersede\")\n\n",
+        );
     }
 
     if mode == Mode::Agent {
@@ -893,6 +921,7 @@ mod tests {
                     tags: vec!["security".into(), "auth".into()],
                     attribution: Attribution::User,
                     created: ts,
+                    code_refs: vec![],
                 },
             }),
         );
@@ -907,6 +936,7 @@ mod tests {
                     tags: vec!["scope".into()],
                     attribution: Attribution::User,
                     created: ts,
+                    code_refs: vec![],
                 },
             }),
         );
@@ -921,6 +951,7 @@ mod tests {
                     tags: vec![],
                     attribution: Attribution::User,
                     created: ts,
+                    code_refs: vec![],
                 },
             }),
         );

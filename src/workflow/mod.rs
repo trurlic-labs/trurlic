@@ -385,6 +385,7 @@ mod integration_tests {
                 tags: tags.iter().map(|t| (*t).into()).collect(),
                 attribution: Attribution::User,
                 created: Utc::now(),
+                code_refs: vec![],
             },
         }
     }
@@ -399,6 +400,7 @@ mod integration_tests {
                 tags: tags.iter().map(|t| (*t).into()).collect(),
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                code_refs: vec![],
             },
         }
     }
