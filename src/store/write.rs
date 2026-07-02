@@ -61,21 +61,6 @@ pub struct RecordDecisionParams<'a> {
     pub code_refs: &'a [CodeRef],
 }
 
-// ── AmendDecisionParams ─────────────────────────────────────────────
-
-/// Parameters for [`Store::amend_decision`].
-///
-/// All fields are optional; the method requires at least one `Some`.
-/// Transport-specific quality checks (field length limits, reason
-/// minimums) belong in the adapter — this struct carries only the
-/// values to write.
-pub struct AmendDecisionParams<'a> {
-    pub choice: Option<&'a str>,
-    pub reason: Option<&'a str>,
-    pub tags: Option<&'a [String]>,
-    pub code_refs: Option<&'a [CodeRef]>,
-}
-
 // ── ReviseDecisionParams ────────────────────────────────────────────
 
 /// Parameters for [`Store::revise_decision`].
@@ -672,99 +657,6 @@ impl Store {
                 state.decisions.insert(name.into(), d);
             }
             state.restore_graph_node(removed);
-            return Err(e);
-        }
-
-        Ok(())
-    }
-
-    // ── Amend decision (shared write path) ────────────────────────────
-
-    /// Amend an existing decision in place: update choice, reason, and/or
-    /// tags without changing the `created` timestamp.
-    ///
-    /// Single write path for MCP `update_decision(mode=amend)` and map
-    /// `PUT /api/decision/:name`. Handles state mutation, graph‐index tag
-    /// sync, and rollback on commit failure.
-    ///
-    /// **Callers** validate transport‐specific quality constraints (field
-    /// lengths, reason minimums) before calling. This method enforces
-    /// baseline correctness only (non‐empty fields, at least one change).
-    pub fn amend_decision(
-        &self,
-        lock: &StoreLock,
-        state: &mut ProjectState,
-        name: &str,
-        params: AmendDecisionParams<'_>,
-    ) -> Result<()> {
-        if params.choice.is_none()
-            && params.reason.is_none()
-            && params.tags.is_none()
-            && params.code_refs.is_none()
-        {
-            return Err(Error::Validation(
-                "at least one of choice, reason, tags, or code_refs is required".into(),
-            ));
-        }
-        if let Some(c) = params.choice
-            && c.trim().is_empty()
-        {
-            return Err(Error::Validation("choice must not be empty".into()));
-        }
-        if let Some(r) = params.reason
-            && r.trim().is_empty()
-        {
-            return Err(Error::Validation("reason must not be empty".into()));
-        }
-
-        let old_dec = state
-            .decisions
-            .get(name)
-            .ok_or_else(|| Error::DecisionNotFound(name.into()))?
-            .clone();
-
-        let mut amended = DecisionFile::clone(&old_dec);
-        if let Some(c) = params.choice {
-            amended.decision.choice = c.into();
-        }
-        if let Some(r) = params.reason {
-            amended.decision.reason = r.into();
-        }
-        if let Some(t) = params.tags {
-            amended.decision.tags = t.to_vec();
-        }
-        if let Some(refs) = params.code_refs {
-            super::validate_code_refs(refs)?;
-            amended.decision.code_refs = refs.to_vec();
-        }
-
-        let write = self.prepare_write(&self.decision_path(name), &amended)?;
-        let hash = write.content_hash();
-
-        // Mutate state. Save only the affected fields for rollback.
-        state.decisions.insert(name.into(), Arc::new(amended));
-        let old_hash = state.update_node_hash(name, hash);
-        let old_tags = if let Some(t) = params.tags {
-            state
-                .graph_index
-                .nodes
-                .iter_mut()
-                .find(|n| n.name == name)
-                .map(|n| std::mem::replace(&mut n.tags, t.to_vec()))
-        } else {
-            None
-        };
-
-        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
-            state.decisions.insert(name.into(), old_dec);
-            if let Some(h) = old_hash {
-                state.update_node_hash(name, h);
-            }
-            if let Some(t) = old_tags
-                && let Some(n) = state.graph_index.nodes.iter_mut().find(|n| n.name == name)
-            {
-                n.tags = t;
-            }
             return Err(e);
         }
 
@@ -1643,7 +1535,7 @@ mod tests {
     }
 
     #[test]
-    fn amend_decision_rejects_invalid_code_ref() {
+    fn revise_decision_rejects_invalid_code_ref() {
         let tmp = TempDir::new().unwrap();
         let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
         let lock = store.lock().unwrap();
@@ -1671,15 +1563,16 @@ mod tests {
             symbol: None,
         }];
         let err = store
-            .amend_decision(
+            .revise_decision(
                 &lock,
                 &mut state,
                 &stem,
-                AmendDecisionParams {
+                ReviseDecisionParams {
                     choice: None,
                     reason: None,
                     tags: None,
-                    code_refs: Some(&bad),
+                    code_refs: Some(bad),
+                    writes_history: false,
                 },
             )
             .unwrap_err();

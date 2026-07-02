@@ -33,9 +33,7 @@ pub use schema::{
     GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile, STATE_DIR, STORE_DIR,
 };
 pub use state::{ProjectState, has_control_chars, is_valid_kebab_case, slugify};
-pub use write::{
-    AmendDecisionParams, RecordDecisionParams, RecordPatternParams, ReviseDecisionParams,
-};
+pub use write::{RecordDecisionParams, RecordPatternParams, ReviseDecisionParams};
 
 /// Syntactic validation for a code reference.
 ///
@@ -100,7 +98,7 @@ pub(crate) fn validate_code_ref(cr: &CodeRef) -> Result<()> {
 /// Validate a full set of code references: count limit plus per-ref syntax.
 ///
 /// The single slice-level validator. Every write path — store methods,
-/// MCP `parse_code_refs`, the map amend endpoint — calls this so the
+/// MCP `parse_code_refs`, the map revise endpoint — calls this so the
 /// `MAX_CODE_REFS` cap and per-ref rules are enforced identically. The
 /// store invokes it as the final trust boundary no write can bypass.
 pub(crate) fn validate_code_refs(refs: &[CodeRef]) -> Result<()> {
