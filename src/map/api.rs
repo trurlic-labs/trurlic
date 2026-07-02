@@ -44,7 +44,7 @@ pub(crate) struct CreateConnection {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AmendDecision {
+pub(crate) struct ReviseDecision {
     choice: Option<String>,
     reason: Option<String>,
     tags: Option<Vec<String>>,
@@ -325,15 +325,15 @@ fn write_connection(state: Arc<MapState>, body: CreateConnection) -> ApiResult {
 pub(crate) async fn put_decision(
     State(state): State<Arc<MapState>>,
     Path(name): Path<String>,
-    Json(body): Json<AmendDecision>,
+    Json(body): Json<ReviseDecision>,
 ) -> ApiResult {
     let map_state = state.clone();
-    tokio::task::spawn_blocking(move || amend_decision(map_state, name, body))
+    tokio::task::spawn_blocking(move || revise_decision(map_state, name, body))
         .await
         .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
 }
 
-fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> ApiResult {
+fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> ApiResult {
     if body.choice.is_none() && body.reason.is_none() && body.tags.is_none() {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -383,11 +383,16 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
             .map_err(|e| api_err(StatusCode::BAD_REQUEST, e.to_string()))?;
     }
 
-    let params = store::AmendDecisionParams {
+    // ReviseDecisionParams owns its collections; clone so the post-write
+    // broadcast below can still echo the submitted fields.
+    let params = store::ReviseDecisionParams {
         choice: body.choice.as_deref(),
         reason: body.reason.as_deref(),
-        tags: body.tags.as_deref(),
-        code_refs: body.code_refs.as_deref(),
+        tags: body.tags.clone(),
+        code_refs: body.code_refs.clone(),
+        // Substantive edits (choice/reason) version the prior text into history;
+        // tag-only edits update in place without a history entry.
+        writes_history: body.choice.is_some() || body.reason.is_some(),
     };
 
     let lock = state
@@ -397,7 +402,7 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
     let mut ps = state.write_project_state();
     state
         .store
-        .amend_decision(&lock, &mut ps, &name, params)
+        .revise_decision(&lock, &mut ps, &name, params)
         .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     ws::broadcast(
