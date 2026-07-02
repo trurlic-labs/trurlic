@@ -65,18 +65,6 @@ async fn run_design_inner(
     mode: SessionMode,
     task: Option<&str>,
 ) -> Result<()> {
-    let mut session = if mode == SessionMode::Continue {
-        let s = persistence::load(store, component)?;
-        eprintln!(
-            "Resuming session ({} messages, {} decisions recorded)",
-            s.messages.len(),
-            s.decisions_recorded.len()
-        );
-        s
-    } else {
-        Session::new(component)
-    };
-
     let mut state = store.load_state()?;
 
     let issues = state.validate();
@@ -93,6 +81,21 @@ async fn run_design_inner(
     if component != "project" && !state.components.contains_key(component) {
         return Err(Error::ComponentNotFound(component.into()));
     }
+
+    let mut session = if mode == SessionMode::Continue {
+        let mut s = persistence::load(store, component)?;
+        // Decisions can be removed out of band between runs; drop any the
+        // resumed session still names before reporting the recorded count.
+        s.retain_recorded_decisions(|name| state.decisions.contains_key(name));
+        eprintln!(
+            "Resuming session ({} messages, {} decisions recorded)",
+            s.messages.len(),
+            s.decisions_recorded.len()
+        );
+        s
+    } else {
+        Session::new(component)
+    };
 
     let task_type = match mode {
         SessionMode::Revisit => Some(TaskType::Review),
