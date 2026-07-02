@@ -72,8 +72,8 @@ pub struct RecordDecisionParams<'a> {
 pub struct ReviseDecisionParams<'a> {
     pub choice: Option<&'a str>,
     pub reason: Option<&'a str>,
-    pub tags: Option<Vec<String>>,
-    pub code_refs: Option<Vec<CodeRef>>,
+    pub tags: Option<&'a [String]>,
+    pub code_refs: Option<&'a [CodeRef]>,
 }
 
 // ── RecordPatternParams ─────────────────────────────────────────────
@@ -664,24 +664,40 @@ impl Store {
     /// Remove several decisions from disk and the graph index in one atomic
     /// commit.
     ///
-    /// This is the garbage-collection path. Unlike [`remove_decision`], it
-    /// commits the reduced index directly rather than through the fail-closed
-    /// validating write path: node removal is monotonic with respect to graph
-    /// integrity — stripping a node and every incident edge can only clear
-    /// violations, never introduce them. That lets the collector repair a
-    /// store that is *already* invalid (decisions orphaned when a component
-    /// file was deleted out of band) instead of a validating commit refusing
-    /// because other invalid nodes still remain.
+    /// This is the garbage-collection path. Unlike [`remove_decision`], it does
+    /// not route through the strictly-validating [`commit_with_graph`], because
+    /// that refuses to commit while *any* error remains — which would block the
+    /// collector from repairing a store that is *already* invalid (decisions
+    /// orphaned when a component file was deleted out of band). Instead it is
+    /// fail-closed against **new** violations only: it tolerates errors that
+    /// already existed before the removal but refuses to introduce any that did
+    /// not. Removing a node is not unconditionally safe — dropping a pattern's
+    /// member below the two-decision minimum, for instance, is a fresh
+    /// `Severity::Error` — so the pre/post error-set comparison, not a bare
+    /// monotonicity assumption, is what keeps the graph consistent.
     ///
-    /// **Callers must** run cascade pre-flight per name and exclude blocked
-    /// ones. Names absent from `state` are skipped. On failure the in-memory
-    /// `state` is restored and no files change.
+    /// **Callers should** still run cascade pre-flight per name and exclude
+    /// blocked ones for a clean user-facing report; this method is the
+    /// last-line guarantee that a mis-computed pre-flight can never commit a
+    /// newly-invalid graph. Names absent from `state` are skipped. On failure
+    /// the in-memory `state` is restored and no files change.
     pub fn remove_decisions(
         &self,
         lock: &StoreLock,
         state: &mut ProjectState,
         names: &[&str],
     ) -> Result<()> {
+        // Violations present *before* the removal are tolerated (the collector
+        // may be repairing an already-invalid store); anything not in this set
+        // must not be introduced by the removal.
+        let pre_existing_errors: HashSet<String> = state
+            .build_graph()
+            .validate()
+            .into_iter()
+            .filter(|issue| issue.severity == Severity::Error)
+            .map(|issue| issue.message)
+            .collect();
+
         let mut restore_decisions: Vec<(String, Arc<DecisionFile>)> = Vec::new();
         let mut restore_nodes: Vec<super::state::RemovedGraphNode> = Vec::new();
         let mut removes: Vec<PathBuf> = Vec::new();
@@ -698,15 +714,37 @@ impl Store {
             return Ok(());
         }
 
-        let graph = state.build_graph();
-        let index = graph.to_index();
-        if let Err(e) = self.commit_batch(lock, vec![], removes, Some(index)) {
-            for (name, dec) in restore_decisions {
+        let restore = |state: &mut ProjectState,
+                       decisions: Vec<(String, Arc<DecisionFile>)>,
+                       nodes: Vec<super::state::RemovedGraphNode>| {
+            for (name, dec) in decisions {
                 state.decisions.insert(name, dec);
             }
-            for removed in restore_nodes {
+            for removed in nodes {
                 state.restore_graph_node(removed);
             }
+        };
+
+        let graph = state.build_graph();
+
+        // Fail closed against newly-introduced errors (e.g. a pattern dropping
+        // below its minimum membership); pre-existing errors are permitted so
+        // the collector can still clear orphaned nodes from a broken store.
+        let new_errors: Vec<String> = graph
+            .validate()
+            .into_iter()
+            .filter(|issue| issue.severity == Severity::Error)
+            .map(|issue| issue.message)
+            .filter(|message| !pre_existing_errors.contains(message))
+            .collect();
+        if !new_errors.is_empty() {
+            restore(state, restore_decisions, restore_nodes);
+            return Err(Error::GraphIntegrity(new_errors.join("; ")));
+        }
+
+        let index = graph.to_index();
+        if let Err(e) = self.commit_batch(lock, vec![], removes, Some(index)) {
+            restore(state, restore_decisions, restore_nodes);
             return Err(e);
         }
 
@@ -743,6 +781,15 @@ impl Store {
         name: &str,
         params: ReviseDecisionParams<'_>,
     ) -> Result<()> {
+        // Existence first: a revision of a missing decision is Not Found (→ 404
+        // at the map boundary) regardless of the body, so this must precede the
+        // field-shape checks that would otherwise mask it as a 400.
+        let old_dec = state
+            .decisions
+            .get(name)
+            .ok_or_else(|| Error::DecisionNotFound(name.into()))?
+            .clone();
+
         if params.choice.is_none()
             && params.reason.is_none()
             && params.tags.is_none()
@@ -762,15 +809,29 @@ impl Store {
         {
             return Err(Error::Validation("reason must not be empty".into()));
         }
-        if let Some(refs) = &params.code_refs {
+        if let Some(refs) = params.code_refs {
             super::validate_code_refs(refs)?;
         }
 
-        let old_dec = state
-            .decisions
-            .get(name)
-            .ok_or_else(|| Error::DecisionNotFound(name.into()))?
-            .clone();
+        // Reject revising the choice into a restatement of a *different*
+        // decision in the same component — the same duplicate the record path
+        // refuses. Forking two nodes onto identical choice text loses which one
+        // is authoritative; compared on the shared normalized key.
+        if let Some(new_choice) = params.choice {
+            let choice_key = super::normalize_choice(new_choice);
+            let component = old_dec.decision.component.as_str();
+            for (existing_name, existing_dec) in &state.decisions {
+                if existing_name.as_str() != name
+                    && existing_dec.decision.component == component
+                    && super::normalize_choice(&existing_dec.decision.choice) == choice_key
+                {
+                    return Err(Error::Validation(format!(
+                        "decision `{existing_name}` in [{component}] already has identical \
+                         choice text — revise that decision instead of duplicating it"
+                    )));
+                }
+            }
+        }
 
         let mut revised = DecisionFile::clone(&old_dec);
 
@@ -797,11 +858,11 @@ impl Store {
         if let Some(r) = params.reason {
             revised.decision.reason = r.into();
         }
-        if let Some(t) = &params.tags {
-            revised.decision.tags = t.clone();
+        if let Some(t) = params.tags {
+            revised.decision.tags = t.to_vec();
         }
         if let Some(refs) = params.code_refs {
-            revised.decision.code_refs = refs;
+            revised.decision.code_refs = refs.to_vec();
         }
 
         let write = self.prepare_write(&self.decision_path(name), &revised)?;
@@ -810,13 +871,13 @@ impl Store {
         // Mutate state. Save only the affected fields for rollback.
         state.decisions.insert(name.into(), Arc::new(revised));
         let old_hash = state.update_node_hash(name, hash);
-        let old_tags = if let Some(t) = &params.tags {
+        let old_tags = if let Some(t) = params.tags {
             state
                 .graph_index
                 .nodes
                 .iter_mut()
                 .find(|n| n.name == name)
-                .map(|n| std::mem::replace(&mut n.tags, t.clone()))
+                .map(|n| std::mem::replace(&mut n.tags, t.to_vec()))
         } else {
             None
         };
@@ -1628,7 +1689,7 @@ mod tests {
                     choice: None,
                     reason: None,
                     tags: None,
-                    code_refs: Some(bad),
+                    code_refs: Some(&bad),
                 },
             )
             .unwrap_err();
@@ -1666,8 +1727,8 @@ mod tests {
     fn revise_params<'a>(
         choice: Option<&'a str>,
         reason: Option<&'a str>,
-        tags: Option<Vec<String>>,
-        code_refs: Option<Vec<CodeRef>>,
+        tags: Option<&'a [String]>,
+        code_refs: Option<&'a [CodeRef]>,
     ) -> ReviseDecisionParams<'a> {
         ReviseDecisionParams {
             choice,
@@ -1779,12 +1840,13 @@ mod tests {
         let (store, mut state, stem) = setup_one_decision(tmp.path());
         let lock = store.lock().unwrap();
 
+        let tags = vec!["security".to_string()];
         store
             .revise_decision(
                 &lock,
                 &mut state,
                 &stem,
-                revise_params(None, None, Some(vec!["security".into()]), None),
+                revise_params(None, None, Some(&tags), None),
             )
             .unwrap();
 
@@ -1816,7 +1878,7 @@ mod tests {
                 &lock,
                 &mut state,
                 &stem,
-                revise_params(None, None, None, Some(refs)),
+                revise_params(None, None, None, Some(&refs)),
             )
             .unwrap();
 
@@ -1839,7 +1901,7 @@ mod tests {
                 revise_params(
                     Some("New choice"),
                     None,
-                    Some(vec!["security".into()]),
+                    Some(&["security".to_string()]),
                     None,
                 ),
             )
@@ -1922,6 +1984,86 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, Error::Validation(_)), "{err}");
+    }
+
+    #[test]
+    fn revise_missing_decision_is_not_found_even_with_empty_body() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, _stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // An empty body is a Validation error on its own, but a missing target
+        // must take precedence so the map boundary answers 404, not 400.
+        let err = store
+            .revise_decision(
+                &lock,
+                &mut state,
+                "does-not-exist",
+                revise_params(None, None, None, None),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::DecisionNotFound(_)), "{err}");
+    }
+
+    #[test]
+    fn revise_rejects_duplicating_another_decisions_choice() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        record(&store, &lock, &mut state, "Use JWT");
+        let second = record(&store, &lock, &mut state, "Use sessions");
+
+        // Revising `second` onto `first`'s choice — modulo case and spacing — is
+        // exactly the fork the record path forbids; revise must refuse it too.
+        let err = store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &second,
+                revise_params(Some("  use   JWT "), None, None, None),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Validation(_)), "{err}");
+        // The rejected revision left the decision untouched.
+        assert_eq!(state.decisions[&second].decision.choice, "Use sessions");
+    }
+
+    #[test]
+    fn remove_decisions_refuses_to_drop_a_pattern_below_its_minimum() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let first = record(&store, &lock, &mut state, "Use JWT");
+        let second = record(&store, &lock, &mut state, "Rotate tokens");
+        store
+            .record_pattern(
+                &lock,
+                &mut state,
+                RecordPatternParams {
+                    name: "token-hygiene",
+                    description: "Coordinated token handling",
+                    decisions: &[first.clone(), second.clone()],
+                    components: &[],
+                    tags: &[],
+                },
+            )
+            .unwrap();
+
+        // Batch removal is fail-closed against *new* violations: dropping one of
+        // the two members would leave the pattern with a single member, which
+        // the validator rejects — so the batch is refused and nothing changes.
+        let err = store
+            .remove_decisions(&lock, &mut state, &[first.as_str()])
+            .unwrap_err();
+        assert!(matches!(err, Error::GraphIntegrity(_)), "{err}");
+        assert!(state.decisions.contains_key(&first));
+        assert!(state.decisions.contains_key(&second));
+        drop(lock);
+
+        // Nothing was written to disk either.
+        assert!(store.load_state().unwrap().decisions.contains_key(&first));
     }
 
     #[test]

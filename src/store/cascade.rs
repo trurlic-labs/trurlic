@@ -237,9 +237,17 @@ impl InMemoryGraph {
 
         let mut removable = Vec::new();
         let mut blocked_ordered = Vec::new();
+        // Classify each distinct name once. A duplicate in `names` must not be
+        // drained from `blocked` on its first sighting and then fall through to
+        // `removable` on its second — that would leak a blocked decision into
+        // the safe-to-remove set.
+        let mut classified: BTreeSet<&str> = BTreeSet::new();
         for &name in names {
-            match blocked.remove(name) {
-                Some(reason) => blocked_ordered.push((name, reason)),
+            if !classified.insert(name) {
+                continue;
+            }
+            match blocked.get(name) {
+                Some(reason) => blocked_ordered.push((name, reason.clone())),
                 None => removable.push(name),
             }
         }

@@ -167,7 +167,7 @@ fn revise_decision(
         && c.len() > MAX_CHOICE_BYTES
     {
         return Err(format!(
-            "choice must be ≤{MAX_CHOICE_BYTES} characters ({} given)",
+            "choice must be ≤{MAX_CHOICE_BYTES} bytes ({} given)",
             c.len(),
         ));
     }
@@ -175,7 +175,7 @@ fn revise_decision(
         && r.len() < MIN_REASON_BYTES
     {
         return Err(format!(
-            "reason must be at least {MIN_REASON_BYTES} characters ({} given)",
+            "reason must be at least {MIN_REASON_BYTES} bytes ({} given)",
             r.len(),
         ));
     }
@@ -189,8 +189,8 @@ fn revise_decision(
             store::ReviseDecisionParams {
                 choice: new_choice,
                 reason: new_reason,
-                tags: new_tags,
-                code_refs: new_code_refs,
+                tags: new_tags.as_deref(),
+                code_refs: new_code_refs.as_deref(),
             },
         )
         .map_err(|e| e.to_string())?;
@@ -689,7 +689,7 @@ mod tests {
         let args = json!({ "name": "use-jwt", "mode": "revise", "reason": "ok" });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(
-            err.contains("at least") && err.contains("characters"),
+            err.contains("at least") && err.contains("bytes"),
             "revise should enforce quality floor: {err}"
         );
     }

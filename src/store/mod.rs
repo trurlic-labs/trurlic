@@ -145,6 +145,25 @@ pub(crate) fn format_code_refs(refs: &[CodeRef]) -> String {
         .join(", ")
 }
 
+/// Whether every code reference a decision carries points at a file confirmed
+/// absent from disk — the decision's anchors have all been deleted.
+///
+/// A decision with no code refs is never orphaned: the absence of a link is not
+/// a broken link. Probing uses `try_exists`, and only a definite `Ok(false)`
+/// counts as missing — an `Err` (permission denied, mount not ready, transient
+/// I/O) is treated as *present*, so a filesystem blip can never misreport a live
+/// file as deleted and drive a decision to be flagged stale or garbage-collected.
+///
+/// This is the single source of truth for reference-orphaning, shared by the
+/// context health report and the `gc` collector so both agree on the predicate.
+pub(crate) fn decision_refs_all_missing(project_root: &Path, dec: &DecisionFile) -> bool {
+    let refs = &dec.decision.code_refs;
+    !refs.is_empty()
+        && refs
+            .iter()
+            .all(|code_ref| matches!(project_root.join(&code_ref.file).try_exists(), Ok(false)))
+}
+
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -161,6 +180,20 @@ pub(crate) fn hash_file(path: &Path) -> Result<String> {
 #[must_use]
 pub fn hash_bytes(data: &[u8]) -> String {
     blake3::hash(data).to_hex().to_string()
+}
+
+/// Canonical key for detecting decisions with the same choice text: every run
+/// of whitespace collapses to a single space, the ends are trimmed, and letters
+/// are folded to lowercase (Unicode-aware). Two choices that differ only in
+/// case or spacing normalize to the same key, so a trailing space or a doubled
+/// gap cannot sneak a duplicate past the guard. Shared by the record and revise
+/// write paths so both enforce the same notion of "identical".
+pub(crate) fn normalize_choice(choice: &str) -> String {
+    choice
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 // ── Store ────────────────────────────────────────────────────────────────────

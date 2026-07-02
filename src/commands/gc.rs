@@ -14,8 +14,8 @@ use std::path::Path;
 use chrono::{Duration, Utc};
 
 use crate::Result;
-use crate::store::ProjectState;
 use crate::store::schema::{Attribution, DecisionFile};
+use crate::store::{ProjectState, Store, StoreLock};
 use crate::workflow::concerns;
 
 use super::open_store_mut;
@@ -60,7 +60,6 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
 
     let (orphaned, stale, old_agent) = classify(&state);
     let surfaced = orphaned.len() + stale.len() + old_agent.len();
-
     if surfaced == 0 {
         println!("gc: nothing to collect.");
         return Ok(());
@@ -68,16 +67,51 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
 
     let apply = matches!(execution, GcExecution::Apply);
     let reclaim_extra = matches!(scope, GcScope::Aggressive);
-
     if !apply {
         println!("Dry run — no changes written.");
     }
 
-    // Orphaned decisions are always a removal target; stale and agent-review
-    // debt are removed only under `--aggressive`. Pre-flight the whole attempted
-    // set in one batch-aware pass: co-removed dependents and pattern members are
-    // judged against what actually leaves, so removing two members of a shared
-    // pattern can never silently drop it below its minimum.
+    let (removable, blocked) = plan_removals(
+        &state,
+        &orphaned,
+        &stale,
+        &old_agent,
+        reclaim_extra,
+        execution,
+    );
+
+    // `removable` is what leaves under Apply and what *would* leave under a dry
+    // run; both report the same figure so the summary agrees with the sections.
+    let acted = if apply {
+        apply_removals(&store, &lock, &mut state, &removable)?
+    } else {
+        removable.len()
+    };
+    drop(lock);
+
+    let flagged = surfaced - acted - blocked;
+    let verb = if apply { "removed" } else { "would remove" };
+    println!("\nSummary: {verb} {acted}, flagged {flagged}, blocked {blocked}");
+    Ok(())
+}
+
+/// Run the batch cascade pre-flight over every candidate that would be removed,
+/// print each category's removable/blocked breakdown, and return the flat set
+/// cleared for removal plus the count that the pre-flight blocked.
+///
+/// Orphaned decisions are always removal targets; stale and agent-review debt
+/// join them only under `--aggressive`. The pre-flight judges the whole
+/// attempted set in one batch-aware pass, so co-removed dependents and pattern
+/// members are scored against what actually leaves — removing two members of a
+/// shared pattern can never silently drop it below its minimum.
+fn plan_removals<'a>(
+    state: &ProjectState,
+    orphaned: &'a [Candidate],
+    stale: &'a [Candidate],
+    old_agent: &'a [Candidate],
+    reclaim_extra: bool,
+    execution: GcExecution,
+) -> (Vec<&'a Candidate>, usize) {
     let mut attempted: Vec<&Candidate> = orphaned.iter().collect();
     if reclaim_extra {
         attempted.extend(stale.iter());
@@ -91,14 +125,14 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
         .into_iter()
         .collect();
 
-    let (orphan_removable, orphan_blocked) = split_blocked(&orphaned, &blocked_reasons);
+    let (orphan_removable, orphan_blocked) = split_blocked(orphaned, &blocked_reasons);
     let (stale_removable, stale_blocked) = if reclaim_extra {
-        split_blocked(&stale, &blocked_reasons)
+        split_blocked(stale, &blocked_reasons)
     } else {
         (Vec::new(), Vec::new())
     };
     let (agent_removable, agent_blocked) = if reclaim_extra {
-        split_blocked(&old_agent, &blocked_reasons)
+        split_blocked(old_agent, &blocked_reasons)
     } else {
         (Vec::new(), Vec::new())
     };
@@ -118,43 +152,48 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
             execution,
         );
     } else {
-        print_report_section("Stale (all code refs dead)", &stale);
-        print_report_section("Agent unreviewed > 90 days", &old_agent);
+        print_report_section("Stale (all code refs dead)", stale);
+        print_report_section("Agent unreviewed > 90 days", old_agent);
     }
 
     let removable: Vec<&Candidate> = orphan_removable
-        .iter()
-        .chain(&stale_removable)
-        .chain(&agent_removable)
-        .copied()
+        .into_iter()
+        .chain(stale_removable)
+        .chain(agent_removable)
         .collect();
     let blocked = orphan_blocked.len() + stale_blocked.len() + agent_blocked.len();
+    (removable, blocked)
+}
 
-    let mut removed = 0;
-    if apply && !removable.is_empty() {
-        // Snapshot the decisions before removal so the coverage they carried
-        // can be reported once they are gone from the graph.
-        let snapshots: Vec<(String, std::sync::Arc<DecisionFile>)> = removable
-            .iter()
-            .filter_map(|c| {
-                state
-                    .decisions
-                    .get(&c.name)
-                    .map(|d| (c.component.clone(), std::sync::Arc::clone(d)))
-            })
-            .collect();
-
-        let names: Vec<&str> = removable.iter().map(|c| c.name.as_str()).collect();
-        store.remove_decisions(&lock, &mut state, &names)?;
-        removed = names.len();
-
-        report_lost_coverage(&state, &snapshots);
+/// Snapshot the decisions about to leave, remove them in one atomic batch, and
+/// report the concern coverage the removal erased. Returns the number removed.
+fn apply_removals(
+    store: &Store,
+    lock: &StoreLock,
+    state: &mut ProjectState,
+    removable: &[&Candidate],
+) -> Result<usize> {
+    if removable.is_empty() {
+        return Ok(0);
     }
-    drop(lock);
 
-    let flagged = surfaced - removed - blocked;
-    println!("\nSummary: removed {removed}, flagged {flagged}, blocked {blocked}");
-    Ok(())
+    // Snapshot before removal so the coverage each decision carried can be
+    // reported once it is gone from the graph.
+    let snapshots: Vec<(String, std::sync::Arc<DecisionFile>)> = removable
+        .iter()
+        .filter_map(|c| {
+            state
+                .decisions
+                .get(&c.name)
+                .map(|d| (c.component.clone(), std::sync::Arc::clone(d)))
+        })
+        .collect();
+
+    let names: Vec<&str> = removable.iter().map(|c| c.name.as_str()).collect();
+    store.remove_decisions(lock, state, &names)?;
+
+    report_lost_coverage(state, &snapshots);
+    Ok(names.len())
 }
 
 /// Sort every decision into at most one reclaim category. Precedence is
@@ -175,7 +214,7 @@ fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candid
                 component: d.component.clone(),
                 detail: format!("component [{}] no longer exists", d.component),
             });
-        } else if all_refs_deleted(&state.project_root, dec) {
+        } else if crate::store::decision_refs_all_missing(&state.project_root, dec) {
             let files: Vec<&str> = d.code_refs.iter().map(|r| r.file.as_str()).collect();
             stale.push(Candidate {
                 name: name.clone(),
@@ -192,15 +231,6 @@ fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candid
     }
 
     (orphaned, stale, old_agent)
-}
-
-/// A decision is stale when it references code that no longer exists: it
-/// carries at least one code ref and every referenced file is missing from
-/// disk. A decision with no code refs is never stale — the absence of a link
-/// is not a broken link.
-fn all_refs_deleted(project_root: &Path, dec: &DecisionFile) -> bool {
-    let refs = &dec.decision.code_refs;
-    !refs.is_empty() && refs.iter().all(|r| !project_root.join(&r.file).exists())
 }
 
 /// Bucket a category's candidates into those the batch pre-flight cleared and

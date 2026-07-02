@@ -334,10 +334,14 @@ pub(crate) async fn put_decision(
 }
 
 fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> ApiResult {
-    if body.choice.is_none() && body.reason.is_none() && body.tags.is_none() {
+    if body.choice.is_none()
+        && body.reason.is_none()
+        && body.tags.is_none()
+        && body.code_refs.is_none()
+    {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
-            "at least one of choice, reason, or tags required",
+            "at least one of choice, reason, tags, or code_refs required",
         ));
     }
     if let Some(ref c) = body.choice {
@@ -346,7 +350,7 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
                 format!(
-                    "choice must be \u{2264}{MAX_CHOICE_BYTES} characters \
+                    "choice must be \u{2264}{MAX_CHOICE_BYTES} bytes \
                      ({} given)",
                     c.len()
                 ),
@@ -359,7 +363,7 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
                 format!(
-                    "reason must be at least {MIN_REASON_BYTES} characters \
+                    "reason must be at least {MIN_REASON_BYTES} bytes \
                      ({} given)",
                     r.trim().len()
                 ),
@@ -383,13 +387,11 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
             .map_err(|e| api_err(StatusCode::BAD_REQUEST, e.to_string()))?;
     }
 
-    // ReviseDecisionParams owns its collections; clone so the post-write
-    // broadcast below can still echo the submitted fields.
     let params = store::ReviseDecisionParams {
         choice: body.choice.as_deref(),
         reason: body.reason.as_deref(),
-        tags: body.tags.clone(),
-        code_refs: body.code_refs.clone(),
+        tags: body.tags.as_deref(),
+        code_refs: body.code_refs.as_deref(),
     };
 
     let lock = state
@@ -417,6 +419,7 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
                 "choice": body.choice,
                 "reason": body.reason,
                 "tags": body.tags,
+                "code_refs": body.code_refs.as_ref().map(|refs| store::code_refs_to_json(refs)),
             }),
         }],
     );

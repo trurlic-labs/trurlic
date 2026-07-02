@@ -160,17 +160,6 @@ pub(crate) fn validate_consistency(state: &store::ProjectState) -> Value {
 
 // ── record_decision ─────────────────────────────────────────────────────────
 
-/// Normalize a choice for duplicate detection: lowercased with every run of
-/// whitespace collapsed to a single space and the ends trimmed. Two choices
-/// that differ only in case or spacing normalize to the same key.
-fn normalize_choice(choice: &str) -> String {
-    choice
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
-}
-
 pub(crate) fn record_decision(
     store: &Store,
     state: &mut store::ProjectState,
@@ -205,14 +194,14 @@ pub(crate) fn record_decision(
     // Decision quality floor — reject vague or malformed decisions.
     if reason.len() < MIN_REASON_BYTES {
         return Err(format!(
-            "reason must be at least {MIN_REASON_BYTES} characters — \
+            "reason must be at least {MIN_REASON_BYTES} bytes — \
              a real decision needs actual reasoning ({} given)",
             reason.len(),
         ));
     }
     if choice.len() > MAX_CHOICE_BYTES {
         return Err(format!(
-            "choice must be ≤{MAX_CHOICE_BYTES} characters — \
+            "choice must be ≤{MAX_CHOICE_BYTES} bytes — \
              use a concise title, not a paragraph ({} given)",
             choice.len(),
         ));
@@ -235,10 +224,10 @@ pub(crate) fn record_decision(
     // a trailing space or doubled gap can't sneak a near-duplicate past the
     // guard. Forking the graph with a duplicate node loses the original's
     // history and edges — revising it in place keeps both.
-    let choice_key = normalize_choice(choice);
+    let choice_key = store::normalize_choice(choice);
     for (existing_name, existing_dec) in &state.decisions {
         if existing_dec.decision.component == component
-            && normalize_choice(&existing_dec.decision.choice) == choice_key
+            && store::normalize_choice(&existing_dec.decision.choice) == choice_key
         {
             return Err(format!(
                 "decision `{existing_name}` in [{component}] has identical choice text — \
@@ -874,7 +863,7 @@ mod tests {
         });
         let err = record_decision(&store, &mut state, &args).unwrap_err();
         assert!(
-            err.contains("at least") && err.contains("characters"),
+            err.contains("at least") && err.contains("bytes"),
             "should reject short reason: {err}"
         );
     }

@@ -573,24 +573,16 @@ const AGENT_REVIEW_CALL_TO_ACTION: &str = "  \u{2192} call update_decision(mode=
 /// anchor in the source and should be revised or removed.
 const STALE_DECISION_FLAG: &str = "  \u{26a0} STALE \u{2014} all referenced files deleted\n";
 
-/// A decision is stale when it references code that no longer exists: it
-/// carries at least one code_ref and every referenced file is missing from
-/// disk. A decision with no code_refs is never stale — the absence of a link
-/// is not a broken link.
-fn is_stale(project_root: &Path, dec: &DecisionFile) -> bool {
-    let refs = &dec.decision.code_refs;
-    !refs.is_empty() && refs.iter().all(|r| !project_root.join(&r.file).exists())
-}
-
-/// Names of the decisions in `component_decisions` that are stale per
-/// [`is_stale`]. Resolves each `code_ref` against the project root.
+/// Names of the decisions in `component_decisions` that are stale: every
+/// `code_ref` resolves to a file confirmed missing from disk, per the shared
+/// [`store::decision_refs_all_missing`] predicate.
 fn stale_decision_names<'a>(
     project_root: &Path,
     component_decisions: &[(&'a Arc<str>, &'a DecisionFile)],
 ) -> HashSet<&'a str> {
     component_decisions
         .iter()
-        .filter(|(_, d)| is_stale(project_root, d))
+        .filter(|(_, d)| store::decision_refs_all_missing(project_root, d))
         .map(|&(name, _)| name.as_ref())
         .collect()
 }
@@ -1681,7 +1673,7 @@ mod tests {
                 symbol: Some("validate".into()),
             },
         ]);
-        assert!(is_stale(tmp.path(), &dec));
+        assert!(store::decision_refs_all_missing(tmp.path(), &dec));
     }
 
     #[test]
@@ -1699,7 +1691,7 @@ mod tests {
             },
         ]);
         // A single surviving reference keeps the decision anchored.
-        assert!(!is_stale(tmp.path(), &dec));
+        assert!(!store::decision_refs_all_missing(tmp.path(), &dec));
     }
 
     #[test]
@@ -1707,7 +1699,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let dec = decision_with_refs(vec![]);
         // No links means nothing to break — never stale.
-        assert!(!is_stale(tmp.path(), &dec));
+        assert!(!store::decision_refs_all_missing(tmp.path(), &dec));
     }
 
     #[test]
