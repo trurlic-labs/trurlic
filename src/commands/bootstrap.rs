@@ -204,7 +204,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(tmp.path(), "auth", "JWT tokens", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT tokens", "Stateless", &[]).unwrap();
         bootstrap_component(tmp.path(), "auth").unwrap();
     }
 }

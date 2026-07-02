@@ -78,10 +78,6 @@ pub enum Command {
         #[arg(long)]
         reason: String,
 
-        /// Decision this supersedes (filename without `.toml`).
-        #[arg(long = "supersede")]
-        supersedes: Option<String>,
-
         /// Alternative considered and rejected (repeatable).
         #[arg(long = "alternative", short = 'a')]
         alternatives: Vec<String>,
@@ -288,16 +284,8 @@ pub fn run(cli: Cli) -> Result<()> {
             component,
             choice,
             reason,
-            supersedes,
             alternatives,
-        } => commands::decide(
-            &cwd,
-            &component,
-            &choice,
-            &reason,
-            supersedes.as_deref(),
-            &alternatives,
-        ),
+        } => commands::decide(&cwd, &component, &choice, &reason, &alternatives),
         Command::Install {
             ide,
             binary_path,

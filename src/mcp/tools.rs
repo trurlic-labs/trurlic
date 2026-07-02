@@ -221,10 +221,6 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                             "items": { "type": "string" },
                             "description": "Categorical tags for filtering."
                         },
-                        "supersedes": {
-                            "type": "string",
-                            "description": "Decision name being replaced."
-                        },
                         "attribution": {
                             "type": "string",
                             "enum": ["user", "agent"],

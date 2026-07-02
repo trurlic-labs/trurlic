@@ -127,14 +127,6 @@ impl InMemoryGraph {
                         message: format!("constraint from `{other}` will be removed"),
                     });
                 }
-                // Warn: broken supersede chains.
-                (EdgeKind::Supersedes, Direction::Reverse) => {
-                    warnings.push(CascadeEffect {
-                        node: other.to_string(),
-                        edge: EdgeKind::Supersedes,
-                        message: format!("supersede chain broken — `{other}` references `{name}`"),
-                    });
-                }
                 // Clean: all outgoing edges from this decision.
                 (_, Direction::Forward) => {
                     cleanups.push(CascadeCleanup {
@@ -207,7 +199,6 @@ impl InMemoryGraph {
                 // Reverse edges not relevant to component removal.
                 (EdgeKind::DependsOn, Direction::Reverse)
                 | (EdgeKind::Constrains, Direction::Reverse)
-                | (EdgeKind::Supersedes, Direction::Reverse)
                 | (EdgeKind::MemberOf, Direction::Reverse) => {}
             }
         }

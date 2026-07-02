@@ -260,15 +260,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Use JWT tokens",
-            "Stateless auth",
-            None,
-            &[],
-        )
-        .unwrap();
+        decide(tmp.path(), "auth", "Use JWT tokens", "Stateless auth", &[]).unwrap();
 
         // Downgrade the version to simulate an old store.
         let store = Store::discover(tmp.path()).unwrap();
@@ -382,15 +374,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Use JWT tokens",
-            "Stateless auth",
-            None,
-            &[],
-        )
-        .unwrap();
+        decide(tmp.path(), "auth", "Use JWT tokens", "Stateless auth", &[]).unwrap();
 
         // Downgrade and strip the attribution field from the decision file
         // to simulate an older format that didn't have it.
@@ -490,8 +474,8 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Auth module")).unwrap();
         add_component(tmp.path(), "api", Some("API module")).unwrap();
-        decide(tmp.path(), "auth", "JWT tokens", "Stateless", None, &[]).unwrap();
-        decide(tmp.path(), "api", "REST API", "Standard", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT tokens", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "api", "REST API", "Standard", &[]).unwrap();
 
         // Create a pattern file directly (store::record_pattern is pub(crate)
         // in the private `write` module, so we write TOML by hand).

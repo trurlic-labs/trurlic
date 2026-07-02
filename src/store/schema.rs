@@ -76,7 +76,7 @@ pub struct HistoryEntry {
     /// Reason text as it stood before the revision.
     pub reason: String,
 
-    /// When this version was superseded by a revision (UTC, RFC 3339).
+    /// When this version was replaced by a revision (UTC, RFC 3339).
     pub changed_at: DateTime<Utc>,
 }
 
@@ -157,7 +157,6 @@ pub enum EdgeKind {
     ConnectsTo,
     DependsOn,
     Constrains,
-    Supersedes,
     MemberOf,
     AppliesTo,
 }
@@ -176,7 +175,6 @@ impl EdgeKind {
             Self::ConnectsTo => "connects_to",
             Self::DependsOn => "depends_on",
             Self::Constrains => "constrains",
-            Self::Supersedes => "supersedes",
             Self::MemberOf => "member_of",
             Self::AppliesTo => "applies_to",
         }
@@ -428,7 +426,6 @@ created = "2025-06-01T10:30:00Z"
             EdgeKind::ConnectsTo,
             EdgeKind::DependsOn,
             EdgeKind::Constrains,
-            EdgeKind::Supersedes,
             EdgeKind::MemberOf,
             EdgeKind::AppliesTo,
         ] {
@@ -525,7 +522,6 @@ attribution = "user"
             EdgeKind::ConnectsTo,
             EdgeKind::DependsOn,
             EdgeKind::Constrains,
-            EdgeKind::Supersedes,
             EdgeKind::MemberOf,
             EdgeKind::AppliesTo,
         ] {

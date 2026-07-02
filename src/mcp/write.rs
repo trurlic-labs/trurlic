@@ -172,7 +172,6 @@ pub(crate) fn record_decision(
     let depends_on = opt_str_array(args, "depends_on")?;
     let constrains = opt_str_array(args, "constrains")?;
     let tags = opt_str_array(args, "tags")?;
-    let supersedes = opt_str(args, "supersedes")?;
     let code_refs = parse_code_refs(args)?;
     let attribution = match require_str(args, "attribution")? {
         "user" => Attribution::User,
@@ -219,11 +218,6 @@ pub(crate) fn record_decision(
             return Err(format!("constrains target `{con}` does not exist"));
         }
     }
-    if let Some(sup) = supersedes
-        && !state.decisions.contains_key(sup)
-    {
-        return Err(format!("supersedes target `{sup}` does not exist"));
-    }
 
     let lock = store.lock().map_err(|e| e.to_string())?;
 
@@ -236,7 +230,6 @@ pub(crate) fn record_decision(
                 choice,
                 reason,
                 alternatives: &alternatives,
-                supersedes,
                 depends_on: &depends_on,
                 constrains: &constrains,
                 tags: &tags,
@@ -255,18 +248,10 @@ pub(crate) fn record_decision(
                 .into(),
         );
     }
-    if let Some(sup) = supersedes {
-        for (pat_name, _) in state.graph().patterns_containing(sup) {
-            warnings.push(format!(
-                "superseded decision `{sup}` is referenced by pattern `{pat_name}`"
-            ));
-        }
-    }
-
     // Detect near-duplicate: warn if an existing decision in the same
     // component has identical choice text (case-insensitive). The new
     // decision is already written, so this is advisory — the agent may
-    // want to supersede or remove the duplicate.
+    // want to revise or remove the duplicate.
     let choice_lower = choice.to_ascii_lowercase();
     for (existing_name, existing_dec) in &state.decisions {
         if existing_name.as_str() == stem {
@@ -525,7 +510,6 @@ mod tests {
             "alternatives": ["Session cookies — rejected: server state"],
             "depends_on": ["use-tokens"],
             "tags": ["security", "auth"],
-            "supersedes": "use-tokens",
             "attribution": "user",
         });
         let result = record_decision(&store, &mut state, &args).unwrap();
@@ -538,11 +522,6 @@ mod tests {
             idx.edges
                 .iter()
                 .any(|e| e.from == name && e.to == "use-tokens" && e.kind == EdgeKind::DependsOn)
-        );
-        assert!(
-            idx.edges
-                .iter()
-                .any(|e| e.from == name && e.to == "use-tokens" && e.kind == EdgeKind::Supersedes)
         );
         assert!(
             idx.edges

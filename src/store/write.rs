@@ -45,15 +45,14 @@ impl PendingWrite {
 /// Parameters for [`Store::record_decision`].
 ///
 /// Callers are responsible for validating that `component` exists (or is
-/// `"project"`), that all `depends_on`/`constrains`/`supersedes` targets
-/// exist, and that names are valid kebab-case. The shared write path does
-/// not re-validate — it trusts the caller and focuses on atomic mutation.
+/// `"project"`), that all `depends_on`/`constrains` targets exist, and that
+/// names are valid kebab-case. The shared write path does not re-validate —
+/// it trusts the caller and focuses on atomic mutation.
 pub struct RecordDecisionParams<'a> {
     pub component: &'a str,
     pub choice: &'a str,
     pub reason: &'a str,
     pub alternatives: &'a [String],
-    pub supersedes: Option<&'a str>,
     pub depends_on: &'a [String],
     pub constrains: &'a [String],
     pub tags: &'a [String],
@@ -428,14 +427,6 @@ impl Store {
                 from: stem.clone(),
                 to: con.clone(),
                 kind: EdgeKind::Constrains,
-            });
-        }
-
-        if let Some(sup) = params.supersedes {
-            state.graph_index.edges.push(EdgeEntry {
-                from: stem.clone(),
-                to: sup.into(),
-                kind: EdgeKind::Supersedes,
             });
         }
 
@@ -1462,7 +1453,6 @@ mod tests {
                     component: "auth",
                     choice: "Use JWT",
                     reason: "Stateless",
-                    supersedes: None,
                     depends_on: &[],
                     alternatives: &[],
                     constrains: &[],
@@ -1489,7 +1479,6 @@ mod tests {
                     component: "auth",
                     choice: "Use JWT",
                     reason: "Stateless",
-                    supersedes: None,
                     depends_on: &[],
                     alternatives: &[],
                     constrains: &[],

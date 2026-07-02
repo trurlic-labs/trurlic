@@ -11,7 +11,6 @@ pub fn decide(
     component: &str,
     choice: &str,
     reason: &str,
-    supersedes: Option<&str>,
     alternatives: &[String],
 ) -> Result<()> {
     if component != "project" && !store::is_valid_kebab_case(component) {
@@ -24,12 +23,6 @@ pub fn decide(
         return Err(Error::ComponentNotFound(component.into()));
     }
 
-    if let Some(sup) = supersedes
-        && !state.decisions.contains_key(sup)
-    {
-        return Err(Error::DecisionNotFound(sup.into()));
-    }
-
     let stem = store.record_decision(
         &lock,
         &mut state,
@@ -38,7 +31,6 @@ pub fn decide(
             choice,
             reason,
             alternatives,
-            supersedes,
             depends_on: &[],
             constrains: &[],
             tags: &[],
@@ -82,7 +74,7 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-with-dpop").unwrap();
@@ -100,7 +92,6 @@ mod tests {
             "project",
             "Fail-closed on writes",
             "Never silently succeed",
-            None,
             &[],
         )
         .unwrap();
@@ -117,48 +108,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = decide(tmp.path(), "ghost", "x", "y", None, &[]).unwrap_err();
+        let err = decide(tmp.path(), "ghost", "x", "y", &[]).unwrap_err();
         assert!(matches!(err, Error::ComponentNotFound(ref n) if n == "ghost"));
-    }
-
-    #[test]
-    fn decide_rejects_nonexistent_supersede_target() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", None).unwrap();
-
-        let err = decide(tmp.path(), "auth", "x", "y", Some("ghost"), &[]).unwrap_err();
-        assert!(matches!(err, Error::DecisionNotFound(ref n) if n == "ghost"));
-    }
-
-    #[test]
-    fn decide_supersedes_creates_edge() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", None).unwrap();
-
-        decide(tmp.path(), "auth", "Session cookies", "Simple", None, &[]).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "JWT tokens",
-            "Stateless",
-            Some("session-cookies"),
-            &[],
-        )
-        .unwrap();
-
-        let store = Store::discover(tmp.path()).unwrap();
-        let state = store.load_state().unwrap();
-        assert!(
-            state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "jwt-tokens"
-                    && e.to == "session-cookies"
-                    && e.kind == EdgeKind::Supersedes)
-        );
     }
 
     #[test]
@@ -167,7 +118,7 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let state = store.load_state().unwrap();
@@ -190,15 +141,7 @@ mod tests {
             "Session cookies — rejected: requires server-side state".into(),
             "Opaque tokens — rejected: introspection overhead".into(),
         ];
-        decide(
-            tmp.path(),
-            "auth",
-            "JWT with DPoP",
-            "Stateless",
-            None,
-            &alts,
-        )
-        .unwrap();
+        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &alts).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-with-dpop").unwrap();
@@ -211,16 +154,8 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "Use Redis", "Fast", None, &[]).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Use Redis",
-            "Also for sessions",
-            None,
-            &[],
-        )
-        .unwrap();
+        decide(tmp.path(), "auth", "Use Redis", "Fast", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use Redis", "Also for sessions", &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let names = store.list_decisions().unwrap();
@@ -234,7 +169,7 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
 
         let before = Utc::now();
-        decide(tmp.path(), "auth", "JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT", "Stateless", &[]).unwrap();
         let after = Utc::now();
 
         let store = Store::discover(tmp.path()).unwrap();
@@ -248,7 +183,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = decide(tmp.path(), "../escape", "x", "y", None, &[]).unwrap_err();
+        let err = decide(tmp.path(), "../escape", "x", "y", &[]).unwrap_err();
         assert!(matches!(err, Error::InvalidName(_)));
     }
 
@@ -257,7 +192,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        decide(tmp.path(), "project", "Test decision", "Testing", None, &[]).unwrap();
+        decide(tmp.path(), "project", "Test decision", "Testing", &[]).unwrap();
     }
 
     // ── remove decision ──────────────────────────────────────────────────
@@ -267,7 +202,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
 
         remove_decision(tmp.path(), "use-jwt").unwrap();
 
@@ -280,7 +215,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
 
         remove_decision(tmp.path(), "use-jwt").unwrap();
 
@@ -305,46 +240,14 @@ mod tests {
     }
 
     #[test]
-    fn remove_decision_warns_on_broken_supersede_chain() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Session cookies", "Simple", None, &[]).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "JWT tokens",
-            "Stateless",
-            Some("session-cookies"),
-            &[],
-        )
-        .unwrap();
-
-        // Removing session-cookies should succeed (with warning)
-        remove_decision(tmp.path(), "session-cookies").unwrap();
-
-        // jwt-tokens should still exist but its Supersedes edge is cleaned up
-        let store = Store::discover(tmp.path()).unwrap();
-        let state = store.load_state().unwrap();
-        assert!(state.decisions.contains_key("jwt-tokens"));
-        assert!(
-            !state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.to == "session-cookies")
-        );
-    }
-
-    #[test]
     fn remove_decision_blocks_when_depended_on() {
         use crate::store::schema::EdgeEntry;
 
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
-        decide(tmp.path(), "auth", "Token expiry", "15 min", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Token expiry", "15 min", &[]).unwrap();
 
         // Manually add DependsOn edge: token-expiry depends on use-jwt.
         let store = Store::discover(tmp.path()).unwrap();
@@ -379,8 +282,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
-        decide(tmp.path(), "auth", "Token refresh", "Rotate", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Token refresh", "Rotate", &[]).unwrap();
 
         // Create a pattern with exactly 2 member decisions.
         let store = Store::discover(tmp.path()).unwrap();
@@ -442,16 +345,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Short lived tokens",
-            "15 min",
-            None,
-            &[],
-        )
-        .unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Short lived tokens", "15 min", &[]).unwrap();
 
         // Manually add Constrains edge: short-lived-tokens constrains use-jwt.
         let store = Store::discover(tmp.path()).unwrap();

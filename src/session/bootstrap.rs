@@ -263,7 +263,6 @@ fn record_decisions(
                 choice: &dec.choice,
                 reason: &dec.reason,
                 alternatives: &dec.alternatives,
-                supersedes: None,
                 depends_on: &[],
                 constrains: &[],
                 tags: &[],

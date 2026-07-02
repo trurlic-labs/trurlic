@@ -486,8 +486,8 @@ impl Store {
     ///
     /// Uses pre-computed BLAKE3 hashes from `load_state`'s single-pass read,
     /// avoiding a second read of every node file. Reads `graph.toml` for edges
-    /// that cannot be inferred from node files (ConnectsTo, Supersedes,
-    /// DependsOn, etc.), rebuilds the node list from the actual files,
+    /// that cannot be inferred from node files (ConnectsTo, DependsOn,
+    /// Constrains, etc.), rebuilds the node list from the actual files,
     /// preserves tags from existing nodes, filters dangling edges, and ensures
     /// BelongsTo edges for all decisions.
     fn load_graph_index(
