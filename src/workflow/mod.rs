@@ -430,6 +430,7 @@ mod integration_tests {
             None,
             Some(mode),
             &empty_evidence(),
+            chrono::Utc::now(),
         )
         .expect("advance should succeed");
 

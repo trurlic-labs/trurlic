@@ -2,16 +2,17 @@
 //!
 //! The `advance` function computes the next workflow step from the knowledge
 //! graph and returns a single focused action. Read-only, stateless, and
-//! idempotent — no writes, no locks, no LLM calls.
+//! idempotent — no writes, no locks, no LLM calls, no clock reads.
 //!
-//! Called N times with the same graph state, it returns the same `(step, prompt)`
-//! every time. The function is a pure projection from graph contents to
-//! workflow step.
+//! Called N times with the same `(graph state, now)` inputs, it returns the
+//! same `(step, prompt)` every time. The wall clock is injected by the caller
+//! as `now`, never read internally, so `advance` is a pure projection from its
+//! inputs to a workflow step — deterministic and testable with a pinned clock.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::store::ProjectState;
@@ -30,9 +31,11 @@ use super::{CONCERN_FOCUS_LIMIT, Mode, STALENESS_THRESHOLD_DAYS, Step, TaskType}
 /// Compute the next workflow step for a component and return a structured
 /// action.
 ///
-/// Read-only. No writes. No locks. No LLM calls. Computes step from the
-/// in-memory graph on every call — no session tracking, no persistent
-/// workflow state.
+/// Read-only. No writes. No locks. No LLM calls. Computes the step from the
+/// in-memory graph and the injected `now` on every call — no session tracking,
+/// no persistent workflow state. `now` is supplied by the caller (the impure
+/// boundary) so this function never reads the clock and stays a pure,
+/// deterministic projection of its inputs.
 pub fn advance(
     state: &ProjectState,
     component: &str,
@@ -40,6 +43,7 @@ pub fn advance(
     task: Option<&str>,
     mode: Option<Mode>,
     step_evidence: &BTreeMap<&str, &str>,
+    now: DateTime<Utc>,
 ) -> Result<Value, String> {
     // ── Mode gate ────────────────────────────────────────────────────
     let mode = match mode {
@@ -122,7 +126,6 @@ pub fn advance(
         .collect();
     let (covered, uncovered) = concerns::compute_concern_coverage(&all_decs);
 
-    let now = Utc::now();
     let stale: Vec<StaleDec> = decisions
         .iter()
         .filter_map(|(name, d)| {
@@ -1156,6 +1159,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1176,6 +1180,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1195,6 +1200,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1212,6 +1218,7 @@ mod tests {
             Some("build data layer"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1235,6 +1242,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1253,11 +1261,46 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
         assert_eq!(result["task_type"], "review");
         assert_eq!(result["step"], "walk_decisions");
+    }
+
+    #[test]
+    fn staleness_is_driven_by_the_injected_clock_and_is_deterministic() {
+        // Decisions created 2024-01-01, well covered. Whether they read as stale
+        // is a function of the `now` the caller injects — advance never reads the
+        // wall clock — so the same graph yields different steps under different
+        // clocks and identical results under the same clock.
+        let decisions = well_covered_decisions("store", false);
+        let state = build_state(&[("store", "Data store")], &decisions);
+        let call = |now| {
+            advance(
+                &state,
+                "store",
+                None,
+                None,
+                Some(Mode::Interactive),
+                &BTreeMap::new(),
+                now,
+            )
+            .unwrap()
+        };
+
+        // Two weeks after creation: nothing is stale → no drift-driven Review.
+        let early = call(Utc.with_ymd_and_hms(2024, 1, 15, 0, 0, 0).unwrap());
+        assert_ne!(early["task_type"], "review");
+
+        // A year later the same graph crosses the staleness threshold → Review.
+        let late_now = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let late = call(late_now);
+        assert_eq!(late["task_type"], "review");
+
+        // Same (graph, now) in → identical response out: advance is pure.
+        assert_eq!(late, call(late_now));
     }
 
     #[test]
@@ -1273,6 +1316,7 @@ mod tests {
             Some("add caching"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1292,6 +1336,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1316,6 +1361,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1341,6 +1387,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1368,6 +1415,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints", "summary_gate"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1391,6 +1439,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1410,6 +1459,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1433,6 +1483,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1456,6 +1507,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1481,6 +1533,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1507,6 +1560,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["summary_gate"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1532,6 +1586,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1554,6 +1609,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1574,6 +1630,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "verify_constraints");
@@ -1586,6 +1643,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "pattern_detection");
@@ -1604,6 +1662,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints", "pattern_detection"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "summary_gate");
@@ -1625,6 +1684,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(r1["step"], "summary_gate");
@@ -1637,6 +1697,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(r2["step"], "summary_gate");
@@ -1656,6 +1717,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "summary_gate");
@@ -1676,6 +1738,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints", "summary_gate"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -1700,6 +1763,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1730,6 +1794,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "verify_constraints");
@@ -1742,6 +1807,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "impact_check");
@@ -1754,6 +1820,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints", "impact_check"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -1777,6 +1844,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -1792,6 +1860,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1808,6 +1877,7 @@ mod tests {
             Some("fix concurrent write corruption"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1833,6 +1903,7 @@ mod tests {
             Some("fix typo in log message"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1860,6 +1931,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1885,6 +1957,7 @@ mod tests {
             Some("fix encryption key rotation"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1910,6 +1983,7 @@ mod tests {
             Some("fix error handling crash"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1948,6 +2022,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1965,6 +2040,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["user_explains"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -1987,6 +2063,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["user_explains"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2010,6 +2087,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["user_explains"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2034,6 +2112,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["user_explains", "summary_gate"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2054,6 +2133,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2072,6 +2152,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["walk_decisions"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2096,6 +2177,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "walk_decisions");
@@ -2108,6 +2190,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["walk_decisions"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "coverage_audit");
@@ -2127,6 +2210,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "walk_decisions");
@@ -2139,6 +2223,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["walk_decisions"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "pattern_detection");
@@ -2159,6 +2244,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["walk_decisions"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2180,6 +2266,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["walk_decisions", "summary_gate"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2205,6 +2292,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["walk_decisions"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "drift_check");
@@ -2228,6 +2316,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2250,6 +2339,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["coverage_audit"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2271,6 +2361,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2291,6 +2382,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2310,6 +2402,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2333,6 +2426,7 @@ mod tests {
             Some("add auth"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2356,6 +2450,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2381,6 +2476,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2404,6 +2500,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2428,6 +2525,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2452,6 +2550,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2477,6 +2576,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2502,6 +2602,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2532,6 +2633,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         let assessment = &result["assessment"];
@@ -2561,6 +2663,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         let b = advance(
@@ -2570,6 +2673,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(a, b);
@@ -2588,6 +2692,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         let b = advance(
@@ -2597,6 +2702,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(a, b);
@@ -2639,6 +2745,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2670,6 +2777,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         let focus = result["action"]["focus"].as_array().unwrap();
@@ -2694,6 +2802,7 @@ mod tests {
             Some("add caching"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2713,6 +2822,7 @@ mod tests {
             Some("fix bug"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2769,6 +2879,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2788,6 +2899,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2815,6 +2927,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2838,6 +2951,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2867,6 +2981,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2897,6 +3012,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2914,6 +3030,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         let b = advance(
@@ -2923,6 +3040,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(a, b);
@@ -2938,6 +3056,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2963,6 +3082,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -2986,6 +3106,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -3009,6 +3130,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &evidence(&["project_rules"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -3041,6 +3163,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -3069,6 +3192,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &ev,
+            chrono::Utc::now(),
         );
         let err = result.unwrap_err();
         assert!(err.contains("gated"), "error should mention gated: {err}");
@@ -3096,6 +3220,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &ev,
+            chrono::Utc::now(),
         );
         let err = result.unwrap_err();
         assert!(
@@ -3120,6 +3245,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_ne!(result["step"], "verify_constraints");
@@ -3143,6 +3269,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &ev,
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_ne!(result["step"], "project_rules");
@@ -3153,7 +3280,15 @@ mod tests {
         let state = build_state(&[("store", "Data store")], &[]);
         let mut ev = BTreeMap::new();
         ev.insert("nonexistent", "some evidence text that is long enough");
-        let result = advance(&state, "store", None, None, Some(Mode::Interactive), &ev);
+        let result = advance(
+            &state,
+            "store",
+            None,
+            None,
+            Some(Mode::Interactive),
+            &ev,
+            chrono::Utc::now(),
+        );
         assert!(result.is_ok());
     }
 
@@ -3167,6 +3302,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "define_scope");
@@ -3186,6 +3322,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -3215,6 +3352,7 @@ mod tests {
             Some("add caching layer"),
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "verify_constraints");
@@ -3227,6 +3365,7 @@ mod tests {
             Some("add caching layer"),
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -3263,6 +3402,7 @@ mod tests {
             Some("add widget support"),
             Some(Mode::Interactive),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -3281,7 +3421,16 @@ mod tests {
     #[test]
     fn advance_without_mode_returns_requires_mode() {
         let state = build_state(&[("store", "Data store")], &[]);
-        let result = advance(&state, "store", None, None, None, &BTreeMap::new()).unwrap();
+        let result = advance(
+            &state,
+            "store",
+            None,
+            None,
+            None,
+            &BTreeMap::new(),
+            chrono::Utc::now(),
+        )
+        .unwrap();
 
         assert_eq!(result["requires_mode"], true);
         assert!(result["step"].is_null());
@@ -3300,6 +3449,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         );
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -3316,6 +3466,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         );
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -3340,6 +3491,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &ev,
+            chrono::Utc::now(),
         );
         assert!(result.is_ok(), "agent mode should skip evidence validation");
     }
@@ -3363,6 +3515,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_ne!(result["step"], "summary_gate");
@@ -3381,6 +3534,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         );
         assert!(
             result.is_err(),
@@ -3398,6 +3552,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["requires_user_input"], false);
@@ -3414,6 +3569,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "define_scope");
@@ -3431,6 +3587,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["mode"], "agent");
@@ -3456,6 +3613,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(interactive["step"], "summary_gate");
@@ -3467,6 +3625,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(agent["step"], "ready");
@@ -3486,6 +3645,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &evidence(&["walk_decisions"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         // Agent skips summary_gate → ready.
@@ -3506,6 +3666,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(result["step"], "ready");
@@ -3527,6 +3688,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         );
         assert!(
             result.is_err(),
@@ -3546,6 +3708,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(
@@ -3564,6 +3727,7 @@ mod tests {
             None,
             Some(Mode::Interactive),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(
@@ -3582,6 +3746,7 @@ mod tests {
             None,
             Some(Mode::Agent),
             &BTreeMap::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
         assert_eq!(

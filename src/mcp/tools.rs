@@ -695,7 +695,15 @@ fn dispatch_advance(state: &ProjectState, args: &Value) -> ToolEnvelope {
         })
         .unwrap_or_default();
 
-    match workflow::advance::advance(state, component, task_type, task, mode, &evidence_refs) {
+    match workflow::advance::advance(
+        state,
+        component,
+        task_type,
+        task,
+        mode,
+        &evidence_refs,
+        chrono::Utc::now(),
+    ) {
         Ok(result) => tool_result(&result),
         Err(msg) => tool_error(&msg),
     }
