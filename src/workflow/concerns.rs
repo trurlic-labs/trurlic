@@ -196,7 +196,7 @@ pub const CONCERNS: &[(&str, &[&str])] = &[
 // ── Matching ──────────────────────────────────────────────────────────────
 
 /// Extract lowercased words from a decision for keyword matching.
-fn decision_words(dec: &DecisionFile) -> Vec<String> {
+pub(crate) fn decision_words(dec: &DecisionFile) -> Vec<String> {
     let text = format!(
         "{} {} {}",
         dec.decision.choice,
@@ -209,7 +209,7 @@ fn decision_words(dec: &DecisionFile) -> Vec<String> {
         .collect()
 }
 
-fn words_match_keywords(words: &[String], keywords: &[&str]) -> bool {
+pub(crate) fn words_match_keywords(words: &[String], keywords: &[&str]) -> bool {
     keywords.iter().any(|kw| words.iter().any(|w| w == kw))
 }
 
@@ -248,6 +248,28 @@ pub fn compute_concern_coverage(
     }
 
     (covered, uncovered)
+}
+
+/// Concern areas that lose their last covering decision when `removed` is
+/// deleted.
+///
+/// An area is lost only if the removed decision covered it and no decision
+/// in `remaining` still does — surfacing coverage a removal silently erases.
+pub fn coverage_lost(removed: &DecisionFile, remaining: &[&DecisionFile]) -> Vec<&'static str> {
+    let removed_words = decision_words(removed);
+    let remaining_word_sets: Vec<Vec<String>> =
+        remaining.iter().map(|d| decision_words(d)).collect();
+
+    CONCERNS
+        .iter()
+        .filter(|(_, keywords)| {
+            words_match_keywords(&removed_words, keywords)
+                && !remaining_word_sets
+                    .iter()
+                    .any(|words| words_match_keywords(words, keywords))
+        })
+        .map(|(name, _)| *name)
+        .collect()
 }
 
 /// Formatted concern status for inclusion in prompts.
@@ -472,6 +494,32 @@ mod tests {
         let perf_kw = keywords_for("Performance");
         assert!(decision_covers_concern(&dec, error_kw));
         assert!(decision_covers_concern(&dec, perf_kw));
+    }
+
+    #[test]
+    fn coverage_lost_reports_uniquely_covered_area() {
+        let removed = make_decision("auth", "Encrypt credentials", "Secret protection", &[]);
+        let remaining = make_decision("auth", "Result panic recovery", "Graceful failure", &[]);
+        let lost = coverage_lost(&removed, &[&remaining]);
+        assert!(lost.contains(&"Security boundaries"));
+        // The remaining decision still covers error handling — not lost.
+        assert!(!lost.contains(&"Error handling & failure modes"));
+    }
+
+    #[test]
+    fn coverage_lost_empty_when_area_still_covered() {
+        let removed = make_decision("auth", "Encrypt credentials", "Secret protection", &[]);
+        let remaining = make_decision("auth", "Rotate secret keys", "Credential zeroize", &[]);
+        // Another decision still covers security — nothing is lost.
+        let lost = coverage_lost(&removed, &[&remaining]);
+        assert!(lost.is_empty());
+    }
+
+    #[test]
+    fn coverage_lost_all_areas_when_no_remaining() {
+        let removed = make_decision("auth", "Encrypt credentials", "Secret protection", &[]);
+        let lost = coverage_lost(&removed, &[]);
+        assert_eq!(lost, vec!["Security boundaries"]);
     }
 
     #[test]

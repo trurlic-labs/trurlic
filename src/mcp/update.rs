@@ -1,8 +1,9 @@
 use serde_json::Value;
 
 use crate::store::limits::{MAX_CHOICE_BYTES, MIN_REASON_BYTES};
-use crate::store::schema::Attribution;
+use crate::store::schema::{Attribution, DecisionFile};
 use crate::store::{self, Store};
+use crate::workflow::concerns;
 
 use super::write::{opt_str, opt_str_array, parse_code_refs, require_str};
 
@@ -48,11 +49,19 @@ pub(crate) fn remove_decision(
         }));
     }
 
+    // Capture the decision before the write path deletes it — its content and
+    // component are needed to report the concern coverage the removal erases.
+    let removed = std::sync::Arc::clone(&state.decisions[name]);
+    let component = removed.decision.component.clone();
+
     // Execute removal via shared write path.
     let lock = store.lock().map_err(|e| e.to_string())?;
     store
         .remove_decision(&lock, state, name)
         .map_err(|e| e.to_string())?;
+    drop(lock);
+
+    let coverage_impact = coverage_impact(state, &removed, &component);
 
     Ok(serde_json::json!({
         "removed": true,
@@ -70,7 +79,33 @@ pub(crate) fn remove_decision(
                 "target": c.target,
             }))
             .collect::<Vec<_>>(),
+        "coverage_impact": coverage_impact,
     }))
+}
+
+/// Concern coverage delta for the component after a decision is removed.
+///
+/// `lost_coverage` names areas the removed decision was the last to cover;
+/// the remaining counts partition every concern area across the decisions
+/// still belonging to the component.
+fn coverage_impact(state: &store::ProjectState, removed: &DecisionFile, component: &str) -> Value {
+    let remaining: Vec<&DecisionFile> = state
+        .graph()
+        .decisions_for(component)
+        .into_iter()
+        .map(|(_, dec)| dec)
+        .collect();
+
+    let lost = concerns::coverage_lost(removed, &remaining);
+    let (covered, uncovered) = concerns::compute_concern_coverage(&remaining);
+
+    serde_json::json!({
+        "component": component,
+        "lost_coverage": lost,
+        "remaining_covered": covered.len(),
+        "remaining_uncovered": uncovered.len(),
+        "total_concerns": concerns::CONCERNS.len(),
+    })
 }
 
 // ── update_decision ─────────────────────────────────────────────────────────
@@ -301,6 +336,65 @@ mod tests {
         let args = json!({ "name": "ghost" });
         let err = remove_decision(&store, &mut state, &args).unwrap_err();
         assert!(err.contains("ghost"));
+    }
+
+    #[test]
+    fn remove_decision_reports_coverage_impact() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "JWT security tokens", "reason": "Authentication boundary protection", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let result = remove_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-security-tokens" }),
+        )
+        .unwrap();
+        assert_eq!(result["removed"], true);
+
+        let impact = &result["coverage_impact"];
+        assert_eq!(impact["component"], "auth");
+        assert_eq!(impact["total_concerns"], concerns::CONCERNS.len());
+        assert_eq!(impact["remaining_uncovered"], concerns::CONCERNS.len());
+        assert_eq!(impact["remaining_covered"], 0);
+
+        let lost = impact["lost_coverage"].as_array().unwrap();
+        assert!(
+            lost.iter().any(|c| c == "Security boundaries"),
+            "removing the only security decision must report it as lost: {lost:?}"
+        );
+    }
+
+    #[test]
+    fn remove_decision_no_lost_coverage_when_area_still_covered() {
+        let (_tmp, store, mut state) = setup();
+        record_decision(
+            &store,
+            &mut state,
+            &json!({ "component": "auth", "choice": "JWT security tokens", "reason": "Authentication boundary protection", "attribution": "user" }),
+        )
+        .unwrap();
+        record_decision(
+            &store,
+            &mut state,
+            &json!({ "component": "auth", "choice": "OAuth delegated flow", "reason": "External identity security provider", "attribution": "user" }),
+        )
+        .unwrap();
+
+        let result = remove_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-security-tokens" }),
+        )
+        .unwrap();
+
+        let impact = &result["coverage_impact"];
+        let lost = impact["lost_coverage"].as_array().unwrap();
+        assert!(
+            !lost.iter().any(|c| c == "Security boundaries"),
+            "a remaining security decision keeps the area covered: {lost:?}"
+        );
+        assert_eq!(impact["remaining_covered"], 1);
     }
 
     // ── update_decision: revise ──────────────────────────────────────────

@@ -1,7 +1,9 @@
 use std::path::Path;
+use std::sync::Arc;
 
-use crate::store::schema::Attribution;
+use crate::store::schema::{Attribution, DecisionFile};
 use crate::store::{self, RecordDecisionParams};
+use crate::workflow::concerns;
 use crate::{Error, Result};
 
 use super::open_store_mut;
@@ -54,8 +56,27 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
         eprintln!("warning: {}", w.message);
     }
 
+    // Capture the decision before removal so its lost concern coverage can be
+    // reported once it is gone from the graph.
+    let removed = state.decisions.get(name).map(Arc::clone);
+
     store.remove_decision(&lock, &mut state, name)?;
     println!("Removed decision `{name}`");
+
+    if let Some(removed) = removed {
+        let component = &removed.decision.component;
+        let remaining: Vec<&DecisionFile> = state
+            .graph()
+            .decisions_for(component)
+            .into_iter()
+            .map(|(_, dec)| dec)
+            .collect();
+        let lost = concerns::coverage_lost(&removed, &remaining);
+        if !lost.is_empty() {
+            println!("⚠ [{component}] lost coverage: {}", lost.join(", "));
+        }
+    }
+
     Ok(())
 }
 
@@ -237,6 +258,28 @@ mod tests {
 
         let err = remove_decision(tmp.path(), "ghost").unwrap_err();
         assert!(matches!(err, Error::DecisionNotFound(ref n) if n == "ghost"));
+    }
+
+    #[test]
+    fn remove_decision_reports_lost_coverage() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Encrypt credentials at rest",
+            "Protect secrets from disk exposure",
+            &[],
+        )
+        .unwrap();
+
+        // The removed decision uniquely covered Security boundaries — the
+        // report branch must run and the removal must complete cleanly.
+        remove_decision(tmp.path(), "encrypt-credentials-at-rest").unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        assert!(store.list_decisions().unwrap().is_empty());
     }
 
     #[test]
