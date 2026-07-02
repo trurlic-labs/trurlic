@@ -8,6 +8,8 @@
 //! Shared by CLI, MCP server, and map API to enforce identical
 //! deletion rules regardless of the mutation entry point.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::graph::{Direction, InMemoryGraph};
 use super::schema::EdgeKind;
 
@@ -75,10 +77,38 @@ impl CascadeResult {
     }
 }
 
+/// Outcome of pre-flighting a batch of decision removals.
+///
+/// Both fields preserve the caller's input order.
+#[derive(Debug)]
+pub struct RemovalPartition<'a> {
+    /// Names safe to remove together in one atomic commit.
+    pub removable: Vec<&'a str>,
+    /// Names left in place, each paired with the reason it was blocked.
+    pub blocked: Vec<(&'a str, String)>,
+}
+
 // ── Cascade checks ──────────────────────────────────────────────────────
 
 impl InMemoryGraph {
+    /// Cascade pre-flight for removing a single decision.
     pub fn check_decision_cascade(&self, name: &str) -> CascadeResult {
+        // A lone removal is the batch `{name}`: the decision removes only
+        // itself, so its own membership and incident edges are the only ones
+        // that vanish.
+        let removing = BTreeSet::from([name]);
+        self.check_decision_cascade_batch(name, &removing)
+    }
+
+    /// Cascade pre-flight for removing `name` as one member of a batch that
+    /// removes every decision in `removing` (which must contain `name`).
+    ///
+    /// A dependent or pattern member that is itself in `removing` does not
+    /// block: its incident edge is stripped in the same commit, so no dangling
+    /// edge and no pattern-membership underflow can survive it. This is what
+    /// makes atomic batch removal safe — the per-decision check in isolation
+    /// would see the pre-batch graph and miss a sibling that is also leaving.
+    fn check_decision_cascade_batch(&self, name: &str, removing: &BTreeSet<&str>) -> CascadeResult {
         let involved = self.edges_involving(name);
         let mut blockers = Vec::new();
         let mut warnings = Vec::new();
@@ -86,21 +116,25 @@ impl InMemoryGraph {
 
         for (other, edge, dir) in &involved {
             match (edge.kind, *dir) {
-                // Block: other decisions depend on this one.
+                // Block: a decision that is NOT also being removed depends on
+                // this one. A co-removed dependent loses its edge in the same
+                // commit, so it does not block.
                 (EdgeKind::DependsOn, Direction::Reverse) => {
-                    blockers.push(CascadeBlocker {
-                        node: other.to_string(),
-                        edge: EdgeKind::DependsOn,
-                        message: format!(
-                            "decision `{other}` depends on `{name}` — \
-                             remove or update it first"
-                        ),
-                    });
+                    if !removing.contains(other) {
+                        blockers.push(CascadeBlocker {
+                            node: other.to_string(),
+                            edge: EdgeKind::DependsOn,
+                            message: format!(
+                                "decision `{other}` depends on `{name}` — \
+                                 remove or update it first"
+                            ),
+                        });
+                    }
                 }
-                // Block or warn: pattern membership.
+                // Block or warn: pattern membership. Count only the members
+                // that survive the batch — those not in `removing`.
                 (EdgeKind::MemberOf, Direction::Reverse) => {
-                    let member_count = self.forward_edge_count(other, EdgeKind::MemberOf);
-                    if member_count <= 2 {
+                    if self.surviving_member_count(other, removing) < 2 {
                         blockers.push(CascadeBlocker {
                             node: other.to_string(),
                             edge: EdgeKind::MemberOf,
@@ -145,6 +179,73 @@ impl InMemoryGraph {
             blockers,
             warnings,
             cleanups,
+        }
+    }
+
+    /// Count the members a pattern retains once every decision in `removing`
+    /// is gone: its forward `MemberOf` targets minus those being removed.
+    fn surviving_member_count(&self, pattern: &str, removing: &BTreeSet<&str>) -> usize {
+        self.forward
+            .get(pattern)
+            .map(|edges| {
+                edges
+                    .iter()
+                    .filter(|e| {
+                        e.kind == EdgeKind::MemberOf && !removing.contains(&e.target.as_ref())
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Partition `names` into the subset safe to remove in one atomic batch and
+    /// those a cascade blocks, accounting for co-removal.
+    ///
+    /// Iterates to a fixed point: each decision is judged against the set that
+    /// will *actually* be removed, not the full candidate set. When a candidate
+    /// is found blocked it is withdrawn from the removal set, which can only
+    /// raise surviving pattern counts and re-instate dependents — so the blocked
+    /// set grows monotonically and converges in at most `names.len()` passes.
+    /// The result introduces no graph violation and is not over-conservative:
+    /// a decision is kept only if removing the final set would truly break it.
+    #[must_use]
+    pub fn partition_removable_decisions<'a>(&self, names: &[&'a str]) -> RemovalPartition<'a> {
+        // Name → reason, captured at the moment of blocking (while the name is
+        // still in the removal set, so the reason reflects the real conflict).
+        let mut blocked: BTreeMap<&'a str, String> = BTreeMap::new();
+        loop {
+            let removing: BTreeSet<&str> = names
+                .iter()
+                .copied()
+                .filter(|n| !blocked.contains_key(n))
+                .collect();
+            let mut changed = false;
+            for &name in names {
+                if blocked.contains_key(name) {
+                    continue;
+                }
+                let cascade = self.check_decision_cascade_batch(name, &removing);
+                if cascade.is_blocked() {
+                    blocked.insert(name, cascade.blocker_summary());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut removable = Vec::new();
+        let mut blocked_ordered = Vec::new();
+        for &name in names {
+            match blocked.remove(name) {
+                Some(reason) => blocked_ordered.push((name, reason)),
+                None => removable.push(name),
+            }
+        }
+        RemovalPartition {
+            removable,
+            blocked: blocked_ordered,
         }
     }
 
@@ -555,6 +656,222 @@ mod tests {
             cleanups: vec![],
         };
         assert!(blocked.is_blocked());
+    }
+
+    // ── batch-aware removal partition ───────────────────────────────────
+
+    /// A graph with one component, one pattern, and `members` decisions that
+    /// all belong to the pattern.
+    fn pattern_member_graph(members: &[&str]) -> InMemoryGraph {
+        let mut nodes = vec![
+            NodeEntry {
+                name: "auth".into(),
+                kind: NodeKind::Component,
+                tags: vec![],
+                hash: "a".into(),
+            },
+            NodeEntry {
+                name: "pat".into(),
+                kind: NodeKind::Pattern,
+                tags: vec![],
+                hash: "p".into(),
+            },
+        ];
+        let mut edges = Vec::new();
+        let mut decisions = BTreeMap::new();
+        for member in members {
+            nodes.push(NodeEntry {
+                name: (*member).into(),
+                kind: NodeKind::Decision,
+                tags: vec![],
+                hash: (*member).into(),
+            });
+            edges.push(EdgeEntry {
+                from: (*member).into(),
+                to: "auth".into(),
+                kind: EdgeKind::BelongsTo,
+            });
+            edges.push(EdgeEntry {
+                from: "pat".into(),
+                to: (*member).into(),
+                kind: EdgeKind::MemberOf,
+            });
+            decisions.insert(
+                (*member).into(),
+                DecisionFile {
+                    decision: Decision {
+                        component: "auth".into(),
+                        choice: (*member).into(),
+                        reason: "test".into(),
+                        alternatives: vec![],
+                        tags: vec![],
+                        attribution: Attribution::Agent,
+                        created: ts(),
+                        code_refs: vec![],
+                        history: vec![],
+                    },
+                },
+            );
+        }
+        let index = GraphIndex {
+            version: 1,
+            rebuilt: ts(),
+            nodes,
+            edges,
+        };
+        let mut components = BTreeMap::new();
+        components.insert(
+            "auth".into(),
+            ComponentFile {
+                component: Component {
+                    name: "auth".into(),
+                    description: String::new(),
+                },
+            },
+        );
+        let mut patterns = BTreeMap::new();
+        patterns.insert(
+            "pat".into(),
+            PatternFile {
+                pattern: Pattern {
+                    name: "pat".into(),
+                    description: "test".into(),
+                },
+            },
+        );
+        InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &arc_map(patterns),
+        )
+    }
+
+    #[test]
+    fn partition_blocks_co_removing_members_that_shrink_a_pattern() {
+        // Removing two of three members would leave the pattern with one — a
+        // graph violation. The per-candidate check would see three members each
+        // and wave both through; the batch check blocks both.
+        let graph = pattern_member_graph(&["a", "b", "c"]);
+        let part = graph.partition_removable_decisions(&["a", "b"]);
+        assert!(part.removable.is_empty(), "both members must be blocked");
+        assert_eq!(part.blocked.len(), 2);
+        assert!(
+            part.blocked
+                .iter()
+                .all(|(_, why)| why.contains("fewer than 2")),
+        );
+    }
+
+    #[test]
+    fn partition_allows_removing_one_member_of_three() {
+        // Removing a single member leaves two — still valid.
+        let graph = pattern_member_graph(&["a", "b", "c"]);
+        let part = graph.partition_removable_decisions(&["a"]);
+        assert_eq!(part.removable, vec!["a"]);
+        assert!(part.blocked.is_empty());
+    }
+
+    /// Two decisions in one component where `dependent` depends on `base`, with
+    /// no pattern to confound the dependency check.
+    fn depends_graph() -> InMemoryGraph {
+        let index = GraphIndex {
+            version: 1,
+            rebuilt: ts(),
+            nodes: vec![
+                NodeEntry {
+                    name: "auth".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "a".into(),
+                },
+                NodeEntry {
+                    name: "base".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "1".into(),
+                },
+                NodeEntry {
+                    name: "dependent".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "2".into(),
+                },
+            ],
+            edges: vec![
+                EdgeEntry {
+                    from: "base".into(),
+                    to: "auth".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "dependent".into(),
+                    to: "auth".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "dependent".into(),
+                    to: "base".into(),
+                    kind: EdgeKind::DependsOn,
+                },
+            ],
+        };
+        let mut components = BTreeMap::new();
+        components.insert(
+            "auth".into(),
+            ComponentFile {
+                component: Component {
+                    name: "auth".into(),
+                    description: String::new(),
+                },
+            },
+        );
+        let mut decisions = BTreeMap::new();
+        for name in ["base", "dependent"] {
+            decisions.insert(
+                name.into(),
+                DecisionFile {
+                    decision: Decision {
+                        component: "auth".into(),
+                        choice: name.into(),
+                        reason: "test".into(),
+                        alternatives: vec![],
+                        tags: vec![],
+                        attribution: Attribution::Agent,
+                        created: ts(),
+                        code_refs: vec![],
+                        history: vec![],
+                    },
+                },
+            );
+        }
+        InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        )
+    }
+
+    #[test]
+    fn partition_co_removed_dependent_does_not_block() {
+        // `dependent` depends on `base`; removing both together strips the edge,
+        // so neither blocks. The naive per-candidate check aborts here.
+        let graph = depends_graph();
+        let part = graph.partition_removable_decisions(&["base", "dependent"]);
+        assert_eq!(part.removable.len(), 2, "co-removed pair must both clear");
+        assert!(part.blocked.is_empty());
+    }
+
+    #[test]
+    fn partition_external_dependent_still_blocks() {
+        // Removing only `base` leaves `dependent` depending on nothing —
+        // blocked, since the dependent survives the batch.
+        let graph = depends_graph();
+        let part = graph.partition_removable_decisions(&["base"]);
+        assert!(part.removable.is_empty());
+        assert_eq!(part.blocked.len(), 1);
+        assert_eq!(part.blocked[0].0, "base");
     }
 
     #[test]

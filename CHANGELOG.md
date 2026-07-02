@@ -107,6 +107,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   records history) and `promote`. `update_decision(mode="amend")` and
   `update_decision(mode="supersede")` now return a clear invalid-mode error.
 
+### Fixed
+
+- **Batch decision removal is now cascade-safe.** `gc` and `remove decision
+  --agent` pre-flight the whole set with a batch-aware cascade that reaches a
+  fixed point: co-removed dependents and pattern members no longer block one
+  another, while removing two members of a shared pattern can no longer silently
+  drop it below its two-member minimum. Previously each candidate was checked
+  against the pre-batch graph, so a batch could commit a graph that
+  `trurlic check` rejects.
+- **Lost-coverage reports account for project-wide rules.** `remove_decision`,
+  `remove decision --agent`, and `gc` compute erased concern coverage against
+  the same baseline as `get_context` (component decisions **plus** project
+  rules), so a concern a project rule still covers is never falsely reported as
+  lost.
+
 ## [0.2.0] — 2026-06-15
 
 ### Added

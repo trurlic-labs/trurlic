@@ -78,17 +78,23 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Pre-flight the whole set before touching disk: a single blocked candidate
-    // aborts the entire batch, so a partial removal can never leave the graph
-    // in a half-collapsed state.
-    for name in &candidates {
-        let cascade = state.graph().check_decision_cascade(name);
-        if cascade.is_blocked() {
-            return Err(Error::CascadeBlocked(format!(
-                "`{name}` — {}; no decisions removed",
-                cascade.blocker_summary()
-            )));
-        }
+    // Pre-flight the whole set with a batch-aware cascade before touching disk.
+    // Decisions co-removed in the same batch don't block one another, but a
+    // genuine external dependent or a pattern that would drop below its two-member
+    // minimum aborts the entire batch — a partial removal can never leave the
+    // graph in a half-collapsed state.
+    let names: Vec<&str> = candidates.iter().map(String::as_str).collect();
+    let partition = state.graph().partition_removable_decisions(&names);
+    if !partition.blocked.is_empty() {
+        let detail = partition
+            .blocked
+            .iter()
+            .map(|(name, why)| format!("`{name}` — {why}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(Error::CascadeBlocked(format!(
+            "{detail}; no decisions removed"
+        )));
     }
 
     // Snapshot before removal so the coverage the batch carried can be reported
@@ -98,7 +104,6 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
         .filter_map(|name| state.decisions.get(name).map(Arc::clone))
         .collect();
 
-    let names: Vec<&str> = candidates.iter().map(String::as_str).collect();
     store.remove_decisions(&lock, &mut state, &names)?;
     drop(lock);
 
@@ -106,12 +111,7 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
     let plural = if count == 1 { "" } else { "s" };
     println!("Removed {count} agent decision{plural} from [{component}]");
 
-    let remaining: Vec<&DecisionFile> = state
-        .graph()
-        .decisions_for(component)
-        .into_iter()
-        .map(|(_, dec)| dec)
-        .collect();
+    let remaining = state.graph().coverage_baseline(component);
     let mut lost: Vec<&'static str> = Vec::new();
     for dec in &snapshots {
         for area in concerns::coverage_lost(dec, &remaining) {
@@ -147,12 +147,7 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
 
     if let Some(removed) = removed {
         let component = &removed.decision.component;
-        let remaining: Vec<&DecisionFile> = state
-            .graph()
-            .decisions_for(component)
-            .into_iter()
-            .map(|(_, dec)| dec)
-            .collect();
+        let remaining = state.graph().coverage_baseline(component);
         let lost = concerns::coverage_lost(&removed, &remaining);
         if !lost.is_empty() {
             println!("⚠ [{component}] lost coverage: {}", lost.join(", "));
@@ -592,6 +587,79 @@ mod tests {
         let state = Store::discover(tmp.path()).unwrap().load_state().unwrap();
         assert!(state.decisions.contains_key("agent-base"));
         assert!(state.decisions.contains_key("agent-spare"));
+    }
+
+    #[test]
+    fn remove_agent_decisions_aborts_when_batch_would_shrink_a_pattern() {
+        use crate::store::RecordPatternParams;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        let one = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent one",
+            Attribution::Agent,
+        );
+        let two = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent two",
+            Attribution::Agent,
+        );
+        let three = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Human three",
+            Attribution::User,
+        );
+
+        // A three-member pattern. Removing the two agent members would leave one
+        // — below the minimum. Each member passes an isolated cascade check
+        // (three members each), so only a batch-aware pre-flight catches it.
+        store
+            .record_pattern(
+                &lock,
+                &mut state,
+                RecordPatternParams {
+                    name: "auth-shape",
+                    description: "Three related auth decisions",
+                    decisions: &[one, two, three],
+                    components: &[],
+                    tags: &[],
+                },
+            )
+            .unwrap();
+        drop(lock);
+
+        let err = remove_agent_decisions(tmp.path(), "auth").unwrap_err();
+        assert!(matches!(err, Error::CascadeBlocked(_)));
+
+        // Nothing removed — the batch aborted rather than partially applying,
+        // so the graph the write path committed stays valid (no violations).
+        let store = Store::discover(tmp.path()).unwrap();
+        let state = store.load_state().unwrap();
+        assert_eq!(
+            state.decisions.len(),
+            3,
+            "batch must abort, not partially apply"
+        );
+        assert!(
+            state.validate().is_empty(),
+            "the pattern must retain its members: {:?}",
+            state.validate()
+        );
     }
 
     #[test]

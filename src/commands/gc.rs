@@ -74,15 +74,31 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     }
 
     // Orphaned decisions are always a removal target; stale and agent-review
-    // debt are removed only under `--aggressive`.
-    let (orphan_removable, orphan_blocked) = partition_removable(&state, &orphaned);
+    // debt are removed only under `--aggressive`. Pre-flight the whole attempted
+    // set in one batch-aware pass: co-removed dependents and pattern members are
+    // judged against what actually leaves, so removing two members of a shared
+    // pattern can never silently drop it below its minimum.
+    let mut attempted: Vec<&Candidate> = orphaned.iter().collect();
+    if reclaim_extra {
+        attempted.extend(stale.iter());
+        attempted.extend(old_agent.iter());
+    }
+    let names: Vec<&str> = attempted.iter().map(|c| c.name.as_str()).collect();
+    let blocked_reasons: BTreeMap<&str, String> = state
+        .graph()
+        .partition_removable_decisions(&names)
+        .blocked
+        .into_iter()
+        .collect();
+
+    let (orphan_removable, orphan_blocked) = split_blocked(&orphaned, &blocked_reasons);
     let (stale_removable, stale_blocked) = if reclaim_extra {
-        partition_removable(&state, &stale)
+        split_blocked(&stale, &blocked_reasons)
     } else {
         (Vec::new(), Vec::new())
     };
     let (agent_removable, agent_blocked) = if reclaim_extra {
-        partition_removable(&state, &old_agent)
+        split_blocked(&old_agent, &blocked_reasons)
     } else {
         (Vec::new(), Vec::new())
     };
@@ -187,20 +203,19 @@ fn all_refs_deleted(project_root: &Path, dec: &DecisionFile) -> bool {
     !refs.is_empty() && refs.iter().all(|r| !project_root.join(&r.file).exists())
 }
 
-/// Split candidates into those safe to remove and those a cascade pre-flight
-/// blocks (paired with the blocker explanation).
-fn partition_removable<'a>(
-    state: &ProjectState,
+/// Bucket a category's candidates into those the batch pre-flight cleared and
+/// those it blocked (paired with the blocker explanation), by looking each up
+/// in the shared `blocked_reasons` map computed once over the full batch.
+fn split_blocked<'a>(
     candidates: &'a [Candidate],
+    blocked_reasons: &BTreeMap<&str, String>,
 ) -> (Vec<&'a Candidate>, Vec<(&'a Candidate, String)>) {
     let mut removable = Vec::new();
     let mut blocked = Vec::new();
     for candidate in candidates {
-        let cascade = state.graph().check_decision_cascade(&candidate.name);
-        if cascade.is_blocked() {
-            blocked.push((candidate, cascade.blocker_summary()));
-        } else {
-            removable.push(candidate);
+        match blocked_reasons.get(candidate.name.as_str()) {
+            Some(reason) => blocked.push((candidate, reason.clone())),
+            None => removable.push(candidate),
         }
     }
     (removable, blocked)
@@ -219,12 +234,7 @@ fn report_lost_coverage(state: &ProjectState, removed: &[(String, std::sync::Arc
         if !state.components.contains_key(component) {
             continue;
         }
-        let remaining: Vec<&DecisionFile> = state
-            .graph()
-            .decisions_for(component)
-            .into_iter()
-            .map(|(_, d)| d)
-            .collect();
+        let remaining = state.graph().coverage_baseline(component);
 
         let mut lost: Vec<&'static str> = Vec::new();
         for dec in removed_decisions {
