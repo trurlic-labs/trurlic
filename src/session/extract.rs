@@ -340,6 +340,7 @@ pub(crate) fn record_decision(
             constrains: &[],
             tags: &[],
             attribution: Attribution::User,
+            code_refs: &[],
         },
     )
 }

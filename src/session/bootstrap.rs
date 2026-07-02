@@ -268,6 +268,7 @@ fn record_decisions(
                 constrains: &[],
                 tags: &[],
                 attribution: Attribution::Agent,
+                code_refs: &[],
             },
         ) {
             Ok(stem) => {

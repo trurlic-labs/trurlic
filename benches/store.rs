@@ -87,6 +87,7 @@ fn generate_fixture(n_components: usize) -> Fixture {
                     tags: vec![],
                     attribution: Attribution::User,
                     created,
+                    code_refs: vec![],
                 },
             }),
         );
@@ -168,6 +169,7 @@ fn generate_fixture(n_components: usize) -> Fixture {
                         tags: dec_tags,
                         attribution: Attribution::Agent,
                         created,
+                        code_refs: vec![],
                     },
                 }),
             );
@@ -250,6 +252,7 @@ fn sample_decision_toml() -> String {
             tags: vec!["security".into(), "auth".into()],
             attribution: Attribution::User,
             created: ts(),
+            code_refs: vec![],
         },
     })
     .unwrap()
