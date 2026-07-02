@@ -127,6 +127,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the same baseline as `get_context` (component decisions **plus** project
   rules), so a concern a project rule still covers is never falsely reported as
   lost.
+- **Map `PUT /api/decision/:name` returns 404**, not 500, for an unknown
+  decision, and 400 for invalid input.
 
 ### Changed (internal)
 

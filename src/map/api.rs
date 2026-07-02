@@ -400,7 +400,14 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
     state
         .store
         .revise_decision(&lock, &mut ps, &name, params)
-        .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            let status = match e {
+                crate::Error::DecisionNotFound(_) => StatusCode::NOT_FOUND,
+                crate::Error::Validation(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            api_err(status, e.to_string())
+        })?;
 
     ws::broadcast(
         &state.ws_tx,
