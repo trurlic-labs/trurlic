@@ -85,6 +85,7 @@ pub(crate) async fn run(
             ctx.task,
             Some(Mode::Interactive),
             &evidence,
+            chrono::Utc::now(),
         )
         .map_err(Error::Validation)?;
 
@@ -224,6 +225,7 @@ async fn run_step_dialogue(
             ctx.task,
             Some(Mode::Interactive),
             step_evidence,
+            chrono::Utc::now(),
         )
         .map_err(Error::Validation)?;
 

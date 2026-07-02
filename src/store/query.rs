@@ -26,6 +26,27 @@ impl InMemoryGraph {
         self.decisions_for("project")
     }
 
+    /// Decisions that count toward a component's concern coverage: its own
+    /// decisions plus the project-wide rules that constrain every component.
+    ///
+    /// This is the single baseline for coverage math — `get_context` and every
+    /// removal's lost-coverage report share it, so a concern a project rule
+    /// still covers is never falsely reported as lost. For `"project"` itself
+    /// the project rules are the component's own decisions, so they are not
+    /// added twice.
+    #[must_use]
+    pub fn coverage_baseline(&self, component: &str) -> Vec<&DecisionFile> {
+        let mut baseline: Vec<&DecisionFile> = self
+            .decisions_for(component)
+            .into_iter()
+            .map(|(_, dec)| dec)
+            .collect();
+        if component != "project" {
+            baseline.extend(self.project_decisions().into_iter().map(|(_, dec)| dec));
+        }
+        baseline
+    }
+
     /// Components this component connects to (forward `ConnectsTo`).
     pub fn connects_to(&self, component: &str) -> Vec<&str> {
         self.forward_targets(component, EdgeKind::ConnectsTo)
@@ -406,6 +427,7 @@ mod tests {
                         attribution: Attribution::User,
                         created: ts(),
                         code_refs: vec![],
+                        history: vec![],
                     },
                 },
             );
@@ -585,6 +607,7 @@ mod tests {
                         attribution: Attribution::User,
                         created: ts(),
                         code_refs: vec![],
+                        history: vec![],
                     },
                 },
             );
@@ -740,6 +763,7 @@ mod tests {
                         attribution: Attribution::User,
                         created: ts(),
                         code_refs: vec![],
+                        history: vec![],
                     },
                 },
             );

@@ -74,7 +74,7 @@ impl InMemoryGraph {
                     EdgeKind::ConnectsTo => {
                         from_k != NodeKind::Component || to_k != NodeKind::Component
                     }
-                    EdgeKind::DependsOn | EdgeKind::Constrains | EdgeKind::Supersedes => {
+                    EdgeKind::DependsOn | EdgeKind::Constrains => {
                         from_k != NodeKind::Decision || to_k != NodeKind::Decision
                     }
                     EdgeKind::MemberOf => from_k != NodeKind::Pattern || to_k != NodeKind::Decision,
@@ -635,6 +635,7 @@ mod tests {
                         attribution: Attribution::User,
                         created: ts(),
                         code_refs: vec![],
+                        history: vec![],
                     },
                 },
             );
@@ -677,6 +678,7 @@ mod tests {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -716,6 +718,7 @@ mod tests {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -832,6 +835,7 @@ mod tests {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -906,6 +910,7 @@ mod tests {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -986,6 +991,7 @@ mod tests {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -1125,6 +1131,7 @@ mod tests {
                         attribution: Attribution::User,
                         created: ts(),
                         code_refs: vec![],
+                        history: vec![],
                     },
                 },
             );
@@ -1253,6 +1260,7 @@ mod tests {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );

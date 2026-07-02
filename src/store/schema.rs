@@ -63,6 +63,23 @@ pub enum Attribution {
     Agent,
 }
 
+/// A prior version of a decision, captured when its choice or reason is revised.
+///
+/// A decision evolves in place: each revision pushes the pre-edit choice and
+/// reason here before overwriting them. Metadata (tags, code refs, attribution)
+/// updates without leaving history — only the substantive fields are versioned.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HistoryEntry {
+    /// Choice text as it stood before the revision.
+    pub choice: String,
+
+    /// Reason text as it stood before the revision.
+    pub reason: String,
+
+    /// When this version was replaced by a revision (UTC, RFC 3339).
+    pub changed_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Decision {
     /// Component this decision belongs to, or `"project"` for project-wide.
@@ -89,6 +106,12 @@ pub struct Decision {
     /// Source code locations where this decision manifests.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code_refs: Vec<CodeRef>,
+
+    /// Prior versions, oldest first. Each revision of choice or reason
+    /// appends the previous values here; reading top-to-bottom traces the
+    /// decision's evolution up to its current form.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<HistoryEntry>,
 }
 
 // ── patterns/<name>.toml ─────────────────────────────────────────────────────
@@ -134,7 +157,6 @@ pub enum EdgeKind {
     ConnectsTo,
     DependsOn,
     Constrains,
-    Supersedes,
     MemberOf,
     AppliesTo,
 }
@@ -153,7 +175,6 @@ impl EdgeKind {
             Self::ConnectsTo => "connects_to",
             Self::DependsOn => "depends_on",
             Self::Constrains => "constrains",
-            Self::Supersedes => "supersedes",
             Self::MemberOf => "member_of",
             Self::AppliesTo => "applies_to",
         }
@@ -188,7 +209,7 @@ pub struct GraphIndex {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-pub const FORMAT_VERSION: &str = "0.3.0";
+pub const FORMAT_VERSION: &str = "0.4.0";
 
 pub const STORE_DIR: &str = ".trurlic";
 
@@ -246,6 +267,7 @@ mod tests {
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -279,6 +301,7 @@ created = "2025-06-01T10:30:00Z"
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -299,6 +322,7 @@ created = "2025-06-01T10:30:00Z"
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -402,7 +426,6 @@ created = "2025-06-01T10:30:00Z"
             EdgeKind::ConnectsTo,
             EdgeKind::DependsOn,
             EdgeKind::Constrains,
-            EdgeKind::Supersedes,
             EdgeKind::MemberOf,
             EdgeKind::AppliesTo,
         ] {
@@ -429,6 +452,7 @@ created = "2025-06-01T10:30:00Z"
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -498,7 +522,6 @@ attribution = "user"
             EdgeKind::ConnectsTo,
             EdgeKind::DependsOn,
             EdgeKind::Constrains,
-            EdgeKind::Supersedes,
             EdgeKind::MemberOf,
             EdgeKind::AppliesTo,
         ] {
@@ -551,6 +574,7 @@ attribution = "user"
                     attribution: attr,
                     created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             };
             let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -588,6 +612,7 @@ created = "2025-06-01T10:30:00Z"
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -630,6 +655,7 @@ created = "2025-06-01T10:30:00Z"
                         symbol: Some("verify_hashes".into()),
                     },
                 ],
+                history: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -655,6 +681,7 @@ created = "2025-06-01T10:30:00Z"
                     file: "src/store/write.rs".into(),
                     symbol: None,
                 }],
+                history: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -692,6 +719,7 @@ created = "2025-06-01T10:30:00Z"
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -699,5 +727,75 @@ created = "2025-06-01T10:30:00Z"
             !serialized.contains("code_refs"),
             "empty code_refs should not appear in TOML"
         );
+    }
+
+    // ── history ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn decision_history_round_trips() {
+        let file = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT with DPoP binding".into(),
+                reason: "Proof-of-possession prevents replay".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![],
+                history: vec![
+                    HistoryEntry {
+                        choice: "JWT tokens".into(),
+                        reason: "Stateless authentication".into(),
+                        changed_at: Utc.with_ymd_and_hms(2025, 7, 15, 14, 0, 0).unwrap(),
+                    },
+                    HistoryEntry {
+                        choice: "JWT with refresh tokens".into(),
+                        reason: "Stateless auth with rotation".into(),
+                        changed_at: Utc.with_ymd_and_hms(2025, 8, 1, 9, 30, 0).unwrap(),
+                    },
+                ],
+            },
+        };
+        let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(serialized.contains("[[decision.history]]"));
+        let deserialized: DecisionFile = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(file, deserialized);
+    }
+
+    #[test]
+    fn decision_empty_history_omitted_in_toml() {
+        let file = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT".into(),
+                reason: "Stateless".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![],
+                history: vec![],
+            },
+        };
+        let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(
+            !serialized.contains("history"),
+            "empty history should not appear in TOML"
+        );
+    }
+
+    #[test]
+    fn decision_without_history_deserializes() {
+        let toml_str = r#"
+[decision]
+component = "auth"
+choice = "JWT"
+reason = "Stateless"
+attribution = "user"
+created = "2025-06-01T10:30:00Z"
+"#;
+        let file: DecisionFile = toml::from_str(toml_str).expect("deserialize");
+        assert!(file.decision.history.is_empty());
     }
 }

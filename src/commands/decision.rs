@@ -1,7 +1,9 @@
 use std::path::Path;
+use std::sync::Arc;
 
-use crate::store::schema::Attribution;
+use crate::store::schema::{Attribution, DecisionFile};
 use crate::store::{self, RecordDecisionParams};
+use crate::workflow::concerns;
 use crate::{Error, Result};
 
 use super::open_store_mut;
@@ -11,7 +13,6 @@ pub fn decide(
     component: &str,
     choice: &str,
     reason: &str,
-    supersedes: Option<&str>,
     alternatives: &[String],
 ) -> Result<()> {
     if component != "project" && !store::is_valid_kebab_case(component) {
@@ -24,12 +25,6 @@ pub fn decide(
         return Err(Error::ComponentNotFound(component.into()));
     }
 
-    if let Some(sup) = supersedes
-        && !state.decisions.contains_key(sup)
-    {
-        return Err(Error::DecisionNotFound(sup.into()));
-    }
-
     let stem = store.record_decision(
         &lock,
         &mut state,
@@ -38,7 +33,6 @@ pub fn decide(
             choice,
             reason,
             alternatives,
-            supersedes,
             depends_on: &[],
             constrains: &[],
             tags: &[],
@@ -48,6 +42,88 @@ pub fn decide(
     )?;
 
     println!("Recorded decision `{stem}`");
+    Ok(())
+}
+
+/// Remove every agent-recorded decision in a component at once.
+///
+/// Collects each decision whose `attribution` is [`Attribution::Agent`] within
+/// `component`, then runs a cascade pre-flight over the whole set. The batch is
+/// atomic: if removing any candidate would break a dependent or shrink a
+/// pattern below its minimum, none are removed. Human-recorded decisions are
+/// never touched. On success, the concern coverage the batch erased is reported
+/// against what remains in the component.
+pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
+    if component != "project" && !store::is_valid_kebab_case(component) {
+        return Err(Error::InvalidName(component.into()));
+    }
+
+    let (store, lock, mut state) = open_store_mut(cwd)?;
+
+    if component != "project" && !state.components.contains_key(component) {
+        return Err(Error::ComponentNotFound(component.into()));
+    }
+
+    let candidates: Vec<String> = state
+        .decisions
+        .iter()
+        .filter(|(_, dec)| {
+            dec.decision.component == component && dec.decision.attribution == Attribution::Agent
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    if candidates.is_empty() {
+        println!("No agent decisions in [{component}] to remove.");
+        return Ok(());
+    }
+
+    // Pre-flight the whole set with a batch-aware cascade before touching disk.
+    // Decisions co-removed in the same batch don't block one another, but a
+    // genuine external dependent or a pattern that would drop below its two-member
+    // minimum aborts the entire batch — a partial removal can never leave the
+    // graph in a half-collapsed state.
+    let names: Vec<&str> = candidates.iter().map(String::as_str).collect();
+    let partition = state.graph().partition_removable_decisions(&names);
+    if !partition.blocked.is_empty() {
+        let detail = partition
+            .blocked
+            .iter()
+            .map(|(name, why)| format!("`{name}` — {why}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(Error::CascadeBlocked(format!(
+            "{detail}; no decisions removed"
+        )));
+    }
+
+    // Snapshot before removal so the coverage the batch carried can be reported
+    // once the decisions are gone from the graph.
+    let snapshots: Vec<Arc<DecisionFile>> = candidates
+        .iter()
+        .filter_map(|name| state.decisions.get(name).map(Arc::clone))
+        .collect();
+
+    store.remove_decisions(&lock, &mut state, &names)?;
+    drop(lock);
+
+    let count = names.len();
+    let plural = if count == 1 { "" } else { "s" };
+    println!("Removed {count} agent decision{plural} from [{component}]");
+
+    let remaining = state.graph().coverage_baseline(component);
+    let mut lost: Vec<&'static str> = Vec::new();
+    for dec in &snapshots {
+        for area in concerns::coverage_lost(dec, &remaining) {
+            if !lost.contains(&area) {
+                lost.push(area);
+            }
+        }
+    }
+    if !lost.is_empty() {
+        println!("⚠ [{component}] lost coverage: {}", lost.join(", "));
+    }
+
     Ok(())
 }
 
@@ -62,8 +138,22 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
         eprintln!("warning: {}", w.message);
     }
 
+    // Capture the decision before removal so its lost concern coverage can be
+    // reported once it is gone from the graph.
+    let removed = state.decisions.get(name).map(Arc::clone);
+
     store.remove_decision(&lock, &mut state, name)?;
     println!("Removed decision `{name}`");
+
+    if let Some(removed) = removed {
+        let component = &removed.decision.component;
+        let remaining = state.graph().coverage_baseline(component);
+        let lost = concerns::coverage_lost(&removed, &remaining);
+        if !lost.is_empty() {
+            println!("⚠ [{component}] lost coverage: {}", lost.join(", "));
+        }
+    }
+
     Ok(())
 }
 
@@ -82,7 +172,7 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-with-dpop").unwrap();
@@ -100,7 +190,6 @@ mod tests {
             "project",
             "Fail-closed on writes",
             "Never silently succeed",
-            None,
             &[],
         )
         .unwrap();
@@ -117,48 +206,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = decide(tmp.path(), "ghost", "x", "y", None, &[]).unwrap_err();
+        let err = decide(tmp.path(), "ghost", "x", "y", &[]).unwrap_err();
         assert!(matches!(err, Error::ComponentNotFound(ref n) if n == "ghost"));
-    }
-
-    #[test]
-    fn decide_rejects_nonexistent_supersede_target() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", None).unwrap();
-
-        let err = decide(tmp.path(), "auth", "x", "y", Some("ghost"), &[]).unwrap_err();
-        assert!(matches!(err, Error::DecisionNotFound(ref n) if n == "ghost"));
-    }
-
-    #[test]
-    fn decide_supersedes_creates_edge() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", None).unwrap();
-
-        decide(tmp.path(), "auth", "Session cookies", "Simple", None, &[]).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "JWT tokens",
-            "Stateless",
-            Some("session-cookies"),
-            &[],
-        )
-        .unwrap();
-
-        let store = Store::discover(tmp.path()).unwrap();
-        let state = store.load_state().unwrap();
-        assert!(
-            state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "jwt-tokens"
-                    && e.to == "session-cookies"
-                    && e.kind == EdgeKind::Supersedes)
-        );
     }
 
     #[test]
@@ -167,7 +216,7 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let state = store.load_state().unwrap();
@@ -190,15 +239,7 @@ mod tests {
             "Session cookies — rejected: requires server-side state".into(),
             "Opaque tokens — rejected: introspection overhead".into(),
         ];
-        decide(
-            tmp.path(),
-            "auth",
-            "JWT with DPoP",
-            "Stateless",
-            None,
-            &alts,
-        )
-        .unwrap();
+        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &alts).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-with-dpop").unwrap();
@@ -211,16 +252,8 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "Use Redis", "Fast", None, &[]).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Use Redis",
-            "Also for sessions",
-            None,
-            &[],
-        )
-        .unwrap();
+        decide(tmp.path(), "auth", "Use Redis", "Fast", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use Redis", "Also for sessions", &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let names = store.list_decisions().unwrap();
@@ -234,7 +267,7 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
 
         let before = Utc::now();
-        decide(tmp.path(), "auth", "JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT", "Stateless", &[]).unwrap();
         let after = Utc::now();
 
         let store = Store::discover(tmp.path()).unwrap();
@@ -248,7 +281,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = decide(tmp.path(), "../escape", "x", "y", None, &[]).unwrap_err();
+        let err = decide(tmp.path(), "../escape", "x", "y", &[]).unwrap_err();
         assert!(matches!(err, Error::InvalidName(_)));
     }
 
@@ -257,7 +290,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        decide(tmp.path(), "project", "Test decision", "Testing", None, &[]).unwrap();
+        decide(tmp.path(), "project", "Test decision", "Testing", &[]).unwrap();
     }
 
     // ── remove decision ──────────────────────────────────────────────────
@@ -267,7 +300,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
 
         remove_decision(tmp.path(), "use-jwt").unwrap();
 
@@ -280,7 +313,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
 
         remove_decision(tmp.path(), "use-jwt").unwrap();
 
@@ -305,35 +338,25 @@ mod tests {
     }
 
     #[test]
-    fn remove_decision_warns_on_broken_supersede_chain() {
+    fn remove_decision_reports_lost_coverage() {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Session cookies", "Simple", None, &[]).unwrap();
         decide(
             tmp.path(),
             "auth",
-            "JWT tokens",
-            "Stateless",
-            Some("session-cookies"),
+            "Encrypt credentials at rest",
+            "Protect secrets from disk exposure",
             &[],
         )
         .unwrap();
 
-        // Removing session-cookies should succeed (with warning)
-        remove_decision(tmp.path(), "session-cookies").unwrap();
+        // The removed decision uniquely covered Security boundaries — the
+        // report branch must run and the removal must complete cleanly.
+        remove_decision(tmp.path(), "encrypt-credentials-at-rest").unwrap();
 
-        // jwt-tokens should still exist but its Supersedes edge is cleaned up
         let store = Store::discover(tmp.path()).unwrap();
-        let state = store.load_state().unwrap();
-        assert!(state.decisions.contains_key("jwt-tokens"));
-        assert!(
-            !state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.to == "session-cookies")
-        );
+        assert!(store.list_decisions().unwrap().is_empty());
     }
 
     #[test]
@@ -343,8 +366,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
-        decide(tmp.path(), "auth", "Token expiry", "15 min", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Token expiry", "15 min", &[]).unwrap();
 
         // Manually add DependsOn edge: token-expiry depends on use-jwt.
         let store = Store::discover(tmp.path()).unwrap();
@@ -379,8 +402,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
-        decide(tmp.path(), "auth", "Token refresh", "Rotate", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Token refresh", "Rotate", &[]).unwrap();
 
         // Create a pattern with exactly 2 member decisions.
         let store = Store::discover(tmp.path()).unwrap();
@@ -435,6 +458,232 @@ mod tests {
         }
     }
 
+    // ── bulk remove agent decisions ──────────────────────────────────────
+
+    /// Record a decision through the store write path so it carries a real
+    /// `BelongsTo` edge and an explicit attribution.
+    fn record(
+        store: &Store,
+        state: &mut store::ProjectState,
+        lock: &store::StoreLock,
+        component: &str,
+        choice: &str,
+        attribution: Attribution,
+    ) -> String {
+        store
+            .record_decision(
+                lock,
+                state,
+                RecordDecisionParams {
+                    component,
+                    choice,
+                    reason: "Recorded for a bulk-removal test",
+                    alternatives: &[],
+                    depends_on: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution,
+                    code_refs: &[],
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn remove_agent_decisions_removes_only_agent_decisions() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Human choice",
+            Attribution::User,
+        );
+        record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent one",
+            Attribution::Agent,
+        );
+        record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent two",
+            Attribution::Agent,
+        );
+        drop(lock);
+
+        remove_agent_decisions(tmp.path(), "auth").unwrap();
+
+        let state = Store::discover(tmp.path()).unwrap().load_state().unwrap();
+        assert!(state.decisions.contains_key("human-choice"));
+        assert!(!state.decisions.contains_key("agent-one"));
+        assert!(!state.decisions.contains_key("agent-two"));
+    }
+
+    #[test]
+    fn remove_agent_decisions_aborts_when_any_blocked() {
+        use crate::store::schema::EdgeEntry;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        let base = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent base",
+            Attribution::Agent,
+        );
+        record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent spare",
+            Attribution::Agent,
+        );
+        let dependent = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Human gate",
+            Attribution::User,
+        );
+
+        // The human decision depends on one agent decision, so removing that
+        // agent decision is cascade-blocked — which must abort the batch.
+        state.graph_index.edges.push(EdgeEntry {
+            from: dependent,
+            to: base,
+            kind: EdgeKind::DependsOn,
+        });
+        store
+            .commit_batch(&lock, vec![], vec![], Some(state.graph_index.clone()))
+            .unwrap();
+        drop(lock);
+
+        let err = remove_agent_decisions(tmp.path(), "auth").unwrap_err();
+        assert!(matches!(err, Error::CascadeBlocked(_)));
+
+        // Nothing was removed — not even the unblocked agent decision.
+        let state = Store::discover(tmp.path()).unwrap().load_state().unwrap();
+        assert!(state.decisions.contains_key("agent-base"));
+        assert!(state.decisions.contains_key("agent-spare"));
+    }
+
+    #[test]
+    fn remove_agent_decisions_aborts_when_batch_would_shrink_a_pattern() {
+        use crate::store::RecordPatternParams;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        let one = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent one",
+            Attribution::Agent,
+        );
+        let two = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent two",
+            Attribution::Agent,
+        );
+        let three = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Human three",
+            Attribution::User,
+        );
+
+        // A three-member pattern. Removing the two agent members would leave one
+        // — below the minimum. Each member passes an isolated cascade check
+        // (three members each), so only a batch-aware pre-flight catches it.
+        store
+            .record_pattern(
+                &lock,
+                &mut state,
+                RecordPatternParams {
+                    name: "auth-shape",
+                    description: "Three related auth decisions",
+                    decisions: &[one, two, three],
+                    components: &[],
+                    tags: &[],
+                },
+            )
+            .unwrap();
+        drop(lock);
+
+        let err = remove_agent_decisions(tmp.path(), "auth").unwrap_err();
+        assert!(matches!(err, Error::CascadeBlocked(_)));
+
+        // Nothing removed — the batch aborted rather than partially applying,
+        // so the graph the write path committed stays valid (no violations).
+        let store = Store::discover(tmp.path()).unwrap();
+        let state = store.load_state().unwrap();
+        assert_eq!(
+            state.decisions.len(),
+            3,
+            "batch must abort, not partially apply"
+        );
+        assert!(
+            state.validate().is_empty(),
+            "the pattern must retain its members: {:?}",
+            state.validate()
+        );
+    }
+
+    #[test]
+    fn remove_agent_decisions_noop_when_none_present() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+        decide(tmp.path(), "auth", "Human only", "Reason enough here", &[]).unwrap();
+
+        remove_agent_decisions(tmp.path(), "auth").unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        assert_eq!(store.list_decisions().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn remove_agent_decisions_rejects_nonexistent_component() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+
+        let err = remove_agent_decisions(tmp.path(), "ghost").unwrap_err();
+        assert!(matches!(err, Error::ComponentNotFound(ref n) if n == "ghost"));
+    }
+
     #[test]
     fn remove_decision_allows_with_constrains_edge() {
         use crate::store::schema::EdgeEntry;
@@ -442,16 +691,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Short lived tokens",
-            "15 min",
-            None,
-            &[],
-        )
-        .unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Short lived tokens", "15 min", &[]).unwrap();
 
         // Manually add Constrains edge: short-lived-tokens constrains use-jwt.
         let store = Store::discover(tmp.path()).unwrap();

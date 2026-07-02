@@ -88,6 +88,7 @@ fn generate_fixture(n_components: usize) -> Fixture {
                     attribution: Attribution::User,
                     created,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -170,6 +171,7 @@ fn generate_fixture(n_components: usize) -> Fixture {
                         attribution: Attribution::Agent,
                         created,
                         code_refs: vec![],
+                        history: vec![],
                     },
                 }),
             );
@@ -253,6 +255,7 @@ fn sample_decision_toml() -> String {
             attribution: Attribution::User,
             created: ts(),
             code_refs: vec![],
+            history: vec![],
         },
     })
     .unwrap()

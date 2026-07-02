@@ -1,12 +1,11 @@
 use serde_json::Value;
 
-use crate::store::graph::Direction;
 use crate::store::limits::{MAX_CHOICE_BYTES, MIN_REASON_BYTES};
-use crate::store::schema::EdgeKind;
+use crate::store::schema::{Attribution, DecisionFile};
 use crate::store::{self, Store};
+use crate::workflow::concerns;
 
-use super::write::{opt_str, parse_code_refs, record_decision, require_str};
-use crate::store::schema::Attribution;
+use super::write::{opt_str, opt_str_array, parse_code_refs, require_str};
 
 // ── remove_decision ─────────────────────────────────────────────────────────
 
@@ -50,11 +49,19 @@ pub(crate) fn remove_decision(
         }));
     }
 
+    // Capture the decision before the write path deletes it — its content and
+    // component are needed to report the concern coverage the removal erases.
+    let removed = std::sync::Arc::clone(&state.decisions[name]);
+    let component = removed.decision.component.clone();
+
     // Execute removal via shared write path.
     let lock = store.lock().map_err(|e| e.to_string())?;
     store
         .remove_decision(&lock, state, name)
         .map_err(|e| e.to_string())?;
+    drop(lock);
+
+    let coverage_impact = coverage_impact(state, &removed, &component);
 
     Ok(serde_json::json!({
         "removed": true,
@@ -72,7 +79,30 @@ pub(crate) fn remove_decision(
                 "target": c.target,
             }))
             .collect::<Vec<_>>(),
+        "coverage_impact": coverage_impact,
     }))
+}
+
+/// Concern coverage delta for the component after a decision is removed.
+///
+/// `lost_coverage` names areas the removed decision was the last to cover;
+/// the remaining counts partition every concern area across the decisions
+/// still belonging to the component.
+fn coverage_impact(state: &store::ProjectState, removed: &DecisionFile, component: &str) -> Value {
+    // Baseline includes project rules, matching get_context — a concern a
+    // project-wide rule still covers must not be reported as lost.
+    let remaining = state.graph().coverage_baseline(component);
+
+    let lost = concerns::coverage_lost(removed, &remaining);
+    let (covered, uncovered) = concerns::compute_concern_coverage(&remaining);
+
+    serde_json::json!({
+        "component": component,
+        "lost_coverage": lost,
+        "remaining_covered": covered.len(),
+        "remaining_uncovered": uncovered.len(),
+        "total_concerns": concerns::CONCERNS.len(),
+    })
 }
 
 // ── update_decision ─────────────────────────────────────────────────────────
@@ -90,16 +120,17 @@ pub(crate) fn update_decision(
     }
 
     match mode {
-        "amend" => amend_decision(store, state, name, args),
-        "supersede" => supersede_decision(store, state, name, args),
-        _ => Err(format!(
-            "invalid mode `{mode}` — expected \"amend\" or \"supersede\""
+        "revise" => revise_decision(store, state, name, args),
+        "promote" => promote_decision(store, state, name),
+        other => Err(format!(
+            "invalid mode `{other}` — expected: revise, promote"
         )),
     }
 }
 
-/// Small correction: edit the file in place. `created` timestamp unchanged.
-fn amend_decision(
+/// Edit a decision in place, versioning the prior choice and reason into
+/// history. The name, `created` timestamp, and every edge survive unchanged.
+fn revise_decision(
     store: &Store,
     state: &mut store::ProjectState,
     name: &str,
@@ -107,24 +138,36 @@ fn amend_decision(
 ) -> Result<Value, String> {
     let new_choice = opt_str(args, "choice")?;
     let new_reason = opt_str(args, "reason")?;
-    let new_code_refs = parse_code_refs(args)?;
-    let code_refs_param =
-        if new_code_refs.is_empty() && !args.get("code_refs").is_some_and(|v| v.is_array()) {
+
+    // Distinguish an omitted field from an empty one: a missing `tags`/
+    // `code_refs` key leaves the current values intact, while an explicit
+    // (possibly empty) array replaces them.
+    let new_tags = if args.get("tags").is_some_and(|v| v.is_array()) {
+        Some(opt_str_array(args, "tags")?)
+    } else {
+        None
+    };
+    let parsed_refs = parse_code_refs(args)?;
+    let new_code_refs =
+        if parsed_refs.is_empty() && !args.get("code_refs").is_some_and(|v| v.is_array()) {
             None
         } else {
-            Some(new_code_refs)
+            Some(parsed_refs)
         };
 
-    if new_choice.is_none() && new_reason.is_none() && code_refs_param.is_none() {
-        return Err("amend requires at least one of `choice`, `reason`, or `code_refs`".into());
+    if new_choice.is_none() && new_reason.is_none() && new_tags.is_none() && new_code_refs.is_none()
+    {
+        return Err(
+            "revise requires at least one of `choice`, `reason`, `tags`, or `code_refs`".into(),
+        );
     }
 
-    // Quality floor: amended values must meet the same bar as new decisions.
+    // Quality floor: revised values must meet the same bar as new decisions.
     if let Some(c) = new_choice
         && c.len() > MAX_CHOICE_BYTES
     {
         return Err(format!(
-            "choice must be ≤{MAX_CHOICE_BYTES} characters ({} given)",
+            "choice must be ≤{MAX_CHOICE_BYTES} bytes ({} given)",
             c.len(),
         ));
     }
@@ -132,127 +175,65 @@ fn amend_decision(
         && r.len() < MIN_REASON_BYTES
     {
         return Err(format!(
-            "reason must be at least {MIN_REASON_BYTES} characters ({} given)",
+            "reason must be at least {MIN_REASON_BYTES} bytes ({} given)",
             r.len(),
         ));
     }
 
     let lock = store.lock().map_err(|e| e.to_string())?;
     store
-        .amend_decision(
+        .revise_decision(
             &lock,
             state,
             name,
-            store::AmendDecisionParams {
+            store::ReviseDecisionParams {
                 choice: new_choice,
                 reason: new_reason,
-                tags: None,
-                code_refs: code_refs_param.as_deref(),
+                tags: new_tags.as_deref(),
+                code_refs: new_code_refs.as_deref(),
             },
         )
         .map_err(|e| e.to_string())?;
+    drop(lock);
 
-    // Collect affected patterns and decisions.
-    let (affected_patterns, affected_decisions) = collect_affected(state.graph(), name);
+    let history_length = state
+        .decisions
+        .get(name)
+        .map_or(0, |d| d.decision.history.len());
 
     Ok(serde_json::json!({
         "name": name,
+        "revised": true,
+        "history_length": history_length,
         "path": store.decision_path(name).display().to_string(),
-        "affected_patterns": affected_patterns,
-        "affected_decisions": affected_decisions,
     }))
 }
 
-/// Substantive change: create a new decision that supersedes the old one.
-fn supersede_decision(
+/// Mark an agent decision as human-reviewed by flipping its attribution to
+/// `user`. Rejects decisions already attributed to the user.
+fn promote_decision(
     store: &Store,
     state: &mut store::ProjectState,
-    old_name: &str,
-    args: &Value,
+    name: &str,
 ) -> Result<Value, String> {
-    let old_dec = state
+    let already_user = state
         .decisions
-        .get(old_name)
-        .ok_or_else(|| format!("decision `{old_name}` does not exist"))?;
-
-    let new_choice = opt_str(args, "choice")?;
-    let new_reason = opt_str(args, "reason")?;
-
-    if new_choice.is_none() && new_reason.is_none() {
-        return Err("supersede requires at least one of `choice` or `reason`".into());
+        .get(name)
+        .is_some_and(|d| d.decision.attribution == Attribution::User);
+    if already_user {
+        return Err(format!("decision `{name}` already has attribution=user"));
     }
 
-    let choice = new_choice.unwrap_or(&old_dec.decision.choice);
-    let reason = new_reason.unwrap_or(&old_dec.decision.reason);
-
-    let component = old_dec.decision.component.clone();
-    let tags = old_dec.decision.tags.clone();
-    let old_code_refs = old_dec.decision.code_refs.clone();
-    let attribution = match old_dec.decision.attribution {
-        Attribution::User => "user",
-        Attribution::Agent => "agent",
-    };
-
-    // Resolve code_refs: inherit from old decision, override if explicitly provided.
-    let new_code_refs = parse_code_refs(args)?;
-    let resolved_refs =
-        if new_code_refs.is_empty() && !args.get("code_refs").is_some_and(|v| v.is_array()) {
-            store::code_refs_to_json(&old_code_refs)
-        } else {
-            store::code_refs_to_json(&new_code_refs)
-        };
-
-    // Delegate to record_decision with supersedes set.
-    let record_args = serde_json::json!({
-        "component": component,
-        "choice": choice,
-        "reason": reason,
-        "supersedes": old_name,
-        "tags": tags,
-        "attribution": attribution,
-        "code_refs": resolved_refs,
-    });
-
-    let result = record_decision(store, state, &record_args)?;
-    let new_name = result["name"].as_str().unwrap_or_default();
-
-    // Collect affected info from the OLD decision.
-    let (affected_patterns, affected_decisions) = collect_affected(state.graph(), old_name);
+    let lock = store.lock().map_err(|e| e.to_string())?;
+    store
+        .promote_decision(&lock, state, name)
+        .map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
-        "name": new_name,
-        "superseded": old_name,
-        "path": result["path"],
-        "affected_patterns": affected_patterns,
-        "affected_decisions": affected_decisions,
+        "name": name,
+        "promoted": true,
+        "attribution": "user",
     }))
-}
-
-/// Collect pattern and decision names affected by edges involving a decision.
-fn collect_affected(
-    graph: &crate::store::graph::InMemoryGraph,
-    decision: &str,
-) -> (Vec<String>, Vec<String>) {
-    let involved = graph.edges_involving(decision);
-
-    let patterns: Vec<String> = involved
-        .iter()
-        .filter(|(_, e, d)| e.kind == EdgeKind::MemberOf && *d == Direction::Reverse)
-        .map(|(other, _, _)| other.to_string())
-        .collect();
-
-    let decisions: Vec<String> = involved
-        .iter()
-        .filter(|(_, e, d)| {
-            matches!(
-                e.kind,
-                EdgeKind::DependsOn | EdgeKind::Constrains | EdgeKind::Supersedes
-            ) && *d == Direction::Reverse
-        })
-        .map(|(other, _, _)| other.to_string())
-        .collect();
-
-    (patterns, decisions)
 }
 
 #[cfg(test)]
@@ -350,17 +331,114 @@ mod tests {
         assert!(err.contains("ghost"));
     }
 
-    // ── update_decision ─────────────────────────────────────────────────
+    #[test]
+    fn remove_decision_reports_coverage_impact() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "JWT security tokens", "reason": "Authentication boundary protection", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let result = remove_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-security-tokens" }),
+        )
+        .unwrap();
+        assert_eq!(result["removed"], true);
+
+        let impact = &result["coverage_impact"];
+        assert_eq!(impact["component"], "auth");
+        assert_eq!(impact["total_concerns"], concerns::CONCERNS.len());
+        assert_eq!(impact["remaining_uncovered"], concerns::CONCERNS.len());
+        assert_eq!(impact["remaining_covered"], 0);
+
+        let lost = impact["lost_coverage"].as_array().unwrap();
+        assert!(
+            lost.iter().any(|c| c == "Security boundaries"),
+            "removing the only security decision must report it as lost: {lost:?}"
+        );
+    }
 
     #[test]
-    fn update_decision_amend_choice() {
+    fn remove_decision_no_lost_coverage_when_area_still_covered() {
+        let (_tmp, store, mut state) = setup();
+        record_decision(
+            &store,
+            &mut state,
+            &json!({ "component": "auth", "choice": "JWT security tokens", "reason": "Authentication boundary protection", "attribution": "user" }),
+        )
+        .unwrap();
+        record_decision(
+            &store,
+            &mut state,
+            &json!({ "component": "auth", "choice": "OAuth delegated flow", "reason": "External identity security provider", "attribution": "user" }),
+        )
+        .unwrap();
+
+        let result = remove_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-security-tokens" }),
+        )
+        .unwrap();
+
+        let impact = &result["coverage_impact"];
+        let lost = impact["lost_coverage"].as_array().unwrap();
+        assert!(
+            !lost.iter().any(|c| c == "Security boundaries"),
+            "a remaining security decision keeps the area covered: {lost:?}"
+        );
+        assert_eq!(impact["remaining_covered"], 1);
+    }
+
+    #[test]
+    fn remove_decision_no_lost_coverage_when_project_rule_covers_area() {
+        let (_tmp, store, mut state) = setup();
+        // A project-wide security rule covers the same concern as the
+        // component's only security decision.
+        record_decision(
+            &store,
+            &mut state,
+            &json!({ "component": "project", "choice": "Security boundaries enforced across every module", "reason": "Authentication and authorization security boundary protection", "attribution": "user" }),
+        )
+        .unwrap();
+        record_decision(
+            &store,
+            &mut state,
+            &json!({ "component": "auth", "choice": "JWT security tokens", "reason": "Authentication boundary protection", "attribution": "user" }),
+        )
+        .unwrap();
+
+        let result = remove_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-security-tokens" }),
+        )
+        .unwrap();
+
+        let impact = &result["coverage_impact"];
+        let lost = impact["lost_coverage"].as_array().unwrap();
+        assert!(
+            !lost.iter().any(|c| c == "Security boundaries"),
+            "a project-wide security rule keeps the area covered: {lost:?}"
+        );
+        assert!(
+            impact["remaining_covered"].as_u64().unwrap() >= 1,
+            "the project rule counts toward remaining coverage"
+        );
+    }
+
+    // ── update_decision: revise ──────────────────────────────────────────
+
+    #[test]
+    fn update_decision_revise_choice() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "Use JWT v2" });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "Use JWT v2" });
         let result = update_decision(&store, &mut state, &args).unwrap();
         assert_eq!(result["name"], "use-jwt");
+        assert_eq!(result["revised"], true);
 
         let dec = state.decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.choice, "Use JWT v2");
@@ -368,118 +446,70 @@ mod tests {
     }
 
     #[test]
-    fn update_decision_amend_reason() {
+    fn update_decision_revise_grows_history() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "reason": "Better reason" });
+        let first = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "use-jwt", "mode": "revise", "choice": "Use OAuth" }),
+        )
+        .unwrap();
+        assert_eq!(first["history_length"], 1);
+
+        let second = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "use-jwt", "mode": "revise", "reason": "Delegated identity provider" }),
+        )
+        .unwrap();
+        assert_eq!(second["history_length"], 2);
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        // Oldest first: history traces the decision's evolution.
+        assert_eq!(dec.decision.history[0].choice, "Use JWT");
+        assert_eq!(dec.decision.history[1].choice, "Use OAuth");
+    }
+
+    #[test]
+    fn update_decision_revise_reason() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "revise", "reason": "Better reason text" });
         let result = update_decision(&store, &mut state, &args).unwrap();
         assert_eq!(result["name"], "use-jwt");
 
         let dec = state.decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.choice, "Use JWT"); // unchanged
-        assert_eq!(dec.decision.reason, "Better reason");
+        assert_eq!(dec.decision.reason, "Better reason text");
     }
 
     #[test]
-    fn update_decision_amend_preserves_timestamp() {
+    fn update_decision_revise_preserves_timestamp() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
         let original_ts = state.decisions["use-jwt"].decision.created;
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "JWT v2" });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "JWT v2" });
         update_decision(&store, &mut state, &args).unwrap();
 
         assert_eq!(state.decisions["use-jwt"].decision.created, original_ts);
     }
 
     #[test]
-    fn update_decision_amend_rejects_no_changes() {
+    fn update_decision_revise_rejects_no_changes() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend" });
+        let args = json!({ "name": "use-jwt", "mode": "revise" });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(err.contains("at least one"));
-    }
-
-    #[test]
-    fn update_decision_supersede_creates_new() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Session cookies", "reason": "Simple session-based model", "attribution": "user" });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "session-cookies",
-            "mode": "supersede",
-            "choice": "JWT tokens",
-            "reason": "Stateless, no server session",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-        assert_ne!(new_name, "session-cookies");
-
-        // Old decision still exists.
-        assert!(state.decisions.contains_key("session-cookies"));
-        // New decision exists.
-        assert!(state.decisions.contains_key(new_name));
-        // Supersedes edge exists.
-        assert!(state.graph_index.edges.iter().any(|e| e.from == new_name
-            && e.to == "session-cookies"
-            && e.kind == EdgeKind::Supersedes));
-    }
-
-    #[test]
-    fn update_decision_supersede_inherits_component() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "use-jwt",
-            "mode": "supersede",
-            "choice": "Use PASETO",
-            "reason": "Better defaults",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-        let new_dec = state.decisions.get(new_name).unwrap();
-        assert_eq!(new_dec.decision.component, "auth");
-    }
-
-    #[test]
-    fn update_decision_supersede_carries_tags() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({
-            "component": "auth",
-            "choice": "Use JWT",
-            "reason": "Stateless, no server session",
-            "tags": ["security", "auth"],
-            "attribution": "user",
-        });
-        record_decision(&store, &mut state, &d).unwrap();
-        assert_eq!(
-            state.decisions["use-jwt"].decision.tags,
-            vec!["security", "auth"]
-        );
-
-        let args = json!({
-            "name": "use-jwt",
-            "mode": "supersede",
-            "choice": "Use PASETO",
-            "reason": "Better defaults",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-        let new_dec = state.decisions.get(new_name).unwrap();
-        assert_eq!(
-            new_dec.decision.tags,
-            vec!["security", "auth"],
-            "supersede must carry tags forward"
-        );
     }
 
     #[test]
@@ -494,11 +524,134 @@ mod tests {
     }
 
     #[test]
+    fn update_decision_rejects_legacy_amend_mode() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "X" });
+        let err = update_decision(&store, &mut state, &args).unwrap_err();
+        assert!(
+            err.contains("invalid mode"),
+            "amend is no longer a mode: {err}"
+        );
+    }
+
+    #[test]
+    fn update_decision_rejects_legacy_supersede_mode() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "supersede", "choice": "X" });
+        let err = update_decision(&store, &mut state, &args).unwrap_err();
+        assert!(
+            err.contains("invalid mode"),
+            "supersede is no longer a mode: {err}"
+        );
+    }
+
+    #[test]
     fn update_decision_rejects_nonexistent() {
         let (_tmp, store, mut state) = setup();
-        let args = json!({ "name": "ghost", "mode": "amend", "choice": "X" });
+        let args = json!({ "name": "ghost", "mode": "revise", "choice": "X" });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(err.contains("ghost"));
+    }
+
+    // ── update_decision: promote ─────────────────────────────────────────
+
+    #[test]
+    fn update_decision_promote_flips_agent_to_user() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "agent" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "promote" });
+        let result = update_decision(&store, &mut state, &args).unwrap();
+        assert_eq!(result["promoted"], true);
+        assert_eq!(result["attribution"], "user");
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        assert_eq!(dec.decision.attribution, Attribution::User);
+    }
+
+    #[test]
+    fn update_decision_promote_rejects_user() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "promote" });
+        let err = update_decision(&store, &mut state, &args).unwrap_err();
+        assert!(err.contains("already"), "{err}");
+    }
+
+    #[test]
+    fn update_decision_promote_leaves_no_history() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "agent" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "use-jwt", "mode": "promote" }),
+        )
+        .unwrap();
+
+        assert!(state.decisions["use-jwt"].decision.history.is_empty());
+    }
+
+    // ── full decision lifecycle ───────────────────────────────────────
+
+    #[test]
+    fn record_revise_history_promote_lifecycle() {
+        let (_tmp, store, mut state) = setup();
+
+        // Record an agent decision.
+        let d = json!({ "component": "auth", "choice": "JWT tokens", "reason": "Stateless authentication", "attribution": "agent" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        // Two substantive revisions grow the history chain.
+        let first = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-tokens", "mode": "revise", "choice": "JWT with refresh tokens" }),
+        )
+        .unwrap();
+        assert_eq!(first["history_length"], 1);
+
+        let second = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-tokens", "mode": "revise", "choice": "JWT with DPoP binding", "reason": "Proof-of-possession prevents token replay" }),
+        )
+        .unwrap();
+        assert_eq!(second["history_length"], 2);
+
+        // get_decision_history exposes the full chronological chain.
+        let history = crate::mcp::context::get_decision_history(&state, "jwt-tokens").unwrap();
+        assert_eq!(history["current"]["choice"], "JWT with DPoP binding");
+        assert_eq!(history["revision_count"], 2);
+        let entries = history["history"].as_array().unwrap();
+        assert_eq!(entries[0]["choice"], "JWT tokens");
+        assert_eq!(entries[1]["choice"], "JWT with refresh tokens");
+
+        // Promote flips the surviving decision from agent to user.
+        let promoted = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-tokens", "mode": "promote" }),
+        )
+        .unwrap();
+        assert_eq!(promoted["attribution"], "user");
+        assert_eq!(
+            state.decisions["jwt-tokens"].decision.attribution,
+            Attribution::User
+        );
+        // History survives the promotion untouched.
+        assert_eq!(state.decisions["jwt-tokens"].decision.history.len(), 2);
     }
 
     // ── no workflow hints ─────────────────────────────────────────────
@@ -515,68 +668,66 @@ mod tests {
     }
 
     #[test]
-    fn amend_no_workflow() {
+    fn revise_no_workflow() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "Use JWT v2" });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "Use JWT v2" });
         let result = update_decision(&store, &mut state, &args).unwrap();
         assert!(result.get("workflow").is_none());
     }
 
+    // ── revise quality floor ──────────────────────────────────────────
+
     #[test]
-    fn supersede_no_workflow() {
+    fn revise_rejects_short_reason() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({
-            "name": "use-jwt",
-            "mode": "supersede",
-            "choice": "Use PASETO",
-            "reason": "Better defaults",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        assert!(result.get("workflow").is_none());
-        assert!(result.get("superseded").is_some());
-    }
-
-    // ── amend quality floor ───────────────────────────────────────────
-
-    #[test]
-    fn amend_rejects_short_reason() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({ "name": "use-jwt", "mode": "amend", "reason": "ok" });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "reason": "ok" });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(
-            err.contains("at least") && err.contains("characters"),
-            "amend should enforce quality floor: {err}"
+            err.contains("at least") && err.contains("bytes"),
+            "revise should enforce quality floor: {err}"
         );
     }
 
     #[test]
-    fn amend_rejects_long_choice() {
+    fn revise_rejects_long_choice() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let long = "x".repeat(201);
-        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": long });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": long });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(
             err.contains("200"),
-            "amend should enforce choice length: {err}"
+            "revise should enforce choice length: {err}"
         );
     }
 
-    // ── code_refs ─────────────────────────────────────────────────────
+    // ── revise: tags and code_refs ────────────────────────────────────
 
     #[test]
-    fn amend_code_refs() {
+    fn revise_tags_leaves_no_history() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "revise", "tags": ["security", "auth"] });
+        let result = update_decision(&store, &mut state, &args).unwrap();
+        assert_eq!(result["history_length"], 0);
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        assert_eq!(dec.decision.tags, vec!["security", "auth"]);
+        assert!(dec.decision.history.is_empty());
+    }
+
+    #[test]
+    fn revise_code_refs() {
         let (_tmp, store, mut state) = setup();
         let d = json!({
             "component": "auth",
@@ -588,7 +739,7 @@ mod tests {
 
         let args = json!({
             "name": "use-jwt",
-            "mode": "amend",
+            "mode": "revise",
             "code_refs": [
                 { "file": "src/auth/jwt.rs", "symbol": "verify" },
             ],
@@ -601,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn amend_code_refs_replaces_existing() {
+    fn revise_code_refs_replaces_existing() {
         let (_tmp, store, mut state) = setup();
         let d = json!({
             "component": "auth",
@@ -614,7 +765,7 @@ mod tests {
 
         let args = json!({
             "name": "use-jwt",
-            "mode": "amend",
+            "mode": "revise",
             "code_refs": [{ "file": "src/new.rs" }],
         });
         update_decision(&store, &mut state, &args).unwrap();
@@ -625,7 +776,7 @@ mod tests {
     }
 
     #[test]
-    fn amend_empty_code_refs_clears() {
+    fn revise_empty_code_refs_clears() {
         let (_tmp, store, mut state) = setup();
         let d = json!({
             "component": "auth",
@@ -639,7 +790,7 @@ mod tests {
 
         let args = json!({
             "name": "use-jwt",
-            "mode": "amend",
+            "mode": "revise",
             "code_refs": [],
         });
         update_decision(&store, &mut state, &args).unwrap();
@@ -649,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn amend_without_code_refs_key_preserves_existing() {
+    fn revise_without_code_refs_key_preserves_existing() {
         let (_tmp, store, mut state) = setup();
         let d = json!({
             "component": "auth",
@@ -660,10 +811,10 @@ mod tests {
         });
         record_decision(&store, &mut state, &d).unwrap();
 
-        // Amend an unrelated field — omitting code_refs must leave refs intact.
+        // Revise an unrelated field — omitting code_refs must leave refs intact.
         let args = json!({
             "name": "use-jwt",
-            "mode": "amend",
+            "mode": "revise",
             "reason": "Stateless, avoids a server-side session store",
         });
         update_decision(&store, &mut state, &args).unwrap();
@@ -671,64 +822,5 @@ mod tests {
         let dec = state.decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.code_refs.len(), 1);
         assert_eq!(dec.decision.code_refs[0].file, "src/keep.rs");
-    }
-
-    #[test]
-    fn supersede_inherits_code_refs() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({
-            "component": "auth",
-            "choice": "Session cookies",
-            "reason": "Simple session-based model",
-            "attribution": "user",
-            "code_refs": [
-                { "file": "src/auth/session.rs", "symbol": "create_session" },
-            ],
-        });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "session-cookies",
-            "mode": "supersede",
-            "choice": "JWT tokens",
-            "reason": "Stateless, no server session",
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-
-        let new_dec = state.decisions.get(new_name).unwrap();
-        assert_eq!(
-            new_dec.decision.code_refs.len(),
-            1,
-            "supersede must inherit code_refs"
-        );
-        assert_eq!(new_dec.decision.code_refs[0].file, "src/auth/session.rs");
-    }
-
-    #[test]
-    fn supersede_explicit_code_refs_override() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({
-            "component": "auth",
-            "choice": "Session cookies",
-            "reason": "Simple session-based model",
-            "attribution": "user",
-            "code_refs": [{ "file": "src/old.rs" }],
-        });
-        record_decision(&store, &mut state, &d).unwrap();
-
-        let args = json!({
-            "name": "session-cookies",
-            "mode": "supersede",
-            "choice": "JWT tokens",
-            "reason": "Stateless, no server session",
-            "code_refs": [{ "file": "src/new.rs", "symbol": "verify" }],
-        });
-        let result = update_decision(&store, &mut state, &args).unwrap();
-        let new_name = result["name"].as_str().unwrap();
-
-        let new_dec = state.decisions.get(new_name).unwrap();
-        assert_eq!(new_dec.decision.code_refs.len(), 1);
-        assert_eq!(new_dec.decision.code_refs[0].file, "src/new.rs");
     }
 }

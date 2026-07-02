@@ -44,7 +44,7 @@ pub(crate) struct CreateConnection {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AmendDecision {
+pub(crate) struct ReviseDecision {
     choice: Option<String>,
     reason: Option<String>,
     tags: Option<Vec<String>>,
@@ -325,19 +325,23 @@ fn write_connection(state: Arc<MapState>, body: CreateConnection) -> ApiResult {
 pub(crate) async fn put_decision(
     State(state): State<Arc<MapState>>,
     Path(name): Path<String>,
-    Json(body): Json<AmendDecision>,
+    Json(body): Json<ReviseDecision>,
 ) -> ApiResult {
     let map_state = state.clone();
-    tokio::task::spawn_blocking(move || amend_decision(map_state, name, body))
+    tokio::task::spawn_blocking(move || revise_decision(map_state, name, body))
         .await
         .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
 }
 
-fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> ApiResult {
-    if body.choice.is_none() && body.reason.is_none() && body.tags.is_none() {
+fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> ApiResult {
+    if body.choice.is_none()
+        && body.reason.is_none()
+        && body.tags.is_none()
+        && body.code_refs.is_none()
+    {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
-            "at least one of choice, reason, or tags required",
+            "at least one of choice, reason, tags, or code_refs required",
         ));
     }
     if let Some(ref c) = body.choice {
@@ -346,7 +350,7 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
                 format!(
-                    "choice must be \u{2264}{MAX_CHOICE_BYTES} characters \
+                    "choice must be \u{2264}{MAX_CHOICE_BYTES} bytes \
                      ({} given)",
                     c.len()
                 ),
@@ -359,7 +363,7 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
                 format!(
-                    "reason must be at least {MIN_REASON_BYTES} characters \
+                    "reason must be at least {MIN_REASON_BYTES} bytes \
                      ({} given)",
                     r.trim().len()
                 ),
@@ -383,7 +387,7 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
             .map_err(|e| api_err(StatusCode::BAD_REQUEST, e.to_string()))?;
     }
 
-    let params = store::AmendDecisionParams {
+    let params = store::ReviseDecisionParams {
         choice: body.choice.as_deref(),
         reason: body.reason.as_deref(),
         tags: body.tags.as_deref(),
@@ -397,8 +401,15 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
     let mut ps = state.write_project_state();
     state
         .store
-        .amend_decision(&lock, &mut ps, &name, params)
-        .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .revise_decision(&lock, &mut ps, &name, params)
+        .map_err(|e| {
+            let status = match e {
+                crate::Error::DecisionNotFound(_) => StatusCode::NOT_FOUND,
+                crate::Error::Validation(_) => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            api_err(status, e.to_string())
+        })?;
 
     ws::broadcast(
         &state.ws_tx,
@@ -408,6 +419,7 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
                 "choice": body.choice,
                 "reason": body.reason,
                 "tags": body.tags,
+                "code_refs": body.code_refs.as_ref().map(|refs| store::code_refs_to_json(refs)),
             }),
         }],
     );

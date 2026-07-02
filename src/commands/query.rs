@@ -79,8 +79,8 @@ pub fn check(cwd: &Path, rebuild: bool) -> Result<()> {
 ///
 /// Deletes the existing index and reconstructs it from the node directories.
 /// Only `BelongsTo` edges can be inferred from `decision.component`; all other
-/// edge types (ConnectsTo, DependsOn, Constrains, Supersedes, MemberOf,
-/// AppliesTo) are non-inferable and will be lost.
+/// edge types (ConnectsTo, DependsOn, Constrains, MemberOf, AppliesTo) are
+/// non-inferable and will be lost.
 fn check_rebuild(cwd: &Path) -> Result<()> {
     let store = discover_store(cwd)?;
     let lock = store.lock()?;
@@ -168,7 +168,7 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
         add_component(tmp.path(), "database", None).unwrap();
         add_connection(tmp.path(), "auth", "database").unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
 
         check(tmp.path(), true).unwrap();
 
@@ -218,7 +218,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", None, &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let issues = store.verify_hashes().unwrap();
@@ -331,7 +331,6 @@ mod tests {
                     choice: "Use JWT",
                     reason: "Stateless",
                     alternatives: &[],
-                    supersedes: None,
                     depends_on: &[],
                     constrains: &[],
                     tags: &["security".into(), "auth".into()],
@@ -392,7 +391,6 @@ mod tests {
             "project",
             "Rust single binary",
             "No runtime deps",
-            None,
             &[],
         )
         .unwrap();
@@ -401,11 +399,10 @@ mod tests {
             "decision-store",
             "TOML with serde",
             "Git-diffable",
-            None,
             &[],
         )
         .unwrap();
-        decide(tmp.path(), "cli", "clap derive", "Type-safe", None, &[]).unwrap();
+        decide(tmp.path(), "cli", "clap derive", "Type-safe", &[]).unwrap();
 
         check(tmp.path(), false).unwrap();
 

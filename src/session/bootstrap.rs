@@ -51,6 +51,7 @@ pub(crate) async fn run(
             None,
             Some(Mode::Agent),
             &evidence,
+            chrono::Utc::now(),
         )
         .map_err(Error::Validation)?;
 
@@ -105,6 +106,7 @@ pub(crate) async fn run_component(
             None,
             Some(Mode::Agent),
             &evidence,
+            chrono::Utc::now(),
         )
         .map_err(Error::Validation)?;
 
@@ -263,7 +265,6 @@ fn record_decisions(
                 choice: &dec.choice,
                 reason: &dec.reason,
                 alternatives: &dec.alternatives,
-                supersedes: None,
                 depends_on: &[],
                 constrains: &[],
                 tags: &[],

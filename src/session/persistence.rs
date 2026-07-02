@@ -54,6 +54,16 @@ impl Session {
             })
             .collect()
     }
+
+    /// Drop recorded decision names whose decisions no longer exist.
+    ///
+    /// A resumed session can reference decisions that were removed out of
+    /// band — by `gc` or `remove decision` — between runs. Pruning them on
+    /// load keeps the recorded count and any downstream reads honest instead
+    /// of carrying names that resolve to nothing.
+    pub fn retain_recorded_decisions(&mut self, exists: impl Fn(&str) -> bool) {
+        self.decisions_recorded.retain(|name| exists(name));
+    }
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────────
@@ -184,6 +194,18 @@ mod tests {
         assert_eq!(restored.component, "auth");
         assert_eq!(restored.messages.len(), 2);
         assert_eq!(restored.decisions_recorded, vec!["use-jwt"]);
+    }
+
+    #[test]
+    fn retain_recorded_decisions_drops_missing_names() {
+        let mut session = Session::new("auth");
+        session.decisions_recorded.push("use-jwt".into());
+        session.decisions_recorded.push("removed-since".into());
+        session.decisions_recorded.push("rate-limit".into());
+
+        session.retain_recorded_decisions(|name| name != "removed-since");
+
+        assert_eq!(session.decisions_recorded, vec!["use-jwt", "rate-limit"]);
     }
 
     #[test]

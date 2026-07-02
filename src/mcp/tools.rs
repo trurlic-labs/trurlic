@@ -163,6 +163,30 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 "inputSchema": { "type": "object", "properties": {} }
             },
             {
+                "name": "get_decision_history",
+                "description": "Trace how a decision evolved. Returns its \
+                    current choice, reason, attribution, and creation time, \
+                    plus every prior version in chronological order (oldest \
+                    first) and a count of revisions.",
+                "annotations": {
+                    "title": "Get decision history",
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Decision name (without .toml)."
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
                 "name": "validate_consistency",
                 "description": "Full graph integrity check. Same validation as `trurlic check`.",
                 "annotations": {
@@ -220,10 +244,6 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                             "type": "array",
                             "items": { "type": "string" },
                             "description": "Categorical tags for filtering."
-                        },
-                        "supersedes": {
-                            "type": "string",
-                            "description": "Decision name being replaced."
                         },
                         "attribution": {
                             "type": "string",
@@ -319,10 +339,11 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
             },
             {
                 "name": "update_decision",
-                "description": "Modify an existing decision. 'amend' edits in place \
-                    (typo, clarification). 'supersede' creates a new decision \
-                    replacing the old one (substantive change). Reports affected \
-                    patterns and decisions.",
+                "description": "Modify an existing decision in place. 'revise' \
+                    updates content and versions the previous choice/reason into \
+                    history. 'promote' marks an agent decision as human-reviewed \
+                    by changing its attribution to user. The decision's name and \
+                    every edge survive unchanged.",
                 "annotations": {
                     "title": "Update decision",
                     "readOnlyHint": false,
@@ -339,16 +360,21 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         },
                         "mode": {
                             "type": "string",
-                            "enum": ["amend", "supersede"],
-                            "description": "amend = edit in place; supersede = create replacement."
+                            "enum": ["revise", "promote"],
+                            "description": "revise: update content, previous version saved to history. promote: change attribution from agent to user (marks as human-reviewed)."
                         },
                         "choice": {
                             "type": "string",
-                            "description": "New choice text (at least one of choice/reason required)."
+                            "description": "New choice text (revise only, optional — omit to keep current)."
                         },
                         "reason": {
                             "type": "string",
-                            "description": "New reason text."
+                            "description": "New reason text (revise only, optional — omit to keep current)."
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "New tags (revise only, optional — omit to keep current)."
                         },
                         "code_refs": {
                             "type": "array",
@@ -366,7 +392,7 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                                 },
                                 "required": ["file"]
                             },
-                            "description": "Source code locations where this decision manifests. Only applies to amend mode."
+                            "description": "New code refs (revise only, optional — omit to keep current)."
                         }
                     },
                     "required": ["name", "mode"]
@@ -525,6 +551,7 @@ pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> 
         "advance" => dispatch_advance(state, args),
         "get_context" => dispatch_get_context(state, args),
         "check_pattern" => dispatch_check_pattern(state, args),
+        "get_decision_history" => dispatch_get_decision_history(state, args),
         "get_architecture" => tool_result(&context::get_architecture(state)),
         "validate_consistency" => tool_result(&write::validate_consistency(state)),
         "get_step_prompt" => dispatch_get_step_prompt(state, args),
@@ -581,6 +608,17 @@ fn dispatch_check_pattern(state: &ProjectState, args: &Value) -> ToolEnvelope {
         None => return tool_error("missing required parameter: description"),
     };
     tool_result(&context::check_pattern(state, description))
+}
+
+fn dispatch_get_decision_history(state: &ProjectState, args: &Value) -> ToolEnvelope {
+    let name = match args.get("name").and_then(|v| v.as_str()) {
+        Some(n) => n,
+        None => return tool_error("missing required parameter: name"),
+    };
+    match context::get_decision_history(state, name) {
+        Ok(result) => tool_result(&result),
+        Err(msg) => tool_error(&msg),
+    }
 }
 
 fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope {
@@ -657,7 +695,15 @@ fn dispatch_advance(state: &ProjectState, args: &Value) -> ToolEnvelope {
         })
         .unwrap_or_default();
 
-    match workflow::advance::advance(state, component, task_type, task, mode, &evidence_refs) {
+    match workflow::advance::advance(
+        state,
+        component,
+        task_type,
+        task,
+        mode,
+        &evidence_refs,
+        chrono::Utc::now(),
+    ) {
         Ok(result) => tool_result(&result),
         Err(msg) => tool_error(&msg),
     }
@@ -724,6 +770,7 @@ mod tests {
         assert!(names.contains(&"advance"));
         assert!(names.contains(&"get_context"));
         assert!(names.contains(&"check_pattern"));
+        assert!(names.contains(&"get_decision_history"));
         assert!(names.contains(&"get_architecture"));
         assert!(names.contains(&"validate_consistency"));
         assert!(names.contains(&"record_decision"));
@@ -811,6 +858,7 @@ mod tests {
         assert!(!is_write_tool("advance"));
         assert!(!is_write_tool("get_context"));
         assert!(!is_write_tool("check_pattern"));
+        assert!(!is_write_tool("get_decision_history"));
         assert!(!is_write_tool("get_architecture"));
         assert!(!is_write_tool("validate_consistency"));
         assert!(!is_write_tool("get_step_prompt"));
@@ -887,6 +935,7 @@ mod tests {
             "advance",
             "get_context",
             "check_pattern",
+            "get_decision_history",
             "get_architecture",
             "validate_consistency",
             "get_step_prompt",

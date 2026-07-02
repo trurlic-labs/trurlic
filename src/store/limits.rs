@@ -35,3 +35,9 @@ pub const MAX_CODE_REF_PATH_BYTES: usize = 500;
 
 /// Maximum byte length for a code reference symbol name.
 pub const MAX_CODE_REF_SYMBOL_BYTES: usize = 200;
+
+/// Maximum number of history entries retained per decision.
+/// History is a ring buffer: once full, revising a decision drops the
+/// oldest entry so a single long-lived decision cannot grow without bound.
+/// Twenty revisions of one decision is already well beyond normal use.
+pub const MAX_HISTORY_ENTRIES: usize = 20;

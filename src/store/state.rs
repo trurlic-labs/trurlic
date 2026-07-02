@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::{Error, Result};
@@ -27,6 +27,12 @@ pub struct ProjectState {
     pub decisions: BTreeMap<String, Arc<DecisionFile>>,
     pub patterns: BTreeMap<String, Arc<PatternFile>>,
     pub graph_index: GraphIndex,
+    /// Absolute path to the project directory (the parent of `.trurlic/`).
+    /// Decision `code_refs` are resolved against this root to detect
+    /// references to deleted files. [`Store::load_state`] fills it in;
+    /// states built directly by tests default to an empty path (which,
+    /// with no `code_refs`, never triggers staleness).
+    pub(crate) project_root: PathBuf,
     /// Cached in-memory graph. Kept in sync by
     /// [`Store::commit_with_graph`], which assigns the validated graph
     /// on successful commit. Writable only from within `store/`.
@@ -54,6 +60,7 @@ impl ProjectState {
             decisions,
             patterns,
             graph_index,
+            project_root: PathBuf::new(),
             graph,
         }
     }

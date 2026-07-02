@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -73,6 +74,11 @@ pub(crate) fn get_context(
 
     match depth {
         ContextDepth::Full => {
+            // Decisions whose code_refs all point at deleted files — each ref is
+            // stat'd on disk, so this runs only on the full brief that consumes
+            // it (health summary + stale flags), never the light constraints path.
+            let stale_names = stale_decision_names(&state.project_root, &component_decisions);
+
             let related_decisions = graph.related_decisions(component);
             let seeds: Vec<&str> = component_decisions
                 .iter()
@@ -89,6 +95,7 @@ pub(crate) fn get_context(
                 transitive_deps: &transitive_deps,
                 patterns: &patterns,
                 uncovered_concerns: &uncovered_concerns,
+                stale_names: &stale_names,
             });
 
             let mut seen: HashSet<&str> =
@@ -125,6 +132,7 @@ pub(crate) fn get_context(
                     "covered": covered_concerns,
                     "uncovered": uncovered_concerns,
                 },
+                "health": build_health(&component_decisions, stale_names.len()),
                 "brief": brief,
                 "status": status,
             }))
@@ -209,6 +217,9 @@ struct BriefParams<'a> {
     transitive_deps: &'a [(&'a Arc<str>, &'a DecisionFile)],
     patterns: &'a [(&'a Arc<str>, &'a PatternFile)],
     uncovered_concerns: &'a [&'a str],
+    /// Names of component decisions whose code_refs all point at deleted
+    /// files. Flagged inline so the agent knows the reference is untrustworthy.
+    stale_names: &'a HashSet<&'a str>,
 }
 
 /// Format the authoritative brief that coding agents consume directly.
@@ -260,12 +271,18 @@ fn build_brief(p: &BriefParams<'_>) -> String {
     if p.component_decisions.is_empty() {
         brief.push_str("- No decisions recorded yet.\n");
     } else {
-        for (_, d) in p.component_decisions {
+        for (name, d) in p.component_decisions {
             let suffix = attribution_suffix(d.decision.attribution);
             brief.push_str(&format!(
                 "- {} ({}){}\n",
                 d.decision.choice, d.decision.reason, suffix
             ));
+            if p.stale_names.contains(name.as_ref()) {
+                brief.push_str(STALE_DECISION_FLAG);
+            }
+            if d.decision.attribution == Attribution::Agent {
+                brief.push_str(AGENT_REVIEW_CALL_TO_ACTION);
+            }
             if !d.decision.code_refs.is_empty() {
                 brief.push_str(&format!(
                     "  Code: {}\n",
@@ -513,6 +530,106 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
         "total_decisions": state.decisions.len(),
         "total_patterns": state.patterns.len(),
     })
+}
+
+// ── get_decision_history ───────────────────────────────────────────────────
+
+/// Return a decision's current values alongside its revision history.
+///
+/// History is chronological (oldest first): each entry captures the
+/// choice and reason as they stood before a revision replaced them.
+/// `revision_count` equals the number of history entries — the number of
+/// times choice or reason has changed since the decision was recorded.
+pub(crate) fn get_decision_history(state: &ProjectState, name: &str) -> Result<Value, String> {
+    let dec = state
+        .decisions
+        .get(name)
+        .ok_or_else(|| format!("decision `{name}` does not exist"))?;
+    let d = &dec.decision;
+
+    Ok(serde_json::json!({
+        "name": name,
+        "current": {
+            "choice": d.choice,
+            "reason": d.reason,
+            "attribution": attribution_str(d.attribution),
+            "created": d.created,
+        },
+        "history": d.history,
+        "revision_count": d.history.len(),
+    }))
+}
+
+// ── Decision health ────────────────────────────────────────────────────────
+
+/// Follow-up line appended under agent-attributed decisions in the brief.
+/// Points the reader at the two ways to clear the unreviewed flag: confirm
+/// the decision as-is, or change it. Line continuations collapse to one line.
+const AGENT_REVIEW_CALL_TO_ACTION: &str = "  \u{2192} call update_decision(mode=\"promote\") to \
+     confirm, or update_decision(mode=\"revise\") to change\n";
+
+/// Inline flag appended under a decision whose every code_ref points at a
+/// file that no longer exists on disk — the recorded constraint has lost its
+/// anchor in the source and should be revised or removed.
+const STALE_DECISION_FLAG: &str = "  \u{26a0} STALE \u{2014} all referenced files deleted\n";
+
+/// Names of the decisions in `component_decisions` that are stale: every
+/// `code_ref` resolves to a file confirmed missing from disk, per the shared
+/// [`store::decision_refs_all_missing`] predicate.
+fn stale_decision_names<'a>(
+    project_root: &Path,
+    component_decisions: &[(&'a Arc<str>, &'a DecisionFile)],
+) -> HashSet<&'a str> {
+    component_decisions
+        .iter()
+        .filter(|(_, d)| store::decision_refs_all_missing(project_root, d))
+        .map(|&(name, _)| name.as_ref())
+        .collect()
+}
+
+/// Summarize the health of a component's decision set: how many decisions it
+/// carries, how many remain unreviewed agent decisions, how many are stale
+/// (referencing deleted files), and a single most-pressing warning.
+///
+/// `stale` is computed by the caller via [`stale_decision_names`] so the same
+/// pass feeds both this summary and the brief's inline flags. The counts drive
+/// the warning via [`health_warning`].
+fn build_health(component_decisions: &[(&Arc<str>, &DecisionFile)], stale: usize) -> Value {
+    let total = component_decisions.len();
+    let agent_unreviewed = component_decisions
+        .iter()
+        .filter(|(_, d)| d.decision.attribution == Attribution::Agent)
+        .count();
+
+    serde_json::json!({
+        "total": total,
+        "agent_unreviewed": agent_unreviewed,
+        "stale": stale,
+        "warning": health_warning(total, agent_unreviewed, stale),
+    })
+}
+
+/// Select the single most-pressing health warning by fixed precedence:
+/// decision overload first, then unreviewed agent decisions, then stale
+/// references. Returns `Null` when the decision set is healthy.
+fn health_warning(total: usize, agent_unreviewed: usize, stale: usize) -> Value {
+    const MAX_HEALTHY_DECISIONS: usize = 20;
+    const MAX_HEALTHY_AGENT_UNREVIEWED: usize = 5;
+
+    if total > MAX_HEALTHY_DECISIONS {
+        serde_json::json!(
+            "Too many decisions for this component — consider consolidating \
+             with revise or removing outdated ones"
+        )
+    } else if agent_unreviewed > MAX_HEALTHY_AGENT_UNREVIEWED {
+        serde_json::json!("Multiple agent decisions pending review")
+    } else if stale > 0 {
+        serde_json::json!(format!(
+            "{stale} decisions reference deleted files — consider removing or revising"
+        ))
+    } else {
+        Value::Null
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -952,6 +1069,7 @@ mod tests {
                     attribution: Attribution::User,
                     created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -1390,6 +1508,7 @@ mod tests {
                     attribution: Attribution::Agent,
                     created: ts,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -1429,6 +1548,276 @@ mod tests {
         assert_eq!(user_dec["attribution"], "user");
     }
 
+    // ── decision health ───────────────────────────────────────────────
+
+    #[test]
+    fn get_context_includes_health() {
+        let state = test_state();
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+        let health = &result["health"];
+        assert!(health["total"].is_number());
+        assert!(health["agent_unreviewed"].is_number());
+        assert!(health["stale"].is_number());
+        // auth carries a single user decision → healthy, no warning.
+        assert!(health["warning"].is_null());
+    }
+
+    #[test]
+    fn health_total_matches_decision_count() {
+        let state = test_state();
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+        let decision_count = result["decisions"].as_array().unwrap().len();
+        assert_eq!(result["health"]["total"], decision_count);
+    }
+
+    #[test]
+    fn health_counts_agent_unreviewed() {
+        use chrono::Utc;
+
+        let user = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "User choice".into(),
+                reason: "Confirmed".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc::now(),
+                code_refs: vec![],
+                history: vec![],
+            },
+        };
+        let agent = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "Agent choice".into(),
+                reason: "Inferred".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::Agent,
+                created: Utc::now(),
+                code_refs: vec![],
+                history: vec![],
+            },
+        };
+        let un: Arc<str> = Arc::from("user-dec");
+        let an: Arc<str> = Arc::from("agent-dec");
+        let decisions = vec![(&un, &user), (&an, &agent)];
+
+        let health = build_health(&decisions, 0);
+        assert_eq!(health["total"], 2);
+        assert_eq!(health["agent_unreviewed"], 1);
+        assert_eq!(health["stale"], 0);
+        assert!(health["warning"].is_null());
+    }
+
+    #[test]
+    fn health_warning_consolidate_when_over_twenty() {
+        let warning = health_warning(21, 0, 0);
+        assert!(warning.as_str().unwrap().contains("consolidating"));
+    }
+
+    #[test]
+    fn health_warning_agent_pending_over_five() {
+        let warning = health_warning(10, 6, 0);
+        assert_eq!(warning, "Multiple agent decisions pending review");
+    }
+
+    #[test]
+    fn health_warning_stale_refs() {
+        let warning = health_warning(5, 2, 3);
+        assert!(warning.as_str().unwrap().contains("deleted files"));
+    }
+
+    #[test]
+    fn health_warning_null_when_healthy() {
+        assert!(health_warning(5, 2, 0).is_null());
+    }
+
+    #[test]
+    fn health_warning_precedence_total_over_agent() {
+        // Overload dominates even when agent decisions also exceed threshold.
+        let warning = health_warning(25, 10, 5);
+        assert!(warning.as_str().unwrap().contains("consolidating"));
+    }
+
+    // ── staleness ─────────────────────────────────────────────────────
+
+    fn decision_with_refs(refs: Vec<CodeRef>) -> DecisionFile {
+        use chrono::Utc;
+        DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "Custom XML parser".into(),
+                reason: "Avoid libxml2 dependency".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc::now(),
+                code_refs: refs,
+                history: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn is_stale_when_all_refs_deleted() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dec = decision_with_refs(vec![
+            CodeRef {
+                file: "src/parsers/xml.rs".into(),
+                symbol: None,
+            },
+            CodeRef {
+                file: "src/parsers/dtd.rs".into(),
+                symbol: Some("validate".into()),
+            },
+        ]);
+        assert!(store::decision_refs_all_missing(tmp.path(), &dec));
+    }
+
+    #[test]
+    fn not_stale_when_any_ref_survives() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("live.rs"), "// present").unwrap();
+        let dec = decision_with_refs(vec![
+            CodeRef {
+                file: "live.rs".into(),
+                symbol: None,
+            },
+            CodeRef {
+                file: "gone.rs".into(),
+                symbol: None,
+            },
+        ]);
+        // A single surviving reference keeps the decision anchored.
+        assert!(!store::decision_refs_all_missing(tmp.path(), &dec));
+    }
+
+    #[test]
+    fn not_stale_without_code_refs() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dec = decision_with_refs(vec![]);
+        // No links means nothing to break — never stale.
+        assert!(!store::decision_refs_all_missing(tmp.path(), &dec));
+    }
+
+    #[test]
+    fn health_reports_and_flags_stale_decisions() {
+        use chrono::Utc;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = test_state();
+        state.project_root = tmp.path().to_path_buf();
+
+        // Anchor a decision entirely to a file absent from the project root.
+        state.decisions.insert(
+            "xml-parser".into(),
+            Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "auth".into(),
+                    choice: "Use custom XML parser".into(),
+                    reason: "Avoid libxml2 dependency".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::User,
+                    created: Utc::now(),
+                    code_refs: vec![CodeRef {
+                        file: "src/parsers/xml.rs".into(),
+                        symbol: None,
+                    }],
+                    history: vec![],
+                },
+            }),
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "xml-parser".into(),
+            kind: NodeKind::Decision,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "xml-parser".into(),
+            to: "auth".into(),
+            kind: EdgeKind::BelongsTo,
+        });
+        state.rebuild_graph();
+
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+
+        // Only the dead-ref decision counts; use-jwt has no code_refs.
+        assert_eq!(result["health"]["stale"], 1);
+        // With a small, reviewed set, staleness is the surfaced warning.
+        assert!(
+            result["health"]["warning"]
+                .as_str()
+                .unwrap()
+                .contains("deleted files"),
+            "stale refs should drive the health warning: {:?}",
+            result["health"]["warning"]
+        );
+        // The brief flags the specific decision inline.
+        let brief = result["brief"].as_str().unwrap();
+        assert!(
+            brief.contains("STALE"),
+            "brief must flag the stale decision: {brief}"
+        );
+    }
+
+    #[test]
+    fn brief_agent_decision_has_review_call_to_action() {
+        use chrono::{TimeZone, Utc};
+
+        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap();
+        let mut state = test_state();
+        state.decisions.insert(
+            "agent-dec".into(),
+            Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "auth".into(),
+                    choice: "Agent suggested approach".into(),
+                    reason: "Automated".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::Agent,
+                    created: ts,
+                    code_refs: vec![],
+                    history: vec![],
+                },
+            }),
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "agent-dec".into(),
+            kind: NodeKind::Decision,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "agent-dec".into(),
+            to: "auth".into(),
+            kind: EdgeKind::BelongsTo,
+        });
+        state.rebuild_graph();
+
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+        let brief = result["brief"].as_str().unwrap();
+
+        assert!(
+            brief.contains("update_decision(mode=\"promote\")"),
+            "agent decision must offer a promote call-to-action: {brief}"
+        );
+        assert!(
+            brief.contains("update_decision(mode=\"revise\")"),
+            "agent decision must offer a revise call-to-action: {brief}"
+        );
+        // The user decision must not carry the call-to-action.
+        let user_line = brief.lines().find(|l| l.contains("JWT with DPoP")).unwrap();
+        assert!(
+            !user_line.contains("promote"),
+            "user decision line must stay clean: {user_line}"
+        );
+    }
+
     // ── code_refs in brief ────────────────────────────────────────────
 
     #[test]
@@ -1453,10 +1842,12 @@ mod tests {
                         symbol: None,
                     },
                 ],
+                history: vec![],
             },
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
         let comp_decs = vec![(&name, &dec)];
+        let stale_names: HashSet<&str> = HashSet::new();
 
         let brief = build_brief(&BriefParams {
             component: "store",
@@ -1467,6 +1858,7 @@ mod tests {
             related_decisions: &[],
             patterns: &[],
             uncovered_concerns: &[],
+            stale_names: &stale_names,
         });
 
         assert!(
@@ -1488,10 +1880,12 @@ mod tests {
                 attribution: Attribution::User,
                 created: Utc::now(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
         let comp_decs = vec![(&name, &dec)];
+        let stale_names: HashSet<&str> = HashSet::new();
 
         let brief = build_brief(&BriefParams {
             component: "store",
@@ -1502,6 +1896,7 @@ mod tests {
             related_decisions: &[],
             patterns: &[],
             uncovered_concerns: &[],
+            stale_names: &stale_names,
         });
 
         assert!(
@@ -1526,6 +1921,7 @@ mod tests {
                     file: "src/store/write.rs".into(),
                     symbol: Some("commit_with_graph".into()),
                 }],
+                history: vec![],
             },
         };
         let name: Arc<str> = Arc::from("atomic-writes");
@@ -1537,6 +1933,78 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0]["file"], "src/store/write.rs");
         assert_eq!(refs[0]["symbol"], "commit_with_graph");
+    }
+
+    // ── get_decision_history ──────────────────────────────────────────
+
+    #[test]
+    fn get_decision_history_no_history_is_empty() {
+        let state = test_state();
+        // use-jwt is a freshly recorded decision — never revised.
+        let result = get_decision_history(&state, "use-jwt").unwrap();
+
+        assert_eq!(result["name"], "use-jwt");
+        assert_eq!(result["revision_count"], 0);
+        assert!(result["history"].as_array().unwrap().is_empty());
+        // Current values are always present.
+        assert!(result["current"]["choice"].is_string());
+        assert!(result["current"]["reason"].is_string());
+        assert_eq!(result["current"]["attribution"], "user");
+        assert!(result["current"]["created"].is_string());
+    }
+
+    #[test]
+    fn get_decision_history_returns_chronological_entries() {
+        use chrono::{TimeZone, Utc};
+
+        let mut state = test_state();
+        state.decisions.insert(
+            "revised-dec".into(),
+            Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "auth".into(),
+                    choice: "JWT with DPoP binding".into(),
+                    reason: "Proof-of-possession prevents replay".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::User,
+                    created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                    code_refs: vec![],
+                    history: vec![
+                        HistoryEntry {
+                            choice: "JWT tokens".into(),
+                            reason: "Stateless authentication".into(),
+                            changed_at: Utc.with_ymd_and_hms(2025, 7, 15, 14, 0, 0).unwrap(),
+                        },
+                        HistoryEntry {
+                            choice: "JWT with refresh tokens".into(),
+                            reason: "Stateless auth with rotation".into(),
+                            changed_at: Utc.with_ymd_and_hms(2025, 8, 1, 9, 30, 0).unwrap(),
+                        },
+                    ],
+                },
+            }),
+        );
+
+        let result = get_decision_history(&state, "revised-dec").unwrap();
+
+        assert_eq!(result["revision_count"], 2);
+        assert_eq!(result["current"]["choice"], "JWT with DPoP binding");
+
+        let history = result["history"].as_array().unwrap();
+        assert_eq!(history.len(), 2);
+        // Oldest first: entries trace the decision's evolution.
+        assert_eq!(history[0]["choice"], "JWT tokens");
+        assert_eq!(history[1]["choice"], "JWT with refresh tokens");
+        assert!(history[0]["changed_at"].is_string());
+    }
+
+    #[test]
+    fn get_decision_history_rejects_nonexistent() {
+        let state = test_state();
+        let err = get_decision_history(&state, "ghost").unwrap_err();
+        assert!(err.contains("ghost"));
+        assert!(err.contains("does not exist"));
     }
 
     #[test]
@@ -1552,6 +2020,7 @@ mod tests {
                 attribution: Attribution::User,
                 created: Utc::now(),
                 code_refs: vec![],
+                history: vec![],
             },
         };
         let name: Arc<str> = Arc::from("atomic-writes");

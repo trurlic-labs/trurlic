@@ -33,7 +33,7 @@ pub use schema::{
     GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile, STATE_DIR, STORE_DIR,
 };
 pub use state::{ProjectState, has_control_chars, is_valid_kebab_case, slugify};
-pub use write::{AmendDecisionParams, RecordDecisionParams, RecordPatternParams};
+pub use write::{RecordDecisionParams, RecordPatternParams, ReviseDecisionParams};
 
 /// Syntactic validation for a code reference.
 ///
@@ -98,7 +98,7 @@ pub(crate) fn validate_code_ref(cr: &CodeRef) -> Result<()> {
 /// Validate a full set of code references: count limit plus per-ref syntax.
 ///
 /// The single slice-level validator. Every write path — store methods,
-/// MCP `parse_code_refs`, the map amend endpoint — calls this so the
+/// MCP `parse_code_refs`, the map revise endpoint — calls this so the
 /// `MAX_CODE_REFS` cap and per-ref rules are enforced identically. The
 /// store invokes it as the final trust boundary no write can bypass.
 pub(crate) fn validate_code_refs(refs: &[CodeRef]) -> Result<()> {
@@ -145,6 +145,25 @@ pub(crate) fn format_code_refs(refs: &[CodeRef]) -> String {
         .join(", ")
 }
 
+/// Whether every code reference a decision carries points at a file confirmed
+/// absent from disk — the decision's anchors have all been deleted.
+///
+/// A decision with no code refs is never orphaned: the absence of a link is not
+/// a broken link. Probing uses `try_exists`, and only a definite `Ok(false)`
+/// counts as missing — an `Err` (permission denied, mount not ready, transient
+/// I/O) is treated as *present*, so a filesystem blip can never misreport a live
+/// file as deleted and drive a decision to be flagged stale or garbage-collected.
+///
+/// This is the single source of truth for reference-orphaning, shared by the
+/// context health report and the `gc` collector so both agree on the predicate.
+pub(crate) fn decision_refs_all_missing(project_root: &Path, dec: &DecisionFile) -> bool {
+    let refs = &dec.decision.code_refs;
+    !refs.is_empty()
+        && refs
+            .iter()
+            .all(|code_ref| matches!(project_root.join(&code_ref.file).try_exists(), Ok(false)))
+}
+
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -161,6 +180,20 @@ pub(crate) fn hash_file(path: &Path) -> Result<String> {
 #[must_use]
 pub fn hash_bytes(data: &[u8]) -> String {
     blake3::hash(data).to_hex().to_string()
+}
+
+/// Canonical key for detecting decisions with the same choice text: every run
+/// of whitespace collapses to a single space, the ends are trimmed, and letters
+/// are folded to lowercase (Unicode-aware). Two choices that differ only in
+/// case or spacing normalize to the same key, so a trailing space or a doubled
+/// gap cannot sneak a duplicate past the guard. Shared by the record and revise
+/// write paths so both enforce the same notion of "identical".
+pub(crate) fn normalize_choice(choice: &str) -> String {
+    choice
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 // ── Store ────────────────────────────────────────────────────────────────────
@@ -473,21 +506,19 @@ impl Store {
 
         let graph_index = self.load_graph_index(&components, &decisions, &patterns, hashes)?;
 
-        Ok(ProjectState::new(
-            project,
-            components,
-            decisions,
-            patterns,
-            graph_index,
-        ))
+        let mut state = ProjectState::new(project, components, decisions, patterns, graph_index);
+        // code_refs are relative to the project directory, which is the parent
+        // of `.trurlic/`. Staleness detection resolves them against this root.
+        state.project_root = self.root.parent().unwrap_or(&self.root).to_path_buf();
+        Ok(state)
     }
 
     /// Reconcile the on-disk graph index with actual node files.
     ///
     /// Uses pre-computed BLAKE3 hashes from `load_state`'s single-pass read,
     /// avoiding a second read of every node file. Reads `graph.toml` for edges
-    /// that cannot be inferred from node files (ConnectsTo, Supersedes,
-    /// DependsOn, etc.), rebuilds the node list from the actual files,
+    /// that cannot be inferred from node files (ConnectsTo, DependsOn,
+    /// Constrains, etc.), rebuilds the node list from the actual files,
     /// preserves tags from existing nodes, filters dangling edges, and ensures
     /// BelongsTo edges for all decisions.
     fn load_graph_index(
@@ -791,6 +822,7 @@ pub(crate) mod testing {
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         }
     }
@@ -859,6 +891,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -874,6 +907,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -889,6 +923,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts,
                     code_refs: vec![],
+                    history: vec![],
                 },
             }),
         );
@@ -1130,6 +1165,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -1145,6 +1181,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );
@@ -1160,6 +1197,7 @@ pub(crate) mod testing {
                     attribution: Attribution::User,
                     created: ts(),
                     code_refs: vec![],
+                    history: vec![],
                 },
             },
         );

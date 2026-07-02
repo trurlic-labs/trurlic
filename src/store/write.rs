@@ -11,9 +11,10 @@ use serde::de::DeserializeOwned;
 use crate::{Error, Result};
 
 use super::graph::Severity;
+use super::limits::MAX_HISTORY_ENTRIES;
 use super::schema::{
     Attribution, CodeRef, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
-    GraphIndex, NodeEntry, NodeKind, Pattern, PatternFile,
+    GraphIndex, HistoryEntry, NodeEntry, NodeKind, Pattern, PatternFile,
 };
 use super::state::{
     ProjectState, is_reserved_node_name, is_valid_kebab_case, slugify, unique_decision_stem,
@@ -45,15 +46,14 @@ impl PendingWrite {
 /// Parameters for [`Store::record_decision`].
 ///
 /// Callers are responsible for validating that `component` exists (or is
-/// `"project"`), that all `depends_on`/`constrains`/`supersedes` targets
-/// exist, and that names are valid kebab-case. The shared write path does
-/// not re-validate — it trusts the caller and focuses on atomic mutation.
+/// `"project"`), that all `depends_on`/`constrains` targets exist, and that
+/// names are valid kebab-case. The shared write path does not re-validate —
+/// it trusts the caller and focuses on atomic mutation.
 pub struct RecordDecisionParams<'a> {
     pub component: &'a str,
     pub choice: &'a str,
     pub reason: &'a str,
     pub alternatives: &'a [String],
-    pub supersedes: Option<&'a str>,
     pub depends_on: &'a [String],
     pub constrains: &'a [String],
     pub tags: &'a [String],
@@ -61,15 +61,15 @@ pub struct RecordDecisionParams<'a> {
     pub code_refs: &'a [CodeRef],
 }
 
-// ── AmendDecisionParams ─────────────────────────────────────────────
+// ── ReviseDecisionParams ────────────────────────────────────────────
 
-/// Parameters for [`Store::amend_decision`].
+/// Parameters for [`Store::revise_decision`].
 ///
-/// All fields are optional; the method requires at least one `Some`.
-/// Transport-specific quality checks (field length limits, reason
-/// minimums) belong in the adapter — this struct carries only the
-/// values to write.
-pub struct AmendDecisionParams<'a> {
+/// All fields are optional; the method requires at least one `Some`. Whether
+/// the revision versions the prior text into history is derived, not passed: a
+/// substantive edit (`choice` or `reason`) is versioned; a tag- or code-ref-only
+/// edit updates in place and leaves no history.
+pub struct ReviseDecisionParams<'a> {
     pub choice: Option<&'a str>,
     pub reason: Option<&'a str>,
     pub tags: Option<&'a [String]>,
@@ -392,6 +392,7 @@ impl Store {
                 attribution: params.attribution,
                 created: Utc::now(),
                 code_refs: params.code_refs.to_vec(),
+                history: Vec::new(),
             },
         };
 
@@ -427,14 +428,6 @@ impl Store {
                 from: stem.clone(),
                 to: con.clone(),
                 kind: EdgeKind::Constrains,
-            });
-        }
-
-        if let Some(sup) = params.supersedes {
-            state.graph_index.edges.push(EdgeEntry {
-                from: stem.clone(),
-                to: sup.into(),
-                kind: EdgeKind::Supersedes,
             });
         }
 
@@ -668,25 +661,135 @@ impl Store {
         Ok(())
     }
 
-    // ── Amend decision (shared write path) ────────────────────────────
+    /// Remove several decisions from disk and the graph index in one atomic
+    /// commit.
+    ///
+    /// This is the garbage-collection path. Unlike [`remove_decision`], it does
+    /// not route through the strictly-validating [`commit_with_graph`], because
+    /// that refuses to commit while *any* error remains — which would block the
+    /// collector from repairing a store that is *already* invalid (decisions
+    /// orphaned when a component file was deleted out of band). Instead it is
+    /// fail-closed against **new** violations only: it tolerates errors that
+    /// already existed before the removal but refuses to introduce any that did
+    /// not. Removing a node is not unconditionally safe — dropping a pattern's
+    /// member below the two-decision minimum, for instance, is a fresh
+    /// `Severity::Error` — so the pre/post error-set comparison, not a bare
+    /// monotonicity assumption, is what keeps the graph consistent.
+    ///
+    /// **Callers should** still run cascade pre-flight per name and exclude
+    /// blocked ones for a clean user-facing report; this method is the
+    /// last-line guarantee that a mis-computed pre-flight can never commit a
+    /// newly-invalid graph. Names absent from `state` are skipped. On failure
+    /// the in-memory `state` is restored and no files change.
+    pub fn remove_decisions(
+        &self,
+        lock: &StoreLock,
+        state: &mut ProjectState,
+        names: &[&str],
+    ) -> Result<()> {
+        // Violations present *before* the removal are tolerated (the collector
+        // may be repairing an already-invalid store); anything not in this set
+        // must not be introduced by the removal.
+        let pre_existing_errors: HashSet<String> = state
+            .build_graph()
+            .validate()
+            .into_iter()
+            .filter(|issue| issue.severity == Severity::Error)
+            .map(|issue| issue.message)
+            .collect();
 
-    /// Amend an existing decision in place: update choice, reason, and/or
-    /// tags without changing the `created` timestamp.
+        let mut restore_decisions: Vec<(String, Arc<DecisionFile>)> = Vec::new();
+        let mut restore_nodes: Vec<super::state::RemovedGraphNode> = Vec::new();
+        let mut removes: Vec<PathBuf> = Vec::new();
+
+        for &name in names {
+            if let Some(dec) = state.decisions.remove(name) {
+                restore_nodes.push(state.remove_graph_node(name));
+                removes.push(self.decision_path(name));
+                restore_decisions.push((name.to_string(), dec));
+            }
+        }
+
+        if removes.is_empty() {
+            return Ok(());
+        }
+
+        let restore = |state: &mut ProjectState,
+                       decisions: Vec<(String, Arc<DecisionFile>)>,
+                       nodes: Vec<super::state::RemovedGraphNode>| {
+            for (name, dec) in decisions {
+                state.decisions.insert(name, dec);
+            }
+            for removed in nodes {
+                state.restore_graph_node(removed);
+            }
+        };
+
+        let graph = state.build_graph();
+
+        // Fail closed against newly-introduced errors (e.g. a pattern dropping
+        // below its minimum membership); pre-existing errors are permitted so
+        // the collector can still clear orphaned nodes from a broken store.
+        let new_errors: Vec<String> = graph
+            .validate()
+            .into_iter()
+            .filter(|issue| issue.severity == Severity::Error)
+            .map(|issue| issue.message)
+            .filter(|message| !pre_existing_errors.contains(message))
+            .collect();
+        if !new_errors.is_empty() {
+            restore(state, restore_decisions, restore_nodes);
+            return Err(Error::GraphIntegrity(new_errors.join("; ")));
+        }
+
+        let index = graph.to_index();
+        if let Err(e) = self.commit_batch(lock, vec![], removes, Some(index)) {
+            restore(state, restore_decisions, restore_nodes);
+            return Err(e);
+        }
+
+        // Reuse the graph built from the reduced index — mirrors the cache
+        // refresh commit_with_graph performs on the validating path.
+        state.graph = graph;
+        Ok(())
+    }
+
+    // ── Revise decision (shared write path) ───────────────────────────
+
+    /// Revise an existing decision in place, versioning the prior choice and
+    /// reason into history.
     ///
-    /// Single write path for MCP `update_decision(mode=amend)` and map
-    /// `PUT /api/decision/:name`. Handles state mutation, graph‐index tag
-    /// sync, and rollback on commit failure.
+    /// Single write path for MCP `update_decision(mode=revise)` and map
+    /// `PUT /api/decision/:name`. When `params.writes_history` is set, the
+    /// pre-edit choice and reason are appended to the decision's history as a
+    /// [`HistoryEntry`] before the new values overwrite them. History is a
+    /// ring buffer capped at [`MAX_HISTORY_ENTRIES`]: once full, pushing a new
+    /// entry drops the oldest. Tag and code-ref edits apply without leaving
+    /// history.
     ///
-    /// **Callers** validate transport‐specific quality constraints (field
-    /// lengths, reason minimums) before calling. This method enforces
-    /// baseline correctness only (non‐empty fields, at least one change).
-    pub fn amend_decision(
+    /// The decision's name, `created` timestamp, and every graph edge survive
+    /// unchanged — revision never creates a new node, so no edge is ever
+    /// orphaned.
+    ///
+    /// **Callers** validate transport-specific quality constraints (field
+    /// lengths, reason minimums) before calling. This method enforces baseline
+    /// correctness only (non-empty fields, at least one change).
+    pub fn revise_decision(
         &self,
         lock: &StoreLock,
         state: &mut ProjectState,
         name: &str,
-        params: AmendDecisionParams<'_>,
+        params: ReviseDecisionParams<'_>,
     ) -> Result<()> {
+        // Existence first: a revision of a missing decision is Not Found (→ 404
+        // at the map boundary) regardless of the body, so this must precede the
+        // field-shape checks that would otherwise mask it as a 400.
+        let old_dec = state
+            .decisions
+            .get(name)
+            .ok_or_else(|| Error::DecisionNotFound(name.into()))?
+            .clone();
+
         if params.choice.is_none()
             && params.reason.is_none()
             && params.tags.is_none()
@@ -706,33 +809,67 @@ impl Store {
         {
             return Err(Error::Validation("reason must not be empty".into()));
         }
-
-        let old_dec = state
-            .decisions
-            .get(name)
-            .ok_or_else(|| Error::DecisionNotFound(name.into()))?
-            .clone();
-
-        let mut amended = DecisionFile::clone(&old_dec);
-        if let Some(c) = params.choice {
-            amended.decision.choice = c.into();
-        }
-        if let Some(r) = params.reason {
-            amended.decision.reason = r.into();
-        }
-        if let Some(t) = params.tags {
-            amended.decision.tags = t.to_vec();
-        }
         if let Some(refs) = params.code_refs {
             super::validate_code_refs(refs)?;
-            amended.decision.code_refs = refs.to_vec();
         }
 
-        let write = self.prepare_write(&self.decision_path(name), &amended)?;
+        // Reject revising the choice into a restatement of a *different*
+        // decision in the same component — the same duplicate the record path
+        // refuses. Forking two nodes onto identical choice text loses which one
+        // is authoritative; compared on the shared normalized key.
+        if let Some(new_choice) = params.choice {
+            let choice_key = super::normalize_choice(new_choice);
+            let component = old_dec.decision.component.as_str();
+            for (existing_name, existing_dec) in &state.decisions {
+                if existing_name.as_str() != name
+                    && existing_dec.decision.component == component
+                    && super::normalize_choice(&existing_dec.decision.choice) == choice_key
+                {
+                    return Err(Error::Validation(format!(
+                        "decision `{existing_name}` in [{component}] already has identical \
+                         choice text — revise that decision instead of duplicating it"
+                    )));
+                }
+            }
+        }
+
+        let mut revised = DecisionFile::clone(&old_dec);
+
+        // A substantive edit (choice or reason) versions the prior text; a
+        // tag- or code-ref-only edit updates in place without leaving history.
+        let writes_history = params.choice.is_some() || params.reason.is_some();
+
+        // Version the pre-edit substantive fields before overwriting them.
+        if writes_history {
+            revised.decision.history.push(HistoryEntry {
+                choice: revised.decision.choice.clone(),
+                reason: revised.decision.reason.clone(),
+                changed_at: Utc::now(),
+            });
+            // Ring buffer: the oldest entry falls off once the cap is exceeded.
+            if revised.decision.history.len() > MAX_HISTORY_ENTRIES {
+                revised.decision.history.remove(0);
+            }
+        }
+
+        if let Some(c) = params.choice {
+            revised.decision.choice = c.into();
+        }
+        if let Some(r) = params.reason {
+            revised.decision.reason = r.into();
+        }
+        if let Some(t) = params.tags {
+            revised.decision.tags = t.to_vec();
+        }
+        if let Some(refs) = params.code_refs {
+            revised.decision.code_refs = refs.to_vec();
+        }
+
+        let write = self.prepare_write(&self.decision_path(name), &revised)?;
         let hash = write.content_hash();
 
         // Mutate state. Save only the affected fields for rollback.
-        state.decisions.insert(name.into(), Arc::new(amended));
+        state.decisions.insert(name.into(), Arc::new(revised));
         let old_hash = state.update_node_hash(name, hash);
         let old_tags = if let Some(t) = params.tags {
             state
@@ -754,6 +891,48 @@ impl Store {
                 && let Some(n) = state.graph_index.nodes.iter_mut().find(|n| n.name == name)
             {
                 n.tags = t;
+            }
+            return Err(e);
+        }
+
+        Ok(())
+    }
+
+    // ── Promote decision (shared write path) ──────────────────────────
+
+    /// Promote a decision's attribution to [`Attribution::User`], marking it
+    /// human-reviewed.
+    ///
+    /// Attribution lives only in the node file, not the graph index, so this
+    /// rewrites the decision and refreshes its content hash while the name,
+    /// `created` timestamp, history, and every edge survive unchanged. The
+    /// method sets `User` unconditionally; the already-promoted guard is the
+    /// caller's concern. On commit failure, `state` is restored.
+    pub fn promote_decision(
+        &self,
+        lock: &StoreLock,
+        state: &mut ProjectState,
+        name: &str,
+    ) -> Result<()> {
+        let old_dec = state
+            .decisions
+            .get(name)
+            .ok_or_else(|| Error::DecisionNotFound(name.into()))?
+            .clone();
+
+        let mut promoted = DecisionFile::clone(&old_dec);
+        promoted.decision.attribution = Attribution::User;
+
+        let write = self.prepare_write(&self.decision_path(name), &promoted)?;
+        let hash = write.content_hash();
+
+        state.decisions.insert(name.into(), Arc::new(promoted));
+        let old_hash = state.update_node_hash(name, hash);
+
+        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
+            state.decisions.insert(name.into(), old_dec);
+            if let Some(h) = old_hash {
+                state.update_node_hash(name, h);
             }
             return Err(e);
         }
@@ -1461,7 +1640,6 @@ mod tests {
                     component: "auth",
                     choice: "Use JWT",
                     reason: "Stateless",
-                    supersedes: None,
                     depends_on: &[],
                     alternatives: &[],
                     constrains: &[],
@@ -1475,7 +1653,7 @@ mod tests {
     }
 
     #[test]
-    fn amend_decision_rejects_invalid_code_ref() {
+    fn revise_decision_rejects_invalid_code_ref() {
         let tmp = TempDir::new().unwrap();
         let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
         let lock = store.lock().unwrap();
@@ -1488,7 +1666,6 @@ mod tests {
                     component: "auth",
                     choice: "Use JWT",
                     reason: "Stateless",
-                    supersedes: None,
                     depends_on: &[],
                     alternatives: &[],
                     constrains: &[],
@@ -1504,11 +1681,11 @@ mod tests {
             symbol: None,
         }];
         let err = store
-            .amend_decision(
+            .revise_decision(
                 &lock,
                 &mut state,
                 &stem,
-                AmendDecisionParams {
+                ReviseDecisionParams {
                     choice: None,
                     reason: None,
                     tags: None,
@@ -1517,5 +1694,657 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, Error::Validation(_)), "{err}");
+    }
+
+    // ── revise decision ──────────────────────────────────────────────────
+
+    /// Record a single decision under `auth` and return the store, its state,
+    /// and the decision's stem — the shared starting point for revise tests.
+    fn setup_one_decision(dir: &Path) -> (Store, ProjectState, String) {
+        let (store, mut state) = setup_store_with_components(dir, &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let stem = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless auth",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+        drop(lock);
+        (store, state, stem)
+    }
+
+    fn revise_params<'a>(
+        choice: Option<&'a str>,
+        reason: Option<&'a str>,
+        tags: Option<&'a [String]>,
+        code_refs: Option<&'a [CodeRef]>,
+    ) -> ReviseDecisionParams<'a> {
+        ReviseDecisionParams {
+            choice,
+            reason,
+            tags,
+            code_refs,
+        }
+    }
+
+    #[test]
+    fn revise_pushes_old_choice_and_reason_to_history() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(Some("Use OAuth"), Some("Delegated auth"), None, None),
+            )
+            .unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.choice, "Use OAuth");
+        assert_eq!(dec.reason, "Delegated auth");
+        assert_eq!(dec.history.len(), 1);
+        // The entry captures the values as they stood *before* the revision.
+        assert_eq!(dec.history[0].choice, "Use JWT");
+        assert_eq!(dec.history[0].reason, "Stateless auth");
+    }
+
+    #[test]
+    fn revise_preserves_name_and_all_edges() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let base = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Base decision",
+                    reason: "Foundation",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+        let dependent = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Dependent decision",
+                    reason: "Builds on base",
+                    depends_on: std::slice::from_ref(&base),
+                    alternatives: &[],
+                    constrains: std::slice::from_ref(&base),
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+
+        let edges_before = state.graph_index.edges.clone();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &dependent,
+                revise_params(Some("Revised dependent"), None, None, None),
+            )
+            .unwrap();
+
+        // The node keeps its name and every edge survives — revision never
+        // rewires the graph.
+        assert!(state.decisions.contains_key(&dependent));
+        assert_eq!(state.graph_index.edges, edges_before);
+        assert!(
+            state
+                .graph_index
+                .edges
+                .iter()
+                .any(|e| e.from == dependent && e.to == base && e.kind == EdgeKind::DependsOn)
+        );
+        assert!(
+            state
+                .graph_index
+                .edges
+                .iter()
+                .any(|e| e.from == dependent && e.to == base && e.kind == EdgeKind::Constrains)
+        );
+    }
+
+    #[test]
+    fn revise_tags_only_writes_no_history() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let tags = vec!["security".to_string()];
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(None, None, Some(&tags), None),
+            )
+            .unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.tags, vec!["security".to_string()]);
+        assert!(dec.history.is_empty());
+        // Metadata edits mirror to the graph-index node tags.
+        let node = state
+            .graph_index
+            .nodes
+            .iter()
+            .find(|n| n.name == stem)
+            .unwrap();
+        assert_eq!(node.tags, vec!["security".to_string()]);
+    }
+
+    #[test]
+    fn revise_code_refs_only_writes_no_history() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let refs = vec![CodeRef {
+            file: "src/auth/token.rs".into(),
+            symbol: Some("validate".into()),
+        }];
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(None, None, None, Some(&refs)),
+            )
+            .unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.code_refs.len(), 1);
+        assert!(dec.history.is_empty());
+    }
+
+    #[test]
+    fn revise_choice_and_tags_writes_exactly_one_entry() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(
+                    Some("New choice"),
+                    None,
+                    Some(&["security".to_string()]),
+                    None,
+                ),
+            )
+            .unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        // History versions substantive fields only — one entry, not one per
+        // changed field.
+        assert_eq!(dec.history.len(), 1);
+        assert_eq!(dec.history[0].choice, "Use JWT");
+        assert_eq!(dec.tags, vec!["security".to_string()]);
+    }
+
+    #[test]
+    fn revise_ring_buffer_drops_oldest_past_limit() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // MAX_HISTORY_ENTRIES + 1 revisions overflow the ring buffer by one.
+        for i in 0..=MAX_HISTORY_ENTRIES {
+            let choice = format!("choice-{i}");
+            store
+                .revise_decision(
+                    &lock,
+                    &mut state,
+                    &stem,
+                    revise_params(Some(&choice), None, None, None),
+                )
+                .unwrap();
+        }
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.history.len(), MAX_HISTORY_ENTRIES);
+        // The original "Use JWT" (pushed by the first revise) has fallen off;
+        // the oldest surviving entry is the pre-edit value of the second revise.
+        assert_eq!(dec.history[0].choice, "choice-0");
+    }
+
+    #[test]
+    fn revise_history_stays_chronological() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        for choice in ["one", "two", "three"] {
+            store
+                .revise_decision(
+                    &lock,
+                    &mut state,
+                    &stem,
+                    revise_params(Some(choice), None, None, None),
+                )
+                .unwrap();
+        }
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.history.len(), 3);
+        // Oldest first: choices are appended in revision order and timestamps
+        // never decrease.
+        let choices: Vec<&str> = dec.history.iter().map(|h| h.choice.as_str()).collect();
+        assert_eq!(choices, vec!["Use JWT", "one", "two"]);
+        for pair in dec.history.windows(2) {
+            assert!(pair[0].changed_at <= pair[1].changed_at);
+        }
+    }
+
+    #[test]
+    fn revise_with_no_fields_errors() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        let err = store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(None, None, None, None),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Validation(_)), "{err}");
+    }
+
+    #[test]
+    fn revise_missing_decision_is_not_found_even_with_empty_body() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, _stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        // An empty body is a Validation error on its own, but a missing target
+        // must take precedence so the map boundary answers 404, not 400.
+        let err = store
+            .revise_decision(
+                &lock,
+                &mut state,
+                "does-not-exist",
+                revise_params(None, None, None, None),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::DecisionNotFound(_)), "{err}");
+    }
+
+    #[test]
+    fn revise_rejects_duplicating_another_decisions_choice() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        record(&store, &lock, &mut state, "Use JWT");
+        let second = record(&store, &lock, &mut state, "Use sessions");
+
+        // Revising `second` onto `first`'s choice — modulo case and spacing — is
+        // exactly the fork the record path forbids; revise must refuse it too.
+        let err = store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &second,
+                revise_params(Some("  use   JWT "), None, None, None),
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Validation(_)), "{err}");
+        // The rejected revision left the decision untouched.
+        assert_eq!(state.decisions[&second].decision.choice, "Use sessions");
+    }
+
+    #[test]
+    fn remove_decisions_refuses_to_drop_a_pattern_below_its_minimum() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let first = record(&store, &lock, &mut state, "Use JWT");
+        let second = record(&store, &lock, &mut state, "Rotate tokens");
+        store
+            .record_pattern(
+                &lock,
+                &mut state,
+                RecordPatternParams {
+                    name: "token-hygiene",
+                    description: "Coordinated token handling",
+                    decisions: &[first.clone(), second.clone()],
+                    components: &[],
+                    tags: &[],
+                },
+            )
+            .unwrap();
+
+        // Batch removal is fail-closed against *new* violations: dropping one of
+        // the two members would leave the pattern with a single member, which
+        // the validator rejects — so the batch is refused and nothing changes.
+        let err = store
+            .remove_decisions(&lock, &mut state, &[first.as_str()])
+            .unwrap_err();
+        assert!(matches!(err, Error::GraphIntegrity(_)), "{err}");
+        assert!(state.decisions.contains_key(&first));
+        assert!(state.decisions.contains_key(&second));
+        drop(lock);
+
+        // Nothing was written to disk either.
+        assert!(store.load_state().unwrap().decisions.contains_key(&first));
+    }
+
+    #[test]
+    fn revise_survives_reload_from_disk() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, stem) = setup_one_decision(tmp.path());
+        let lock = store.lock().unwrap();
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &stem,
+                revise_params(
+                    Some("Persisted choice"),
+                    Some("Persisted reason"),
+                    None,
+                    None,
+                ),
+            )
+            .unwrap();
+        drop(lock);
+
+        // The history must round-trip through the TOML node file, not just
+        // live in memory.
+        let reloaded = store.load_state().unwrap();
+        let dec = &reloaded.decisions[&stem].decision;
+        assert_eq!(dec.choice, "Persisted choice");
+        assert_eq!(dec.history.len(), 1);
+        assert_eq!(dec.history[0].choice, "Use JWT");
+    }
+
+    // ── promote decision ─────────────────────────────────────────────────
+
+    #[test]
+    fn promote_flips_attribution_to_user() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let stem = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless auth",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::Agent,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+        let created = state.decisions[&stem].decision.created;
+
+        store.promote_decision(&lock, &mut state, &stem).unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.attribution, Attribution::User);
+        // Promotion is metadata-only: the substance and timestamp are untouched.
+        assert_eq!(dec.choice, "Use JWT");
+        assert_eq!(dec.created, created);
+        assert!(dec.history.is_empty());
+    }
+
+    #[test]
+    fn promote_survives_reload_from_disk() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let stem = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless auth",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::Agent,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+
+        store.promote_decision(&lock, &mut state, &stem).unwrap();
+        drop(lock);
+
+        let reloaded = store.load_state().unwrap();
+        assert_eq!(
+            reloaded.decisions[&stem].decision.attribution,
+            Attribution::User
+        );
+    }
+
+    #[test]
+    fn promote_rejects_nonexistent() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let err = store
+            .promote_decision(&lock, &mut state, "ghost")
+            .unwrap_err();
+        assert!(matches!(err, Error::DecisionNotFound(_)), "{err}");
+    }
+
+    // ── remove_decisions (batch) ──────────────────────────────────────────
+
+    fn record(store: &Store, lock: &StoreLock, state: &mut ProjectState, choice: &str) -> String {
+        store
+            .record_decision(
+                lock,
+                state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice,
+                    reason: "Test reasoning",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn remove_decisions_deletes_the_whole_set_atomically() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let a = record(&store, &lock, &mut state, "Use JWT");
+        let b = record(&store, &lock, &mut state, "Rotate tokens");
+        let keep = record(&store, &lock, &mut state, "Encrypt at rest");
+
+        store
+            .remove_decisions(&lock, &mut state, &[a.as_str(), b.as_str()])
+            .unwrap();
+        drop(lock);
+
+        // Both targets gone in memory and on disk; the untouched one survives.
+        assert!(!state.decisions.contains_key(&a));
+        assert!(!state.decisions.contains_key(&b));
+        assert!(state.decisions.contains_key(&keep));
+        let reloaded = store.load_state().unwrap();
+        assert_eq!(reloaded.decisions.len(), 1);
+        assert!(reloaded.decisions.contains_key(&keep));
+        // Removed nodes leave no dangling edges behind.
+        assert!(
+            reloaded
+                .graph_index
+                .edges
+                .iter()
+                .all(|e| e.from != a && e.to != a && e.from != b && e.to != b)
+        );
+    }
+
+    #[test]
+    fn remove_decisions_repairs_orphaned_store() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let a = record(&store, &lock, &mut state, "Use JWT");
+        let b = record(&store, &lock, &mut state, "Rotate tokens");
+        drop(lock);
+
+        // Orphan both decisions by deleting their component out of band, then
+        // reload so the graph reflects the missing component.
+        fs::remove_file(store.component_path("auth")).unwrap();
+        let mut orphaned = store.load_state().unwrap();
+        assert!(!orphaned.components.contains_key("auth"));
+
+        // A single validating removal cannot proceed: the sibling orphan keeps
+        // the graph invalid, so the fail-closed commit refuses.
+        let lock = store.lock().unwrap();
+        assert!(
+            store.remove_decision(&lock, &mut orphaned, &a).is_err(),
+            "validating removal must refuse while another orphan remains"
+        );
+
+        // The garbage-collection path clears the whole orphaned set.
+        store
+            .remove_decisions(&lock, &mut orphaned, &[a.as_str(), b.as_str()])
+            .unwrap();
+        drop(lock);
+
+        assert!(orphaned.decisions.is_empty());
+        assert!(store.load_state().unwrap().decisions.is_empty());
+    }
+
+    #[test]
+    fn remove_decision_cleans_every_incident_edge_type() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let base = record(&store, &lock, &mut state, "Use JWT");
+        let dependent = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Rotate tokens",
+                    reason: "Limit blast radius on leak",
+                    depends_on: std::slice::from_ref(&base),
+                    alternatives: &[],
+                    constrains: std::slice::from_ref(&base),
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+        let third = record(&store, &lock, &mut state, "Encrypt at rest");
+
+        let members = vec![base.clone(), dependent.clone(), third.clone()];
+        let pattern = store
+            .record_pattern(
+                &lock,
+                &mut state,
+                RecordPatternParams {
+                    name: "token-hygiene",
+                    description: "Coordinated token-handling decisions",
+                    decisions: &members,
+                    components: &[],
+                    tags: &[],
+                },
+            )
+            .unwrap();
+
+        // The dependent carries one of every decision-incident edge type:
+        // BelongsTo (→auth), DependsOn and Constrains (→base), plus an inbound
+        // MemberOf (pattern→dependent). Removing it must strip all of them.
+        store
+            .remove_decision(&lock, &mut state, &dependent)
+            .unwrap();
+        drop(lock);
+
+        let reloaded = store.load_state().unwrap();
+
+        // No edge of any kind still references the removed decision.
+        assert!(
+            reloaded
+                .graph_index
+                .edges
+                .iter()
+                .all(|e| e.from != dependent && e.to != dependent)
+        );
+
+        // The pattern persists, now bound to exactly its two surviving members.
+        assert!(reloaded.patterns.contains_key(&pattern));
+        let member_edges: Vec<_> = reloaded
+            .graph_index
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::MemberOf && e.from == pattern)
+            .map(|e| e.to.clone())
+            .collect();
+        assert_eq!(member_edges.len(), 2);
+        assert!(member_edges.contains(&base));
+        assert!(member_edges.contains(&third));
+
+        // Surviving decisions keep their BelongsTo ownership intact.
+        for keep in [&base, &third] {
+            assert!(
+                reloaded
+                    .graph_index
+                    .edges
+                    .iter()
+                    .any(|e| e.kind == EdgeKind::BelongsTo && e.from == *keep && e.to == "auth")
+            );
+        }
     }
 }

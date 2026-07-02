@@ -34,13 +34,56 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Code references on decisions.** Decisions carry an optional `code_refs`
   list — `{ file, symbol? }` entries pinpointing where a decision manifests in
   source (no line numbers, which go stale). Plumbed through `record_decision`,
-  `update_decision` (amend replaces, supersede inherits unless overridden), the
-  map amend endpoint, and every context brief and step prompt. Paths are
+  `update_decision` (revise replaces the refs), the map revise endpoint, and
+  every context brief and step prompt. Paths are
   validated syntactically at the store trust boundary (relative, no `..`
   segment, forward slashes, no control characters) with counts capped by
   `MAX_CODE_REFS`; agent-mode prompts now instruct the AI to attach refs to
   every decision. Non-array or empty-symbol input is rejected, never silently
   dropped.
+- **In-place decision revision with history.** A decision is a single document
+  that evolves in place: `update_decision(mode="revise")` edits `choice`,
+  `reason`, `tags`, or `code_refs` and, when a substantive field (`choice` or
+  `reason`) changes, pushes the pre-edit values to a `history` list on the same
+  node. History is chronological (oldest first) and ring-buffered to
+  `MAX_HISTORY_ENTRIES` (20); the oldest entry drops when the limit is exceeded.
+  The decision keeps its name and every incident edge across revisions.
+- **Decision promotion.** `update_decision(mode="promote")` flips a decision's
+  attribution from `agent` to `user`, marking it human-reviewed. Rejects a
+  decision that is already `user`. Leaves history untouched.
+- **`get_decision_history` MCP tool.** Returns a decision's current `choice`,
+  `reason`, `attribution`, and `created`, its full chronological `history`, and
+  a `revision_count`.
+- **Decision health in `get_context`.** The full context brief carries a
+  `health` object (`total`, `agent_unreviewed`, `stale`, `warning`). The warning
+  fires on the first matching condition: more than 20 decisions (consolidate),
+  more than 5 unreviewed agent decisions (pending review), or any stale decision
+  (references deleted files). Unreviewed agent decisions carry a promote/revise
+  call-to-action in the brief.
+- **Staleness detection.** A decision whose `code_refs` all point to files
+  missing on disk is flagged `⚠ STALE` in the brief and counted in
+  `health.stale`. Decisions with no refs, or with at least one live ref, are
+  never stale.
+- **Coverage feedback on removal.** `remove_decision` reports a
+  `coverage_impact` object naming concern areas that lost their last covering
+  decision, plus the remaining covered/uncovered counts. The CLI prints a
+  `⚠ [component] lost coverage: …` line.
+- **Unreviewed-decision count in `advance`.** The ready response carries
+  `agent_decisions_unreviewed` and a hint when agent decisions await promotion.
+- **`trurlic gc`.** Reclaims decision debt. Safe mode removes decisions orphaned
+  by a deleted component and reports (without removing) stale decisions and
+  agent decisions older than 90 days that were never promoted; `--aggressive`
+  also removes the stale and old-agent candidates; `--dry-run` reports only.
+  Cascade-blocked candidates are skipped and reported — never silently dropped —
+  and coverage impact is shown per component. CLI only.
+- **Bulk agent-decision removal.** `trurlic remove decision --component <c>
+  --agent` removes every agent-attributed decision in a component atomically:
+  cascade is pre-flighted across all candidates, and if any is blocked, none are
+  removed.
+- **Hardened duplicate detection.** `record_decision` hard-errors on a choice
+  identical (case-insensitive) to an existing decision in the same component,
+  pointing at `update_decision(mode="revise")`, and warns on high word overlap
+  (Jaccard > 0.7) with a same-component decision.
 
 ### Changed
 
@@ -50,6 +93,89 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `advance` MCP tool: `mode` is optional — omitting it triggers the mode gate.
 - Response JSON includes `mode` field alongside `step`, `ready`, and
   `requires_user_input`.
+- `update_decision` modes are now `revise` and `promote`. The map
+  `PUT /api/decision/:name` endpoint maps its request body to a revise.
+- Loading a design session drops any recorded-decision names whose decisions no
+  longer exist in the graph.
+
+### Removed
+
+- **`Supersedes` edge type.** In-place revision keeps prior versions inside the
+  decision file, so a superseding edge to an old node no longer exists. Every
+  read path returns exactly the active decisions with no filtering.
+- **`amend` and `supersede` update modes.** Replaced by `revise` (which always
+  records history) and `promote`. `update_decision(mode="amend")` and
+  `update_decision(mode="supersede")` now return a clear invalid-mode error.
+
+### Fixed
+
+- **Batch decision removal is now cascade-safe.** `gc` and `remove decision
+  --agent` pre-flight the whole set with a batch-aware cascade that reaches a
+  fixed point: co-removed dependents and pattern members no longer block one
+  another, while removing two members of a shared pattern can no longer silently
+  drop it below its two-member minimum. Previously each candidate was checked
+  against the pre-batch graph, so a batch could commit a graph that
+  `trurlic check` rejects.
+- **`supersedes` edges are migrated away, not left to break loading.** The
+  on-disk format is bumped to `0.4.0`. A store written by 0.2.0 could carry a
+  `supersedes` edge in `graph.toml`; a typed read now rejects that whole file,
+  so `trurlic migrate` strips retired edge kinds before rebuilding the index.
+  Without the version bump, `migrate` reported "already up to date" and the
+  store stayed unloadable.
+- **Lost-coverage reports account for project-wide rules.** `remove_decision`,
+  `remove decision --agent`, and `gc` compute erased concern coverage against
+  the same baseline as `get_context` (component decisions **plus** project
+  rules), so a concern a project rule still covers is never falsely reported as
+  lost.
+- **Project-level `advance` ready responses carry the agent-review hint.** A
+  ready `component="project"` response now includes `agent_decisions_unreviewed`
+  and `hint`, matching component-level responses, so unreviewed agent-authored
+  project rules aren't silently exempt from review.
+- **Duplicate-decision detection is whitespace-insensitive.** The hard block on
+  restating an existing decision's choice normalizes whitespace as well as case,
+  so a trailing or doubled space can't slip a near-duplicate past it.
+- **Map `PUT /api/decision/:name` returns 404**, not 500, for an unknown
+  decision, and 400 for invalid input.
+- **`advance` is pure again — the wall clock is injected, not read.** Staleness
+  (decisions older than the threshold) is now computed from a `now` the caller
+  supplies, so `advance` is a deterministic function of `(graph, now)`. Reading
+  `Utc::now()` internally made the same graph return different steps as the
+  calendar advanced (a healthy component silently flipping to `review` on day
+  90), violating the purity invariant and the determinism the engine promises.
+- **Batch decision removal is fail-closed at the store boundary.** `remove_decisions`
+  now compares the graph's error set before and after removal and refuses any
+  removal that introduces a *new* violation (e.g. dropping a pattern below its
+  two-member minimum), while still tolerating pre-existing errors so the
+  collector can repair an already-broken store. Safety no longer rests solely on
+  each caller's pre-flight.
+- **`revise` cannot manufacture a duplicate decision.** Revising a choice into a
+  restatement of another decision in the same component is now rejected at the
+  store layer — the same guard `record_decision` enforces — so neither the MCP
+  nor the map transport can fork two nodes onto identical choice text.
+- **`revise` of a missing decision is a 404, not a 400.** The existence check now
+  precedes body-shape validation, so an empty-bodied revise of an absent
+  decision surfaces `DecisionNotFound` (→ 404) rather than a validation error.
+- **`trurlic migrate --dry-run` no longer crashes on a retired edge.** The
+  preview parses `graph.toml` loosely (like the apply path) instead of a typed
+  read that a `supersedes` edge — the very thing migration repairs — would
+  reject, and it now reports how many retired edges would be stripped.
+- **`migrate` is crash-safer and its backup is consistent.** The recovery backup
+  is copied under the store lock (no torn snapshot from a concurrent writer), and
+  retired edges are stripped before the version bump so an interrupted run leaves
+  a loadable store rather than one bricked on an unknown edge kind. The apply path
+  reports the count of edges it removed.
+- **Staleness / orphaned-reference detection is deduplicated and I/O-robust.**
+  The "all code references deleted" predicate lives once in `store`
+  (`decision_refs_all_missing`), shared by the context health report and `gc`,
+  and uses `try_exists` so a permission or mount error never misreports a live
+  file as deleted and drives a decision to be flagged or collected.
+
+### Changed (internal)
+
+- `ReviseDecisionParams` no longer carries a `writes_history` flag — whether a
+  revision versions history is derived from whether `choice`/`reason` changed.
+- `get_context` computes decision staleness (a per-`code_ref` filesystem stat)
+  only for the full brief, not the lightweight `constraints` depth.
 
 ## [0.2.0] — 2026-06-15
 

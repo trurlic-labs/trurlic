@@ -386,6 +386,7 @@ mod integration_tests {
                 attribution: Attribution::User,
                 created: Utc::now(),
                 code_refs: vec![],
+                history: vec![],
             },
         }
     }
@@ -401,6 +402,7 @@ mod integration_tests {
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
                 code_refs: vec![],
+                history: vec![],
             },
         }
     }
@@ -428,6 +430,7 @@ mod integration_tests {
             None,
             Some(mode),
             &empty_evidence(),
+            chrono::Utc::now(),
         )
         .expect("advance should succeed");
 

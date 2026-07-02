@@ -335,7 +335,6 @@ pub(crate) fn record_decision(
             choice,
             reason,
             alternatives,
-            supersedes: None,
             depends_on: &[],
             constrains: &[],
             tags: &[],
