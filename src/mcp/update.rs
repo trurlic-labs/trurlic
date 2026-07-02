@@ -180,9 +180,6 @@ fn revise_decision(
         ));
     }
 
-    // Only substantive edits — choice or reason — are versioned into history.
-    let writes_history = new_choice.is_some() || new_reason.is_some();
-
     let lock = store.lock().map_err(|e| e.to_string())?;
     store
         .revise_decision(
@@ -194,7 +191,6 @@ fn revise_decision(
                 reason: new_reason,
                 tags: new_tags,
                 code_refs: new_code_refs,
-                writes_history,
             },
         )
         .map_err(|e| e.to_string())?;

@@ -128,6 +128,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   rules), so a concern a project rule still covers is never falsely reported as
   lost.
 
+### Changed (internal)
+
+- `ReviseDecisionParams` no longer carries a `writes_history` flag — whether a
+  revision versions history is derived from whether `choice`/`reason` changed.
+
 ## [0.2.0] — 2026-06-15
 
 ### Added

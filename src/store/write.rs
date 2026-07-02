@@ -65,17 +65,15 @@ pub struct RecordDecisionParams<'a> {
 
 /// Parameters for [`Store::revise_decision`].
 ///
-/// All fields are optional; the method requires at least one `Some`.
-/// `writes_history` is decided by the caller: set it whenever the revision
-/// touches a substantive field (choice or reason) so the pre-edit values are
-/// versioned into history. Tag and code-ref edits update in place and leave
-/// no history, so they carry `writes_history = false`.
+/// All fields are optional; the method requires at least one `Some`. Whether
+/// the revision versions the prior text into history is derived, not passed: a
+/// substantive edit (`choice` or `reason`) is versioned; a tag- or code-ref-only
+/// edit updates in place and leaves no history.
 pub struct ReviseDecisionParams<'a> {
     pub choice: Option<&'a str>,
     pub reason: Option<&'a str>,
     pub tags: Option<Vec<String>>,
     pub code_refs: Option<Vec<CodeRef>>,
-    pub writes_history: bool,
 }
 
 // ── RecordPatternParams ─────────────────────────────────────────────
@@ -776,8 +774,12 @@ impl Store {
 
         let mut revised = DecisionFile::clone(&old_dec);
 
+        // A substantive edit (choice or reason) versions the prior text; a
+        // tag- or code-ref-only edit updates in place without leaving history.
+        let writes_history = params.choice.is_some() || params.reason.is_some();
+
         // Version the pre-edit substantive fields before overwriting them.
-        if params.writes_history {
+        if writes_history {
             revised.decision.history.push(HistoryEntry {
                 choice: revised.decision.choice.clone(),
                 reason: revised.decision.reason.clone(),
@@ -1627,7 +1629,6 @@ mod tests {
                     reason: None,
                     tags: None,
                     code_refs: Some(bad),
-                    writes_history: false,
                 },
             )
             .unwrap_err();
@@ -1668,13 +1669,11 @@ mod tests {
         tags: Option<Vec<String>>,
         code_refs: Option<Vec<CodeRef>>,
     ) -> ReviseDecisionParams<'a> {
-        let writes_history = choice.is_some() || reason.is_some();
         ReviseDecisionParams {
             choice,
             reason,
             tags,
             code_refs,
-            writes_history,
         }
     }
 

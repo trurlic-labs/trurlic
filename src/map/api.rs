@@ -390,9 +390,6 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
         reason: body.reason.as_deref(),
         tags: body.tags.clone(),
         code_refs: body.code_refs.clone(),
-        // Substantive edits (choice/reason) version the prior text into history;
-        // tag-only edits update in place without a history entry.
-        writes_history: body.choice.is_some() || body.reason.is_some(),
     };
 
     let lock = state
