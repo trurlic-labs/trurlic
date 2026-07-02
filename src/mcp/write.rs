@@ -6,7 +6,7 @@ use crate::store::graph::Severity;
 use crate::store::limits::{
     MAX_ARRAY_ITEMS, MAX_CHOICE_BYTES, MAX_TEXT_FIELD_BYTES, MIN_REASON_BYTES,
 };
-use crate::store::schema::Attribution;
+use crate::store::schema::{Attribution, CodeRef};
 use crate::store::{self, Store};
 
 // ── Argument helpers ────────────────────────────────────────────────────────
@@ -114,6 +114,31 @@ pub(super) fn require_str_array(args: &Value, key: &str) -> Result<Vec<String>, 
     Ok(strings)
 }
 
+pub(super) fn parse_code_refs(args: &Value) -> Result<Vec<CodeRef>, String> {
+    // Absent or explicit null means "no code_refs supplied". A present-but-
+    // non-array value is malformed and rejected — never silently ignored.
+    let arr = match args.get("code_refs") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(items)) => items,
+        Some(_) => return Err("code_refs must be an array".into()),
+    };
+    let mut refs = Vec::with_capacity(arr.len());
+    for item in arr {
+        let file = item
+            .get("file")
+            .and_then(|v| v.as_str())
+            .ok_or("code_ref missing required field: file")?
+            .to_string();
+        let symbol = item
+            .get("symbol")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        refs.push(CodeRef { file, symbol });
+    }
+    store::validate_code_refs(&refs).map_err(|e| e.to_string())?;
+    Ok(refs)
+}
+
 // ── validate_consistency ────────────────────────────────────────────────────
 
 pub(crate) fn validate_consistency(state: &store::ProjectState) -> Value {
@@ -148,6 +173,7 @@ pub(crate) fn record_decision(
     let constrains = opt_str_array(args, "constrains")?;
     let tags = opt_str_array(args, "tags")?;
     let supersedes = opt_str(args, "supersedes")?;
+    let code_refs = parse_code_refs(args)?;
     let attribution = match require_str(args, "attribution")? {
         "user" => Attribution::User,
         "agent" => Attribution::Agent,
@@ -215,6 +241,7 @@ pub(crate) fn record_decision(
                 constrains: &constrains,
                 tags: &tags,
                 attribution,
+                code_refs: &code_refs,
             },
         )
         .map_err(|e| e.to_string())?;
@@ -261,6 +288,7 @@ pub(crate) fn record_decision(
     Ok(serde_json::json!({
         "name": stem,
         "path": store.decision_path(&stem).display().to_string(),
+        "code_refs": store::code_refs_to_json(&code_refs),
         "warnings": warnings,
         "pattern_opportunity": pattern_opportunity,
     }))
@@ -1025,6 +1053,111 @@ mod tests {
                 .iter()
                 .any(|w| w.as_str().unwrap().contains("no description")),
             "should warn about missing description: {warnings:?}"
+        );
+    }
+
+    // ── code_refs ─────────────────────────────────────────────────────
+
+    #[test]
+    fn record_decision_with_code_refs() {
+        let (_tmp, store, mut state) = setup();
+        let args = json!({
+            "component": "auth",
+            "choice": "JWT with DPoP",
+            "reason": "Stateless, no session store needed",
+            "attribution": "user",
+            "code_refs": [
+                { "file": "src/auth/token.rs", "symbol": "verify_token" },
+                { "file": "src/auth/middleware.rs" }
+            ],
+        });
+        let result = record_decision(&store, &mut state, &args).unwrap();
+        let name = result["name"].as_str().unwrap();
+
+        let dec = state.decisions.get(name).unwrap();
+        assert_eq!(dec.decision.code_refs.len(), 2);
+        assert_eq!(dec.decision.code_refs[0].file, "src/auth/token.rs");
+        assert_eq!(
+            dec.decision.code_refs[0].symbol.as_deref(),
+            Some("verify_token")
+        );
+        assert_eq!(dec.decision.code_refs[1].file, "src/auth/middleware.rs");
+        assert!(dec.decision.code_refs[1].symbol.is_none());
+
+        let refs = result["code_refs"].as_array().unwrap();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0]["file"], "src/auth/token.rs");
+        assert_eq!(refs[0]["symbol"], "verify_token");
+    }
+
+    #[test]
+    fn record_decision_without_code_refs() {
+        let (_tmp, store, mut state) = setup();
+        let args = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Stateless authentication model",
+            "attribution": "user",
+        });
+        let result = record_decision(&store, &mut state, &args).unwrap();
+        let refs = result["code_refs"].as_array().unwrap();
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn record_decision_rejects_invalid_code_ref() {
+        let (_tmp, store, mut state) = setup();
+        let args = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Stateless authentication model",
+            "attribution": "user",
+            "code_refs": [{ "file": "/absolute/path.rs" }],
+        });
+        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        assert!(err.contains("relative"), "{err}");
+    }
+
+    #[test]
+    fn record_decision_rejects_too_many_code_refs() {
+        let (_tmp, store, mut state) = setup();
+        let refs: Vec<_> = (0..21)
+            .map(|i| json!({ "file": format!("src/f{i}.rs") }))
+            .collect();
+        let args = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Stateless authentication model",
+            "attribution": "user",
+            "code_refs": refs,
+        });
+        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        assert!(err.contains("too many"), "{err}");
+    }
+
+    #[test]
+    fn parse_code_refs_rejects_empty_symbol() {
+        let args = json!({
+            "code_refs": [{ "file": "src/lib.rs", "symbol": "" }],
+        });
+        let err = parse_code_refs(&args).unwrap_err();
+        assert!(err.contains("symbol"), "{err}");
+    }
+
+    #[test]
+    fn parse_code_refs_rejects_non_array() {
+        let args = json!({ "code_refs": "src/lib.rs" });
+        let err = parse_code_refs(&args).unwrap_err();
+        assert!(err.contains("must be an array"), "{err}");
+    }
+
+    #[test]
+    fn parse_code_refs_absent_and_null_yield_empty() {
+        assert!(parse_code_refs(&json!({})).unwrap().is_empty());
+        assert!(
+            parse_code_refs(&json!({ "code_refs": null }))
+                .unwrap()
+                .is_empty()
         );
     }
 }

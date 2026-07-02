@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::store::graph::InMemoryGraph;
 use crate::store::schema::{Attribution, EdgeKind};
-use crate::store::{DecisionFile, PatternFile, ProjectState};
+use crate::store::{self, DecisionFile, PatternFile, ProjectState};
 use crate::workflow::concerns;
 
 // ── Context depth ──────────────────────────────────────────────────────────
@@ -266,6 +266,12 @@ fn build_brief(p: &BriefParams<'_>) -> String {
                 "- {} ({}){}\n",
                 d.decision.choice, d.decision.reason, suffix
             ));
+            if !d.decision.code_refs.is_empty() {
+                brief.push_str(&format!(
+                    "  Code: {}\n",
+                    store::format_code_refs(&d.decision.code_refs)
+                ));
+            }
         }
     }
     brief.push('\n');
@@ -515,12 +521,17 @@ fn format_decisions(decisions: &[(&Arc<str>, &DecisionFile)]) -> Vec<Value> {
     decisions
         .iter()
         .map(|(name, d)| {
-            serde_json::json!({
+            let mut obj = serde_json::json!({
                 "name": name.as_ref(),
                 "choice": d.decision.choice,
                 "reason": d.decision.reason,
                 "attribution": attribution_str(d.decision.attribution),
-            })
+            });
+            if !d.decision.code_refs.is_empty() {
+                obj["code_refs"] =
+                    serde_json::json!(store::code_refs_to_json(&d.decision.code_refs));
+            }
+            obj
         })
         .collect()
 }
@@ -599,6 +610,12 @@ fn build_brief_compact(
         for (_, d) in component_decisions {
             let suffix = attribution_suffix(d.decision.attribution);
             brief.push_str(&format!("- {}{}\n", d.decision.choice, suffix));
+            if !d.decision.code_refs.is_empty() {
+                brief.push_str(&format!(
+                    "  Code: {}\n",
+                    store::format_code_refs(&d.decision.code_refs)
+                ));
+            }
         }
     }
 
@@ -934,6 +951,7 @@ mod tests {
                     tags: vec![],
                     attribution: Attribution::User,
                     created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+                    code_refs: vec![],
                 },
             }),
         );
@@ -1371,6 +1389,7 @@ mod tests {
                     tags: vec![],
                     attribution: Attribution::Agent,
                     created: ts,
+                    code_refs: vec![],
                 },
             }),
         );
@@ -1408,5 +1427,140 @@ mod tests {
 
         let user_dec = decisions.iter().find(|d| d["name"] == "use-jwt").unwrap();
         assert_eq!(user_dec["attribution"], "user");
+    }
+
+    // ── code_refs in brief ────────────────────────────────────────────
+
+    #[test]
+    fn brief_includes_code_refs_line() {
+        use chrono::Utc;
+        let dec = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "BLAKE3 hashing".into(),
+                reason: "Fast integrity checks".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc::now(),
+                code_refs: vec![
+                    CodeRef {
+                        file: "src/store/write.rs".into(),
+                        symbol: Some("content_hash".into()),
+                    },
+                    CodeRef {
+                        file: "src/store/validate.rs".into(),
+                        symbol: None,
+                    },
+                ],
+            },
+        };
+        let name: Arc<str> = Arc::from("blake3-hashing");
+        let comp_decs = vec![(&name, &dec)];
+
+        let brief = build_brief(&BriefParams {
+            component: "store",
+            task: None,
+            project_decisions: &[],
+            component_decisions: &comp_decs,
+            transitive_deps: &[],
+            related_decisions: &[],
+            patterns: &[],
+            uncovered_concerns: &[],
+        });
+
+        assert!(
+            brief.contains("Code: src/store/write.rs::content_hash, src/store/validate.rs"),
+            "brief should include code_refs line, got:\n{brief}"
+        );
+    }
+
+    #[test]
+    fn brief_omits_code_line_when_empty() {
+        use chrono::Utc;
+        let dec = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "BLAKE3 hashing".into(),
+                reason: "Fast integrity checks".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc::now(),
+                code_refs: vec![],
+            },
+        };
+        let name: Arc<str> = Arc::from("blake3-hashing");
+        let comp_decs = vec![(&name, &dec)];
+
+        let brief = build_brief(&BriefParams {
+            component: "store",
+            task: None,
+            project_decisions: &[],
+            component_decisions: &comp_decs,
+            transitive_deps: &[],
+            related_decisions: &[],
+            patterns: &[],
+            uncovered_concerns: &[],
+        });
+
+        assert!(
+            !brief.contains("Code:"),
+            "brief should not contain Code: when code_refs empty"
+        );
+    }
+
+    #[test]
+    fn format_decisions_includes_code_refs() {
+        use chrono::Utc;
+        let dec = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "Atomic writes".into(),
+                reason: "Crash safety".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc::now(),
+                code_refs: vec![CodeRef {
+                    file: "src/store/write.rs".into(),
+                    symbol: Some("commit_with_graph".into()),
+                }],
+            },
+        };
+        let name: Arc<str> = Arc::from("atomic-writes");
+        let decisions = vec![(&name, &dec)];
+
+        let formatted = format_decisions(&decisions);
+        assert_eq!(formatted.len(), 1);
+        let refs = formatted[0]["code_refs"].as_array().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0]["file"], "src/store/write.rs");
+        assert_eq!(refs[0]["symbol"], "commit_with_graph");
+    }
+
+    #[test]
+    fn format_decisions_omits_code_refs_when_empty() {
+        use chrono::Utc;
+        let dec = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "Atomic writes".into(),
+                reason: "Crash safety".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc::now(),
+                code_refs: vec![],
+            },
+        };
+        let name: Arc<str> = Arc::from("atomic-writes");
+        let decisions = vec![(&name, &dec)];
+
+        let formatted = format_decisions(&decisions);
+        assert!(
+            formatted[0].get("code_refs").is_none(),
+            "should omit code_refs key when empty"
+        );
     }
 }
