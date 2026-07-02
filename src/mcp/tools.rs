@@ -315,10 +315,11 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
             },
             {
                 "name": "update_decision",
-                "description": "Modify an existing decision. 'amend' edits in place \
-                    (typo, clarification). 'supersede' creates a new decision \
-                    replacing the old one (substantive change). Reports affected \
-                    patterns and decisions.",
+                "description": "Modify an existing decision in place. 'revise' \
+                    updates content and versions the previous choice/reason into \
+                    history. 'promote' marks an agent decision as human-reviewed \
+                    by changing its attribution to user. The decision's name and \
+                    every edge survive unchanged.",
                 "annotations": {
                     "title": "Update decision",
                     "readOnlyHint": false,
@@ -335,16 +336,21 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         },
                         "mode": {
                             "type": "string",
-                            "enum": ["amend", "supersede"],
-                            "description": "amend = edit in place; supersede = create replacement."
+                            "enum": ["revise", "promote"],
+                            "description": "revise: update content, previous version saved to history. promote: change attribution from agent to user (marks as human-reviewed)."
                         },
                         "choice": {
                             "type": "string",
-                            "description": "New choice text (at least one of choice/reason required)."
+                            "description": "New choice text (revise only, optional — omit to keep current)."
                         },
                         "reason": {
                             "type": "string",
-                            "description": "New reason text."
+                            "description": "New reason text (revise only, optional — omit to keep current)."
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "New tags (revise only, optional — omit to keep current)."
                         },
                         "code_refs": {
                             "type": "array",
@@ -362,7 +368,7 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                                 },
                                 "required": ["file"]
                             },
-                            "description": "Source code locations where this decision manifests. Only applies to amend mode."
+                            "description": "New code refs (revise only, optional — omit to keep current)."
                         }
                     },
                     "required": ["name", "mode"]

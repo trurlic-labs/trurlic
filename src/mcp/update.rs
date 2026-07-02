@@ -1,11 +1,10 @@
 use serde_json::Value;
 
-use crate::store::graph::Direction;
 use crate::store::limits::{MAX_CHOICE_BYTES, MIN_REASON_BYTES};
-use crate::store::schema::EdgeKind;
+use crate::store::schema::Attribution;
 use crate::store::{self, Store};
 
-use super::write::{opt_str, parse_code_refs, require_str};
+use super::write::{opt_str, opt_str_array, parse_code_refs, require_str};
 
 // ── remove_decision ─────────────────────────────────────────────────────────
 
@@ -89,13 +88,17 @@ pub(crate) fn update_decision(
     }
 
     match mode {
-        "amend" => amend_decision(store, state, name, args),
-        _ => Err(format!("invalid mode `{mode}` — expected \"amend\"")),
+        "revise" => revise_decision(store, state, name, args),
+        "promote" => promote_decision(store, state, name),
+        other => Err(format!(
+            "invalid mode `{other}` — expected: revise, promote"
+        )),
     }
 }
 
-/// Small correction: edit the file in place. `created` timestamp unchanged.
-fn amend_decision(
+/// Edit a decision in place, versioning the prior choice and reason into
+/// history. The name, `created` timestamp, and every edge survive unchanged.
+fn revise_decision(
     store: &Store,
     state: &mut store::ProjectState,
     name: &str,
@@ -103,19 +106,31 @@ fn amend_decision(
 ) -> Result<Value, String> {
     let new_choice = opt_str(args, "choice")?;
     let new_reason = opt_str(args, "reason")?;
-    let new_code_refs = parse_code_refs(args)?;
-    let code_refs_param =
-        if new_code_refs.is_empty() && !args.get("code_refs").is_some_and(|v| v.is_array()) {
+
+    // Distinguish an omitted field from an empty one: a missing `tags`/
+    // `code_refs` key leaves the current values intact, while an explicit
+    // (possibly empty) array replaces them.
+    let new_tags = if args.get("tags").is_some_and(|v| v.is_array()) {
+        Some(opt_str_array(args, "tags")?)
+    } else {
+        None
+    };
+    let parsed_refs = parse_code_refs(args)?;
+    let new_code_refs =
+        if parsed_refs.is_empty() && !args.get("code_refs").is_some_and(|v| v.is_array()) {
             None
         } else {
-            Some(new_code_refs)
+            Some(parsed_refs)
         };
 
-    if new_choice.is_none() && new_reason.is_none() && code_refs_param.is_none() {
-        return Err("amend requires at least one of `choice`, `reason`, or `code_refs`".into());
+    if new_choice.is_none() && new_reason.is_none() && new_tags.is_none() && new_code_refs.is_none()
+    {
+        return Err(
+            "revise requires at least one of `choice`, `reason`, `tags`, or `code_refs`".into(),
+        );
     }
 
-    // Quality floor: amended values must meet the same bar as new decisions.
+    // Quality floor: revised values must meet the same bar as new decisions.
     if let Some(c) = new_choice
         && c.len() > MAX_CHOICE_BYTES
     {
@@ -133,54 +148,64 @@ fn amend_decision(
         ));
     }
 
+    // Only substantive edits — choice or reason — are versioned into history.
+    let writes_history = new_choice.is_some() || new_reason.is_some();
+
     let lock = store.lock().map_err(|e| e.to_string())?;
     store
-        .amend_decision(
+        .revise_decision(
             &lock,
             state,
             name,
-            store::AmendDecisionParams {
+            store::ReviseDecisionParams {
                 choice: new_choice,
                 reason: new_reason,
-                tags: None,
-                code_refs: code_refs_param.as_deref(),
+                tags: new_tags,
+                code_refs: new_code_refs,
+                writes_history,
             },
         )
         .map_err(|e| e.to_string())?;
+    drop(lock);
 
-    // Collect affected patterns and decisions.
-    let (affected_patterns, affected_decisions) = collect_affected(state.graph(), name);
+    let history_length = state
+        .decisions
+        .get(name)
+        .map_or(0, |d| d.decision.history.len());
 
     Ok(serde_json::json!({
         "name": name,
+        "revised": true,
+        "history_length": history_length,
         "path": store.decision_path(name).display().to_string(),
-        "affected_patterns": affected_patterns,
-        "affected_decisions": affected_decisions,
     }))
 }
 
-/// Collect pattern and decision names affected by edges involving a decision.
-fn collect_affected(
-    graph: &crate::store::graph::InMemoryGraph,
-    decision: &str,
-) -> (Vec<String>, Vec<String>) {
-    let involved = graph.edges_involving(decision);
+/// Mark an agent decision as human-reviewed by flipping its attribution to
+/// `user`. Rejects decisions already attributed to the user.
+fn promote_decision(
+    store: &Store,
+    state: &mut store::ProjectState,
+    name: &str,
+) -> Result<Value, String> {
+    let already_user = state
+        .decisions
+        .get(name)
+        .is_some_and(|d| d.decision.attribution == Attribution::User);
+    if already_user {
+        return Err(format!("decision `{name}` already has attribution=user"));
+    }
 
-    let patterns: Vec<String> = involved
-        .iter()
-        .filter(|(_, e, d)| e.kind == EdgeKind::MemberOf && *d == Direction::Reverse)
-        .map(|(other, _, _)| other.to_string())
-        .collect();
+    let lock = store.lock().map_err(|e| e.to_string())?;
+    store
+        .promote_decision(&lock, state, name)
+        .map_err(|e| e.to_string())?;
 
-    let decisions: Vec<String> = involved
-        .iter()
-        .filter(|(_, e, d)| {
-            matches!(e.kind, EdgeKind::DependsOn | EdgeKind::Constrains) && *d == Direction::Reverse
-        })
-        .map(|(other, _, _)| other.to_string())
-        .collect();
-
-    (patterns, decisions)
+    Ok(serde_json::json!({
+        "name": name,
+        "promoted": true,
+        "attribution": "user",
+    }))
 }
 
 #[cfg(test)]
@@ -278,17 +303,18 @@ mod tests {
         assert!(err.contains("ghost"));
     }
 
-    // ── update_decision ─────────────────────────────────────────────────
+    // ── update_decision: revise ──────────────────────────────────────────
 
     #[test]
-    fn update_decision_amend_choice() {
+    fn update_decision_revise_choice() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "Use JWT v2" });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "Use JWT v2" });
         let result = update_decision(&store, &mut state, &args).unwrap();
         assert_eq!(result["name"], "use-jwt");
+        assert_eq!(result["revised"], true);
 
         let dec = state.decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.choice, "Use JWT v2");
@@ -296,40 +322,68 @@ mod tests {
     }
 
     #[test]
-    fn update_decision_amend_reason() {
+    fn update_decision_revise_grows_history() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "reason": "Better reason" });
+        let first = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "use-jwt", "mode": "revise", "choice": "Use OAuth" }),
+        )
+        .unwrap();
+        assert_eq!(first["history_length"], 1);
+
+        let second = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "use-jwt", "mode": "revise", "reason": "Delegated identity provider" }),
+        )
+        .unwrap();
+        assert_eq!(second["history_length"], 2);
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        // Oldest first: history traces the decision's evolution.
+        assert_eq!(dec.decision.history[0].choice, "Use JWT");
+        assert_eq!(dec.decision.history[1].choice, "Use OAuth");
+    }
+
+    #[test]
+    fn update_decision_revise_reason() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "revise", "reason": "Better reason text" });
         let result = update_decision(&store, &mut state, &args).unwrap();
         assert_eq!(result["name"], "use-jwt");
 
         let dec = state.decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.choice, "Use JWT"); // unchanged
-        assert_eq!(dec.decision.reason, "Better reason");
+        assert_eq!(dec.decision.reason, "Better reason text");
     }
 
     #[test]
-    fn update_decision_amend_preserves_timestamp() {
+    fn update_decision_revise_preserves_timestamp() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
         let original_ts = state.decisions["use-jwt"].decision.created;
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "JWT v2" });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "JWT v2" });
         update_decision(&store, &mut state, &args).unwrap();
 
         assert_eq!(state.decisions["use-jwt"].decision.created, original_ts);
     }
 
     #[test]
-    fn update_decision_amend_rejects_no_changes() {
+    fn update_decision_revise_rejects_no_changes() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend" });
+        let args = json!({ "name": "use-jwt", "mode": "revise" });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(err.contains("at least one"));
     }
@@ -346,11 +400,69 @@ mod tests {
     }
 
     #[test]
+    fn update_decision_rejects_legacy_amend_mode() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "X" });
+        let err = update_decision(&store, &mut state, &args).unwrap_err();
+        assert!(
+            err.contains("invalid mode"),
+            "amend is no longer a mode: {err}"
+        );
+    }
+
+    #[test]
     fn update_decision_rejects_nonexistent() {
         let (_tmp, store, mut state) = setup();
-        let args = json!({ "name": "ghost", "mode": "amend", "choice": "X" });
+        let args = json!({ "name": "ghost", "mode": "revise", "choice": "X" });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(err.contains("ghost"));
+    }
+
+    // ── update_decision: promote ─────────────────────────────────────────
+
+    #[test]
+    fn update_decision_promote_flips_agent_to_user() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "agent" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "promote" });
+        let result = update_decision(&store, &mut state, &args).unwrap();
+        assert_eq!(result["promoted"], true);
+        assert_eq!(result["attribution"], "user");
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        assert_eq!(dec.decision.attribution, Attribution::User);
+    }
+
+    #[test]
+    fn update_decision_promote_rejects_user() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "promote" });
+        let err = update_decision(&store, &mut state, &args).unwrap_err();
+        assert!(err.contains("already"), "{err}");
+    }
+
+    #[test]
+    fn update_decision_promote_leaves_no_history() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "agent" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "use-jwt", "mode": "promote" }),
+        )
+        .unwrap();
+
+        assert!(state.decisions["use-jwt"].decision.history.is_empty());
     }
 
     // ── no workflow hints ─────────────────────────────────────────────
@@ -367,51 +479,66 @@ mod tests {
     }
 
     #[test]
-    fn amend_no_workflow() {
+    fn revise_no_workflow() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "Use JWT v2" });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "Use JWT v2" });
         let result = update_decision(&store, &mut state, &args).unwrap();
         assert!(result.get("workflow").is_none());
     }
 
-    // ── amend quality floor ───────────────────────────────────────────
+    // ── revise quality floor ──────────────────────────────────────────
 
     #[test]
-    fn amend_rejects_short_reason() {
+    fn revise_rejects_short_reason() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
-        let args = json!({ "name": "use-jwt", "mode": "amend", "reason": "ok" });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "reason": "ok" });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(
             err.contains("at least") && err.contains("characters"),
-            "amend should enforce quality floor: {err}"
+            "revise should enforce quality floor: {err}"
         );
     }
 
     #[test]
-    fn amend_rejects_long_choice() {
+    fn revise_rejects_long_choice() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         record_decision(&store, &mut state, &d).unwrap();
 
         let long = "x".repeat(201);
-        let args = json!({ "name": "use-jwt", "mode": "amend", "choice": long });
+        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": long });
         let err = update_decision(&store, &mut state, &args).unwrap_err();
         assert!(
             err.contains("200"),
-            "amend should enforce choice length: {err}"
+            "revise should enforce choice length: {err}"
         );
     }
 
-    // ── code_refs ─────────────────────────────────────────────────────
+    // ── revise: tags and code_refs ────────────────────────────────────
 
     #[test]
-    fn amend_code_refs() {
+    fn revise_tags_leaves_no_history() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "revise", "tags": ["security", "auth"] });
+        let result = update_decision(&store, &mut state, &args).unwrap();
+        assert_eq!(result["history_length"], 0);
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        assert_eq!(dec.decision.tags, vec!["security", "auth"]);
+        assert!(dec.decision.history.is_empty());
+    }
+
+    #[test]
+    fn revise_code_refs() {
         let (_tmp, store, mut state) = setup();
         let d = json!({
             "component": "auth",
@@ -423,7 +550,7 @@ mod tests {
 
         let args = json!({
             "name": "use-jwt",
-            "mode": "amend",
+            "mode": "revise",
             "code_refs": [
                 { "file": "src/auth/jwt.rs", "symbol": "verify" },
             ],
@@ -436,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn amend_code_refs_replaces_existing() {
+    fn revise_code_refs_replaces_existing() {
         let (_tmp, store, mut state) = setup();
         let d = json!({
             "component": "auth",
@@ -449,7 +576,7 @@ mod tests {
 
         let args = json!({
             "name": "use-jwt",
-            "mode": "amend",
+            "mode": "revise",
             "code_refs": [{ "file": "src/new.rs" }],
         });
         update_decision(&store, &mut state, &args).unwrap();
@@ -460,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn amend_empty_code_refs_clears() {
+    fn revise_empty_code_refs_clears() {
         let (_tmp, store, mut state) = setup();
         let d = json!({
             "component": "auth",
@@ -474,7 +601,7 @@ mod tests {
 
         let args = json!({
             "name": "use-jwt",
-            "mode": "amend",
+            "mode": "revise",
             "code_refs": [],
         });
         update_decision(&store, &mut state, &args).unwrap();
@@ -484,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn amend_without_code_refs_key_preserves_existing() {
+    fn revise_without_code_refs_key_preserves_existing() {
         let (_tmp, store, mut state) = setup();
         let d = json!({
             "component": "auth",
@@ -495,10 +622,10 @@ mod tests {
         });
         record_decision(&store, &mut state, &d).unwrap();
 
-        // Amend an unrelated field — omitting code_refs must leave refs intact.
+        // Revise an unrelated field — omitting code_refs must leave refs intact.
         let args = json!({
             "name": "use-jwt",
-            "mode": "amend",
+            "mode": "revise",
             "reason": "Stateless, avoids a server-side session store",
         });
         update_decision(&store, &mut state, &args).unwrap();
