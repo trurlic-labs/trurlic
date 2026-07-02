@@ -48,6 +48,7 @@ pub(crate) struct AmendDecision {
     choice: Option<String>,
     reason: Option<String>,
     tags: Option<Vec<String>>,
+    code_refs: Option<Vec<store::CodeRef>>,
 }
 
 #[derive(Deserialize)]
@@ -110,7 +111,7 @@ pub(crate) async fn get_graph(State(state): State<Arc<MapState>>) -> ApiResult {
         .iter()
         .map(|(name, dec)| {
             let d = &dec.decision;
-            json!({
+            let mut obj = json!({
                 "name": name,
                 "component": d.component,
                 "choice": d.choice,
@@ -118,7 +119,11 @@ pub(crate) async fn get_graph(State(state): State<Arc<MapState>>) -> ApiResult {
                 "tags": d.tags,
                 "created": d.created.to_rfc3339(),
                 "alternatives": d.alternatives,
-            })
+            });
+            if !d.code_refs.is_empty() {
+                obj["code_refs"] = json!(store::code_refs_to_json(&d.code_refs));
+            }
+            obj
         })
         .collect();
 
@@ -373,10 +378,16 @@ fn amend_decision(state: Arc<MapState>, name: String, body: AmendDecision) -> Ap
         }
     }
 
+    if let Some(ref refs) = body.code_refs {
+        store::validate_code_refs(refs)
+            .map_err(|e| api_err(StatusCode::BAD_REQUEST, e.to_string()))?;
+    }
+
     let params = store::AmendDecisionParams {
         choice: body.choice.as_deref(),
         reason: body.reason.as_deref(),
         tags: body.tags.as_deref(),
+        code_refs: body.code_refs.as_deref(),
     };
 
     let lock = state
