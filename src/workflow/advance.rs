@@ -19,8 +19,8 @@ use crate::store::limits::MIN_STEP_EVIDENCE_BYTES;
 use crate::store::schema::DecisionFile;
 
 use super::action::{
-    ReadyParams, StaleDec, build_assessment, build_response, ready_response, step_action,
-    step_prompt_action, top_n,
+    ReadyParams, StaleDec, agent_unreviewed_count, build_assessment, build_response,
+    ready_response, step_action, step_prompt_action, top_n, with_agent_review_hint,
 };
 use super::concerns;
 use super::{CONCERN_FOCUS_LIMIT, Mode, STALENESS_THRESHOLD_DAYS, Step, TaskType};
@@ -183,9 +183,15 @@ pub fn advance(
     let assessment = build_assessment(&decisions, &covered, &uncovered, &stale, &patterns);
     let action = step_action(component, &step, task, mode);
 
-    Ok(build_response(
-        component, task_type, &step, ready, mode, assessment, action,
-    ))
+    let response = build_response(component, task_type, &step, ready, mode, assessment, action);
+    if ready {
+        Ok(with_agent_review_hint(
+            response,
+            agent_unreviewed_count(&decisions),
+        ))
+    } else {
+        Ok(response)
+    }
 }
 
 // ── Task type inference ───────────────────────────────────────────────────
@@ -1003,6 +1009,22 @@ mod tests {
         }
     }
 
+    fn agent_decision(component: &str, choice: &str, reason: &str, tags: &[&str]) -> DecisionFile {
+        DecisionFile {
+            decision: Decision {
+                component: component.into(),
+                choice: choice.into(),
+                reason: reason.into(),
+                alternatives: vec![],
+                tags: tags.iter().map(|t| (*t).into()).collect(),
+                attribution: Attribution::Agent,
+                created: Utc::now(),
+                code_refs: vec![],
+                history: vec![],
+            },
+        }
+    }
+
     fn stale_decision(component: &str, choice: &str, reason: &str, tags: &[&str]) -> DecisionFile {
         DecisionFile {
             decision: Decision {
@@ -1266,6 +1288,82 @@ mod tests {
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
+    }
+
+    // ── Agent-review count on ready ────────────────────────────────────
+
+    #[test]
+    fn ready_response_reports_agent_review_count() {
+        let mut decs = well_covered_decisions("store", true);
+        decs.push((
+            "d-agent",
+            agent_decision("store", "Auto-detected cache", "Inferred", &[]),
+        ));
+        let state = build_state(&[("store", "Data store")], &decs);
+        let result = advance(
+            &state,
+            "store",
+            None,
+            None,
+            Some(Mode::Interactive),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(result["ready"], true);
+        assert_eq!(result["agent_decisions_unreviewed"], 1);
+        assert!(
+            result["hint"].as_str().unwrap().contains("pending review"),
+            "hint should prompt review: {}",
+            result["hint"]
+        );
+    }
+
+    #[test]
+    fn ready_response_hint_null_when_all_reviewed() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &well_covered_decisions("store", true),
+        );
+        let result = advance(
+            &state,
+            "store",
+            None,
+            None,
+            Some(Mode::Interactive),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(result["ready"], true);
+        assert_eq!(result["agent_decisions_unreviewed"], 0);
+        assert!(result["hint"].is_null());
+    }
+
+    #[test]
+    fn feature_ready_carries_agent_review_count() {
+        let mut decs = well_covered_decisions("store", true);
+        decs.push((
+            "d-agent",
+            agent_decision("store", "Auto-detected cache", "Inferred", &[]),
+        ));
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &decs,
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["verify_constraints", "summary_gate"]),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["agent_decisions_unreviewed"], 1);
     }
 
     // ── NewComponent step sequence ────────────────────────────────────

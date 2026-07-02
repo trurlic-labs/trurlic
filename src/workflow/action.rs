@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::store::schema::{DecisionFile, PatternFile};
+use crate::store::schema::{Attribution, DecisionFile, PatternFile};
 
 use super::{Mode, Step, TaskType};
 
@@ -332,7 +332,7 @@ pub(super) fn ready_response(p: ReadyParams<'_>) -> Value {
         TaskType::Feature
     };
     let assessment = build_assessment(p.decisions, p.covered, p.uncovered, p.stale, p.patterns);
-    build_response(
+    let response = build_response(
         p.component,
         display_type,
         &Step::Ready,
@@ -346,7 +346,33 @@ pub(super) fn ready_response(p: ReadyParams<'_>) -> Value {
                             implementation. Call get_context for the \
                             authoritative brief.",
         }),
-    )
+    );
+    with_agent_review_hint(response, agent_unreviewed_count(p.decisions))
+}
+
+/// Count decisions still attributed to the agent — those recorded
+/// autonomously and not yet confirmed by a human.
+pub(super) fn agent_unreviewed_count(decisions: &[(&Arc<str>, &DecisionFile)]) -> usize {
+    decisions
+        .iter()
+        .filter(|(_, d)| d.decision.attribution == Attribution::Agent)
+        .count()
+}
+
+/// Annotate a ready response with the count of unreviewed agent decisions
+/// and a prompt to review them. When every decision is human-confirmed the
+/// hint is null, keeping the healthy path quiet.
+pub(super) fn with_agent_review_hint(mut response: Value, count: usize) -> Value {
+    response["agent_decisions_unreviewed"] = serde_json::json!(count);
+    response["hint"] = if count > 0 {
+        serde_json::json!(format!(
+            "{count} agent decision{} pending review — promote or revise before relying on them",
+            if count == 1 { "" } else { "s" }
+        ))
+    } else {
+        Value::Null
+    };
+    response
 }
 
 /// Build a `get_step_prompt` action.

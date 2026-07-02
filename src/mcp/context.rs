@@ -125,6 +125,7 @@ pub(crate) fn get_context(
                     "covered": covered_concerns,
                     "uncovered": uncovered_concerns,
                 },
+                "health": build_health(&component_decisions),
                 "brief": brief,
                 "status": status,
             }))
@@ -266,6 +267,9 @@ fn build_brief(p: &BriefParams<'_>) -> String {
                 "- {} ({}){}\n",
                 d.decision.choice, d.decision.reason, suffix
             ));
+            if d.decision.attribution == Attribution::Agent {
+                brief.push_str(AGENT_REVIEW_CALL_TO_ACTION);
+            }
             if !d.decision.code_refs.is_empty() {
                 brief.push_str(&format!(
                     "  Code: {}\n",
@@ -541,6 +545,59 @@ pub(crate) fn get_decision_history(state: &ProjectState, name: &str) -> Result<V
         "history": d.history,
         "revision_count": d.history.len(),
     }))
+}
+
+// ── Decision health ────────────────────────────────────────────────────────
+
+/// Follow-up line appended under agent-attributed decisions in the brief.
+/// Points the reader at the two ways to clear the unreviewed flag: confirm
+/// the decision as-is, or change it. Line continuations collapse to one line.
+const AGENT_REVIEW_CALL_TO_ACTION: &str = "  \u{2192} call update_decision(mode=\"promote\") to \
+     confirm, or update_decision(mode=\"revise\") to change\n";
+
+/// Summarize the health of a component's decision set: how many decisions it
+/// carries, how many remain unreviewed agent decisions, how many are stale
+/// (referencing deleted files), and a single most-pressing warning.
+///
+/// The counts drive the warning via [`health_warning`]. Staleness is not yet
+/// computed here and is reported as zero.
+fn build_health(component_decisions: &[(&Arc<str>, &DecisionFile)]) -> Value {
+    let total = component_decisions.len();
+    let agent_unreviewed = component_decisions
+        .iter()
+        .filter(|(_, d)| d.decision.attribution == Attribution::Agent)
+        .count();
+    let stale = 0;
+
+    serde_json::json!({
+        "total": total,
+        "agent_unreviewed": agent_unreviewed,
+        "stale": stale,
+        "warning": health_warning(total, agent_unreviewed, stale),
+    })
+}
+
+/// Select the single most-pressing health warning by fixed precedence:
+/// decision overload first, then unreviewed agent decisions, then stale
+/// references. Returns `Null` when the decision set is healthy.
+fn health_warning(total: usize, agent_unreviewed: usize, stale: usize) -> Value {
+    const MAX_HEALTHY_DECISIONS: usize = 20;
+    const MAX_HEALTHY_AGENT_UNREVIEWED: usize = 5;
+
+    if total > MAX_HEALTHY_DECISIONS {
+        serde_json::json!(
+            "Too many decisions for this component — consider consolidating \
+             with revise or removing outdated ones"
+        )
+    } else if agent_unreviewed > MAX_HEALTHY_AGENT_UNREVIEWED {
+        serde_json::json!("Multiple agent decisions pending review")
+    } else if stale > 0 {
+        serde_json::json!(format!(
+            "{stale} decisions reference deleted files — consider removing or revising"
+        ))
+    } else {
+        Value::Null
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -1457,6 +1514,153 @@ mod tests {
 
         let user_dec = decisions.iter().find(|d| d["name"] == "use-jwt").unwrap();
         assert_eq!(user_dec["attribution"], "user");
+    }
+
+    // ── decision health ───────────────────────────────────────────────
+
+    #[test]
+    fn get_context_includes_health() {
+        let state = test_state();
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+        let health = &result["health"];
+        assert!(health["total"].is_number());
+        assert!(health["agent_unreviewed"].is_number());
+        assert!(health["stale"].is_number());
+        // auth carries a single user decision → healthy, no warning.
+        assert!(health["warning"].is_null());
+    }
+
+    #[test]
+    fn health_total_matches_decision_count() {
+        let state = test_state();
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+        let decision_count = result["decisions"].as_array().unwrap().len();
+        assert_eq!(result["health"]["total"], decision_count);
+    }
+
+    #[test]
+    fn health_counts_agent_unreviewed() {
+        use chrono::Utc;
+
+        let user = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "User choice".into(),
+                reason: "Confirmed".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc::now(),
+                code_refs: vec![],
+                history: vec![],
+            },
+        };
+        let agent = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "Agent choice".into(),
+                reason: "Inferred".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::Agent,
+                created: Utc::now(),
+                code_refs: vec![],
+                history: vec![],
+            },
+        };
+        let un: Arc<str> = Arc::from("user-dec");
+        let an: Arc<str> = Arc::from("agent-dec");
+        let decisions = vec![(&un, &user), (&an, &agent)];
+
+        let health = build_health(&decisions);
+        assert_eq!(health["total"], 2);
+        assert_eq!(health["agent_unreviewed"], 1);
+        assert_eq!(health["stale"], 0);
+        assert!(health["warning"].is_null());
+    }
+
+    #[test]
+    fn health_warning_consolidate_when_over_twenty() {
+        let warning = health_warning(21, 0, 0);
+        assert!(warning.as_str().unwrap().contains("consolidating"));
+    }
+
+    #[test]
+    fn health_warning_agent_pending_over_five() {
+        let warning = health_warning(10, 6, 0);
+        assert_eq!(warning, "Multiple agent decisions pending review");
+    }
+
+    #[test]
+    fn health_warning_stale_refs() {
+        let warning = health_warning(5, 2, 3);
+        assert!(warning.as_str().unwrap().contains("deleted files"));
+    }
+
+    #[test]
+    fn health_warning_null_when_healthy() {
+        assert!(health_warning(5, 2, 0).is_null());
+    }
+
+    #[test]
+    fn health_warning_precedence_total_over_agent() {
+        // Overload dominates even when agent decisions also exceed threshold.
+        let warning = health_warning(25, 10, 5);
+        assert!(warning.as_str().unwrap().contains("consolidating"));
+    }
+
+    #[test]
+    fn brief_agent_decision_has_review_call_to_action() {
+        use chrono::{TimeZone, Utc};
+
+        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap();
+        let mut state = test_state();
+        state.decisions.insert(
+            "agent-dec".into(),
+            Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "auth".into(),
+                    choice: "Agent suggested approach".into(),
+                    reason: "Automated".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::Agent,
+                    created: ts,
+                    code_refs: vec![],
+                    history: vec![],
+                },
+            }),
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "agent-dec".into(),
+            kind: NodeKind::Decision,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "agent-dec".into(),
+            to: "auth".into(),
+            kind: EdgeKind::BelongsTo,
+        });
+        state.rebuild_graph();
+
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+        let brief = result["brief"].as_str().unwrap();
+
+        assert!(
+            brief.contains("update_decision(mode=\"promote\")"),
+            "agent decision must offer a promote call-to-action: {brief}"
+        );
+        assert!(
+            brief.contains("update_decision(mode=\"revise\")"),
+            "agent decision must offer a revise call-to-action: {brief}"
+        );
+        // The user decision must not carry the call-to-action.
+        let user_line = brief.lines().find(|l| l.contains("JWT with DPoP")).unwrap();
+        assert!(
+            !user_line.contains("promote"),
+            "user decision line must stay clean: {user_line}"
+        );
     }
 
     // ── code_refs in brief ────────────────────────────────────────────
