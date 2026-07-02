@@ -136,6 +136,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   so a trailing or doubled space can't slip a near-duplicate past it.
 - **Map `PUT /api/decision/:name` returns 404**, not 500, for an unknown
   decision, and 400 for invalid input.
+- **`advance` is pure again — the wall clock is injected, not read.** Staleness
+  (decisions older than the threshold) is now computed from a `now` the caller
+  supplies, so `advance` is a deterministic function of `(graph, now)`. Reading
+  `Utc::now()` internally made the same graph return different steps as the
+  calendar advanced (a healthy component silently flipping to `review` on day
+  90), violating the purity invariant and the determinism the engine promises.
+- **Batch decision removal is fail-closed at the store boundary.** `remove_decisions`
+  now compares the graph's error set before and after removal and refuses any
+  removal that introduces a *new* violation (e.g. dropping a pattern below its
+  two-member minimum), while still tolerating pre-existing errors so the
+  collector can repair an already-broken store. Safety no longer rests solely on
+  each caller's pre-flight.
+- **`revise` cannot manufacture a duplicate decision.** Revising a choice into a
+  restatement of another decision in the same component is now rejected at the
+  store layer — the same guard `record_decision` enforces — so neither the MCP
+  nor the map transport can fork two nodes onto identical choice text.
+- **`revise` of a missing decision is a 404, not a 400.** The existence check now
+  precedes body-shape validation, so an empty-bodied revise of an absent
+  decision surfaces `DecisionNotFound` (→ 404) rather than a validation error.
+- **`trurlic migrate --dry-run` no longer crashes on a retired edge.** The
+  preview parses `graph.toml` loosely (like the apply path) instead of a typed
+  read that a `supersedes` edge — the very thing migration repairs — would
+  reject, and it now reports how many retired edges would be stripped.
+- **`migrate` is crash-safer and its backup is consistent.** The recovery backup
+  is copied under the store lock (no torn snapshot from a concurrent writer), and
+  retired edges are stripped before the version bump so an interrupted run leaves
+  a loadable store rather than one bricked on an unknown edge kind. The apply path
+  reports the count of edges it removed.
+- **Staleness / orphaned-reference detection is deduplicated and I/O-robust.**
+  The "all code references deleted" predicate lives once in `store`
+  (`decision_refs_all_missing`), shared by the context health report and `gc`,
+  and uses `try_exists` so a permission or mount error never misreports a live
+  file as deleted and drives a decision to be flagged or collected.
 
 ### Changed (internal)
 
