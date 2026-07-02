@@ -515,6 +515,34 @@ pub(crate) fn get_architecture(state: &ProjectState) -> Value {
     })
 }
 
+// ── get_decision_history ───────────────────────────────────────────────────
+
+/// Return a decision's current values alongside its revision history.
+///
+/// History is chronological (oldest first): each entry captures the
+/// choice and reason as they stood before a revision replaced them.
+/// `revision_count` equals the number of history entries — the number of
+/// times choice or reason has changed since the decision was recorded.
+pub(crate) fn get_decision_history(state: &ProjectState, name: &str) -> Result<Value, String> {
+    let dec = state
+        .decisions
+        .get(name)
+        .ok_or_else(|| format!("decision `{name}` does not exist"))?;
+    let d = &dec.decision;
+
+    Ok(serde_json::json!({
+        "name": name,
+        "current": {
+            "choice": d.choice,
+            "reason": d.reason,
+            "attribution": attribution_str(d.attribution),
+            "created": d.created,
+        },
+        "history": d.history,
+        "revision_count": d.history.len(),
+    }))
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 fn format_decisions(decisions: &[(&Arc<str>, &DecisionFile)]) -> Vec<Value> {
@@ -1542,6 +1570,78 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0]["file"], "src/store/write.rs");
         assert_eq!(refs[0]["symbol"], "commit_with_graph");
+    }
+
+    // ── get_decision_history ──────────────────────────────────────────
+
+    #[test]
+    fn get_decision_history_no_history_is_empty() {
+        let state = test_state();
+        // use-jwt is a freshly recorded decision — never revised.
+        let result = get_decision_history(&state, "use-jwt").unwrap();
+
+        assert_eq!(result["name"], "use-jwt");
+        assert_eq!(result["revision_count"], 0);
+        assert!(result["history"].as_array().unwrap().is_empty());
+        // Current values are always present.
+        assert!(result["current"]["choice"].is_string());
+        assert!(result["current"]["reason"].is_string());
+        assert_eq!(result["current"]["attribution"], "user");
+        assert!(result["current"]["created"].is_string());
+    }
+
+    #[test]
+    fn get_decision_history_returns_chronological_entries() {
+        use chrono::{TimeZone, Utc};
+
+        let mut state = test_state();
+        state.decisions.insert(
+            "revised-dec".into(),
+            Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "auth".into(),
+                    choice: "JWT with DPoP binding".into(),
+                    reason: "Proof-of-possession prevents replay".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::User,
+                    created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                    code_refs: vec![],
+                    history: vec![
+                        HistoryEntry {
+                            choice: "JWT tokens".into(),
+                            reason: "Stateless authentication".into(),
+                            changed_at: Utc.with_ymd_and_hms(2025, 7, 15, 14, 0, 0).unwrap(),
+                        },
+                        HistoryEntry {
+                            choice: "JWT with refresh tokens".into(),
+                            reason: "Stateless auth with rotation".into(),
+                            changed_at: Utc.with_ymd_and_hms(2025, 8, 1, 9, 30, 0).unwrap(),
+                        },
+                    ],
+                },
+            }),
+        );
+
+        let result = get_decision_history(&state, "revised-dec").unwrap();
+
+        assert_eq!(result["revision_count"], 2);
+        assert_eq!(result["current"]["choice"], "JWT with DPoP binding");
+
+        let history = result["history"].as_array().unwrap();
+        assert_eq!(history.len(), 2);
+        // Oldest first: entries trace the decision's evolution.
+        assert_eq!(history[0]["choice"], "JWT tokens");
+        assert_eq!(history[1]["choice"], "JWT with refresh tokens");
+        assert!(history[0]["changed_at"].is_string());
+    }
+
+    #[test]
+    fn get_decision_history_rejects_nonexistent() {
+        let state = test_state();
+        let err = get_decision_history(&state, "ghost").unwrap_err();
+        assert!(err.contains("ghost"));
+        assert!(err.contains("does not exist"));
     }
 
     #[test]
