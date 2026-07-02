@@ -663,6 +663,61 @@ impl Store {
         Ok(())
     }
 
+    /// Remove several decisions from disk and the graph index in one atomic
+    /// commit.
+    ///
+    /// This is the garbage-collection path. Unlike [`remove_decision`], it
+    /// commits the reduced index directly rather than through the fail-closed
+    /// validating write path: node removal is monotonic with respect to graph
+    /// integrity — stripping a node and every incident edge can only clear
+    /// violations, never introduce them. That lets the collector repair a
+    /// store that is *already* invalid (decisions orphaned when a component
+    /// file was deleted out of band) instead of a validating commit refusing
+    /// because other invalid nodes still remain.
+    ///
+    /// **Callers must** run cascade pre-flight per name and exclude blocked
+    /// ones. Names absent from `state` are skipped. On failure the in-memory
+    /// `state` is restored and no files change.
+    pub fn remove_decisions(
+        &self,
+        lock: &StoreLock,
+        state: &mut ProjectState,
+        names: &[&str],
+    ) -> Result<()> {
+        let mut restore_decisions: Vec<(String, Arc<DecisionFile>)> = Vec::new();
+        let mut restore_nodes: Vec<super::state::RemovedGraphNode> = Vec::new();
+        let mut removes: Vec<PathBuf> = Vec::new();
+
+        for &name in names {
+            if let Some(dec) = state.decisions.remove(name) {
+                restore_nodes.push(state.remove_graph_node(name));
+                removes.push(self.decision_path(name));
+                restore_decisions.push((name.to_string(), dec));
+            }
+        }
+
+        if removes.is_empty() {
+            return Ok(());
+        }
+
+        let graph = state.build_graph();
+        let index = graph.to_index();
+        if let Err(e) = self.commit_batch(lock, vec![], removes, Some(index)) {
+            for (name, dec) in restore_decisions {
+                state.decisions.insert(name, dec);
+            }
+            for removed in restore_nodes {
+                state.restore_graph_node(removed);
+            }
+            return Err(e);
+        }
+
+        // Reuse the graph built from the reduced index — mirrors the cache
+        // refresh commit_with_graph performs on the validating path.
+        state.graph = graph;
+        Ok(())
+    }
+
     // ── Revise decision (shared write path) ───────────────────────────
 
     /// Revise an existing decision in place, versioning the prior choice and
@@ -1979,5 +2034,176 @@ mod tests {
             .promote_decision(&lock, &mut state, "ghost")
             .unwrap_err();
         assert!(matches!(err, Error::DecisionNotFound(_)), "{err}");
+    }
+
+    // ── remove_decisions (batch) ──────────────────────────────────────────
+
+    fn record(store: &Store, lock: &StoreLock, state: &mut ProjectState, choice: &str) -> String {
+        store
+            .record_decision(
+                lock,
+                state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice,
+                    reason: "Test reasoning",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn remove_decisions_deletes_the_whole_set_atomically() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let a = record(&store, &lock, &mut state, "Use JWT");
+        let b = record(&store, &lock, &mut state, "Rotate tokens");
+        let keep = record(&store, &lock, &mut state, "Encrypt at rest");
+
+        store
+            .remove_decisions(&lock, &mut state, &[a.as_str(), b.as_str()])
+            .unwrap();
+        drop(lock);
+
+        // Both targets gone in memory and on disk; the untouched one survives.
+        assert!(!state.decisions.contains_key(&a));
+        assert!(!state.decisions.contains_key(&b));
+        assert!(state.decisions.contains_key(&keep));
+        let reloaded = store.load_state().unwrap();
+        assert_eq!(reloaded.decisions.len(), 1);
+        assert!(reloaded.decisions.contains_key(&keep));
+        // Removed nodes leave no dangling edges behind.
+        assert!(
+            reloaded
+                .graph_index
+                .edges
+                .iter()
+                .all(|e| e.from != a && e.to != a && e.from != b && e.to != b)
+        );
+    }
+
+    #[test]
+    fn remove_decisions_repairs_orphaned_store() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let a = record(&store, &lock, &mut state, "Use JWT");
+        let b = record(&store, &lock, &mut state, "Rotate tokens");
+        drop(lock);
+
+        // Orphan both decisions by deleting their component out of band, then
+        // reload so the graph reflects the missing component.
+        fs::remove_file(store.component_path("auth")).unwrap();
+        let mut orphaned = store.load_state().unwrap();
+        assert!(!orphaned.components.contains_key("auth"));
+
+        // A single validating removal cannot proceed: the sibling orphan keeps
+        // the graph invalid, so the fail-closed commit refuses.
+        let lock = store.lock().unwrap();
+        assert!(
+            store.remove_decision(&lock, &mut orphaned, &a).is_err(),
+            "validating removal must refuse while another orphan remains"
+        );
+
+        // The garbage-collection path clears the whole orphaned set.
+        store
+            .remove_decisions(&lock, &mut orphaned, &[a.as_str(), b.as_str()])
+            .unwrap();
+        drop(lock);
+
+        assert!(orphaned.decisions.is_empty());
+        assert!(store.load_state().unwrap().decisions.is_empty());
+    }
+
+    #[test]
+    fn remove_decision_cleans_every_incident_edge_type() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let base = record(&store, &lock, &mut state, "Use JWT");
+        let dependent = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Rotate tokens",
+                    reason: "Limit blast radius on leak",
+                    depends_on: std::slice::from_ref(&base),
+                    alternatives: &[],
+                    constrains: std::slice::from_ref(&base),
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+        let third = record(&store, &lock, &mut state, "Encrypt at rest");
+
+        let members = vec![base.clone(), dependent.clone(), third.clone()];
+        let pattern = store
+            .record_pattern(
+                &lock,
+                &mut state,
+                RecordPatternParams {
+                    name: "token-hygiene",
+                    description: "Coordinated token-handling decisions",
+                    decisions: &members,
+                    components: &[],
+                    tags: &[],
+                },
+            )
+            .unwrap();
+
+        // The dependent carries one of every decision-incident edge type:
+        // BelongsTo (→auth), DependsOn and Constrains (→base), plus an inbound
+        // MemberOf (pattern→dependent). Removing it must strip all of them.
+        store
+            .remove_decision(&lock, &mut state, &dependent)
+            .unwrap();
+        drop(lock);
+
+        let reloaded = store.load_state().unwrap();
+
+        // No edge of any kind still references the removed decision.
+        assert!(
+            reloaded
+                .graph_index
+                .edges
+                .iter()
+                .all(|e| e.from != dependent && e.to != dependent)
+        );
+
+        // The pattern persists, now bound to exactly its two surviving members.
+        assert!(reloaded.patterns.contains_key(&pattern));
+        let member_edges: Vec<_> = reloaded
+            .graph_index
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::MemberOf && e.from == pattern)
+            .map(|e| e.to.clone())
+            .collect();
+        assert_eq!(member_edges.len(), 2);
+        assert!(member_edges.contains(&base));
+        assert!(member_edges.contains(&third));
+
+        // Surviving decisions keep their BelongsTo ownership intact.
+        for keep in [&base, &third] {
+            assert!(
+                reloaded
+                    .graph_index
+                    .edges
+                    .iter()
+                    .any(|e| e.kind == EdgeKind::BelongsTo && e.from == *keep && e.to == "auth")
+            );
+        }
     }
 }
