@@ -508,6 +508,20 @@ mod tests {
     }
 
     #[test]
+    fn update_decision_rejects_legacy_supersede_mode() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({ "name": "use-jwt", "mode": "supersede", "choice": "X" });
+        let err = update_decision(&store, &mut state, &args).unwrap_err();
+        assert!(
+            err.contains("invalid mode"),
+            "supersede is no longer a mode: {err}"
+        );
+    }
+
+    #[test]
     fn update_decision_rejects_nonexistent() {
         let (_tmp, store, mut state) = setup();
         let args = json!({ "name": "ghost", "mode": "revise", "choice": "X" });
@@ -557,6 +571,57 @@ mod tests {
         .unwrap();
 
         assert!(state.decisions["use-jwt"].decision.history.is_empty());
+    }
+
+    // ── full decision lifecycle ───────────────────────────────────────
+
+    #[test]
+    fn record_revise_history_promote_lifecycle() {
+        let (_tmp, store, mut state) = setup();
+
+        // Record an agent decision.
+        let d = json!({ "component": "auth", "choice": "JWT tokens", "reason": "Stateless authentication", "attribution": "agent" });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        // Two substantive revisions grow the history chain.
+        let first = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-tokens", "mode": "revise", "choice": "JWT with refresh tokens" }),
+        )
+        .unwrap();
+        assert_eq!(first["history_length"], 1);
+
+        let second = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-tokens", "mode": "revise", "choice": "JWT with DPoP binding", "reason": "Proof-of-possession prevents token replay" }),
+        )
+        .unwrap();
+        assert_eq!(second["history_length"], 2);
+
+        // get_decision_history exposes the full chronological chain.
+        let history = crate::mcp::context::get_decision_history(&state, "jwt-tokens").unwrap();
+        assert_eq!(history["current"]["choice"], "JWT with DPoP binding");
+        assert_eq!(history["revision_count"], 2);
+        let entries = history["history"].as_array().unwrap();
+        assert_eq!(entries[0]["choice"], "JWT tokens");
+        assert_eq!(entries[1]["choice"], "JWT with refresh tokens");
+
+        // Promote flips the surviving decision from agent to user.
+        let promoted = update_decision(
+            &store,
+            &mut state,
+            &json!({ "name": "jwt-tokens", "mode": "promote" }),
+        )
+        .unwrap();
+        assert_eq!(promoted["attribution"], "user");
+        assert_eq!(
+            state.decisions["jwt-tokens"].decision.attribution,
+            Attribution::User
+        );
+        // History survives the promotion untouched.
+        assert_eq!(state.decisions["jwt-tokens"].decision.history.len(), 2);
     }
 
     // ── no workflow hints ─────────────────────────────────────────────

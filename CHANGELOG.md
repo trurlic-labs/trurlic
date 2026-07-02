@@ -34,13 +34,56 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Code references on decisions.** Decisions carry an optional `code_refs`
   list — `{ file, symbol? }` entries pinpointing where a decision manifests in
   source (no line numbers, which go stale). Plumbed through `record_decision`,
-  `update_decision` (amend replaces, supersede inherits unless overridden), the
-  map amend endpoint, and every context brief and step prompt. Paths are
+  `update_decision` (revise replaces the refs), the map revise endpoint, and
+  every context brief and step prompt. Paths are
   validated syntactically at the store trust boundary (relative, no `..`
   segment, forward slashes, no control characters) with counts capped by
   `MAX_CODE_REFS`; agent-mode prompts now instruct the AI to attach refs to
   every decision. Non-array or empty-symbol input is rejected, never silently
   dropped.
+- **In-place decision revision with history.** A decision is a single document
+  that evolves in place: `update_decision(mode="revise")` edits `choice`,
+  `reason`, `tags`, or `code_refs` and, when a substantive field (`choice` or
+  `reason`) changes, pushes the pre-edit values to a `history` list on the same
+  node. History is chronological (oldest first) and ring-buffered to
+  `MAX_HISTORY_ENTRIES` (20); the oldest entry drops when the limit is exceeded.
+  The decision keeps its name and every incident edge across revisions.
+- **Decision promotion.** `update_decision(mode="promote")` flips a decision's
+  attribution from `agent` to `user`, marking it human-reviewed. Rejects a
+  decision that is already `user`. Leaves history untouched.
+- **`get_decision_history` MCP tool.** Returns a decision's current `choice`,
+  `reason`, `attribution`, and `created`, its full chronological `history`, and
+  a `revision_count`.
+- **Decision health in `get_context`.** The full context brief carries a
+  `health` object (`total`, `agent_unreviewed`, `stale`, `warning`). The warning
+  fires on the first matching condition: more than 20 decisions (consolidate),
+  more than 5 unreviewed agent decisions (pending review), or any stale decision
+  (references deleted files). Unreviewed agent decisions carry a promote/revise
+  call-to-action in the brief.
+- **Staleness detection.** A decision whose `code_refs` all point to files
+  missing on disk is flagged `⚠ STALE` in the brief and counted in
+  `health.stale`. Decisions with no refs, or with at least one live ref, are
+  never stale.
+- **Coverage feedback on removal.** `remove_decision` reports a
+  `coverage_impact` object naming concern areas that lost their last covering
+  decision, plus the remaining covered/uncovered counts. The CLI prints a
+  `⚠ [component] lost coverage: …` line.
+- **Unreviewed-decision count in `advance`.** The ready response carries
+  `agent_decisions_unreviewed` and a hint when agent decisions await promotion.
+- **`trurlic gc`.** Reclaims decision debt. Safe mode removes decisions orphaned
+  by a deleted component and reports (without removing) stale decisions and
+  agent decisions older than 90 days that were never promoted; `--aggressive`
+  also removes the stale and old-agent candidates; `--dry-run` reports only.
+  Cascade-blocked candidates are skipped and reported — never silently dropped —
+  and coverage impact is shown per component. CLI only.
+- **Bulk agent-decision removal.** `trurlic remove decision --component <c>
+  --agent` removes every agent-attributed decision in a component atomically:
+  cascade is pre-flighted across all candidates, and if any is blocked, none are
+  removed.
+- **Hardened duplicate detection.** `record_decision` hard-errors on a choice
+  identical (case-insensitive) to an existing decision in the same component,
+  pointing at `update_decision(mode="revise")`, and warns on high word overlap
+  (Jaccard > 0.7) with a same-component decision.
 
 ### Changed
 
@@ -50,6 +93,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `advance` MCP tool: `mode` is optional — omitting it triggers the mode gate.
 - Response JSON includes `mode` field alongside `step`, `ready`, and
   `requires_user_input`.
+- `update_decision` modes are now `revise` and `promote`. The map
+  `PUT /api/decision/:name` endpoint maps its request body to a revise.
+- Loading a design session drops any recorded-decision names whose decisions no
+  longer exist in the graph.
+
+### Removed
+
+- **`Supersedes` edge type.** In-place revision keeps prior versions inside the
+  decision file, so a superseding edge to an old node no longer exists. Every
+  read path returns exactly the active decisions with no filtering.
+- **`amend` and `supersede` update modes.** Replaced by `revise` (which always
+  records history) and `promote`. `update_decision(mode="amend")` and
+  `update_decision(mode="supersede")` now return a clear invalid-mode error.
 
 ## [0.2.0] — 2026-06-15
 
