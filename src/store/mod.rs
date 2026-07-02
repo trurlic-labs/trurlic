@@ -473,13 +473,11 @@ impl Store {
 
         let graph_index = self.load_graph_index(&components, &decisions, &patterns, hashes)?;
 
-        Ok(ProjectState::new(
-            project,
-            components,
-            decisions,
-            patterns,
-            graph_index,
-        ))
+        let mut state = ProjectState::new(project, components, decisions, patterns, graph_index);
+        // code_refs are relative to the project directory, which is the parent
+        // of `.trurlic/`. Staleness detection resolves them against this root.
+        state.project_root = self.root.parent().unwrap_or(&self.root).to_path_buf();
+        Ok(state)
     }
 
     /// Reconcile the on-disk graph index with actual node files.

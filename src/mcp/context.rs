@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -71,6 +72,10 @@ pub(crate) fn get_context(
         "not_covered"
     };
 
+    // Decisions whose code_refs all point at deleted files. Computed once
+    // and shared between the health summary and the brief's stale flags.
+    let stale_names = stale_decision_names(&state.project_root, &component_decisions);
+
     match depth {
         ContextDepth::Full => {
             let related_decisions = graph.related_decisions(component);
@@ -89,6 +94,7 @@ pub(crate) fn get_context(
                 transitive_deps: &transitive_deps,
                 patterns: &patterns,
                 uncovered_concerns: &uncovered_concerns,
+                stale_names: &stale_names,
             });
 
             let mut seen: HashSet<&str> =
@@ -125,7 +131,7 @@ pub(crate) fn get_context(
                     "covered": covered_concerns,
                     "uncovered": uncovered_concerns,
                 },
-                "health": build_health(&component_decisions),
+                "health": build_health(&component_decisions, stale_names.len()),
                 "brief": brief,
                 "status": status,
             }))
@@ -210,6 +216,9 @@ struct BriefParams<'a> {
     transitive_deps: &'a [(&'a Arc<str>, &'a DecisionFile)],
     patterns: &'a [(&'a Arc<str>, &'a PatternFile)],
     uncovered_concerns: &'a [&'a str],
+    /// Names of component decisions whose code_refs all point at deleted
+    /// files. Flagged inline so the agent knows the reference is untrustworthy.
+    stale_names: &'a HashSet<&'a str>,
 }
 
 /// Format the authoritative brief that coding agents consume directly.
@@ -261,12 +270,15 @@ fn build_brief(p: &BriefParams<'_>) -> String {
     if p.component_decisions.is_empty() {
         brief.push_str("- No decisions recorded yet.\n");
     } else {
-        for (_, d) in p.component_decisions {
+        for (name, d) in p.component_decisions {
             let suffix = attribution_suffix(d.decision.attribution);
             brief.push_str(&format!(
                 "- {} ({}){}\n",
                 d.decision.choice, d.decision.reason, suffix
             ));
+            if p.stale_names.contains(name.as_ref()) {
+                brief.push_str(STALE_DECISION_FLAG);
+            }
             if d.decision.attribution == Attribution::Agent {
                 brief.push_str(AGENT_REVIEW_CALL_TO_ACTION);
             }
@@ -555,19 +567,46 @@ pub(crate) fn get_decision_history(state: &ProjectState, name: &str) -> Result<V
 const AGENT_REVIEW_CALL_TO_ACTION: &str = "  \u{2192} call update_decision(mode=\"promote\") to \
      confirm, or update_decision(mode=\"revise\") to change\n";
 
+/// Inline flag appended under a decision whose every code_ref points at a
+/// file that no longer exists on disk — the recorded constraint has lost its
+/// anchor in the source and should be revised or removed.
+const STALE_DECISION_FLAG: &str = "  \u{26a0} STALE \u{2014} all referenced files deleted\n";
+
+/// A decision is stale when it references code that no longer exists: it
+/// carries at least one code_ref and every referenced file is missing from
+/// disk. A decision with no code_refs is never stale — the absence of a link
+/// is not a broken link.
+fn is_stale(project_root: &Path, dec: &DecisionFile) -> bool {
+    let refs = &dec.decision.code_refs;
+    !refs.is_empty() && refs.iter().all(|r| !project_root.join(&r.file).exists())
+}
+
+/// Names of the decisions in `component_decisions` that are stale per
+/// [`is_stale`]. Resolves each `code_ref` against the project root.
+fn stale_decision_names<'a>(
+    project_root: &Path,
+    component_decisions: &[(&'a Arc<str>, &'a DecisionFile)],
+) -> HashSet<&'a str> {
+    component_decisions
+        .iter()
+        .filter(|(_, d)| is_stale(project_root, d))
+        .map(|&(name, _)| name.as_ref())
+        .collect()
+}
+
 /// Summarize the health of a component's decision set: how many decisions it
 /// carries, how many remain unreviewed agent decisions, how many are stale
 /// (referencing deleted files), and a single most-pressing warning.
 ///
-/// The counts drive the warning via [`health_warning`]. Staleness is not yet
-/// computed here and is reported as zero.
-fn build_health(component_decisions: &[(&Arc<str>, &DecisionFile)]) -> Value {
+/// `stale` is computed by the caller via [`stale_decision_names`] so the same
+/// pass feeds both this summary and the brief's inline flags. The counts drive
+/// the warning via [`health_warning`].
+fn build_health(component_decisions: &[(&Arc<str>, &DecisionFile)], stale: usize) -> Value {
     let total = component_decisions.len();
     let agent_unreviewed = component_decisions
         .iter()
         .filter(|(_, d)| d.decision.attribution == Attribution::Agent)
         .count();
-    let stale = 0;
 
     serde_json::json!({
         "total": total,
@@ -1572,7 +1611,7 @@ mod tests {
         let an: Arc<str> = Arc::from("agent-dec");
         let decisions = vec![(&un, &user), (&an, &agent)];
 
-        let health = build_health(&decisions);
+        let health = build_health(&decisions, 0);
         assert_eq!(health["total"], 2);
         assert_eq!(health["agent_unreviewed"], 1);
         assert_eq!(health["stale"], 0);
@@ -1607,6 +1646,129 @@ mod tests {
         // Overload dominates even when agent decisions also exceed threshold.
         let warning = health_warning(25, 10, 5);
         assert!(warning.as_str().unwrap().contains("consolidating"));
+    }
+
+    // ── staleness ─────────────────────────────────────────────────────
+
+    fn decision_with_refs(refs: Vec<CodeRef>) -> DecisionFile {
+        use chrono::Utc;
+        DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "Custom XML parser".into(),
+                reason: "Avoid libxml2 dependency".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc::now(),
+                code_refs: refs,
+                history: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn is_stale_when_all_refs_deleted() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dec = decision_with_refs(vec![
+            CodeRef {
+                file: "src/parsers/xml.rs".into(),
+                symbol: None,
+            },
+            CodeRef {
+                file: "src/parsers/dtd.rs".into(),
+                symbol: Some("validate".into()),
+            },
+        ]);
+        assert!(is_stale(tmp.path(), &dec));
+    }
+
+    #[test]
+    fn not_stale_when_any_ref_survives() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("live.rs"), "// present").unwrap();
+        let dec = decision_with_refs(vec![
+            CodeRef {
+                file: "live.rs".into(),
+                symbol: None,
+            },
+            CodeRef {
+                file: "gone.rs".into(),
+                symbol: None,
+            },
+        ]);
+        // A single surviving reference keeps the decision anchored.
+        assert!(!is_stale(tmp.path(), &dec));
+    }
+
+    #[test]
+    fn not_stale_without_code_refs() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dec = decision_with_refs(vec![]);
+        // No links means nothing to break — never stale.
+        assert!(!is_stale(tmp.path(), &dec));
+    }
+
+    #[test]
+    fn health_reports_and_flags_stale_decisions() {
+        use chrono::Utc;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = test_state();
+        state.project_root = tmp.path().to_path_buf();
+
+        // Anchor a decision entirely to a file absent from the project root.
+        state.decisions.insert(
+            "xml-parser".into(),
+            Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "auth".into(),
+                    choice: "Use custom XML parser".into(),
+                    reason: "Avoid libxml2 dependency".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::User,
+                    created: Utc::now(),
+                    code_refs: vec![CodeRef {
+                        file: "src/parsers/xml.rs".into(),
+                        symbol: None,
+                    }],
+                    history: vec![],
+                },
+            }),
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "xml-parser".into(),
+            kind: NodeKind::Decision,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "xml-parser".into(),
+            to: "auth".into(),
+            kind: EdgeKind::BelongsTo,
+        });
+        state.rebuild_graph();
+
+        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+
+        // Only the dead-ref decision counts; use-jwt has no code_refs.
+        assert_eq!(result["health"]["stale"], 1);
+        // With a small, reviewed set, staleness is the surfaced warning.
+        assert!(
+            result["health"]["warning"]
+                .as_str()
+                .unwrap()
+                .contains("deleted files"),
+            "stale refs should drive the health warning: {:?}",
+            result["health"]["warning"]
+        );
+        // The brief flags the specific decision inline.
+        let brief = result["brief"].as_str().unwrap();
+        assert!(
+            brief.contains("STALE"),
+            "brief must flag the stale decision: {brief}"
+        );
     }
 
     #[test]
@@ -1692,6 +1854,7 @@ mod tests {
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
         let comp_decs = vec![(&name, &dec)];
+        let stale_names: HashSet<&str> = HashSet::new();
 
         let brief = build_brief(&BriefParams {
             component: "store",
@@ -1702,6 +1865,7 @@ mod tests {
             related_decisions: &[],
             patterns: &[],
             uncovered_concerns: &[],
+            stale_names: &stale_names,
         });
 
         assert!(
@@ -1728,6 +1892,7 @@ mod tests {
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
         let comp_decs = vec![(&name, &dec)];
+        let stale_names: HashSet<&str> = HashSet::new();
 
         let brief = build_brief(&BriefParams {
             component: "store",
@@ -1738,6 +1903,7 @@ mod tests {
             related_decisions: &[],
             patterns: &[],
             uncovered_concerns: &[],
+            stale_names: &stale_names,
         });
 
         assert!(
