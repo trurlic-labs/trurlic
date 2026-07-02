@@ -888,6 +888,48 @@ impl Store {
         Ok(())
     }
 
+    // ── Promote decision (shared write path) ──────────────────────────
+
+    /// Promote a decision's attribution to [`Attribution::User`], marking it
+    /// human-reviewed.
+    ///
+    /// Attribution lives only in the node file, not the graph index, so this
+    /// rewrites the decision and refreshes its content hash while the name,
+    /// `created` timestamp, history, and every edge survive unchanged. The
+    /// method sets `User` unconditionally; the already-promoted guard is the
+    /// caller's concern. On commit failure, `state` is restored.
+    pub fn promote_decision(
+        &self,
+        lock: &StoreLock,
+        state: &mut ProjectState,
+        name: &str,
+    ) -> Result<()> {
+        let old_dec = state
+            .decisions
+            .get(name)
+            .ok_or_else(|| Error::DecisionNotFound(name.into()))?
+            .clone();
+
+        let mut promoted = DecisionFile::clone(&old_dec);
+        promoted.decision.attribution = Attribution::User;
+
+        let write = self.prepare_write(&self.decision_path(name), &promoted)?;
+        let hash = write.content_hash();
+
+        state.decisions.insert(name.into(), Arc::new(promoted));
+        let old_hash = state.update_node_hash(name, hash);
+
+        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
+            state.decisions.insert(name.into(), old_dec);
+            if let Some(h) = old_hash {
+                state.update_node_hash(name, h);
+            }
+            return Err(e);
+        }
+
+        Ok(())
+    }
+
     // ── Rename component (shared write path) ────────────────────────────
 
     /// Rename a component, updating all references (decisions, graph
@@ -1963,5 +2005,86 @@ mod tests {
         assert_eq!(dec.choice, "Persisted choice");
         assert_eq!(dec.history.len(), 1);
         assert_eq!(dec.history[0].choice, "Use JWT");
+    }
+
+    // ── promote decision ─────────────────────────────────────────────────
+
+    #[test]
+    fn promote_flips_attribution_to_user() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let stem = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless auth",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::Agent,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+        let created = state.decisions[&stem].decision.created;
+
+        store.promote_decision(&lock, &mut state, &stem).unwrap();
+
+        let dec = &state.decisions[&stem].decision;
+        assert_eq!(dec.attribution, Attribution::User);
+        // Promotion is metadata-only: the substance and timestamp are untouched.
+        assert_eq!(dec.choice, "Use JWT");
+        assert_eq!(dec.created, created);
+        assert!(dec.history.is_empty());
+    }
+
+    #[test]
+    fn promote_survives_reload_from_disk() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let stem = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless auth",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::Agent,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+
+        store.promote_decision(&lock, &mut state, &stem).unwrap();
+        drop(lock);
+
+        let reloaded = store.load_state().unwrap();
+        assert_eq!(
+            reloaded.decisions[&stem].decision.attribution,
+            Attribution::User
+        );
+    }
+
+    #[test]
+    fn promote_rejects_nonexistent() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let err = store
+            .promote_decision(&lock, &mut state, "ghost")
+            .unwrap_err();
+        assert!(matches!(err, Error::DecisionNotFound(_)), "{err}");
     }
 }
