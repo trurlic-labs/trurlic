@@ -116,6 +116,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   drop it below its two-member minimum. Previously each candidate was checked
   against the pre-batch graph, so a batch could commit a graph that
   `trurlic check` rejects.
+- **`supersedes` edges are migrated away, not left to break loading.** The
+  on-disk format is bumped to `0.4.0`. A store written by 0.2.0 could carry a
+  `supersedes` edge in `graph.toml`; a typed read now rejects that whole file,
+  so `trurlic migrate` strips retired edge kinds before rebuilding the index.
+  Without the version bump, `migrate` reported "already up to date" and the
+  store stayed unloadable.
 - **Lost-coverage reports account for project-wide rules.** `remove_decision`,
   `remove decision --agent`, and `gc` compute erased concern coverage against
   the same baseline as `get_context` (component decisions **plus** project

@@ -2,11 +2,11 @@ use std::cmp::Ordering;
 use std::fs;
 use std::path::Path;
 
-use crate::store::Store;
 use crate::store::schema::{
-    COMPONENTS_DIR, ComponentFile, DECISIONS_DIR, DecisionFile, FORMAT_VERSION, GRAPH_FILE,
-    GraphIndex, PATTERNS_DIR, PatternFile, ProjectFile,
+    COMPONENTS_DIR, ComponentFile, DECISIONS_DIR, DecisionFile, EdgeEntry, FORMAT_VERSION,
+    GRAPH_FILE, GraphIndex, PATTERNS_DIR, PatternFile, ProjectFile,
 };
+use crate::store::{Store, StoreLock};
 use crate::{Error, Result};
 
 use super::DryRun;
@@ -77,6 +77,13 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     round_trip_dir::<DecisionFile>(root, DECISIONS_DIR, &lock, &store)?;
     round_trip_dir::<PatternFile>(root, PATTERNS_DIR, &lock, &store)?;
 
+    // Drop edges whose kind no longer exists in the schema (e.g. `supersedes`,
+    // retired in 0.4.0). These edges live only in the compiled index, never in
+    // node files, and a typed read rejects the whole graph on one unknown
+    // variant — so this loose pre-pass is the entirety of their migration and
+    // must run before the typed rebuild below can parse graph.toml.
+    sanitize_graph_edges(root, &lock, &store)?;
+
     // Rebuild graph.toml with fresh BLAKE3 hashes from the updated node
     // files. A plain round-trip of the old graph.toml would leave stale
     // hashes for any file whose content changed (e.g. new default fields).
@@ -87,6 +94,35 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
 
     println!("Migrated from {old_version} \u{2192} {FORMAT_VERSION}, backup at {backup_name}/");
     Ok(())
+}
+
+/// Remove edges from graph.toml whose `kind` no longer deserializes into a
+/// current [`EdgeEntry`].
+///
+/// A typed `GraphIndex` read rejects the entire file on a single unknown edge
+/// variant, so this parses loosely as a `toml::Table`, keeps only the edges the
+/// current schema understands, and rewrites the file when any were dropped.
+/// No-op when graph.toml is absent or already clean.
+fn sanitize_graph_edges(root: &Path, lock: &StoreLock, store: &Store) -> Result<()> {
+    let path = root.join(GRAPH_FILE);
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::Io(e)),
+    };
+
+    let mut index: toml::Table = toml::from_str(&content)?;
+    let Some(toml::Value::Array(edges)) = index.get_mut("edges") else {
+        return Ok(());
+    };
+
+    let before = edges.len();
+    edges.retain(|edge| edge.clone().try_into::<EdgeEntry>().is_ok());
+    if edges.len() == before {
+        return Ok(());
+    }
+
+    store.write_atomic(lock, &path, &index)
 }
 
 fn round_trip_project(root: &Path, lock: &crate::store::StoreLock, store: &Store) -> Result<()> {
@@ -466,6 +502,69 @@ mod tests {
             hash_issues.is_empty(),
             "graph.toml hashes must match: {hash_issues:?}"
         );
+    }
+
+    #[test]
+    fn migrate_strips_retired_supersedes_edge() {
+        // A store written by 0.2.0 (format 0.3.0) could carry a `supersedes`
+        // edge in graph.toml — an edge kind removed in 0.4.0. A typed load
+        // rejects the whole file on it, so migrate must strip it and the store
+        // must open afterward.
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
+        decide(tmp.path(), "auth", "Old choice", "Superseded later", &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "New choice",
+            "Replaces the old one",
+            &[],
+        )
+        .unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+
+        // Inject a legacy supersedes edge and downgrade the version, mimicking a
+        // graph.toml this CLI can no longer parse with a typed read.
+        let graph_path = store.graph_path();
+        let mut graph = fs::read_to_string(&graph_path).unwrap();
+        graph.push_str(
+            "\n[[edges]]\nfrom = \"new-choice\"\nto = \"old-choice\"\nkind = \"supersedes\"\n",
+        );
+        fs::write(&graph_path, &graph).unwrap();
+
+        let mut project = store.read_project().unwrap();
+        project.trurlic_version = "0.3.0".into();
+        let lock = store.lock().unwrap();
+        store
+            .write_atomic(&lock, &store.root().join("project.toml"), &project)
+            .unwrap();
+        drop(lock);
+
+        // A typed load must fail before migration (proves the fixture is real).
+        assert!(
+            store.load_state().is_err(),
+            "supersedes edge should break a typed load pre-migration"
+        );
+
+        migrate(tmp.path(), DryRun::No).unwrap();
+
+        // After migration the store opens and the retired edge is gone.
+        store.check_version().unwrap();
+        let state = store.load_state().unwrap();
+        assert!(
+            !state
+                .graph_index
+                .edges
+                .iter()
+                .any(|e| e.from == "new-choice" && e.to == "old-choice"),
+            "supersedes edge must be stripped"
+        );
+        assert!(state.decisions.contains_key("old-choice"));
+        assert!(state.decisions.contains_key("new-choice"));
+        let hash_issues = store.verify_hashes().unwrap();
+        assert!(hash_issues.is_empty(), "hashes must match: {hash_issues:?}");
     }
 
     #[test]

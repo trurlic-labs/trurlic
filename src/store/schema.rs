@@ -209,7 +209,7 @@ pub struct GraphIndex {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-pub const FORMAT_VERSION: &str = "0.3.0";
+pub const FORMAT_VERSION: &str = "0.4.0";
 
 pub const STORE_DIR: &str = ".trurlic";
 
