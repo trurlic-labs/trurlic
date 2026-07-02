@@ -2,6 +2,7 @@ mod bootstrap;
 mod component;
 mod decision;
 mod design;
+mod gc;
 mod init;
 pub(crate) mod install;
 mod map;
@@ -13,8 +14,9 @@ pub use bootstrap::{bootstrap, bootstrap_component, bootstrap_direct};
 pub use component::{
     add_component, add_connection, remove_component, remove_connection, rename_component,
 };
-pub use decision::{decide, remove_decision};
+pub use decision::{decide, remove_agent_decisions, remove_decision};
 pub use design::design;
+pub use gc::{GcExecution, GcScope, gc};
 pub use init::init;
 pub use install::install;
 pub use map::map;

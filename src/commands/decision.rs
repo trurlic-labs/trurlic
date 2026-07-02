@@ -45,6 +45,88 @@ pub fn decide(
     Ok(())
 }
 
+/// Remove every agent-recorded decision in a component at once.
+///
+/// Collects each decision whose `attribution` is [`Attribution::Agent`] within
+/// `component`, then runs a cascade pre-flight over the whole set. The batch is
+/// atomic: if removing any candidate would break a dependent or shrink a
+/// pattern below its minimum, none are removed. Human-recorded decisions are
+/// never touched. On success, the concern coverage the batch erased is reported
+/// against what remains in the component.
+pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
+    if component != "project" && !store::is_valid_kebab_case(component) {
+        return Err(Error::InvalidName(component.into()));
+    }
+
+    let (store, lock, mut state) = open_store_mut(cwd)?;
+
+    if component != "project" && !state.components.contains_key(component) {
+        return Err(Error::ComponentNotFound(component.into()));
+    }
+
+    let candidates: Vec<String> = state
+        .decisions
+        .iter()
+        .filter(|(_, dec)| {
+            dec.decision.component == component && dec.decision.attribution == Attribution::Agent
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    if candidates.is_empty() {
+        println!("No agent decisions in [{component}] to remove.");
+        return Ok(());
+    }
+
+    // Pre-flight the whole set before touching disk: a single blocked candidate
+    // aborts the entire batch, so a partial removal can never leave the graph
+    // in a half-collapsed state.
+    for name in &candidates {
+        let cascade = state.graph().check_decision_cascade(name);
+        if cascade.is_blocked() {
+            return Err(Error::CascadeBlocked(format!(
+                "`{name}` — {}; no decisions removed",
+                cascade.blocker_summary()
+            )));
+        }
+    }
+
+    // Snapshot before removal so the coverage the batch carried can be reported
+    // once the decisions are gone from the graph.
+    let snapshots: Vec<Arc<DecisionFile>> = candidates
+        .iter()
+        .filter_map(|name| state.decisions.get(name).map(Arc::clone))
+        .collect();
+
+    let names: Vec<&str> = candidates.iter().map(String::as_str).collect();
+    store.remove_decisions(&lock, &mut state, &names)?;
+    drop(lock);
+
+    let count = names.len();
+    let plural = if count == 1 { "" } else { "s" };
+    println!("Removed {count} agent decision{plural} from [{component}]");
+
+    let remaining: Vec<&DecisionFile> = state
+        .graph()
+        .decisions_for(component)
+        .into_iter()
+        .map(|(_, dec)| dec)
+        .collect();
+    let mut lost: Vec<&'static str> = Vec::new();
+    for dec in &snapshots {
+        for area in concerns::coverage_lost(dec, &remaining) {
+            if !lost.contains(&area) {
+                lost.push(area);
+            }
+        }
+    }
+    if !lost.is_empty() {
+        println!("⚠ [{component}] lost coverage: {}", lost.join(", "));
+    }
+
+    Ok(())
+}
+
 pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
 
@@ -379,6 +461,159 @@ mod tests {
             }
             other => panic!("expected CascadeBlocked, got: {other}"),
         }
+    }
+
+    // ── bulk remove agent decisions ──────────────────────────────────────
+
+    /// Record a decision through the store write path so it carries a real
+    /// `BelongsTo` edge and an explicit attribution.
+    fn record(
+        store: &Store,
+        state: &mut store::ProjectState,
+        lock: &store::StoreLock,
+        component: &str,
+        choice: &str,
+        attribution: Attribution,
+    ) -> String {
+        store
+            .record_decision(
+                lock,
+                state,
+                RecordDecisionParams {
+                    component,
+                    choice,
+                    reason: "Recorded for a bulk-removal test",
+                    alternatives: &[],
+                    depends_on: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution,
+                    code_refs: &[],
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn remove_agent_decisions_removes_only_agent_decisions() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Human choice",
+            Attribution::User,
+        );
+        record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent one",
+            Attribution::Agent,
+        );
+        record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent two",
+            Attribution::Agent,
+        );
+        drop(lock);
+
+        remove_agent_decisions(tmp.path(), "auth").unwrap();
+
+        let state = Store::discover(tmp.path()).unwrap().load_state().unwrap();
+        assert!(state.decisions.contains_key("human-choice"));
+        assert!(!state.decisions.contains_key("agent-one"));
+        assert!(!state.decisions.contains_key("agent-two"));
+    }
+
+    #[test]
+    fn remove_agent_decisions_aborts_when_any_blocked() {
+        use crate::store::schema::EdgeEntry;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        let base = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent base",
+            Attribution::Agent,
+        );
+        record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Agent spare",
+            Attribution::Agent,
+        );
+        let dependent = record(
+            &store,
+            &mut state,
+            &lock,
+            "auth",
+            "Human gate",
+            Attribution::User,
+        );
+
+        // The human decision depends on one agent decision, so removing that
+        // agent decision is cascade-blocked — which must abort the batch.
+        state.graph_index.edges.push(EdgeEntry {
+            from: dependent,
+            to: base,
+            kind: EdgeKind::DependsOn,
+        });
+        store
+            .commit_batch(&lock, vec![], vec![], Some(state.graph_index.clone()))
+            .unwrap();
+        drop(lock);
+
+        let err = remove_agent_decisions(tmp.path(), "auth").unwrap_err();
+        assert!(matches!(err, Error::CascadeBlocked(_)));
+
+        // Nothing was removed — not even the unblocked agent decision.
+        let state = Store::discover(tmp.path()).unwrap().load_state().unwrap();
+        assert!(state.decisions.contains_key("agent-base"));
+        assert!(state.decisions.contains_key("agent-spare"));
+    }
+
+    #[test]
+    fn remove_agent_decisions_noop_when_none_present() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+        decide(tmp.path(), "auth", "Human only", "Reason enough here", &[]).unwrap();
+
+        remove_agent_decisions(tmp.path(), "auth").unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        assert_eq!(store.list_decisions().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn remove_agent_decisions_rejects_nonexistent_component() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+
+        let err = remove_agent_decisions(tmp.path(), "ghost").unwrap_err();
+        assert!(matches!(err, Error::ComponentNotFound(ref n) if n == "ghost"));
     }
 
     #[test]

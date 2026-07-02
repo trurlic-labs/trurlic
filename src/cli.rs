@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use crate::session::SessionMode;
-use crate::{Result, commands};
+use crate::{Error, Result, commands};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -81,6 +81,20 @@ pub enum Command {
         /// Alternative considered and rejected (repeatable).
         #[arg(long = "alternative", short = 'a')]
         alternatives: Vec<String>,
+    },
+
+    /// Reclaim decisions that have lost their anchor: orphaned (component
+    /// gone), stale (all referenced files deleted), or long-unreviewed agent
+    /// decisions. Safe by default — removes only orphans and reports the rest.
+    Gc {
+        /// Report what would be reclaimed without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Also remove stale and long-unreviewed agent decisions, not just
+        /// orphans.
+        #[arg(long)]
+        aggressive: bool,
     },
 
     /// Start the MCP server for AI coding agent integration.
@@ -222,10 +236,19 @@ pub enum RemoveCommand {
         name: String,
     },
 
-    /// Remove a decision.
+    /// Remove a decision, or every agent-recorded decision in a component.
     Decision {
-        /// Decision filename (without `.toml`).
-        name: String,
+        /// Decision filename (without `.toml`). Omit when using `--agent`.
+        name: Option<String>,
+
+        /// Remove every agent-recorded decision in a component at once. The
+        /// batch is atomic — if any removal is cascade-blocked, none happen.
+        #[arg(long, requires = "component", conflicts_with = "name")]
+        agent: bool,
+
+        /// Component to scope `--agent` bulk removal to.
+        #[arg(long, requires = "agent")]
+        component: Option<String>,
     },
 
     /// Remove a connection between two components.
@@ -253,7 +276,19 @@ pub fn run(cli: Cli) -> Result<()> {
         },
         Command::Remove(sub) => match sub {
             RemoveCommand::Component { name } => commands::remove_component(&cwd, &name),
-            RemoveCommand::Decision { name } => commands::remove_decision(&cwd, &name),
+            RemoveCommand::Decision {
+                name,
+                agent,
+                component,
+            } => match (name, agent, component) {
+                (Some(name), false, _) => commands::remove_decision(&cwd, &name),
+                (None, true, Some(component)) => commands::remove_agent_decisions(&cwd, &component),
+                _ => Err(Error::Validation(
+                    "specify a decision name, or `--agent --component <name>` to bulk-remove \
+                     agent decisions"
+                        .into(),
+                )),
+            },
             RemoveCommand::Connection { from, to } => commands::remove_connection(&cwd, &from, &to),
         },
         Command::Design {
@@ -297,6 +332,22 @@ pub fn run(cli: Cli) -> Result<()> {
                 commands::DryRun::No
             };
             commands::install(ide, binary_path.as_deref(), mode)
+        }
+        Command::Gc {
+            dry_run,
+            aggressive,
+        } => {
+            let scope = if aggressive {
+                commands::GcScope::Aggressive
+            } else {
+                commands::GcScope::Safe
+            };
+            let execution = if dry_run {
+                commands::GcExecution::DryRun
+            } else {
+                commands::GcExecution::Apply
+            };
+            commands::gc(&cwd, scope, execution)
         }
         Command::Serve => commands::serve(&cwd),
         Command::Map {
