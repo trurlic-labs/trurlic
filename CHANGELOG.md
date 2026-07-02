@@ -31,6 +31,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   generates mode-specific instructions. Agent variants emphasize code reading
   and autonomous recording; interactive variants preserve the existing
   ask-then-record dialogue.
+- **Code references on decisions.** Decisions carry an optional `code_refs`
+  list — `{ file, symbol? }` entries pinpointing where a decision manifests in
+  source (no line numbers, which go stale). Plumbed through `record_decision`,
+  `update_decision` (amend replaces, supersede inherits unless overridden), the
+  map amend endpoint, and every context brief and step prompt. Paths are
+  validated syntactically at the store trust boundary (relative, no `..`
+  segment, forward slashes, no control characters) with counts capped by
+  `MAX_CODE_REFS`; agent-mode prompts now instruct the AI to attach refs to
+  every decision. Non-array or empty-symbol input is rejected, never silently
+  dropped.
 
 ### Changed
 

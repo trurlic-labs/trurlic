@@ -229,6 +229,24 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                             "type": "string",
                             "enum": ["user", "agent"],
                             "description": "Who authored this decision: \"user\" (human present) or \"agent\" (autonomous)."
+                        },
+                        "code_refs": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "file": {
+                                        "type": "string",
+                                        "description": "Relative path from project root (e.g. 'src/store/write.rs')."
+                                    },
+                                    "symbol": {
+                                        "type": "string",
+                                        "description": "Function, struct, constant, or method name."
+                                    }
+                                },
+                                "required": ["file"]
+                            },
+                            "description": "Source code locations where this decision manifests. Agent mode should always include these."
                         }
                     },
                     "required": ["component", "choice", "reason", "attribution"]
@@ -331,6 +349,24 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         "reason": {
                             "type": "string",
                             "description": "New reason text."
+                        },
+                        "code_refs": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "file": {
+                                        "type": "string",
+                                        "description": "Relative path from project root (e.g. 'src/store/write.rs')."
+                                    },
+                                    "symbol": {
+                                        "type": "string",
+                                        "description": "Function, struct, constant, or method name."
+                                    }
+                                },
+                                "required": ["file"]
+                            },
+                            "description": "Source code locations where this decision manifests. Only applies to amend mode."
                         }
                     },
                     "required": ["name", "mode"]

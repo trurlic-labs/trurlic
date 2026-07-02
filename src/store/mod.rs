@@ -29,11 +29,121 @@ use schema::{EdgeEntry, EdgeKind, GraphIndex, NodeEntry, NodeKind};
 // Re-exports — public API surface of the store module.
 // Graph types (NodeKind, EdgeKind, etc.) are accessible via `store::schema::*`.
 pub use schema::{
-    COMPONENTS_DIR, ComponentFile, DECISIONS_DIR, DecisionFile, FORMAT_VERSION, GRAPH_FILE,
-    PATTERNS_DIR, PatternFile, ProjectFile, STATE_DIR, STORE_DIR,
+    COMPONENTS_DIR, CodeRef, ComponentFile, DECISIONS_DIR, DecisionFile, FORMAT_VERSION,
+    GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile, STATE_DIR, STORE_DIR,
 };
 pub use state::{ProjectState, has_control_chars, is_valid_kebab_case, slugify};
 pub use write::{AmendDecisionParams, RecordDecisionParams, RecordPatternParams};
+
+/// Syntactic validation for a code reference.
+///
+/// Paths are NOT validated against the filesystem — the decision may
+/// reference files that don't exist yet (design-first) or files that
+/// were deleted (drift).
+pub(crate) fn validate_code_ref(cr: &CodeRef) -> Result<()> {
+    use limits::{MAX_CODE_REF_PATH_BYTES, MAX_CODE_REF_SYMBOL_BYTES};
+
+    if cr.file.trim().is_empty() {
+        return Err(Error::Validation(
+            "code_ref file path cannot be empty".into(),
+        ));
+    }
+    if cr.file.len() > MAX_CODE_REF_PATH_BYTES {
+        return Err(Error::Validation(format!(
+            "code_ref file path exceeds {MAX_CODE_REF_PATH_BYTES} byte limit"
+        )));
+    }
+    if cr.file.starts_with('/') {
+        return Err(Error::Validation(
+            "code_ref file path must be relative (no leading /)".into(),
+        ));
+    }
+    // Component-wise check: reject a `..` path segment (traversal) without
+    // rejecting legitimate filenames that merely contain `..` (e.g. `a..b.rs`).
+    if cr.file.split('/').any(|segment| segment == "..") {
+        return Err(Error::Validation(
+            "code_ref file path must not contain path traversal (..)".into(),
+        ));
+    }
+    if cr.file.contains('\\') {
+        return Err(Error::Validation(
+            "code_ref file path must use forward slashes".into(),
+        ));
+    }
+    if has_control_chars(&cr.file) {
+        return Err(Error::Validation(
+            "code_ref file path contains control characters".into(),
+        ));
+    }
+    if let Some(sym) = &cr.symbol {
+        if sym.trim().is_empty() {
+            return Err(Error::Validation(
+                "code_ref symbol must not be empty".into(),
+            ));
+        }
+        if sym.len() > MAX_CODE_REF_SYMBOL_BYTES {
+            return Err(Error::Validation(format!(
+                "code_ref symbol exceeds {MAX_CODE_REF_SYMBOL_BYTES} byte limit"
+            )));
+        }
+        if has_control_chars(sym) {
+            return Err(Error::Validation(
+                "code_ref symbol contains control characters".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate a full set of code references: count limit plus per-ref syntax.
+///
+/// The single slice-level validator. Every write path — store methods,
+/// MCP `parse_code_refs`, the map amend endpoint — calls this so the
+/// `MAX_CODE_REFS` cap and per-ref rules are enforced identically. The
+/// store invokes it as the final trust boundary no write can bypass.
+pub(crate) fn validate_code_refs(refs: &[CodeRef]) -> Result<()> {
+    if refs.len() > limits::MAX_CODE_REFS {
+        return Err(Error::Validation(format!(
+            "code_refs has too many items ({}, max {})",
+            refs.len(),
+            limits::MAX_CODE_REFS
+        )));
+    }
+    for cr in refs {
+        validate_code_ref(cr)?;
+    }
+    Ok(())
+}
+
+/// Serialize code references to JSON `Value` array.
+///
+/// Single serialization path — every module that needs `CodeRef` as
+/// JSON calls this instead of hand-building `match &cr.symbol` arms.
+pub(crate) fn code_refs_to_json(refs: &[CodeRef]) -> Vec<serde_json::Value> {
+    refs.iter()
+        .map(|cr| {
+            let mut obj = serde_json::json!({ "file": cr.file });
+            if let Some(sym) = &cr.symbol {
+                obj["symbol"] = serde_json::json!(sym);
+            }
+            obj
+        })
+        .collect()
+}
+
+/// Format code references as a comma-separated display string.
+///
+/// Returns `"file::symbol, file2"` — callers add their own prefix
+/// and newline.
+pub(crate) fn format_code_refs(refs: &[CodeRef]) -> String {
+    refs.iter()
+        .map(|cr| match &cr.symbol {
+            Some(sym) => format!("{}::{}", cr.file, sym),
+            None => cr.file.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -680,6 +790,7 @@ pub(crate) mod testing {
                 tags: vec![],
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+                code_refs: vec![],
             },
         }
     }
@@ -747,6 +858,7 @@ pub(crate) mod testing {
                     tags: vec![],
                     attribution: Attribution::User,
                     created: ts,
+                    code_refs: vec![],
                 },
             }),
         );
@@ -761,6 +873,7 @@ pub(crate) mod testing {
                     tags: vec![],
                     attribution: Attribution::User,
                     created: ts,
+                    code_refs: vec![],
                 },
             }),
         );
@@ -775,6 +888,7 @@ pub(crate) mod testing {
                     tags: vec![],
                     attribution: Attribution::User,
                     created: ts,
+                    code_refs: vec![],
                 },
             }),
         );
@@ -1015,6 +1129,7 @@ pub(crate) mod testing {
                     tags: vec![],
                     attribution: Attribution::User,
                     created: ts(),
+                    code_refs: vec![],
                 },
             },
         );
@@ -1029,6 +1144,7 @@ pub(crate) mod testing {
                     tags: vec![],
                     attribution: Attribution::User,
                     created: ts(),
+                    code_refs: vec![],
                 },
             },
         );
@@ -1043,6 +1159,7 @@ pub(crate) mod testing {
                     tags: vec![],
                     attribution: Attribution::User,
                     created: ts(),
+                    code_refs: vec![],
                 },
             },
         );
@@ -1579,5 +1696,170 @@ mod tests {
             .map(|e| e.from.as_str())
             .collect();
         assert_eq!(edge_froms, vec!["auth", "database"]);
+    }
+
+    // ── validate_code_ref ──────────────────────────────────────────────
+
+    #[test]
+    fn validate_code_ref_valid_with_symbol() {
+        let cr = CodeRef {
+            file: "src/store/write.rs".into(),
+            symbol: Some("content_hash".into()),
+        };
+        assert!(validate_code_ref(&cr).is_ok());
+    }
+
+    #[test]
+    fn validate_code_ref_valid_without_symbol() {
+        let cr = CodeRef {
+            file: "src/store/write.rs".into(),
+            symbol: None,
+        };
+        assert!(validate_code_ref(&cr).is_ok());
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_empty_path() {
+        let cr = CodeRef {
+            file: String::new(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_absolute_path() {
+        let cr = CodeRef {
+            file: "/etc/passwd".into(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("relative"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_path_traversal() {
+        let cr = CodeRef {
+            file: "../escape/file.rs".into(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("traversal"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_backslashes() {
+        let cr = CodeRef {
+            file: "src\\store\\write.rs".into(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("forward slashes"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_control_chars_in_path() {
+        let cr = CodeRef {
+            file: "src/store\x00write.rs".into(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("control"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_control_chars_in_symbol() {
+        let cr = CodeRef {
+            file: "src/store/write.rs".into(),
+            symbol: Some("fn\x00bad".into()),
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("control"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_long_path() {
+        let cr = CodeRef {
+            file: "x".repeat(501),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("500"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_long_symbol() {
+        let cr = CodeRef {
+            file: "src/lib.rs".into(),
+            symbol: Some("x".repeat(201)),
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("200"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_empty_symbol() {
+        let cr = CodeRef {
+            file: "src/lib.rs".into(),
+            symbol: Some(String::new()),
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_whitespace_only_path() {
+        let cr = CodeRef {
+            file: "   ".into(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_accepts_dots_within_filename() {
+        // `..` inside a filename is not traversal — only a `..` path segment is.
+        let cr = CodeRef {
+            file: "src/store/a..b.rs".into(),
+            symbol: None,
+        };
+        assert!(validate_code_ref(&cr).is_ok());
+    }
+
+    // ── validate_code_refs (slice-level count limit) ────────────────────
+
+    #[test]
+    fn validate_code_refs_accepts_within_limit() {
+        let refs: Vec<_> = (0..limits::MAX_CODE_REFS)
+            .map(|i| CodeRef {
+                file: format!("src/f{i}.rs"),
+                symbol: None,
+            })
+            .collect();
+        assert!(validate_code_refs(&refs).is_ok());
+    }
+
+    #[test]
+    fn validate_code_refs_rejects_too_many() {
+        let refs: Vec<_> = (0..=limits::MAX_CODE_REFS)
+            .map(|i| CodeRef {
+                file: format!("src/f{i}.rs"),
+                symbol: None,
+            })
+            .collect();
+        let err = validate_code_refs(&refs).unwrap_err().to_string();
+        assert!(err.contains("too many"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_refs_propagates_per_ref_error() {
+        let refs = vec![CodeRef {
+            file: "/absolute.rs".into(),
+            symbol: None,
+        }];
+        let err = validate_code_refs(&refs).unwrap_err().to_string();
+        assert!(err.contains("relative"), "{err}");
     }
 }

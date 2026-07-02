@@ -5,7 +5,7 @@ use crate::store::limits::{MAX_CHOICE_BYTES, MIN_REASON_BYTES};
 use crate::store::schema::EdgeKind;
 use crate::store::{self, Store};
 
-use super::write::{opt_str, record_decision, require_str};
+use super::write::{opt_str, parse_code_refs, record_decision, require_str};
 use crate::store::schema::Attribution;
 
 // ── remove_decision ─────────────────────────────────────────────────────────
@@ -107,9 +107,16 @@ fn amend_decision(
 ) -> Result<Value, String> {
     let new_choice = opt_str(args, "choice")?;
     let new_reason = opt_str(args, "reason")?;
+    let new_code_refs = parse_code_refs(args)?;
+    let code_refs_param =
+        if new_code_refs.is_empty() && !args.get("code_refs").is_some_and(|v| v.is_array()) {
+            None
+        } else {
+            Some(new_code_refs)
+        };
 
-    if new_choice.is_none() && new_reason.is_none() {
-        return Err("amend requires at least one of `choice` or `reason`".into());
+    if new_choice.is_none() && new_reason.is_none() && code_refs_param.is_none() {
+        return Err("amend requires at least one of `choice`, `reason`, or `code_refs`".into());
     }
 
     // Quality floor: amended values must meet the same bar as new decisions.
@@ -140,6 +147,7 @@ fn amend_decision(
                 choice: new_choice,
                 reason: new_reason,
                 tags: None,
+                code_refs: code_refs_param.as_deref(),
             },
         )
         .map_err(|e| e.to_string())?;
@@ -179,10 +187,20 @@ fn supersede_decision(
 
     let component = old_dec.decision.component.clone();
     let tags = old_dec.decision.tags.clone();
+    let old_code_refs = old_dec.decision.code_refs.clone();
     let attribution = match old_dec.decision.attribution {
         Attribution::User => "user",
         Attribution::Agent => "agent",
     };
+
+    // Resolve code_refs: inherit from old decision, override if explicitly provided.
+    let new_code_refs = parse_code_refs(args)?;
+    let resolved_refs =
+        if new_code_refs.is_empty() && !args.get("code_refs").is_some_and(|v| v.is_array()) {
+            store::code_refs_to_json(&old_code_refs)
+        } else {
+            store::code_refs_to_json(&new_code_refs)
+        };
 
     // Delegate to record_decision with supersedes set.
     let record_args = serde_json::json!({
@@ -192,6 +210,7 @@ fn supersede_decision(
         "supersedes": old_name,
         "tags": tags,
         "attribution": attribution,
+        "code_refs": resolved_refs,
     });
 
     let result = record_decision(store, state, &record_args)?;
@@ -552,5 +571,164 @@ mod tests {
             err.contains("200"),
             "amend should enforce choice length: {err}"
         );
+    }
+
+    // ── code_refs ─────────────────────────────────────────────────────
+
+    #[test]
+    fn amend_code_refs() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({
+            "component": "auth",
+            "choice": "Use JWT",
+            "reason": "Stateless, no server session",
+            "attribution": "user",
+        });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({
+            "name": "use-jwt",
+            "mode": "amend",
+            "code_refs": [
+                { "file": "src/auth/jwt.rs", "symbol": "verify" },
+            ],
+        });
+        update_decision(&store, &mut state, &args).unwrap();
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        assert_eq!(dec.decision.code_refs.len(), 1);
+        assert_eq!(dec.decision.code_refs[0].file, "src/auth/jwt.rs");
+    }
+
+    #[test]
+    fn amend_code_refs_replaces_existing() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({
+            "component": "auth",
+            "choice": "Use JWT",
+            "reason": "Stateless, no server session",
+            "attribution": "user",
+            "code_refs": [{ "file": "src/old.rs" }],
+        });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({
+            "name": "use-jwt",
+            "mode": "amend",
+            "code_refs": [{ "file": "src/new.rs" }],
+        });
+        update_decision(&store, &mut state, &args).unwrap();
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        assert_eq!(dec.decision.code_refs.len(), 1);
+        assert_eq!(dec.decision.code_refs[0].file, "src/new.rs");
+    }
+
+    #[test]
+    fn amend_empty_code_refs_clears() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({
+            "component": "auth",
+            "choice": "Use JWT",
+            "reason": "Stateless, no server session",
+            "attribution": "user",
+            "code_refs": [{ "file": "src/old.rs" }],
+        });
+        record_decision(&store, &mut state, &d).unwrap();
+        assert_eq!(state.decisions["use-jwt"].decision.code_refs.len(), 1);
+
+        let args = json!({
+            "name": "use-jwt",
+            "mode": "amend",
+            "code_refs": [],
+        });
+        update_decision(&store, &mut state, &args).unwrap();
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        assert!(dec.decision.code_refs.is_empty());
+    }
+
+    #[test]
+    fn amend_without_code_refs_key_preserves_existing() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({
+            "component": "auth",
+            "choice": "Use JWT",
+            "reason": "Stateless, no server session",
+            "attribution": "user",
+            "code_refs": [{ "file": "src/keep.rs", "symbol": "verify" }],
+        });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        // Amend an unrelated field — omitting code_refs must leave refs intact.
+        let args = json!({
+            "name": "use-jwt",
+            "mode": "amend",
+            "reason": "Stateless, avoids a server-side session store",
+        });
+        update_decision(&store, &mut state, &args).unwrap();
+
+        let dec = state.decisions.get("use-jwt").unwrap();
+        assert_eq!(dec.decision.code_refs.len(), 1);
+        assert_eq!(dec.decision.code_refs[0].file, "src/keep.rs");
+    }
+
+    #[test]
+    fn supersede_inherits_code_refs() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({
+            "component": "auth",
+            "choice": "Session cookies",
+            "reason": "Simple session-based model",
+            "attribution": "user",
+            "code_refs": [
+                { "file": "src/auth/session.rs", "symbol": "create_session" },
+            ],
+        });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({
+            "name": "session-cookies",
+            "mode": "supersede",
+            "choice": "JWT tokens",
+            "reason": "Stateless, no server session",
+        });
+        let result = update_decision(&store, &mut state, &args).unwrap();
+        let new_name = result["name"].as_str().unwrap();
+
+        let new_dec = state.decisions.get(new_name).unwrap();
+        assert_eq!(
+            new_dec.decision.code_refs.len(),
+            1,
+            "supersede must inherit code_refs"
+        );
+        assert_eq!(new_dec.decision.code_refs[0].file, "src/auth/session.rs");
+    }
+
+    #[test]
+    fn supersede_explicit_code_refs_override() {
+        let (_tmp, store, mut state) = setup();
+        let d = json!({
+            "component": "auth",
+            "choice": "Session cookies",
+            "reason": "Simple session-based model",
+            "attribution": "user",
+            "code_refs": [{ "file": "src/old.rs" }],
+        });
+        record_decision(&store, &mut state, &d).unwrap();
+
+        let args = json!({
+            "name": "session-cookies",
+            "mode": "supersede",
+            "choice": "JWT tokens",
+            "reason": "Stateless, no server session",
+            "code_refs": [{ "file": "src/new.rs", "symbol": "verify" }],
+        });
+        let result = update_decision(&store, &mut state, &args).unwrap();
+        let new_name = result["name"].as_str().unwrap();
+
+        let new_dec = state.decisions.get(new_name).unwrap();
+        assert_eq!(new_dec.decision.code_refs.len(), 1);
+        assert_eq!(new_dec.decision.code_refs[0].file, "src/new.rs");
     }
 }

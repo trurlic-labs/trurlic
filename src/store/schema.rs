@@ -39,6 +39,22 @@ pub struct DecisionFile {
     pub decision: Decision,
 }
 
+/// Source code location where a decision manifests.
+///
+/// No line numbers by design — lines go stale on every edit. Symbols
+/// (function names, struct names) are more durable and more meaningful
+/// in prompts. If a symbol is renamed, the decision drifts — which is
+/// correct behavior.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodeRef {
+    /// Relative path from project root (forward slashes, no leading ./).
+    pub file: String,
+
+    /// Function, method, struct, or constant name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Attribution {
@@ -69,6 +85,10 @@ pub struct Decision {
 
     /// When this decision was recorded (UTC, ISO 8601 / RFC 3339).
     pub created: DateTime<Utc>,
+
+    /// Source code locations where this decision manifests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_refs: Vec<CodeRef>,
 }
 
 // ── patterns/<name>.toml ─────────────────────────────────────────────────────
@@ -225,6 +245,7 @@ mod tests {
                 tags: vec!["security".into(), "auth".into()],
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -257,6 +278,7 @@ created = "2025-06-01T10:30:00Z"
                 tags: vec!["security".into(), "auth".into()],
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -276,6 +298,7 @@ created = "2025-06-01T10:30:00Z"
                 tags: vec![],
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -405,6 +428,7 @@ created = "2025-06-01T10:30:00Z"
                 tags: vec![],
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -526,6 +550,7 @@ attribution = "user"
                     tags: vec![],
                     attribution: attr,
                     created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                    code_refs: vec![],
                 },
             };
             let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -562,6 +587,7 @@ created = "2025-06-01T10:30:00Z"
                 tags: vec![],
                 attribution: Attribution::User,
                 created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![],
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
@@ -580,6 +606,98 @@ created = "2025-06-01T10:30:00Z"
         assert!(
             agent_serialized.contains(r#"attribution = "agent""#),
             "Attribution::Agent must serialize as snake_case, got:\n{agent_serialized}"
+        );
+    }
+
+    #[test]
+    fn code_ref_round_trip_with_symbol() {
+        let file = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "BLAKE3 hashing".into(),
+                reason: "Fast, no-std capable".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![
+                    CodeRef {
+                        file: "src/store/write.rs".into(),
+                        symbol: Some("content_hash".into()),
+                    },
+                    CodeRef {
+                        file: "src/store/validate.rs".into(),
+                        symbol: Some("verify_hashes".into()),
+                    },
+                ],
+            },
+        };
+        let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(serialized.contains("[[decision.code_refs]]"));
+        assert!(serialized.contains(r#"file = "src/store/write.rs""#));
+        assert!(serialized.contains(r#"symbol = "content_hash""#));
+        let deserialized: DecisionFile = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(file, deserialized);
+    }
+
+    #[test]
+    fn code_ref_round_trip_without_symbol() {
+        let file = DecisionFile {
+            decision: Decision {
+                component: "store".into(),
+                choice: "Atomic writes".into(),
+                reason: "Crash safety".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![CodeRef {
+                    file: "src/store/write.rs".into(),
+                    symbol: None,
+                }],
+            },
+        };
+        let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(
+            !serialized.contains("symbol"),
+            "None symbol should be omitted"
+        );
+        let deserialized: DecisionFile = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(file, deserialized);
+    }
+
+    #[test]
+    fn decision_without_code_refs_deserializes() {
+        let toml_str = r#"
+[decision]
+component = "auth"
+choice = "JWT"
+reason = "Stateless"
+attribution = "user"
+created = "2025-06-01T10:30:00Z"
+"#;
+        let file: DecisionFile = toml::from_str(toml_str).expect("deserialize");
+        assert!(file.decision.code_refs.is_empty());
+    }
+
+    #[test]
+    fn empty_code_refs_omitted_in_toml() {
+        let file = DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT".into(),
+                reason: "Stateless".into(),
+                alternatives: vec![],
+                tags: vec![],
+                attribution: Attribution::User,
+                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                code_refs: vec![],
+            },
+        };
+        let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(
+            !serialized.contains("code_refs"),
+            "empty code_refs should not appear in TOML"
         );
     }
 }

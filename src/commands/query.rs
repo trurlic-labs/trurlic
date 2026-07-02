@@ -336,6 +336,7 @@ mod tests {
                     constrains: &[],
                     tags: &["security".into(), "auth".into()],
                     attribution: crate::store::schema::Attribution::User,
+                    code_refs: &[],
                 },
             )
             .unwrap();

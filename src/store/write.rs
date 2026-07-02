@@ -12,8 +12,8 @@ use crate::{Error, Result};
 
 use super::graph::Severity;
 use super::schema::{
-    Attribution, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind, GraphIndex,
-    NodeEntry, NodeKind, Pattern, PatternFile,
+    Attribution, CodeRef, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
+    GraphIndex, NodeEntry, NodeKind, Pattern, PatternFile,
 };
 use super::state::{
     ProjectState, is_reserved_node_name, is_valid_kebab_case, slugify, unique_decision_stem,
@@ -58,6 +58,7 @@ pub struct RecordDecisionParams<'a> {
     pub constrains: &'a [String],
     pub tags: &'a [String],
     pub attribution: Attribution,
+    pub code_refs: &'a [CodeRef],
 }
 
 // ── AmendDecisionParams ─────────────────────────────────────────────
@@ -72,6 +73,7 @@ pub struct AmendDecisionParams<'a> {
     pub choice: Option<&'a str>,
     pub reason: Option<&'a str>,
     pub tags: Option<&'a [String]>,
+    pub code_refs: Option<&'a [CodeRef]>,
 }
 
 // ── RecordPatternParams ─────────────────────────────────────────────
@@ -374,6 +376,10 @@ impl Store {
         state: &mut ProjectState,
         params: RecordDecisionParams<'_>,
     ) -> Result<String> {
+        // The store is the trust boundary — validate refs here even though
+        // MCP/map callers also validate, so no write path can bypass it.
+        super::validate_code_refs(params.code_refs)?;
+
         let stem = unique_decision_stem(state, &slugify(params.choice))?;
 
         let decision = DecisionFile {
@@ -385,6 +391,7 @@ impl Store {
                 tags: params.tags.to_vec(),
                 attribution: params.attribution,
                 created: Utc::now(),
+                code_refs: params.code_refs.to_vec(),
             },
         };
 
@@ -680,9 +687,13 @@ impl Store {
         name: &str,
         params: AmendDecisionParams<'_>,
     ) -> Result<()> {
-        if params.choice.is_none() && params.reason.is_none() && params.tags.is_none() {
+        if params.choice.is_none()
+            && params.reason.is_none()
+            && params.tags.is_none()
+            && params.code_refs.is_none()
+        {
             return Err(Error::Validation(
-                "at least one of choice, reason, or tags is required".into(),
+                "at least one of choice, reason, tags, or code_refs is required".into(),
             ));
         }
         if let Some(c) = params.choice
@@ -711,6 +722,10 @@ impl Store {
         }
         if let Some(t) = params.tags {
             amended.decision.tags = t.to_vec();
+        }
+        if let Some(refs) = params.code_refs {
+            super::validate_code_refs(refs)?;
+            amended.decision.code_refs = refs.to_vec();
         }
 
         let write = self.prepare_write(&self.decision_path(name), &amended)?;
@@ -1423,5 +1438,84 @@ mod tests {
         let err = store.remove_file(&lock, &outside).unwrap_err();
         assert!(matches!(err, Error::Validation(_)));
         assert!(outside.exists(), "file outside root must not be deleted");
+    }
+
+    // ── code_refs validation at the store boundary ───────────────────────
+
+    #[test]
+    fn record_decision_rejects_invalid_code_ref() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        // Path traversal must be refused even though this bypasses the MCP layer.
+        let refs = vec![CodeRef {
+            file: "../escape.rs".into(),
+            symbol: None,
+        }];
+        let err = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless",
+                    supersedes: None,
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &refs,
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Validation(_)), "{err}");
+    }
+
+    #[test]
+    fn amend_decision_rejects_invalid_code_ref() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+
+        let stem = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "Use JWT",
+                    reason: "Stateless",
+                    supersedes: None,
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap();
+
+        let bad = vec![CodeRef {
+            file: "/etc/passwd".into(),
+            symbol: None,
+        }];
+        let err = store
+            .amend_decision(
+                &lock,
+                &mut state,
+                &stem,
+                AmendDecisionParams {
+                    choice: None,
+                    reason: None,
+                    tags: None,
+                    code_refs: Some(&bad),
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Validation(_)), "{err}");
     }
 }
