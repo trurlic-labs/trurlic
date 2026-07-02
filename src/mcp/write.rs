@@ -219,6 +219,21 @@ pub(crate) fn record_decision(
         }
     }
 
+    // Reject an exact restatement of an existing decision in the same
+    // component (case-insensitive). Forking the graph with a duplicate node
+    // loses the original's history and edges — revising it in place keeps both.
+    let choice_lower = choice.to_ascii_lowercase();
+    for (existing_name, existing_dec) in &state.decisions {
+        if existing_dec.decision.component == component
+            && existing_dec.decision.choice.to_ascii_lowercase() == choice_lower
+        {
+            return Err(format!(
+                "decision `{existing_name}` in [{component}] has identical choice text — \
+                 use update_decision(mode=\"revise\") to update it"
+            ));
+        }
+    }
+
     let lock = store.lock().map_err(|e| e.to_string())?;
 
     let stem = store
@@ -248,21 +263,23 @@ pub(crate) fn record_decision(
                 .into(),
         );
     }
-    // Detect near-duplicate: warn if an existing decision in the same
-    // component has identical choice text (case-insensitive). The new
-    // decision is already written, so this is advisory — the agent may
-    // want to revise or remove the duplicate.
-    let choice_lower = choice.to_ascii_lowercase();
+    // Flag probable near-duplicates: an existing decision in the same
+    // component whose choice shares most of its significant words with the
+    // new one. Advisory, not a block — reworded variants are sometimes
+    // legitimately distinct, so the agent decides whether to consolidate.
     for (existing_name, existing_dec) in &state.decisions {
         if existing_name.as_str() == stem {
             continue;
         }
-        if existing_dec.decision.component == component
-            && existing_dec.decision.choice.to_ascii_lowercase() == choice_lower
-        {
+        if existing_dec.decision.component != component {
+            continue;
+        }
+        let overlap = word_overlap(choice, &existing_dec.decision.choice);
+        if overlap > NEAR_DUPLICATE_OVERLAP {
+            let percent = (overlap * 100.0).round() as u64;
             warnings.push(format!(
-                "decision `{existing_name}` in the same component has identical \
-                 choice text — consider using update_decision instead"
+                "high text overlap ({percent}%) with decision `{existing_name}` in \
+                 [{component}] — consider using update_decision(mode=\"revise\") instead"
             ));
         }
     }
@@ -277,6 +294,38 @@ pub(crate) fn record_decision(
         "warnings": warnings,
         "pattern_opportunity": pattern_opportunity,
     }))
+}
+
+// ── Near-duplicate detection ─────────────────────────────────────────────────
+
+/// Word-overlap ratio above which two same-component decisions are flagged as
+/// probable near-duplicates.
+const NEAR_DUPLICATE_OVERLAP: f64 = 0.7;
+
+/// Jaccard similarity over the significant words of two choice texts. Words
+/// shorter than three characters are dropped as noise, surrounding punctuation
+/// is stripped so `"JWT."` matches `"JWT"`, and comparison is case-insensitive.
+/// Returns a value in `[0.0, 1.0]`; `0.0` when either side has no significant
+/// words.
+fn word_overlap(a: &str, b: &str) -> f64 {
+    fn significant_words(text: &str) -> HashSet<String> {
+        text.split_whitespace()
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_ascii_lowercase()
+            })
+            .filter(|w| w.len() >= 3)
+            .collect()
+    }
+
+    let words_a = significant_words(a);
+    let words_b = significant_words(b);
+    if words_a.is_empty() || words_b.is_empty() {
+        return 0.0;
+    }
+    let intersection = words_a.intersection(&words_b).count();
+    let union = words_a.union(&words_b).count();
+    intersection as f64 / union as f64
 }
 
 // ── record_pattern ──────────────────────────────────────────────────────────
@@ -963,7 +1012,7 @@ mod tests {
     }
 
     #[test]
-    fn record_decision_warns_on_duplicate_choice() {
+    fn record_decision_rejects_duplicate_choice() {
         let (_tmp, store, mut state) = setup();
         let d1 = json!({
             "component": "auth",
@@ -973,11 +1022,38 @@ mod tests {
         });
         record_decision(&store, &mut state, &d1).unwrap();
 
-        // Same choice text, same component.
+        // Same choice text (case-insensitive), same component — hard error.
         let d2 = json!({
             "component": "auth",
-            "choice": "Use JWT tokens",
+            "choice": "use jwt TOKENS",
             "reason": "Different reasoning entirely",
+            "attribution": "user",
+        });
+        let err = record_decision(&store, &mut state, &d2).unwrap_err();
+        assert!(
+            err.contains("identical choice") && err.contains("revise"),
+            "should reject duplicate and point at revise: {err}"
+        );
+        // The rejected decision must never reach disk or state.
+        assert_eq!(state.decisions.len(), 1);
+    }
+
+    #[test]
+    fn record_decision_warns_on_high_overlap() {
+        let (_tmp, store, mut state) = setup();
+        let d1 = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens for authentication",
+            "reason": "Stateless authentication model",
+            "attribution": "user",
+        });
+        record_decision(&store, &mut state, &d1).unwrap();
+
+        // Same significant words plus one — high Jaccard overlap, not identical.
+        let d2 = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens for authentication flow",
+            "reason": "Slightly different framing of the same idea",
             "attribution": "user",
         });
         let result = record_decision(&store, &mut state, &d2).unwrap();
@@ -985,9 +1061,50 @@ mod tests {
         assert!(
             warnings
                 .iter()
-                .any(|w| w.as_str().unwrap().contains("identical choice")),
-            "should warn about duplicate: {warnings:?}"
+                .any(|w| w.as_str().unwrap().contains("overlap")),
+            "should warn about high text overlap: {warnings:?}"
         );
+    }
+
+    #[test]
+    fn record_decision_no_warning_on_low_overlap() {
+        let (_tmp, store, mut state) = setup();
+        let d1 = json!({
+            "component": "auth",
+            "choice": "Use JWT tokens",
+            "reason": "Stateless authentication model",
+            "attribution": "user",
+        });
+        record_decision(&store, &mut state, &d1).unwrap();
+
+        // Unrelated wording in the same component — no near-duplicate warning.
+        let d2 = json!({
+            "component": "auth",
+            "choice": "Rotate signing keys quarterly",
+            "reason": "Limit blast radius of a key compromise",
+            "attribution": "user",
+        });
+        let result = record_decision(&store, &mut state, &d2).unwrap();
+        let warnings = result["warnings"].as_array().unwrap();
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("overlap")),
+            "should not warn on low overlap: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn word_overlap_is_jaccard_over_significant_words() {
+        // Identical significant words, differing only in case → 1.0.
+        assert!((word_overlap("Use JWT tokens", "use jwt TOKENS") - 1.0).abs() < 1e-9);
+        // Disjoint word sets → 0.0.
+        assert_eq!(word_overlap("alpha beta gamma", "delta epsilon zeta"), 0.0);
+        // Words shorter than three chars carry no signal → 0.0.
+        assert_eq!(word_overlap("a an of", "no it is"), 0.0);
+        // Partial overlap → intersection / union: {jwt} over {jwt, tokens, cookies}.
+        let overlap = word_overlap("jwt tokens", "jwt cookies");
+        assert!((overlap - 1.0 / 3.0).abs() < 1e-9, "got {overlap}");
     }
 
     #[test]
