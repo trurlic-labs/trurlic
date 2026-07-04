@@ -256,24 +256,37 @@ fn component_graph(graph: &InMemoryGraph, component: &str) -> String {
 /// when `Mode::Interactive`.
 const INTERACTION_PROTOCOL: &str = "\
 ---\n\
-INTERACTION PROTOCOL (non-negotiable):\n\n\
-ONE topic per message. After asking any question, STOP and wait for \
-the user's response. Do not continue to the next topic in the same \
-message.\n\n\
-WHEN THE USER'S ANSWER IS CORRECT BUT SHALLOW (≤1 sentence or \
-restatement without deeper understanding):\n\
-You are a senior engineer mentoring. Expand their understanding:\n\
-- Explain the deeper implications they didn't mention\n\
-- Give one concrete failure scenario this decision prevents\n\
-- Connect it to other decisions in the graph\n\
-Then ask: \"Does that deepen your understanding?\"\n\
-STOP. Wait.\n\n\
-WHEN THE USER SAYS \"I DON'T KNOW\" OR GIVES A ≤3 WORD ANSWER:\n\
-This is a teaching moment, not a failure.\n\
-1. Describe what the code does and why it matters (3-4 sentences)\n\
-2. Give one concrete failure scenario\n\
-3. Ask: \"Can you restate that in your own words?\"\n\
-STOP. Wait. Record only after they demonstrate understanding.\n";
+INTERACTION PROTOCOL:\n\n\
+You are a senior engineer in a design discussion with a peer. Your job \
+is to help them think through decisions, not quiz them on facts.\n\n\
+ONE topic per exchange. After posing a question, STOP and wait.\n\n\
+HOW TO ASK:\n\
+Probe trade-offs, not recall.\n\
+  Good: \"Why this approach over X? What's the trade-off?\"\n\
+  Good: \"What happens to this when traffic is 10x higher?\"\n\
+  Good: \"I noticed the code does Z — was that deliberate?\"\n\
+  Avoid: \"Can you explain what this component does?\"\n\
+  Avoid: \"What does this NOT do?\"\n\n\
+HOW TO DEEPEN:\n\
+When the user gives a correct but surface-level answer, go deeper \
+on what they said — don't repeat the question differently:\n\
+- \"That's the what — what drove that choice? What did you reject?\"\n\
+- Share a concrete scenario the code handles because of this decision\n\
+- Connect to another decision: \"This interacts with [X] — have you \
+thought about what happens when both are in play?\"\n\n\
+HOW TO TEACH:\n\
+When the user doesn't know something, that's the most valuable \
+moment — not a failure.\n\
+1. Walk through the specific code path (cite the file and function)\n\
+2. Explain what problem it solves with a concrete scenario\n\
+3. Ask a forward-looking question: \"Now that you see this, does \
+this approach still make sense for where the project is heading?\"\n\
+Don't ask them to restate what you just said.\n\n\
+WHEN THE USER PUSHES BACK:\n\
+Engage with their reasoning — pushback means they're thinking.\n\
+- Present the counter-argument from the code's perspective\n\
+- If they have a better idea: \"How would that change the implementation?\"\n\
+- Record what they actually decide, not what the code currently does\n";
 
 /// Agent protocol — replaces INTERACTION_PROTOCOL in `Mode::Agent`.
 const AGENT_PROTOCOL: &str = "\
@@ -1134,12 +1147,8 @@ mod tests {
             let result =
                 build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
             assert!(
-                result.instructions.contains("ONE topic per message"),
+                result.instructions.contains("ONE topic per exchange"),
                 "step `{step}` missing interaction protocol"
-            );
-            assert!(
-                result.instructions.contains("I DON'T KNOW"),
-                "step `{step}` missing I-don't-know protocol"
             );
         }
     }
@@ -1149,11 +1158,11 @@ mod tests {
         let state = test_state();
         let reg =
             build_step_prompt(&state, "auth", "register", None, None, Mode::Interactive).unwrap();
-        assert!(!reg.instructions.contains("ONE topic per message"));
+        assert!(!reg.instructions.contains("ONE topic per exchange"));
 
         let ready =
             build_step_prompt(&state, "auth", "ready", None, None, Mode::Interactive).unwrap();
-        assert!(!ready.instructions.contains("ONE topic per message"));
+        assert!(!ready.instructions.contains("ONE topic per exchange"));
     }
 
     // ── Step-specific behavior ────────────────────────────────────────
@@ -1470,7 +1479,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("ONE topic per message"),
+            !result.instructions.contains("ONE topic per exchange"),
             "scan_project must skip interaction protocol"
         );
     }
@@ -1520,7 +1529,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("ONE topic per message"),
+            !result.instructions.contains("ONE topic per exchange"),
             "extract_decisions must skip interaction protocol"
         );
     }
@@ -1601,7 +1610,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("ONE topic per message"),
+            !result.instructions.contains("ONE topic per exchange"),
             "project_rules must skip interaction protocol"
         );
     }
@@ -1654,7 +1663,7 @@ mod tests {
         let result =
             build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
         assert!(
-            result.instructions.contains("ONE topic per message"),
+            result.instructions.contains("ONE topic per exchange"),
             "warm_up must include interaction protocol"
         );
     }
@@ -1806,7 +1815,7 @@ mod tests {
                 "step `{step}` in agent mode missing AGENT PROTOCOL"
             );
             assert!(
-                !result.instructions.contains("ONE topic per message"),
+                !result.instructions.contains("ONE topic per exchange"),
                 "step `{step}` in agent mode should not have INTERACTION PROTOCOL"
             );
         }
@@ -1828,7 +1837,7 @@ mod tests {
             let result =
                 build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
             assert!(
-                result.instructions.contains("ONE topic per message"),
+                result.instructions.contains("ONE topic per exchange"),
                 "step `{step}` in interactive mode missing INTERACTION PROTOCOL"
             );
             assert!(
@@ -2004,7 +2013,7 @@ mod tests {
                 let result = build_step_prompt(&state, comp, step, None, None, mode).unwrap();
                 assert!(
                     !result.instructions.contains("AGENT PROTOCOL")
-                        && !result.instructions.contains("ONE topic per message"),
+                        && !result.instructions.contains("ONE topic per exchange"),
                     "step `{step}` should skip both protocols in {:?}",
                     mode
                 );
