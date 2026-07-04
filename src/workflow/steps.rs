@@ -802,8 +802,10 @@ fn step_pattern_detection(graph: &InMemoryGraph, component: &str, mode: Mode) ->
                  - Reinforce the same invariant\n\
                  - Form a defense-in-depth chain\n\
                  - Share a common constraint or trade-off\n\n\
-                 For each candidate: \"These N decisions form a pattern — \
-                 [describe]. Should I record it?\"\n\
+                 For each candidate, present it as a discussion:\n\
+                 \"These decisions seem to work together \u{2014} [describe the pattern]. \
+                 Does that match how you think about it?\"\n\
+                 STOP. Wait.\n\
                  If confirmed, call record_pattern with the decision names.\n",
             );
         }
@@ -861,44 +863,71 @@ fn step_drift_check(graph: &InMemoryGraph, component: &str, mode: Mode) -> Strin
     decisions.sort_by_key(|(_, d)| d.decision.created);
 
     if decisions.is_empty() {
-        return "STEP: Drift Check\n\n\
-                No decisions to check for drift.\n"
-            .into();
+        return "STEP: Drift Check\n\nNo decisions to check.\n".into();
     }
 
     let mut out = String::with_capacity(512);
-    out.push_str(
-        "STEP: Drift Check\n\n\
-         Compare each decision against the current source code. \
-         Oldest decisions first:\n\n",
-    );
 
-    for (name, d) in &decisions {
-        out.push_str(&format!(
-            "DECISION: {name} (created {})\n\
-             Choice: {}\n\
-             Reason: {}\n",
-            d.decision.created.format("%Y-%m-%d"),
-            sanitize(&d.decision.choice),
-            sanitize(&d.decision.reason),
-        ));
-        if !d.decision.code_refs.is_empty() {
-            out.push_str(&format!(
-                "Code: {}\n",
-                store::format_code_refs(&d.decision.code_refs)
-            ));
+    match mode {
+        Mode::Interactive => {
+            out.push_str(
+                "STEP: Drift Check\n\n\
+                 Check each decision against current source code. Oldest first \
+                 \u{2014} older decisions are more likely to have drifted.\n\n",
+            );
+
+            let now = Utc::now();
+            for (name, d) in &decisions {
+                let code_line = format_code_refs_line(&d.decision);
+                let age_note = format!("Created: {}", d.decision.created.format("%Y-%m-%d"));
+                out.push_str(&format!(
+                    "DECISION: {name}\n\
+                     Choice: {choice}\n\
+                     {code_line}\
+                     {age_note}\n\
+                     \u{2192} Read the code at these locations\n\
+                     \u{2192} Ask: \"This is {age} old. Does the code still do this?\"\n\
+                     \u{2192} If drifted: discuss what changed and why, then call \
+                     update_decision(mode=\"revise\")\n\
+                     \u{2192} STOP. Wait.\n\n",
+                    choice = sanitize(&d.decision.choice),
+                    age = format_age(d.decision.created, now),
+                ));
+            }
         }
-        out.push_str(
-            "→ Verify this matches the current implementation\n\
-             → If drifted, call update_decision(mode=\"revise\")\n\n",
-        );
-    }
+        Mode::Agent => {
+            out.push_str(
+                "STEP: Drift Check\n\n\
+                 Compare each decision against the current source code. \
+                 Oldest decisions first:\n\n",
+            );
 
-    if mode == Mode::Agent {
-        out.push_str(
-            "Verify each decision automatically against source code. \
-             Revise any that have drifted. Call advance again when done.\n",
-        );
+            for (name, d) in &decisions {
+                out.push_str(&format!(
+                    "DECISION: {name} (created {})\n\
+                     Choice: {}\n\
+                     Reason: {}\n",
+                    d.decision.created.format("%Y-%m-%d"),
+                    sanitize(&d.decision.choice),
+                    sanitize(&d.decision.reason),
+                ));
+                if !d.decision.code_refs.is_empty() {
+                    out.push_str(&format!(
+                        "Code: {}\n",
+                        store::format_code_refs(&d.decision.code_refs),
+                    ));
+                }
+                out.push_str(
+                    "\u{2192} Verify this matches the current implementation\n\
+                     \u{2192} If drifted, call update_decision(mode=\"revise\")\n\n",
+                );
+            }
+
+            out.push_str(
+                "Verify each decision automatically against source code. \
+                 Revise any that have drifted. Call advance again when done.\n",
+            );
+        }
     }
     out
 }
@@ -925,9 +954,15 @@ fn step_coverage_audit(covered: &[&str], uncovered: &[&str], mode: Mode) -> Stri
         match mode {
             Mode::Interactive => {
                 out.push_str(
-                    "\nFor each gap, determine whether the component needs a \
-                     decision there or if the gap is intentional. If a decision \
-                     is needed, use cover_concerns to address it.\n",
+                    "\nSome gaps are real and some are intentional — not every \
+                     component needs a decision in every area.\n\n\
+                     Walk through each uncovered area with the user:\n\
+                     - Ask: \"Is [area] something this component needs to \
+                     address, or is it intentionally out of scope?\"\n\
+                     - STOP. Wait.\n\
+                     - If it needs coverage, use cover_concerns to work \
+                     through it together.\n\
+                     - If it's intentional, note why and move on.\n",
                 );
             }
             Mode::Agent => {
@@ -1094,7 +1129,6 @@ fn format_code_refs_line(decision: &Decision) -> String {
 ///
 /// Takes `now` as a parameter so callers in prompts pass `Utc::now()`
 /// while tests pass a fixed timestamp.
-#[allow(dead_code)]
 fn format_age(created: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let days = (now - created).num_days().max(0);
     if days < 30 {
@@ -1808,6 +1842,28 @@ mod tests {
         .unwrap();
         assert!(result.instructions.contains("auth-jwt"));
         assert!(result.instructions.contains("defense-in-depth"));
+    }
+
+    #[test]
+    fn pattern_detection_presents_as_discussion() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "pattern_detection",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("Does that match how you think about it?"),
+            "pattern_detection should frame as discussion"
+        );
+        assert!(
+            !result.instructions.contains("Should I record it?"),
+            "pattern_detection should not ask for confirmation"
+        );
     }
 
     #[test]
@@ -2678,6 +2734,100 @@ mod tests {
             result
                 .instructions
                 .contains("Verify each decision automatically")
+        );
+    }
+
+    #[test]
+    fn drift_check_interactive_includes_age() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
+                .unwrap();
+        assert!(
+            result
+                .instructions
+                .contains("old. Does the code still do this?"),
+            "interactive drift_check should include age in question"
+        );
+        assert!(
+            result.instructions.contains("Created: 2025-01-15"),
+            "interactive drift_check should show creation date"
+        );
+    }
+
+    #[test]
+    fn drift_check_interactive_stops_per_decision() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
+                .unwrap();
+        assert!(
+            result.instructions.contains("STOP. Wait"),
+            "interactive drift_check should stop after each decision"
+        );
+    }
+
+    #[test]
+    fn drift_check_interactive_discusses_before_revising() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
+                .unwrap();
+        assert!(
+            result.instructions.contains("discuss what changed"),
+            "interactive drift_check should discuss changes before revising"
+        );
+        assert!(
+            result
+                .instructions
+                .contains("update_decision(mode=\"revise\")"),
+            "interactive drift_check should use revise mode"
+        );
+    }
+
+    #[test]
+    fn drift_check_interactive_shows_code_refs() {
+        let ts = Utc.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).unwrap();
+        let mut state = test_state();
+        let with_refs = Arc::new(DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT with DPoP binding".into(),
+                reason: "Proof-of-possession prevents token theft".into(),
+                alternatives: vec![],
+                tags: vec!["security".into()],
+                attribution: Attribution::User,
+                created: ts,
+                code_refs: vec![CodeRef {
+                    file: "src/auth/jwt.rs".into(),
+                    symbol: Some("verify_dpop".into()),
+                }],
+                history: vec![],
+            },
+        });
+        state.decisions.insert("auth-jwt".into(), with_refs);
+        state.rebuild_graph();
+
+        let result =
+            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
+                .unwrap();
+        assert!(
+            result
+                .instructions
+                .contains("src/auth/jwt.rs::verify_dpop"),
+            "interactive drift_check should show code references via format_code_refs_line"
+        );
+    }
+
+    #[test]
+    fn drift_check_interactive_explains_oldest_first() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
+                .unwrap();
+        assert!(
+            result.instructions.contains("Oldest first"),
+            "interactive drift_check should explain oldest-first ordering"
         );
     }
 
