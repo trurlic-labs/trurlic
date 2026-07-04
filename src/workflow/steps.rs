@@ -125,7 +125,7 @@ pub fn build_step_prompt(
         "scan_project" => out.push_str(&step_scan_project()),
         "extract_decisions" => out.push_str(&step_extract_decisions(component)),
         "project_rules" => out.push_str(&step_project_rules()),
-        "warm_up" | "user_explains" => out.push_str(&step_user_explains()),
+        "warm_up" | "user_explains" => out.push_str(&step_warm_up()),
         "ready" => out.push_str(&step_ready(component)),
         _ => {
             return Err(format!(
@@ -775,16 +775,21 @@ fn step_coverage_audit(covered: &[&str], uncovered: &[&str], mode: Mode) -> Stri
     out
 }
 
-fn step_user_explains() -> String {
-    "STEP: User Explains\n\n\
-     Ask the user: \"From memory, describe this component's architecture \
-     — its responsibilities, key decisions, and how it connects to the \
-     rest of the system.\"\n\n\
-     Do NOT show them any decisions or code first. The user must recall \
-     from memory without looking at code or documentation.\n\n\
-     After they respond, compare their description against the recorded \
-     decisions. Note what they got right, what they missed, and any \
-     misconceptions. Use this as the foundation for the learning session.\n"
+fn step_warm_up() -> String {
+    "STEP: Warm-Up\n\n\
+     Start with a practical question:\n\
+     \"If something broke in this component right now, what's the \
+     first thing you'd check and why?\"\n\n\
+     STOP. Wait.\n\n\
+     Their answer reveals their mental model without making them \
+     perform. Note:\n\
+     - What they mention → they understand this\n\
+     - What they omit → explore in later steps\n\
+     - Don't correct yet — save discrepancies for analyze_code\n\n\
+     Follow up with ONE boundary question:\n\
+     \"What's the one thing this component should never do, even \
+     if someone asks for it?\"\n\n\
+     STOP. Wait.\n"
         .into()
 }
 
@@ -1639,7 +1644,7 @@ mod tests {
         let state = test_state();
         let result =
             build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
-        assert!(result.instructions.contains("from memory"));
+        assert!(result.instructions.contains("first thing you'd check"));
     }
 
     #[test]
@@ -1654,7 +1659,7 @@ mod tests {
             Mode::Interactive,
         )
         .unwrap();
-        assert!(result.instructions.contains("from memory"));
+        assert!(result.instructions.contains("first thing you'd check"));
     }
 
     #[test]
@@ -1665,6 +1670,28 @@ mod tests {
         assert!(
             result.instructions.contains("ONE topic per exchange"),
             "warm_up must include interaction protocol"
+        );
+    }
+
+    #[test]
+    fn warm_up_asks_boundary_question() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
+        assert!(
+            result.instructions.contains("should never do"),
+            "warm_up must probe component boundaries"
+        );
+    }
+
+    #[test]
+    fn warm_up_does_not_require_recall() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
+        assert!(
+            !result.instructions.contains("from memory"),
+            "warm_up should not ask for recall from memory"
         );
     }
 
