@@ -112,9 +112,9 @@ pub fn build_step_prompt(
         }
         "walk_decisions" => out.push_str(&step_walk_decisions(graph, component, mode)),
         "verify_constraints" => {
-            out.push_str(&step_verify_constraints(graph, component, mode));
+            out.push_str(&step_verify_constraints(graph, component, task_type, mode));
         }
-        "impact_check" => out.push_str(&step_impact_check(graph, component, mode)),
+        "impact_check" => out.push_str(&step_impact_check(graph, component, task_type, mode)),
         "pattern_detection" => out.push_str(&step_pattern_detection(graph, component, mode)),
         "design_check" | "summary_gate" => out.push_str(&step_summary_gate(task_type)),
         "drift_check" => out.push_str(&step_drift_check(graph, component, mode)),
@@ -342,35 +342,35 @@ fn step_define_scope(mode: Mode) -> String {
 fn step_analyze_code(component: &str, task_type: Option<&str>, mode: Mode) -> String {
     let mut out = String::with_capacity(512);
 
-    if task_type == Some("learn") {
-        out.push_str(
-            "CONTEXT: The user has already described this component from \
-             memory. Compare what you find in the source code to what the \
-             user described earlier — note what they got right, what they \
-             missed, and any misconceptions.\n\n",
-        );
-    }
-
     match mode {
         Mode::Interactive => {
+            if task_type == Some("learn") {
+                out.push_str(
+                    "CONTEXT: The user described this component in the warm-up. \
+                     Now read the source code. Focus on:\n\
+                     - Where their mental model matches the code (reinforce)\n\
+                     - Gaps they didn't mention (learning opportunities)\n\
+                     - Things they described differently from the code — frame \
+                     as discussion: \"Interesting — the code actually does X here. \
+                     What's your take on that?\"\n\n\
+                     Frame discrepancies as discussion points, not corrections.\n\n",
+                );
+            }
+
             out.push_str(&format!(
                 "STEP: Analyze Code\n\n\
-                 Read every source file in [{component}]'s module. Build a \
-                 numbered list of all architectural decisions you identify:\n\
+                 Read every source file in [{component}]. Identify architectural \
+                 decisions in the code:\n\
                  - Data structures and why they were chosen\n\
                  - Error handling strategy\n\
-                 - Concurrency primitives\n\
-                 - Validation and integrity checks\n\
-                 - Performance-sensitive paths\n\
-                 - External boundaries\n\
-                 - Security measures\n\
-                 - Storage strategy\n\
-                 - Dependency choices\n\
-                 - Explicit scope boundaries\n\n\
-                 Present: \"I found N architectural decisions in the source \
-                 code. Let me go through each one.\"\n\
-                 This list drives the session. Walk through each decision \
-                 one at a time.\n"
+                 - Concurrency, performance-sensitive paths\n\
+                 - Validation, integrity checks, security measures\n\
+                 - External boundaries and dependency choices\n\n\
+                 Walk through each one with the user. For each:\n\
+                 - Share what the code does and why it matters\n\
+                 - Ask: \"Does this match how you think about it?\"\n\
+                 - STOP. Wait. Discuss. Then record_decision.\n\n\
+                 Don't dump a numbered list. One decision at a time.\n"
             ));
         }
         Mode::Agent => {
@@ -518,7 +518,12 @@ fn step_walk_decisions(graph: &InMemoryGraph, component: &str, mode: Mode) -> St
     out
 }
 
-fn step_verify_constraints(graph: &InMemoryGraph, component: &str, mode: Mode) -> String {
+fn step_verify_constraints(
+    graph: &InMemoryGraph,
+    component: &str,
+    task_type: Option<&str>,
+    mode: Mode,
+) -> String {
     let decisions = graph.decisions_for(component);
 
     if decisions.is_empty() {
@@ -528,52 +533,87 @@ fn step_verify_constraints(graph: &InMemoryGraph, component: &str, mode: Mode) -
     }
 
     let mut out = String::with_capacity(512);
-    out.push_str(
-        "STEP: Verify Constraints\n\n\
-         Present each existing constraint that the task may affect:\n\n",
-    );
-
-    for (name, d) in &decisions {
-        match mode {
-            Mode::Interactive => {
-                out.push_str(&format!(
-                    "CONSTRAINT: {name} — {} ({})\n\
-                     → Cite the specific source file and function where this \
-                     constraint is enforced.\n\
-                     → Ask: \"Does your change respect this constraint, violate \
-                     it, or require changing it?\"\n\
-                     → STOP. Wait.\n\n",
-                    sanitize(&d.decision.choice),
-                    sanitize(&d.decision.reason),
-                ));
-            }
-            Mode::Agent => {
-                out.push_str(&format!(
-                    "CONSTRAINT: {name} — {} ({})\n\
-                     → Locate in source code and verify it is still enforced\n\
-                     → Check if the current task conflicts with this constraint\n\n",
-                    sanitize(&d.decision.choice),
-                    sanitize(&d.decision.reason),
-                ));
-            }
-        }
-    }
 
     match mode {
         Mode::Interactive => {
-            out.push_str(
-                "If any constraint needs changing → call update_decision(mode=\"revise\").\n\
-                 If all constraints hold → report \"all constraints verified\" with \
-                 the code locations checked.\n\
-                 If you cannot locate a constraint in the source code, flag it as \
-                 potentially drifted.\n\
-                 Also check whether the change impacts connected components.\n",
-            );
+            match task_type {
+                Some("fix") => {
+                    out.push_str(
+                        "STEP: Verify Constraints\n\n\
+                         Start by understanding the fix:\n\
+                         \"Tell me about this bug \u{2014} what's happening, what should \
+                         happen, and what's your plan to fix it?\"\n\
+                         STOP. Wait.\n\n\
+                         Then check each constraint the fix might affect:\n\n",
+                    );
+                }
+                _ => {
+                    out.push_str(
+                        "STEP: Verify Constraints\n\n\
+                         Start by understanding the feature:\n\
+                         \"Walk me through this feature \u{2014} what are you adding \
+                         and which parts of the code will it touch?\"\n\
+                         STOP. Wait.\n\n\
+                         Based on their answer, check relevant constraints:\n\n",
+                    );
+                }
+            }
+
+            for (name, d) in &decisions {
+                let code_line = format_code_refs_line(&d.decision);
+                out.push_str(&format!(
+                    "CONSTRAINT: {name} \u{2014} {choice}\n\
+                     Reason: {reason}\n\
+                     {code_line}\
+                     \u{2192} Read the constraint's code location\n\
+                     \u{2192} Ask: \"Does your change respect this, or does it need \
+                     to change?\"\n\
+                     \u{2192} If it needs to change, discuss why. Call \
+                     update_decision(mode=\"revise\") if agreed.\n\
+                     \u{2192} STOP. Wait.\n\n",
+                    choice = sanitize(&d.decision.choice),
+                    reason = sanitize(&d.decision.reason),
+                ));
+            }
+
+            match task_type {
+                Some("fix") => {
+                    out.push_str(
+                        "After checking constraints, ask: \"If this fix ships \
+                         and causes a regression, what's the most likely thing \
+                         to break and why?\"\n",
+                    );
+                }
+                _ => {
+                    out.push_str(
+                        "After checking constraints, ask: \"Is there anything \
+                         this feature needs that the current architecture doesn't \
+                         support?\"\n\
+                         If yes, discuss whether to adapt the architecture or \
+                         the feature.\n",
+                    );
+                }
+            }
         }
         Mode::Agent => {
             out.push_str(
-                "If any constraint has drifted → call update_decision(mode=\"revise\").\n\
-                 If any constraint conflicts with the task → note the conflict \
+                "STEP: Verify Constraints\n\n\
+                 Present each existing constraint that the task may affect:\n\n",
+            );
+
+            for (name, d) in &decisions {
+                out.push_str(&format!(
+                    "CONSTRAINT: {name} \u{2014} {} ({})\n\
+                     \u{2192} Locate in source code and verify it is still enforced\n\
+                     \u{2192} Check if the current task conflicts with this constraint\n\n",
+                    sanitize(&d.decision.choice),
+                    sanitize(&d.decision.reason),
+                ));
+            }
+
+            out.push_str(
+                "If any constraint has drifted \u{2192} call update_decision(mode=\"revise\").\n\
+                 If any constraint conflicts with the task \u{2192} note the conflict \
                  and call update_decision.\n\
                  If you cannot locate a constraint in the source code, flag it as \
                  potentially drifted.\n\
@@ -584,41 +624,55 @@ fn step_verify_constraints(graph: &InMemoryGraph, component: &str, mode: Mode) -
     out
 }
 
-fn step_impact_check(graph: &InMemoryGraph, component: &str, mode: Mode) -> String {
+fn step_impact_check(
+    graph: &InMemoryGraph,
+    component: &str,
+    task_type: Option<&str>,
+    mode: Mode,
+) -> String {
     let connects_to = graph.connects_to(component);
     let connects_from = graph.connects_from(component);
 
     let mut out = String::with_capacity(256);
-    out.push_str(
-        "STEP: Impact Check\n\n\
-         Check whether this change impacts connected components.\n\n",
-    );
+    out.push_str("STEP: Impact Check\n\n");
 
     if connects_to.is_empty() && connects_from.is_empty() {
         out.push_str("No connected components. Impact check complete.\n");
-    } else {
-        out.push_str("Connected components to check:\n");
-        for c in &connects_to {
-            out.push_str(&format!("  → {c} (this component sends to it)\n"));
-        }
-        for c in &connects_from {
-            out.push_str(&format!("  ← {c} (sends to this component)\n"));
-        }
-        match mode {
-            Mode::Interactive => {
+        return out;
+    }
+
+    out.push_str("Connected components:\n");
+    for c in &connects_to {
+        out.push_str(&format!("  \u{2192} {c} (this component sends to it)\n"));
+    }
+    for c in &connects_from {
+        out.push_str(&format!("  \u{2190} {c} (sends to this component)\n"));
+    }
+
+    match mode {
+        Mode::Interactive => match task_type {
+            Some("fix") => {
                 out.push_str(
-                    "\nFor each connected component, ask: \"Does your change affect \
-                     the interface between these components?\"\n\
+                    "\nAsk: \"Could this fix change the behavior that \
+                     connected components depend on? Walk me through the \
+                     interface.\"\n\
                      STOP. Wait.\n",
                 );
             }
-            Mode::Agent => {
+            _ => {
                 out.push_str(
-                    "\nFor each connected component, read the interface code and \
-                     determine whether the current task affects it. Report \
-                     findings and call advance again.\n",
+                    "\nAsk: \"Which of these connections does your feature \
+                     affect? Does the interface between them need to change?\"\n\
+                     STOP. Wait.\n",
                 );
             }
+        },
+        Mode::Agent => {
+            out.push_str(
+                "\nFor each connected component, read the interface code and \
+                 determine whether the current task affects it. Report \
+                 findings and call advance again.\n",
+            );
         }
     }
     out
@@ -925,7 +979,6 @@ fn sanitize_short(s: &str, max_chars: usize) -> String {
 /// Returns `"Code: file::symbol, file2\n"` when refs exist, or an
 /// empty string when there are none — callers can unconditionally
 /// include the result without conditional formatting.
-#[allow(dead_code)]
 fn format_code_refs_line(decision: &Decision) -> String {
     if decision.code_refs.is_empty() {
         return String::new();
@@ -1211,7 +1264,7 @@ mod tests {
         .unwrap();
         assert!(result.instructions.contains("Data structures"));
         assert!(result.instructions.contains("Error handling"));
-        assert!(result.instructions.contains("Security measures"));
+        assert!(result.instructions.contains("security measures"));
     }
 
     #[test]
@@ -1281,12 +1334,12 @@ mod tests {
         assert!(
             result
                 .instructions
-                .contains("violate it, or require changing it")
+                .contains("Does your change respect this, or does it need")
         );
     }
 
     #[test]
-    fn verify_constraints_requires_code_citation() {
+    fn verify_constraints_anchors_on_code_location() {
         let state = test_state();
         let result = build_step_prompt(
             &state,
@@ -1298,13 +1351,108 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("source file and function"),
-            "verify_constraints must require code citation"
+            result.instructions.contains("code location"),
+            "verify_constraints must direct agent to constraint code"
+        );
+    }
+
+    #[test]
+    fn verify_constraints_fix_variant() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "verify_constraints",
+            None,
+            Some("fix"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("Tell me about this bug"),
+            "fix variant should open by understanding the bug"
         );
         assert!(
-            result.instructions.contains("cannot locate"),
-            "verify_constraints must flag unlocatable constraints as drifted"
+            result.instructions.contains("regression"),
+            "fix variant closing should ask about regression risk"
         );
+    }
+
+    #[test]
+    fn verify_constraints_feature_variant() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "verify_constraints",
+            None,
+            Some("feature"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("Walk me through this feature"),
+            "feature variant should open by understanding the feature"
+        );
+        assert!(
+            result.instructions.contains("architecture doesn't"),
+            "feature variant closing should ask about architecture gaps"
+        );
+    }
+
+    #[test]
+    fn verify_constraints_default_uses_feature_variant() {
+        let state = test_state();
+        let no_type = build_step_prompt(
+            &state,
+            "auth",
+            "verify_constraints",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        let feature = build_step_prompt(
+            &state,
+            "auth",
+            "verify_constraints",
+            None,
+            Some("feature"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert_eq!(
+            no_type.instructions, feature.instructions,
+            "default (no task_type) should match feature variant"
+        );
+    }
+
+    #[test]
+    fn verify_constraints_understands_change_before_checking() {
+        let state = test_state();
+        for task_type in [None, Some("fix"), Some("feature")] {
+            let result = build_step_prompt(
+                &state,
+                "auth",
+                "verify_constraints",
+                None,
+                task_type,
+                Mode::Interactive,
+            )
+            .unwrap();
+            let understanding_pos = result
+                .instructions
+                .find("Start by understanding")
+                .expect("should start by understanding the change");
+            let constraint_pos = result
+                .instructions
+                .find("CONSTRAINT:")
+                .expect("should list constraints");
+            assert!(
+                understanding_pos < constraint_pos,
+                "task_type={task_type:?}: must understand the change before listing constraints"
+            );
+        }
     }
 
     #[test]
@@ -1320,6 +1468,71 @@ mod tests {
         )
         .unwrap();
         assert!(result.instructions.contains("store"));
+    }
+
+    #[test]
+    fn impact_check_fix_variant() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "impact_check",
+            None,
+            Some("fix"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("Could this fix change the behavior"),
+            "fix variant should ask about behavioral change from the fix"
+        );
+    }
+
+    #[test]
+    fn impact_check_feature_variant() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "impact_check",
+            None,
+            Some("feature"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result
+                .instructions
+                .contains("Which of these connections does your feature"),
+            "feature variant should ask which connections the feature affects"
+        );
+    }
+
+    #[test]
+    fn impact_check_default_uses_feature_variant() {
+        let state = test_state();
+        let no_type = build_step_prompt(
+            &state,
+            "auth",
+            "impact_check",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        let feature = build_step_prompt(
+            &state,
+            "auth",
+            "impact_check",
+            None,
+            Some("feature"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert_eq!(
+            no_type.instructions, feature.instructions,
+            "default (no task_type) should match feature variant"
+        );
     }
 
     #[test]
@@ -1806,8 +2019,13 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Compare what you find"),
-            "learn variant should reference user's earlier description"
+            result.instructions.contains("warm-up")
+                || result.instructions.contains("mental model"),
+            "learn variant should reference the warm-up step"
+        );
+        assert!(
+            result.instructions.contains("discussion points"),
+            "learn variant should frame discrepancies as discussion"
         );
     }
 
@@ -1824,8 +2042,30 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("Compare what you find"),
+            !result.instructions.contains("warm-up"),
             "non-learn variant should not include learn preamble"
+        );
+    }
+
+    #[test]
+    fn analyze_code_interactive_one_at_a_time() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "analyze_code",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("One decision at a time"),
+            "interactive variant should walk decisions one at a time"
+        );
+        assert!(
+            !result.instructions.contains("Build a\n"),
+            "interactive variant should not instruct building a list"
         );
     }
 
