@@ -314,11 +314,19 @@ fn step_register(component: &str) -> String {
 fn step_define_scope(mode: Mode) -> String {
     match mode {
         Mode::Interactive => "STEP: Define Scope\n\n\
-             Ask the user two questions (one per message):\n\
-             1. \"What is this component responsible for?\"\n\
-             2. \"What is explicitly NOT its responsibility?\"\n\n\
-             After each answer, call record_decision with tags: [\"scope\"]. \
-             Do not proceed until both scope decisions are recorded.\n"
+             Start with: \"In one sentence, what's this component's job?\"\n\
+             STOP. Wait.\n\n\
+             Based on their answer, probe the boundary:\n\
+             - If scope sounds too broad: \"That sounds like it could include \
+             [adjacent concern] — is that intentional, or does that belong \
+             somewhere else?\"\n\
+             - If scope is too narrow: \"What about [thing the code actually \
+             does]? I see that in the source.\"\n\n\
+             Record TWO decisions with tags [\"scope\"]:\n\
+             1. What the component IS responsible for\n\
+             2. What is explicitly NOT its responsibility\n\n\
+             The boundary decision is the more important one — it prevents \
+             scope creep. Spend more time on it.\n"
             .into(),
         Mode::Agent => "STEP: Define Scope\n\n\
              Read the source code for this component. Determine:\n\
@@ -1902,8 +1910,30 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Ask the user"),
-            "interactive define_scope should ask the user"
+            result.instructions.contains("component's job"),
+            "interactive define_scope should ask about component's job"
+        );
+    }
+
+    #[test]
+    fn interactive_define_scope_probes_boundaries() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "define_scope",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("probe the boundary"),
+            "interactive define_scope should probe boundaries"
+        );
+        assert!(
+            result.instructions.contains("scope creep"),
+            "interactive define_scope should emphasize boundary importance"
         );
     }
 
