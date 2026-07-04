@@ -428,14 +428,16 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                                 "verify_constraints",
                                 "impact_check",
                                 "pattern_detection",
-                                "summary_gate",
+                                "design_check",
                                 "drift_check",
                                 "coverage_audit",
                                 "scan_project",
                                 "extract_decisions",
                                 "project_rules",
-                                "user_explains",
-                                "ready"
+                                "warm_up",
+                                "ready",
+                                "summary_gate",
+                                "user_explains"
                             ],
                             "description": "Workflow step to get the prompt for."
                         },

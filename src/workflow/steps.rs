@@ -77,6 +77,7 @@ pub fn build_step_prompt(
             | "verify_constraints"
             | "impact_check"
             | "walk_decisions"
+            | "design_check"
             | "summary_gate"
             | "drift_check"
             | "coverage_audit"
@@ -115,7 +116,7 @@ pub fn build_step_prompt(
         }
         "impact_check" => out.push_str(&step_impact_check(graph, component, mode)),
         "pattern_detection" => out.push_str(&step_pattern_detection(graph, component, mode)),
-        "summary_gate" => out.push_str(&step_summary_gate(task_type)),
+        "design_check" | "summary_gate" => out.push_str(&step_summary_gate(task_type)),
         "drift_check" => out.push_str(&step_drift_check(graph, component, mode)),
         "coverage_audit" => {
             focus = uncovered.iter().map(|s| (*s).to_string()).collect();
@@ -124,15 +125,15 @@ pub fn build_step_prompt(
         "scan_project" => out.push_str(&step_scan_project()),
         "extract_decisions" => out.push_str(&step_extract_decisions(component)),
         "project_rules" => out.push_str(&step_project_rules()),
-        "user_explains" => out.push_str(&step_user_explains()),
+        "warm_up" | "user_explains" => out.push_str(&step_user_explains()),
         "ready" => out.push_str(&step_ready(component)),
         _ => {
             return Err(format!(
                 "unknown step `{step}` — expected: register, define_scope, \
              analyze_code, cover_concerns, walk_decisions, verify_constraints, \
-             impact_check, pattern_detection, summary_gate, drift_check, \
+             impact_check, pattern_detection, design_check, drift_check, \
              coverage_audit, scan_project, extract_decisions, project_rules, \
-             user_explains, ready"
+             warm_up, ready"
             ));
         }
     }
@@ -1128,7 +1129,7 @@ mod tests {
             "cover_concerns",
             "walk_decisions",
             "verify_constraints",
-            "summary_gate",
+            "design_check",
         ] {
             let result =
                 build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
@@ -1316,12 +1317,12 @@ mod tests {
     }
 
     #[test]
-    fn summary_gate_forbids_hints() {
+    fn design_check_forbids_hints() {
         let state = test_state();
         let result = build_step_prompt(
             &state,
             "auth",
-            "summary_gate",
+            "design_check",
             None,
             None,
             Mode::Interactive,
@@ -1622,10 +1623,18 @@ mod tests {
         assert!(result.instructions.contains("project"));
     }
 
-    // ── user_explains step ───────────────────────────────────────────
+    // ── warm_up step (and user_explains alias) ─────────────────────
 
     #[test]
-    fn build_step_prompt_accepts_user_explains() {
+    fn build_step_prompt_accepts_warm_up() {
+        let state = test_state();
+        let result =
+            build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
+        assert!(result.instructions.contains("from memory"));
+    }
+
+    #[test]
+    fn build_step_prompt_accepts_user_explains_alias() {
         let state = test_state();
         let result = build_step_prompt(
             &state,
@@ -1640,50 +1649,55 @@ mod tests {
     }
 
     #[test]
-    fn step_as_str_round_trips_user_explains() {
+    fn warm_up_includes_interaction_protocol() {
         let state = test_state();
-        let result = build_step_prompt(
-            &state,
-            "auth",
-            "user_explains",
-            None,
-            None,
-            Mode::Interactive,
-        );
+        let result =
+            build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
         assert!(
-            result.is_ok(),
-            "user_explains must be accepted: {:?}",
-            result.err()
+            result.instructions.contains("ONE topic per message"),
+            "warm_up must include interaction protocol"
         );
     }
 
+    // ── design_check task_type variants (and summary_gate alias) ────
+
     #[test]
-    fn user_explains_includes_interaction_protocol() {
+    fn build_step_prompt_accepts_design_check() {
         let state = test_state();
         let result = build_step_prompt(
             &state,
             "auth",
-            "user_explains",
+            "design_check",
             None,
             None,
             Mode::Interactive,
         )
         .unwrap();
-        assert!(
-            result.instructions.contains("ONE topic per message"),
-            "user_explains must include interaction protocol"
-        );
+        assert!(result.instructions.contains("Summary Gate"));
     }
 
-    // ── summary_gate task_type variants ──────────────────────────────
-
     #[test]
-    fn summary_gate_feature_variant() {
+    fn build_step_prompt_accepts_summary_gate_alias() {
         let state = test_state();
         let result = build_step_prompt(
             &state,
             "auth",
             "summary_gate",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(result.instructions.contains("Summary Gate"));
+    }
+
+    #[test]
+    fn design_check_feature_variant() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "design_check",
             None,
             Some("feature"),
             Mode::Interactive,
@@ -1696,12 +1710,12 @@ mod tests {
     }
 
     #[test]
-    fn summary_gate_review_variant() {
+    fn design_check_review_variant() {
         let state = test_state();
         let result = build_step_prompt(
             &state,
             "auth",
-            "summary_gate",
+            "design_check",
             None,
             Some("review"),
             Mode::Interactive,
@@ -1714,12 +1728,12 @@ mod tests {
     }
 
     #[test]
-    fn summary_gate_default_variant() {
+    fn design_check_default_variant() {
         let state = test_state();
         let result = build_step_prompt(
             &state,
             "auth",
-            "summary_gate",
+            "design_check",
             None,
             None,
             Mode::Interactive,

@@ -161,9 +161,9 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             },
         ),
 
-        Step::SummaryGate => step_prompt_action(
+        Step::DesignCheck => step_prompt_action(
             component,
-            "summary_gate",
+            "design_check",
             task,
             mode,
             "Ask the user: \"Without looking at the list, describe in \
@@ -210,9 +210,9 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             },
         ),
 
-        Step::UserExplains => step_prompt_action(
+        Step::WarmUp => step_prompt_action(
             component,
-            "user_explains",
+            "warm_up",
             task,
             mode,
             "Ask the user to describe this component's architecture from \
