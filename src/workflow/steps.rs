@@ -108,15 +108,17 @@ pub fn build_step_prompt(
         "analyze_code" => out.push_str(&step_analyze_code(component, task_type, mode)),
         "cover_concerns" => {
             focus = top_n(&uncovered, CONCERN_FOCUS_LIMIT);
-            out.push_str(&step_cover_concerns(&focus, &all_decs, mode));
+            out.push_str(&step_cover_concerns(&focus, &all_decs, task_type, mode));
         }
-        "walk_decisions" => out.push_str(&step_walk_decisions(graph, component, mode)),
+        "walk_decisions" => {
+            out.push_str(&step_walk_decisions(graph, component, task_type, mode));
+        }
         "verify_constraints" => {
             out.push_str(&step_verify_constraints(graph, component, task_type, mode));
         }
         "impact_check" => out.push_str(&step_impact_check(graph, component, task_type, mode)),
         "pattern_detection" => out.push_str(&step_pattern_detection(graph, component, mode)),
-        "design_check" | "summary_gate" => out.push_str(&step_summary_gate(task_type)),
+        "design_check" | "summary_gate" => out.push_str(&step_design_check(task_type)),
         "drift_check" => out.push_str(&step_drift_check(graph, component, mode)),
         "coverage_audit" => {
             focus = uncovered.iter().map(|s| (*s).to_string()).collect();
@@ -400,26 +402,61 @@ fn step_analyze_code(component: &str, task_type: Option<&str>, mode: Mode) -> St
     out
 }
 
-fn step_cover_concerns(focus: &[String], all_decs: &[&DecisionFile], mode: Mode) -> String {
+fn step_cover_concerns(
+    focus: &[String],
+    all_decs: &[&DecisionFile],
+    task_type: Option<&str>,
+    mode: Mode,
+) -> String {
     let mut out = String::with_capacity(512);
     out.push_str("STEP: Cover Concerns\n\n");
     out.push_str(&concerns::concern_status(all_decs));
-    out.push_str(&format!(
-        "Focus on these uncovered areas (priority order):\n  {}\n\n",
-        focus.join(", "),
-    ));
     match mode {
         Mode::Interactive => {
-            out.push_str(
-                "For each uncovered concern:\n\
-                 1. Read the relevant source code for that concern area\n\
-                 2. Present 2-3 viable options with trade-offs\n\
-                 3. Ask the user to choose\n\
-                 4. Call record_decision with tags matching the concern area\n\n\
-                 Do not move to the next concern until the current one is recorded.\n",
-            );
+            match task_type {
+                Some("feature") => {
+                    out.push_str(&format!(
+                        "Uncovered concerns relevant to this feature: {}\n\n\
+                         For each concern that the feature touches:\n\
+                         1. Read the code the feature will change\n\
+                         2. Ask: \"How does [concern area] affect your feature? \
+                         Have you thought about this?\"\n\
+                         3. STOP. Wait.\n\
+                         4. If they have a plan — validate or challenge it\n\
+                         5. If they haven't thought about it — share what the code \
+                         currently does, ask if the feature needs to change that\n\
+                         6. Record the decision together\n\n\
+                         Focus only on concerns the feature actually impacts. \
+                         Don't force discussion on irrelevant concern areas.\n",
+                        focus.join(", "),
+                    ));
+                }
+                _ => {
+                    out.push_str(&format!(
+                        "Uncovered areas (priority order): {}\n\n\
+                         For each uncovered concern:\n\
+                         1. Read the relevant source code\n\
+                         2. Ask: \"How are you thinking about [concern] for this \
+                         component?\"\n\
+                         3. STOP. Wait.\n\
+                         4. If they have a clear opinion — validate or challenge \
+                         with code evidence. Discuss trade-offs.\n\
+                         5. If they haven't thought about it — share what the code \
+                         does (or doesn't do), ask if that's intentional\n\
+                         6. If they're stuck — then offer 2-3 options as a starting \
+                         point\n\
+                         7. Arrive at a decision together. Record it.\n\n\
+                         Start with their thinking, not a menu of options.\n",
+                        focus.join(", "),
+                    ));
+                }
+            }
         }
         Mode::Agent => {
+            out.push_str(&format!(
+                "Focus on these uncovered areas (priority order):\n  {}\n\n",
+                focus.join(", "),
+            ));
             out.push_str(
                 "For each uncovered concern:\n\
                  1. Read the relevant source code for that concern area\n\
@@ -434,54 +471,114 @@ fn step_cover_concerns(focus: &[String], all_decs: &[&DecisionFile], mode: Mode)
     out
 }
 
-fn step_walk_decisions(graph: &InMemoryGraph, component: &str, mode: Mode) -> String {
+fn step_walk_decisions(
+    graph: &InMemoryGraph,
+    component: &str,
+    task_type: Option<&str>,
+    mode: Mode,
+) -> String {
     let decisions = graph.decisions_for(component);
 
     if decisions.is_empty() {
-        return "STEP: Walk Decisions\n\n\
-                No decisions recorded for this component. Consider running \
-                the analyze_code step first.\n"
-            .into();
+        return "STEP: Walk Decisions\n\nNo decisions recorded.\n".into();
     }
 
     let mut out = String::with_capacity(1024);
 
     match mode {
         Mode::Interactive => {
-            out.push_str(
-                "STEP: Walk Decisions\n\n\
-                 Present each decision one at a time:\n\n",
-            );
-
-            for (name, d) in &decisions {
-                out.push_str(&format!(
-                    "DECISION: {name} — {}\n\
-                     Reason: {}\n",
-                    sanitize(&d.decision.choice),
-                    sanitize(&d.decision.reason),
-                ));
-                if !d.decision.code_refs.is_empty() {
-                    out.push_str(&format!(
-                        "Code: {}\n",
-                        store::format_code_refs(&d.decision.code_refs)
-                    ));
+            match task_type {
+                Some("review") => {
+                    out.push_str(
+                        "STEP: Walk Decisions\n\n\
+                         Review each decision against the current code. Focus on \
+                         freshness \u{2014} has the code evolved past this decision?\n\n",
+                    );
                 }
-                out.push_str(
-                    "→ Cite the specific file/function where this manifests\n\
-                     → Ask the user to confirm or correct\n\
-                     → STOP. Wait for response.\n\n",
-                );
+                Some("learn") => {
+                    out.push_str(
+                        "STEP: Walk Decisions\n\n\
+                         Walk through each decision as a design discussion. The \
+                         goal is understanding why, not confirming what.\n\n",
+                    );
+                }
+                _ => {
+                    out.push_str(
+                        "STEP: Walk Decisions\n\n\
+                         Discuss each decision \u{2014} don\u{2019}t just present and ask for \
+                         confirmation.\n\n",
+                    );
+                }
             }
 
-            out.push_str(
-                "After all decisions walked, probe for decisions you found in \
-                 the code that are NOT yet recorded. For each, discuss and \
-                 call record_decision.\n\n\
-                 Then look for groups of 2+ decisions that reinforce the same \
-                 invariant or form a defense-in-depth chain. For each candidate \
-                 pattern, ask: \"Should I record this as a pattern?\" If confirmed, \
-                 call record_pattern.\n",
-            );
+            for (name, d) in &decisions {
+                let code_line = format_code_refs_line(&d.decision);
+                let history_note = if !d.decision.history.is_empty() {
+                    format!(
+                        "Revised {} time(s) \u{2014} original: \"{}\"\n",
+                        d.decision.history.len(),
+                        sanitize_short(&d.decision.history[0].choice, 60),
+                    )
+                } else {
+                    String::new()
+                };
+
+                let question = match task_type {
+                    Some("review") => {
+                        format!(
+                            "\u{2192} Read the code at these locations\n\
+                             \u{2192} Ask: \"This decision is from {}. Does the code \
+                             still match? Has anything drifted?\"\n",
+                            d.decision.created.format("%Y-%m-%d"),
+                        )
+                    }
+                    Some("learn") => {
+                        "\u{2192} Read the code where this lives\n\
+                         \u{2192} Ask: \"Why was this approach chosen over the \
+                         alternatives? What\u{2019}s the trade-off?\"\n"
+                            .into()
+                    }
+                    _ => {
+                        format!(
+                            "\u{2192} Read the code where this lives\n\
+                             \u{2192} Ask: \"This was decided because of {reason} \u{2014} is \
+                             that still the right trade-off?\"\n",
+                            reason = sanitize_short(&d.decision.reason, 60),
+                        )
+                    }
+                };
+
+                out.push_str(&format!(
+                    "DECISION: {name}\n\
+                     Choice: {choice}\n\
+                     Reason: {reason}\n\
+                     {code_line}\
+                     {history_note}\
+                     {question}\
+                     \u{2192} STOP. Wait.\n\n",
+                    choice = sanitize(&d.decision.choice),
+                    reason = sanitize(&d.decision.reason),
+                ));
+            }
+
+            match task_type {
+                Some("review") => {
+                    out.push_str(
+                        "After walking all decisions, ask: \"Are there decisions \
+                         in the code that should be recorded but aren\u{2019}t?\" Look \
+                         for undocumented patterns.\n",
+                    );
+                }
+                _ => {
+                    out.push_str(
+                        "After walking all decisions, ask: \"What\u{2019}s the one \
+                         decision in this component you\u{2019}d change if you were \
+                         starting over today?\" This surfaces latent design debt.\n\n\
+                         Then check for undocumented decisions in the code. \
+                         For each, discuss and record.\n",
+                    );
+                }
+            }
         }
         Mode::Agent => {
             out.push_str(
@@ -491,7 +588,7 @@ fn step_walk_decisions(graph: &InMemoryGraph, component: &str, mode: Mode) -> St
 
             for (name, d) in &decisions {
                 out.push_str(&format!(
-                    "DECISION: {name} — {}\n\
+                    "DECISION: {name} \u{2014} {}\n\
                      Reason: {}\n",
                     sanitize(&d.decision.choice),
                     sanitize(&d.decision.reason),
@@ -503,8 +600,8 @@ fn step_walk_decisions(graph: &InMemoryGraph, component: &str, mode: Mode) -> St
                     ));
                 }
                 out.push_str(
-                    "→ Locate in source code and verify accuracy\n\
-                     → If drifted, call update_decision(mode=\"revise\")\n\n",
+                    "\u{2192} Locate in source code and verify accuracy\n\
+                     \u{2192} If drifted, call update_decision(mode=\"revise\")\n\n",
                 );
             }
 
@@ -725,29 +822,37 @@ fn step_pattern_detection(graph: &InMemoryGraph, component: &str, mode: Mode) ->
     out
 }
 
-fn step_summary_gate(task_type: Option<&str>) -> String {
+fn step_design_check(task_type: Option<&str>) -> String {
     let question = match task_type {
-        Some("feature") => {
-            "\"Without looking at the list, what constraints does your \
-             change need to respect? Describe in 3-5 sentences.\""
+        Some("learn") => {
+            "\"A new team member asks you to explain this component \
+             over coffee. What do you tell them \u{2014} the essential things \
+             they need to understand?\""
         }
         Some("review") => {
-            "\"Summarize what you found in this review — which decisions \
-             still hold, which drifted, and what gaps remain. 3-5 sentences.\""
+            "\"Based on this review, what\u{2019}s changed, what\u{2019}s still solid, \
+             and what needs attention next?\""
+        }
+        Some("feature") => {
+            "\"You\u{2019}re opening the PR. What do you write in the \
+             description about architectural impact?\""
         }
         _ => {
-            "\"Without looking at the list, describe in 3-5 sentences \
-             the constraints any code touching this component must respect.\""
+            "\"A new team member is about to make their first change \
+             to this component. What do they need to know before they \
+             touch anything?\""
         }
     };
 
     format!(
-        "STEP: Summary Gate\n\n\
+        "STEP: Design Check\n\n\
          Ask: {question}\n\n\
-         Do NOT help. Do NOT give hints. Do NOT break it into sub-questions.\n\n\
-         If the user cannot produce a coherent summary, revisit the \
-         decisions they couldn't explain.\n\
-         The session ends only when the user demonstrates ownership.\n"
+         This is a practical check, not a quiz. The user should be able \
+         to answer from understanding built during this session.\n\n\
+         If they miss something important, don\u{2019}t say \"wrong.\" Say: \
+         \"What about [topic]? We talked about that earlier \u{2014} how does \
+         it fit in?\" Let them connect the dots.\n\n\
+         If they cover the key points, the session is complete.\n"
     )
 }
 
@@ -963,7 +1068,6 @@ fn sanitize(s: &str) -> String {
 ///
 /// Applies `sanitize` (strips control chars, caps at 512 chars), then
 /// truncates further to `max_chars` characters with a trailing ellipsis.
-#[allow(dead_code)]
 fn sanitize_short(s: &str, max_chars: usize) -> String {
     let cleaned = sanitize(s);
     if cleaned.chars().count() <= max_chars {
@@ -1314,7 +1418,162 @@ mod tests {
         .unwrap();
         assert!(result.instructions.contains("auth-jwt"));
         assert!(result.instructions.contains("JWT with DPoP binding"));
-        assert!(result.instructions.contains("STOP. Wait for response"));
+        assert!(result.instructions.contains("STOP. Wait"));
+    }
+
+    #[test]
+    fn walk_decisions_review_variant() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            Some("review"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("freshness"),
+            "review variant should focus on freshness"
+        );
+        assert!(
+            result.instructions.contains("drifted"),
+            "review variant should ask about drift"
+        );
+        assert!(
+            result.instructions.contains("2025-01-15"),
+            "review variant should include decision date"
+        );
+        assert!(
+            result
+                .instructions
+                .contains("recorded but aren"),
+            "review closing should ask about unrecorded decisions"
+        );
+    }
+
+    #[test]
+    fn walk_decisions_learn_variant() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            Some("learn"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("understanding why"),
+            "learn variant should focus on understanding"
+        );
+        assert!(
+            result.instructions.contains("trade-off"),
+            "learn variant should probe trade-offs"
+        );
+        assert!(
+            result.instructions.contains("Why was this approach chosen"),
+            "learn variant should ask about alternatives"
+        );
+    }
+
+    #[test]
+    fn walk_decisions_default_discusses() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("Discuss each decision"),
+            "default should frame as discussion"
+        );
+        assert!(
+            !result.instructions.contains("confirm or correct"),
+            "default should not use confirm-or-correct language"
+        );
+        assert!(
+            result.instructions.contains("starting over today"),
+            "default closing should surface design debt"
+        );
+    }
+
+    #[test]
+    fn walk_decisions_history_display() {
+        let ts = Utc.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).unwrap();
+
+        let mut state = test_state();
+        let revised = Arc::new(DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT with rotating keys".into(),
+                reason: "Key rotation improves security posture".into(),
+                alternatives: vec![],
+                tags: vec!["security".into()],
+                attribution: Attribution::User,
+                created: ts,
+                code_refs: vec![],
+                history: vec![HistoryEntry {
+                    choice: "JWT with static keys".into(),
+                    reason: "Simple key management".into(),
+                    changed_at: ts,
+                }],
+            },
+        });
+        state.decisions.insert("auth-jwt".into(), revised);
+        state.rebuild_graph();
+
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("Revised 1 time(s)"),
+            "should show revision count"
+        );
+        assert!(
+            result.instructions.contains("JWT with static keys"),
+            "should show original choice"
+        );
+    }
+
+    #[test]
+    fn walk_decisions_agent_unchanged_by_task_type() {
+        let state = test_state();
+        let without = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            None,
+            Mode::Agent,
+        )
+        .unwrap();
+        let with_review = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            Some("review"),
+            Mode::Agent,
+        )
+        .unwrap();
+        assert_eq!(
+            without.instructions, with_review.instructions,
+            "agent mode should not vary by task_type"
+        );
     }
 
     #[test]
@@ -1552,7 +1811,7 @@ mod tests {
     }
 
     #[test]
-    fn design_check_forbids_hints() {
+    fn design_check_practical_not_quiz() {
         let state = test_state();
         let result = build_step_prompt(
             &state,
@@ -1563,8 +1822,26 @@ mod tests {
             Mode::Interactive,
         )
         .unwrap();
-        assert!(result.instructions.contains("Do NOT help"));
-        assert!(result.instructions.contains("Do NOT give hints"));
+        assert!(
+            result.instructions.contains("practical check"),
+            "design_check should frame as practical check"
+        );
+        assert!(
+            !result.instructions.contains("Do NOT help"),
+            "design_check should not contain adversarial gating"
+        );
+        assert!(
+            !result.instructions.contains("Do NOT give hints"),
+            "design_check should not contain adversarial gating"
+        );
+        assert!(
+            !result.instructions.contains("Without looking at the list"),
+            "design_check should not demand unprompted recall"
+        );
+        assert!(
+            !result.instructions.contains("demonstrates ownership"),
+            "design_check should not use demonstrate-ownership language"
+        );
     }
 
     #[test]
@@ -1930,7 +2207,7 @@ mod tests {
             Mode::Interactive,
         )
         .unwrap();
-        assert!(result.instructions.contains("Summary Gate"));
+        assert!(result.instructions.contains("Design Check"));
     }
 
     #[test]
@@ -1945,7 +2222,29 @@ mod tests {
             Mode::Interactive,
         )
         .unwrap();
-        assert!(result.instructions.contains("Summary Gate"));
+        assert!(result.instructions.contains("Design Check"));
+    }
+
+    #[test]
+    fn design_check_learn_variant() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "design_check",
+            None,
+            Some("learn"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("explain this component"),
+            "learn variant should use explain-over-coffee framing"
+        );
+        assert!(
+            result.instructions.contains("over coffee"),
+            "learn variant should use casual peer framing"
+        );
     }
 
     #[test]
@@ -1961,8 +2260,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("constraints does your change"),
-            "feature variant should ask about change constraints"
+            result.instructions.contains("opening the PR"),
+            "feature variant should use PR framing"
+        );
+        assert!(
+            result.instructions.contains("architectural impact"),
+            "feature variant should ask about architectural impact"
         );
     }
 
@@ -1979,8 +2282,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Summarize what you found"),
-            "review variant should ask for review summary"
+            result.instructions.contains("what\u{2019}s changed"),
+            "review variant should ask what changed"
+        );
+        assert!(
+            result.instructions.contains("needs attention"),
+            "review variant should surface what needs attention"
         );
     }
 
@@ -1997,10 +2304,14 @@ mod tests {
         )
         .unwrap();
         assert!(
+            result.instructions.contains("new team member"),
+            "default variant should use new-team-member framing"
+        );
+        assert!(
             result
                 .instructions
-                .contains("constraints any code touching"),
-            "default variant should ask about component constraints"
+                .contains("need to know before they"),
+            "default variant should ask what to know before touching code"
         );
     }
 
@@ -2222,6 +2533,93 @@ mod tests {
             build_step_prompt(&state, "auth", "cover_concerns", None, None, Mode::Agent).unwrap();
         assert!(result.instructions.contains("attribution=\"agent\""));
         assert!(result.instructions.contains("without user interaction"));
+    }
+
+    #[test]
+    fn cover_concerns_feature_asks_about_feature_impact() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "store",
+            "cover_concerns",
+            None,
+            Some("feature"),
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result.instructions.contains("affect your feature"),
+            "feature variant should ask how concern affects the feature"
+        );
+        assert!(
+            result
+                .instructions
+                .contains("Focus only on concerns the feature actually impacts"),
+            "feature variant should scope to relevant concerns"
+        );
+        assert!(
+            !result
+                .instructions
+                .contains("How are you thinking about"),
+            "feature variant should not use the default question"
+        );
+    }
+
+    #[test]
+    fn cover_concerns_default_starts_with_user_thinking() {
+        let state = test_state();
+        let result = build_step_prompt(
+            &state,
+            "store",
+            "cover_concerns",
+            None,
+            None,
+            Mode::Interactive,
+        )
+        .unwrap();
+        assert!(
+            result
+                .instructions
+                .contains("How are you thinking about"),
+            "default variant should start with the user's opinion"
+        );
+        assert!(
+            result
+                .instructions
+                .contains("Start with their thinking, not a menu of options"),
+            "default variant should emphasize user-first discussion"
+        );
+        assert!(
+            !result.instructions.contains("affect your feature"),
+            "default variant should not use feature-specific question"
+        );
+    }
+
+    #[test]
+    fn cover_concerns_agent_unchanged_by_task_type() {
+        let state = test_state();
+        let without = build_step_prompt(
+            &state,
+            "store",
+            "cover_concerns",
+            None,
+            None,
+            Mode::Agent,
+        )
+        .unwrap();
+        let with_feature = build_step_prompt(
+            &state,
+            "store",
+            "cover_concerns",
+            None,
+            Some("feature"),
+            Mode::Agent,
+        )
+        .unwrap();
+        assert_eq!(
+            without.instructions, with_feature.instructions,
+            "agent mode should not vary by task_type"
+        );
     }
 
     #[test]
