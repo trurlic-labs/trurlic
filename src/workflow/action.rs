@@ -55,9 +55,10 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
                      with attribution=\"agent\"."
                 }
                 Mode::Interactive => {
-                    "Read every source file in this component. Build a numbered \
-                     list of all architectural decisions you identify. Present \
-                     the list, then walk through each one."
+                    "Read every source file in this component. Walk through \
+                     each architectural decision one at a time with the user. \
+                     Share what the code does and why it matters, discuss, \
+                     then record."
                 }
             },
         ),
@@ -71,9 +72,9 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
                     focus.join(", "),
                 ),
                 Mode::Interactive => format!(
-                    "Cover uncovered concern areas: {}. For each, present \
-                     2-3 viable options with trade-offs, ask the user to \
-                     choose, and record with matching tags.",
+                    "Cover uncovered concern areas: {}. For each, start by \
+                     asking how the user thinks about that concern. Discuss \
+                     trade-offs together, then record the decision.",
                     focus.join(", "),
                 ),
             };
@@ -95,9 +96,9 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
                      unrecorded decisions with attribution=\"agent\"."
                 }
                 Mode::Interactive => {
-                    "Walk through each recorded decision with the user. Present \
-                     one per message. After each, STOP and wait for the user's \
-                     response. Then identify patterns across decisions."
+                    "Discuss each recorded decision with the user as a \
+                     design conversation. One at a time — share the code \
+                     context, probe trade-offs, then move on."
                 }
             },
         ),
@@ -114,11 +115,10 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
                      Update any that have drifted."
                 }
                 Mode::Interactive => {
-                    "Present each existing constraint that the task may affect. \
-                     For each, ask: \"Does your change respect this constraint, \
-                     violate it, or require changing it?\" STOP and wait. If \
-                     any constraint needs changing, call update_decision. Also \
-                     check whether this change impacts connected components."
+                    "Start by understanding the user's change, then check \
+                     each relevant constraint. For each, ask whether the \
+                     change respects it or needs it to change. Discuss and \
+                     update_decision if agreed."
                 }
             },
         ),
@@ -161,16 +161,15 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             },
         ),
 
-        Step::SummaryGate => step_prompt_action(
+        Step::DesignCheck => step_prompt_action(
             component,
-            "summary_gate",
+            "design_check",
             task,
             mode,
-            "Ask the user: \"Without looking at the list, describe in \
-             3-5 sentences the constraints any code touching this \
-             component must respect.\" Do NOT help, hint, or break it \
-             into sub-questions. If the user cannot produce a coherent \
-             summary, revisit the decisions they couldn't explain.",
+            "Practical comprehension check. Ask a context-appropriate \
+             question that lets the user demonstrate understanding \
+             built during this session. If they miss something, help \
+             them connect the dots — don't quiz.",
         ),
 
         Step::DriftCheck => step_prompt_action(
@@ -210,14 +209,14 @@ pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode
             },
         ),
 
-        Step::UserExplains => step_prompt_action(
+        Step::WarmUp => step_prompt_action(
             component,
-            "user_explains",
+            "warm_up",
             task,
             mode,
-            "Ask the user to describe this component's architecture from \
-             memory. Do not show decisions or code first. Compare their \
-             answer against recorded decisions afterward.",
+            "Conversational opener — ask a practical question that \
+             reveals the user's mental model without making them perform. \
+             Note what they mention and what they omit for later steps.",
         ),
 
         Step::ScanProject => step_prompt_action(

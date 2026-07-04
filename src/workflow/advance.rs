@@ -301,7 +301,7 @@ fn deduce_step(task_type: TaskType, ctx: &DeduceContext<'_>) -> Step {
     }
 }
 
-/// NewComponent: Register → DefineScope → CoverConcerns → PatternDetection → [SummaryGate] → Ready
+/// NewComponent: Register → DefineScope → CoverConcerns → PatternDetection → [DesignCheck] → Ready
 fn deduce_new_component(
     decisions: &[(&Arc<str>, &DecisionFile)],
     covered: &[&str],
@@ -321,13 +321,16 @@ fn deduce_new_component(
     if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
-    if mode == Mode::Interactive && !completed.contains(&"summary_gate") {
-        return Step::SummaryGate;
+    if mode == Mode::Interactive
+        && !completed.contains(&"design_check")
+        && !completed.contains(&"summary_gate")
+    {
+        return Step::DesignCheck;
     }
     Step::Ready
 }
 
-/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → SummaryGate → Ready
+/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → DesignCheck → Ready
 ///
 /// VerifyConstraints: ensures existing decisions still hold for the new
 /// feature. Has no verifiable graph postcondition — uses `completed_steps`
@@ -342,8 +345,8 @@ fn deduce_new_component(
 /// PatternDetection: after concerns are covered, look for patterns across
 /// decisions. Has a verifiable postcondition (patterns recorded).
 ///
-/// SummaryGate: comprehension check — user describes constraints their
-/// change must respect.
+/// DesignCheck: practical comprehension check — user demonstrates
+/// understanding through a context-appropriate question.
 fn deduce_feature(
     decisions: &[(&Arc<str>, &DecisionFile)],
     covered: &[&str],
@@ -382,9 +385,12 @@ fn deduce_feature(
         return Step::PatternDetection;
     }
 
-    // SummaryGate: comprehension check before ready (interactive only).
-    if mode == Mode::Interactive && !completed.contains(&"summary_gate") {
-        return Step::SummaryGate;
+    // DesignCheck: comprehension check before ready (interactive only).
+    if mode == Mode::Interactive
+        && !completed.contains(&"design_check")
+        && !completed.contains(&"summary_gate")
+    {
+        return Step::DesignCheck;
     }
 
     Step::Ready
@@ -476,24 +482,24 @@ fn deduce_fix(
     Step::Ready
 }
 
-/// Learn: UserExplains → AnalyzeCode → WalkDecisions → SummaryGate → Ready
+/// Learn: WarmUp → AnalyzeCode → WalkDecisions → DesignCheck → Ready
 ///
-/// UserExplains: user describes the component from memory before seeing
-/// code. Postcondition: step evidence (not graph-verifiable).
+/// WarmUp: practical question that reveals the user's mental model.
+/// Postcondition: step evidence (not graph-verifiable).
 ///
 /// AnalyzeCode postcondition: decisions recorded (verifiable).
 ///
 /// WalkDecisions postcondition: heuristic (patterns serve as proxy —
 /// if patterns exist, walkthrough is complete).
 ///
-/// SummaryGate: comprehension check — user summarizes constraints.
+/// DesignCheck: comprehension check — user summarizes understanding.
 fn deduce_learn(
     decisions: &[(&Arc<str>, &DecisionFile)],
     patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
     completed: &[&str],
 ) -> Step {
-    if !completed.contains(&"user_explains") {
-        return Step::UserExplains;
+    if !completed.contains(&"warm_up") && !completed.contains(&"user_explains") {
+        return Step::WarmUp;
     }
     if decisions.is_empty() {
         return Step::AnalyzeCode;
@@ -501,13 +507,13 @@ fn deduce_learn(
     if patterns.is_empty() {
         return Step::WalkDecisions;
     }
-    if !completed.contains(&"summary_gate") {
-        return Step::SummaryGate;
+    if !completed.contains(&"design_check") && !completed.contains(&"summary_gate") {
+        return Step::DesignCheck;
     }
     Step::Ready
 }
 
-/// Review: WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → SummaryGate → Ready
+/// Review: WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → DesignCheck → Ready
 ///
 /// WalkDecisions: interactive walkthrough of all decisions, challenging
 /// each against current source code. No verifiable graph postcondition,
@@ -521,7 +527,7 @@ fn deduce_learn(
 /// CoverageAudit: surfaces coverage gaps. Agent may record intentional-
 /// gap decisions (graph change) or note gaps for future work.
 ///
-/// SummaryGate: comprehension check — user summarizes review findings.
+/// DesignCheck: comprehension check — user summarizes review findings.
 fn deduce_review(
     decisions: &[(&Arc<str>, &DecisionFile)],
     stale: &[StaleDec],
@@ -543,8 +549,11 @@ fn deduce_review(
     if patterns.is_empty() && !completed.contains(&"pattern_detection") {
         return Step::PatternDetection;
     }
-    if mode == Mode::Interactive && !completed.contains(&"summary_gate") {
-        return Step::SummaryGate;
+    if mode == Mode::Interactive
+        && !completed.contains(&"design_check")
+        && !completed.contains(&"summary_gate")
+    {
+        return Step::DesignCheck;
     }
     Step::Ready
 }
@@ -1205,7 +1214,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(result["task_type"], "learn");
-        assert_eq!(result["step"], "user_explains");
+        assert_eq!(result["step"], "warm_up");
     }
 
     #[test]
@@ -1414,7 +1423,7 @@ mod tests {
             Some(TaskType::Feature),
             None,
             Some(Mode::Interactive),
-            &evidence(&["verify_constraints", "summary_gate"]),
+            &evidence(&["verify_constraints", "design_check"]),
             chrono::Utc::now(),
         )
         .unwrap();
@@ -1515,7 +1524,7 @@ mod tests {
     }
 
     #[test]
-    fn new_component_with_patterns_moves_to_summary_gate() {
+    fn new_component_with_patterns_moves_to_design_check() {
         let mut decs = well_covered_decisions("store", true);
         decs.push((
             "d-scope",
@@ -1537,12 +1546,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["step"], "design_check");
         assert_eq!(result["ready"], false);
     }
 
     #[test]
-    fn new_component_after_summary_gate_is_ready() {
+    fn new_component_after_design_check_is_ready() {
         let mut decs = well_covered_decisions("store", true);
         decs.push((
             "d-scope",
@@ -1559,7 +1568,7 @@ mod tests {
             Some(TaskType::NewComponent),
             None,
             Some(Mode::Interactive),
-            &evidence(&["summary_gate"]),
+            &evidence(&["design_check"]),
             chrono::Utc::now(),
         )
         .unwrap();
@@ -1650,7 +1659,7 @@ mod tests {
     }
 
     #[test]
-    fn feature_reaches_summary_gate_after_pattern_detection() {
+    fn feature_reaches_design_check_after_pattern_detection() {
         let state = build_state(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
@@ -1665,18 +1674,18 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["step"], "design_check");
         assert_eq!(result["ready"], false);
     }
 
     #[test]
-    fn feature_summary_gate_blocks_ready() {
+    fn feature_design_check_blocks_ready() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
             &[("p1", "Integrity chain", &["store"])],
         );
-        // Without summary_gate evidence → stays at summary_gate.
+        // Without design_check evidence → stays at design_check.
         let r1 = advance(
             &state,
             "store",
@@ -1687,9 +1696,9 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        assert_eq!(r1["step"], "summary_gate");
+        assert_eq!(r1["step"], "design_check");
 
-        // Same call again → still summary_gate (idempotent).
+        // Same call again → still design_check (idempotent).
         let r2 = advance(
             &state,
             "store",
@@ -1700,11 +1709,11 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        assert_eq!(r2["step"], "summary_gate");
+        assert_eq!(r2["step"], "design_check");
     }
 
     #[test]
-    fn feature_fully_covered_with_patterns_reaches_summary_gate() {
+    fn feature_fully_covered_with_patterns_reaches_design_check() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
@@ -1720,12 +1729,12 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["step"], "design_check");
         assert_eq!(result["ready"], false);
     }
 
     #[test]
-    fn feature_fully_covered_with_patterns_is_ready_after_summary_gate() {
+    fn feature_fully_covered_with_patterns_is_ready_after_design_check() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
@@ -1737,7 +1746,7 @@ mod tests {
             Some(TaskType::Feature),
             None,
             Some(Mode::Interactive),
-            &evidence(&["verify_constraints", "summary_gate"]),
+            &evidence(&["verify_constraints", "design_check"]),
             chrono::Utc::now(),
         )
         .unwrap();
@@ -2013,7 +2022,7 @@ mod tests {
     // ── Learn step sequence ───────────────────────────────────────────
 
     #[test]
-    fn learn_starts_with_user_explains() {
+    fn learn_starts_with_warm_up() {
         let state = build_state(&[("store", "Data store")], &[]);
         let result = advance(
             &state,
@@ -2026,12 +2035,29 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result["step"], "user_explains");
+        assert_eq!(result["step"], "warm_up");
         assert_eq!(result["ready"], false);
     }
 
     #[test]
-    fn learn_user_explains_gates_analyze_code() {
+    fn learn_warm_up_gates_analyze_code() {
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["warm_up"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "analyze_code");
+    }
+
+    #[test]
+    fn learn_accepts_user_explains_alias_as_evidence() {
         let state = build_state(&[("store", "Data store")], &[]);
         let result = advance(
             &state,
@@ -2062,7 +2088,7 @@ mod tests {
             Some(TaskType::Learn),
             None,
             Some(Mode::Interactive),
-            &evidence(&["user_explains"]),
+            &evidence(&["warm_up"]),
             chrono::Utc::now(),
         )
         .unwrap();
@@ -2071,7 +2097,7 @@ mod tests {
     }
 
     #[test]
-    fn learn_reaches_summary_gate() {
+    fn learn_reaches_design_check() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &[(
@@ -2086,17 +2112,17 @@ mod tests {
             Some(TaskType::Learn),
             None,
             Some(Mode::Interactive),
-            &evidence(&["user_explains"]),
+            &evidence(&["warm_up"]),
             chrono::Utc::now(),
         )
         .unwrap();
 
-        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["step"], "design_check");
         assert_eq!(result["ready"], false);
     }
 
     #[test]
-    fn learn_with_patterns_is_ready_after_summary_gate() {
+    fn learn_with_patterns_is_ready_after_design_check() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &[(
@@ -2111,7 +2137,32 @@ mod tests {
             Some(TaskType::Learn),
             None,
             Some(Mode::Interactive),
-            &evidence(&["user_explains", "summary_gate"]),
+            &evidence(&["warm_up", "design_check"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "ready");
+        assert_eq!(result["ready"], true);
+    }
+
+    #[test]
+    fn learn_accepts_summary_gate_alias_as_evidence() {
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &[]),
+            )],
+            &[("p1", "Integrity chain", &["store"])],
+        );
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Learn),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["warm_up", "summary_gate"]),
             chrono::Utc::now(),
         )
         .unwrap();
@@ -2230,13 +2281,13 @@ mod tests {
     }
 
     #[test]
-    fn review_reaches_summary_gate() {
+    fn review_reaches_design_check() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
             &[("p1", "Integrity chain", &["store"])],
         );
-        // With completed walk: SummaryGate (no stale, no gaps, patterns exist).
+        // With completed walk: DesignCheck (no stale, no gaps, patterns exist).
         let result = advance(
             &state,
             "store",
@@ -2248,12 +2299,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result["step"], "summary_gate");
+        assert_eq!(result["step"], "design_check");
         assert_eq!(result["ready"], false);
     }
 
     #[test]
-    fn review_fully_healthy_is_ready_after_summary_gate() {
+    fn review_fully_healthy_is_ready_after_design_check() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
@@ -2265,7 +2316,7 @@ mod tests {
             Some(TaskType::Review),
             None,
             Some(Mode::Interactive),
-            &evidence(&["walk_decisions", "summary_gate"]),
+            &evidence(&["walk_decisions", "design_check"]),
             chrono::Utc::now(),
         )
         .unwrap();
@@ -2275,10 +2326,10 @@ mod tests {
     }
 
     #[test]
-    fn review_stale_reaches_summary_gate() {
+    fn review_stale_reaches_drift_check_before_design_check() {
         // Stale decisions: walk_decisions → drift_check → (stale cleared) →
-        // pattern_detection or summary_gate. Here, stale decisions exist,
-        // but after walk and with patterns, hits summary_gate.
+        // pattern_detection or design_check. Here, stale decisions exist,
+        // but after walk and with patterns, hits design_check.
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", false),
@@ -3141,7 +3192,7 @@ mod tests {
     #[test]
     fn bootstrap_pipeline_unaffected() {
         // Full bootstrap pipeline: scan → extract → project_rules →
-        // pattern_detection → ready. No summary_gate, no user_explains.
+        // pattern_detection → ready. No design_check, no warm_up.
         let state = build_state_with_patterns(
             &[("auth", "Auth")],
             &[
@@ -3169,7 +3220,7 @@ mod tests {
 
         assert_eq!(result["step"], "ready");
         assert_eq!(result["ready"], true);
-        // Bootstrap never returns summary_gate or user_explains.
+        // Bootstrap never returns design_check or warm_up.
     }
 
     // ── Step evidence validation ──────────────────────────────────
@@ -3497,7 +3548,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_mode_never_returns_summary_gate() {
+    fn agent_mode_never_returns_design_check() {
         let mut decs = well_covered_decisions("store", true);
         decs.push((
             "d-scope",
@@ -3518,13 +3569,13 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        assert_ne!(result["step"], "summary_gate");
+        assert_ne!(result["step"], "design_check");
         assert_eq!(result["step"], "ready");
     }
 
     #[test]
-    fn agent_mode_never_returns_user_explains() {
-        // Learn is the only task type with UserExplains, and Learn
+    fn agent_mode_never_returns_warm_up() {
+        // Learn is the only task type with WarmUp, and Learn
         // requires interactive mode. Verify the validation catches it.
         let state = build_state(&[("store", "Data store")], &[]);
         let result = advance(
@@ -3538,7 +3589,7 @@ mod tests {
         );
         assert!(
             result.is_err(),
-            "agent + learn should be rejected, preventing user_explains"
+            "agent + learn should be rejected, preventing warm_up"
         );
     }
 
@@ -3594,7 +3645,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_mode_new_component_skips_summary_gate_to_ready() {
+    fn agent_mode_new_component_skips_design_check_to_ready() {
         let mut decs = well_covered_decisions("store", true);
         decs.push((
             "d-scope",
@@ -3605,7 +3656,7 @@ mod tests {
             &decs,
             &[("p1", "Integrity chain", &["store"])],
         );
-        // Interactive would return summary_gate; agent skips to ready.
+        // Interactive would return design_check; agent skips to ready.
         let interactive = advance(
             &state,
             "store",
@@ -3616,7 +3667,7 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        assert_eq!(interactive["step"], "summary_gate");
+        assert_eq!(interactive["step"], "design_check");
 
         let agent = advance(
             &state,
@@ -3632,7 +3683,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_mode_review_skips_summary_gate() {
+    fn agent_mode_review_skips_design_check() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),
@@ -3648,12 +3699,12 @@ mod tests {
             chrono::Utc::now(),
         )
         .unwrap();
-        // Agent skips summary_gate → ready.
+        // Agent skips design_check → ready.
         assert_eq!(result["step"], "ready");
     }
 
     #[test]
-    fn agent_mode_feature_skips_summary_gate() {
+    fn agent_mode_feature_skips_design_check() {
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", true),

@@ -97,11 +97,11 @@ pub fn validate_mode_task(mode: Mode, task_type: TaskType) -> Result<(), String>
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskType {
     /// Build a new component from scratch.
-    /// DefineScope → CoverConcerns → PatternDetection → SummaryGate → Ready.
+    /// DefineScope → CoverConcerns → PatternDetection → DesignCheck → Ready.
     NewComponent,
 
     /// Add a feature to an existing component.
-    /// VerifyConstraints → CoverConcerns(focused) → PatternDetection → SummaryGate → Ready.
+    /// VerifyConstraints → CoverConcerns(focused) → PatternDetection → DesignCheck → Ready.
     Feature,
 
     /// Fix a bug or apply a hotfix.
@@ -109,11 +109,11 @@ pub enum TaskType {
     Fix,
 
     /// Study existing architecture.
-    /// UserExplains → AnalyzeCode → WalkDecisions → SummaryGate → Ready.
+    /// WarmUp → AnalyzeCode → WalkDecisions → DesignCheck → Ready.
     Learn,
 
     /// Challenge existing decisions for drift.
-    /// WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → SummaryGate → Ready.
+    /// WalkDecisions → DriftCheck → CoverageAudit → PatternDetection → DesignCheck → Ready.
     Review,
 
     /// Strengthen coverage of under-designed areas.
@@ -200,8 +200,9 @@ pub enum Step {
     /// Identify patterns across recorded decisions.
     PatternDetection,
 
-    /// Final comprehension gate — user summarizes without help.
-    SummaryGate,
+    /// Practical comprehension check — user demonstrates understanding
+    /// through a context-appropriate question, not a quiz.
+    DesignCheck,
 
     /// Verify all decisions still match the source code.
     DriftCheck,
@@ -225,10 +226,10 @@ pub enum Step {
     /// Postcondition: project has ≥1 decision.
     ProjectRules,
 
-    /// User describes the component's architecture from memory before the
-    /// agent reads code. Learn-only. Postcondition: step evidence contains
-    /// the user's description.
-    UserExplains,
+    /// Conversational opener — a practical question that reveals the user's
+    /// mental model without making them perform. Learn-only. Postcondition:
+    /// step evidence contains the user's response.
+    WarmUp,
 
     /// All steps complete. Ready for implementation.
     Ready,
@@ -245,13 +246,13 @@ impl Step {
             Self::VerifyConstraints => "verify_constraints",
             Self::ImpactCheck => "impact_check",
             Self::PatternDetection => "pattern_detection",
-            Self::SummaryGate => "summary_gate",
+            Self::DesignCheck => "design_check",
             Self::DriftCheck => "drift_check",
             Self::CoverageAudit => "coverage_audit",
             Self::ScanProject => "scan_project",
             Self::ExtractDecisions { .. } => "extract_decisions",
             Self::ProjectRules => "project_rules",
-            Self::UserExplains => "user_explains",
+            Self::WarmUp => "warm_up",
             Self::Ready => "ready",
         }
     }
@@ -271,10 +272,10 @@ impl Step {
             | Self::VerifyConstraints
             | Self::ImpactCheck
             | Self::PatternDetection
-            | Self::SummaryGate
+            | Self::DesignCheck
             | Self::DriftCheck
             | Self::CoverageAudit
-            | Self::UserExplains => true,
+            | Self::WarmUp => true,
         }
     }
 
@@ -286,8 +287,10 @@ impl Step {
                 Some(false)
             }
             "define_scope" | "analyze_code" | "cover_concerns" | "walk_decisions"
-            | "verify_constraints" | "impact_check" | "pattern_detection" | "summary_gate"
-            | "drift_check" | "coverage_audit" | "user_explains" => Some(true),
+            | "verify_constraints" | "impact_check" | "pattern_detection" | "design_check"
+            | "summary_gate" | "drift_check" | "coverage_audit" | "warm_up" | "user_explains" => {
+                Some(true)
+            }
             _ => None,
         }
     }
@@ -704,12 +707,14 @@ mod integration_tests {
             "verify_constraints",
             "impact_check",
             "pattern_detection",
+            "design_check",
             "summary_gate",
             "drift_check",
             "coverage_audit",
             "scan_project",
             "extract_decisions",
             "project_rules",
+            "warm_up",
             "user_explains",
             "ready",
         ];
@@ -740,7 +745,7 @@ mod integration_tests {
             Step::VerifyConstraints,
             Step::ImpactCheck,
             Step::PatternDetection,
-            Step::SummaryGate,
+            Step::DesignCheck,
             Step::DriftCheck,
             Step::CoverageAudit,
             Step::ScanProject,
@@ -748,7 +753,7 @@ mod integration_tests {
                 component: "store".into(),
             },
             Step::ProjectRules,
-            Step::UserExplains,
+            Step::WarmUp,
             Step::Ready,
         ];
 
@@ -787,7 +792,7 @@ mod integration_tests {
             Step::VerifyConstraints,
             Step::ImpactCheck,
             Step::PatternDetection,
-            Step::SummaryGate,
+            Step::DesignCheck,
             Step::DriftCheck,
             Step::CoverageAudit,
             Step::ScanProject,
@@ -795,7 +800,7 @@ mod integration_tests {
                 component: "store".into(),
             },
             Step::ProjectRules,
-            Step::UserExplains,
+            Step::WarmUp,
             Step::Ready,
         ];
 
@@ -805,8 +810,31 @@ mod integration_tests {
     }
 
     #[test]
-    fn user_explains_is_gated() {
-        assert!(Step::UserExplains.is_gated());
+    fn warm_up_as_str() {
+        assert_eq!(Step::WarmUp.as_str(), "warm_up");
+    }
+
+    #[test]
+    fn design_check_as_str() {
+        assert_eq!(Step::DesignCheck.as_str(), "design_check");
+    }
+
+    #[test]
+    fn warm_up_is_gated() {
+        assert!(Step::WarmUp.is_gated());
+    }
+
+    #[test]
+    fn design_check_is_gated() {
+        assert!(Step::DesignCheck.is_gated());
+    }
+
+    #[test]
+    fn is_gated_name_accepts_aliases() {
+        assert_eq!(Step::is_gated_name("warm_up"), Some(true));
+        assert_eq!(Step::is_gated_name("user_explains"), Some(true));
+        assert_eq!(Step::is_gated_name("design_check"), Some(true));
+        assert_eq!(Step::is_gated_name("summary_gate"), Some(true));
     }
 
     #[test]
