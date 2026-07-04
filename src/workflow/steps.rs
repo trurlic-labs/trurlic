@@ -8,8 +8,10 @@
 //! Prompts are transport-agnostic. The MCP tool `get_step_prompt` calls
 //! `build_step_prompt` and combines the result with `get_context` output.
 
+use chrono::{DateTime, Utc};
+
 use crate::store::graph::InMemoryGraph;
-use crate::store::schema::DecisionFile;
+use crate::store::schema::{Decision, DecisionFile};
 use crate::store::{self, ProjectState};
 
 use super::CONCERN_FOCUS_LIMIT;
@@ -874,6 +876,64 @@ fn sanitize(s: &str) -> String {
         cleaned.push('\u{2026}'); // …
     }
     cleaned
+}
+
+/// Sanitize and truncate text for inline use in questions.
+///
+/// Applies `sanitize` (strips control chars, caps at 512 chars), then
+/// truncates further to `max_chars` characters with a trailing ellipsis.
+#[allow(dead_code)]
+fn sanitize_short(s: &str, max_chars: usize) -> String {
+    let cleaned = sanitize(s);
+    if cleaned.chars().count() <= max_chars {
+        cleaned
+    } else {
+        let truncated: String = cleaned.chars().take(max_chars).collect();
+        format!("{truncated}\u{2026}")
+    }
+}
+
+/// Format a decision's code references as a single prompt line.
+///
+/// Returns `"Code: file::symbol, file2\n"` when refs exist, or an
+/// empty string when there are none — callers can unconditionally
+/// include the result without conditional formatting.
+#[allow(dead_code)]
+fn format_code_refs_line(decision: &Decision) -> String {
+    if decision.code_refs.is_empty() {
+        return String::new();
+    }
+    format!("Code: {}\n", store::format_code_refs(&decision.code_refs))
+}
+
+/// Human-readable age between `created` and `now`.
+///
+/// Takes `now` as a parameter so callers in prompts pass `Utc::now()`
+/// while tests pass a fixed timestamp.
+#[allow(dead_code)]
+fn format_age(created: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let days = (now - created).num_days().max(0);
+    if days < 30 {
+        if days == 1 {
+            "1 day".into()
+        } else {
+            format!("{days} days")
+        }
+    } else if days < 365 {
+        let months = days / 30;
+        if months == 1 {
+            "1 month".into()
+        } else {
+            format!("{months} months")
+        }
+    } else {
+        let years = days / 365;
+        if years == 1 {
+            "1 year".into()
+        } else {
+            format!("{years} years")
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -1936,5 +1996,154 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── sanitize_short ──────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_short_under_limit_unchanged() {
+        assert_eq!(sanitize_short("hello world", 20), "hello world");
+    }
+
+    #[test]
+    fn sanitize_short_truncates_with_ellipsis() {
+        let result = sanitize_short("a long reason that exceeds the limit", 10);
+        assert_eq!(result, "a long rea\u{2026}");
+        assert_eq!(result.chars().count(), 11); // 10 chars + ellipsis
+    }
+
+    #[test]
+    fn sanitize_short_exact_limit() {
+        assert_eq!(sanitize_short("12345", 5), "12345");
+    }
+
+    #[test]
+    fn sanitize_short_empty_input() {
+        assert_eq!(sanitize_short("", 10), "");
+    }
+
+    #[test]
+    fn sanitize_short_strips_control_chars_before_counting() {
+        let input = "he\x01llo"; // control char removed → "hello" (5 chars)
+        assert_eq!(sanitize_short(input, 5), "hello");
+        assert_eq!(sanitize_short(input, 3), "hel\u{2026}");
+    }
+
+    // ── format_code_refs_line ───────────────────────────────────────
+
+    fn minimal_decision(code_refs: Vec<CodeRef>) -> Decision {
+        Decision {
+            component: "test".into(),
+            choice: "test choice".into(),
+            reason: "test reason".into(),
+            alternatives: vec![],
+            tags: vec![],
+            attribution: Attribution::User,
+            created: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            code_refs,
+            history: vec![],
+        }
+    }
+
+    #[test]
+    fn format_code_refs_line_empty() {
+        let d = minimal_decision(vec![]);
+        assert_eq!(format_code_refs_line(&d), "");
+    }
+
+    #[test]
+    fn format_code_refs_line_file_only() {
+        let d = minimal_decision(vec![CodeRef {
+            file: "src/main.rs".into(),
+            symbol: None,
+        }]);
+        assert_eq!(format_code_refs_line(&d), "Code: src/main.rs\n");
+    }
+
+    #[test]
+    fn format_code_refs_line_file_and_symbol() {
+        let d = minimal_decision(vec![CodeRef {
+            file: "src/store.rs".into(),
+            symbol: Some("Store::load".into()),
+        }]);
+        assert_eq!(
+            format_code_refs_line(&d),
+            "Code: src/store.rs::Store::load\n"
+        );
+    }
+
+    #[test]
+    fn format_code_refs_line_multiple() {
+        let d = minimal_decision(vec![
+            CodeRef {
+                file: "src/a.rs".into(),
+                symbol: Some("foo".into()),
+            },
+            CodeRef {
+                file: "src/b.rs".into(),
+                symbol: None,
+            },
+        ]);
+        assert_eq!(
+            format_code_refs_line(&d),
+            "Code: src/a.rs::foo, src/b.rs\n"
+        );
+    }
+
+    // ── format_age ──────────────────────────────────────────────────
+
+    #[test]
+    fn format_age_zero_days() {
+        let now = Utc.with_ymd_and_hms(2025, 6, 15, 12, 0, 0).unwrap();
+        assert_eq!(format_age(now, now), "0 days");
+    }
+
+    #[test]
+    fn format_age_one_day() {
+        let created = Utc.with_ymd_and_hms(2025, 6, 14, 12, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 15, 12, 0, 0).unwrap();
+        assert_eq!(format_age(created, now), "1 day");
+    }
+
+    #[test]
+    fn format_age_several_days() {
+        let created = Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap();
+        assert_eq!(format_age(created, now), "14 days");
+    }
+
+    #[test]
+    fn format_age_one_month() {
+        let created = Utc.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap();
+        assert_eq!(format_age(created, now), "1 month");
+    }
+
+    #[test]
+    fn format_age_several_months() {
+        let created = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap();
+        assert_eq!(format_age(created, now), "5 months");
+    }
+
+    #[test]
+    fn format_age_one_year() {
+        let created = Utc.with_ymd_and_hms(2024, 6, 15, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap();
+        assert_eq!(format_age(created, now), "1 year");
+    }
+
+    #[test]
+    fn format_age_multiple_years() {
+        let created = Utc.with_ymd_and_hms(2022, 1, 1, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap();
+        assert_eq!(format_age(created, now), "3 years");
+    }
+
+    #[test]
+    fn format_age_future_date_clamps_to_zero() {
+        let created = Utc.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap();
+        assert_eq!(format_age(created, now), "0 days");
     }
 }
