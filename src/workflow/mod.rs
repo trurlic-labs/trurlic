@@ -809,6 +809,16 @@ mod integration_tests {
     }
 
     #[test]
+    fn warm_up_as_str() {
+        assert_eq!(Step::WarmUp.as_str(), "warm_up");
+    }
+
+    #[test]
+    fn design_check_as_str() {
+        assert_eq!(Step::DesignCheck.as_str(), "design_check");
+    }
+
+    #[test]
     fn warm_up_is_gated() {
         assert!(Step::WarmUp.is_gated());
     }

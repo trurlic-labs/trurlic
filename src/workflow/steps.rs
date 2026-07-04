@@ -2,8 +2,7 @@
 //!
 //! Each workflow step gets a focused prompt: 200-500 bytes of step-specific
 //! instructions, sandwiched between a shared preamble (source code mandate)
-//! and a shared interaction protocol (one-at-a-time, senior engineer
-//! deepening, "I don't know" teaching).
+//! and a shared protocol (interaction or agent, depending on mode).
 //!
 //! Prompts are transport-agnostic. The MCP tool `get_step_prompt` calls
 //! `build_step_prompt` and combines the result with `get_context` output.
@@ -37,7 +36,7 @@ pub struct StepPrompt {
 /// to form the full tool response.
 ///
 /// `task_type` is optional context for steps that generate variant prompts
-/// (e.g. `summary_gate` varies by Feature vs Review vs NewComponent).
+/// (e.g. `design_check` varies by Feature vs Review vs NewComponent).
 pub fn build_step_prompt(
     state: &ProjectState,
     component: &str,
@@ -1069,7 +1068,7 @@ fn step_project_rules() -> String {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-/// Maximum byte length for a single decision value inlined into a prompt.
+/// Maximum character count for a single decision value inlined into a prompt.
 /// Prevents pathologically large decisions from bloating the system message.
 const MAX_PROMPT_VALUE_LEN: usize = 512;
 
@@ -1324,7 +1323,7 @@ mod tests {
             "walk_decisions",
             "verify_constraints",
             "pattern_detection",
-            "summary_gate",
+            "design_check",
             "drift_check",
             "coverage_audit",
         ] {
@@ -1916,6 +1915,94 @@ mod tests {
         // All remaining concern areas are in the focus list.
         assert!(!result.focus.is_empty());
         assert!(result.instructions.contains("WITHOUT decisions"));
+    }
+
+    // ── INTERACTION_PROTOCOL tone ────────────────────────────────────
+
+    #[test]
+    fn interaction_protocol_peer_tone() {
+        assert!(
+            INTERACTION_PROTOCOL.contains("senior engineer"),
+            "protocol should establish peer framing"
+        );
+        assert!(
+            INTERACTION_PROTOCOL.contains("peer"),
+            "protocol should reference peer relationship"
+        );
+        assert!(
+            INTERACTION_PROTOCOL.contains("trade-off"),
+            "protocol should emphasize trade-off discussion"
+        );
+        assert!(
+            INTERACTION_PROTOCOL.contains("pushback"),
+            "protocol should handle user pushback"
+        );
+    }
+
+    #[test]
+    fn interaction_protocol_no_old_patterns() {
+        assert!(
+            !INTERACTION_PROTOCOL.contains("restate in your own words"),
+            "protocol must not use classroom restate language"
+        );
+        assert!(
+            !INTERACTION_PROTOCOL.contains("restate that"),
+            "protocol must not use classroom restate language"
+        );
+        assert!(
+            !INTERACTION_PROTOCOL.contains("Does that deepen your understanding"),
+            "protocol must not use patronizing deepening language"
+        );
+        assert!(
+            !INTERACTION_PROTOCOL.contains("Do NOT help"),
+            "protocol must not contain adversarial gating"
+        );
+        assert!(
+            !INTERACTION_PROTOCOL.contains("Do NOT give hints"),
+            "protocol must not contain adversarial gating"
+        );
+    }
+
+    // ── Cross-prompt tone ────────────────────────────────────────────
+
+    #[test]
+    fn no_interactive_prompt_uses_adversarial_language() {
+        let state = test_state();
+        let interactive_steps = [
+            "define_scope",
+            "analyze_code",
+            "cover_concerns",
+            "walk_decisions",
+            "verify_constraints",
+            "impact_check",
+            "pattern_detection",
+            "design_check",
+            "drift_check",
+            "coverage_audit",
+            "warm_up",
+        ];
+
+        for step in &interactive_steps {
+            let result =
+                build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
+
+            assert!(
+                !result.instructions.contains("confirm or correct"),
+                "step `{step}` must not use confirm-or-correct language"
+            );
+            assert!(
+                !result.instructions.contains("Without looking at the list"),
+                "step `{step}` must not demand unprompted recall"
+            );
+            assert!(
+                !result.instructions.contains("demonstrate understanding"),
+                "step `{step}` must not use demonstrate-understanding language"
+            );
+            assert!(
+                !result.instructions.contains("demonstrate ownership"),
+                "step `{step}` must not use demonstrate-ownership language"
+            );
+        }
     }
 
     // ── Error cases ───────────────────────────────────────────────────

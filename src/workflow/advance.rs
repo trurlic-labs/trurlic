@@ -330,7 +330,7 @@ fn deduce_new_component(
     Step::Ready
 }
 
-/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → SummaryGate → Ready
+/// Feature: VerifyConstraints → CoverConcerns(focused) → PatternDetection → DesignCheck → Ready
 ///
 /// VerifyConstraints: ensures existing decisions still hold for the new
 /// feature. Has no verifiable graph postcondition — uses `completed_steps`
@@ -345,8 +345,8 @@ fn deduce_new_component(
 /// PatternDetection: after concerns are covered, look for patterns across
 /// decisions. Has a verifiable postcondition (patterns recorded).
 ///
-/// SummaryGate: comprehension check — user describes constraints their
-/// change must respect.
+/// DesignCheck: practical comprehension check — user demonstrates
+/// understanding through a context-appropriate question.
 fn deduce_feature(
     decisions: &[(&Arc<str>, &DecisionFile)],
     covered: &[&str],
@@ -2328,8 +2328,8 @@ mod tests {
     #[test]
     fn review_stale_reaches_drift_check_before_design_check() {
         // Stale decisions: walk_decisions → drift_check → (stale cleared) →
-        // pattern_detection or summary_gate. Here, stale decisions exist,
-        // but after walk and with patterns, hits summary_gate.
+        // pattern_detection or design_check. Here, stale decisions exist,
+        // but after walk and with patterns, hits design_check.
         let state = build_state_with_patterns(
             &[("store", "Data store")],
             &well_covered_decisions("store", false),
@@ -3192,7 +3192,7 @@ mod tests {
     #[test]
     fn bootstrap_pipeline_unaffected() {
         // Full bootstrap pipeline: scan → extract → project_rules →
-        // pattern_detection → ready. No summary_gate, no user_explains.
+        // pattern_detection → ready. No design_check, no warm_up.
         let state = build_state_with_patterns(
             &[("auth", "Auth")],
             &[
