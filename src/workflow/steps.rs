@@ -411,11 +411,10 @@ fn step_cover_concerns(
     out.push_str("STEP: Cover Concerns\n\n");
     out.push_str(&concerns::concern_status(all_decs));
     match mode {
-        Mode::Interactive => {
-            match task_type {
-                Some("feature") => {
-                    out.push_str(&format!(
-                        "Uncovered concerns relevant to this feature: {}\n\n\
+        Mode::Interactive => match task_type {
+            Some("feature") => {
+                out.push_str(&format!(
+                    "Uncovered concerns relevant to this feature: {}\n\n\
                          For each concern that the feature touches:\n\
                          1. Read the code the feature will change\n\
                          2. Ask: \"How does [concern area] affect your feature? \
@@ -427,12 +426,12 @@ fn step_cover_concerns(
                          6. Record the decision together\n\n\
                          Focus only on concerns the feature actually impacts. \
                          Don't force discussion on irrelevant concern areas.\n",
-                        focus.join(", "),
-                    ));
-                }
-                _ => {
-                    out.push_str(&format!(
-                        "Uncovered areas (priority order): {}\n\n\
+                    focus.join(", "),
+                ));
+            }
+            _ => {
+                out.push_str(&format!(
+                    "Uncovered areas (priority order): {}\n\n\
                          For each uncovered concern:\n\
                          1. Read the relevant source code\n\
                          2. Ask: \"How are you thinking about [concern] for this \
@@ -446,11 +445,10 @@ fn step_cover_concerns(
                          point\n\
                          7. Arrive at a decision together. Record it.\n\n\
                          Start with their thinking, not a menu of options.\n",
-                        focus.join(", "),
-                    ));
-                }
+                    focus.join(", "),
+                ));
             }
-        }
+        },
         Mode::Agent => {
             out.push_str(&format!(
                 "Focus on these uncovered areas (priority order):\n  {}\n\n",
@@ -531,12 +529,10 @@ fn step_walk_decisions(
                             d.decision.created.format("%Y-%m-%d"),
                         )
                     }
-                    Some("learn") => {
-                        "\u{2192} Read the code where this lives\n\
+                    Some("learn") => "\u{2192} Read the code where this lives\n\
                          \u{2192} Ask: \"Why was this approach chosen over the \
                          alternatives? What\u{2019}s the trade-off?\"\n"
-                            .into()
-                    }
+                        .into(),
                     _ => {
                         format!(
                             "\u{2192} Read the code where this lives\n\
@@ -1479,9 +1475,7 @@ mod tests {
             "review variant should include decision date"
         );
         assert!(
-            result
-                .instructions
-                .contains("recorded but aren"),
+            result.instructions.contains("recorded but aren"),
             "review closing should ask about unrecorded decisions"
         );
     }
@@ -1585,15 +1579,8 @@ mod tests {
     #[test]
     fn walk_decisions_agent_unchanged_by_task_type() {
         let state = test_state();
-        let without = build_step_prompt(
-            &state,
-            "auth",
-            "walk_decisions",
-            None,
-            None,
-            Mode::Agent,
-        )
-        .unwrap();
+        let without =
+            build_step_prompt(&state, "auth", "walk_decisions", None, None, Mode::Agent).unwrap();
         let with_review = build_step_prompt(
             &state,
             "auth",
@@ -1775,7 +1762,9 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Could this fix change the behavior"),
+            result
+                .instructions
+                .contains("Could this fix change the behavior"),
             "fix variant should ask about behavioral change from the fix"
         );
     }
@@ -1856,7 +1845,9 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Does that match how you think about it?"),
+            result
+                .instructions
+                .contains("Does that match how you think about it?"),
             "pattern_detection should frame as discussion"
         );
         assert!(
@@ -2451,9 +2442,7 @@ mod tests {
             "default variant should use new-team-member framing"
         );
         assert!(
-            result
-                .instructions
-                .contains("need to know before they"),
+            result.instructions.contains("need to know before they"),
             "default variant should ask what to know before touching code"
         );
     }
@@ -2473,8 +2462,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("warm-up")
-                || result.instructions.contains("mental model"),
+            result.instructions.contains("warm-up") || result.instructions.contains("mental model"),
             "learn variant should reference the warm-up step"
         );
         assert!(
@@ -2701,9 +2689,7 @@ mod tests {
             "feature variant should scope to relevant concerns"
         );
         assert!(
-            !result
-                .instructions
-                .contains("How are you thinking about"),
+            !result.instructions.contains("How are you thinking about"),
             "feature variant should not use the default question"
         );
     }
@@ -2721,9 +2707,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result
-                .instructions
-                .contains("How are you thinking about"),
+            result.instructions.contains("How are you thinking about"),
             "default variant should start with the user's opinion"
         );
         assert!(
@@ -2741,15 +2725,8 @@ mod tests {
     #[test]
     fn cover_concerns_agent_unchanged_by_task_type() {
         let state = test_state();
-        let without = build_step_prompt(
-            &state,
-            "store",
-            "cover_concerns",
-            None,
-            None,
-            Mode::Agent,
-        )
-        .unwrap();
+        let without =
+            build_step_prompt(&state, "store", "cover_concerns", None, None, Mode::Agent).unwrap();
         let with_feature = build_step_prompt(
             &state,
             "store",
@@ -2899,9 +2876,7 @@ mod tests {
             build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
                 .unwrap();
         assert!(
-            result
-                .instructions
-                .contains("src/auth/jwt.rs::verify_dpop"),
+            result.instructions.contains("src/auth/jwt.rs::verify_dpop"),
             "interactive drift_check should show code references via format_code_refs_line"
         );
     }
@@ -3039,10 +3014,7 @@ mod tests {
                 symbol: None,
             },
         ]);
-        assert_eq!(
-            format_code_refs_line(&d),
-            "Code: src/a.rs::foo, src/b.rs\n"
-        );
+        assert_eq!(format_code_refs_line(&d), "Code: src/a.rs::foo, src/b.rs\n");
     }
 
     // ── format_age ──────────────────────────────────────────────────

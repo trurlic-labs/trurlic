@@ -287,9 +287,10 @@ impl Step {
                 Some(false)
             }
             "define_scope" | "analyze_code" | "cover_concerns" | "walk_decisions"
-            | "verify_constraints" | "impact_check" | "pattern_detection"
-            | "design_check" | "summary_gate" | "drift_check" | "coverage_audit"
-            | "warm_up" | "user_explains" => Some(true),
+            | "verify_constraints" | "impact_check" | "pattern_detection" | "design_check"
+            | "summary_gate" | "drift_check" | "coverage_audit" | "warm_up" | "user_explains" => {
+                Some(true)
+            }
             _ => None,
         }
     }
