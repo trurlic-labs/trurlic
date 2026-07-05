@@ -1,12 +1,31 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::store::schema::{Attribution, DecisionFile};
+use crate::store::schema::{Attribution, CodeRef, DecisionFile};
 use crate::store::{self, RecordDecisionParams};
 use crate::workflow::concerns;
 use crate::{Error, Result};
 
 use super::open_store_mut;
+
+/// Parse a `--ref` CLI argument into a [`CodeRef`].
+///
+/// Splits on the first `::` only — the file part is everything before it,
+/// the symbol part everything after. A bare path with no `::` produces a
+/// ref with no symbol. An empty symbol after `::` (e.g. `src/a.rs::`) is
+/// left for [`store::validate_code_refs`] to reject at the trust boundary.
+pub(crate) fn parse_code_ref_arg(arg: &str) -> CodeRef {
+    match arg.find("::") {
+        Some(pos) => CodeRef {
+            file: arg[..pos].to_string(),
+            symbol: Some(arg[pos + 2..].to_string()),
+        },
+        None => CodeRef {
+            file: arg.to_string(),
+            symbol: None,
+        },
+    }
+}
 
 pub fn decide(
     cwd: &Path,
@@ -14,6 +33,7 @@ pub fn decide(
     choice: &str,
     reason: &str,
     alternatives: &[String],
+    code_refs: &[CodeRef],
 ) -> Result<()> {
     if component != "project" && !store::is_valid_kebab_case(component) {
         return Err(Error::InvalidName(component.into()));
@@ -37,7 +57,7 @@ pub fn decide(
             constrains: &[],
             tags: &[],
             attribution: Attribution::User,
-            code_refs: &[],
+            code_refs,
         },
     )?;
 
@@ -172,7 +192,7 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &[], &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-with-dpop").unwrap();
@@ -191,6 +211,7 @@ mod tests {
             "Fail-closed on writes",
             "Never silently succeed",
             &[],
+            &[],
         )
         .unwrap();
 
@@ -206,7 +227,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = decide(tmp.path(), "ghost", "x", "y", &[]).unwrap_err();
+        let err = decide(tmp.path(), "ghost", "x", "y", &[], &[]).unwrap_err();
         assert!(matches!(err, Error::ComponentNotFound(ref n) if n == "ghost"));
     }
 
@@ -216,7 +237,7 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let state = store.load_state().unwrap();
@@ -239,7 +260,7 @@ mod tests {
             "Session cookies — rejected: requires server-side state".into(),
             "Opaque tokens — rejected: introspection overhead".into(),
         ];
-        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &alts).unwrap();
+        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &alts, &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-with-dpop").unwrap();
@@ -252,8 +273,16 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "Use Redis", "Fast", &[]).unwrap();
-        decide(tmp.path(), "auth", "Use Redis", "Also for sessions", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use Redis", "Fast", &[], &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Use Redis",
+            "Also for sessions",
+            &[],
+            &[],
+        )
+        .unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let names = store.list_decisions().unwrap();
@@ -267,7 +296,7 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
 
         let before = Utc::now();
-        decide(tmp.path(), "auth", "JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT", "Stateless", &[], &[]).unwrap();
         let after = Utc::now();
 
         let store = Store::discover(tmp.path()).unwrap();
@@ -281,7 +310,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        let err = decide(tmp.path(), "../escape", "x", "y", &[]).unwrap_err();
+        let err = decide(tmp.path(), "../escape", "x", "y", &[], &[]).unwrap_err();
         assert!(matches!(err, Error::InvalidName(_)));
     }
 
@@ -290,7 +319,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        decide(tmp.path(), "project", "Test decision", "Testing", &[]).unwrap();
+        decide(tmp.path(), "project", "Test decision", "Testing", &[], &[]).unwrap();
     }
 
     // ── remove decision ──────────────────────────────────────────────────
@@ -300,7 +329,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
 
         remove_decision(tmp.path(), "use-jwt").unwrap();
 
@@ -313,7 +342,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
 
         remove_decision(tmp.path(), "use-jwt").unwrap();
 
@@ -348,6 +377,7 @@ mod tests {
             "Encrypt credentials at rest",
             "Protect secrets from disk exposure",
             &[],
+            &[],
         )
         .unwrap();
 
@@ -366,8 +396,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
-        decide(tmp.path(), "auth", "Token expiry", "15 min", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Token expiry", "15 min", &[], &[]).unwrap();
 
         // Manually add DependsOn edge: token-expiry depends on use-jwt.
         let store = Store::discover(tmp.path()).unwrap();
@@ -402,8 +432,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
-        decide(tmp.path(), "auth", "Token refresh", "Rotate", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Token refresh", "Rotate", &[], &[]).unwrap();
 
         // Create a pattern with exactly 2 member decisions.
         let store = Store::discover(tmp.path()).unwrap();
@@ -667,7 +697,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Human only", "Reason enough here", &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Human only",
+            "Reason enough here",
+            &[],
+            &[],
+        )
+        .unwrap();
 
         remove_agent_decisions(tmp.path(), "auth").unwrap();
 
@@ -691,8 +729,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
-        decide(tmp.path(), "auth", "Short lived tokens", "15 min", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Short lived tokens", "15 min", &[], &[]).unwrap();
 
         // Manually add Constrains edge: short-lived-tokens constrains use-jwt.
         let store = Store::discover(tmp.path()).unwrap();
@@ -725,5 +763,117 @@ mod tests {
         );
         // The constraining decision itself is unaffected.
         assert!(state.decisions.contains_key("short-lived-tokens"));
+    }
+
+    // ── parse_code_ref_arg ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_code_ref_arg_file_only() {
+        let cr = parse_code_ref_arg("src/a.rs");
+        assert_eq!(cr.file, "src/a.rs");
+        assert_eq!(cr.symbol, None);
+    }
+
+    #[test]
+    fn parse_code_ref_arg_file_and_symbol() {
+        let cr = parse_code_ref_arg("src/a.rs::foo");
+        assert_eq!(cr.file, "src/a.rs");
+        assert_eq!(cr.symbol, Some("foo".into()));
+    }
+
+    #[test]
+    fn parse_code_ref_arg_splits_on_first_double_colon_only() {
+        let cr = parse_code_ref_arg("src/a.rs::Foo::bar");
+        assert_eq!(cr.file, "src/a.rs");
+        assert_eq!(cr.symbol, Some("Foo::bar".into()));
+    }
+
+    #[test]
+    fn parse_code_ref_arg_empty_symbol_after_separator() {
+        let cr = parse_code_ref_arg("src/a.rs::");
+        assert_eq!(cr.file, "src/a.rs");
+        assert_eq!(cr.symbol, Some(String::new()));
+    }
+
+    // ── decide with code_refs ───────────────────────────────────────────
+
+    #[test]
+    fn decide_records_code_refs() {
+        use crate::store::schema::CodeRef;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let refs = vec![
+            CodeRef {
+                file: "src/auth.rs".into(),
+                symbol: Some("validate_token".into()),
+            },
+            CodeRef {
+                file: "src/middleware.rs".into(),
+                symbol: None,
+            },
+        ];
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &refs).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let dec = store.read_decision("use-jwt").unwrap();
+        assert_eq!(dec.decision.code_refs.len(), 2);
+        assert_eq!(dec.decision.code_refs[0].file, "src/auth.rs");
+        assert_eq!(
+            dec.decision.code_refs[0].symbol,
+            Some("validate_token".into())
+        );
+        assert_eq!(dec.decision.code_refs[1].file, "src/middleware.rs");
+        assert_eq!(dec.decision.code_refs[1].symbol, None);
+    }
+
+    #[test]
+    fn decide_repeated_ref_flags() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let refs: Vec<_> = ["src/a.rs", "src/b.rs::init", "src/c.rs"]
+            .iter()
+            .map(|r| parse_code_ref_arg(r))
+            .collect();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &refs).unwrap();
+
+        let store = Store::discover(tmp.path()).unwrap();
+        let dec = store.read_decision("use-jwt").unwrap();
+        assert_eq!(dec.decision.code_refs.len(), 3);
+    }
+
+    #[test]
+    fn decide_max_code_refs_exceeded_propagates_store_error() {
+        use crate::store::schema::CodeRef;
+
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let refs: Vec<_> = (0..=store::limits::MAX_CODE_REFS)
+            .map(|i| CodeRef {
+                file: format!("src/f{i}.rs"),
+                symbol: None,
+            })
+            .collect();
+        let err = decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &refs).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("too many"), "should mention limit: {msg}");
+    }
+
+    #[test]
+    fn decide_empty_symbol_rejected() {
+        let tmp = TempDir::new().unwrap();
+        init(tmp.path()).unwrap();
+        add_component(tmp.path(), "auth", None).unwrap();
+
+        let refs = vec![parse_code_ref_arg("src/a.rs::")];
+        let err = decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &refs).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("empty"), "should reject empty symbol: {msg}");
     }
 }

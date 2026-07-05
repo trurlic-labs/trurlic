@@ -81,6 +81,13 @@ pub enum Command {
         /// Alternative considered and rejected (repeatable).
         #[arg(long = "alternative", short = 'a')]
         alternatives: Vec<String>,
+
+        /// Source code location where this decision manifests (repeatable).
+        /// Format: `file` or `file::symbol`. Split on the first `::` —
+        /// Rust-path-like symbols should use the terminal segment (e.g.
+        /// `Store::lock` → `lock`).
+        #[arg(long = "ref")]
+        refs: Vec<String>,
     },
 
     /// Reclaim decisions that have lost their anchor: orphaned (component
@@ -347,7 +354,21 @@ pub fn run(cli: Cli) -> Result<()> {
             choice,
             reason,
             alternatives,
-        } => commands::decide(&cwd, &component, &choice, &reason, &alternatives),
+            refs,
+        } => {
+            let code_refs: Vec<_> = refs
+                .iter()
+                .map(|r| commands::parse_code_ref_arg(r))
+                .collect();
+            commands::decide(
+                &cwd,
+                &component,
+                &choice,
+                &reason,
+                &alternatives,
+                &code_refs,
+            )
+        }
         Command::Install {
             ide,
             binary_path,

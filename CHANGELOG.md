@@ -11,6 +11,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **`trurlic decide --ref` flag.** Code references can now be attached from the CLI
+  via repeatable `--ref <file[::symbol]>` flags. The argument is split on the first
+  `::` only — the file part is everything before it, the symbol part everything
+  after. Validation flows through the existing `store::validate_code_refs` at the
+  store trust boundary.
 - **`get_decisions_for_file` query tool.** New read-only MCP tool and CLI command
   (`trurlic query file <path>`) that finds all decisions whose `code_refs`
   reference a given file (exact match) or any file under a directory (prefix

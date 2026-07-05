@@ -204,7 +204,7 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
         add_component(tmp.path(), "database", None).unwrap();
         add_connection(tmp.path(), "auth", "database").unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
 
         check(tmp.path(), true).unwrap();
 
@@ -254,7 +254,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let issues = store.verify_hashes().unwrap();
@@ -428,6 +428,7 @@ mod tests {
             "Rust single binary",
             "No runtime deps",
             &[],
+            &[],
         )
         .unwrap();
         decide(
@@ -436,9 +437,10 @@ mod tests {
             "TOML with serde",
             "Git-diffable",
             &[],
+            &[],
         )
         .unwrap();
-        decide(tmp.path(), "cli", "clap derive", "Type-safe", &[]).unwrap();
+        decide(tmp.path(), "cli", "clap derive", "Type-safe", &[], &[]).unwrap();
 
         check(tmp.path(), false).unwrap();
 
