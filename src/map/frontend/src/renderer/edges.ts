@@ -4,7 +4,6 @@ import type { ColorSnapshot } from '../types';
 export const EDGE_DASH: Record<string, number[]> = {
   depends_on: [6, 4],
   constrains: [2, 3],
-  supersedes: [8, 3, 2, 3],
 };
 
 /**
@@ -15,14 +14,12 @@ export const EDGE_OPACITY: Record<string, number> = {
   connects_to: 1.0,
   depends_on: 0.7,
   constrains: 0.55,
-  supersedes: 0.4,
 };
 
 /** Edge stroke color by kind, reading from the per-frame color snapshot. */
 export function edgeColor(kind: string, c: ColorSnapshot): string {
   if (kind === 'depends_on') return c.edgeDep;
   if (kind === 'constrains') return c.edgeCon;
-  if (kind === 'supersedes') return c.edgeSup;
   return c.edge;
 }
 

@@ -113,7 +113,6 @@ export interface ColorSnapshot {
   edge: string;
   edgeDep: string;
   edgeCon: string;
-  edgeSup: string;
   selectRing: string;
   badge: string;
   minimap: string;
@@ -139,7 +138,7 @@ export interface FilterState {
 
 export function defaultFilterState(): FilterState {
   return {
-    edgeKinds: new Set(['connects_to', 'depends_on', 'constrains', 'supersedes']),
+    edgeKinds: new Set(['connects_to', 'depends_on', 'constrains']),
     activeTags: new Set(),
     focusMode: false,
     maxAgeDays: null,

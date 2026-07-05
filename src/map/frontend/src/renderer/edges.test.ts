@@ -7,7 +7,6 @@ const COLORS = {
   edge: '#3a3f52',
   edgeDep: '#5a7f5a',
   edgeCon: '#8f6c3a',
-  edgeSup: '#7a5a7a',
 } as ColorSnapshot;
 
 describe('edgeColor', () => {
@@ -17,10 +16,6 @@ describe('edgeColor', () => {
 
   it('returns edge-con color for constrains', () => {
     expect(edgeColor('constrains', COLORS)).toBe('#8f6c3a');
-  });
-
-  it('returns edge-sup color for supersedes', () => {
-    expect(edgeColor('supersedes', COLORS)).toBe('#7a5a7a');
   });
 
   it('returns default edge color for connects_to and unknown kinds', () => {
@@ -37,7 +32,6 @@ describe('EDGE_OPACITY', () => {
   it('secondary connections are lower opacity', () => {
     expect(EDGE_OPACITY['depends_on']).toBeLessThan(1.0);
     expect(EDGE_OPACITY['constrains']).toBeLessThan(EDGE_OPACITY['depends_on']);
-    expect(EDGE_OPACITY['supersedes']).toBeLessThan(EDGE_OPACITY['constrains']);
   });
 });
 

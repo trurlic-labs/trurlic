@@ -388,9 +388,9 @@ export function renderRevisionCount(count: number | undefined): string {
   return `<span class="dim revision-count">Revised ${count}×</span>`;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// ── Helpers (exported for panel.test.ts) ────────────────────────────────────
 
-function decisionRow(d: DecisionNode): string {
+export function decisionRow(d: DecisionNode): string {
   return `
     <div class="dec-card dec-link" data-dec="${esc(d.name)}">
       <div class="dec-choice">${esc(d.choice)}</div>
@@ -400,7 +400,7 @@ function decisionRow(d: DecisionNode): string {
   `;
 }
 
-function patternList(graph: Graph): string {
+export function patternList(graph: Graph): string {
   const patterns = [...graph.patterns.values()];
   if (patterns.length === 0) return '<p class="dim">None yet</p>';
   return patterns
@@ -415,7 +415,7 @@ function patternList(graph: Graph): string {
     .join('');
 }
 
-function recentDecisions(graph: Graph): string {
+export function recentDecisions(graph: Graph): string {
   const sorted = [...graph.decisions.values()]
     .sort((a, b) => b.created.localeCompare(a.created))
     .slice(0, 5);

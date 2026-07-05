@@ -10,7 +10,7 @@ const AGE_OPTIONS: { label: string; days: number | null }[] = [
   { label: '1y', days: 365 },
 ];
 
-const EDGE_KINDS = ['connects_to', 'depends_on', 'constrains', 'supersedes'] as const;
+const EDGE_KINDS = ['connects_to', 'depends_on', 'constrains'] as const;
 
 /**
  * Toolbar controller (spec §Filtering and Visibility).
