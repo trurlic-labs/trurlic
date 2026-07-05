@@ -108,7 +108,6 @@ pub fn advance(
             component,
             TaskType::NewComponent,
             &Step::Register,
-            false,
             mode,
             Value::Null,
             serde_json::json!({
@@ -152,11 +151,27 @@ pub fn advance(
 
     let patterns = graph.patterns_for(component);
 
+    // All step-deduction state, bundled once and threaded through both
+    // task-type inference and step deduction so neither carries a long
+    // parameter list.
+    let ctx = DeduceContext {
+        decisions: &decisions,
+        covered: &covered,
+        uncovered: &uncovered,
+        stale: &stale,
+        patterns: &patterns,
+        graph,
+        component,
+        task,
+        completed: &completed,
+        mode,
+    };
+
     // ── Infer task type if not provided ───────────────────────────────
 
     let task_type = match task_type {
         Some(tt) => tt,
-        None => match infer_task_type(&decisions, task, &covered, &uncovered, &stale, mode) {
+        None => match infer_task_type(&ctx) {
             Some(tt) => {
                 // Validate mode × inferred task_type.
                 super::validate_mode_task(mode, tt)?;
@@ -180,25 +195,13 @@ pub fn advance(
 
     // ── Deduce step ───────────────────────────────────────────────────
 
-    let ctx = DeduceContext {
-        decisions: &decisions,
-        covered: &covered,
-        uncovered: &uncovered,
-        stale: &stale,
-        patterns: &patterns,
-        graph,
-        component,
-        task,
-        completed: &completed,
-        mode,
-    };
     let step = deduce_step(task_type, &ctx);
 
-    let ready = matches!(step, Step::Ready);
     let assessment = build_assessment(&decisions, &covered, &uncovered, &stale, &patterns);
     let action = step_action(component, &step, task, mode);
 
-    let response = build_response(component, task_type, &step, ready, mode, assessment, action);
+    let response = build_response(component, task_type, &step, mode, assessment, action);
+    let ready = step.is_terminal();
     if ready {
         Ok(with_agent_review_hint(
             response,
@@ -220,14 +223,16 @@ pub fn advance(
 ///
 /// Returns `None` when the component is fully designed and no task is
 /// specified — the caller should return `Ready` directly.
-fn infer_task_type(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    task: Option<&str>,
-    covered: &[&str],
-    uncovered: &[&str],
-    stale: &[StaleDec],
-    mode: Mode,
-) -> Option<TaskType> {
+fn infer_task_type(ctx: &DeduceContext<'_>) -> Option<TaskType> {
+    let DeduceContext {
+        decisions,
+        task,
+        covered,
+        uncovered,
+        stale,
+        mode,
+        ..
+    } = *ctx;
     if decisions.is_empty() {
         return if task.is_some() {
             Some(TaskType::NewComponent)
@@ -280,57 +285,27 @@ struct DeduceContext<'a> {
 /// The machine errs on the side of returning `Ready` rather than looping.
 fn deduce_step(task_type: TaskType, ctx: &DeduceContext<'_>) -> Step {
     match task_type {
-        TaskType::NewComponent => deduce_new_component(
-            ctx.decisions,
-            ctx.covered,
-            ctx.uncovered,
-            ctx.patterns,
-            ctx.completed,
-            ctx.mode,
-        ),
-        TaskType::Feature => deduce_feature(
-            ctx.decisions,
-            ctx.covered,
-            ctx.uncovered,
-            ctx.patterns,
-            ctx.task,
-            ctx.completed,
-            ctx.mode,
-        ),
-        TaskType::Fix => deduce_fix(
-            ctx.decisions,
-            ctx.uncovered,
-            ctx.graph,
-            ctx.component,
-            ctx.task,
-            ctx.completed,
-        ),
-        TaskType::Learn => deduce_learn(ctx.decisions, ctx.patterns, ctx.completed),
-        TaskType::Review => deduce_review(
-            ctx.decisions,
-            ctx.stale,
-            ctx.covered,
-            ctx.uncovered,
-            ctx.patterns,
-            ctx.completed,
-            ctx.mode,
-        ),
-        TaskType::Harden => deduce_harden(ctx.uncovered, ctx.patterns, ctx.completed),
-        TaskType::Bootstrap => {
-            deduce_bootstrap_component(ctx.decisions, ctx.patterns, ctx.component)
-        }
+        TaskType::NewComponent => deduce_new_component(ctx),
+        TaskType::Feature => deduce_feature(ctx),
+        TaskType::Fix => deduce_fix(ctx),
+        TaskType::Learn => deduce_learn(ctx),
+        TaskType::Review => deduce_review(ctx),
+        TaskType::Harden => deduce_harden(ctx),
+        TaskType::Bootstrap => deduce_bootstrap_component(ctx),
     }
 }
 
 /// NewComponent: Register → DefineScope → CoverConcerns → PatternDetection → [DesignCheck] → Ready
-fn deduce_new_component(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    covered: &[&str],
-    uncovered: &[&str],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    completed: &[&str],
-    mode: Mode,
-) -> Step {
+fn deduce_new_component(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        covered,
+        uncovered,
+        patterns,
+        completed,
+        mode,
+        ..
+    } = *ctx;
     if !has_scope_decision(decisions) {
         return Step::DefineScope;
     }
@@ -371,15 +346,17 @@ fn deduce_new_component(
 ///
 /// DesignCheck: practical comprehension check — user demonstrates
 /// understanding through a context-appropriate question.
-fn deduce_feature(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    covered: &[&str],
-    uncovered: &[&str],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    task: Option<&str>,
-    completed: &[&str],
-    mode: Mode,
-) -> Step {
+fn deduce_feature(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        covered,
+        uncovered,
+        patterns,
+        task,
+        completed,
+        mode,
+        ..
+    } = *ctx;
     // VerifyConstraints: existing decisions need checking against the task.
     // Skipped only when no decisions exist (nothing to verify) or when
     // the caller signals the step was already completed.
@@ -471,14 +448,16 @@ fn task_relevant_concerns<'a>(uncovered: &[&'a str], task: &str) -> Vec<&'a str>
 ///
 /// VerifyConstraints and ImpactCheck lack verifiable graph postconditions —
 /// `completed_steps` handles progression.
-fn deduce_fix(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    uncovered: &[&str],
-    graph: &crate::store::graph::InMemoryGraph,
-    component: &str,
-    task: Option<&str>,
-    completed: &[&str],
-) -> Step {
+fn deduce_fix(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        uncovered,
+        graph,
+        component,
+        task,
+        completed,
+        ..
+    } = *ctx;
     // VerifyConstraints: existing decisions need checking against the fix.
     if !decisions.is_empty() && !completed.contains(&"verify_constraints") {
         return Step::VerifyConstraints;
@@ -521,11 +500,13 @@ fn deduce_fix(
 /// if patterns exist, walkthrough is complete).
 ///
 /// DesignCheck: comprehension check — user summarizes understanding.
-fn deduce_learn(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    completed: &[&str],
-) -> Step {
+fn deduce_learn(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        patterns,
+        completed,
+        ..
+    } = *ctx;
     if !completed.contains(&"warm_up") && !completed.contains(&"user_explains") {
         return Step::WarmUp;
     }
@@ -563,15 +544,17 @@ fn deduce_learn(
 /// don't match concern keywords.
 ///
 /// DesignCheck: comprehension check — user summarizes review findings.
-fn deduce_review(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    stale: &[StaleDec],
-    covered: &[&str],
-    uncovered: &[&str],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    completed: &[&str],
-    mode: Mode,
-) -> Step {
+fn deduce_review(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        stale,
+        covered,
+        uncovered,
+        patterns,
+        completed,
+        mode,
+        ..
+    } = *ctx;
     if !decisions.is_empty() && !completed.contains(&"walk_decisions") {
         return Step::WalkDecisions;
     }
@@ -605,11 +588,13 @@ fn deduce_review(
 ///
 /// CoverConcerns fills the real gaps with recorded decisions (verifiable).
 /// PatternDetection is the final pass.
-fn deduce_harden(
-    uncovered: &[&str],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    completed: &[&str],
-) -> Step {
+fn deduce_harden(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        uncovered,
+        patterns,
+        completed,
+        ..
+    } = *ctx;
     if !uncovered.is_empty() && !completed.contains(&"coverage_audit") {
         return Step::CoverageAudit;
     }
@@ -632,11 +617,13 @@ fn deduce_harden(
 /// code and records decisions without interactive dialogue. Unlike
 /// `deduce_learn`, the step prompts omit the Socratic interaction
 /// protocol.
-fn deduce_bootstrap_component(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    component: &str,
-) -> Step {
+fn deduce_bootstrap_component(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        patterns,
+        component,
+        ..
+    } = *ctx;
     if decisions.is_empty() {
         return Step::ExtractDecisions {
             component: component.into(),
@@ -703,14 +690,13 @@ fn advance_project(
         })
     };
 
-    let (step, ready, action) = match task_type {
+    let (step, action) = match task_type {
         TaskType::NewComponent | TaskType::Harden => {
             if has_decisions {
-                (Step::Ready, true, ready_action())
+                (Step::Ready, ready_action())
             } else {
                 (
                     Step::DefineScope,
-                    false,
                     step_prompt_action(
                         "project",
                         "define_scope",
@@ -724,11 +710,10 @@ fn advance_project(
         }
         TaskType::Feature | TaskType::Fix => {
             if has_decisions {
-                (Step::Ready, true, ready_action())
+                (Step::Ready, ready_action())
             } else {
                 (
                     Step::DefineScope,
-                    false,
                     step_prompt_action(
                         "project",
                         "define_scope",
@@ -744,7 +729,6 @@ fn advance_project(
             if !has_decisions {
                 (
                     Step::WalkDecisions,
-                    false,
                     step_prompt_action(
                         "project",
                         "walk_decisions",
@@ -757,7 +741,6 @@ fn advance_project(
             } else if !has_patterns && !completed_steps.contains(&"walk_decisions") {
                 (
                     Step::WalkDecisions,
-                    false,
                     step_prompt_action(
                         "project",
                         "walk_decisions",
@@ -768,14 +751,13 @@ fn advance_project(
                     ),
                 )
             } else {
-                (Step::Ready, true, ready_action())
+                (Step::Ready, ready_action())
             }
         }
         TaskType::Review => {
             if !has_decisions {
                 (
                     Step::DefineScope,
-                    false,
                     step_prompt_action(
                         "project",
                         "define_scope",
@@ -787,7 +769,6 @@ fn advance_project(
             } else if !has_patterns && !completed_steps.contains(&"drift_check") {
                 (
                     Step::DriftCheck,
-                    false,
                     step_prompt_action(
                         "project",
                         "drift_check",
@@ -798,13 +779,14 @@ fn advance_project(
                     ),
                 )
             } else {
-                (Step::Ready, true, ready_action())
+                (Step::Ready, ready_action())
             }
         }
         TaskType::Bootstrap => deduce_bootstrap_project(state, task, mode, completed_steps),
     };
 
-    let response = build_response("project", task_type, &step, ready, mode, assessment, action);
+    let ready = step.is_terminal();
+    let response = build_response("project", task_type, &step, mode, assessment, action);
     if ready {
         // Match component-level ready: surface unreviewed agent-authored project
         // rules so the schema is uniform and project rules aren't silently exempt
@@ -835,14 +817,13 @@ fn deduce_bootstrap_project(
     task: Option<&str>,
     mode: Mode,
     completed: &[&str],
-) -> (Step, bool, Value) {
+) -> (Step, Value) {
     let graph = state.graph();
 
     // Phase 1: no components registered → scan the project.
     if state.components.is_empty() {
         return (
             Step::ScanProject,
-            false,
             step_prompt_action(
                 "project",
                 "scan_project",
@@ -873,7 +854,6 @@ fn deduce_bootstrap_project(
                 Step::ExtractDecisions {
                     component: name.clone(),
                 },
-                false,
                 action,
             );
         }
@@ -883,7 +863,6 @@ fn deduce_bootstrap_project(
     if graph.project_decisions().is_empty() && !completed.contains(&"project_rules") {
         return (
             Step::ProjectRules,
-            false,
             step_prompt_action(
                 "project",
                 "project_rules",
@@ -899,7 +878,6 @@ fn deduce_bootstrap_project(
     if graph.patterns_for("project").is_empty() && !completed.contains(&"pattern_detection") {
         return (
             Step::PatternDetection,
-            false,
             step_prompt_action(
                 "project",
                 "pattern_detection",
@@ -914,7 +892,6 @@ fn deduce_bootstrap_project(
     // All phases complete.
     (
         Step::Ready,
-        true,
         serde_json::json!({
             "tool": "get_context",
             "args": { "component": "project", "task": task },

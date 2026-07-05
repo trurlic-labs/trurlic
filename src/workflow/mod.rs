@@ -73,20 +73,27 @@ impl Mode {
 /// Learn requires interactive (it exists to build the user's understanding).
 /// Bootstrap requires agent (it's autonomous source code extraction).
 pub fn validate_mode_task(mode: Mode, task_type: TaskType) -> Result<(), String> {
+    use Mode::{Agent, Interactive};
+    use TaskType::{Bootstrap, Feature, Fix, Harden, Learn, NewComponent, Review};
+
+    // Exhaustive over every (Mode, TaskType) pair — no wildcard. A new Mode
+    // or TaskType variant will fail to compile here until its validity is
+    // decided explicitly.
     match (mode, task_type) {
-        (Mode::Agent, TaskType::Learn) => Err(
+        (Agent, Learn) => Err(
             "task_type=learn requires mode=interactive — Learn exists to build \
              the user's understanding. For agent context retrieval, use \
              get_context() or get_architecture() instead."
                 .into(),
         ),
-        (Mode::Interactive, TaskType::Bootstrap) => Err(
+        (Interactive, Bootstrap) => Err(
             "task_type=bootstrap requires mode=agent — Bootstrap is autonomous \
              source code extraction. For interactive design, use \
              task_type=new_component with mode=interactive."
                 .into(),
         ),
-        _ => Ok(()),
+        (Interactive, Learn) | (Agent, Bootstrap) => Ok(()),
+        (Agent | Interactive, NewComponent | Feature | Fix | Review | Harden) => Ok(()),
     }
 }
 
@@ -287,6 +294,12 @@ impl Step {
             "ready" => Some(Self::Ready),
             _ => None,
         }
+    }
+
+    /// Whether this is the terminal step — the component is fully designed
+    /// and the caller should switch to `get_context` and implement.
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::Ready)
     }
 
     pub const fn is_gated(&self) -> bool {

@@ -67,7 +67,6 @@ pub(super) fn build_response(
     component: &str,
     task_type: TaskType,
     step: &Step,
-    ready: bool,
     mode: Mode,
     assessment: Value,
     action: Value,
@@ -80,7 +79,7 @@ pub(super) fn build_response(
         "component": component,
         "task_type": task_type.as_str(),
         "step": step.as_str(),
-        "ready": ready,
+        "ready": step.is_terminal(),
         "mode": mode.as_str(),
         "requires_user_input": requires_user_input,
         "assessment": assessment,
@@ -140,7 +139,6 @@ pub(super) fn ready_response(p: ReadyParams<'_>) -> Value {
         p.component,
         display_type,
         &Step::Ready,
-        true,
         p.mode,
         assessment,
         serde_json::json!({
@@ -204,6 +202,8 @@ pub(super) fn top_n(concerns: &[&str], n: usize) -> Vec<String> {
     concerns.iter().take(n).map(|s| (*s).to_string()).collect()
 }
 
+/// A decision whose `last_touched` age has crossed the staleness threshold,
+/// carried through assessment building and the `stale_decisions` report.
 pub(super) struct StaleDec {
     pub(super) name: Arc<str>,
     pub(super) created: String,
