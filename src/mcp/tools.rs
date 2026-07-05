@@ -1069,6 +1069,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dispatch_advance_unknown_step_evidence_key_returns_error() {
+        let state = empty_state();
+        let args = serde_json::json!({
+            "component": "project",
+            "mode": "agent",
+            "step_evidence": {
+                "designcheck": "this is more than twenty bytes of evidence text"
+            }
+        });
+        let envelope = call_read_tool(&state, "advance", &args);
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "unknown step_evidence key should surface as tool error"
+        );
+        assert!(
+            envelope.content[0].text.contains("designcheck"),
+            "error should mention the bad key: {}",
+            envelope.content[0].text,
+        );
+    }
+
     fn empty_state() -> ProjectState {
         crate::store::testing::empty_project_state()
     }

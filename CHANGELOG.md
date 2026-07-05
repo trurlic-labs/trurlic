@@ -144,6 +144,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   so a trailing or doubled space can't slip a near-duplicate past it.
 - **Map `PUT /api/decision/:name` returns 404**, not 500, for an unknown
   decision, and 400 for invalid input.
+- **Agent-mode inference no longer dead-ends on `Learn`.** `infer_task_type`
+  is now mode-aware: a registered component with zero decisions and no task
+  infers `Bootstrap` in agent mode (autonomous extraction) instead of `Learn`
+  (which requires interactive mode). Interactive mode behavior is unchanged.
 - **Feature and review workflows no longer loop on `CoverConcerns` /
   `CoverageAudit`.** `deduce_feature` now gates both `CoverConcerns` branches
   (task-relevant and majority-threshold) on `completed_steps`, and
@@ -184,6 +188,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (`decision_refs_all_missing`), shared by the context health report and `gc`,
   and uses `try_exists` so a permission or mount error never misreports a live
   file as deleted and drives a decision to be flagged or collected.
+- **Unknown `step_evidence` keys are now rejected with a clear error.** Previously
+  a typo in a step name (e.g. `designcheck` instead of `design_check`) was
+  silently accepted, matched nothing, and caused the state machine to return the
+  same step indefinitely. Now `advance()` validates all `step_evidence` keys
+  against `Step::ALL_NAMES` in both agent and interactive modes, returning an
+  error that names the offending key and lists all valid step names.
 
 ### Changed (internal)
 

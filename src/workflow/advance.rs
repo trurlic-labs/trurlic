@@ -70,7 +70,17 @@ pub fn advance(
         super::validate_mode_task(mode, tt)?;
     }
 
-    // ── Evidence validation (interactive only) ───────────────────────
+    // ── Reject unknown step names (both modes) ────────────────────────
+    for step_name in step_evidence.keys() {
+        if Step::is_gated_name(step_name).is_none() {
+            return Err(format!(
+                "unknown step_evidence key `{step_name}` — valid names: {}",
+                Step::ALL_NAMES.join(", ")
+            ));
+        }
+    }
+
+    // ── Evidence length validation (interactive only) ────────────────
     if mode == Mode::Interactive {
         for (step_name, evidence) in step_evidence {
             if let Some(true) = Step::is_gated_name(step_name)
@@ -146,7 +156,7 @@ pub fn advance(
 
     let task_type = match task_type {
         Some(tt) => tt,
-        None => match infer_task_type(&decisions, task, &covered, &uncovered, &stale) {
+        None => match infer_task_type(&decisions, task, &covered, &uncovered, &stale, mode) {
             Some(tt) => {
                 // Validate mode × inferred task_type.
                 super::validate_mode_task(mode, tt)?;
@@ -203,6 +213,11 @@ pub fn advance(
 
 /// Infer the task type from graph state when not explicitly provided.
 ///
+/// Mode-aware: in `Agent` mode, a component with zero decisions and no
+/// task infers `Bootstrap` (autonomous extraction). In `Interactive`
+/// mode, the same state infers `Learn` (user-guided understanding).
+/// This ensures the inferred type always passes `validate_mode_task`.
+///
 /// Returns `None` when the component is fully designed and no task is
 /// specified — the caller should return `Ready` directly.
 fn infer_task_type(
@@ -211,12 +226,16 @@ fn infer_task_type(
     covered: &[&str],
     uncovered: &[&str],
     stale: &[StaleDec],
+    mode: Mode,
 ) -> Option<TaskType> {
     if decisions.is_empty() {
         return if task.is_some() {
             Some(TaskType::NewComponent)
         } else {
-            Some(TaskType::Learn)
+            match mode {
+                Mode::Agent => Some(TaskType::Bootstrap),
+                Mode::Interactive => Some(TaskType::Learn),
+            }
         };
     }
 
@@ -3579,7 +3598,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_step_in_evidence_ignored() {
+    fn unknown_step_in_evidence_rejected() {
         let state = build_state(&[("store", "Data store")], &[]);
         let mut ev = BTreeMap::new();
         ev.insert("nonexistent", "some evidence text that is long enough");
@@ -3592,7 +3611,9 @@ mod tests {
             &ev,
             chrono::Utc::now(),
         );
-        assert!(result.is_ok());
+        let err = result.unwrap_err();
+        assert!(err.contains("nonexistent"));
+        assert!(err.contains("valid names"));
     }
 
     #[test]
@@ -4207,5 +4228,100 @@ mod tests {
             result["action"]["args"]["mode"], "agent",
             "bootstrap action args must include mode"
         );
+    }
+
+    // ── T03: Agent-mode task-type inference ──────────────────────────
+
+    #[test]
+    fn agent_infer_bootstrap_when_empty_no_task() {
+        // Regression (T03): registered component, zero decisions, no task,
+        // mode=agent → Ok with extract_decisions (bootstrap path), not error.
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            None,
+            None,
+            Some(Mode::Agent),
+            &BTreeMap::new(),
+            chrono::Utc::now(),
+        );
+
+        assert!(
+            result.is_ok(),
+            "agent + inferred on empty component must not error: {}",
+            result.unwrap_err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result["task_type"], "bootstrap");
+        assert_eq!(result["step"], "extract_decisions");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn interactive_infer_learn_when_empty_no_task_unchanged() {
+        // T03: Interactive unchanged — same graph, mode=interactive →
+        // warm_up (Learn path). Mirrors infer_learn_when_empty_no_task
+        // but exists as a T03 regression guard.
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            None,
+            None,
+            Some(Mode::Interactive),
+            &BTreeMap::new(),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(result["task_type"], "learn");
+        assert_eq!(result["step"], "warm_up");
+    }
+
+    #[test]
+    fn inferred_task_type_never_violates_mode_validation() {
+        // T03: Property test — every inferred type passes
+        // validate_mode_task for the mode that produced it.
+        // Full input space: empty/nonempty decisions × task present/absent
+        // × coverage states × staleness × mode.
+        let empty: Vec<(&str, DecisionFile)> = vec![];
+        let few = vec![(
+            "d1",
+            fresh_decision("store", "TOML format", "Readable", &["format"]),
+        )];
+        let covered = well_covered_decisions("store", true);
+        let stale = well_covered_decisions("store", false);
+
+        let decision_sets: Vec<&[(&str, DecisionFile)]> = vec![&empty, &few, &covered, &stale];
+        let tasks: [Option<&str>; 2] = [None, Some("add feature")];
+        let modes = [Mode::Agent, Mode::Interactive];
+
+        for decs in &decision_sets {
+            let state = build_state(&[("store", "Data store")], decs);
+            for task in &tasks {
+                for mode in &modes {
+                    let result = advance(
+                        &state,
+                        "store",
+                        None,
+                        *task,
+                        Some(*mode),
+                        &BTreeMap::new(),
+                        chrono::Utc::now(),
+                    );
+
+                    assert!(
+                        result.is_ok(),
+                        "inferred task_type violated mode validation: \
+                         mode={:?}, task={:?}, decisions={}, err={}",
+                        mode,
+                        task,
+                        decs.len(),
+                        result.unwrap_err()
+                    );
+                }
+            }
+        }
     }
 }

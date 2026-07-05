@@ -279,6 +279,31 @@ impl Step {
         }
     }
 
+    /// All valid step names accepted in `step_evidence` keys.
+    ///
+    /// This is the single source of truth — `is_gated_name` and the
+    /// unknown-key rejection error both derive from this list.
+    pub const ALL_NAMES: &'static [&'static str] = &[
+        "register",
+        "scan_project",
+        "extract_decisions",
+        "project_rules",
+        "ready",
+        "define_scope",
+        "analyze_code",
+        "cover_concerns",
+        "walk_decisions",
+        "verify_constraints",
+        "impact_check",
+        "pattern_detection",
+        "design_check",
+        "summary_gate",
+        "drift_check",
+        "coverage_audit",
+        "warm_up",
+        "user_explains",
+    ];
+
     /// Resolve a step name string to its gated status.
     /// Returns `None` for unknown step names.
     pub fn is_gated_name(name: &str) -> Option<bool> {
@@ -581,6 +606,14 @@ mod integration_tests {
         let state = build_state(&[("store", "Data store")], &[]);
         // No task_type → inferred from graph state (Learn for empty).
         assert_pipeline(&state, "store", None);
+    }
+
+    #[test]
+    fn pipeline_agent_inferred_bootstrap_on_empty() {
+        // T03: inferred task_type in agent mode on empty component →
+        // Bootstrap, and the step/prompt pipeline accepts it.
+        let state = build_state(&[("store", "Data store")], &[]);
+        assert_pipeline_mode(&state, "store", None, Mode::Agent);
     }
 
     #[test]
@@ -913,6 +946,121 @@ mod integration_tests {
                 "({:?}, {:?}) should be valid",
                 mode,
                 tt
+            );
+        }
+    }
+
+    // ── T04: unknown step_evidence key rejection ─────────────────────
+
+    #[test]
+    fn unknown_step_evidence_key_rejected_interactive() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let mut evidence = BTreeMap::new();
+        evidence.insert(
+            "designcheck",
+            "this is more than twenty bytes of evidence text",
+        );
+
+        let result = advance::advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            Some(Mode::Interactive),
+            &evidence,
+            Utc::now(),
+        );
+
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("designcheck"),
+            "error should mention the offending key: {err}"
+        );
+        assert!(
+            err.contains("design_check"),
+            "error should suggest the correct name: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_step_evidence_key_rejected_agent() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let mut evidence = BTreeMap::new();
+        evidence.insert(
+            "designcheck",
+            "this is more than twenty bytes of evidence text",
+        );
+
+        let result = advance::advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            Some(Mode::Agent),
+            &evidence,
+            Utc::now(),
+        );
+
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("designcheck"),
+            "error should mention the offending key in agent mode: {err}"
+        );
+    }
+
+    #[test]
+    fn all_valid_step_names_accepted_in_evidence() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+
+        for &name in Step::ALL_NAMES {
+            let mut evidence = BTreeMap::new();
+            evidence.insert(
+                name,
+                "this is more than twenty bytes of evidence for the step",
+            );
+
+            let result = advance::advance(
+                &state,
+                "store",
+                Some(TaskType::Feature),
+                None,
+                Some(Mode::Agent),
+                &evidence,
+                Utc::now(),
+            );
+
+            assert!(
+                result.is_ok(),
+                "valid step name `{name}` should be accepted but got: {:?}",
+                result.err()
+            );
+        }
+    }
+
+    #[test]
+    fn all_names_consistent_with_is_gated_name() {
+        for &name in Step::ALL_NAMES {
+            assert!(
+                Step::is_gated_name(name).is_some(),
+                "ALL_NAMES entry `{name}` not recognized by is_gated_name"
             );
         }
     }
