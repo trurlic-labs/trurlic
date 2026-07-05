@@ -18,6 +18,11 @@ export interface ComponentNode {
   pattern_count: number;
 }
 
+export interface CodeRefData {
+  file: string;
+  symbol?: string;
+}
+
 export interface DecisionNode {
   name: string;
   component: string;
@@ -26,6 +31,9 @@ export interface DecisionNode {
   tags: string[];
   created: string;
   alternatives: string[];
+  code_refs?: CodeRefData[];
+  attribution?: string;
+  revision_count?: number;
 }
 
 export interface PatternNode {

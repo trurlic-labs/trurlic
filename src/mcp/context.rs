@@ -560,6 +560,49 @@ pub(crate) fn get_decision_history(state: &ProjectState, name: &str) -> Result<V
     }))
 }
 
+// ── get_decisions_for_file ─────────────────────────────────────────────────
+
+/// Reverse lookup: given a file path, find every decision whose `code_refs`
+/// reference it (exact match or directory prefix). Project-wide rules are
+/// excluded — they apply everywhere and would add noise; the description
+/// tells agents to pair this with `get_context` for full coverage.
+///
+/// Results are sorted deterministically by (component, decision name).
+pub(crate) fn get_decisions_for_file(state: &ProjectState, file: &str) -> Result<Value, String> {
+    let normalized =
+        store::normalize_file_query(file).map_err(|e| format!("invalid file path: {e}"))?;
+
+    let graph = state.graph();
+    let matches = graph.decisions_for_file(&normalized);
+
+    let decisions: Vec<Value> = matches
+        .iter()
+        .map(|(name, dec)| {
+            let matching_refs = InMemoryGraph::matching_refs_for_decision(dec, &normalized);
+            let mut obj = serde_json::json!({
+                "name": name.as_ref(),
+                "component": dec.decision.component,
+                "choice": dec.decision.choice,
+                "reason": dec.decision.reason,
+                "attribution": attribution_str(dec.decision.attribution),
+            });
+            if !dec.decision.tags.is_empty() {
+                obj["tags"] = serde_json::json!(dec.decision.tags);
+            }
+            obj["matching_refs"] = serde_json::json!(store::code_refs_to_json(
+                &matching_refs.into_iter().cloned().collect::<Vec<_>>()
+            ));
+            obj
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "file": normalized,
+        "decisions": decisions,
+        "count": decisions.len(),
+    }))
+}
+
 // ── Decision health ────────────────────────────────────────────────────────
 
 /// Follow-up line appended under agent-attributed decisions in the brief.

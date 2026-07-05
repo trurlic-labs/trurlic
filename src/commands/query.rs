@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::store::graph::Severity;
+use crate::store::graph::{InMemoryGraph, Severity};
+use crate::store::{self, format_code_refs};
 use crate::{Error, Result};
 
 use super::{discover_store, open_store};
@@ -29,6 +30,41 @@ pub fn status(cwd: &Path) -> Result<()> {
     let issues = state.validate();
     if !issues.is_empty() {
         println!("issues: {}", issues.len());
+    }
+
+    Ok(())
+}
+
+pub fn query_file(cwd: &Path, path: &str) -> Result<()> {
+    let normalized = store::normalize_file_query(path)?;
+    let (_store, state) = open_store(cwd)?;
+
+    let graph = state.graph();
+    let matches = graph.decisions_for_file(&normalized);
+
+    if matches.is_empty() {
+        println!("No decisions reference `{normalized}`.");
+        return Ok(());
+    }
+
+    println!("{} decision(s) constrain `{normalized}`:\n", matches.len());
+
+    for (name, dec) in &matches {
+        let attr_suffix = match dec.decision.attribution {
+            store::schema::Attribution::Agent => " (agent — unreviewed)",
+            store::schema::Attribution::User => "",
+        };
+        println!(
+            "  [{component}] {name}{attr_suffix}",
+            component = dec.decision.component
+        );
+        println!("    {}", dec.decision.choice);
+        let matching_refs = InMemoryGraph::matching_refs_for_decision(dec, &normalized);
+        if !matching_refs.is_empty() {
+            let refs_vec: Vec<_> = matching_refs.into_iter().cloned().collect();
+            println!("    refs: {}", format_code_refs(&refs_vec));
+        }
+        println!();
     }
 
     Ok(())

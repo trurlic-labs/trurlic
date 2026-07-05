@@ -221,6 +221,60 @@ impl InMemoryGraph {
         }
         result
     }
+
+    /// Decisions whose `code_refs` reference the given file path.
+    ///
+    /// A decision matches when any of its code_refs satisfies either:
+    /// - exact match: `code_ref.file == normalized_path`, or
+    /// - directory prefix: `code_ref.file` starts with `{normalized_path}/`
+    ///
+    /// The caller is responsible for normalizing and validating the path
+    /// (via [`normalize_file_query`](super::normalize_file_query)) before
+    /// calling this method.
+    ///
+    /// Results are sorted by (component, decision name) for deterministic output.
+    pub fn decisions_for_file<'a>(
+        &'a self,
+        normalized_path: &str,
+    ) -> Vec<(&'a Arc<str>, &'a DecisionFile)> {
+        let prefix_with_slash = format!("{normalized_path}/");
+
+        let mut matches: Vec<(&Arc<str>, &DecisionFile)> =
+            self.decisions
+                .iter()
+                .filter(|(_, dec)| {
+                    dec.decision.code_refs.iter().any(|cr| {
+                        cr.file == normalized_path || cr.file.starts_with(&prefix_with_slash)
+                    })
+                })
+                .map(|(name, dec)| (name, dec.as_ref()))
+                .collect();
+
+        matches.sort_by(|a, b| {
+            a.1.decision
+                .component
+                .cmp(&b.1.decision.component)
+                .then_with(|| a.0.as_ref().cmp(b.0.as_ref()))
+        });
+
+        matches
+    }
+
+    /// Collect the matching code_refs from a decision for a given path.
+    ///
+    /// Returns only the refs that triggered the match (exact or prefix).
+    /// Used by callers that need to display which refs matched the query.
+    pub fn matching_refs_for_decision<'a>(
+        dec: &'a DecisionFile,
+        normalized_path: &str,
+    ) -> Vec<&'a super::schema::CodeRef> {
+        let prefix_with_slash = format!("{normalized_path}/");
+        dec.decision
+            .code_refs
+            .iter()
+            .filter(|cr| cr.file == normalized_path || cr.file.starts_with(&prefix_with_slash))
+            .collect()
+    }
 }
 
 // ── Private helpers ─────────────────────────────────────────────────────
@@ -779,5 +833,273 @@ mod tests {
         let result = g.transitive_depends_on(&["a"], 10);
         let names: Vec<&str> = result.iter().map(|(n, _)| n.as_ref()).collect();
         assert_eq!(names, vec!["b"]);
+    }
+
+    // ── decisions_for_file ──────────────────────────────────────────────
+
+    fn graph_with_code_refs() -> InMemoryGraph {
+        let index = GraphIndex {
+            version: 1,
+            rebuilt: ts(),
+            nodes: vec![
+                NodeEntry {
+                    name: "project".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "p".into(),
+                },
+                NodeEntry {
+                    name: "store".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "s".into(),
+                },
+                NodeEntry {
+                    name: "mcp".into(),
+                    kind: NodeKind::Component,
+                    tags: vec![],
+                    hash: "m".into(),
+                },
+                NodeEntry {
+                    name: "atomic-writes".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "aw".into(),
+                },
+                NodeEntry {
+                    name: "json-rpc".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "jr".into(),
+                },
+                NodeEntry {
+                    name: "no-io-in-workflow".into(),
+                    kind: NodeKind::Decision,
+                    tags: vec![],
+                    hash: "ni".into(),
+                },
+            ],
+            edges: vec![
+                EdgeEntry {
+                    from: "atomic-writes".into(),
+                    to: "store".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "json-rpc".into(),
+                    to: "mcp".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+                EdgeEntry {
+                    from: "no-io-in-workflow".into(),
+                    to: "project".into(),
+                    kind: EdgeKind::BelongsTo,
+                },
+            ],
+        };
+
+        let mut components = BTreeMap::new();
+        for name in ["store", "mcp"] {
+            components.insert(
+                name.into(),
+                ComponentFile {
+                    component: Component {
+                        name: name.into(),
+                        description: format!("The {name} module"),
+                    },
+                },
+            );
+        }
+
+        let mut decisions = BTreeMap::new();
+        decisions.insert(
+            "atomic-writes".into(),
+            DecisionFile {
+                decision: Decision {
+                    component: "store".into(),
+                    choice: "Atomic writes via temp + rename".into(),
+                    reason: "Crash safety".into(),
+                    alternatives: vec![],
+                    tags: vec!["reliability".into()],
+                    attribution: Attribution::User,
+                    created: ts(),
+                    code_refs: vec![
+                        CodeRef {
+                            file: "src/store/write.rs".into(),
+                            symbol: Some("commit_with_graph".into()),
+                        },
+                        CodeRef {
+                            file: "src/store/mod.rs".into(),
+                            symbol: None,
+                        },
+                    ],
+                    history: vec![],
+                },
+            },
+        );
+        decisions.insert(
+            "json-rpc".into(),
+            DecisionFile {
+                decision: Decision {
+                    component: "mcp".into(),
+                    choice: "JSON-RPC 2.0 over stdio".into(),
+                    reason: "MCP spec compliance".into(),
+                    alternatives: vec![],
+                    tags: vec!["protocol".into()],
+                    attribution: Attribution::Agent,
+                    created: ts(),
+                    code_refs: vec![CodeRef {
+                        file: "src/mcp/protocol.rs".into(),
+                        symbol: Some("write_success".into()),
+                    }],
+                    history: vec![],
+                },
+            },
+        );
+        decisions.insert(
+            "no-io-in-workflow".into(),
+            DecisionFile {
+                decision: Decision {
+                    component: "project".into(),
+                    choice: "Workflow module has no I/O".into(),
+                    reason: "Purity guarantees determinism".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::User,
+                    created: ts(),
+                    code_refs: vec![],
+                    history: vec![],
+                },
+            },
+        );
+
+        InMemoryGraph::build(
+            &index,
+            &arc_map(components),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        )
+    }
+
+    #[test]
+    fn decisions_for_file_exact_match() {
+        let g = graph_with_code_refs();
+        let results = g.decisions_for_file("src/store/write.rs");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.as_ref(), "atomic-writes");
+    }
+
+    #[test]
+    fn decisions_for_file_directory_prefix_match() {
+        let g = graph_with_code_refs();
+        let results = g.decisions_for_file("src/store");
+        let names: Vec<&str> = results.iter().map(|(n, _)| n.as_ref()).collect();
+        assert_eq!(names, vec!["atomic-writes"]);
+    }
+
+    #[test]
+    fn decisions_for_file_no_match_returns_empty() {
+        let g = graph_with_code_refs();
+        let results = g.decisions_for_file("src/workflow/advance.rs");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn decisions_for_file_deterministic_ordering() {
+        let g = graph_with_code_refs();
+        // "src/store" prefix matches both code_refs in atomic-writes
+        // and "src/mcp" prefix matches json-rpc — check ordering by component.
+        let results_store = g.decisions_for_file("src/store");
+        let results_mcp = g.decisions_for_file("src/mcp");
+        assert_eq!(results_store.len(), 1);
+        assert_eq!(results_mcp.len(), 1);
+        assert_eq!(results_store[0].0.as_ref(), "atomic-writes");
+        assert_eq!(results_mcp[0].0.as_ref(), "json-rpc");
+    }
+
+    #[test]
+    fn decisions_for_file_decision_without_refs_not_matched() {
+        let g = graph_with_code_refs();
+        // no-io-in-workflow has no code_refs — should never appear.
+        let all_src = g.decisions_for_file("src");
+        let names: Vec<&str> = all_src.iter().map(|(n, _)| n.as_ref()).collect();
+        assert!(!names.contains(&"no-io-in-workflow"));
+    }
+
+    #[test]
+    fn decisions_for_file_multiple_decisions_sorted_by_component_then_name() {
+        let g = graph_with_code_refs();
+        // "src" as a directory prefix matches both store and mcp decisions.
+        let results = g.decisions_for_file("src");
+        let names: Vec<&str> = results.iter().map(|(n, _)| n.as_ref()).collect();
+        // mcp < store alphabetically by component
+        assert_eq!(names, vec!["json-rpc", "atomic-writes"]);
+    }
+
+    #[test]
+    fn matching_refs_for_decision_returns_only_matching() {
+        let g = graph_with_code_refs();
+        let dec = g.decisions.get("atomic-writes").unwrap();
+        let refs = InMemoryGraph::matching_refs_for_decision(dec, "src/store/write.rs");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].file, "src/store/write.rs");
+    }
+
+    #[test]
+    fn matching_refs_for_decision_prefix_returns_all_in_dir() {
+        let g = graph_with_code_refs();
+        let dec = g.decisions.get("atomic-writes").unwrap();
+        let refs = InMemoryGraph::matching_refs_for_decision(dec, "src/store");
+        assert_eq!(refs.len(), 2);
+    }
+
+    // ��─ normalize_file_query ────────────────────────────────────────────
+
+    #[test]
+    fn normalize_strips_leading_dot_slash() {
+        let result = super::super::normalize_file_query("./src/store/write.rs").unwrap();
+        assert_eq!(result, "src/store/write.rs");
+    }
+
+    #[test]
+    fn normalize_collapses_multiple_slashes() {
+        let result = super::super::normalize_file_query("src//store///write.rs").unwrap();
+        assert_eq!(result, "src/store/write.rs");
+    }
+
+    #[test]
+    fn normalize_strips_trailing_slash() {
+        let result = super::super::normalize_file_query("src/store/").unwrap();
+        assert_eq!(result, "src/store");
+    }
+
+    #[test]
+    fn normalize_rejects_absolute_path() {
+        let err = super::super::normalize_file_query("/etc/passwd");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn normalize_rejects_traversal() {
+        let err = super::super::normalize_file_query("../escape/file.rs");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn normalize_rejects_backslashes() {
+        let err = super::super::normalize_file_query("src\\store\\write.rs");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn normalize_rejects_windows_drive() {
+        let err = super::super::normalize_file_query("C:/Users/x/file.rs");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn normalize_accepts_valid_path() {
+        let result = super::super::normalize_file_query("src/store/write.rs").unwrap();
+        assert_eq!(result, "src/store/write.rs");
     }
 }

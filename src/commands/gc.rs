@@ -39,6 +39,35 @@ pub enum GcExecution {
     DryRun,
 }
 
+/// What the caller should do when `--aggressive --apply` is requested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AggressiveConfirm {
+    /// User already confirmed via `--yes`; proceed without prompting.
+    Confirmed,
+    /// Running on a TTY without `--yes`; the caller must prompt.
+    PromptUser,
+}
+
+/// Decide how to handle an `--aggressive --apply` invocation.
+///
+/// Returns `Ok(Confirmed)` if `--yes` was passed, `Ok(PromptUser)` if running
+/// on a TTY, or `Err` if not on a TTY and `--yes` was omitted (non-interactive
+/// environments must not hang waiting for input).
+pub(crate) fn resolve_aggressive_confirm(
+    yes: bool,
+    is_tty: bool,
+) -> crate::Result<AggressiveConfirm> {
+    if yes {
+        return Ok(AggressiveConfirm::Confirmed);
+    }
+    if is_tty {
+        return Ok(AggressiveConfirm::PromptUser);
+    }
+    Err(crate::Error::Validation(
+        "--aggressive --apply requires --yes in non-interactive environments".into(),
+    ))
+}
+
 /// Agent decisions older than this without promotion are treated as review
 /// debt worth surfacing.
 const AGENT_REVIEW_STALE_DAYS: i64 = 90;
@@ -92,6 +121,9 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     let flagged = surfaced - acted - blocked;
     let verb = if apply { "removed" } else { "would remove" };
     println!("\nSummary: {verb} {acted}, flagged {flagged}, blocked {blocked}");
+    if !apply {
+        println!("Run again with --apply to write.");
+    }
     Ok(())
 }
 
@@ -325,6 +357,104 @@ mod tests {
     use chrono::Utc;
     use tempfile::TempDir;
 
+    // ── resolve_aggressive_confirm ──────────────────────────────────────
+
+    #[test]
+    fn aggressive_confirm_yes_flag_proceeds() {
+        let result = resolve_aggressive_confirm(true, false).unwrap();
+        assert_eq!(result, AggressiveConfirm::Confirmed);
+    }
+
+    #[test]
+    fn aggressive_confirm_yes_flag_on_tty_still_proceeds() {
+        let result = resolve_aggressive_confirm(true, true).unwrap();
+        assert_eq!(result, AggressiveConfirm::Confirmed);
+    }
+
+    #[test]
+    fn aggressive_confirm_tty_without_yes_prompts() {
+        let result = resolve_aggressive_confirm(false, true).unwrap();
+        assert_eq!(result, AggressiveConfirm::PromptUser);
+    }
+
+    #[test]
+    fn aggressive_confirm_no_tty_no_yes_errors() {
+        let err = resolve_aggressive_confirm(false, false).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("--yes"), "error must mention --yes: {msg}");
+        assert!(
+            msg.contains("--aggressive"),
+            "error must mention --aggressive: {msg}"
+        );
+    }
+
+    // ── CLI parsing ─────────────────────────────────────────────────────
+
+    #[test]
+    fn cli_bare_gc_defaults_to_dry_run() {
+        use crate::cli::{Cli, Command};
+        use clap::Parser;
+        let cli = Cli::parse_from(["trurlic", "gc"]);
+        match cli.command {
+            Command::Gc {
+                apply,
+                aggressive,
+                yes,
+                ..
+            } => {
+                assert!(!apply, "bare gc must not apply");
+                assert!(!aggressive);
+                assert!(!yes);
+            }
+            other => panic!("expected Gc, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_gc_apply_flag() {
+        use crate::cli::{Cli, Command};
+        use clap::Parser;
+        let cli = Cli::parse_from(["trurlic", "gc", "--apply"]);
+        match cli.command {
+            Command::Gc { apply, .. } => assert!(apply),
+            other => panic!("expected Gc, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_gc_aggressive_apply_yes() {
+        use crate::cli::{Cli, Command};
+        use clap::Parser;
+        let cli = Cli::parse_from(["trurlic", "gc", "--aggressive", "--apply", "--yes"]);
+        match cli.command {
+            Command::Gc {
+                apply,
+                aggressive,
+                yes,
+                ..
+            } => {
+                assert!(apply);
+                assert!(aggressive);
+                assert!(yes);
+            }
+            other => panic!("expected Gc, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_gc_deprecated_dry_run_still_parses() {
+        use crate::cli::{Cli, Command};
+        use clap::Parser;
+        let cli = Cli::parse_from(["trurlic", "gc", "--dry-run"]);
+        match cli.command {
+            Command::Gc { apply, dry_run, .. } => {
+                assert!(!apply, "deprecated --dry-run must not set apply");
+                assert!(dry_run, "deprecated flag should still parse");
+            }
+            other => panic!("expected Gc, got {other:?}"),
+        }
+    }
+
     /// Write a decision file straight to disk so tests can set fields the CLI
     /// cannot (a stale code ref, an aged `created`, or a missing component).
     fn plant_decision(store: &Store, name: &str, decision: Decision) {
@@ -469,6 +599,7 @@ mod tests {
             "auth",
             "Live decision",
             "Depends on the orphan",
+            &[],
             &[],
         )
         .unwrap();

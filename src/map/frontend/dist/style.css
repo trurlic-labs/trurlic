@@ -327,6 +327,23 @@ body {
   color: var(--text);
   border-color: transparent;
 }
+.chip.code-ref {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+}
+.chip.attr-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+.chip.attr-badge.agent {
+  background: var(--accent-dim);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.revision-count {
+  font-size: 12px;
+}
 
 /* ── Details ──────────────────────────────────────────────────────────── */
 details summary {

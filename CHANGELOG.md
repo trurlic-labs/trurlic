@@ -11,6 +11,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **`get_decisions_for_file` query tool.** New read-only MCP tool and CLI command
+  (`trurlic query file <path>`) that finds all decisions whose `code_refs`
+  reference a given file (exact match) or any file under a directory (prefix
+  match). Normalizes input paths (strips `./`, collapses `//`, rejects absolute
+  paths and traversals). Results sorted deterministically by (component, name).
 - **Agent / interactive mode separation.** `advance()` and `get_step_prompt`
   accept a `mode` parameter (`agent` | `interactive`). When omitted, `advance`
   returns `requires_mode: true` so the caller can present the choice. Agent mode
@@ -89,6 +94,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `mode="promote"` without the user's explicit review and confirmation.
   `AGENT_PROTOCOL` carries the same prohibition. The ready-response hint
   and context-brief call-to-action now address the user, not the agent.
+- **Map decision panel shows code refs, attribution, and revision count.**
+  The decision detail view now renders `code_refs` as monospace chips in
+  `file::symbol` format, an amber "agent · unreviewed" attribution badge for
+  agent-authored decisions, and a "Revised N×" indicator when a decision has
+  revision history. The REST API response includes `attribution` and
+  `revision_count` fields. TypeScript types updated with `CodeRefData`
+  interface.
 
 ### Changed
 
@@ -102,6 +114,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `PUT /api/decision/:name` endpoint maps its request body to a revise.
 - Loading a design session drops any recorded-decision names whose decisions no
   longer exist in the graph.
+- **`trurlic gc` defaults to dry-run.** `gc` now reports what would be reclaimed
+  without writing by default. Pass `--apply` to perform removals. The former
+  `--dry-run` flag is accepted as a hidden no-op for one release. `--aggressive
+  --apply` requires `--yes` in non-interactive environments (piped output, CI);
+  on a TTY it prompts for confirmation.
 
 ### Removed
 
@@ -193,6 +210,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (`decision_refs_all_missing`), shared by the context health report and `gc`,
   and uses `try_exists` so a permission or mount error never misreports a live
   file as deleted and drives a decision to be flagged or collected.
+- **`CodeRef` path validation rejects Windows drive-letter paths.** `C:/Users/x`,
+  `c:/file.rs`, and bare `D:` forms are now rejected by `validate_code_ref` on all
+  platforms, preventing `Path::join` from yielding an absolute path that escapes
+  the project root on Windows. The string-level check (first segment ending with
+  `:`) catches drive letters even on Unix builds, which matters because stores are
+  git-shared across OSes. A colon in a later path segment (`src/a:b.rs`) remains
+  valid.
 - **Unknown `step_evidence` keys are now rejected with a clear error.** Previously
   a typo in a step name (e.g. `designcheck` instead of `design_check`) was
   silently accepted, matched nothing, and caused the state machine to return the

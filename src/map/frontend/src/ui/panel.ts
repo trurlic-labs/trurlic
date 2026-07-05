@@ -1,4 +1,4 @@
-import type { RenderNode, DecisionNode, PatternNode } from '../types';
+import type { RenderNode, DecisionNode, PatternNode, CodeRefData } from '../types';
 import type { Graph } from '../state/graph';
 import type { ApiClient } from '../state/api';
 import { esc } from '../util';
@@ -132,13 +132,17 @@ export class Panel {
     this.currentView = { type: 'decision', name };
     const backHtml = this.history.length > 0 ? '<a href="#" class="panel-back">← back</a>' : '';
 
+    const attrHtml = renderAttribution(dec.attribution);
+    const revHtml = renderRevisionCount(dec.revision_count);
+    const metaSuffix = [attrHtml, revHtml].filter(Boolean).join(' ');
+
     this.el.innerHTML = `
       ${backHtml}
       <div class="panel-kind">decision</div>
       <h2 class="editable-heading" data-field="choice" data-dec="${esc(name)}" data-placeholder="Click to edit">${esc(dec.choice)}</h2>
       <p class="dim">
         <a class="nav-link" data-nav="${esc(dec.component)}" href="#">${esc(dec.component)}</a>
-        · ${new Date(dec.created).toLocaleDateString()}
+        · ${new Date(dec.created).toLocaleDateString()}${metaSuffix ? ` · ${metaSuffix}` : ''}
       </p>
       <h3>Reason</h3>
       <div class="editable-block" data-field="reason" data-dec="${esc(name)}" data-placeholder="Click to add reason">${esc(dec.reason)}</div>
@@ -150,6 +154,7 @@ export class Panel {
       `
           : ''
       }
+      ${renderCodeRefs(dec.code_refs ?? [])}
       ${
         dec.alternatives.length > 0
           ? `
@@ -356,6 +361,31 @@ export class Panel {
     errEl.textContent = msg;
     setTimeout(() => errEl?.remove(), 5000);
   }
+}
+
+// ── Exported helpers (tested in panel.test.ts) ──────────────────────────
+
+export function renderCodeRefs(refs: CodeRefData[]): string {
+  if (refs.length === 0) return '';
+  const items = refs
+    .map((r) => {
+      const display = r.symbol ? `${esc(r.file)}::${esc(r.symbol)}` : esc(r.file);
+      return `<span class="chip code-ref">${display}</span>`;
+    })
+    .join('');
+  return `<h3>Code references</h3>\n        <div class="chip-list">${items}</div>`;
+}
+
+export function renderAttribution(attribution: string | undefined): string {
+  if (attribution === 'agent') {
+    return '<span class="chip attr-badge agent">agent · unreviewed</span>';
+  }
+  return '';
+}
+
+export function renderRevisionCount(count: number | undefined): string {
+  if (!count) return '';
+  return `<span class="dim revision-count">Revised ${count}×</span>`;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────

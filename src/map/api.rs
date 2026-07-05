@@ -119,6 +119,8 @@ pub(crate) async fn get_graph(State(state): State<Arc<MapState>>) -> ApiResult {
                 "tags": d.tags,
                 "created": d.created.to_rfc3339(),
                 "alternatives": d.alternatives,
+                "attribution": d.attribution,
+                "revision_count": d.history.len(),
             });
             if !d.code_refs.is_empty() {
                 obj["code_refs"] = json!(store::code_refs_to_json(&d.code_refs));

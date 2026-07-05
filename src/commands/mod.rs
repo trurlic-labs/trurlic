@@ -16,12 +16,13 @@ pub use component::{
 };
 pub use decision::{decide, remove_agent_decisions, remove_decision};
 pub use design::design;
+pub(crate) use gc::{AggressiveConfirm, resolve_aggressive_confirm};
 pub use gc::{GcExecution, GcScope, gc};
 pub use init::init;
 pub use install::install;
 pub use map::map;
 pub use migrate::migrate;
-pub use query::{check, status};
+pub use query::{check, query_file, status};
 pub use serve::serve;
 
 use std::path::Path;
