@@ -2045,6 +2045,7 @@ mod tests {
             Some("fix error handling crash"),
             Some("fix"),
             Mode::Interactive,
+            chrono::Utc::now(),
         )
         .expect("build_step_prompt must accept cover_concerns from fix workflow");
 

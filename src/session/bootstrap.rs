@@ -166,6 +166,7 @@ async fn run_step(
         None,
         Some("bootstrap"),
         Mode::Agent,
+        chrono::Utc::now(),
     )
     .map_err(Error::Validation)?;
 

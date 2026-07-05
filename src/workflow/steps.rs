@@ -37,6 +37,9 @@ pub struct StepPrompt {
 ///
 /// `task_type` is optional context for steps that generate variant prompts
 /// (e.g. `design_check` varies by Feature vs Review vs NewComponent).
+///
+/// `now` is the current wall-clock time, injected by the caller so that
+/// prompt generation remains a pure function (no I/O, no clock reads).
 pub fn build_step_prompt(
     state: &ProjectState,
     component: &str,
@@ -44,6 +47,7 @@ pub fn build_step_prompt(
     task: Option<&str>,
     task_type: Option<&str>,
     mode: Mode,
+    now: DateTime<Utc>,
 ) -> Result<StepPrompt, String> {
     if component != "project" && !state.components.contains_key(component) {
         return Err(format!("component `{component}` does not exist"));
@@ -118,7 +122,7 @@ pub fn build_step_prompt(
         "impact_check" => out.push_str(&step_impact_check(graph, component, task_type, mode)),
         "pattern_detection" => out.push_str(&step_pattern_detection(graph, component, mode)),
         "design_check" | "summary_gate" => out.push_str(&step_design_check(task_type)),
-        "drift_check" => out.push_str(&step_drift_check(graph, component, mode)),
+        "drift_check" => out.push_str(&step_drift_check(graph, component, mode, now)),
         "coverage_audit" => {
             focus = uncovered.iter().map(|s| (*s).to_string()).collect();
             out.push_str(&step_coverage_audit(&covered, &uncovered, mode));
@@ -855,7 +859,12 @@ fn step_design_check(task_type: Option<&str>) -> String {
     )
 }
 
-fn step_drift_check(graph: &InMemoryGraph, component: &str, mode: Mode) -> String {
+fn step_drift_check(
+    graph: &InMemoryGraph,
+    component: &str,
+    mode: Mode,
+    now: DateTime<Utc>,
+) -> String {
     let mut decisions: Vec<_> = graph.decisions_for(component);
     decisions.sort_by_key(|(_, d)| d.decision.created);
 
@@ -873,7 +882,6 @@ fn step_drift_check(graph: &InMemoryGraph, component: &str, mode: Mode) -> Strin
                  \u{2014} older decisions are more likely to have drifted.\n\n",
             );
 
-            let now = Utc::now();
             for (name, d) in &decisions {
                 let code_line = format_code_refs_line(&d.decision);
                 let age_note = format!("Created: {}", d.decision.created.format("%Y-%m-%d"));
@@ -1124,8 +1132,8 @@ fn format_code_refs_line(decision: &Decision) -> String {
 
 /// Human-readable age between `created` and `now`.
 ///
-/// Takes `now` as a parameter so callers in prompts pass `Utc::now()`
-/// while tests pass a fixed timestamp.
+/// Takes `now` as a parameter so all callers use the injected clock,
+/// keeping prompt generation deterministic and testable.
 fn format_age(created: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let days = (now - created).num_days().max(0);
     if days < 30 {
@@ -1325,8 +1333,16 @@ mod tests {
             "drift_check",
             "coverage_audit",
         ] {
-            let result =
-                build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
+            let result = build_step_prompt(
+                &state,
+                "auth",
+                step,
+                None,
+                None,
+                Mode::Interactive,
+                Utc::now(),
+            )
+            .unwrap();
             assert!(
                 result.instructions.contains("Read the source code"),
                 "step `{step}` missing preamble"
@@ -1345,8 +1361,16 @@ mod tests {
             "verify_constraints",
             "design_check",
         ] {
-            let result =
-                build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
+            let result = build_step_prompt(
+                &state,
+                "auth",
+                step,
+                None,
+                None,
+                Mode::Interactive,
+                Utc::now(),
+            )
+            .unwrap();
             assert!(
                 result.instructions.contains("ONE topic per exchange"),
                 "step `{step}` missing interaction protocol"
@@ -1357,12 +1381,28 @@ mod tests {
     #[test]
     fn register_and_ready_skip_protocol() {
         let state = test_state();
-        let reg =
-            build_step_prompt(&state, "auth", "register", None, None, Mode::Interactive).unwrap();
+        let reg = build_step_prompt(
+            &state,
+            "auth",
+            "register",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(!reg.instructions.contains("ONE topic per exchange"));
 
-        let ready =
-            build_step_prompt(&state, "auth", "ready", None, None, Mode::Interactive).unwrap();
+        let ready = build_step_prompt(
+            &state,
+            "auth",
+            "ready",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(!ready.instructions.contains("ONE topic per exchange"));
     }
 
@@ -1378,6 +1418,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("responsible for"));
@@ -1395,6 +1436,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("Data structures"));
@@ -1412,6 +1454,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         // store has no decisions → all 10 concerns uncovered, focus is top 3.
@@ -1429,6 +1472,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("COVERED"));
@@ -1445,6 +1489,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("auth-jwt"));
@@ -1462,6 +1507,7 @@ mod tests {
             None,
             Some("review"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1492,6 +1538,7 @@ mod tests {
             None,
             Some("learn"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1518,6 +1565,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1566,6 +1614,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1581,8 +1630,16 @@ mod tests {
     #[test]
     fn walk_decisions_agent_unchanged_by_task_type() {
         let state = test_state();
-        let without =
-            build_step_prompt(&state, "auth", "walk_decisions", None, None, Mode::Agent).unwrap();
+        let without = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         let with_review = build_step_prompt(
             &state,
             "auth",
@@ -1590,6 +1647,7 @@ mod tests {
             None,
             Some("review"),
             Mode::Agent,
+            Utc::now(),
         )
         .unwrap();
         assert_eq!(
@@ -1608,6 +1666,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("CONSTRAINT:"));
@@ -1629,6 +1688,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1647,6 +1707,7 @@ mod tests {
             None,
             Some("fix"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1669,6 +1730,7 @@ mod tests {
             None,
             Some("feature"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1691,6 +1753,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         let feature = build_step_prompt(
@@ -1700,6 +1763,7 @@ mod tests {
             None,
             Some("feature"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert_eq!(
@@ -1719,6 +1783,7 @@ mod tests {
                 None,
                 task_type,
                 Mode::Interactive,
+                Utc::now(),
             )
             .unwrap();
             let understanding_pos = result
@@ -1746,6 +1811,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("store"));
@@ -1761,6 +1827,7 @@ mod tests {
             None,
             Some("fix"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1781,6 +1848,7 @@ mod tests {
             None,
             Some("feature"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1801,6 +1869,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         let feature = build_step_prompt(
@@ -1810,6 +1879,7 @@ mod tests {
             None,
             Some("feature"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert_eq!(
@@ -1828,6 +1898,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("auth-jwt"));
@@ -1844,6 +1915,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1868,6 +1940,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -1902,6 +1975,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         // store has 0 decisions → project-errors covers Error handling.
@@ -1976,8 +2050,16 @@ mod tests {
         ];
 
         for step in &interactive_steps {
-            let result =
-                build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
+            let result = build_step_prompt(
+                &state,
+                "auth",
+                step,
+                None,
+                None,
+                Mode::Interactive,
+                Utc::now(),
+            )
+            .unwrap();
 
             assert!(
                 !result.instructions.contains("confirm or correct"),
@@ -2010,6 +2092,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap_err();
         assert!(err.contains("does not exist"));
@@ -2018,8 +2101,16 @@ mod tests {
     #[test]
     fn unknown_step_returns_error() {
         let state = test_state();
-        let err = build_step_prompt(&state, "auth", "bogus_step", None, None, Mode::Interactive)
-            .unwrap_err();
+        let err = build_step_prompt(
+            &state,
+            "auth",
+            "bogus_step",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap_err();
         assert!(err.contains("unknown step"));
     }
 
@@ -2033,6 +2124,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("PROJECT LEVEL"));
@@ -2050,6 +2142,7 @@ mod tests {
             Some("add rate limiting"),
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("add rate limiting"));
@@ -2067,6 +2160,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("COMPONENT [auth]"));
@@ -2082,6 +2176,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("PROJECT LEVEL"));
@@ -2100,6 +2195,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("source code"));
@@ -2115,6 +2211,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2133,6 +2230,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("add_component"));
@@ -2150,6 +2248,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("source code"));
@@ -2165,6 +2264,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2183,6 +2283,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("[auth]"));
@@ -2199,6 +2300,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         // auth has existing decisions → they appear as constraints context.
@@ -2215,6 +2317,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         // auth connects to store → graph context present.
@@ -2231,6 +2334,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("source code"));
@@ -2246,6 +2350,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2264,6 +2369,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("cross-cutting"));
@@ -2276,8 +2382,16 @@ mod tests {
     #[test]
     fn build_step_prompt_accepts_warm_up() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "warm_up",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(result.instructions.contains("first thing you'd check"));
     }
 
@@ -2291,6 +2405,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("first thing you'd check"));
@@ -2299,8 +2414,16 @@ mod tests {
     #[test]
     fn warm_up_includes_interaction_protocol() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "warm_up",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result.instructions.contains("ONE topic per exchange"),
             "warm_up must include interaction protocol"
@@ -2310,8 +2433,16 @@ mod tests {
     #[test]
     fn warm_up_asks_boundary_question() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "warm_up",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result.instructions.contains("should never do"),
             "warm_up must probe component boundaries"
@@ -2321,8 +2452,16 @@ mod tests {
     #[test]
     fn warm_up_does_not_require_recall() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "warm_up", None, None, Mode::Interactive).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "warm_up",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             !result.instructions.contains("from memory"),
             "warm_up should not ask for recall from memory"
@@ -2341,6 +2480,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("Design Check"));
@@ -2356,6 +2496,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("Design Check"));
@@ -2371,6 +2512,7 @@ mod tests {
             None,
             Some("learn"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2393,6 +2535,7 @@ mod tests {
             None,
             Some("feature"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2415,6 +2558,7 @@ mod tests {
             None,
             Some("review"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2437,6 +2581,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2461,6 +2606,7 @@ mod tests {
             None,
             Some("learn"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2483,6 +2629,7 @@ mod tests {
             None,
             Some("feature"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2501,6 +2648,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2528,7 +2676,9 @@ mod tests {
             "drift_check",
             "coverage_audit",
         ] {
-            let result = build_step_prompt(&state, "auth", step, None, None, Mode::Agent).unwrap();
+            let result =
+                build_step_prompt(&state, "auth", step, None, None, Mode::Agent, Utc::now())
+                    .unwrap();
             assert!(
                 result.instructions.contains("AGENT PROTOCOL"),
                 "step `{step}` in agent mode missing AGENT PROTOCOL"
@@ -2553,8 +2703,16 @@ mod tests {
             "drift_check",
             "coverage_audit",
         ] {
-            let result =
-                build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
+            let result = build_step_prompt(
+                &state,
+                "auth",
+                step,
+                None,
+                None,
+                Mode::Interactive,
+                Utc::now(),
+            )
+            .unwrap();
             assert!(
                 result.instructions.contains("ONE topic per exchange"),
                 "step `{step}` in interactive mode missing INTERACTION PROTOCOL"
@@ -2569,8 +2727,16 @@ mod tests {
     #[test]
     fn agent_define_scope_reads_source_code() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "define_scope", None, None, Mode::Agent).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "define_scope",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result.instructions.contains("Read the source code"),
             "agent define_scope should instruct reading source code"
@@ -2591,6 +2757,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2609,6 +2776,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2636,9 +2804,19 @@ mod tests {
             "coverage_audit",
         ];
         for step in &dual_mode_steps {
-            let agent = build_step_prompt(&state, "auth", step, None, None, Mode::Agent).unwrap();
-            let interactive =
-                build_step_prompt(&state, "auth", step, None, None, Mode::Interactive).unwrap();
+            let agent =
+                build_step_prompt(&state, "auth", step, None, None, Mode::Agent, Utc::now())
+                    .unwrap();
+            let interactive = build_step_prompt(
+                &state,
+                "auth",
+                step,
+                None,
+                None,
+                Mode::Interactive,
+                Utc::now(),
+            )
+            .unwrap();
             assert_ne!(
                 agent.instructions, interactive.instructions,
                 "step `{step}` should produce different prompts for agent vs interactive"
@@ -2649,8 +2827,16 @@ mod tests {
     #[test]
     fn agent_analyze_code_records_without_discussion() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "analyze_code", None, None, Mode::Agent).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "analyze_code",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result
                 .instructions
@@ -2662,8 +2848,16 @@ mod tests {
     #[test]
     fn agent_cover_concerns_records_with_attribution() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "cover_concerns", None, None, Mode::Agent).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "cover_concerns",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(result.instructions.contains("attribution=\"agent\""));
         assert!(result.instructions.contains("without user interaction"));
     }
@@ -2678,6 +2872,7 @@ mod tests {
             None,
             Some("feature"),
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2706,6 +2901,7 @@ mod tests {
             None,
             None,
             Mode::Interactive,
+            Utc::now(),
         )
         .unwrap();
         assert!(
@@ -2727,8 +2923,16 @@ mod tests {
     #[test]
     fn cover_concerns_agent_unchanged_by_task_type() {
         let state = test_state();
-        let without =
-            build_step_prompt(&state, "store", "cover_concerns", None, None, Mode::Agent).unwrap();
+        let without = build_step_prompt(
+            &state,
+            "store",
+            "cover_concerns",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         let with_feature = build_step_prompt(
             &state,
             "store",
@@ -2736,6 +2940,7 @@ mod tests {
             None,
             Some("feature"),
             Mode::Agent,
+            Utc::now(),
         )
         .unwrap();
         assert_eq!(
@@ -2747,8 +2952,16 @@ mod tests {
     #[test]
     fn agent_walk_decisions_verifies_against_code() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "walk_decisions", None, None, Mode::Agent).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result
                 .instructions
@@ -2767,6 +2980,7 @@ mod tests {
             None,
             None,
             Mode::Agent,
+            Utc::now(),
         )
         .unwrap();
         assert!(result.instructions.contains("Locate in source code"));
@@ -2776,8 +2990,16 @@ mod tests {
     #[test]
     fn agent_impact_check_autonomous() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "impact_check", None, None, Mode::Agent).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "impact_check",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(result.instructions.contains("read the interface code"));
         assert!(!result.instructions.contains("STOP. Wait"));
     }
@@ -2785,17 +3007,32 @@ mod tests {
     #[test]
     fn agent_pattern_detection_records_with_attribution() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "pattern_detection", None, None, Mode::Agent)
-                .unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "pattern_detection",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(result.instructions.contains("attribution=\"agent\""));
     }
 
     #[test]
     fn agent_drift_check_verifies_automatically() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Agent).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result
                 .instructions
@@ -2806,9 +3043,16 @@ mod tests {
     #[test]
     fn drift_check_interactive_includes_age() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
-                .unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result
                 .instructions
@@ -2824,9 +3068,16 @@ mod tests {
     #[test]
     fn drift_check_interactive_stops_per_decision() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
-                .unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result.instructions.contains("STOP. Wait"),
             "interactive drift_check should stop after each decision"
@@ -2836,9 +3087,16 @@ mod tests {
     #[test]
     fn drift_check_interactive_discusses_before_revising() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
-                .unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result.instructions.contains("discuss what changed"),
             "interactive drift_check should discuss changes before revising"
@@ -2874,9 +3132,16 @@ mod tests {
         state.decisions.insert("auth-jwt".into(), with_refs);
         state.rebuild_graph();
 
-        let result =
-            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
-                .unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result.instructions.contains("src/auth/jwt.rs::verify_dpop"),
             "interactive drift_check should show code references via format_code_refs_line"
@@ -2886,9 +3151,16 @@ mod tests {
     #[test]
     fn drift_check_interactive_explains_oldest_first() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "drift_check", None, None, Mode::Interactive)
-                .unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(
             result.instructions.contains("Oldest first"),
             "interactive drift_check should explain oldest-first ordering"
@@ -2896,10 +3168,98 @@ mod tests {
     }
 
     #[test]
+    fn drift_check_prompt_deterministic_with_injected_now() {
+        let state = test_state();
+        let fixed_now = Utc.with_ymd_and_hms(2026, 7, 1, 12, 0, 0).unwrap();
+
+        let a = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            fixed_now,
+        )
+        .unwrap();
+
+        let b = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            fixed_now,
+        )
+        .unwrap();
+
+        assert_eq!(
+            a.instructions, b.instructions,
+            "same injected `now` must produce byte-identical prompts"
+        );
+    }
+
+    #[test]
+    fn drift_check_prompt_age_reflects_injected_now() {
+        let state = test_state();
+        // test_state decisions created at 2025-01-15 10:00:00
+        let now_a = Utc.with_ymd_and_hms(2025, 4, 20, 0, 0, 0).unwrap();
+        let now_b = Utc.with_ymd_and_hms(2027, 2, 15, 0, 0, 0).unwrap();
+
+        let prompt_a = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            now_a,
+        )
+        .unwrap();
+
+        let prompt_b = build_step_prompt(
+            &state,
+            "auth",
+            "drift_check",
+            None,
+            None,
+            Mode::Interactive,
+            now_b,
+        )
+        .unwrap();
+
+        // 2025-01-15 to 2025-04-20 ≈ 95 days → 3 months
+        assert!(
+            prompt_a.instructions.contains("3 months"),
+            "decision created 2025-01-15, now 2025-04-20 → 3 months old, got:\n{}",
+            prompt_a.instructions,
+        );
+        // 2025-01-15 to 2027-02-15 ≈ 761 days → 2 years
+        assert!(
+            prompt_b.instructions.contains("2 years"),
+            "decision created 2025-01-15, now 2027-02-15 → 2 years old, got:\n{}",
+            prompt_b.instructions,
+        );
+        assert_ne!(
+            prompt_a.instructions, prompt_b.instructions,
+            "different injected `now` must produce different age text"
+        );
+    }
+
+    #[test]
     fn agent_coverage_audit_reads_source() {
         let state = test_state();
-        let result =
-            build_step_prompt(&state, "auth", "coverage_audit", None, None, Mode::Agent).unwrap();
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "coverage_audit",
+            None,
+            None,
+            Mode::Agent,
+            Utc::now(),
+        )
+        .unwrap();
         assert!(result.instructions.contains("read the source code"));
     }
 
@@ -2919,7 +3279,8 @@ mod tests {
                 "auth"
             };
             for mode in [Mode::Interactive, Mode::Agent] {
-                let result = build_step_prompt(&state, comp, step, None, None, mode).unwrap();
+                let result =
+                    build_step_prompt(&state, comp, step, None, None, mode, Utc::now()).unwrap();
                 assert!(
                     !result.instructions.contains("AGENT PROTOCOL")
                         && !result.instructions.contains("ONE topic per exchange"),
@@ -3093,4 +3454,5 @@ mod tests {
             "AGENT_PROTOCOL must name the tool being prohibited"
         );
     }
+
 }

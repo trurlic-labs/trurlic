@@ -111,6 +111,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - `advance()` signature: added `mode: Option<Mode>` parameter.
 - `build_step_prompt()` signature: added `mode: Mode` parameter.
+- `build_step_prompt()` signature: added `now: DateTime<Utc>` parameter.
+  Prompt generation is now a pure function — callers at system boundaries
+  (MCP, session) inject `Utc::now()` rather than the function reading the
+  clock internally.
 - `get_step_prompt` MCP tool: `mode` is now a required parameter.
 - `advance` MCP tool: `mode` is optional — omitting it triggers the mode gate.
 - Response JSON includes `mode` field alongside `step`, `ready`, and
@@ -587,5 +591,6 @@ any MCP-compatible coding agent.
 - CodSpeed benchmarks for store operations (via `criterion` /
   `codspeed-criterion-compat`).
 
-[Unreleased]: https://github.com/trurlic-labs/trurlic/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/trurlic-labs/trurlic/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.2.0
 [0.1.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.1.0

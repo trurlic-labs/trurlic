@@ -484,8 +484,16 @@ mod integration_tests {
             .as_str()
             .unwrap_or(component);
 
-        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None, None, mode)
-            .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
+        let prompt = steps::build_step_prompt(
+            state,
+            prompt_component,
+            step_name,
+            None,
+            None,
+            mode,
+            Utc::now(),
+        )
+        .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
 
         // Every prompt must include the source code preamble.
         assert!(
@@ -754,7 +762,8 @@ mod integration_tests {
 
         for name in &step_names {
             for mode in [Mode::Interactive, Mode::Agent] {
-                let result = steps::build_step_prompt(&state, "store", name, None, None, mode);
+                let result =
+                    steps::build_step_prompt(&state, "store", name, None, None, mode, Utc::now());
                 assert!(
                     result.is_ok(),
                     "build_step_prompt must accept step `{name}` in {:?}: {:?}",
@@ -798,7 +807,8 @@ mod integration_tests {
         for variant in &variants {
             let name = variant.as_str();
             for mode in [Mode::Interactive, Mode::Agent] {
-                let result = steps::build_step_prompt(&state, "store", name, None, None, mode);
+                let result =
+                    steps::build_step_prompt(&state, "store", name, None, None, mode, Utc::now());
                 assert!(
                     result.is_ok(),
                     "Step::{:?} as_str `{name}` rejected by build_step_prompt in {:?}: {:?}",

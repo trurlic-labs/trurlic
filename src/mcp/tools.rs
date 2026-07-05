@@ -682,11 +682,18 @@ fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope 
         None => return tool_error("missing required parameter: mode"),
     };
 
-    let prompt =
-        match workflow::steps::build_step_prompt(state, component, step, task, task_type, mode) {
-            Ok(p) => p,
-            Err(msg) => return tool_error(&msg),
-        };
+    let prompt = match workflow::steps::build_step_prompt(
+        state,
+        component,
+        step,
+        task,
+        task_type,
+        mode,
+        chrono::Utc::now(),
+    ) {
+        Ok(p) => p,
+        Err(msg) => return tool_error(&msg),
+    };
 
     let ctx = match context::get_context(state, component, task, context::ContextDepth::Full) {
         Ok(c) => c,
