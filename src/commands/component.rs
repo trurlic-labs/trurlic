@@ -4,6 +4,7 @@ use crate::{Error, Result};
 
 use super::open_store_mut;
 
+/// `trurlic add component` — register a new component node.
 pub fn add_component(cwd: &Path, name: &str, description: Option<&str>) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.add_component(&lock, &mut state, name, description.unwrap_or_default())?;
@@ -11,6 +12,7 @@ pub fn add_component(cwd: &Path, name: &str, description: Option<&str>) -> Resul
     Ok(())
 }
 
+/// `trurlic connect` — add a directed `ConnectsTo` edge between components.
 pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.add_connection(&lock, &mut state, from, to)?;
@@ -18,6 +20,7 @@ pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
     Ok(())
 }
 
+/// `trurlic rename component` — rename a component, rewriting every incident edge.
 pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.rename_component(&lock, &mut state, old, new)?;
@@ -25,6 +28,9 @@ pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
     Ok(())
 }
 
+/// `trurlic remove component` — delete a component after a cascade pre-flight.
+/// Refused with `CascadeBlocked` if decisions still reference it; non-blocking
+/// warnings are printed but do not stop the removal.
 pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
 
@@ -41,6 +47,7 @@ pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// `trurlic disconnect` — remove a `ConnectsTo` edge between components.
 pub fn remove_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.remove_connection(&lock, &mut state, from, to)?;
@@ -320,8 +327,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
-        decide(tmp.path(), "auth", "Use Redis", "Fast sessions", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use Redis", "Fast sessions", &[], &[]).unwrap();
 
         rename_component(tmp.path(), "auth", "authentication").unwrap();
 
@@ -361,7 +368,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
 
         let err = remove_component(tmp.path(), "auth").unwrap_err();
         match err {

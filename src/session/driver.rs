@@ -117,6 +117,7 @@ pub(crate) async fn run(
             ctx.task,
             tt_str,
             Mode::Interactive,
+            chrono::Utc::now(),
         )
         .map_err(Error::Validation)?;
 

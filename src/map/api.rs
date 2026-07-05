@@ -30,6 +30,7 @@ use super::{MapState, ws};
 /// Maximum number of layout positions in a single PUT.
 const MAX_LAYOUT_POSITIONS: usize = 10_000;
 
+/// Request body for `POST /api/component`.
 #[derive(Deserialize)]
 pub(crate) struct CreateComponent {
     name: String,
@@ -37,12 +38,15 @@ pub(crate) struct CreateComponent {
     description: String,
 }
 
+/// Request body for `POST /api/connection`.
 #[derive(Deserialize)]
 pub(crate) struct CreateConnection {
     from: String,
     to: String,
 }
 
+/// Request body for `PUT /api/decision/:name`. Every field is optional — only
+/// the present ones are revised; `code_refs`, when present, replaces the set.
 #[derive(Deserialize)]
 pub(crate) struct ReviseDecision {
     choice: Option<String>,
@@ -51,6 +55,8 @@ pub(crate) struct ReviseDecision {
     code_refs: Option<Vec<store::CodeRef>>,
 }
 
+/// Request body for `PUT /api/layout`. `layout_version` is the optimistic-
+/// concurrency token the client last read.
 #[derive(Deserialize)]
 pub(crate) struct PutLayout {
     positions: std::collections::BTreeMap<String, Position>,
@@ -79,6 +85,52 @@ fn check_field_len(field: &str, value: &str) -> Result<(), (StatusCode, Json<Val
 
 fn api_err(status: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<Value>) {
     (status, Json(json!({ "error": msg.into() })))
+}
+
+/// Map a store [`Error`](crate::Error) to the HTTP status a JSON API client
+/// should see. Exhaustive by construction: a new `Error` variant fails to
+/// compile here until its status is chosen deliberately, so no error silently
+/// degrades to a generic 500.
+fn error_status(err: &crate::Error) -> StatusCode {
+    use crate::Error;
+    match err {
+        // Missing resources → 404.
+        Error::ComponentNotFound(_)
+        | Error::DecisionNotFound(_)
+        | Error::ConnectionNotFound { .. }
+        | Error::StoreNotFound(_) => StatusCode::NOT_FOUND,
+
+        // Bad client input / rejected mutation → 400.
+        Error::InvalidName(_)
+        | Error::ReservedName(_)
+        | Error::SelfConnection(_)
+        | Error::ComponentExists(_)
+        | Error::DuplicateConnection { .. }
+        | Error::Validation(_)
+        | Error::GraphIntegrity(_)
+        | Error::CascadeBlocked(_) => StatusCode::BAD_REQUEST,
+
+        // Lock contention → 503, tell the client to retry.
+        Error::LockTimeout { .. } => StatusCode::SERVICE_UNAVAILABLE,
+
+        // Internal faults the client cannot act on → 500.
+        Error::Io(_)
+        | Error::TomlRead(_)
+        | Error::TomlWrite(_)
+        | Error::StoreExists(_)
+        | Error::CheckFailed(_)
+        | Error::ProviderConfig(_)
+        | Error::Api { .. }
+        | Error::HomeNotFound
+        | Error::BinaryNotFound
+        | Error::InvalidInstallConfig { .. }
+        | Error::InvalidInstallStructure { .. }
+        | Error::InvalidBinaryPath(_)
+        | Error::InvalidInstallToml { .. }
+        | Error::InvalidInstallYaml { .. }
+        | Error::ClaudeCliNotFound
+        | Error::ClaudeCliExec(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 type ApiResult = Result<Json<Value>, (StatusCode, Json<Value>)>;
@@ -119,6 +171,8 @@ pub(crate) async fn get_graph(State(state): State<Arc<MapState>>) -> ApiResult {
                 "tags": d.tags,
                 "created": d.created.to_rfc3339(),
                 "alternatives": d.alternatives,
+                "attribution": d.attribution,
+                "revision_count": d.history.len(),
             });
             if !d.code_refs.is_empty() {
                 obj["code_refs"] = json!(store::code_refs_to_json(&d.code_refs));
@@ -402,14 +456,7 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
     state
         .store
         .revise_decision(&lock, &mut ps, &name, params)
-        .map_err(|e| {
-            let status = match e {
-                crate::Error::DecisionNotFound(_) => StatusCode::NOT_FOUND,
-                crate::Error::Validation(_) => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            api_err(status, e.to_string())
-        })?;
+        .map_err(|e| api_err(error_status(&e), e.to_string()))?;
 
     ws::broadcast(
         &state.ws_tx,

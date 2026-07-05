@@ -44,7 +44,6 @@ function snapshotColors(): ColorSnapshot {
     edge: v('--edge', '#4a4a56'),
     edgeDep: v('--edge-dep', '#7aad6a'),
     edgeCon: v('--edge-con', '#c09040'),
-    edgeSup: v('--edge-sup', '#a07890'),
     selectRing: v('--select', '#e8993a'),
     badge: v('--badge', '#4a4a56'),
     minimap: v('--minimap-bg', '#1c1c26'),

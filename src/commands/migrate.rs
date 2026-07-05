@@ -11,6 +11,9 @@ use crate::{Error, Result};
 
 use super::DryRun;
 
+/// `trurlic migrate` — upgrade an on-disk store to the current `FORMAT_VERSION`:
+/// re-serialize every node to the latest schema and drop edges whose kind the
+/// schema retired. `DryRun::Yes` reports the plan without writing.
 pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     let store = Store::discover(cwd)?;
     store.clean_stale_tmp()?;
@@ -342,7 +345,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(tmp.path(), "auth", "Use JWT tokens", "Stateless auth", &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Use JWT tokens",
+            "Stateless auth",
+            &[],
+            &[],
+        )
+        .unwrap();
 
         // Downgrade the version to simulate an old store.
         let store = Store::discover(tmp.path()).unwrap();
@@ -456,7 +467,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(tmp.path(), "auth", "Use JWT tokens", "Stateless auth", &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Use JWT tokens",
+            "Stateless auth",
+            &[],
+            &[],
+        )
+        .unwrap();
 
         // Downgrade and strip the attribution field from the decision file
         // to simulate an older format that didn't have it.
@@ -559,12 +578,21 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(tmp.path(), "auth", "Old choice", "Superseded later", &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Old choice",
+            "Superseded later",
+            &[],
+            &[],
+        )
+        .unwrap();
         decide(
             tmp.path(),
             "auth",
             "New choice",
             "Replaces the old one",
+            &[],
             &[],
         )
         .unwrap();
@@ -618,12 +646,21 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(tmp.path(), "auth", "Old choice", "Superseded later", &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Old choice",
+            "Superseded later",
+            &[],
+            &[],
+        )
+        .unwrap();
         decide(
             tmp.path(),
             "auth",
             "New choice",
             "Replaces the old one",
+            &[],
             &[],
         )
         .unwrap();
@@ -664,8 +701,8 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Auth module")).unwrap();
         add_component(tmp.path(), "api", Some("API module")).unwrap();
-        decide(tmp.path(), "auth", "JWT tokens", "Stateless", &[]).unwrap();
-        decide(tmp.path(), "api", "REST API", "Standard", &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT tokens", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "api", "REST API", "Standard", &[], &[]).unwrap();
 
         // Create a pattern file directly (store::record_pattern is pub(crate)
         // in the private `write` module, so we write TOML by hand).

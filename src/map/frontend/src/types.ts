@@ -18,6 +18,11 @@ export interface ComponentNode {
   pattern_count: number;
 }
 
+export interface CodeRefData {
+  file: string;
+  symbol?: string;
+}
+
 export interface DecisionNode {
   name: string;
   component: string;
@@ -26,6 +31,9 @@ export interface DecisionNode {
   tags: string[];
   created: string;
   alternatives: string[];
+  code_refs?: CodeRefData[];
+  attribution?: string;
+  revision_count?: number;
 }
 
 export interface PatternNode {
@@ -105,7 +113,6 @@ export interface ColorSnapshot {
   edge: string;
   edgeDep: string;
   edgeCon: string;
-  edgeSup: string;
   selectRing: string;
   badge: string;
   minimap: string;
@@ -131,7 +138,7 @@ export interface FilterState {
 
 export function defaultFilterState(): FilterState {
   return {
-    edgeKinds: new Set(['connects_to', 'depends_on', 'constrains', 'supersedes']),
+    edgeKinds: new Set(['connects_to', 'depends_on', 'constrains']),
     activeTags: new Set(),
     focusMode: false,
     maxAgeDays: null,

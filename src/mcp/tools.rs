@@ -187,16 +187,32 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 }
             },
             {
-                "name": "validate_consistency",
-                "description": "Full graph integrity check. Same validation as `trurlic check`.",
+                "name": "get_decisions_for_file",
+                "description": "Reverse lookup: given a file path, find every decision \
+                    whose code_refs reference it (exact match or directory prefix). \
+                    Returns decisions sorted by component then name. Does NOT include \
+                    project-wide rules — they apply everywhere; pair with get_context \
+                    for full coverage.",
                 "annotations": {
-                    "title": "Validate consistency",
+                    "title": "Get decisions for file",
                     "readOnlyHint": true,
                     "destructiveHint": false,
                     "idempotentHint": true,
                     "openWorldHint": false
                 },
-                "inputSchema": { "type": "object", "properties": {} }
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                            "description": "Relative file path or directory from project root \
+                                (e.g. 'src/store/write.rs' or 'src/store'). \
+                                Leading './' is stripped; backslashes, traversal (..), \
+                                and absolute paths are rejected."
+                        }
+                    },
+                    "required": ["file"]
+                }
             },
             {
                 "name": "record_decision",
@@ -361,7 +377,7 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         "mode": {
                             "type": "string",
                             "enum": ["revise", "promote"],
-                            "description": "revise: update content, previous version saved to history. promote: change attribution from agent to user (marks as human-reviewed)."
+                            "description": "revise: update content, previous version saved to history. promote: mark an agent decision as human-reviewed. Call ONLY when the user has explicitly reviewed the decision and confirmed it in this conversation. Never promote autonomously; never promote in agent mode."
                         },
                         "choice": {
                             "type": "string",
@@ -552,8 +568,8 @@ pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> 
         "get_context" => dispatch_get_context(state, args),
         "check_pattern" => dispatch_check_pattern(state, args),
         "get_decision_history" => dispatch_get_decision_history(state, args),
+        "get_decisions_for_file" => dispatch_get_decisions_for_file(state, args),
         "get_architecture" => tool_result(&context::get_architecture(state)),
-        "validate_consistency" => tool_result(&write::validate_consistency(state)),
         "get_step_prompt" => dispatch_get_step_prompt(state, args),
         _ => tool_error(&format!("unknown tool: {name}")),
     }
@@ -621,6 +637,17 @@ fn dispatch_get_decision_history(state: &ProjectState, args: &Value) -> ToolEnve
     }
 }
 
+fn dispatch_get_decisions_for_file(state: &ProjectState, args: &Value) -> ToolEnvelope {
+    let file = match args.get("file").and_then(|v| v.as_str()) {
+        Some(f) => f,
+        None => return tool_error("missing required parameter: file"),
+    };
+    match context::get_decisions_for_file(state, file) {
+        Ok(result) => tool_result(&result),
+        Err(msg) => tool_error(&msg),
+    }
+}
+
 fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope {
     let component = match args.get("component").and_then(|v| v.as_str()) {
         Some(c) => c,
@@ -642,11 +669,18 @@ fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope 
         None => return tool_error("missing required parameter: mode"),
     };
 
-    let prompt =
-        match workflow::steps::build_step_prompt(state, component, step, task, task_type, mode) {
-            Ok(p) => p,
-            Err(msg) => return tool_error(&msg),
-        };
+    let prompt = match workflow::steps::build_step_prompt(
+        state,
+        component,
+        step,
+        task,
+        task_type,
+        mode,
+        chrono::Utc::now(),
+    ) {
+        Ok(p) => p,
+        Err(msg) => return tool_error(&msg),
+    };
 
     let ctx = match context::get_context(state, component, task, context::ContextDepth::Full) {
         Ok(c) => c,
@@ -771,8 +805,8 @@ mod tests {
         assert!(names.contains(&"get_context"));
         assert!(names.contains(&"check_pattern"));
         assert!(names.contains(&"get_decision_history"));
+        assert!(names.contains(&"get_decisions_for_file"));
         assert!(names.contains(&"get_architecture"));
-        assert!(names.contains(&"validate_consistency"));
         assert!(names.contains(&"record_decision"));
         assert!(names.contains(&"record_pattern"));
         assert!(names.contains(&"remove_decision"));
@@ -859,8 +893,8 @@ mod tests {
         assert!(!is_write_tool("get_context"));
         assert!(!is_write_tool("check_pattern"));
         assert!(!is_write_tool("get_decision_history"));
+        assert!(!is_write_tool("get_decisions_for_file"));
         assert!(!is_write_tool("get_architecture"));
-        assert!(!is_write_tool("validate_consistency"));
         assert!(!is_write_tool("get_step_prompt"));
 
         // Unknown.
@@ -936,8 +970,8 @@ mod tests {
             "get_context",
             "check_pattern",
             "get_decision_history",
+            "get_decisions_for_file",
             "get_architecture",
-            "validate_consistency",
             "get_step_prompt",
         ];
         for tool in tools {
@@ -1065,6 +1099,267 @@ mod tests {
         assert!(
             envelope.content[0].text.contains("mode"),
             "error should mention mode: {}",
+            envelope.content[0].text,
+        );
+    }
+
+    #[test]
+    fn dispatch_advance_unknown_step_evidence_key_returns_error() {
+        let state = empty_state();
+        let args = serde_json::json!({
+            "component": "project",
+            "mode": "agent",
+            "step_evidence": {
+                "designcheck": "this is more than twenty bytes of evidence text"
+            }
+        });
+        let envelope = call_read_tool(&state, "advance", &args);
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "unknown step_evidence key should surface as tool error"
+        );
+        assert!(
+            envelope.content[0].text.contains("designcheck"),
+            "error should mention the bad key: {}",
+            envelope.content[0].text,
+        );
+    }
+
+    // ── T05: promote guardrails in tool schema ─────────────────────
+
+    #[test]
+    fn update_decision_promote_description_prohibits_autonomous_use() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "update_decision")
+            .unwrap();
+        let mode_desc = tool["inputSchema"]["properties"]["mode"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            mode_desc.contains("ONLY when the user has explicitly reviewed"),
+            "promote mode description must require explicit user review: {mode_desc}"
+        );
+        assert!(
+            mode_desc.contains("Never promote autonomously"),
+            "promote mode description must prohibit autonomous promotion: {mode_desc}"
+        );
+    }
+
+    // ── T09: get_decisions_for_file dispatch tests ──────────────────
+
+    #[test]
+    fn dispatch_get_decisions_for_file_missing_param() {
+        let state = empty_state();
+        let envelope = call_read_tool(&state, "get_decisions_for_file", &serde_json::json!({}));
+        assert_eq!(envelope.is_error, Some(true));
+        assert!(envelope.content[0].text.contains("file"));
+    }
+
+    #[test]
+    fn dispatch_get_decisions_for_file_invalid_path() {
+        let state = empty_state();
+        let args = serde_json::json!({ "file": "/etc/passwd" });
+        let envelope = call_read_tool(&state, "get_decisions_for_file", &args);
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "absolute path should be rejected"
+        );
+        assert!(
+            envelope.content[0].text.contains("invalid file path"),
+            "error should describe the issue: {}",
+            envelope.content[0].text
+        );
+    }
+
+    #[test]
+    fn dispatch_get_decisions_for_file_no_match_returns_empty() {
+        let state = empty_state();
+        let args = serde_json::json!({ "file": "src/store/write.rs" });
+        let envelope = call_read_tool(&state, "get_decisions_for_file", &args);
+        assert!(envelope.is_error.is_none());
+        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        assert_eq!(result["count"], 0);
+        assert!(result["decisions"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dispatch_get_decisions_for_file_finds_matching_decision() {
+        use crate::store::schema::*;
+        use chrono::{TimeZone, Utc};
+
+        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap();
+        let mut state = empty_state();
+        state.components.insert(
+            "store".into(),
+            std::sync::Arc::new(ComponentFile {
+                component: Component {
+                    name: "store".into(),
+                    description: "The store".into(),
+                },
+            }),
+        );
+        state.decisions.insert(
+            "atomic-writes".into(),
+            std::sync::Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "store".into(),
+                    choice: "Atomic writes via temp + rename".into(),
+                    reason: "Crash safety".into(),
+                    alternatives: vec![],
+                    tags: vec!["reliability".into()],
+                    attribution: Attribution::User,
+                    created: ts,
+                    code_refs: vec![CodeRef {
+                        file: "src/store/write.rs".into(),
+                        symbol: Some("commit_with_graph".into()),
+                    }],
+                    history: vec![],
+                },
+            }),
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "store".into(),
+            kind: NodeKind::Component,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.nodes.push(NodeEntry {
+            name: "atomic-writes".into(),
+            kind: NodeKind::Decision,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "atomic-writes".into(),
+            to: "store".into(),
+            kind: EdgeKind::BelongsTo,
+        });
+        state.rebuild_graph();
+
+        let args = serde_json::json!({ "file": "src/store/write.rs" });
+        let envelope = call_read_tool(&state, "get_decisions_for_file", &args);
+        assert!(envelope.is_error.is_none(), "should succeed");
+        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        assert_eq!(result["count"], 1);
+        let decisions = result["decisions"].as_array().unwrap();
+        assert_eq!(decisions[0]["name"], "atomic-writes");
+        assert_eq!(decisions[0]["component"], "store");
+        assert_eq!(decisions[0]["attribution"], "user");
+        assert!(
+            decisions[0]["tags"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("reliability"))
+        );
+        let refs = decisions[0]["matching_refs"].as_array().unwrap();
+        assert_eq!(refs[0]["file"], "src/store/write.rs");
+        assert_eq!(refs[0]["symbol"], "commit_with_graph");
+    }
+
+    #[test]
+    fn dispatch_get_decisions_for_file_directory_prefix() {
+        use crate::store::schema::*;
+        use chrono::{TimeZone, Utc};
+
+        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap();
+        let mut state = empty_state();
+        state.components.insert(
+            "store".into(),
+            std::sync::Arc::new(ComponentFile {
+                component: Component {
+                    name: "store".into(),
+                    description: "The store".into(),
+                },
+            }),
+        );
+        state.decisions.insert(
+            "atomic-writes".into(),
+            std::sync::Arc::new(DecisionFile {
+                decision: Decision {
+                    component: "store".into(),
+                    choice: "Atomic writes".into(),
+                    reason: "Crash safety".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::Agent,
+                    created: ts,
+                    code_refs: vec![CodeRef {
+                        file: "src/store/write.rs".into(),
+                        symbol: None,
+                    }],
+                    history: vec![],
+                },
+            }),
+        );
+        state.graph_index.nodes.push(NodeEntry {
+            name: "store".into(),
+            kind: NodeKind::Component,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.nodes.push(NodeEntry {
+            name: "atomic-writes".into(),
+            kind: NodeKind::Decision,
+            tags: vec![],
+            hash: String::new(),
+        });
+        state.graph_index.edges.push(EdgeEntry {
+            from: "atomic-writes".into(),
+            to: "store".into(),
+            kind: EdgeKind::BelongsTo,
+        });
+        state.rebuild_graph();
+
+        let args = serde_json::json!({ "file": "./src/store" });
+        let envelope = call_read_tool(&state, "get_decisions_for_file", &args);
+        assert!(envelope.is_error.is_none());
+        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        assert_eq!(result["file"], "src/store", "leading ./ must be normalized");
+        assert_eq!(result["count"], 1);
+    }
+
+    #[test]
+    fn get_decisions_for_file_is_read_tool() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "get_decisions_for_file")
+            .unwrap();
+        assert_eq!(tool["annotations"]["readOnlyHint"], true);
+        assert_eq!(tool["inputSchema"]["required"][0], "file");
+    }
+
+    // ── C05: validate_consistency removed ─────────────────────────
+
+    #[test]
+    fn validate_consistency_absent_from_tool_list() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(
+            !names.contains(&"validate_consistency"),
+            "validate_consistency should have been removed from the tool catalogue"
+        );
+    }
+
+    #[test]
+    fn dispatch_validate_consistency_returns_unknown_tool() {
+        let state = empty_state();
+        let envelope = call_read_tool(&state, "validate_consistency", &serde_json::json!({}));
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "validate_consistency should be rejected as unknown"
+        );
+        assert!(
+            envelope.content[0].text.contains("unknown tool"),
+            "error should say 'unknown tool': {}",
             envelope.content[0].text,
         );
     }

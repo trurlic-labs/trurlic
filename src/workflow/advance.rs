@@ -70,7 +70,17 @@ pub fn advance(
         super::validate_mode_task(mode, tt)?;
     }
 
-    // ── Evidence validation (interactive only) ───────────────────────
+    // ── Reject unknown step names (both modes) ────────────────────────
+    for step_name in step_evidence.keys() {
+        if Step::is_gated_name(step_name).is_none() {
+            return Err(format!(
+                "unknown step_evidence key `{step_name}` — valid names: {}",
+                Step::ALL_NAMES.join(", ")
+            ));
+        }
+    }
+
+    // ── Evidence length validation (interactive only) ────────────────
     if mode == Mode::Interactive {
         for (step_name, evidence) in step_evidence {
             if let Some(true) = Step::is_gated_name(step_name)
@@ -98,7 +108,6 @@ pub fn advance(
             component,
             TaskType::NewComponent,
             &Step::Register,
-            false,
             mode,
             Value::Null,
             serde_json::json!({
@@ -129,10 +138,12 @@ pub fn advance(
     let stale: Vec<StaleDec> = decisions
         .iter()
         .filter_map(|(name, d)| {
-            let age_days = now.signed_duration_since(d.decision.created).num_days();
+            let touched = d.decision.last_touched();
+            let age_days = now.signed_duration_since(touched).num_days();
             (age_days >= STALENESS_THRESHOLD_DAYS).then(|| StaleDec {
                 name: Arc::clone(name),
                 created: d.decision.created.to_rfc3339(),
+                last_touched: touched.to_rfc3339(),
                 age_days,
             })
         })
@@ -140,11 +151,27 @@ pub fn advance(
 
     let patterns = graph.patterns_for(component);
 
+    // All step-deduction state, bundled once and threaded through both
+    // task-type inference and step deduction so neither carries a long
+    // parameter list.
+    let ctx = DeduceContext {
+        decisions: &decisions,
+        covered: &covered,
+        uncovered: &uncovered,
+        stale: &stale,
+        patterns: &patterns,
+        graph,
+        component,
+        task,
+        completed: &completed,
+        mode,
+    };
+
     // ── Infer task type if not provided ───────────────────────────────
 
     let task_type = match task_type {
         Some(tt) => tt,
-        None => match infer_task_type(&decisions, task, &covered, &uncovered, &stale) {
+        None => match infer_task_type(&ctx) {
             Some(tt) => {
                 // Validate mode × inferred task_type.
                 super::validate_mode_task(mode, tt)?;
@@ -168,25 +195,13 @@ pub fn advance(
 
     // ── Deduce step ───────────────────────────────────────────────────
 
-    let ctx = DeduceContext {
-        decisions: &decisions,
-        covered: &covered,
-        uncovered: &uncovered,
-        stale: &stale,
-        patterns: &patterns,
-        graph,
-        component,
-        task,
-        completed: &completed,
-        mode,
-    };
     let step = deduce_step(task_type, &ctx);
 
-    let ready = matches!(step, Step::Ready);
     let assessment = build_assessment(&decisions, &covered, &uncovered, &stale, &patterns);
     let action = step_action(component, &step, task, mode);
 
-    let response = build_response(component, task_type, &step, ready, mode, assessment, action);
+    let response = build_response(component, task_type, &step, mode, assessment, action);
+    let ready = step.is_terminal();
     if ready {
         Ok(with_agent_review_hint(
             response,
@@ -201,20 +216,31 @@ pub fn advance(
 
 /// Infer the task type from graph state when not explicitly provided.
 ///
+/// Mode-aware: in `Agent` mode, a component with zero decisions and no
+/// task infers `Bootstrap` (autonomous extraction). In `Interactive`
+/// mode, the same state infers `Learn` (user-guided understanding).
+/// This ensures the inferred type always passes `validate_mode_task`.
+///
 /// Returns `None` when the component is fully designed and no task is
 /// specified — the caller should return `Ready` directly.
-fn infer_task_type(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    task: Option<&str>,
-    covered: &[&str],
-    uncovered: &[&str],
-    stale: &[StaleDec],
-) -> Option<TaskType> {
+fn infer_task_type(ctx: &DeduceContext<'_>) -> Option<TaskType> {
+    let DeduceContext {
+        decisions,
+        task,
+        covered,
+        uncovered,
+        stale,
+        mode,
+        ..
+    } = *ctx;
     if decisions.is_empty() {
         return if task.is_some() {
             Some(TaskType::NewComponent)
         } else {
-            Some(TaskType::Learn)
+            match mode {
+                Mode::Agent => Some(TaskType::Bootstrap),
+                Mode::Interactive => Some(TaskType::Learn),
+            }
         };
     }
 
@@ -259,57 +285,27 @@ struct DeduceContext<'a> {
 /// The machine errs on the side of returning `Ready` rather than looping.
 fn deduce_step(task_type: TaskType, ctx: &DeduceContext<'_>) -> Step {
     match task_type {
-        TaskType::NewComponent => deduce_new_component(
-            ctx.decisions,
-            ctx.covered,
-            ctx.uncovered,
-            ctx.patterns,
-            ctx.completed,
-            ctx.mode,
-        ),
-        TaskType::Feature => deduce_feature(
-            ctx.decisions,
-            ctx.covered,
-            ctx.uncovered,
-            ctx.patterns,
-            ctx.task,
-            ctx.completed,
-            ctx.mode,
-        ),
-        TaskType::Fix => deduce_fix(
-            ctx.decisions,
-            ctx.uncovered,
-            ctx.graph,
-            ctx.component,
-            ctx.task,
-            ctx.completed,
-        ),
-        TaskType::Learn => deduce_learn(ctx.decisions, ctx.patterns, ctx.completed),
-        TaskType::Review => deduce_review(
-            ctx.decisions,
-            ctx.stale,
-            ctx.covered,
-            ctx.uncovered,
-            ctx.patterns,
-            ctx.completed,
-            ctx.mode,
-        ),
-        TaskType::Harden => deduce_harden(ctx.uncovered, ctx.patterns, ctx.completed),
-        TaskType::Bootstrap => {
-            deduce_bootstrap_component(ctx.decisions, ctx.patterns, ctx.component)
-        }
+        TaskType::NewComponent => deduce_new_component(ctx),
+        TaskType::Feature => deduce_feature(ctx),
+        TaskType::Fix => deduce_fix(ctx),
+        TaskType::Learn => deduce_learn(ctx),
+        TaskType::Review => deduce_review(ctx),
+        TaskType::Harden => deduce_harden(ctx),
+        TaskType::Bootstrap => deduce_bootstrap_component(ctx),
     }
 }
 
 /// NewComponent: Register → DefineScope → CoverConcerns → PatternDetection → [DesignCheck] → Ready
-fn deduce_new_component(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    covered: &[&str],
-    uncovered: &[&str],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    completed: &[&str],
-    mode: Mode,
-) -> Step {
+fn deduce_new_component(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        covered,
+        uncovered,
+        patterns,
+        completed,
+        mode,
+        ..
+    } = *ctx;
     if !has_scope_decision(decisions) {
         return Step::DefineScope;
     }
@@ -341,21 +337,26 @@ fn deduce_new_component(
 /// keyword relevance to the task description (e.g. "add caching" matches
 /// "Performance constraints" via the "cache" keyword). If no task or no
 /// keyword matches, fall back to the majority threshold (uncovered > covered).
+/// Gated by `completed_steps` to prevent infinite loops when recorded
+/// decisions don't match concern keywords — once the caller reports
+/// `cover_concerns` in `step_evidence`, the step is never returned again.
 ///
 /// PatternDetection: after concerns are covered, look for patterns across
 /// decisions. Has a verifiable postcondition (patterns recorded).
 ///
 /// DesignCheck: practical comprehension check — user demonstrates
 /// understanding through a context-appropriate question.
-fn deduce_feature(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    covered: &[&str],
-    uncovered: &[&str],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    task: Option<&str>,
-    completed: &[&str],
-    mode: Mode,
-) -> Step {
+fn deduce_feature(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        covered,
+        uncovered,
+        patterns,
+        task,
+        completed,
+        mode,
+        ..
+    } = *ctx;
     // VerifyConstraints: existing decisions need checking against the task.
     // Skipped only when no decisions exist (nothing to verify) or when
     // the caller signals the step was already completed.
@@ -364,20 +365,24 @@ fn deduce_feature(
     }
 
     // CoverConcerns: focused on task-relevant gaps.
-    if let Some(t) = task {
-        let relevant = task_relevant_concerns(uncovered, t);
-        if !relevant.is_empty() {
+    // Gated by completed_steps to prevent infinite loops when recorded
+    // decisions don't match concern keywords.
+    if !completed.contains(&"cover_concerns") {
+        if let Some(t) = task {
+            let relevant = task_relevant_concerns(uncovered, t);
+            if !relevant.is_empty() {
+                return Step::CoverConcerns {
+                    focus: top_n(&relevant, CONCERN_FOCUS_LIMIT),
+                };
+            }
+        }
+
+        // Fallback: majority threshold.
+        if uncovered.len() > covered.len() {
             return Step::CoverConcerns {
-                focus: top_n(&relevant, CONCERN_FOCUS_LIMIT),
+                focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
             };
         }
-    }
-
-    // Fallback: majority threshold.
-    if uncovered.len() > covered.len() {
-        return Step::CoverConcerns {
-            focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
-        };
     }
 
     // PatternDetection: after concerns are covered.
@@ -443,14 +448,16 @@ fn task_relevant_concerns<'a>(uncovered: &[&'a str], task: &str) -> Vec<&'a str>
 ///
 /// VerifyConstraints and ImpactCheck lack verifiable graph postconditions —
 /// `completed_steps` handles progression.
-fn deduce_fix(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    uncovered: &[&str],
-    graph: &crate::store::graph::InMemoryGraph,
-    component: &str,
-    task: Option<&str>,
-    completed: &[&str],
-) -> Step {
+fn deduce_fix(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        uncovered,
+        graph,
+        component,
+        task,
+        completed,
+        ..
+    } = *ctx;
     // VerifyConstraints: existing decisions need checking against the fix.
     if !decisions.is_empty() && !completed.contains(&"verify_constraints") {
         return Step::VerifyConstraints;
@@ -493,11 +500,13 @@ fn deduce_fix(
 /// if patterns exist, walkthrough is complete).
 ///
 /// DesignCheck: comprehension check — user summarizes understanding.
-fn deduce_learn(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    completed: &[&str],
-) -> Step {
+fn deduce_learn(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        patterns,
+        completed,
+        ..
+    } = *ctx;
     if !completed.contains(&"warm_up") && !completed.contains(&"user_explains") {
         return Step::WarmUp;
     }
@@ -520,30 +529,43 @@ fn deduce_learn(
 /// but typically produces updated decisions and/or patterns. Uses
 /// `completed_steps` for progression.
 ///
-/// DriftCheck: systematic verification for stale decisions — agent
-/// updates timestamps by calling `update_decision`, advancing the
-/// state machine past this step naturally.
+/// DriftCheck: systematic verification for stale decisions. Staleness
+/// is computed from `Decision::last_touched()` — the latest revision
+/// timestamp if revised, else `created`. A decision clears staleness
+/// either (a) by being revised via `update_decision`, which refreshes
+/// `last_touched`, or (b) by the caller reporting `drift_check` in
+/// `step_evidence` when decisions were confirmed unchanged (legitimate
+/// outcome). Gated by `completed_steps` to prevent infinite loops when
+/// stale decisions are confirmed without editing.
 ///
 /// CoverageAudit: surfaces coverage gaps. Agent may record intentional-
-/// gap decisions (graph change) or note gaps for future work.
+/// gap decisions (graph change) or note gaps for future work. Gated by
+/// `completed_steps` to prevent infinite loops when recorded decisions
+/// don't match concern keywords.
 ///
 /// DesignCheck: comprehension check — user summarizes review findings.
-fn deduce_review(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    stale: &[StaleDec],
-    covered: &[&str],
-    uncovered: &[&str],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    completed: &[&str],
-    mode: Mode,
-) -> Step {
+fn deduce_review(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        stale,
+        covered,
+        uncovered,
+        patterns,
+        completed,
+        mode,
+        ..
+    } = *ctx;
     if !decisions.is_empty() && !completed.contains(&"walk_decisions") {
         return Step::WalkDecisions;
     }
-    if !stale.is_empty() {
+    // Gated by completed_steps to prevent infinite loops when stale
+    // decisions are confirmed unchanged (legitimate review outcome).
+    if !stale.is_empty() && !completed.contains(&"drift_check") {
         return Step::DriftCheck;
     }
-    if uncovered.len() > covered.len() {
+    // Gated by completed_steps to prevent infinite loops when recorded
+    // decisions don't match concern keywords.
+    if uncovered.len() > covered.len() && !completed.contains(&"coverage_audit") {
         return Step::CoverageAudit;
     }
     if patterns.is_empty() && !completed.contains(&"pattern_detection") {
@@ -566,11 +588,13 @@ fn deduce_review(
 ///
 /// CoverConcerns fills the real gaps with recorded decisions (verifiable).
 /// PatternDetection is the final pass.
-fn deduce_harden(
-    uncovered: &[&str],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    completed: &[&str],
-) -> Step {
+fn deduce_harden(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        uncovered,
+        patterns,
+        completed,
+        ..
+    } = *ctx;
     if !uncovered.is_empty() && !completed.contains(&"coverage_audit") {
         return Step::CoverageAudit;
     }
@@ -593,11 +617,13 @@ fn deduce_harden(
 /// code and records decisions without interactive dialogue. Unlike
 /// `deduce_learn`, the step prompts omit the Socratic interaction
 /// protocol.
-fn deduce_bootstrap_component(
-    decisions: &[(&Arc<str>, &DecisionFile)],
-    patterns: &[(&Arc<str>, &crate::store::schema::PatternFile)],
-    component: &str,
-) -> Step {
+fn deduce_bootstrap_component(ctx: &DeduceContext<'_>) -> Step {
+    let DeduceContext {
+        decisions,
+        patterns,
+        component,
+        ..
+    } = *ctx;
     if decisions.is_empty() {
         return Step::ExtractDecisions {
             component: component.into(),
@@ -664,14 +690,13 @@ fn advance_project(
         })
     };
 
-    let (step, ready, action) = match task_type {
+    let (step, action) = match task_type {
         TaskType::NewComponent | TaskType::Harden => {
             if has_decisions {
-                (Step::Ready, true, ready_action())
+                (Step::Ready, ready_action())
             } else {
                 (
                     Step::DefineScope,
-                    false,
                     step_prompt_action(
                         "project",
                         "define_scope",
@@ -685,11 +710,10 @@ fn advance_project(
         }
         TaskType::Feature | TaskType::Fix => {
             if has_decisions {
-                (Step::Ready, true, ready_action())
+                (Step::Ready, ready_action())
             } else {
                 (
                     Step::DefineScope,
-                    false,
                     step_prompt_action(
                         "project",
                         "define_scope",
@@ -705,7 +729,6 @@ fn advance_project(
             if !has_decisions {
                 (
                     Step::WalkDecisions,
-                    false,
                     step_prompt_action(
                         "project",
                         "walk_decisions",
@@ -718,7 +741,6 @@ fn advance_project(
             } else if !has_patterns && !completed_steps.contains(&"walk_decisions") {
                 (
                     Step::WalkDecisions,
-                    false,
                     step_prompt_action(
                         "project",
                         "walk_decisions",
@@ -729,14 +751,13 @@ fn advance_project(
                     ),
                 )
             } else {
-                (Step::Ready, true, ready_action())
+                (Step::Ready, ready_action())
             }
         }
         TaskType::Review => {
             if !has_decisions {
                 (
                     Step::DefineScope,
-                    false,
                     step_prompt_action(
                         "project",
                         "define_scope",
@@ -748,7 +769,6 @@ fn advance_project(
             } else if !has_patterns && !completed_steps.contains(&"drift_check") {
                 (
                     Step::DriftCheck,
-                    false,
                     step_prompt_action(
                         "project",
                         "drift_check",
@@ -759,13 +779,14 @@ fn advance_project(
                     ),
                 )
             } else {
-                (Step::Ready, true, ready_action())
+                (Step::Ready, ready_action())
             }
         }
         TaskType::Bootstrap => deduce_bootstrap_project(state, task, mode, completed_steps),
     };
 
-    let response = build_response("project", task_type, &step, ready, mode, assessment, action);
+    let ready = step.is_terminal();
+    let response = build_response("project", task_type, &step, mode, assessment, action);
     if ready {
         // Match component-level ready: surface unreviewed agent-authored project
         // rules so the schema is uniform and project rules aren't silently exempt
@@ -796,14 +817,13 @@ fn deduce_bootstrap_project(
     task: Option<&str>,
     mode: Mode,
     completed: &[&str],
-) -> (Step, bool, Value) {
+) -> (Step, Value) {
     let graph = state.graph();
 
     // Phase 1: no components registered → scan the project.
     if state.components.is_empty() {
         return (
             Step::ScanProject,
-            false,
             step_prompt_action(
                 "project",
                 "scan_project",
@@ -834,7 +854,6 @@ fn deduce_bootstrap_project(
                 Step::ExtractDecisions {
                     component: name.clone(),
                 },
-                false,
                 action,
             );
         }
@@ -844,7 +863,6 @@ fn deduce_bootstrap_project(
     if graph.project_decisions().is_empty() && !completed.contains(&"project_rules") {
         return (
             Step::ProjectRules,
-            false,
             step_prompt_action(
                 "project",
                 "project_rules",
@@ -860,7 +878,6 @@ fn deduce_bootstrap_project(
     if graph.patterns_for("project").is_empty() && !completed.contains(&"pattern_detection") {
         return (
             Step::PatternDetection,
-            false,
             step_prompt_action(
                 "project",
                 "pattern_detection",
@@ -875,7 +892,6 @@ fn deduce_bootstrap_project(
     // All phases complete.
     (
         Step::Ready,
-        true,
         serde_json::json!({
             "tool": "get_context",
             "args": { "component": "project", "task": task },
@@ -2006,6 +2022,7 @@ mod tests {
             Some("fix error handling crash"),
             Some("fix"),
             Mode::Interactive,
+            chrono::Utc::now(),
         )
         .expect("build_step_prompt must accept cover_concerns from fix workflow");
 
@@ -2347,6 +2364,238 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["step"], "drift_check");
+    }
+
+    // ── T01: DriftCheck regression tests ────────────────────────────
+
+    #[test]
+    fn review_revised_decision_not_stale_skips_drift_check() {
+        // Decision created 200+ days ago but revised 5 days ago.
+        // last_touched is the revision date → NOT stale → no DriftCheck.
+        let old_created = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let recent_revision = Utc.with_ymd_and_hms(2025, 6, 25, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+
+        let mut decs: Vec<(&str, DecisionFile)> = vec![(
+            "d-security",
+            DecisionFile {
+                decision: Decision {
+                    component: "store".into(),
+                    choice: "Auth tokens revised".into(),
+                    reason: "Token security updated".into(),
+                    alternatives: vec![],
+                    tags: vec!["security".into()],
+                    attribution: Attribution::User,
+                    created: old_created,
+                    code_refs: vec![],
+                    history: vec![HistoryEntry {
+                        choice: "Auth tokens".into(),
+                        reason: "Token security".into(),
+                        changed_at: recent_revision,
+                    }],
+                },
+            },
+        )];
+        // Add remaining decisions also created recently (relative to `now`)
+        // so they are not stale. Use dates within 90 days of `now`.
+        let recent = Utc.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap();
+        for (name, choice, reason, tags) in [
+            ("d-errors", "Fail-closed", "Error recovery", &["error"][..]),
+            (
+                "d-locking",
+                "RwLock for state",
+                "Concurrent access",
+                &["lock"][..],
+            ),
+            (
+                "d-integrity",
+                "BLAKE3 hash validation",
+                "Integrity check",
+                &[][..],
+            ),
+            (
+                "d-perf",
+                "In-memory cache",
+                "Performance target",
+                &["cache"][..],
+            ),
+            ("d-api", "REST API protocol", "External interface", &[][..]),
+        ] {
+            decs.push((
+                name,
+                DecisionFile {
+                    decision: Decision {
+                        component: "store".into(),
+                        choice: choice.into(),
+                        reason: reason.into(),
+                        alternatives: vec![],
+                        tags: tags.iter().map(|t| (*t).into()).collect(),
+                        attribution: Attribution::User,
+                        created: recent,
+                        code_refs: vec![],
+                        history: vec![],
+                    },
+                },
+            ));
+        }
+
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &decs,
+            &[("p1", "Integrity chain", &["store"])],
+        );
+
+        // walk_decisions completed → no stale decisions (revised clears it)
+        // → should skip DriftCheck entirely.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions"]),
+            now,
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "drift_check",
+            "revised decision should NOT be stale; should skip DriftCheck"
+        );
+    }
+
+    #[test]
+    fn review_untouched_stale_decision_returns_drift_check() {
+        // Decision created 200+ days ago, never revised → stale → DriftCheck.
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+        let decisions = well_covered_decisions("store", false); // created 2024-01-01
+        let state = build_state(&[("store", "Data store")], &decisions);
+
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions"]),
+            now,
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "drift_check");
+    }
+
+    #[test]
+    fn review_drift_check_completed_progresses_past_it() {
+        // Untouched stale decisions exist, but drift_check is in completed
+        // → should NOT return DriftCheck again (completed gate).
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+        let decisions = well_covered_decisions("store", false); // stale
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &decisions,
+            &[("p1", "Integrity chain", &["store"])],
+        );
+
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions", "drift_check"]),
+            now,
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "drift_check",
+            "drift_check in completed_steps must prevent infinite DriftCheck loop"
+        );
+    }
+
+    #[test]
+    fn review_staleness_deterministic_with_revised_decisions() {
+        // Same inputs + same `now` → identical output. Advance stays pure
+        // even with history-based last_touched computation.
+        let old_created = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let recent_revision = Utc.with_ymd_and_hms(2025, 6, 25, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+
+        let decs = vec![(
+            "d1",
+            DecisionFile {
+                decision: Decision {
+                    component: "store".into(),
+                    choice: "Current".into(),
+                    reason: "Updated reason".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::User,
+                    created: old_created,
+                    code_refs: vec![],
+                    history: vec![HistoryEntry {
+                        choice: "Original".into(),
+                        reason: "Original reason".into(),
+                        changed_at: recent_revision,
+                    }],
+                },
+            },
+        )];
+        let state = build_state(&[("store", "Data store")], &decs);
+
+        let call = |n| {
+            advance(
+                &state,
+                "store",
+                Some(TaskType::Review),
+                None,
+                Some(Mode::Interactive),
+                &evidence(&["walk_decisions"]),
+                n,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            call(now),
+            call(now),
+            "same (graph, now) must give identical results"
+        );
+    }
+
+    #[test]
+    fn review_stale_assessment_includes_last_touched() {
+        // When decisions ARE stale, the assessment should report last_touched.
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+        let decisions = well_covered_decisions("store", false); // created 2024-01-01
+        let state = build_state(&[("store", "Data store")], &decisions);
+
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &BTreeMap::new(),
+            now,
+        )
+        .unwrap();
+
+        let stale_decs = result["assessment"]["stale_decisions"]
+            .as_array()
+            .expect("stale_decisions must be an array");
+        assert!(!stale_decs.is_empty());
+        for sd in stale_decs {
+            assert!(
+                sd.get("last_touched").is_some(),
+                "stale decision should include last_touched: {sd}"
+            );
+            assert!(
+                sd.get("created").is_some(),
+                "stale decision should still include created: {sd}"
+            );
+        }
     }
 
     // ── Harden step sequence ──────────────────────────────────────────
@@ -3327,7 +3576,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_step_in_evidence_ignored() {
+    fn unknown_step_in_evidence_rejected() {
         let state = build_state(&[("store", "Data store")], &[]);
         let mut ev = BTreeMap::new();
         ev.insert("nonexistent", "some evidence text that is long enough");
@@ -3340,7 +3589,9 @@ mod tests {
             &ev,
             chrono::Utc::now(),
         );
-        assert!(result.is_ok());
+        let err = result.unwrap_err();
+        assert!(err.contains("nonexistent"));
+        assert!(err.contains("valid names"));
     }
 
     #[test]
@@ -3378,6 +3629,157 @@ mod tests {
         .unwrap();
         assert_eq!(result["step"], "ready");
         assert_eq!(result["requires_user_input"], false);
+    }
+
+    // ── Feature task-relevant concerns ────────────────────────────────
+
+    // ── T02: CoverConcerns/CoverageAudit completed gates ───────────
+
+    #[test]
+    fn feature_cover_concerns_completed_gate_majority_threshold() {
+        // Regression (T02): component with decisions, verify_constraints
+        // completed, uncovered > covered, step_evidence contains
+        // cover_concerns → next step is NOT cover_concerns.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // verify_constraints + cover_concerns both completed.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["verify_constraints", "cover_concerns"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "cover_concerns",
+            "cover_concerns in completed_steps must prevent infinite CoverConcerns loop"
+        );
+    }
+
+    #[test]
+    fn feature_cover_concerns_completed_gate_task_relevant() {
+        // Regression (T02): same scenario but with a task whose words match
+        // an uncovered concern's keywords — completed gate still wins.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // "add caching layer" matches Performance concern keywords.
+        // verify_constraints + cover_concerns both completed.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            Some("add caching layer"),
+            Some(Mode::Interactive),
+            &evidence(&["verify_constraints", "cover_concerns"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "cover_concerns",
+            "cover_concerns completed gate must override task-relevant concerns"
+        );
+    }
+
+    #[test]
+    fn feature_cover_concerns_first_pass_still_returned() {
+        // Existing first-pass behavior: without cover_concerns in evidence,
+        // the step IS still returned.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // Only verify_constraints completed — cover_concerns NOT in evidence.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            Some("add caching layer"),
+            Some(Mode::Interactive),
+            &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result["step"], "cover_concerns",
+            "without cover_concerns evidence, the step should still be returned"
+        );
+    }
+
+    #[test]
+    fn review_coverage_audit_completed_gate() {
+        // Regression (T02): stale empty, uncovered > covered,
+        // walk_decisions and coverage_audit completed → not coverage_audit again.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // walk_decisions + coverage_audit both completed; no stale.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions", "coverage_audit"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "coverage_audit",
+            "coverage_audit in completed_steps must prevent infinite CoverageAudit loop"
+        );
+    }
+
+    #[test]
+    fn review_coverage_audit_first_pass_still_returned() {
+        // Existing first-pass behavior: without coverage_audit in evidence,
+        // the step IS still returned when gaps exist.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // Only walk_decisions completed — coverage_audit NOT in evidence.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result["step"], "coverage_audit",
+            "without coverage_audit evidence, the step should still be returned"
+        );
     }
 
     // ── Feature task-relevant concerns ────────────────────────────────
@@ -3804,5 +4206,100 @@ mod tests {
             result["action"]["args"]["mode"], "agent",
             "bootstrap action args must include mode"
         );
+    }
+
+    // ── T03: Agent-mode task-type inference ──────────────────────────
+
+    #[test]
+    fn agent_infer_bootstrap_when_empty_no_task() {
+        // Regression (T03): registered component, zero decisions, no task,
+        // mode=agent → Ok with extract_decisions (bootstrap path), not error.
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            None,
+            None,
+            Some(Mode::Agent),
+            &BTreeMap::new(),
+            chrono::Utc::now(),
+        );
+
+        assert!(
+            result.is_ok(),
+            "agent + inferred on empty component must not error: {}",
+            result.unwrap_err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result["task_type"], "bootstrap");
+        assert_eq!(result["step"], "extract_decisions");
+        assert_eq!(result["ready"], false);
+    }
+
+    #[test]
+    fn interactive_infer_learn_when_empty_no_task_unchanged() {
+        // T03: Interactive unchanged — same graph, mode=interactive →
+        // warm_up (Learn path). Mirrors infer_learn_when_empty_no_task
+        // but exists as a T03 regression guard.
+        let state = build_state(&[("store", "Data store")], &[]);
+        let result = advance(
+            &state,
+            "store",
+            None,
+            None,
+            Some(Mode::Interactive),
+            &BTreeMap::new(),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(result["task_type"], "learn");
+        assert_eq!(result["step"], "warm_up");
+    }
+
+    #[test]
+    fn inferred_task_type_never_violates_mode_validation() {
+        // T03: Property test — every inferred type passes
+        // validate_mode_task for the mode that produced it.
+        // Full input space: empty/nonempty decisions × task present/absent
+        // × coverage states × staleness × mode.
+        let empty: Vec<(&str, DecisionFile)> = vec![];
+        let few = vec![(
+            "d1",
+            fresh_decision("store", "TOML format", "Readable", &["format"]),
+        )];
+        let covered = well_covered_decisions("store", true);
+        let stale = well_covered_decisions("store", false);
+
+        let decision_sets: Vec<&[(&str, DecisionFile)]> = vec![&empty, &few, &covered, &stale];
+        let tasks: [Option<&str>; 2] = [None, Some("add feature")];
+        let modes = [Mode::Agent, Mode::Interactive];
+
+        for decs in &decision_sets {
+            let state = build_state(&[("store", "Data store")], decs);
+            for task in &tasks {
+                for mode in &modes {
+                    let result = advance(
+                        &state,
+                        "store",
+                        None,
+                        *task,
+                        Some(*mode),
+                        &BTreeMap::new(),
+                        chrono::Utc::now(),
+                    );
+
+                    assert!(
+                        result.is_ok(),
+                        "inferred task_type violated mode validation: \
+                         mode={:?}, task={:?}, decisions={}, err={}",
+                        mode,
+                        task,
+                        decs.len(),
+                        result.unwrap_err()
+                    );
+                }
+            }
+        }
     }
 }

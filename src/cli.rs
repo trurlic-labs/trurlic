@@ -81,20 +81,37 @@ pub enum Command {
         /// Alternative considered and rejected (repeatable).
         #[arg(long = "alternative", short = 'a')]
         alternatives: Vec<String>,
+
+        /// Source code location where this decision manifests (repeatable).
+        /// Format: `file` or `file::symbol`. Split on the first `::` —
+        /// Rust-path-like symbols should use the terminal segment (e.g.
+        /// `Store::lock` → `lock`).
+        #[arg(long = "ref")]
+        refs: Vec<String>,
     },
 
     /// Reclaim decisions that have lost their anchor: orphaned (component
-    /// gone), stale (all referenced files deleted), or long-unreviewed agent
-    /// decisions. Safe by default — removes only orphans and reports the rest.
+    /// gone), orphaned-ref (all referenced files deleted), or long-unreviewed
+    /// agent decisions. Reports what would be reclaimed by default; pass
+    /// `--apply` to write the removals.
     Gc {
-        /// Report what would be reclaimed without changing anything.
+        /// Actually write the removals (default: dry-run).
         #[arg(long)]
-        dry_run: bool,
+        apply: bool,
 
-        /// Also remove stale and long-unreviewed agent decisions, not just
-        /// orphans.
+        /// Also remove orphaned-ref and long-unreviewed agent decisions, not
+        /// just orphans.
         #[arg(long)]
         aggressive: bool,
+
+        /// Skip the interactive confirmation prompt for `--aggressive --apply`.
+        /// Required in non-interactive environments (CI, piped output).
+        #[arg(long)]
+        yes: bool,
+
+        /// Deprecated no-op — dry-run is now the default.
+        #[arg(long, hide = true)]
+        dry_run: bool,
     },
 
     /// Start the MCP server for AI coding agent integration.
@@ -114,6 +131,10 @@ pub enum Command {
         #[arg(long)]
         detach: bool,
     },
+
+    /// Query the decision graph.
+    #[command(subcommand)]
+    Query(QueryCommand),
 
     /// Show project status: component count, decision count, issues.
     Status,
@@ -261,6 +282,19 @@ pub enum RemoveCommand {
     },
 }
 
+#[derive(Subcommand, Debug)]
+pub enum QueryCommand {
+    /// Find decisions that constrain a file or directory.
+    ///
+    /// Matches decisions whose code_refs reference the given path (exact match)
+    /// or any file under it (directory prefix). Use when editing a file to
+    /// discover which architectural decisions apply.
+    File {
+        /// Relative path from project root (e.g. `src/store/write.rs` or `src/store`).
+        path: String,
+    },
+}
+
 pub fn run(cli: Cli) -> Result<()> {
     let cwd = std::env::current_dir()?;
     match cli.command {
@@ -320,7 +354,21 @@ pub fn run(cli: Cli) -> Result<()> {
             choice,
             reason,
             alternatives,
-        } => commands::decide(&cwd, &component, &choice, &reason, &alternatives),
+            refs,
+        } => {
+            let code_refs: Vec<_> = refs
+                .iter()
+                .map(|r| commands::parse_code_ref_arg(r))
+                .collect();
+            commands::decide(
+                &cwd,
+                &component,
+                &choice,
+                &reason,
+                &alternatives,
+                &code_refs,
+            )
+        }
         Command::Install {
             ide,
             binary_path,
@@ -334,21 +382,45 @@ pub fn run(cli: Cli) -> Result<()> {
             commands::install(ide, binary_path.as_deref(), mode)
         }
         Command::Gc {
-            dry_run,
+            apply,
             aggressive,
+            yes,
+            dry_run: _,
         } => {
             let scope = if aggressive {
                 commands::GcScope::Aggressive
             } else {
                 commands::GcScope::Safe
             };
-            let execution = if dry_run {
-                commands::GcExecution::DryRun
-            } else {
+            let execution = if apply {
                 commands::GcExecution::Apply
+            } else {
+                commands::GcExecution::DryRun
             };
+            if aggressive && apply {
+                use std::io::{IsTerminal, Write};
+                match commands::resolve_aggressive_confirm(yes, std::io::stdout().is_terminal())? {
+                    commands::AggressiveConfirm::Confirmed => {}
+                    commands::AggressiveConfirm::PromptUser => {
+                        eprint!(
+                            "Aggressive gc will permanently remove orphaned-ref \
+                             and unreviewed agent decisions. Continue? [y/N] "
+                        );
+                        std::io::stderr().flush()?;
+                        let mut buf = String::new();
+                        std::io::stdin().read_line(&mut buf)?;
+                        if !buf.trim().eq_ignore_ascii_case("y") {
+                            println!("Aborted.");
+                            return Ok(());
+                        }
+                    }
+                }
+            }
             commands::gc(&cwd, scope, execution)
         }
+        Command::Query(sub) => match sub {
+            QueryCommand::File { path } => commands::query_file(&cwd, &path),
+        },
         Command::Serve => commands::serve(&cwd),
         Command::Map {
             port,

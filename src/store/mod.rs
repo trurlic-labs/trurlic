@@ -1,4 +1,4 @@
-mod cascade;
+pub(crate) mod cascade;
 pub mod graph;
 pub(crate) mod limits;
 mod query;
@@ -53,9 +53,20 @@ pub(crate) fn validate_code_ref(cr: &CodeRef) -> Result<()> {
             "code_ref file path exceeds {MAX_CODE_REF_PATH_BYTES} byte limit"
         )));
     }
-    if cr.file.starts_with('/') {
+    if cr.file.starts_with('/')
+        || cr
+            .file
+            .split('/')
+            .next()
+            .is_some_and(|seg| seg.ends_with(':'))
+        || std::path::Path::new(&cr.file).is_absolute()
+        || matches!(
+            std::path::Path::new(&cr.file).components().next(),
+            Some(std::path::Component::Prefix(_))
+        )
+    {
         return Err(Error::Validation(
-            "code_ref file path must be relative (no leading /)".into(),
+            "code_ref file path must be relative to the project root".into(),
         ));
     }
     // Component-wise check: reject a `..` path segment (traversal) without
@@ -131,6 +142,43 @@ pub(crate) fn code_refs_to_json(refs: &[CodeRef]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Normalize a file path query for `decisions_for_file`.
+///
+/// Strips leading `./`, collapses multiple `/` to single `/`, and strips
+/// trailing `/`. Validates the result against the same syntactic rules as
+/// [`validate_code_ref`] (reuses it directly) — an invalid query is an error,
+/// not an empty result. Returns the normalized path on success.
+pub(crate) fn normalize_file_query(path: &str) -> Result<String> {
+    let trimmed = path.strip_prefix("./").unwrap_or(path);
+
+    // Collapse runs of `/` to a single `/`.
+    let mut normalized = String::with_capacity(trimmed.len());
+    let mut prev_slash = false;
+    for ch in trimmed.chars() {
+        if ch == '/' {
+            if !prev_slash {
+                normalized.push('/');
+            }
+            prev_slash = true;
+        } else {
+            normalized.push(ch);
+            prev_slash = false;
+        }
+    }
+
+    // Strip trailing slash (directory queries don't need it for prefix matching).
+    if normalized.ends_with('/') {
+        normalized.pop();
+    }
+
+    let cr = CodeRef {
+        file: normalized.clone(),
+        symbol: None,
+    };
+    validate_code_ref(&cr)?;
+    Ok(normalized)
+}
+
 /// Format code references as a comma-separated display string.
 ///
 /// Returns `"file::symbol, file2"` — callers add their own prefix
@@ -152,7 +200,8 @@ pub(crate) fn format_code_refs(refs: &[CodeRef]) -> String {
 /// a broken link. Probing uses `try_exists`, and only a definite `Ok(false)`
 /// counts as missing — an `Err` (permission denied, mount not ready, transient
 /// I/O) is treated as *present*, so a filesystem blip can never misreport a live
-/// file as deleted and drive a decision to be flagged stale or garbage-collected.
+/// file as deleted and drive a decision to be flagged as having orphaned refs or
+/// garbage-collected.
 ///
 /// This is the single source of truth for reference-orphaning, shared by the
 /// context health report and the `gc` collector so both agree on the predicate.
@@ -1773,7 +1822,7 @@ mod tests {
             symbol: None,
         };
         let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("relative"), "{err}");
+        assert!(err.contains("relative to the project root"), "{err}");
     }
 
     #[test]
@@ -1861,6 +1910,56 @@ mod tests {
         // `..` inside a filename is not traversal — only a `..` path segment is.
         let cr = CodeRef {
             file: "src/store/a..b.rs".into(),
+            symbol: None,
+        };
+        assert!(validate_code_ref(&cr).is_ok());
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_windows_drive_letter_uppercase() {
+        let cr = CodeRef {
+            file: "C:/Users/x/file.rs".into(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("relative to the project root"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_windows_drive_letter_lowercase() {
+        let cr = CodeRef {
+            file: "c:/x.rs".into(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("relative to the project root"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_bare_drive_letter() {
+        let cr = CodeRef {
+            file: "D:".into(),
+            symbol: None,
+        };
+        let err = validate_code_ref(&cr).unwrap_err().to_string();
+        assert!(err.contains("relative to the project root"), "{err}");
+    }
+
+    #[test]
+    fn validate_code_ref_rejects_windows_backslash_drive_path() {
+        // Already caught by the backslash check — verify it stays rejected.
+        let cr = CodeRef {
+            file: "C:\\x.rs".into(),
+            symbol: None,
+        };
+        assert!(validate_code_ref(&cr).is_err());
+    }
+
+    #[test]
+    fn validate_code_ref_accepts_colon_in_later_segment() {
+        // A `:` in a non-first segment is legal on Unix filesystems.
+        let cr = CodeRef {
+            file: "src/a:b.rs".into(),
             symbol: None,
         };
         assert!(validate_code_ref(&cr).is_ok());

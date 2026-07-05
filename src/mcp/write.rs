@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use crate::store::graph::Severity;
 use crate::store::limits::{
     MAX_ARRAY_ITEMS, MAX_CHOICE_BYTES, MAX_TEXT_FIELD_BYTES, MIN_REASON_BYTES,
 };
@@ -137,25 +136,6 @@ pub(super) fn parse_code_refs(args: &Value) -> Result<Vec<CodeRef>, String> {
     }
     store::validate_code_refs(&refs).map_err(|e| e.to_string())?;
     Ok(refs)
-}
-
-// ── validate_consistency ────────────────────────────────────────────────────
-
-pub(crate) fn validate_consistency(state: &store::ProjectState) -> Value {
-    let issues = state.graph().validate();
-    let valid = issues.iter().all(|i| i.severity != Severity::Error);
-
-    serde_json::json!({
-        "valid": valid,
-        "issues": issues.iter().map(|i| serde_json::json!({
-            "severity": match i.severity {
-                Severity::Error => "error",
-                Severity::Warning => "warning",
-            },
-            "message": i.message,
-            "location": i.node,
-        })).collect::<Vec<_>>(),
-    })
 }
 
 // ── record_decision ─────────────────────────────────────────────────────────
@@ -513,16 +493,6 @@ mod tests {
             &[("auth", "Authentication"), ("database", "Database layer")],
         );
         (tmp, store, state)
-    }
-
-    // ── validate_consistency ────────────────────────────────────────────
-
-    #[test]
-    fn validate_clean_state() {
-        let (_tmp, _store, state) = setup();
-        let result = validate_consistency(&state);
-        assert_eq!(result["valid"], true);
-        assert!(result["issues"].as_array().unwrap().is_empty());
     }
 
     // ── record_decision ─────────────────────────────────────────────────

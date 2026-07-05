@@ -1,10 +1,14 @@
 use std::path::Path;
 
-use crate::store::graph::Severity;
+use crate::store::graph::{InMemoryGraph, Severity};
+use crate::store::{self, format_code_refs};
 use crate::{Error, Result};
 
 use super::{discover_store, open_store};
 
+/// `trurlic status` — print a one-screen summary of the graph: component,
+/// decision (with project-wide count), pattern, and edge totals, plus a
+/// consistency-issue count when the graph does not validate cleanly.
 pub fn status(cwd: &Path) -> Result<()> {
     let (_store, state) = open_store(cwd)?;
 
@@ -34,6 +38,48 @@ pub fn status(cwd: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `trurlic query file <path>` — list every decision whose `code_refs`
+/// reference `path` (exact file match or directory prefix), with attribution
+/// and the matching refs. The query path is normalized and traversal-checked
+/// at the trust boundary before lookup.
+pub fn query_file(cwd: &Path, path: &str) -> Result<()> {
+    let normalized = store::normalize_file_query(path)?;
+    let (_store, state) = open_store(cwd)?;
+
+    let graph = state.graph();
+    let matches = graph.decisions_for_file(&normalized);
+
+    if matches.is_empty() {
+        println!("No decisions reference `{normalized}`.");
+        return Ok(());
+    }
+
+    println!("{} decision(s) constrain `{normalized}`:\n", matches.len());
+
+    for (name, dec) in &matches {
+        let attr_suffix = match dec.decision.attribution {
+            store::schema::Attribution::Agent => " (agent — unreviewed)",
+            store::schema::Attribution::User => "",
+        };
+        println!(
+            "  [{component}] {name}{attr_suffix}",
+            component = dec.decision.component
+        );
+        println!("    {}", dec.decision.choice);
+        let matching_refs = InMemoryGraph::matching_refs_for_decision(dec, &normalized);
+        if !matching_refs.is_empty() {
+            let refs_vec: Vec<_> = matching_refs.into_iter().cloned().collect();
+            println!("    refs: {}", format_code_refs(&refs_vec));
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+/// `trurlic check` — verify content hashes against `graph.toml`, then validate
+/// full graph integrity, exiting non-zero on any error. With `rebuild`, instead
+/// recompiles `graph.toml` deterministically from the node files.
 pub fn check(cwd: &Path, rebuild: bool) -> Result<()> {
     if rebuild {
         return check_rebuild(cwd);
@@ -168,7 +214,7 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
         add_component(tmp.path(), "database", None).unwrap();
         add_connection(tmp.path(), "auth", "database").unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
 
         check(tmp.path(), true).unwrap();
 
@@ -218,7 +264,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let issues = store.verify_hashes().unwrap();
@@ -392,6 +438,7 @@ mod tests {
             "Rust single binary",
             "No runtime deps",
             &[],
+            &[],
         )
         .unwrap();
         decide(
@@ -400,9 +447,10 @@ mod tests {
             "TOML with serde",
             "Git-diffable",
             &[],
+            &[],
         )
         .unwrap();
-        decide(tmp.path(), "cli", "clap derive", "Type-safe", &[]).unwrap();
+        decide(tmp.path(), "cli", "clap derive", "Type-safe", &[], &[]).unwrap();
 
         check(tmp.path(), false).unwrap();
 

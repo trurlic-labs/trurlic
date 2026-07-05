@@ -73,20 +73,27 @@ impl Mode {
 /// Learn requires interactive (it exists to build the user's understanding).
 /// Bootstrap requires agent (it's autonomous source code extraction).
 pub fn validate_mode_task(mode: Mode, task_type: TaskType) -> Result<(), String> {
+    use Mode::{Agent, Interactive};
+    use TaskType::{Bootstrap, Feature, Fix, Harden, Learn, NewComponent, Review};
+
+    // Exhaustive over every (Mode, TaskType) pair — no wildcard. A new Mode
+    // or TaskType variant will fail to compile here until its validity is
+    // decided explicitly.
     match (mode, task_type) {
-        (Mode::Agent, TaskType::Learn) => Err(
+        (Agent, Learn) => Err(
             "task_type=learn requires mode=interactive — Learn exists to build \
              the user's understanding. For agent context retrieval, use \
              get_context() or get_architecture() instead."
                 .into(),
         ),
-        (Mode::Interactive, TaskType::Bootstrap) => Err(
+        (Interactive, Bootstrap) => Err(
             "task_type=bootstrap requires mode=agent — Bootstrap is autonomous \
              source code extraction. For interactive design, use \
              task_type=new_component with mode=interactive."
                 .into(),
         ),
-        _ => Ok(()),
+        (Interactive, Learn) | (Agent, Bootstrap) => Ok(()),
+        (Agent | Interactive, NewComponent | Feature | Fix | Review | Harden) => Ok(()),
     }
 }
 
@@ -257,6 +264,44 @@ impl Step {
         }
     }
 
+    /// Parse a step name string into its corresponding Step variant.
+    ///
+    /// Accepts all canonical names (from [`Self::as_str`]) and legacy aliases
+    /// (`summary_gate` → `DesignCheck`, `user_explains` → `WarmUp`).
+    ///
+    /// Payload variants return a canonical empty-payload form:
+    /// - `"cover_concerns"` → `CoverConcerns { focus: vec![] }`
+    /// - `"extract_decisions"` → `ExtractDecisions { component: String::new() }`
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "register" => Some(Self::Register),
+            "define_scope" => Some(Self::DefineScope),
+            "analyze_code" => Some(Self::AnalyzeCode),
+            "cover_concerns" => Some(Self::CoverConcerns { focus: vec![] }),
+            "walk_decisions" => Some(Self::WalkDecisions),
+            "verify_constraints" => Some(Self::VerifyConstraints),
+            "impact_check" => Some(Self::ImpactCheck),
+            "pattern_detection" => Some(Self::PatternDetection),
+            "design_check" | "summary_gate" => Some(Self::DesignCheck),
+            "drift_check" => Some(Self::DriftCheck),
+            "coverage_audit" => Some(Self::CoverageAudit),
+            "scan_project" => Some(Self::ScanProject),
+            "extract_decisions" => Some(Self::ExtractDecisions {
+                component: String::new(),
+            }),
+            "project_rules" => Some(Self::ProjectRules),
+            "warm_up" | "user_explains" => Some(Self::WarmUp),
+            "ready" => Some(Self::Ready),
+            _ => None,
+        }
+    }
+
+    /// Whether this is the terminal step — the component is fully designed
+    /// and the caller should switch to `get_context` and implement.
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
     pub const fn is_gated(&self) -> bool {
         match self {
             Self::Register
@@ -279,20 +324,35 @@ impl Step {
         }
     }
 
+    /// All valid step names accepted in `step_evidence` keys and
+    /// `build_step_prompt`. Includes canonical names and legacy aliases.
+    ///
+    /// Used for error messages listing accepted values.
+    pub const ALL_NAMES: &'static [&'static str] = &[
+        "register",
+        "scan_project",
+        "extract_decisions",
+        "project_rules",
+        "ready",
+        "define_scope",
+        "analyze_code",
+        "cover_concerns",
+        "walk_decisions",
+        "verify_constraints",
+        "impact_check",
+        "pattern_detection",
+        "design_check",
+        "summary_gate",
+        "drift_check",
+        "coverage_audit",
+        "warm_up",
+        "user_explains",
+    ];
+
     /// Resolve a step name string to its gated status.
     /// Returns `None` for unknown step names.
     pub fn is_gated_name(name: &str) -> Option<bool> {
-        match name {
-            "register" | "scan_project" | "extract_decisions" | "project_rules" | "ready" => {
-                Some(false)
-            }
-            "define_scope" | "analyze_code" | "cover_concerns" | "walk_decisions"
-            | "verify_constraints" | "impact_check" | "pattern_detection" | "design_check"
-            | "summary_gate" | "drift_check" | "coverage_audit" | "warm_up" | "user_explains" => {
-                Some(true)
-            }
-            _ => None,
-        }
+        Self::parse(name).map(|st| st.is_gated())
     }
 }
 
@@ -459,8 +519,16 @@ mod integration_tests {
             .as_str()
             .unwrap_or(component);
 
-        let prompt = steps::build_step_prompt(state, prompt_component, step_name, None, None, mode)
-            .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
+        let prompt = steps::build_step_prompt(
+            state,
+            prompt_component,
+            step_name,
+            None,
+            None,
+            mode,
+            Utc::now(),
+        )
+        .unwrap_or_else(|e| panic!("build_step_prompt({step_name}) failed: {e}"));
 
         // Every prompt must include the source code preamble.
         assert!(
@@ -581,6 +649,14 @@ mod integration_tests {
         let state = build_state(&[("store", "Data store")], &[]);
         // No task_type → inferred from graph state (Learn for empty).
         assert_pipeline(&state, "store", None);
+    }
+
+    #[test]
+    fn pipeline_agent_inferred_bootstrap_on_empty() {
+        // T03: inferred task_type in agent mode on empty component →
+        // Bootstrap, and the step/prompt pipeline accepts it.
+        let state = build_state(&[("store", "Data store")], &[]);
+        assert_pipeline_mode(&state, "store", None, Mode::Agent);
     }
 
     #[test]
@@ -721,7 +797,8 @@ mod integration_tests {
 
         for name in &step_names {
             for mode in [Mode::Interactive, Mode::Agent] {
-                let result = steps::build_step_prompt(&state, "store", name, None, None, mode);
+                let result =
+                    steps::build_step_prompt(&state, "store", name, None, None, mode, Utc::now());
                 assert!(
                     result.is_ok(),
                     "build_step_prompt must accept step `{name}` in {:?}: {:?}",
@@ -765,7 +842,8 @@ mod integration_tests {
         for variant in &variants {
             let name = variant.as_str();
             for mode in [Mode::Interactive, Mode::Agent] {
-                let result = steps::build_step_prompt(&state, "store", name, None, None, mode);
+                let result =
+                    steps::build_step_prompt(&state, "store", name, None, None, mode, Utc::now());
                 assert!(
                     result.is_ok(),
                     "Step::{:?} as_str `{name}` rejected by build_step_prompt in {:?}: {:?}",
@@ -913,6 +991,203 @@ mod integration_tests {
                 "({:?}, {:?}) should be valid",
                 mode,
                 tt
+            );
+        }
+    }
+
+    // ── T04: unknown step_evidence key rejection ─────────────────────
+
+    #[test]
+    fn unknown_step_evidence_key_rejected_interactive() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let mut evidence = BTreeMap::new();
+        evidence.insert(
+            "designcheck",
+            "this is more than twenty bytes of evidence text",
+        );
+
+        let result = advance::advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            Some(Mode::Interactive),
+            &evidence,
+            Utc::now(),
+        );
+
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("designcheck"),
+            "error should mention the offending key: {err}"
+        );
+        assert!(
+            err.contains("design_check"),
+            "error should suggest the correct name: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_step_evidence_key_rejected_agent() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        let mut evidence = BTreeMap::new();
+        evidence.insert(
+            "designcheck",
+            "this is more than twenty bytes of evidence text",
+        );
+
+        let result = advance::advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            Some(Mode::Agent),
+            &evidence,
+            Utc::now(),
+        );
+
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("designcheck"),
+            "error should mention the offending key in agent mode: {err}"
+        );
+    }
+
+    #[test]
+    fn all_valid_step_names_accepted_in_evidence() {
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+
+        for &name in Step::ALL_NAMES {
+            let mut evidence = BTreeMap::new();
+            evidence.insert(
+                name,
+                "this is more than twenty bytes of evidence for the step",
+            );
+
+            let result = advance::advance(
+                &state,
+                "store",
+                Some(TaskType::Feature),
+                None,
+                Some(Mode::Agent),
+                &evidence,
+                Utc::now(),
+            );
+
+            assert!(
+                result.is_ok(),
+                "valid step name `{name}` should be accepted but got: {:?}",
+                result.err()
+            );
+        }
+    }
+
+    #[test]
+    fn all_names_consistent_with_is_gated_name() {
+        for &name in Step::ALL_NAMES {
+            assert!(
+                Step::is_gated_name(name).is_some(),
+                "ALL_NAMES entry `{name}` not recognized by is_gated_name"
+            );
+        }
+    }
+
+    // ── C02: Step::parse acceptance tests ────────────────────────────
+
+    #[test]
+    fn step_parse_round_trips_as_str() {
+        let variants: Vec<Step> = vec![
+            Step::Register,
+            Step::DefineScope,
+            Step::AnalyzeCode,
+            Step::CoverConcerns {
+                focus: vec!["Security".into()],
+            },
+            Step::WalkDecisions,
+            Step::VerifyConstraints,
+            Step::ImpactCheck,
+            Step::PatternDetection,
+            Step::DesignCheck,
+            Step::DriftCheck,
+            Step::CoverageAudit,
+            Step::ScanProject,
+            Step::ExtractDecisions {
+                component: "store".into(),
+            },
+            Step::ProjectRules,
+            Step::WarmUp,
+            Step::Ready,
+        ];
+
+        for variant in &variants {
+            let name = variant.as_str();
+            let parsed = Step::parse(name);
+            assert!(
+                parsed.is_some(),
+                "Step::{:?} as_str `{name}` not accepted by parse",
+                variant
+            );
+            let parsed = parsed.unwrap();
+            assert_eq!(
+                parsed.as_str(),
+                name,
+                "parse(`{name}`).as_str() should round-trip to `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn step_parse_aliases_resolve_correctly() {
+        assert_eq!(
+            Step::parse("summary_gate").unwrap().as_str(),
+            "design_check"
+        );
+        assert_eq!(Step::parse("user_explains").unwrap().as_str(), "warm_up");
+    }
+
+    #[test]
+    fn step_parse_unknown_returns_none() {
+        assert!(Step::parse("bogus").is_none());
+        assert!(Step::parse("").is_none());
+        assert!(Step::parse("Register").is_none());
+    }
+
+    #[test]
+    fn is_gated_name_agrees_with_parse_for_all_names() {
+        for &name in Step::ALL_NAMES {
+            let via_parse = Step::parse(name).map(|st| st.is_gated());
+            let via_method = Step::is_gated_name(name);
+            assert_eq!(
+                via_parse, via_method,
+                "is_gated_name(`{name}`) disagrees with parse-based result"
+            );
+        }
+    }
+
+    #[test]
+    fn all_names_accepted_by_parse() {
+        for &name in Step::ALL_NAMES {
+            assert!(
+                Step::parse(name).is_some(),
+                "ALL_NAMES entry `{name}` not accepted by Step::parse"
             );
         }
     }
