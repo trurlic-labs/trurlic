@@ -518,7 +518,7 @@ fn step_walk_decisions(
                 let code_line = format_code_refs_line(&d.decision);
                 let history_note = if !d.decision.history.is_empty() {
                     format!(
-                        "Revised {} time(s) \u{2014} original: \"{}\"\n",
+                        "Revised {} time(s) \u{2014} earliest recorded: \"{}\"\n",
                         d.decision.history.len(),
                         sanitize_short(&d.decision.history[0].choice, 60),
                     )
@@ -1623,7 +1623,7 @@ mod tests {
         );
         assert!(
             result.instructions.contains("JWT with static keys"),
-            "should show original choice"
+            "should show earliest recorded choice"
         );
     }
 
@@ -3455,4 +3455,121 @@ mod tests {
         );
     }
 
+    #[test]
+    fn walk_decisions_history_uses_earliest_recorded_label() {
+        let ts = Utc.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).unwrap();
+
+        let mut state = test_state();
+        let revised = Arc::new(DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "JWT with rotating keys".into(),
+                reason: "Key rotation improves security posture".into(),
+                alternatives: vec![],
+                tags: vec!["security".into()],
+                attribution: Attribution::User,
+                created: ts,
+                code_refs: vec![],
+                history: vec![HistoryEntry {
+                    choice: "JWT with static keys".into(),
+                    reason: "Simple key management".into(),
+                    changed_at: ts,
+                }],
+            },
+        });
+        state.decisions.insert("auth-jwt".into(), revised);
+        state.rebuild_graph();
+
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
+
+        assert!(
+            result.instructions.contains("Revised 1 time(s)"),
+            "should show revision count"
+        );
+        assert!(
+            result.instructions.contains("earliest recorded:"),
+            "should use 'earliest recorded:' label, not 'original:'"
+        );
+        assert!(
+            !result.instructions.contains("original:"),
+            "must never claim 'original:' — history is a ring buffer and \
+             the true original may have been evicted"
+        );
+        assert!(
+            result.instructions.contains("JWT with static keys"),
+            "should still show the earliest retained choice text"
+        );
+    }
+
+    #[test]
+    fn walk_decisions_saturated_history_never_says_original() {
+        use crate::store::limits::MAX_HISTORY_ENTRIES;
+
+        let ts = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+
+        let mut state = test_state();
+        let history: Vec<HistoryEntry> = (0..MAX_HISTORY_ENTRIES)
+            .map(|i| HistoryEntry {
+                choice: format!("Revision {i}"),
+                reason: format!("Reason for revision {i}"),
+                changed_at: ts + chrono::Duration::days(i as i64),
+            })
+            .collect();
+
+        let revised = Arc::new(DecisionFile {
+            decision: Decision {
+                component: "auth".into(),
+                choice: "Final choice after many revisions".into(),
+                reason: "Latest reasoning after extensive evolution".into(),
+                alternatives: vec![],
+                tags: vec!["security".into()],
+                attribution: Attribution::User,
+                created: ts,
+                code_refs: vec![],
+                history,
+            },
+        });
+        state.decisions.insert("auth-jwt".into(), revised);
+        state.rebuild_graph();
+
+        let result = build_step_prompt(
+            &state,
+            "auth",
+            "walk_decisions",
+            None,
+            None,
+            Mode::Interactive,
+            Utc::now(),
+        )
+        .unwrap();
+
+        assert!(
+            result
+                .instructions
+                .contains(&format!("Revised {MAX_HISTORY_ENTRIES} time(s)")),
+            "should show full revision count even at cap"
+        );
+        assert!(
+            result.instructions.contains("earliest recorded:"),
+            "saturated history should use 'earliest recorded:' label"
+        );
+        assert!(
+            !result.instructions.contains("original:"),
+            "saturated history must never claim 'original:' — \
+             the true original was evicted from the ring buffer"
+        );
+        assert!(
+            result.instructions.contains("Revision 0"),
+            "should show the earliest retained choice text"
+        );
+    }
 }

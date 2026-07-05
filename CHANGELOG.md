@@ -232,6 +232,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   same step indefinitely. Now `advance()` validates all `step_evidence` keys
   against `Step::ALL_NAMES` in both agent and interactive modes, returning an
   error that names the offending key and lists all valid step names.
+- **Walk-decisions prompt no longer falsely labels `history[0]` as "original".**
+  History is a ring buffer capped at 20 entries; after eviction, `history[0]` is
+  the earliest *retained* version, not the original. The label is now `earliest
+  recorded:` unconditionally, which is truthful regardless of buffer state.
 
 ### Changed (internal)
 
