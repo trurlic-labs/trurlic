@@ -84,6 +84,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   identical (case-insensitive) to an existing decision in the same component,
   pointing at `update_decision(mode="revise")`, and warns on high word overlap
   (Jaccard > 0.7) with a same-component decision.
+- **Promote guardrails.** The `update_decision` MCP tool description now
+  explicitly prohibits autonomous promotion — agents must never call
+  `mode="promote"` without the user's explicit review and confirmation.
+  `AGENT_PROTOCOL` carries the same prohibition. The ready-response hint
+  and context-brief call-to-action now address the user, not the agent.
 
 ### Changed
 

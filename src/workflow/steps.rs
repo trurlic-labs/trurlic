@@ -299,6 +299,8 @@ Include code_refs for every decision — file paths and symbol names where \
 the decision manifests in source code.\n\n\
 If a decision requires domain knowledge not evident from the code, note \
 this in the reason field: \"[needs-review] <reasoning from code evidence>\".\n\n\
+Never call update_decision(mode=\"promote\") — promotion records human \
+review and requires the user's explicit confirmation.\n\n\
 Do not ask the user. Do not wait for input. Complete each step and call \
 advance again.\n";
 
@@ -3072,5 +3074,23 @@ mod tests {
         let created = Utc.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap();
         let now = Utc.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap();
         assert_eq!(format_age(created, now), "0 days");
+    }
+
+    // ── AGENT_PROTOCOL promote guardrail ─────────────────────────────
+
+    #[test]
+    fn agent_protocol_prohibits_promote() {
+        assert!(
+            AGENT_PROTOCOL.contains("promote"),
+            "AGENT_PROTOCOL must mention promote"
+        );
+        assert!(
+            AGENT_PROTOCOL.contains("Never"),
+            "AGENT_PROTOCOL must explicitly prohibit promote with 'Never'"
+        );
+        assert!(
+            AGENT_PROTOCOL.contains("update_decision"),
+            "AGENT_PROTOCOL must name the tool being prohibited"
+        );
     }
 }

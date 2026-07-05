@@ -361,7 +361,7 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         "mode": {
                             "type": "string",
                             "enum": ["revise", "promote"],
-                            "description": "revise: update content, previous version saved to history. promote: change attribution from agent to user (marks as human-reviewed)."
+                            "description": "revise: update content, previous version saved to history. promote: mark an agent decision as human-reviewed. Call ONLY when the user has explicitly reviewed the decision and confirmed it in this conversation. Never promote autonomously; never promote in agent mode."
                         },
                         "choice": {
                             "type": "string",
@@ -1089,6 +1089,29 @@ mod tests {
             envelope.content[0].text.contains("designcheck"),
             "error should mention the bad key: {}",
             envelope.content[0].text,
+        );
+    }
+
+    // ── T05: promote guardrails in tool schema ─────────────────────
+
+    #[test]
+    fn update_decision_promote_description_prohibits_autonomous_use() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "update_decision")
+            .unwrap();
+        let mode_desc = tool["inputSchema"]["properties"]["mode"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            mode_desc.contains("ONLY when the user has explicitly reviewed"),
+            "promote mode description must require explicit user review: {mode_desc}"
+        );
+        assert!(
+            mode_desc.contains("Never promote autonomously"),
+            "promote mode description must prohibit autonomous promotion: {mode_desc}"
         );
     }
 

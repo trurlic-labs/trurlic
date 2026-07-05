@@ -366,7 +366,7 @@ pub(super) fn with_agent_review_hint(mut response: Value, count: usize) -> Value
     response["agent_decisions_unreviewed"] = serde_json::json!(count);
     response["hint"] = if count > 0 {
         serde_json::json!(format!(
-            "{count} agent decision{} pending review — promote or revise before relying on them",
+            "{count} agent decision{} pending review — ask the user to promote or revise before relying on them",
             if count == 1 { "" } else { "s" }
         ))
     } else {

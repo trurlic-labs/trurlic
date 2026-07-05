@@ -563,10 +563,11 @@ pub(crate) fn get_decision_history(state: &ProjectState, name: &str) -> Result<V
 // ── Decision health ────────────────────────────────────────────────────────
 
 /// Follow-up line appended under agent-attributed decisions in the brief.
-/// Points the reader at the two ways to clear the unreviewed flag: confirm
-/// the decision as-is, or change it. Line continuations collapse to one line.
-const AGENT_REVIEW_CALL_TO_ACTION: &str = "  \u{2192} call update_decision(mode=\"promote\") to \
-     confirm, or update_decision(mode=\"revise\") to change\n";
+/// Points the reader at the two ways to clear the unreviewed flag: the user
+/// confirms the decision as-is, or revises it. Line continuations collapse
+/// to one line.
+const AGENT_REVIEW_CALL_TO_ACTION: &str = "  \u{2192} user: call update_decision(mode=\"promote\") \
+     to confirm, or update_decision(mode=\"revise\") to change\n";
 
 /// Inline flag appended under a decision whose every code_ref points at a
 /// file that no longer exists on disk — the recorded constraint has lost its
