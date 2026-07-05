@@ -7,6 +7,8 @@
 //! Prompts are transport-agnostic. The MCP tool `get_step_prompt` calls
 //! `build_step_prompt` and combines the result with `get_context` output.
 
+use std::borrow::Cow;
+
 use chrono::{DateTime, Utc};
 
 use crate::store::graph::InMemoryGraph;
@@ -15,6 +17,7 @@ use crate::store::{self, ProjectState};
 
 use super::CONCERN_FOCUS_LIMIT;
 use super::Mode;
+use super::Step;
 use super::action::top_n;
 use super::concerns;
 
@@ -49,6 +52,13 @@ pub fn build_step_prompt(
     mode: Mode,
     now: DateTime<Utc>,
 ) -> Result<StepPrompt, String> {
+    let parsed = Step::parse(step).ok_or_else(|| {
+        format!(
+            "unknown step `{step}` — valid names: {}",
+            Step::ALL_NAMES.join(", ")
+        )
+    })?;
+
     if component != "project" && !state.components.contains_key(component) {
         return Err(format!("component `{component}` does not exist"));
     }
@@ -74,18 +84,17 @@ pub fn build_step_prompt(
 
     // ── Existing constraints (conditional) ────────────────────────────
     let needs_constraints = matches!(
-        step,
-        "define_scope"
-            | "cover_concerns"
-            | "verify_constraints"
-            | "impact_check"
-            | "walk_decisions"
-            | "design_check"
-            | "summary_gate"
-            | "drift_check"
-            | "coverage_audit"
-            | "extract_decisions"
-            | "project_rules"
+        parsed,
+        Step::DefineScope
+            | Step::CoverConcerns { .. }
+            | Step::VerifyConstraints
+            | Step::ImpactCheck
+            | Step::WalkDecisions
+            | Step::DesignCheck
+            | Step::DriftCheck
+            | Step::CoverageAudit
+            | Step::ExtractDecisions { .. }
+            | Step::ProjectRules
     );
     if needs_constraints {
         out.push_str(&existing_constraints(graph, component));
@@ -93,8 +102,11 @@ pub fn build_step_prompt(
 
     // ── Component graph (conditional) ─────────────────────────────────
     if matches!(
-        step,
-        "impact_check" | "verify_constraints" | "define_scope" | "extract_decisions"
+        parsed,
+        Step::ImpactCheck
+            | Step::VerifyConstraints
+            | Step::DefineScope
+            | Step::ExtractDecisions { .. }
     ) {
         out.push_str(&component_graph(graph, component));
     }
@@ -105,51 +117,43 @@ pub fn build_step_prompt(
     }
 
     // ── Step-specific instructions ────────────────────────────────────
-    match step {
-        "register" => out.push_str(&step_register(component)),
-        "define_scope" => out.push_str(&step_define_scope(mode)),
-        "analyze_code" => out.push_str(&step_analyze_code(component, task_type, mode)),
-        "cover_concerns" => {
+    match parsed {
+        Step::Register => out.push_str(&step_register(component)),
+        Step::DefineScope => out.push_str(&step_define_scope(mode)),
+        Step::AnalyzeCode => out.push_str(&step_analyze_code(component, task_type, mode)),
+        Step::CoverConcerns { .. } => {
             focus = top_n(&uncovered, CONCERN_FOCUS_LIMIT);
             out.push_str(&step_cover_concerns(&focus, &all_decs, task_type, mode));
         }
-        "walk_decisions" => {
+        Step::WalkDecisions => {
             out.push_str(&step_walk_decisions(graph, component, task_type, mode));
         }
-        "verify_constraints" => {
+        Step::VerifyConstraints => {
             out.push_str(&step_verify_constraints(graph, component, task_type, mode));
         }
-        "impact_check" => out.push_str(&step_impact_check(graph, component, task_type, mode)),
-        "pattern_detection" => out.push_str(&step_pattern_detection(graph, component, mode)),
-        "design_check" | "summary_gate" => out.push_str(&step_design_check(task_type)),
-        "drift_check" => out.push_str(&step_drift_check(graph, component, mode, now)),
-        "coverage_audit" => {
+        Step::ImpactCheck => {
+            out.push_str(&step_impact_check(graph, component, task_type, mode));
+        }
+        Step::PatternDetection => {
+            out.push_str(&step_pattern_detection(graph, component, mode));
+        }
+        Step::DesignCheck => out.push_str(&step_design_check(task_type)),
+        Step::DriftCheck => out.push_str(&step_drift_check(graph, component, mode, now)),
+        Step::CoverageAudit => {
             focus = uncovered.iter().map(|s| (*s).to_string()).collect();
             out.push_str(&step_coverage_audit(&covered, &uncovered, mode));
         }
-        "scan_project" => out.push_str(&step_scan_project()),
-        "extract_decisions" => out.push_str(&step_extract_decisions(component)),
-        "project_rules" => out.push_str(&step_project_rules()),
-        "warm_up" | "user_explains" => out.push_str(&step_warm_up()),
-        "ready" => out.push_str(&step_ready(component)),
-        _ => {
-            return Err(format!(
-                "unknown step `{step}` — expected: register, define_scope, \
-             analyze_code, cover_concerns, walk_decisions, verify_constraints, \
-             impact_check, pattern_detection, design_check, drift_check, \
-             coverage_audit, scan_project, extract_decisions, project_rules, \
-             warm_up, ready"
-            ));
-        }
+        Step::ScanProject => out.push_str(&step_scan_project()),
+        Step::ExtractDecisions { .. } => out.push_str(&step_extract_decisions(component)),
+        Step::ProjectRules => out.push_str(&step_project_rules()),
+        Step::WarmUp => out.push_str(&step_warm_up()),
+        Step::Ready => out.push_str(&step_ready(component)),
     }
 
     // ── Shared protocol (mode-conditional) ───────────────────────────
     // Autonomous steps skip the protocol entirely. Other steps get
     // INTERACTION_PROTOCOL in interactive mode, AGENT_PROTOCOL in agent.
-    if !matches!(
-        step,
-        "register" | "ready" | "scan_project" | "extract_decisions" | "project_rules"
-    ) {
+    if parsed.is_gated() {
         match mode {
             Mode::Interactive => out.push_str(INTERACTION_PROTOCOL),
             Mode::Agent => out.push_str(AGENT_PROTOCOL),
@@ -157,7 +161,7 @@ pub fn build_step_prompt(
     }
 
     // ── Existing patterns (informational) ─────────────────────────────
-    if !patterns.is_empty() && matches!(step, "pattern_detection" | "walk_decisions") {
+    if !patterns.is_empty() && matches!(parsed, Step::PatternDetection | Step::WalkDecisions) {
         out.push_str("EXISTING PATTERNS (do not re-record):\n");
         for (name, p) in &patterns {
             out.push_str(&format!(
@@ -173,6 +177,178 @@ pub fn build_step_prompt(
         instructions: out,
         focus,
     })
+}
+
+// ── Step instruction summaries ────────────────────────────────────────────
+
+/// Short instruction for a workflow step, keyed by mode.
+///
+/// This is the **single source of truth** for the `instruction` field
+/// in every `step_prompt_action` response built by [`super::action::step_action`].
+/// The full prompts in the per-step functions below elaborate on these
+/// summaries; this function ensures `advance` and `get_step_prompt` never
+/// send contradictory instructions.
+pub fn summary(step: &Step, mode: Mode) -> Cow<'static, str> {
+    match step {
+        Step::Register => Cow::Borrowed(
+            "Component is not registered. Confirm the name \
+             and description, then call add_component.",
+        ),
+
+        Step::DefineScope => match mode {
+            Mode::Agent => Cow::Borrowed(
+                "Read source code and determine this component's \
+                 responsibilities and boundaries. Record scope decisions \
+                 with tags: [\"scope\"] and attribution=\"agent\".",
+            ),
+            Mode::Interactive => Cow::Borrowed(
+                "Define what the component is and isn't responsible for. \
+                 Record each answer as a decision with tags: [\"scope\"].",
+            ),
+        },
+
+        Step::AnalyzeCode => match mode {
+            Mode::Agent => Cow::Borrowed(
+                "Read every source file in this component. Identify \
+                 all architectural decisions and record each immediately \
+                 with attribution=\"agent\".",
+            ),
+            Mode::Interactive => Cow::Borrowed(
+                "Read every source file in this component. Walk through \
+                 each architectural decision one at a time with the user. \
+                 Share what the code does and why it matters, discuss, \
+                 then record.",
+            ),
+        },
+
+        Step::CoverConcerns { focus } => {
+            let joined = focus.join(", ");
+            match mode {
+                Mode::Agent => Cow::Owned(format!(
+                    "Cover uncovered concern areas: {joined}. For each, determine \
+                     the decision the code has made and record with \
+                     attribution=\"agent\".",
+                )),
+                Mode::Interactive => Cow::Owned(format!(
+                    "Cover uncovered concern areas: {joined}. For each, start by \
+                     asking how the user thinks about that concern. Discuss \
+                     trade-offs together, then record the decision.",
+                )),
+            }
+        }
+
+        Step::WalkDecisions => match mode {
+            Mode::Agent => Cow::Borrowed(
+                "Verify each recorded decision against the current \
+                 source code. Update any that have drifted. Record \
+                 unrecorded decisions with attribution=\"agent\".",
+            ),
+            Mode::Interactive => Cow::Borrowed(
+                "Discuss each recorded decision with the user as a \
+                 design conversation. One at a time \u{2014} share the code \
+                 context, probe trade-offs, then move on.",
+            ),
+        },
+
+        Step::VerifyConstraints => match mode {
+            Mode::Agent => Cow::Borrowed(
+                "Verify each existing constraint against the source code. \
+                 Check if the current task conflicts with any constraint. \
+                 Update any that have drifted.",
+            ),
+            Mode::Interactive => Cow::Borrowed(
+                "Start by understanding the user's change, then check \
+                 each relevant constraint. For each, ask whether the \
+                 change respects it or needs it to change. Discuss and \
+                 update_decision if agreed.",
+            ),
+        },
+
+        Step::ImpactCheck => match mode {
+            Mode::Agent => Cow::Borrowed(
+                "Read the interface code for connected components and \
+                 determine whether the current task affects them.",
+            ),
+            Mode::Interactive => Cow::Borrowed(
+                "Check whether this change impacts connected components. \
+                 Review the architecture brief for cross-component effects.",
+            ),
+        },
+
+        Step::PatternDetection => match mode {
+            Mode::Agent => Cow::Borrowed(
+                "Review all recorded decisions. For groups of 2+ that \
+                 reinforce the same invariant or form a defense-in-depth \
+                 chain, call record_pattern with attribution=\"agent\".",
+            ),
+            Mode::Interactive => Cow::Borrowed(
+                "Review all recorded decisions for this component and project \
+                 rules. Look for groups of 2+ decisions that reinforce the \
+                 same invariant, form a defense-in-depth chain, or share a \
+                 common constraint. For each candidate, ask the user to \
+                 confirm, then call record_pattern.",
+            ),
+        },
+
+        Step::DesignCheck => Cow::Borrowed(
+            "Practical comprehension check. Ask a context-appropriate \
+             question that lets the user demonstrate understanding \
+             built during this session. If they miss something, help \
+             them connect the dots \u{2014} don't quiz.",
+        ),
+
+        Step::DriftCheck => match mode {
+            Mode::Agent => Cow::Borrowed(
+                "Compare each recorded decision against the current source \
+                 code. Revise any that have drifted. Proceed autonomously.",
+            ),
+            Mode::Interactive => Cow::Borrowed(
+                "Compare each recorded decision against the current source \
+                 code. Flag any that have drifted from the implementation. \
+                 For drifted decisions, call update_decision(revise).",
+            ),
+        },
+
+        Step::CoverageAudit => match mode {
+            Mode::Agent => Cow::Borrowed(
+                "Audit concern coverage. Read source code for each gap \
+                 and report which are real vs intentional.",
+            ),
+            Mode::Interactive => Cow::Borrowed(
+                "Audit concern coverage. The assessment shows which areas \
+                 lack decisions. For each gap, determine whether the \
+                 component needs a decision there or if the gap is \
+                 intentional.",
+            ),
+        },
+
+        Step::WarmUp => Cow::Borrowed(
+            "Conversational opener \u{2014} ask a practical question that \
+             reveals the user's mental model without making them perform. \
+             Note what they mention and what they omit for later steps.",
+        ),
+
+        Step::ScanProject => Cow::Borrowed(
+            "Read the project structure, identify major components, \
+             and register them with add_component and add_connection.",
+        ),
+
+        Step::ProjectRules => Cow::Borrowed(
+            "Identify cross-cutting project-level decisions and \
+             record them with component='project'.",
+        ),
+
+        Step::ExtractDecisions { component } => Cow::Owned(format!(
+            "Read every source file in [{component}] and record \
+             architectural decisions autonomously.",
+        )),
+
+        Step::Ready => Cow::Borrowed(
+            "Component is designed and ready for \
+             implementation. Call get_context for the \
+             authoritative brief.",
+        ),
+    }
 }
 
 // ── Shared sections ───────────────────────────────────────────────────────

@@ -257,6 +257,38 @@ impl Step {
         }
     }
 
+    /// Parse a step name string into its corresponding Step variant.
+    ///
+    /// Accepts all canonical names (from [`Self::as_str`]) and legacy aliases
+    /// (`summary_gate` → `DesignCheck`, `user_explains` → `WarmUp`).
+    ///
+    /// Payload variants return a canonical empty-payload form:
+    /// - `"cover_concerns"` → `CoverConcerns { focus: vec![] }`
+    /// - `"extract_decisions"` → `ExtractDecisions { component: String::new() }`
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "register" => Some(Self::Register),
+            "define_scope" => Some(Self::DefineScope),
+            "analyze_code" => Some(Self::AnalyzeCode),
+            "cover_concerns" => Some(Self::CoverConcerns { focus: vec![] }),
+            "walk_decisions" => Some(Self::WalkDecisions),
+            "verify_constraints" => Some(Self::VerifyConstraints),
+            "impact_check" => Some(Self::ImpactCheck),
+            "pattern_detection" => Some(Self::PatternDetection),
+            "design_check" | "summary_gate" => Some(Self::DesignCheck),
+            "drift_check" => Some(Self::DriftCheck),
+            "coverage_audit" => Some(Self::CoverageAudit),
+            "scan_project" => Some(Self::ScanProject),
+            "extract_decisions" => Some(Self::ExtractDecisions {
+                component: String::new(),
+            }),
+            "project_rules" => Some(Self::ProjectRules),
+            "warm_up" | "user_explains" => Some(Self::WarmUp),
+            "ready" => Some(Self::Ready),
+            _ => None,
+        }
+    }
+
     pub const fn is_gated(&self) -> bool {
         match self {
             Self::Register
@@ -279,10 +311,10 @@ impl Step {
         }
     }
 
-    /// All valid step names accepted in `step_evidence` keys.
+    /// All valid step names accepted in `step_evidence` keys and
+    /// `build_step_prompt`. Includes canonical names and legacy aliases.
     ///
-    /// This is the single source of truth — `is_gated_name` and the
-    /// unknown-key rejection error both derive from this list.
+    /// Used for error messages listing accepted values.
     pub const ALL_NAMES: &'static [&'static str] = &[
         "register",
         "scan_project",
@@ -307,17 +339,7 @@ impl Step {
     /// Resolve a step name string to its gated status.
     /// Returns `None` for unknown step names.
     pub fn is_gated_name(name: &str) -> Option<bool> {
-        match name {
-            "register" | "scan_project" | "extract_decisions" | "project_rules" | "ready" => {
-                Some(false)
-            }
-            "define_scope" | "analyze_code" | "cover_concerns" | "walk_decisions"
-            | "verify_constraints" | "impact_check" | "pattern_detection" | "design_check"
-            | "summary_gate" | "drift_check" | "coverage_audit" | "warm_up" | "user_explains" => {
-                Some(true)
-            }
-            _ => None,
-        }
+        Self::parse(name).map(|st| st.is_gated())
     }
 }
 
@@ -1071,6 +1093,88 @@ mod integration_tests {
             assert!(
                 Step::is_gated_name(name).is_some(),
                 "ALL_NAMES entry `{name}` not recognized by is_gated_name"
+            );
+        }
+    }
+
+    // ── C02: Step::parse acceptance tests ────────────────────────────
+
+    #[test]
+    fn step_parse_round_trips_as_str() {
+        let variants: Vec<Step> = vec![
+            Step::Register,
+            Step::DefineScope,
+            Step::AnalyzeCode,
+            Step::CoverConcerns {
+                focus: vec!["Security".into()],
+            },
+            Step::WalkDecisions,
+            Step::VerifyConstraints,
+            Step::ImpactCheck,
+            Step::PatternDetection,
+            Step::DesignCheck,
+            Step::DriftCheck,
+            Step::CoverageAudit,
+            Step::ScanProject,
+            Step::ExtractDecisions {
+                component: "store".into(),
+            },
+            Step::ProjectRules,
+            Step::WarmUp,
+            Step::Ready,
+        ];
+
+        for variant in &variants {
+            let name = variant.as_str();
+            let parsed = Step::parse(name);
+            assert!(
+                parsed.is_some(),
+                "Step::{:?} as_str `{name}` not accepted by parse",
+                variant
+            );
+            let parsed = parsed.unwrap();
+            assert_eq!(
+                parsed.as_str(),
+                name,
+                "parse(`{name}`).as_str() should round-trip to `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn step_parse_aliases_resolve_correctly() {
+        assert_eq!(
+            Step::parse("summary_gate").unwrap().as_str(),
+            "design_check"
+        );
+        assert_eq!(Step::parse("user_explains").unwrap().as_str(), "warm_up");
+    }
+
+    #[test]
+    fn step_parse_unknown_returns_none() {
+        assert!(Step::parse("bogus").is_none());
+        assert!(Step::parse("").is_none());
+        assert!(Step::parse("Register").is_none());
+    }
+
+    #[test]
+    fn is_gated_name_agrees_with_parse_for_all_names() {
+        for &name in Step::ALL_NAMES {
+            let via_parse = Step::parse(name).map(|st| st.is_gated());
+            let via_method = Step::is_gated_name(name);
+            assert_eq!(
+                via_parse, via_method,
+                "is_gated_name(`{name}`) disagrees with parse-based result"
+            );
+        }
+    }
+
+    #[test]
+    fn all_names_accepted_by_parse() {
+        for &name in Step::ALL_NAMES {
+            assert!(
+                Step::parse(name).is_some(),
+                "ALL_NAMES entry `{name}` not accepted by Step::parse"
             );
         }
     }

@@ -16,245 +16,48 @@ use super::{Mode, Step, TaskType};
 // ── Step → action mapping ─────────────────────────────────────────────────
 
 /// Map a deduced step to a concrete tool action the agent should execute.
+///
+/// All instruction text comes from [`super::steps::summary`] — the single
+/// source of truth for the short instruction that accompanies each action.
 pub(super) fn step_action(component: &str, step: &Step, task: Option<&str>, mode: Mode) -> Value {
+    let instruction = super::steps::summary(step, mode);
+    let step_name = step.as_str();
     match step {
         Step::Register => serde_json::json!({
             "tool": "add_component",
             "args": { "name": component },
-            "instruction": "Component is not registered. Confirm the name \
-                            and description, then call add_component.",
+            "instruction": &*instruction,
         }),
 
-        Step::DefineScope => step_prompt_action(
-            component,
-            "define_scope",
-            task,
-            mode,
-            match mode {
-                Mode::Agent => {
-                    "Read source code and determine this component's \
-                     responsibilities and boundaries. Record scope decisions \
-                     with tags: [\"scope\"] and attribution=\"agent\"."
-                }
-                Mode::Interactive => {
-                    "Define what the component is and isn't responsible for. \
-                     Record each answer as a decision with tags: [\"scope\"]."
-                }
-            },
-        ),
-
-        Step::AnalyzeCode => step_prompt_action(
-            component,
-            "analyze_code",
-            task,
-            mode,
-            match mode {
-                Mode::Agent => {
-                    "Read every source file in this component. Identify \
-                     all architectural decisions and record each immediately \
-                     with attribution=\"agent\"."
-                }
-                Mode::Interactive => {
-                    "Read every source file in this component. Walk through \
-                     each architectural decision one at a time with the user. \
-                     Share what the code does and why it matters, discuss, \
-                     then record."
-                }
-            },
-        ),
-
         Step::CoverConcerns { focus } => {
-            let instruction = match mode {
-                Mode::Agent => format!(
-                    "Cover uncovered concern areas: {}. For each, determine \
-                     the decision the code has made and record with \
-                     attribution=\"agent\".",
-                    focus.join(", "),
-                ),
-                Mode::Interactive => format!(
-                    "Cover uncovered concern areas: {}. For each, start by \
-                     asking how the user thinks about that concern. Discuss \
-                     trade-offs together, then record the decision.",
-                    focus.join(", "),
-                ),
-            };
-            let mut action =
-                step_prompt_action(component, "cover_concerns", task, mode, &instruction);
+            let mut action = step_prompt_action(component, step_name, task, mode, &instruction);
             action["focus"] = serde_json::json!(focus);
             action
         }
 
-        Step::WalkDecisions => step_prompt_action(
-            component,
-            "walk_decisions",
-            task,
-            mode,
-            match mode {
-                Mode::Agent => {
-                    "Verify each recorded decision against the current \
-                     source code. Update any that have drifted. Record \
-                     unrecorded decisions with attribution=\"agent\"."
-                }
-                Mode::Interactive => {
-                    "Discuss each recorded decision with the user as a \
-                     design conversation. One at a time — share the code \
-                     context, probe trade-offs, then move on."
-                }
-            },
-        ),
-
-        Step::VerifyConstraints => step_prompt_action(
-            component,
-            "verify_constraints",
-            task,
-            mode,
-            match mode {
-                Mode::Agent => {
-                    "Verify each existing constraint against the source code. \
-                     Check if the current task conflicts with any constraint. \
-                     Update any that have drifted."
-                }
-                Mode::Interactive => {
-                    "Start by understanding the user's change, then check \
-                     each relevant constraint. For each, ask whether the \
-                     change respects it or needs it to change. Discuss and \
-                     update_decision if agreed."
-                }
-            },
-        ),
-
-        Step::ImpactCheck => step_prompt_action(
-            component,
-            "impact_check",
-            task,
-            mode,
-            match mode {
-                Mode::Agent => {
-                    "Read the interface code for connected components and \
-                     determine whether the current task affects them."
-                }
-                Mode::Interactive => {
-                    "Check whether this change impacts connected components. \
-                     Review the architecture brief for cross-component effects."
-                }
-            },
-        ),
-
-        Step::PatternDetection => step_prompt_action(
-            component,
-            "pattern_detection",
-            task,
-            mode,
-            match mode {
-                Mode::Agent => {
-                    "Review all recorded decisions. For groups of 2+ that \
-                     reinforce the same invariant or form a defense-in-depth \
-                     chain, call record_pattern with attribution=\"agent\"."
-                }
-                Mode::Interactive => {
-                    "Review all recorded decisions for this component and project \
-                     rules. Look for groups of 2+ decisions that reinforce the \
-                     same invariant, form a defense-in-depth chain, or share a \
-                     common constraint. For each candidate, ask the user to \
-                     confirm, then call record_pattern."
-                }
-            },
-        ),
-
-        Step::DesignCheck => step_prompt_action(
-            component,
-            "design_check",
-            task,
-            mode,
-            "Practical comprehension check. Ask a context-appropriate \
-             question that lets the user demonstrate understanding \
-             built during this session. If they miss something, help \
-             them connect the dots — don't quiz.",
-        ),
-
-        Step::DriftCheck => step_prompt_action(
-            component,
-            "drift_check",
-            task,
-            mode,
-            match mode {
-                Mode::Agent => {
-                    "Compare each recorded decision against the current source \
-                     code. Revise any that have drifted. Proceed autonomously."
-                }
-                Mode::Interactive => {
-                    "Compare each recorded decision against the current source \
-                     code. Flag any that have drifted from the implementation. \
-                     For drifted decisions, call update_decision(revise)."
-                }
-            },
-        ),
-
-        Step::CoverageAudit => step_prompt_action(
-            component,
-            "coverage_audit",
-            task,
-            mode,
-            match mode {
-                Mode::Agent => {
-                    "Audit concern coverage. Read source code for each gap \
-                     and report which are real vs intentional."
-                }
-                Mode::Interactive => {
-                    "Audit concern coverage. The assessment shows which areas \
-                     lack decisions. For each gap, determine whether the \
-                     component needs a decision there or if the gap is \
-                     intentional."
-                }
-            },
-        ),
-
-        Step::WarmUp => step_prompt_action(
-            component,
-            "warm_up",
-            task,
-            mode,
-            "Conversational opener — ask a practical question that \
-             reveals the user's mental model without making them perform. \
-             Note what they mention and what they omit for later steps.",
-        ),
-
-        Step::ScanProject => step_prompt_action(
-            "project",
-            "scan_project",
-            task,
-            mode,
-            "Read the project structure, identify major components, \
-             and register them with add_component and add_connection.",
-        ),
-
-        Step::ProjectRules => step_prompt_action(
-            "project",
-            "project_rules",
-            task,
-            mode,
-            "Identify cross-cutting project-level decisions and \
-             record them with component='project'.",
-        ),
-
-        Step::ExtractDecisions { component: target } => step_prompt_action(
-            target,
-            "extract_decisions",
-            task,
-            mode,
-            &format!(
-                "Read every source file in [{target}] and record \
-                 architectural decisions autonomously."
-            ),
-        ),
+        Step::ScanProject | Step::ProjectRules => {
+            step_prompt_action("project", step_name, task, mode, &instruction)
+        }
+        Step::ExtractDecisions { component: target } => {
+            step_prompt_action(target, step_name, task, mode, &instruction)
+        }
 
         Step::Ready => serde_json::json!({
             "tool": "get_context",
             "args": { "component": component, "task": task },
-            "instruction": "Component is designed and ready for \
-                            implementation. Call get_context for the \
-                            authoritative brief.",
+            "instruction": &*instruction,
         }),
+
+        Step::DefineScope
+        | Step::AnalyzeCode
+        | Step::WalkDecisions
+        | Step::VerifyConstraints
+        | Step::ImpactCheck
+        | Step::PatternDetection
+        | Step::DesignCheck
+        | Step::DriftCheck
+        | Step::CoverageAudit
+        | Step::WarmUp => step_prompt_action(component, step_name, task, mode, &instruction),
     }
 }
 
@@ -332,6 +135,7 @@ pub(super) fn ready_response(p: ReadyParams<'_>) -> Value {
         TaskType::Feature
     };
     let assessment = build_assessment(p.decisions, p.covered, p.uncovered, p.stale, p.patterns);
+    let instruction = super::steps::summary(&Step::Ready, p.mode);
     let response = build_response(
         p.component,
         display_type,
@@ -342,9 +146,7 @@ pub(super) fn ready_response(p: ReadyParams<'_>) -> Value {
         serde_json::json!({
             "tool": "get_context",
             "args": { "component": p.component, "task": p.task },
-            "instruction": "Component is designed and ready for \
-                            implementation. Call get_context for the \
-                            authoritative brief.",
+            "instruction": &*instruction,
         }),
     );
     with_agent_review_hint(response, agent_unreviewed_count(p.decisions))
@@ -407,4 +209,46 @@ pub(super) struct StaleDec {
     pub(super) created: String,
     pub(super) last_touched: String,
     pub(super) age_days: i64,
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow::steps;
+
+    #[test]
+    fn step_action_instruction_matches_summary_gated() {
+        let step = Step::VerifyConstraints;
+        for mode in [Mode::Agent, Mode::Interactive] {
+            let action = step_action("auth", &step, None, mode);
+            let instruction = action["instruction"]
+                .as_str()
+                .expect("instruction must be a string");
+            assert_eq!(
+                instruction,
+                steps::summary(&step, mode).as_ref(),
+                "instruction mismatch for VerifyConstraints in {:?}",
+                mode
+            );
+        }
+    }
+
+    #[test]
+    fn step_action_instruction_matches_summary_ungated() {
+        let step = Step::ScanProject;
+        for mode in [Mode::Agent, Mode::Interactive] {
+            let action = step_action("project", &step, None, mode);
+            let instruction = action["instruction"]
+                .as_str()
+                .expect("instruction must be a string");
+            assert_eq!(
+                instruction,
+                steps::summary(&step, mode).as_ref(),
+                "instruction mismatch for ScanProject in {:?}",
+                mode
+            );
+        }
+    }
 }
