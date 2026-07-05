@@ -186,7 +186,6 @@ See [CLAUDE.md](CLAUDE.md) for the full recommended instructions.
 | `record_pattern` | Synthesize a pattern from multiple related decisions |
 | `update_decision` | Amend (typo fix) or supersede (substantive change) |
 | `remove_decision` | Remove with cascade analysis |
-| `validate_consistency` | Full graph integrity check |
 
 All tools include [annotations](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so MCP clients can make informed decisions about tool invocation.
 

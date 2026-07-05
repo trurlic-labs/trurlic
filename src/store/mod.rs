@@ -1,4 +1,4 @@
-mod cascade;
+pub(crate) mod cascade;
 pub mod graph;
 pub(crate) mod limits;
 mod query;
@@ -200,7 +200,8 @@ pub(crate) fn format_code_refs(refs: &[CodeRef]) -> String {
 /// a broken link. Probing uses `try_exists`, and only a definite `Ok(false)`
 /// counts as missing — an `Err` (permission denied, mount not ready, transient
 /// I/O) is treated as *present*, so a filesystem blip can never misreport a live
-/// file as deleted and drive a decision to be flagged stale or garbage-collected.
+/// file as deleted and drive a decision to be flagged as having orphaned refs or
+/// garbage-collected.
 ///
 /// This is the single source of truth for reference-orphaning, shared by the
 /// context health report and the `gc` collector so both agree on the predicate.

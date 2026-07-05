@@ -1,11 +1,53 @@
 use serde_json::Value;
 
+use crate::store::cascade::CascadeResult;
 use crate::store::limits::{MAX_CHOICE_BYTES, MIN_REASON_BYTES};
 use crate::store::schema::{Attribution, DecisionFile};
 use crate::store::{self, Store};
 use crate::workflow::concerns;
 
 use super::write::{opt_str, opt_str_array, parse_code_refs, require_str};
+
+/// Cascade analysis → JSON arrays for MCP tool responses.
+///
+/// Private to this module: the map API serializes cascade results in a
+/// different shape (message-only strings), so a shared helper in
+/// `store::cascade` would go unused outside MCP.
+fn cascade_to_json(cascade: &CascadeResult) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
+    let blocked_by = cascade
+        .blockers
+        .iter()
+        .map(|b| {
+            serde_json::json!({
+                "node": b.node,
+                "edge": b.edge.as_str(),
+                "message": b.message,
+            })
+        })
+        .collect();
+    let would_warn = cascade
+        .warnings
+        .iter()
+        .map(|w| {
+            serde_json::json!({
+                "node": w.node,
+                "edge": w.edge.as_str(),
+                "message": w.message,
+            })
+        })
+        .collect();
+    let would_clean = cascade
+        .cleanups
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "edge": c.edge.as_str(),
+                "target": c.target,
+            })
+        })
+        .collect();
+    (blocked_by, would_warn, would_clean)
+}
 
 // ── remove_decision ─────────────────────────────────────────────────────────
 
@@ -22,30 +64,14 @@ pub(crate) fn remove_decision(
 
     // Cascade analysis via the shared graph method.
     let cascade = state.graph().check_decision_cascade(name);
+    let (blocked_by, would_warn, would_clean) = cascade_to_json(&cascade);
 
     if cascade.is_blocked() {
         return Ok(serde_json::json!({
             "removed": false,
-            "blocked_by": cascade.blockers.iter()
-                .map(|b| serde_json::json!({
-                    "node": b.node,
-                    "edge": b.edge.as_str(),
-                    "message": b.message,
-                }))
-                .collect::<Vec<_>>(),
-            "would_warn": cascade.warnings.iter()
-                .map(|w| serde_json::json!({
-                    "node": w.node,
-                    "edge": w.edge.as_str(),
-                    "message": w.message,
-                }))
-                .collect::<Vec<_>>(),
-            "would_clean": cascade.cleanups.iter()
-                .map(|c| serde_json::json!({
-                    "edge": c.edge.as_str(),
-                    "target": c.target,
-                }))
-                .collect::<Vec<_>>(),
+            "blocked_by": blocked_by,
+            "would_warn": would_warn,
+            "would_clean": would_clean,
         }));
     }
 
@@ -65,20 +91,9 @@ pub(crate) fn remove_decision(
 
     Ok(serde_json::json!({
         "removed": true,
-        "blocked_by": [],
-        "would_warn": cascade.warnings.iter()
-            .map(|w| serde_json::json!({
-                "node": w.node,
-                "edge": w.edge.as_str(),
-                "message": w.message,
-            }))
-            .collect::<Vec<_>>(),
-        "would_clean": cascade.cleanups.iter()
-            .map(|c| serde_json::json!({
-                "edge": c.edge.as_str(),
-                "target": c.target,
-            }))
-            .collect::<Vec<_>>(),
+        "blocked_by": blocked_by,
+        "would_warn": would_warn,
+        "would_clean": would_clean,
         "coverage_impact": coverage_impact,
     }))
 }
@@ -652,6 +667,47 @@ mod tests {
         );
         // History survives the promotion untouched.
         assert_eq!(state.decisions["jwt-tokens"].decision.history.len(), 2);
+    }
+
+    // ── cascade_to_json ─────────────────────────────────────────────
+
+    #[test]
+    fn cascade_to_json_produces_expected_shape() {
+        use crate::store::cascade::{CascadeBlocker, CascadeCleanup, CascadeEffect, CascadeResult};
+        use crate::store::schema::EdgeKind;
+
+        let cascade = CascadeResult {
+            blockers: vec![CascadeBlocker {
+                node: "dep".into(),
+                edge: EdgeKind::DependsOn,
+                message: "depends on target".into(),
+            }],
+            warnings: vec![CascadeEffect {
+                node: "pat".into(),
+                edge: EdgeKind::MemberOf,
+                message: "will be updated".into(),
+            }],
+            cleanups: vec![CascadeCleanup {
+                edge: EdgeKind::BelongsTo,
+                target: "auth".into(),
+            }],
+        };
+
+        let (blocked_by, would_warn, would_clean) = cascade_to_json(&cascade);
+
+        assert_eq!(blocked_by.len(), 1);
+        assert_eq!(blocked_by[0]["node"], "dep");
+        assert_eq!(blocked_by[0]["edge"], "depends_on");
+        assert_eq!(blocked_by[0]["message"], "depends on target");
+
+        assert_eq!(would_warn.len(), 1);
+        assert_eq!(would_warn[0]["node"], "pat");
+        assert_eq!(would_warn[0]["edge"], "member_of");
+        assert_eq!(would_warn[0]["message"], "will be updated");
+
+        assert_eq!(would_clean.len(), 1);
+        assert_eq!(would_clean[0]["edge"], "belongs_to");
+        assert_eq!(would_clean[0]["target"], "auth");
     }
 
     // ── no workflow hints ─────────────────────────────────────────────

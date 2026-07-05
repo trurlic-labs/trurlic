@@ -32,6 +32,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **`get_context` health field renamed: `stale` → `orphaned_refs`.** The term "stale" previously described two unrelated concepts — workflow staleness (decisions older than the threshold, driving `DriftCheck`) and reference orphaning (all `code_refs` point at deleted files). The health payload field, brief marker (`⚠ ORPHANED REFS`), gc report section title, and CLI help text now use "orphaned refs" for the reference-deletion concept, reserving "stale" exclusively for age-based workflow staleness.
 - `advance()` signature: added `mode: Option<Mode>` parameter.
 - `build_step_prompt()` signature: added `mode: Mode` parameter.
 - `build_step_prompt()` signature: added `now: DateTime<Utc>` parameter. Prompt generation is now a pure function — callers at system boundaries (MCP, session) inject `Utc::now()` rather than the function reading the clock internally.
@@ -44,6 +45,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Removed
 
+- **`validate_consistency` MCP tool.** Every MCP write already validates the full graph fail-closed server-side, so an agent calling `validate_consistency` in normal operation learns nothing a write wouldn't tell it. Its one niche — diagnosing external file edits — is served by `trurlic check` (human) and the file watcher (server). Each tool schema costs context tokens in every agent session, on every client, forever. The underlying `graph().validate()` remains — it is the write-path validator and `trurlic check`'s engine.
 - **`Supersedes` edge type.** In-place revision keeps prior versions inside the decision file, so a superseding edge to an old node no longer exists. Every read path returns exactly the active decisions with no filtering.
 - **`amend` and `supersede` update modes.** Replaced by `revise` (which always records history) and `promote`. `update_decision(mode="amend")` and `update_decision(mode="supersede")` now return a clear invalid-mode error.
 

@@ -215,18 +215,6 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 }
             },
             {
-                "name": "validate_consistency",
-                "description": "Full graph integrity check. Same validation as `trurlic check`.",
-                "annotations": {
-                    "title": "Validate consistency",
-                    "readOnlyHint": true,
-                    "destructiveHint": false,
-                    "idempotentHint": true,
-                    "openWorldHint": false
-                },
-                "inputSchema": { "type": "object", "properties": {} }
-            },
-            {
                 "name": "record_decision",
                 "description": "Record a single architectural decision. Validates all \
                     edges before writing. Atomic commit. Returns the decision name, \
@@ -582,7 +570,6 @@ pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> 
         "get_decision_history" => dispatch_get_decision_history(state, args),
         "get_decisions_for_file" => dispatch_get_decisions_for_file(state, args),
         "get_architecture" => tool_result(&context::get_architecture(state)),
-        "validate_consistency" => tool_result(&write::validate_consistency(state)),
         "get_step_prompt" => dispatch_get_step_prompt(state, args),
         _ => tool_error(&format!("unknown tool: {name}")),
     }
@@ -820,7 +807,6 @@ mod tests {
         assert!(names.contains(&"get_decision_history"));
         assert!(names.contains(&"get_decisions_for_file"));
         assert!(names.contains(&"get_architecture"));
-        assert!(names.contains(&"validate_consistency"));
         assert!(names.contains(&"record_decision"));
         assert!(names.contains(&"record_pattern"));
         assert!(names.contains(&"remove_decision"));
@@ -909,7 +895,6 @@ mod tests {
         assert!(!is_write_tool("get_decision_history"));
         assert!(!is_write_tool("get_decisions_for_file"));
         assert!(!is_write_tool("get_architecture"));
-        assert!(!is_write_tool("validate_consistency"));
         assert!(!is_write_tool("get_step_prompt"));
 
         // Unknown.
@@ -987,7 +972,6 @@ mod tests {
             "get_decision_history",
             "get_decisions_for_file",
             "get_architecture",
-            "validate_consistency",
             "get_step_prompt",
         ];
         for tool in tools {
@@ -1349,6 +1333,35 @@ mod tests {
             .unwrap();
         assert_eq!(tool["annotations"]["readOnlyHint"], true);
         assert_eq!(tool["inputSchema"]["required"][0], "file");
+    }
+
+    // ── C05: validate_consistency removed ─────────────────────────
+
+    #[test]
+    fn validate_consistency_absent_from_tool_list() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(
+            !names.contains(&"validate_consistency"),
+            "validate_consistency should have been removed from the tool catalogue"
+        );
+    }
+
+    #[test]
+    fn dispatch_validate_consistency_returns_unknown_tool() {
+        let state = empty_state();
+        let envelope = call_read_tool(&state, "validate_consistency", &serde_json::json!({}));
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "validate_consistency should be rejected as unknown"
+        );
+        assert!(
+            envelope.content[0].text.contains("unknown tool"),
+            "error should say 'unknown tool': {}",
+            envelope.content[0].text,
+        );
     }
 
     fn empty_state() -> ProjectState {

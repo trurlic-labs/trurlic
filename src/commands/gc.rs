@@ -24,9 +24,9 @@ use super::open_store_mut;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GcScope {
     /// Remove only structurally-orphaned decisions (their component is gone).
-    /// Stale and long-unreviewed agent decisions are reported, not removed.
+    /// Orphaned-ref and long-unreviewed agent decisions are reported, not removed.
     Safe,
-    /// Additionally remove stale and long-unreviewed agent decisions.
+    /// Additionally remove orphaned-ref and long-unreviewed agent decisions.
     Aggressive,
 }
 
@@ -80,15 +80,15 @@ struct Candidate {
     detail: String,
 }
 
-/// Reclaim orphaned decisions, and — under `Aggressive` — stale and
+/// Reclaim orphaned decisions, and — under `Aggressive` — orphaned-ref and
 /// long-unreviewed agent decisions too. Every candidate passes a cascade
 /// pre-flight; those that would break a dependent or shrink a pattern below
 /// its minimum are reported as blocked and left in place.
 pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
 
-    let (orphaned, stale, old_agent) = classify(&state);
-    let surfaced = orphaned.len() + stale.len() + old_agent.len();
+    let (orphaned, orphaned_ref, old_agent) = classify(&state);
+    let surfaced = orphaned.len() + orphaned_ref.len() + old_agent.len();
     if surfaced == 0 {
         println!("gc: nothing to collect.");
         return Ok(());
@@ -103,7 +103,7 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     let (removable, blocked) = plan_removals(
         &state,
         &orphaned,
-        &stale,
+        &orphaned_ref,
         &old_agent,
         reclaim_extra,
         execution,
@@ -131,22 +131,22 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
 /// print each category's removable/blocked breakdown, and return the flat set
 /// cleared for removal plus the count that the pre-flight blocked.
 ///
-/// Orphaned decisions are always removal targets; stale and agent-review debt
-/// join them only under `--aggressive`. The pre-flight judges the whole
+/// Orphaned decisions are always removal targets; orphaned-ref and agent-review
+/// debt join them only under `--aggressive`. The pre-flight judges the whole
 /// attempted set in one batch-aware pass, so co-removed dependents and pattern
 /// members are scored against what actually leaves — removing two members of a
 /// shared pattern can never silently drop it below its minimum.
 fn plan_removals<'a>(
     state: &ProjectState,
     orphaned: &'a [Candidate],
-    stale: &'a [Candidate],
+    orphaned_ref: &'a [Candidate],
     old_agent: &'a [Candidate],
     reclaim_extra: bool,
     execution: GcExecution,
 ) -> (Vec<&'a Candidate>, usize) {
     let mut attempted: Vec<&Candidate> = orphaned.iter().collect();
     if reclaim_extra {
-        attempted.extend(stale.iter());
+        attempted.extend(orphaned_ref.iter());
         attempted.extend(old_agent.iter());
     }
     let names: Vec<&str> = attempted.iter().map(|c| c.name.as_str()).collect();
@@ -158,8 +158,8 @@ fn plan_removals<'a>(
         .collect();
 
     let (orphan_removable, orphan_blocked) = split_blocked(orphaned, &blocked_reasons);
-    let (stale_removable, stale_blocked) = if reclaim_extra {
-        split_blocked(stale, &blocked_reasons)
+    let (ref_removable, ref_blocked) = if reclaim_extra {
+        split_blocked(orphaned_ref, &blocked_reasons)
     } else {
         (Vec::new(), Vec::new())
     };
@@ -172,9 +172,9 @@ fn plan_removals<'a>(
     print_removal_section("Orphaned", &orphan_removable, &orphan_blocked, execution);
     if reclaim_extra {
         print_removal_section(
-            "Stale (all code refs dead)",
-            &stale_removable,
-            &stale_blocked,
+            "Orphaned refs (all code refs dead)",
+            &ref_removable,
+            &ref_blocked,
             execution,
         );
         print_removal_section(
@@ -184,16 +184,16 @@ fn plan_removals<'a>(
             execution,
         );
     } else {
-        print_report_section("Stale (all code refs dead)", stale);
+        print_report_section("Orphaned refs (all code refs dead)", orphaned_ref);
         print_report_section("Agent unreviewed > 90 days", old_agent);
     }
 
     let removable: Vec<&Candidate> = orphan_removable
         .into_iter()
-        .chain(stale_removable)
+        .chain(ref_removable)
         .chain(agent_removable)
         .collect();
-    let blocked = orphan_blocked.len() + stale_blocked.len() + agent_blocked.len();
+    let blocked = orphan_blocked.len() + ref_blocked.len() + agent_blocked.len();
     (removable, blocked)
 }
 
@@ -230,12 +230,12 @@ fn apply_removals(
 
 /// Sort every decision into at most one reclaim category. Precedence is
 /// structural first: an orphaned decision is reported as orphaned even if its
-/// code refs are also dead, and a stale decision is not double-counted as
-/// review debt.
+/// code refs are also dead, and an orphaned-ref decision is not double-counted
+/// as review debt.
 fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candidate>) {
     let cutoff = Utc::now() - Duration::days(AGENT_REVIEW_STALE_DAYS);
     let mut orphaned = Vec::new();
-    let mut stale = Vec::new();
+    let mut orphaned_ref = Vec::new();
     let mut old_agent = Vec::new();
 
     for (name, dec) in &state.decisions {
@@ -248,7 +248,7 @@ fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candid
             });
         } else if crate::store::decision_refs_all_missing(&state.project_root, dec) {
             let files: Vec<&str> = d.code_refs.iter().map(|r| r.file.as_str()).collect();
-            stale.push(Candidate {
+            orphaned_ref.push(Candidate {
                 name: name.clone(),
                 component: d.component.clone(),
                 detail: format!("{} deleted", files.join(", ")),
@@ -262,7 +262,7 @@ fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candid
         }
     }
 
-    (orphaned, stale, old_agent)
+    (orphaned, orphaned_ref, old_agent)
 }
 
 /// Bucket a category's candidates into those the batch pre-flight cleared and
@@ -456,7 +456,7 @@ mod tests {
     }
 
     /// Write a decision file straight to disk so tests can set fields the CLI
-    /// cannot (a stale code ref, an aged `created`, or a missing component).
+    /// cannot (an orphaned code ref, an aged `created`, or a missing component).
     fn plant_decision(store: &Store, name: &str, decision: Decision) {
         let lock = store.lock().unwrap();
         store
@@ -499,18 +499,18 @@ mod tests {
     }
 
     #[test]
-    fn gc_safe_flags_but_keeps_stale_and_old_agent() {
+    fn gc_safe_flags_but_keeps_orphaned_ref_and_old_agent() {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
         let store = Store::discover(tmp.path()).unwrap();
 
-        let mut stale = base_decision("auth", "Custom XML parser");
-        stale.code_refs = vec![CodeRef {
+        let mut orphaned_ref = base_decision("auth", "Custom XML parser");
+        orphaned_ref.code_refs = vec![CodeRef {
             file: "src/parsers/xml.rs".into(),
             symbol: None,
         }];
-        plant_decision(&store, "xml-parser", stale);
+        plant_decision(&store, "xml-parser", orphaned_ref);
 
         let mut old = base_decision("auth", "Auto-detected cache layer");
         old.attribution = Attribution::Agent;
@@ -526,18 +526,18 @@ mod tests {
     }
 
     #[test]
-    fn gc_aggressive_removes_stale_and_old_agent() {
+    fn gc_aggressive_removes_orphaned_ref_and_old_agent() {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
         let store = Store::discover(tmp.path()).unwrap();
 
-        let mut stale = base_decision("auth", "Custom XML parser");
-        stale.code_refs = vec![CodeRef {
+        let mut orphaned_ref = base_decision("auth", "Custom XML parser");
+        orphaned_ref.code_refs = vec![CodeRef {
             file: "src/parsers/xml.rs".into(),
             symbol: None,
         }];
-        plant_decision(&store, "xml-parser", stale);
+        plant_decision(&store, "xml-parser", orphaned_ref);
 
         let mut old = base_decision("auth", "Auto-detected cache layer");
         old.attribution = Attribution::Agent;

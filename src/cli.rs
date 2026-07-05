@@ -91,16 +91,16 @@ pub enum Command {
     },
 
     /// Reclaim decisions that have lost their anchor: orphaned (component
-    /// gone), stale (all referenced files deleted), or long-unreviewed agent
-    /// decisions. Reports what would be reclaimed by default; pass `--apply`
-    /// to write the removals.
+    /// gone), orphaned-ref (all referenced files deleted), or long-unreviewed
+    /// agent decisions. Reports what would be reclaimed by default; pass
+    /// `--apply` to write the removals.
     Gc {
         /// Actually write the removals (default: dry-run).
         #[arg(long)]
         apply: bool,
 
-        /// Also remove stale and long-unreviewed agent decisions, not just
-        /// orphans.
+        /// Also remove orphaned-ref and long-unreviewed agent decisions, not
+        /// just orphans.
         #[arg(long)]
         aggressive: bool,
 
@@ -403,8 +403,8 @@ pub fn run(cli: Cli) -> Result<()> {
                     commands::AggressiveConfirm::Confirmed => {}
                     commands::AggressiveConfirm::PromptUser => {
                         eprint!(
-                            "Aggressive gc will permanently remove stale and \
-                             unreviewed agent decisions. Continue? [y/N] "
+                            "Aggressive gc will permanently remove orphaned-ref \
+                             and unreviewed agent decisions. Continue? [y/N] "
                         );
                         std::io::stderr().flush()?;
                         let mut buf = String::new();

@@ -76,8 +76,8 @@ pub(crate) fn get_context(
         ContextDepth::Full => {
             // Decisions whose code_refs all point at deleted files — each ref is
             // stat'd on disk, so this runs only on the full brief that consumes
-            // it (health summary + stale flags), never the light constraints path.
-            let stale_names = stale_decision_names(&state.project_root, &component_decisions);
+            // it (health summary + orphaned-ref flags), never the light constraints path.
+            let orphaned_ref_names = orphaned_ref_names(&state.project_root, &component_decisions);
 
             let related_decisions = graph.related_decisions(component);
             let seeds: Vec<&str> = component_decisions
@@ -95,7 +95,7 @@ pub(crate) fn get_context(
                 transitive_deps: &transitive_deps,
                 patterns: &patterns,
                 uncovered_concerns: &uncovered_concerns,
-                stale_names: &stale_names,
+                orphaned_ref_names: &orphaned_ref_names,
             });
 
             let mut seen: HashSet<&str> =
@@ -132,7 +132,7 @@ pub(crate) fn get_context(
                     "covered": covered_concerns,
                     "uncovered": uncovered_concerns,
                 },
-                "health": build_health(&component_decisions, stale_names.len()),
+                "health": build_health(&component_decisions, orphaned_ref_names.len()),
                 "brief": brief,
                 "status": status,
             }))
@@ -219,7 +219,7 @@ struct BriefParams<'a> {
     uncovered_concerns: &'a [&'a str],
     /// Names of component decisions whose code_refs all point at deleted
     /// files. Flagged inline so the agent knows the reference is untrustworthy.
-    stale_names: &'a HashSet<&'a str>,
+    orphaned_ref_names: &'a HashSet<&'a str>,
 }
 
 /// Format the authoritative brief that coding agents consume directly.
@@ -277,8 +277,8 @@ fn build_brief(p: &BriefParams<'_>) -> String {
                 "- {} ({}){}\n",
                 d.decision.choice, d.decision.reason, suffix
             ));
-            if p.stale_names.contains(name.as_ref()) {
-                brief.push_str(STALE_DECISION_FLAG);
+            if p.orphaned_ref_names.contains(name.as_ref()) {
+                brief.push_str(ORPHANED_REFS_FLAG);
             }
             if d.decision.attribution == Attribution::Agent {
                 brief.push_str(AGENT_REVIEW_CALL_TO_ACTION);
@@ -615,12 +615,12 @@ const AGENT_REVIEW_CALL_TO_ACTION: &str = "  \u{2192} user: call update_decision
 /// Inline flag appended under a decision whose every code_ref points at a
 /// file that no longer exists on disk — the recorded constraint has lost its
 /// anchor in the source and should be revised or removed.
-const STALE_DECISION_FLAG: &str = "  \u{26a0} STALE \u{2014} all referenced files deleted\n";
+const ORPHANED_REFS_FLAG: &str = "  \u{26a0} ORPHANED REFS \u{2014} all referenced files deleted\n";
 
-/// Names of the decisions in `component_decisions` that are stale: every
+/// Names of the decisions in `component_decisions` with orphaned refs: every
 /// `code_ref` resolves to a file confirmed missing from disk, per the shared
 /// [`store::decision_refs_all_missing`] predicate.
-fn stale_decision_names<'a>(
+fn orphaned_ref_names<'a>(
     project_root: &Path,
     component_decisions: &[(&'a Arc<str>, &'a DecisionFile)],
 ) -> HashSet<&'a str> {
@@ -632,13 +632,14 @@ fn stale_decision_names<'a>(
 }
 
 /// Summarize the health of a component's decision set: how many decisions it
-/// carries, how many remain unreviewed agent decisions, how many are stale
-/// (referencing deleted files), and a single most-pressing warning.
+/// carries, how many remain unreviewed agent decisions, how many have orphaned
+/// refs (all code_refs point at deleted files), and a single most-pressing
+/// warning.
 ///
-/// `stale` is computed by the caller via [`stale_decision_names`] so the same
-/// pass feeds both this summary and the brief's inline flags. The counts drive
-/// the warning via [`health_warning`].
-fn build_health(component_decisions: &[(&Arc<str>, &DecisionFile)], stale: usize) -> Value {
+/// `orphaned_refs` is computed by the caller via [`orphaned_ref_names`] so the
+/// same pass feeds both this summary and the brief's inline flags. The counts
+/// drive the warning via [`health_warning`].
+fn build_health(component_decisions: &[(&Arc<str>, &DecisionFile)], orphaned_refs: usize) -> Value {
     let total = component_decisions.len();
     let agent_unreviewed = component_decisions
         .iter()
@@ -648,15 +649,15 @@ fn build_health(component_decisions: &[(&Arc<str>, &DecisionFile)], stale: usize
     serde_json::json!({
         "total": total,
         "agent_unreviewed": agent_unreviewed,
-        "stale": stale,
-        "warning": health_warning(total, agent_unreviewed, stale),
+        "orphaned_refs": orphaned_refs,
+        "warning": health_warning(total, agent_unreviewed, orphaned_refs),
     })
 }
 
 /// Select the single most-pressing health warning by fixed precedence:
-/// decision overload first, then unreviewed agent decisions, then stale
-/// references. Returns `Null` when the decision set is healthy.
-fn health_warning(total: usize, agent_unreviewed: usize, stale: usize) -> Value {
+/// decision overload first, then unreviewed agent decisions, then orphaned
+/// refs. Returns `Null` when the decision set is healthy.
+fn health_warning(total: usize, agent_unreviewed: usize, orphaned_refs: usize) -> Value {
     const MAX_HEALTHY_DECISIONS: usize = 20;
     const MAX_HEALTHY_AGENT_UNREVIEWED: usize = 5;
 
@@ -667,9 +668,9 @@ fn health_warning(total: usize, agent_unreviewed: usize, stale: usize) -> Value 
         )
     } else if agent_unreviewed > MAX_HEALTHY_AGENT_UNREVIEWED {
         serde_json::json!("Multiple agent decisions pending review")
-    } else if stale > 0 {
+    } else if orphaned_refs > 0 {
         serde_json::json!(format!(
-            "{stale} decisions reference deleted files — consider removing or revising"
+            "{orphaned_refs} decisions reference deleted files — consider removing or revising"
         ))
     } else {
         Value::Null
@@ -1601,7 +1602,12 @@ mod tests {
         let health = &result["health"];
         assert!(health["total"].is_number());
         assert!(health["agent_unreviewed"].is_number());
-        assert!(health["stale"].is_number());
+        assert!(health["orphaned_refs"].is_number());
+        // The old "stale" key must not appear — concept (b) is now "orphaned_refs".
+        assert!(
+            health["stale"].is_null(),
+            "health must not contain 'stale' key"
+        );
         // auth carries a single user decision → healthy, no warning.
         assert!(health["warning"].is_null());
     }
@@ -1651,7 +1657,7 @@ mod tests {
         let health = build_health(&decisions, 0);
         assert_eq!(health["total"], 2);
         assert_eq!(health["agent_unreviewed"], 1);
-        assert_eq!(health["stale"], 0);
+        assert_eq!(health["orphaned_refs"], 0);
         assert!(health["warning"].is_null());
     }
 
@@ -1668,7 +1674,7 @@ mod tests {
     }
 
     #[test]
-    fn health_warning_stale_refs() {
+    fn health_warning_orphaned_refs() {
         let warning = health_warning(5, 2, 3);
         assert!(warning.as_str().unwrap().contains("deleted files"));
     }
@@ -1685,7 +1691,7 @@ mod tests {
         assert!(warning.as_str().unwrap().contains("consolidating"));
     }
 
-    // ── staleness ─────────────────────────────────────────────────────
+    // ── orphaned refs ─────────────────────────────────────────────────
 
     fn decision_with_refs(refs: Vec<CodeRef>) -> DecisionFile {
         use chrono::Utc;
@@ -1705,7 +1711,7 @@ mod tests {
     }
 
     #[test]
-    fn is_stale_when_all_refs_deleted() {
+    fn is_orphaned_when_all_refs_deleted() {
         let tmp = tempfile::TempDir::new().unwrap();
         let dec = decision_with_refs(vec![
             CodeRef {
@@ -1721,7 +1727,7 @@ mod tests {
     }
 
     #[test]
-    fn not_stale_when_any_ref_survives() {
+    fn not_orphaned_when_any_ref_survives() {
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::write(tmp.path().join("live.rs"), "// present").unwrap();
         let dec = decision_with_refs(vec![
@@ -1739,15 +1745,15 @@ mod tests {
     }
 
     #[test]
-    fn not_stale_without_code_refs() {
+    fn not_orphaned_without_code_refs() {
         let tmp = tempfile::TempDir::new().unwrap();
         let dec = decision_with_refs(vec![]);
-        // No links means nothing to break — never stale.
+        // No links means nothing to break — never orphaned.
         assert!(!store::decision_refs_all_missing(tmp.path(), &dec));
     }
 
     #[test]
-    fn health_reports_and_flags_stale_decisions() {
+    fn health_reports_and_flags_orphaned_ref_decisions() {
         use chrono::Utc;
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1790,21 +1796,21 @@ mod tests {
         let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
 
         // Only the dead-ref decision counts; use-jwt has no code_refs.
-        assert_eq!(result["health"]["stale"], 1);
-        // With a small, reviewed set, staleness is the surfaced warning.
+        assert_eq!(result["health"]["orphaned_refs"], 1);
+        // With a small, reviewed set, orphaned refs is the surfaced warning.
         assert!(
             result["health"]["warning"]
                 .as_str()
                 .unwrap()
                 .contains("deleted files"),
-            "stale refs should drive the health warning: {:?}",
+            "orphaned refs should drive the health warning: {:?}",
             result["health"]["warning"]
         );
         // The brief flags the specific decision inline.
         let brief = result["brief"].as_str().unwrap();
         assert!(
-            brief.contains("STALE"),
-            "brief must flag the stale decision: {brief}"
+            brief.contains("ORPHANED REFS"),
+            "brief must flag the orphaned-ref decision: {brief}"
         );
     }
 
@@ -1891,7 +1897,7 @@ mod tests {
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
         let comp_decs = vec![(&name, &dec)];
-        let stale_names: HashSet<&str> = HashSet::new();
+        let orphaned_ref_names: HashSet<&str> = HashSet::new();
 
         let brief = build_brief(&BriefParams {
             component: "store",
@@ -1902,7 +1908,7 @@ mod tests {
             related_decisions: &[],
             patterns: &[],
             uncovered_concerns: &[],
-            stale_names: &stale_names,
+            orphaned_ref_names: &orphaned_ref_names,
         });
 
         assert!(
@@ -1929,7 +1935,7 @@ mod tests {
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
         let comp_decs = vec![(&name, &dec)];
-        let stale_names: HashSet<&str> = HashSet::new();
+        let orphaned_ref_names: HashSet<&str> = HashSet::new();
 
         let brief = build_brief(&BriefParams {
             component: "store",
@@ -1940,7 +1946,7 @@ mod tests {
             related_decisions: &[],
             patterns: &[],
             uncovered_concerns: &[],
-            stale_names: &stale_names,
+            orphaned_ref_names: &orphaned_ref_names,
         });
 
         assert!(
