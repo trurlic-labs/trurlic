@@ -27,6 +27,9 @@ pub(crate) fn parse_code_ref_arg(arg: &str) -> CodeRef {
     }
 }
 
+/// `trurlic decide` — record a user-attributed decision on a component (or
+/// `project`). Validates the component name, then commits through the store's
+/// atomic write path.
 pub fn decide(
     cwd: &Path,
     component: &str,
@@ -147,6 +150,9 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
     Ok(())
 }
 
+/// `trurlic remove decision` — delete a single decision after a cascade
+/// pre-flight, then report any concern areas that lost their last cover.
+/// Refused with `CascadeBlocked` if another decision depends on it.
 pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
 

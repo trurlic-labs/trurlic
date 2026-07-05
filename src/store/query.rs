@@ -344,6 +344,44 @@ mod tests {
         assert_eq!(decs[0].0.as_ref(), "error-strategy");
     }
 
+    // ── coverage_baseline ────────────────────────────────────────────────
+
+    #[test]
+    fn coverage_baseline_component_includes_project_rules() {
+        let g = test_graph();
+        // auth owns `use-jwt`; the project owns `error-strategy`. A component's
+        // coverage baseline is its own decisions plus the project-wide rules.
+        let baseline = g.coverage_baseline("auth");
+        assert_eq!(baseline.len(), 2);
+        let owners: HashSet<&str> = baseline
+            .iter()
+            .map(|d| d.decision.component.as_str())
+            .collect();
+        assert!(owners.contains("auth"));
+        assert!(owners.contains("project"));
+    }
+
+    #[test]
+    fn coverage_baseline_undesigned_component_is_project_rules_only() {
+        let g = test_graph();
+        // rate-limiter has no decisions of its own — the baseline is exactly
+        // the inherited project rules.
+        let baseline = g.coverage_baseline("rate-limiter");
+        assert_eq!(baseline.len(), 1);
+        assert_eq!(baseline[0].decision.component.as_str(), "project");
+    }
+
+    #[test]
+    fn coverage_baseline_project_does_not_duplicate_rules() {
+        let g = test_graph();
+        // For "project" itself the project rules ARE its own decisions, so they
+        // must be counted once, never added a second time.
+        let baseline = g.coverage_baseline("project");
+        assert_eq!(baseline.len(), g.project_decisions().len());
+        assert_eq!(baseline.len(), 1);
+        assert_eq!(baseline[0].decision.component.as_str(), "project");
+    }
+
     // ── connects_to / connects_from ──────────────────────────────────────
 
     #[test]

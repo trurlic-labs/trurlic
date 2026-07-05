@@ -11,6 +11,9 @@ use crate::{Error, Result};
 
 use super::DryRun;
 
+/// `trurlic migrate` — upgrade an on-disk store to the current `FORMAT_VERSION`:
+/// re-serialize every node to the latest schema and drop edges whose kind the
+/// schema retired. `DryRun::Yes` reports the plan without writing.
 pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     let store = Store::discover(cwd)?;
     store.clean_stale_tmp()?;

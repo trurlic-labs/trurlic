@@ -55,14 +55,11 @@ pub(crate) fn get_context(
     let project_decisions = graph.project_decisions();
     let patterns = graph.patterns_for(component);
 
-    // Concern coverage: project rules + component decisions.
-    let coverage_decisions: Vec<&crate::store::DecisionFile> = project_decisions
-        .iter()
-        .chain(component_decisions.iter())
-        .map(|(_, d)| *d)
-        .collect();
+    // Concern coverage: component decisions plus the project rules that
+    // constrain every component. Shares the single baseline used by every
+    // lost-coverage report so the two never diverge.
     let (covered_concerns, uncovered_concerns) =
-        concerns::compute_concern_coverage(&coverage_decisions);
+        concerns::compute_concern_coverage(&graph.coverage_baseline(component));
 
     let status = if !component_decisions.is_empty() {
         "covered"

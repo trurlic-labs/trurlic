@@ -6,6 +6,9 @@ use crate::{Error, Result};
 
 use super::{discover_store, open_store};
 
+/// `trurlic status` — print a one-screen summary of the graph: component,
+/// decision (with project-wide count), pattern, and edge totals, plus a
+/// consistency-issue count when the graph does not validate cleanly.
 pub fn status(cwd: &Path) -> Result<()> {
     let (_store, state) = open_store(cwd)?;
 
@@ -35,6 +38,10 @@ pub fn status(cwd: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `trurlic query file <path>` — list every decision whose `code_refs`
+/// reference `path` (exact file match or directory prefix), with attribution
+/// and the matching refs. The query path is normalized and traversal-checked
+/// at the trust boundary before lookup.
 pub fn query_file(cwd: &Path, path: &str) -> Result<()> {
     let normalized = store::normalize_file_query(path)?;
     let (_store, state) = open_store(cwd)?;
@@ -70,6 +77,9 @@ pub fn query_file(cwd: &Path, path: &str) -> Result<()> {
     Ok(())
 }
 
+/// `trurlic check` — verify content hashes against `graph.toml`, then validate
+/// full graph integrity, exiting non-zero on any error. With `rebuild`, instead
+/// recompiles `graph.toml` deterministically from the node files.
 pub fn check(cwd: &Path, rebuild: bool) -> Result<()> {
     if rebuild {
         return check_rebuild(cwd);

@@ -95,7 +95,6 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     }
 
     let apply = matches!(execution, GcExecution::Apply);
-    let reclaim_extra = matches!(scope, GcScope::Aggressive);
     if !apply {
         println!("Dry run — no changes written.");
     }
@@ -105,7 +104,7 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
         &orphaned,
         &orphaned_ref,
         &old_agent,
-        reclaim_extra,
+        scope,
         execution,
     );
 
@@ -141,9 +140,12 @@ fn plan_removals<'a>(
     orphaned: &'a [Candidate],
     orphaned_ref: &'a [Candidate],
     old_agent: &'a [Candidate],
-    reclaim_extra: bool,
+    scope: GcScope,
     execution: GcExecution,
 ) -> (Vec<&'a Candidate>, usize) {
+    // Orphaned decisions are always reclaimed; orphaned-ref and agent-review
+    // debt join them only under `--aggressive`.
+    let reclaim_extra = matches!(scope, GcScope::Aggressive);
     let mut attempted: Vec<&Candidate> = orphaned.iter().collect();
     if reclaim_extra {
         attempted.extend(orphaned_ref.iter());

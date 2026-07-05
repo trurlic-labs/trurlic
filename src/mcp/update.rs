@@ -243,6 +243,7 @@ fn promote_decision(
     store
         .promote_decision(&lock, state, name)
         .map_err(|e| e.to_string())?;
+    drop(lock);
 
     Ok(serde_json::json!({
         "name": name,
