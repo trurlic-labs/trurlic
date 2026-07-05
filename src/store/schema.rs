@@ -114,6 +114,17 @@ pub struct Decision {
     pub history: Vec<HistoryEntry>,
 }
 
+impl Decision {
+    /// The most recent timestamp reflecting when this decision was last examined.
+    ///
+    /// Returns the latest `HistoryEntry.changed_at` if the decision has been
+    /// revised, otherwise returns `created`. Revising a decision after a drift
+    /// check signals that it was re-examined; this clears staleness.
+    pub fn last_touched(&self) -> DateTime<Utc> {
+        self.history.last().map_or(self.created, |h| h.changed_at)
+    }
+}
+
 // ── patterns/<name>.toml ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -797,5 +808,54 @@ created = "2025-06-01T10:30:00Z"
 "#;
         let file: DecisionFile = toml::from_str(toml_str).expect("deserialize");
         assert!(file.decision.history.is_empty());
+    }
+
+    // ── last_touched ───────────────────────────────────────────────────
+
+    #[test]
+    fn last_touched_returns_created_when_no_history() {
+        let created = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let dec = Decision {
+            component: "store".into(),
+            choice: "TOML".into(),
+            reason: "Readable".into(),
+            alternatives: vec![],
+            tags: vec![],
+            attribution: Attribution::User,
+            created,
+            code_refs: vec![],
+            history: vec![],
+        };
+        assert_eq!(dec.last_touched(), created);
+    }
+
+    #[test]
+    fn last_touched_returns_latest_changed_at() {
+        let created = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let rev1 = Utc.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap();
+        let rev2 = Utc.with_ymd_and_hms(2025, 6, 25, 0, 0, 0).unwrap();
+        let dec = Decision {
+            component: "store".into(),
+            choice: "Current choice".into(),
+            reason: "Current reason".into(),
+            alternatives: vec![],
+            tags: vec![],
+            attribution: Attribution::User,
+            created,
+            code_refs: vec![],
+            history: vec![
+                HistoryEntry {
+                    choice: "First".into(),
+                    reason: "First reason".into(),
+                    changed_at: rev1,
+                },
+                HistoryEntry {
+                    choice: "Second".into(),
+                    reason: "Second reason".into(),
+                    changed_at: rev2,
+                },
+            ],
+        };
+        assert_eq!(dec.last_touched(), rev2);
     }
 }

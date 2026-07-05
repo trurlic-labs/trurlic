@@ -109,6 +109,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Review no longer loops forever on DriftCheck.** Staleness is now computed
+  from `Decision::last_touched()` — the latest revision timestamp if revised,
+  otherwise `created` — instead of the immutable `created` date. A revised
+  decision clears staleness. Additionally, `deduce_review` now gates `DriftCheck`
+  on `completed_steps`, matching the project-scope behavior and allowing
+  progression when stale decisions are confirmed unchanged. The stale-decisions
+  assessment payload now includes both `created` and `last_touched` for UI
+  transparency.
 - **Batch decision removal is now cascade-safe.** `gc` and `remove decision
   --agent` pre-flight the whole set with a batch-aware cascade that reaches a
   fixed point: co-removed dependents and pattern members no longer block one

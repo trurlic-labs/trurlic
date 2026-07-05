@@ -129,10 +129,12 @@ pub fn advance(
     let stale: Vec<StaleDec> = decisions
         .iter()
         .filter_map(|(name, d)| {
-            let age_days = now.signed_duration_since(d.decision.created).num_days();
+            let touched = d.decision.last_touched();
+            let age_days = now.signed_duration_since(touched).num_days();
             (age_days >= STALENESS_THRESHOLD_DAYS).then(|| StaleDec {
                 name: Arc::clone(name),
                 created: d.decision.created.to_rfc3339(),
+                last_touched: touched.to_rfc3339(),
                 age_days,
             })
         })
@@ -520,9 +522,14 @@ fn deduce_learn(
 /// but typically produces updated decisions and/or patterns. Uses
 /// `completed_steps` for progression.
 ///
-/// DriftCheck: systematic verification for stale decisions — agent
-/// updates timestamps by calling `update_decision`, advancing the
-/// state machine past this step naturally.
+/// DriftCheck: systematic verification for stale decisions. Staleness
+/// is computed from `Decision::last_touched()` — the latest revision
+/// timestamp if revised, else `created`. A decision clears staleness
+/// either (a) by being revised via `update_decision`, which refreshes
+/// `last_touched`, or (b) by the caller reporting `drift_check` in
+/// `step_evidence` when decisions were confirmed unchanged (legitimate
+/// outcome). Gated by `completed_steps` to prevent infinite loops when
+/// stale decisions are confirmed without editing.
 ///
 /// CoverageAudit: surfaces coverage gaps. Agent may record intentional-
 /// gap decisions (graph change) or note gaps for future work.
@@ -540,7 +547,9 @@ fn deduce_review(
     if !decisions.is_empty() && !completed.contains(&"walk_decisions") {
         return Step::WalkDecisions;
     }
-    if !stale.is_empty() {
+    // Gated by completed_steps to prevent infinite loops when stale
+    // decisions are confirmed unchanged (legitimate review outcome).
+    if !stale.is_empty() && !completed.contains(&"drift_check") {
         return Step::DriftCheck;
     }
     if uncovered.len() > covered.len() {
@@ -2347,6 +2356,238 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["step"], "drift_check");
+    }
+
+    // ── T01: DriftCheck regression tests ────────────────────────────
+
+    #[test]
+    fn review_revised_decision_not_stale_skips_drift_check() {
+        // Decision created 200+ days ago but revised 5 days ago.
+        // last_touched is the revision date → NOT stale → no DriftCheck.
+        let old_created = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let recent_revision = Utc.with_ymd_and_hms(2025, 6, 25, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+
+        let mut decs: Vec<(&str, DecisionFile)> = vec![(
+            "d-security",
+            DecisionFile {
+                decision: Decision {
+                    component: "store".into(),
+                    choice: "Auth tokens revised".into(),
+                    reason: "Token security updated".into(),
+                    alternatives: vec![],
+                    tags: vec!["security".into()],
+                    attribution: Attribution::User,
+                    created: old_created,
+                    code_refs: vec![],
+                    history: vec![HistoryEntry {
+                        choice: "Auth tokens".into(),
+                        reason: "Token security".into(),
+                        changed_at: recent_revision,
+                    }],
+                },
+            },
+        )];
+        // Add remaining decisions also created recently (relative to `now`)
+        // so they are not stale. Use dates within 90 days of `now`.
+        let recent = Utc.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap();
+        for (name, choice, reason, tags) in [
+            ("d-errors", "Fail-closed", "Error recovery", &["error"][..]),
+            (
+                "d-locking",
+                "RwLock for state",
+                "Concurrent access",
+                &["lock"][..],
+            ),
+            (
+                "d-integrity",
+                "BLAKE3 hash validation",
+                "Integrity check",
+                &[][..],
+            ),
+            (
+                "d-perf",
+                "In-memory cache",
+                "Performance target",
+                &["cache"][..],
+            ),
+            ("d-api", "REST API protocol", "External interface", &[][..]),
+        ] {
+            decs.push((
+                name,
+                DecisionFile {
+                    decision: Decision {
+                        component: "store".into(),
+                        choice: choice.into(),
+                        reason: reason.into(),
+                        alternatives: vec![],
+                        tags: tags.iter().map(|t| (*t).into()).collect(),
+                        attribution: Attribution::User,
+                        created: recent,
+                        code_refs: vec![],
+                        history: vec![],
+                    },
+                },
+            ));
+        }
+
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &decs,
+            &[("p1", "Integrity chain", &["store"])],
+        );
+
+        // walk_decisions completed → no stale decisions (revised clears it)
+        // → should skip DriftCheck entirely.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions"]),
+            now,
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "drift_check",
+            "revised decision should NOT be stale; should skip DriftCheck"
+        );
+    }
+
+    #[test]
+    fn review_untouched_stale_decision_returns_drift_check() {
+        // Decision created 200+ days ago, never revised → stale → DriftCheck.
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+        let decisions = well_covered_decisions("store", false); // created 2024-01-01
+        let state = build_state(&[("store", "Data store")], &decisions);
+
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions"]),
+            now,
+        )
+        .unwrap();
+
+        assert_eq!(result["step"], "drift_check");
+    }
+
+    #[test]
+    fn review_drift_check_completed_progresses_past_it() {
+        // Untouched stale decisions exist, but drift_check is in completed
+        // → should NOT return DriftCheck again (completed gate).
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+        let decisions = well_covered_decisions("store", false); // stale
+        let state = build_state_with_patterns(
+            &[("store", "Data store")],
+            &decisions,
+            &[("p1", "Integrity chain", &["store"])],
+        );
+
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions", "drift_check"]),
+            now,
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "drift_check",
+            "drift_check in completed_steps must prevent infinite DriftCheck loop"
+        );
+    }
+
+    #[test]
+    fn review_staleness_deterministic_with_revised_decisions() {
+        // Same inputs + same `now` → identical output. Advance stays pure
+        // even with history-based last_touched computation.
+        let old_created = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let recent_revision = Utc.with_ymd_and_hms(2025, 6, 25, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+
+        let decs = vec![(
+            "d1",
+            DecisionFile {
+                decision: Decision {
+                    component: "store".into(),
+                    choice: "Current".into(),
+                    reason: "Updated reason".into(),
+                    alternatives: vec![],
+                    tags: vec![],
+                    attribution: Attribution::User,
+                    created: old_created,
+                    code_refs: vec![],
+                    history: vec![HistoryEntry {
+                        choice: "Original".into(),
+                        reason: "Original reason".into(),
+                        changed_at: recent_revision,
+                    }],
+                },
+            },
+        )];
+        let state = build_state(&[("store", "Data store")], &decs);
+
+        let call = |n| {
+            advance(
+                &state,
+                "store",
+                Some(TaskType::Review),
+                None,
+                Some(Mode::Interactive),
+                &evidence(&["walk_decisions"]),
+                n,
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            call(now),
+            call(now),
+            "same (graph, now) must give identical results"
+        );
+    }
+
+    #[test]
+    fn review_stale_assessment_includes_last_touched() {
+        // When decisions ARE stale, the assessment should report last_touched.
+        let now = Utc.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap();
+        let decisions = well_covered_decisions("store", false); // created 2024-01-01
+        let state = build_state(&[("store", "Data store")], &decisions);
+
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &BTreeMap::new(),
+            now,
+        )
+        .unwrap();
+
+        let stale_decs = result["assessment"]["stale_decisions"]
+            .as_array()
+            .expect("stale_decisions must be an array");
+        assert!(!stale_decs.is_empty());
+        for sd in stale_decs {
+            assert!(
+                sd.get("last_touched").is_some(),
+                "stale decision should include last_touched: {sd}"
+            );
+            assert!(
+                sd.get("created").is_some(),
+                "stale decision should still include created: {sd}"
+            );
+        }
     }
 
     // ── Harden step sequence ──────────────────────────────────────────

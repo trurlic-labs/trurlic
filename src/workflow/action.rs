@@ -298,6 +298,7 @@ pub(super) fn build_assessment(
             serde_json::json!({
                 "name": s.name.as_ref(),
                 "created": &s.created,
+                "last_touched": &s.last_touched,
                 "age_days": s.age_days,
             })
         })
@@ -404,5 +405,6 @@ pub(super) fn top_n(concerns: &[&str], n: usize) -> Vec<String> {
 pub(super) struct StaleDec {
     pub(super) name: Arc<str>,
     pub(super) created: String,
+    pub(super) last_touched: String,
     pub(super) age_days: i64,
 }
