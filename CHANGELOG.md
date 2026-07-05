@@ -144,6 +144,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   so a trailing or doubled space can't slip a near-duplicate past it.
 - **Map `PUT /api/decision/:name` returns 404**, not 500, for an unknown
   decision, and 400 for invalid input.
+- **Feature and review workflows no longer loop on `CoverConcerns` /
+  `CoverageAudit`.** `deduce_feature` now gates both `CoverConcerns` branches
+  (task-relevant and majority-threshold) on `completed_steps`, and
+  `deduce_review` gates its `CoverageAudit` branch the same way. Previously,
+  if a recorded decision's text didn't hit the concern keyword list, the
+  uncovered count never shrank and the state machine returned the same step
+  forever.
 - **`advance` is pure again — the wall clock is injected, not read.** Staleness
   (decisions older than the threshold) is now computed from a `now` the caller
   supplies, so `advance` is a deterministic function of `(graph, now)`. Reading

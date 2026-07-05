@@ -343,6 +343,9 @@ fn deduce_new_component(
 /// keyword relevance to the task description (e.g. "add caching" matches
 /// "Performance constraints" via the "cache" keyword). If no task or no
 /// keyword matches, fall back to the majority threshold (uncovered > covered).
+/// Gated by `completed_steps` to prevent infinite loops when recorded
+/// decisions don't match concern keywords — once the caller reports
+/// `cover_concerns` in `step_evidence`, the step is never returned again.
 ///
 /// PatternDetection: after concerns are covered, look for patterns across
 /// decisions. Has a verifiable postcondition (patterns recorded).
@@ -366,20 +369,24 @@ fn deduce_feature(
     }
 
     // CoverConcerns: focused on task-relevant gaps.
-    if let Some(t) = task {
-        let relevant = task_relevant_concerns(uncovered, t);
-        if !relevant.is_empty() {
+    // Gated by completed_steps to prevent infinite loops when recorded
+    // decisions don't match concern keywords.
+    if !completed.contains(&"cover_concerns") {
+        if let Some(t) = task {
+            let relevant = task_relevant_concerns(uncovered, t);
+            if !relevant.is_empty() {
+                return Step::CoverConcerns {
+                    focus: top_n(&relevant, CONCERN_FOCUS_LIMIT),
+                };
+            }
+        }
+
+        // Fallback: majority threshold.
+        if uncovered.len() > covered.len() {
             return Step::CoverConcerns {
-                focus: top_n(&relevant, CONCERN_FOCUS_LIMIT),
+                focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
             };
         }
-    }
-
-    // Fallback: majority threshold.
-    if uncovered.len() > covered.len() {
-        return Step::CoverConcerns {
-            focus: top_n(uncovered, CONCERN_FOCUS_LIMIT),
-        };
     }
 
     // PatternDetection: after concerns are covered.
@@ -532,7 +539,9 @@ fn deduce_learn(
 /// stale decisions are confirmed without editing.
 ///
 /// CoverageAudit: surfaces coverage gaps. Agent may record intentional-
-/// gap decisions (graph change) or note gaps for future work.
+/// gap decisions (graph change) or note gaps for future work. Gated by
+/// `completed_steps` to prevent infinite loops when recorded decisions
+/// don't match concern keywords.
 ///
 /// DesignCheck: comprehension check — user summarizes review findings.
 fn deduce_review(
@@ -552,7 +561,9 @@ fn deduce_review(
     if !stale.is_empty() && !completed.contains(&"drift_check") {
         return Step::DriftCheck;
     }
-    if uncovered.len() > covered.len() {
+    // Gated by completed_steps to prevent infinite loops when recorded
+    // decisions don't match concern keywords.
+    if uncovered.len() > covered.len() && !completed.contains(&"coverage_audit") {
         return Step::CoverageAudit;
     }
     if patterns.is_empty() && !completed.contains(&"pattern_detection") {
@@ -3619,6 +3630,157 @@ mod tests {
         .unwrap();
         assert_eq!(result["step"], "ready");
         assert_eq!(result["requires_user_input"], false);
+    }
+
+    // ── Feature task-relevant concerns ────────────────────────────────
+
+    // ── T02: CoverConcerns/CoverageAudit completed gates ───────────
+
+    #[test]
+    fn feature_cover_concerns_completed_gate_majority_threshold() {
+        // Regression (T02): component with decisions, verify_constraints
+        // completed, uncovered > covered, step_evidence contains
+        // cover_concerns → next step is NOT cover_concerns.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // verify_constraints + cover_concerns both completed.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["verify_constraints", "cover_concerns"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "cover_concerns",
+            "cover_concerns in completed_steps must prevent infinite CoverConcerns loop"
+        );
+    }
+
+    #[test]
+    fn feature_cover_concerns_completed_gate_task_relevant() {
+        // Regression (T02): same scenario but with a task whose words match
+        // an uncovered concern's keywords — completed gate still wins.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // "add caching layer" matches Performance concern keywords.
+        // verify_constraints + cover_concerns both completed.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            Some("add caching layer"),
+            Some(Mode::Interactive),
+            &evidence(&["verify_constraints", "cover_concerns"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "cover_concerns",
+            "cover_concerns completed gate must override task-relevant concerns"
+        );
+    }
+
+    #[test]
+    fn feature_cover_concerns_first_pass_still_returned() {
+        // Existing first-pass behavior: without cover_concerns in evidence,
+        // the step IS still returned.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // Only verify_constraints completed — cover_concerns NOT in evidence.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Feature),
+            Some("add caching layer"),
+            Some(Mode::Interactive),
+            &evidence(&["verify_constraints"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result["step"], "cover_concerns",
+            "without cover_concerns evidence, the step should still be returned"
+        );
+    }
+
+    #[test]
+    fn review_coverage_audit_completed_gate() {
+        // Regression (T02): stale empty, uncovered > covered,
+        // walk_decisions and coverage_audit completed → not coverage_audit again.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // walk_decisions + coverage_audit both completed; no stale.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions", "coverage_audit"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_ne!(
+            result["step"], "coverage_audit",
+            "coverage_audit in completed_steps must prevent infinite CoverageAudit loop"
+        );
+    }
+
+    #[test]
+    fn review_coverage_audit_first_pass_still_returned() {
+        // Existing first-pass behavior: without coverage_audit in evidence,
+        // the step IS still returned when gaps exist.
+        let state = build_state(
+            &[("store", "Data store")],
+            &[(
+                "d1",
+                fresh_decision("store", "TOML format", "Readable", &["format"]),
+            )],
+        );
+        // Only walk_decisions completed — coverage_audit NOT in evidence.
+        let result = advance(
+            &state,
+            "store",
+            Some(TaskType::Review),
+            None,
+            Some(Mode::Interactive),
+            &evidence(&["walk_decisions"]),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result["step"], "coverage_audit",
+            "without coverage_audit evidence, the step should still be returned"
+        );
     }
 
     // ── Feature task-relevant concerns ────────────────────────────────
