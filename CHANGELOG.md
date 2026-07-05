@@ -9,6 +9,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-05
+
 ### Added
 
 - **`trurlic decide --ref` flag.** Code references can now be attached from the CLI via repeatable `--ref <file[::symbol]>` flags. The argument is split on the first `::` only — the file part is everything before it, the symbol part everything after. Validation flows through the existing `store::validate_code_refs` at the store trust boundary.
@@ -273,6 +275,7 @@ any MCP-compatible coding agent.
 - TypeScript frontend tests (force layout, camera, culling, edges, geometry, level-of-detail, graph state, drag, hover, selection, search).
 - CodSpeed benchmarks for store operations (via `criterion` / `codspeed-criterion-compat`).
 
-[Unreleased]: https://github.com/trurlic-labs/trurlic/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/trurlic-labs/trurlic/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.3.0
 [0.2.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.2.0
 [0.1.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.1.0
