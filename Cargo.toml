@@ -52,9 +52,6 @@ fs2 = "0.4"
 # File system watcher for live reload
 notify = "6"
 
-# HTTP client for LLM API calls (rustls = pure-Rust TLS, no OpenSSL dep)
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-
 # Async runtime
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "net", "signal", "sync"] }
 
@@ -75,9 +72,6 @@ rand = "0.8"
 
 # Atomic file writes (install command)
 tempfile = "3"
-
-# Security: zero API keys from memory on drop
-zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 criterion = { version = "2", package = "codspeed-criterion-compat", default-features = false }
