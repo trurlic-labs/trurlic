@@ -9,6 +9,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Removed
+
+- **`trurlic design` and `trurlic bootstrap` subcommands.** The CLI is no longer a design interface — Socratic design conversations, decision recording, and the advance loop now happen exclusively through MCP. The LLM subsystem that existed solely to serve those commands is gone: the `session/` module (design driver, bootstrap driver, LLM response extraction, session persistence), the `provider/` module (Anthropic/OpenAI/OpenRouter/Gemini/Ollama/Custom clients and SSE streaming), and the `config/` module (provider resolution, API-key handling). The `Error::ProviderConfig` and `Error::Api` variants are removed with them. The map, query tools, and component/decision management CLI are unchanged.
+
 ## [0.3.0] — 2026-07-05
 
 ### Added

@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::session::SessionMode;
 use crate::{Error, Result, commands};
 
 #[derive(Parser, Debug)]
@@ -37,33 +36,6 @@ pub enum Command {
     /// Remove a component or decision.
     #[command(subcommand)]
     Remove(RemoveCommand),
-
-    /// Start a Socratic design conversation for a component.
-    Design {
-        /// Component to design (must already exist via `trurlic add component`).
-        component: String,
-
-        /// Resume a previously interrupted design session.
-        #[arg(long = "continue", conflicts_with = "revisit")]
-        continue_session: bool,
-
-        /// Revisit and potentially revise existing decisions.
-        #[arg(long)]
-        revisit: bool,
-
-        /// Task description (e.g. "add caching", "fix auth race condition").
-        /// Focuses the workflow on concerns relevant to the task.
-        #[arg(long, short = 't')]
-        task: Option<String>,
-
-        /// LLM provider: anthropic, openai, openrouter (auto-detected if omitted).
-        #[arg(long, short = 'p')]
-        provider: Option<String>,
-
-        /// Model override (default per provider: claude-sonnet-4, gpt-4o, etc.).
-        #[arg(long, short = 'm')]
-        model: Option<String>,
-    },
 
     /// Record a quick decision without the full Socratic flow.
     Decide {
@@ -168,24 +140,6 @@ pub enum Command {
         /// Show what would change without writing.
         #[arg(long)]
         dry_run: bool,
-    },
-
-    /// Show bootstrap progress and agent instructions for autonomous
-    /// architecture extraction from an existing codebase.
-    /// With -p/--provider, runs the bootstrap directly using the LLM API.
-    Bootstrap {
-        /// Bootstrap a single component instead of the full project.
-        component: Option<String>,
-
-        /// LLM provider for direct mode: anthropic, openai, openrouter.
-        /// When set, runs the bootstrap using the LLM instead of printing
-        /// agent instructions.
-        #[arg(long, short = 'p')]
-        provider: Option<String>,
-
-        /// Model override (default per provider: claude-sonnet-4, gpt-4o, etc.).
-        #[arg(long, short = 'm')]
-        model: Option<String>,
     },
 }
 
@@ -325,30 +279,6 @@ pub fn run(cli: Cli) -> Result<()> {
             },
             RemoveCommand::Connection { from, to } => commands::remove_connection(&cwd, &from, &to),
         },
-        Command::Design {
-            component,
-            continue_session,
-            revisit,
-            task,
-            provider,
-            model,
-        } => {
-            let mode = if continue_session {
-                SessionMode::Continue
-            } else if revisit {
-                SessionMode::Revisit
-            } else {
-                SessionMode::Fresh
-            };
-            commands::design(
-                &cwd,
-                &component,
-                mode,
-                task.as_deref(),
-                provider.as_deref(),
-                model.as_deref(),
-            )
-        }
         Command::Decide {
             component,
             choice,
@@ -436,25 +366,6 @@ pub fn run(cli: Cli) -> Result<()> {
                 commands::DryRun::No
             };
             commands::migrate(&cwd, mode)
-        }
-        Command::Bootstrap {
-            component,
-            provider,
-            model,
-        } => {
-            if provider.is_some() {
-                commands::bootstrap_direct(
-                    &cwd,
-                    component.as_deref(),
-                    provider.as_deref(),
-                    model.as_deref(),
-                )
-            } else {
-                match component {
-                    Some(ref c) => commands::bootstrap_component(&cwd, c),
-                    None => commands::bootstrap(&cwd),
-                }
-            }
         }
     }
 }

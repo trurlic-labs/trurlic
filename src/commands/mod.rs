@@ -1,7 +1,5 @@
-mod bootstrap;
 mod component;
 mod decision;
-mod design;
 mod gc;
 mod init;
 pub(crate) mod install;
@@ -10,13 +8,11 @@ pub(crate) mod migrate;
 mod query;
 mod serve;
 
-pub use bootstrap::{bootstrap, bootstrap_component, bootstrap_direct};
 pub use component::{
     add_component, add_connection, remove_component, remove_connection, rename_component,
 };
 pub(crate) use decision::parse_code_ref_arg;
 pub use decision::{decide, remove_agent_decisions, remove_decision};
-pub use design::design;
 pub(crate) use gc::{AggressiveConfirm, resolve_aggressive_confirm};
 pub use gc::{GcExecution, GcScope, gc};
 pub use init::init;

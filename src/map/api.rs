@@ -119,8 +119,6 @@ fn error_status(err: &crate::Error) -> StatusCode {
         | Error::TomlWrite(_)
         | Error::StoreExists(_)
         | Error::CheckFailed(_)
-        | Error::ProviderConfig(_)
-        | Error::Api { .. }
         | Error::HomeNotFound
         | Error::BinaryNotFound
         | Error::InvalidInstallConfig { .. }
