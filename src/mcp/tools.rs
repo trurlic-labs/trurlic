@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::context;
-use super::{update, write};
+use super::{update, verify, write};
 use crate::store::{ProjectState, Store};
 use crate::workflow;
 
@@ -212,6 +212,38 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                         }
                     },
                     "required": ["file"]
+                }
+            },
+            {
+                "name": "verify_against_decisions",
+                "description": "Call after implementing code, before committing. \
+                    Returns architectural decisions that apply to the files you \
+                    changed, with instructions to verify your code respects them. \
+                    Read each affected file and evaluate.",
+                "annotations": {
+                    "title": "Verify against decisions",
+                    "readOnlyHint": true,
+                    "destructiveHint": false,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "component": {
+                            "type": "string",
+                            "description": "Component name (kebab-case) or 'project'."
+                        },
+                        "changed_files": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Relative file paths from project root that \
+                                you changed (e.g. 'src/store/write.rs'). Leading './' is \
+                                stripped; backslashes, traversal (..), and absolute paths \
+                                are rejected."
+                        }
+                    },
+                    "required": ["component", "changed_files"]
                 }
             },
             {
@@ -569,6 +601,7 @@ pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> 
         "check_pattern" => dispatch_check_pattern(state, args),
         "get_decision_history" => dispatch_get_decision_history(state, args),
         "get_decisions_for_file" => dispatch_get_decisions_for_file(state, args),
+        "verify_against_decisions" => dispatch_verify_against_decisions(state, args),
         "get_architecture" => tool_result(&context::get_architecture(state)),
         "get_step_prompt" => dispatch_get_step_prompt(state, args),
         _ => tool_error(&format!("unknown tool: {name}")),
@@ -646,6 +679,46 @@ fn dispatch_get_decisions_for_file(state: &ProjectState, args: &Value) -> ToolEn
         Ok(result) => tool_result(&result),
         Err(msg) => tool_error(&msg),
     }
+}
+
+fn dispatch_verify_against_decisions(state: &ProjectState, args: &Value) -> ToolEnvelope {
+    let component = match args.get("component").and_then(|v| v.as_str()) {
+        Some(c) => c,
+        None => return tool_error("missing required parameter: component"),
+    };
+
+    let entries = match args.get("changed_files").and_then(|v| v.as_array()) {
+        Some(arr) if !arr.is_empty() => arr,
+        Some(_) => return tool_error("changed_files must be a non-empty array"),
+        None => {
+            return tool_error("missing required parameter: changed_files (array of strings)");
+        }
+    };
+
+    // Normalize and validate every path up front — an invalid path is an
+    // error, never a silent skip, matching get_decisions_for_file.
+    let mut changed_files: Vec<String> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let path = match entry.as_str() {
+            Some(p) => p,
+            None => return tool_error("changed_files entries must be strings"),
+        };
+        match crate::store::normalize_file_query(path) {
+            Ok(normalized) => changed_files.push(normalized),
+            Err(e) => return tool_error(&format!("invalid file path: {e}")),
+        }
+    }
+
+    // Component must exist (or be the project scope), matching get_context.
+    if component != "project" && !state.components.contains_key(component) {
+        return tool_error(&format!("component `{component}` does not exist"));
+    }
+
+    tool_result(&verify::build_response(
+        state.graph(),
+        component,
+        &changed_files,
+    ))
 }
 
 fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope {
@@ -806,6 +879,7 @@ mod tests {
         assert!(names.contains(&"check_pattern"));
         assert!(names.contains(&"get_decision_history"));
         assert!(names.contains(&"get_decisions_for_file"));
+        assert!(names.contains(&"verify_against_decisions"));
         assert!(names.contains(&"get_architecture"));
         assert!(names.contains(&"record_decision"));
         assert!(names.contains(&"record_pattern"));
@@ -894,6 +968,7 @@ mod tests {
         assert!(!is_write_tool("check_pattern"));
         assert!(!is_write_tool("get_decision_history"));
         assert!(!is_write_tool("get_decisions_for_file"));
+        assert!(!is_write_tool("verify_against_decisions"));
         assert!(!is_write_tool("get_architecture"));
         assert!(!is_write_tool("get_step_prompt"));
 
@@ -971,6 +1046,7 @@ mod tests {
             "check_pattern",
             "get_decision_history",
             "get_decisions_for_file",
+            "verify_against_decisions",
             "get_architecture",
             "get_step_prompt",
         ];
@@ -1362,6 +1438,237 @@ mod tests {
             "error should say 'unknown tool': {}",
             envelope.content[0].text,
         );
+    }
+
+    // ── verify_against_decisions dispatch tests ─────────────────────
+
+    /// State with an `mcp` component owning one decision that references
+    /// `src/mcp/verify.rs`, an `mcp` decision that references an unrelated
+    /// file, and one project-wide rule. Enough to exercise every branch of
+    /// the response builder through the dispatch boundary.
+    fn verify_state() -> ProjectState {
+        use crate::store::schema::*;
+        use chrono::{TimeZone, Utc};
+        use std::sync::Arc;
+
+        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap();
+        let mut state = empty_state();
+
+        state.components.insert(
+            "mcp".into(),
+            Arc::new(ComponentFile {
+                component: Component {
+                    name: "mcp".into(),
+                    description: "MCP server".into(),
+                },
+            }),
+        );
+
+        let decisions = [
+            (
+                "verify-tool",
+                "mcp",
+                vec!["src/mcp/verify.rs"],
+                vec!["protocol"],
+            ),
+            (
+                "watcher-debounce",
+                "mcp",
+                vec!["src/mcp/watcher.rs"],
+                vec![],
+            ),
+            ("no-panic", "project", vec![], vec!["reliability"]),
+        ];
+        for (name, component, refs, tags) in decisions {
+            state.decisions.insert(
+                name.into(),
+                Arc::new(DecisionFile {
+                    decision: Decision {
+                        component: component.into(),
+                        choice: format!("choice for {name}"),
+                        reason: format!("reason for {name}"),
+                        alternatives: vec![],
+                        tags: tags.iter().map(|t| (*t).into()).collect(),
+                        attribution: Attribution::User,
+                        created: ts,
+                        code_refs: refs
+                            .iter()
+                            .map(|f| CodeRef {
+                                file: (*f).into(),
+                                symbol: None,
+                            })
+                            .collect(),
+                        history: vec![],
+                    },
+                }),
+            );
+        }
+
+        for (name, kind) in [
+            ("mcp", NodeKind::Component),
+            ("verify-tool", NodeKind::Decision),
+            ("watcher-debounce", NodeKind::Decision),
+            ("no-panic", NodeKind::Decision),
+        ] {
+            state.graph_index.nodes.push(NodeEntry {
+                name: name.into(),
+                kind,
+                tags: vec![],
+                hash: String::new(),
+            });
+        }
+        for (from, to) in [
+            ("verify-tool", "mcp"),
+            ("watcher-debounce", "mcp"),
+            ("no-panic", "project"),
+        ] {
+            state.graph_index.edges.push(EdgeEntry {
+                from: from.into(),
+                to: to.into(),
+                kind: EdgeKind::BelongsTo,
+            });
+        }
+        state.rebuild_graph();
+        state
+    }
+
+    #[test]
+    fn verify_against_decisions_missing_component() {
+        let state = verify_state();
+        let args = serde_json::json!({ "changed_files": ["src/mcp/verify.rs"] });
+        let envelope = call_read_tool(&state, "verify_against_decisions", &args);
+        assert_eq!(envelope.is_error, Some(true));
+        assert!(envelope.content[0].text.contains("component"));
+    }
+
+    #[test]
+    fn verify_against_decisions_missing_changed_files() {
+        let state = verify_state();
+        let args = serde_json::json!({ "component": "mcp" });
+        let envelope = call_read_tool(&state, "verify_against_decisions", &args);
+        assert_eq!(envelope.is_error, Some(true));
+        assert!(envelope.content[0].text.contains("changed_files"));
+    }
+
+    #[test]
+    fn verify_against_decisions_empty_changed_files() {
+        let state = verify_state();
+        let args = serde_json::json!({ "component": "mcp", "changed_files": [] });
+        let envelope = call_read_tool(&state, "verify_against_decisions", &args);
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "empty changed_files must be rejected"
+        );
+    }
+
+    #[test]
+    fn verify_against_decisions_nonexistent_component() {
+        let state = verify_state();
+        let args = serde_json::json!({
+            "component": "does-not-exist",
+            "changed_files": ["src/mcp/verify.rs"],
+        });
+        let envelope = call_read_tool(&state, "verify_against_decisions", &args);
+        assert_eq!(envelope.is_error, Some(true));
+        assert!(
+            envelope.content[0].text.contains("does not exist"),
+            "error should say the component does not exist: {}",
+            envelope.content[0].text
+        );
+    }
+
+    #[test]
+    fn verify_against_decisions_invalid_path() {
+        let state = verify_state();
+        let args = serde_json::json!({
+            "component": "mcp",
+            "changed_files": ["/etc/passwd"],
+        });
+        let envelope = call_read_tool(&state, "verify_against_decisions", &args);
+        assert_eq!(
+            envelope.is_error,
+            Some(true),
+            "absolute path must be rejected"
+        );
+        assert!(
+            envelope.content[0].text.contains("invalid file path"),
+            "error should describe the issue: {}",
+            envelope.content[0].text
+        );
+    }
+
+    #[test]
+    fn verify_against_decisions_happy_path() {
+        let state = verify_state();
+        let args = serde_json::json!({
+            "component": "mcp",
+            "changed_files": ["src/mcp/verify.rs"],
+        });
+        let envelope = call_read_tool(&state, "verify_against_decisions", &args);
+        assert!(envelope.is_error.is_none(), "should succeed");
+
+        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        assert_eq!(result["component"], "mcp");
+
+        // Only verify-tool references the changed file; watcher-debounce does not.
+        let to_verify = result["decisions_to_verify"].as_array().unwrap();
+        assert_eq!(to_verify.len(), 1);
+        assert_eq!(to_verify[0]["name"], "verify-tool");
+        assert_eq!(to_verify[0]["affected_files"][0], "src/mcp/verify.rs");
+        assert_eq!(to_verify[0]["code_refs"][0]["file"], "src/mcp/verify.rs");
+        assert_eq!(to_verify[0]["tags"][0], "protocol");
+
+        // watcher-debounce is the one unaffected component decision.
+        assert_eq!(result["unaffected_count"], 1);
+
+        // The project rule is always returned in full.
+        let project = result["project_decisions"].as_array().unwrap();
+        assert_eq!(project.len(), 1);
+        assert_eq!(project[0]["name"], "no-panic");
+
+        // Instructions carry the verdict vocabulary.
+        let instructions = result["instructions"].as_str().unwrap();
+        assert!(instructions.contains("RESPECTED"));
+        assert!(instructions.contains("VIOLATED"));
+        assert!(instructions.contains("NEEDS_REVIEW"));
+
+        // A match means no "no decisions" message.
+        assert!(result.get("message").is_none());
+    }
+
+    #[test]
+    fn verify_against_decisions_no_match_returns_message() {
+        let state = verify_state();
+        let args = serde_json::json!({
+            "component": "mcp",
+            "changed_files": ["src/store/write.rs"],
+        });
+        let envelope = call_read_tool(&state, "verify_against_decisions", &args);
+        assert!(envelope.is_error.is_none());
+
+        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        assert!(result["decisions_to_verify"].as_array().unwrap().is_empty());
+        assert_eq!(result["message"], "No decisions affected by these changes");
+        // Both mcp decisions filtered out.
+        assert_eq!(result["unaffected_count"], 2);
+        // Project decisions still included.
+        assert_eq!(result["project_decisions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn verify_against_decisions_is_read_tool() {
+        let list = tool_list();
+        let tools = list["tools"].as_array().unwrap();
+        let tool = tools
+            .iter()
+            .find(|t| t["name"] == "verify_against_decisions")
+            .unwrap();
+        assert_eq!(tool["annotations"]["readOnlyHint"], true);
+        assert!(!is_write_tool("verify_against_decisions"));
+        let required = tool["inputSchema"]["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "component"));
+        assert!(required.iter().any(|v| v == "changed_files"));
     }
 
     fn empty_state() -> ProjectState {

@@ -2,6 +2,7 @@ mod context;
 mod protocol;
 mod tools;
 mod update;
+mod verify;
 mod watcher;
 mod write;
 
