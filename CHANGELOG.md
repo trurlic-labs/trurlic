@@ -9,6 +9,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **`verify_against_decisions` MCP tool.** Closes the implementation feedback loop: after an agent writes code, this read-only tool returns the architectural decisions that apply to the changed files, plus instructions to check the code respects them before committing. Given a `component` and a `changed_files` array, it partitions the component's decisions into affected and unaffected — a decision with `code_refs` is affected when any ref matches a changed file (bidirectional exact-or-directory-prefix match, so a directory-valued ref like `src/auth` matches a changed `src/auth/token.rs` and vice versa); a decision without `code_refs` is affected when it carries a `scope` or `boundary` tag and then applies to every changed file. Each affected decision reports the `affected_files` that triggered it. Project-wide rules are always returned in full. No file contents are read, no LLM is called, nothing is mutated — the same read path as `get_context`. Changed-file paths are normalized and validated (leading `./` stripped; backslashes, `..` traversal, and absolute paths rejected); a missing/empty `changed_files`, a nonexistent component, or an invalid path is a tool error, never a silent skip.
+
 ### Removed
 
 - **`trurlic design` and `trurlic bootstrap` subcommands.** The CLI is no longer a design interface — Socratic design conversations, decision recording, and the advance loop now happen exclusively through MCP. The LLM subsystem that existed solely to serve those commands is gone: the `session/` module (design driver, bootstrap driver, LLM response extraction, session persistence), the `provider/` module (Anthropic/OpenAI/OpenRouter/Gemini/Ollama/Custom clients and SSE streaming), and the `config/` module (provider resolution, API-key handling). The `Error::ProviderConfig` and `Error::Api` variants are removed with them. The now-orphaned `reqwest` (HTTP client) and `zeroize` (API-key zeroing) dependencies are dropped from the manifest. The map, query tools, and component/decision management CLI are unchanged.

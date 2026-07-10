@@ -106,6 +106,8 @@ When to suggest which mode:
      record_decision(component, choice, reason, attribution="agent")
      continue — the decision is flagged ⚠ for human review
 4. get_context(component, depth="constraints") → verify compliance
+5. verify_against_decisions(component, changed_files) → read each
+   verdict, fix any VIOLATED decision before committing
 ```
 
 When to use which: if the task says "add a feature," "fix a bug," or "implement X" and the component has existing decisions that cover the work, use implementation mode. If the task says "design," "architect," "add a new component," or you realize the existing decisions don't cover what you need to do, switch to design mode.
@@ -113,6 +115,7 @@ When to use which: if the task says "add a feature," "fix a bug," or "implement 
 During implementation in either mode:
 - When touching a second module, call `get_context` for that module's component too.
 - After implementation, re-read the brief and verify no decision was silently violated.
+- After implementing, call `verify_against_decisions` with the component and changed files. Review each verdict. Fix violations before committing.
 
 ### Testing
 
