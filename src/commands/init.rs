@@ -20,7 +20,6 @@ pub fn init(cwd: &Path) -> Result<()> {
     fs::create_dir_all(root.join(COMPONENTS_DIR))?;
     fs::create_dir_all(root.join(DECISIONS_DIR))?;
     fs::create_dir_all(root.join(PATTERNS_DIR))?;
-    fs::create_dir_all(root.join(STATE_DIR).join("sessions"))?;
     fs::create_dir_all(root.join(STATE_DIR).join("tmp"))?;
 
     let name = cwd
@@ -101,7 +100,7 @@ mod tests {
         assert!(root.join(DECISIONS_DIR).is_dir());
         assert!(root.join(PATTERNS_DIR).is_dir());
         assert!(root.join(STATE_DIR).is_dir());
-        assert!(root.join(STATE_DIR).join("sessions").is_dir());
+        assert!(!root.join(STATE_DIR).join("sessions").exists());
         assert!(root.join(STATE_DIR).join("tmp").is_dir());
     }
 
