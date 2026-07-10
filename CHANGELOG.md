@@ -9,6 +9,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-07-10
+
 ### Added
 
 - **`verify_against_decisions` MCP tool.** Closes the implementation feedback loop: after an agent writes code, this read-only tool returns the architectural decisions that apply to the changed files, plus instructions to check the code respects them before committing. Given a `component` and a `changed_files` array, it partitions the component's decisions into affected and unaffected — a decision with `code_refs` is affected when any ref matches a changed file (bidirectional exact-or-directory-prefix match, so a directory-valued ref like `src/auth` matches a changed `src/auth/token.rs` and vice versa); a decision without `code_refs` is affected when it carries a `scope` or `boundary` tag and then applies to every changed file. Each affected decision reports the `affected_files` that triggered it. Project-wide rules are always returned in full. No file contents are read, no LLM is called, nothing is mutated — the same read path as `get_context`. Changed-file paths are normalized and validated (leading `./` stripped; backslashes, `..` traversal, and absolute paths rejected); a missing/empty `changed_files`, a nonexistent component, or an invalid path is a tool error, never a silent skip.
@@ -284,7 +286,8 @@ any MCP-compatible coding agent.
 - TypeScript frontend tests (force layout, camera, culling, edges, geometry, level-of-detail, graph state, drag, hover, selection, search).
 - CodSpeed benchmarks for store operations (via `criterion` / `codspeed-criterion-compat`).
 
-[Unreleased]: https://github.com/trurlic-labs/trurlic/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/trurlic-labs/trurlic/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/trurlic-labs/trurlic/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.3.0
 [0.2.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.2.0
 [0.1.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.1.0
