@@ -61,14 +61,6 @@ pub enum Error {
     #[error("operation blocked by cascade rule: {0}")]
     CascadeBlocked(String),
 
-    #[error("{0}")]
-    ProviderConfig(String),
-
-    /// `status` is the HTTP status code, or `0` for connection-level
-    /// failures (timeout, DNS, TLS, stream stall).
-    #[error("API error ({status}): {detail}")]
-    Api { status: u16, detail: String },
-
     #[error("cannot determine home directory — set $HOME")]
     HomeNotFound,
 
