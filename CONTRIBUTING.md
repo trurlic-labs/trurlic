@@ -23,7 +23,7 @@ cargo install cargo-deny
 ```bash
 git clone https://github.com/trurlic-labs/trurlic.git
 cd trurlic
-make setup    # installs git hooks
+make setup    # installs frontend deps + git hooks
 cargo build
 cargo test
 ```
@@ -84,14 +84,14 @@ The MCP server assembles specs from stored decisions.
 - The server uses `Arc<RwLock<ProjectState>>` shared with a file watcher thread. Tool calls hold the write lock. Keep tool execution fast (<50ms for writes).
 - Test with a real MCP client to verify response format.
 
-## Working on the conversation engine
+## Working on the workflow engine
 
-The Socratic design flow powers `trurlic design`.
+`workflow` computes the next step for the coding agent — the `advance` state machine and the step prompts MCP serves.
 
-- Each user answer writes a decision immediately — no batching. Crash-safe by design.
-- After recording a decision, `state.rebuild_graph()` must be called to keep the graph cache consistent for subsequent writes in the same session.
-- Questions should make the user think. "What matters more — latency or durability?" not "I suggest Redis."
-- Test with `--continue` to verify session resume.
+- `advance()` is a pure function of `(graph, now)` — no I/O, no LLM calls, no wall-clock reads, no side effects. Same inputs must always produce the same step. Inject `Utc::now()` at the call site; never read it inside the engine.
+- Steps have preconditions (what the graph must look like) and postconditions (what changes after the step succeeds). The state machine gates on `completed_steps` so it can't loop on a step whose postcondition it can't detect.
+- Prompts are transport-agnostic and mode-aware — the same text feeds MCP and any other caller. Agent-mode variants instruct autonomous code reading; interactive variants preserve the Socratic ask-then-record dialogue.
+- Every `Step::as_str()` value must be accepted by `build_step_prompt()`, and every `(Mode, TaskType)` pair must be resolved explicitly. These are property-tested — extend the tests when you add a variant.
 
 ## Commit conventions
 
@@ -103,12 +103,12 @@ The Socratic design flow powers `trurlic design`.
 
 Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `security`.
 
-Scopes: `store`, `mcp`, `conversation`, `provider`, `cli`.
+Scopes: `store`, `workflow`, `mcp`, `map`, `commands`, `cli`.
 
 ```
 feat(mcp): add related decisions from connected components to get_context
 fix(store): validate component references before writing decision
-security(mcp): bound SSE stream accumulation
+fix(workflow): gate CoverConcerns on completed_steps to stop advance looping
 perf(store): single-pass file I/O in load_state
 ```
 
