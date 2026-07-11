@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/rust-1.88%2B-orange?style=flat-square" alt="Rust">
   <br>
-  <a href="SECURITY.md">Report a vulnerability</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="https://trurlic-docs.pages.dev/"><b>Documentation</b></a> · <a href="SECURITY.md">Report a vulnerability</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 ---
@@ -171,6 +171,16 @@ Before writing a line, the agent pulls the component's brief, generates code tha
 ```bash
 trurlic map      # review the graph anytime — interactive, in your browser
 ```
+
+## Documentation
+
+Full documentation lives at **[trurlic-docs.pages.dev](https://trurlic-docs.pages.dev/)**:
+
+- **[Start here](https://trurlic-docs.pages.dev/)** — overview, setup, and the core concepts
+- **[Architecture](https://trurlic-docs.pages.dev/)** — system design and the integrity model
+- **[Guides](https://trurlic-docs.pages.dev/)** — the MCP server, configuration, design workflows, and the visual map
+- **[Reference](https://trurlic-docs.pages.dev/)** — full CLI reference, MCP tools, and troubleshooting
+- **[Integrations](https://trurlic-docs.pages.dev/)** — connecting Claude Code, Cursor, Windsurf, and other agents
 
 ## How the agent works with the graph
 
