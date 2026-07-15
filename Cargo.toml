@@ -68,7 +68,7 @@ rust-embed = "8"
 opener = "0.8"
 
 # Cryptographic random token generation (map)
-rand = "0.8"
+rand = "0.10"
 
 # Atomic file writes (install command)
 tempfile = "3"
