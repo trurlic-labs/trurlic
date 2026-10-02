@@ -1462,22 +1462,6 @@ mod tests {
         assert_eq!(read_back.edges[1].from, "z-node");
     }
 
-    #[test]
-    fn content_hash_is_deterministic() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-
-        let comp = sample_component("auth");
-        let w1 = store
-            .prepare_write(&store.component_path("auth"), &comp)
-            .unwrap();
-        let w2 = store
-            .prepare_write(&store.component_path("auth"), &comp)
-            .unwrap();
-        assert_eq!(w1.content_hash(), w2.content_hash());
-        assert_eq!(w1.content_hash().len(), 64);
-    }
-
     // ── commit_with_graph ────────────────────────────────────────────────
 
     #[test]

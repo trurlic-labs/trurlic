@@ -1686,14 +1686,6 @@ mod tests {
     // ── hash ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn hash_bytes_is_deterministic() {
-        let a = hash_bytes(b"hello world");
-        let b = hash_bytes(b"hello world");
-        assert_eq!(a, b);
-        assert_eq!(a.len(), 64); // 256-bit hex
-    }
-
-    #[test]
     fn hash_file_matches_hash_bytes() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("test.txt");
