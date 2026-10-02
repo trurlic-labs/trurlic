@@ -1,5 +1,5 @@
 version = 1
-rebuilt = "2026-10-02T09:47:51.781427080Z"
+rebuilt = "2026-10-02T09:52:28.917871804Z"
 
 [[nodes]]
 name = "256-bit-csprng-token-with-constant-time-comparison-for"
@@ -20,27 +20,6 @@ tags = [
 hash = "a25a8b690f0f0e0f833dc1a5a09de3d1a00d5db149250089685b419681f7eb38"
 
 [[nodes]]
-name = "api-key-security-zeroizing-wrappers-and-url-scrubbing-in"
-kind = "decision"
-tags = ["security"]
-hash = "92b7021759043f396d4cfd874417b2f453860d6f063a3246ebf4f21772940d27"
-
-[[nodes]]
-name = "api-keys-wrapped-in-zeroizing-newtype-with-redacted-display"
-kind = "decision"
-tags = [
-    "security",
-    "api",
-]
-hash = "9627b8846f082eb4cc1a1e559f65a784a799e57562a2bd5d4bf1d6e071eea7ea"
-
-[[nodes]]
-name = "api-keys-wrapped-in-zeroizing-string-zeroed-on-drop-never"
-kind = "decision"
-tags = ["security"]
-hash = "1b0a75b40f50bfc7c735b45bd7d93c060a5d4ee5dda55d15bbce573ed517eb5e"
-
-[[nodes]]
 name = "arc-wrapped-content-values-in-btreemap-with-oncelock-free"
 kind = "decision"
 tags = [
@@ -52,11 +31,7 @@ hash = "372bf5329b370eb49b0259d83e8e8d23890624bcbdad2edefc0c41065d2baf3a"
 [[nodes]]
 name = "atomic-write-with-round-trip-verification"
 kind = "pattern"
-tags = [
-    "persistence",
-    "integrity",
-]
-hash = "d19d3b6d03defb4843dc4fe280a27fd983b3cfecde163be51c233859f0000777"
+hash = "6fd82ec05775e38fb57953b7e5b506fc83f711131d7fcc90e39b4b0382186530"
 
 [[nodes]]
 name = "atomic-writes-via-serialize-to-temp-verify-round-trip"
@@ -167,17 +142,6 @@ name = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
 kind = "decision"
 tags = ["scope"]
 hash = "331ede53afd47571829cdc98fd7fb1efbc35791ca291de6777d350c6a6c9ec5c"
-
-[[nodes]]
-name = "config"
-kind = "component"
-hash = "c07193aa6f94baee79eed13e215264f708da129c807c616f28f0a790301dbe52"
-
-[[nodes]]
-name = "defense-in-depth-secrets"
-kind = "pattern"
-tags = ["security"]
-hash = "2d0c3c4caa6064cd07be7c560e03657d5b754fcccd789d0f99aeb916c9bf5a66"
 
 [[nodes]]
 name = "deny-unsafe-code-project-wide-via-cargo-lint"
@@ -420,20 +384,6 @@ tags = ["security"]
 hash = "bfb6eb848b6e26c21db016aaa2f89f2ab45758b8cc4cea6a48ec2d27ce64e1fe"
 
 [[nodes]]
-name = "provider"
-kind = "component"
-hash = "c595efe0480cffbe3e689806c02015270cd144d0e3920f377c27efcafec912f3"
-
-[[nodes]]
-name = "pure-rust-tls-via-rustls-no-openssl-dependency"
-kind = "decision"
-tags = [
-    "dependencies",
-    "security",
-]
-hash = "8a8298030bd38a4352284db4d2f385fe2fd74acb7f38e3b44afec25a43894811"
-
-[[nodes]]
 name = "read-write-lock-split-read-tools-acquire-rwlock-read-lock"
 kind = "decision"
 tags = [
@@ -556,15 +506,6 @@ tags = [
 hash = "29c712d17d836b8f59530b58127c2da5a1fdbd13b6df10caca54543213d4af15"
 
 [[nodes]]
-name = "toml-config-file-at-xdg-config-home-trurlic-config-toml"
-kind = "decision"
-tags = [
-    "security",
-    "ergonomics",
-]
-hash = "14cfd74450b968e6e767eda22be70709053ebcbc68cc0066ed823390bd3fbbea"
-
-[[nodes]]
 name = "transport-agnostic-prompt-generation-shared-preamble-step"
 kind = "decision"
 tags = ["scope"]
@@ -635,21 +576,6 @@ kind = "belongs_to"
 [[edges]]
 from = "advance-is-a-pure-function-read-only-stateless-idempotent"
 to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
-from = "api-key-security-zeroizing-wrappers-and-url-scrubbing-in"
-to = "provider"
-kind = "belongs_to"
-
-[[edges]]
-from = "api-keys-wrapped-in-zeroizing-newtype-with-redacted-display"
-to = "config"
-kind = "belongs_to"
-
-[[edges]]
-from = "api-keys-wrapped-in-zeroizing-string-zeroed-on-drop-never"
-to = "project"
 kind = "belongs_to"
 
 [[edges]]
@@ -754,11 +680,6 @@ kind = "belongs_to"
 
 [[edges]]
 from = "commands"
-to = "config"
-kind = "connects_to"
-
-[[edges]]
-from = "commands"
 to = "store"
 kind = "connects_to"
 
@@ -776,41 +697,6 @@ kind = "belongs_to"
 from = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
 to = "workflow"
 kind = "belongs_to"
-
-[[edges]]
-from = "defense-in-depth-secrets"
-to = "api-key-security-zeroizing-wrappers-and-url-scrubbing-in"
-kind = "member_of"
-
-[[edges]]
-from = "defense-in-depth-secrets"
-to = "api-keys-wrapped-in-zeroizing-newtype-with-redacted-display"
-kind = "member_of"
-
-[[edges]]
-from = "defense-in-depth-secrets"
-to = "api-keys-wrapped-in-zeroizing-string-zeroed-on-drop-never"
-kind = "member_of"
-
-[[edges]]
-from = "defense-in-depth-secrets"
-to = "config"
-kind = "applies_to"
-
-[[edges]]
-from = "defense-in-depth-secrets"
-to = "provider"
-kind = "applies_to"
-
-[[edges]]
-from = "defense-in-depth-secrets"
-to = "pure-rust-tls-via-rustls-no-openssl-dependency"
-kind = "member_of"
-
-[[edges]]
-from = "defense-in-depth-secrets"
-to = "toml-config-file-at-xdg-config-home-trurlic-config-toml"
-kind = "member_of"
 
 [[edges]]
 from = "deny-unsafe-code-project-wide-via-cargo-lint"
@@ -1043,11 +929,6 @@ to = "workflow"
 kind = "belongs_to"
 
 [[edges]]
-from = "pure-rust-tls-via-rustls-no-openssl-dependency"
-to = "project"
-kind = "belongs_to"
-
-[[edges]]
 from = "read-write-lock-split-read-tools-acquire-rwlock-read-lock"
 to = "mcp"
 kind = "belongs_to"
@@ -1120,11 +1001,6 @@ kind = "belongs_to"
 [[edges]]
 from = "toml-as-the-sole-serialization-format-with-one-file-per"
 to = "store"
-kind = "belongs_to"
-
-[[edges]]
-from = "toml-config-file-at-xdg-config-home-trurlic-config-toml"
-to = "config"
 kind = "belongs_to"
 
 [[edges]]
