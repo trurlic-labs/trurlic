@@ -319,7 +319,7 @@ mod tests {
                 .any(|e| e.from == "auth" || e.to == "auth")
         );
 
-        check(tmp.path(), false).unwrap();
+        check(tmp.path()).unwrap();
     }
 
     #[test]
@@ -337,7 +337,7 @@ mod tests {
             let dec = store.read_decision(&name).unwrap();
             assert_eq!(dec.decision.component, "authentication");
         }
-        check(tmp.path(), false).unwrap();
+        check(tmp.path()).unwrap();
     }
 
     // ── remove component ─────────────────────────────────────────────────
@@ -407,7 +407,7 @@ mod tests {
                 .any(|e| e.from == "database" || e.to == "database")
         );
 
-        check(tmp.path(), false).unwrap();
+        check(tmp.path()).unwrap();
     }
 
     // ── remove connection ───────────────────────────────────────────────
@@ -431,7 +431,7 @@ mod tests {
                 .iter()
                 .any(|e| e.from == "auth" && e.to == "database" && e.kind == EdgeKind::ConnectsTo)
         );
-        check(tmp.path(), false).unwrap();
+        check(tmp.path()).unwrap();
     }
 
     #[test]

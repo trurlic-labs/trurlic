@@ -112,12 +112,7 @@ pub enum Command {
     Status,
 
     /// Validate `.trurlic/` internal consistency.
-    Check {
-        /// Force-rebuild graph.toml from node files (nuclear recovery).
-        /// Non-inferable edges (ConnectsTo, DependsOn, etc.) will be lost.
-        #[arg(long)]
-        rebuild: bool,
-    },
+    Check,
 
     /// Write MCP server configuration for an IDE.
     Install {
@@ -365,7 +360,7 @@ pub fn run(cli: Cli) -> Result<()> {
             detach,
         } => commands::map(&cwd, port, no_open, detach),
         Command::Status => commands::status(&cwd),
-        Command::Check { rebuild } => commands::check(&cwd, rebuild),
+        Command::Check => commands::check(&cwd),
         Command::Migrate { dry_run } => {
             let mode = if dry_run {
                 commands::DryRun::Yes
