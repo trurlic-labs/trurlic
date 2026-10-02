@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "Parallel file loading via rayon for load_state with single-pass read+hash"
+reason = "load_state() lists all node files up front, then uses rayon par_iter to read and hash them concurrently. Each file is read once via read_toml_with_hash() which parses TOML and computes BLAKE3 in a single pass over the raw bytes, eliminating the double-read that would occur if parsing and hashing were separate. On a cold cache with 260 files this reduces wall time from ~300ms (sequential) to ~50ms (parallel). The graph index is then reconciled: BelongsTo edges are always re-derived from decision files (source of truth), dangling edges are filtered, and nodes/edges are sorted for deterministic output."
+alternatives = [
+    "Sequential file loading — rejected: measured at 300ms for 260 files on cold cache; unacceptable for MCP tool response latency",
+    "Memory-mapped files — rejected: adds complexity for marginal benefit on small files (typical node is 200-500 bytes); rayon parallelism gives better wall-time improvement",
+    "Incremental loading (only changed files) — rejected: requires a persistent index of file mtimes; full reload with rayon is fast enough and simpler to reason about for correctness",
+]
+tags = [
+    "performance",
+    "storage",
+]
+attribution = "user"
+created = "2026-06-15T09:45:56.889052260Z"

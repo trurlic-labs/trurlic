@@ -37,6 +37,9 @@ pub enum Error {
     #[error("decision `{0}` does not exist")]
     DecisionNotFound(String),
 
+    #[error("pattern `{0}` does not exist")]
+    PatternNotFound(String),
+
     #[error("`{0}` is reserved and cannot be used as a node name")]
     ReservedName(String),
 

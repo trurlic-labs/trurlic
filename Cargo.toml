@@ -24,6 +24,12 @@ path = "src/lib.rs"
 name = "store"
 harness = false
 
+[features]
+# Test-only: `TRURLIC_FAILPOINT=<site>:<n>` aborts at a named store write
+# site (src/store/failpoint.rs). Enabled only in the test job; release
+# builds never carry it.
+failpoints = []
+
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }

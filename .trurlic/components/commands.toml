@@ -1,0 +1,3 @@
+[component]
+name = "commands"
+description = "CLI command handlers including install for IDE MCP config"

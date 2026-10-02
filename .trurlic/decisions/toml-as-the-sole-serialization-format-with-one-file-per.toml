@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "TOML as the sole serialization format with one file per graph node"
+reason = "Each graph node (component, decision, pattern) is a separate TOML file under .trurlic/{components,decisions,patterns}/<name>.toml. TOML was chosen for human readability and git-friendly diffs. The schema uses wrapper types (ComponentFile, DecisionFile, PatternFile) with a single top-level table key matching the node type. graph.toml is a compiled edge index rebuilt deterministically from node files. Empty arrays use skip_serializing_if to keep files minimal. Format versioning via FORMAT_VERSION in project.toml enables future migrations."
+alternatives = [
+    "Single monolithic JSON file — rejected: merge conflicts on every change, not human-readable, no partial reads",
+    "SQLite database — rejected: binary format is opaque in git diffs, overkill for a store with typically fewer than 500 nodes, adds a C library dependency",
+    "YAML — rejected: YAML has surprising parsing behaviors (Norway problem, implicit type coercion) that make it unsuitable for a store where data integrity is critical",
+]
+tags = [
+    "storage",
+    "developer-experience",
+]
+attribution = "user"
+created = "2026-06-15T09:45:46.975613404Z"

@@ -1,0 +1,14 @@
+[decision]
+component = "commands"
+choice = "Claude Code install delegates to claude CLI subprocess instead of direct file write"
+reason = "Unlike all other IDE targets where install directly reads/writes the config file, Claude Code installation shells out to 'claude mcp add/remove' via std::process::Command. This avoids reverse-engineering Claude Code's internal config format and update semantics, which may change between versions. The subprocess approach does a best-effort removal first (closing stdin to prevent hanging on prompts), then adds the server entry. The tradeoff is a runtime dependency on the claude binary being installed and findable."
+alternatives = [
+    "Directly write Claude Code's settings.json like other IDE targets — rejected: Claude Code's config format and validation rules are not a stable public contract; direct writes risk breakage on updates and must duplicate format knowledge",
+    "Skip Claude Code support entirely — rejected: Claude Code is a primary consumer of MCP servers, and the dry-run fallback ('claude mcp add ...') provides a manual path when the CLI isn't found",
+]
+tags = [
+    "extensibility",
+    "error-handling",
+]
+attribution = "user"
+created = "2026-06-15T09:42:55.745417589Z"

@@ -1,0 +1,14 @@
+[decision]
+component = "mcp"
+choice = "Read-write lock split: read tools acquire RwLock read lock, write tools acquire write lock"
+reason = "State is held in Arc<RwLock<ProjectState>>. The is_write_tool() classifier determines lock type at dispatch time. Read tools (advance, get_context, check_pattern, get_architecture, validate_consistency, get_step_prompt) acquire only a read lock, allowing concurrent reads and never blocking the file watcher's state swap. Write tools (record_decision, record_pattern, remove_decision, update_decision, add_component, add_connection) acquire an exclusive write lock. This separation is enforced by the type system: call_read_tool takes &ProjectState, call_write_tool takes &mut ProjectState."
+alternatives = [
+    "Single Mutex for all operations — rejected: would serialize reads unnecessarily and block the file watcher during read-only queries",
+    "Lock-free data structure — rejected: unnecessary complexity for a single-threaded request loop with a background watcher thread",
+]
+tags = [
+    "concurrency",
+    "performance",
+]
+attribution = "user"
+created = "2026-06-15T09:44:42.094944771Z"

@@ -1,0 +1,15 @@
+[decision]
+component = "workflow"
+choice = "Transport-agnostic prompt generation: shared preamble, step-specific body, shared interaction protocol"
+reason = "Step prompts live in the workflow module, not in mcp/. Every prompt follows a three-part structure: (1) shared preamble mandating source code reading, (2) step-specific instructions with graph-derived context, (3) a shared protocol: INTERACTION_PROTOCOL in interactive mode (one topic per message, senior-engineer deepening, 'I don't know' teaching), AGENT_PROTOCOL in agent mode. mcp serves the prompts through get_step_prompt; any other transport consumes the same text, so agent behavior does not depend on the transport."
+alternatives = [
+    "Transport-specific prompts in each transport module (mcp/ or a future CLI flow): rejected because it would duplicate prompt logic and allow behavioral divergence between transports",
+    "Prompt generation via LLM: rejected because it would break the purity guarantee and add latency to every advance call",
+]
+tags = ["scope"]
+attribution = "user"
+created = "2026-10-02T09:47:17.003571841Z"
+
+[[decision.code_refs]]
+file = "src/workflow/steps.rs"
+symbol = "build_step_prompt"

@@ -1,0 +1,14 @@
+[decision]
+component = "mcp"
+choice = "Initialization gate: tools/list and tools/call require prior initialize handshake"
+reason = "The handle() dispatcher tracks an initialized boolean flag. tools/list and tools/call return INVALID_REQUEST if called before initialize. The initialize method itself always succeeds and sets the flag. ping is allowed before initialization per the MCP spec. Notifications (requests with no id) are silently dropped without response per JSON-RPC 2.0 section 4.1. This ensures the client has negotiated capabilities before invoking tools, preventing premature tool calls from an incompletely configured client."
+alternatives = [
+    "No initialization gate (serve tools immediately) — rejected: violates MCP protocol which requires capability negotiation before tool use",
+    "Stateful session tracking with client identity — rejected: unnecessary for stdio transport which is inherently single-client",
+]
+tags = [
+    "protocol",
+    "security",
+]
+attribution = "user"
+created = "2026-06-15T09:45:44.800597540Z"

@@ -1,0 +1,14 @@
+[decision]
+component = "mcp"
+choice = "JSON-RPC 2.0 over newline-delimited stdio transport"
+reason = "MCP protocol requires JSON-RPC 2.0. Stdio is the standard MCP transport for local tools. Each message is a single JSON object on one line terminated by newline, enabling simple line-based parsing. Blank lines between messages are skipped. Messages are bounded to 10MB (MAX_MESSAGE_BYTES) to prevent memory exhaustion from malformed input. The bounded reader (read_line_bounded) reads incrementally from a BufRead without accumulating unbounded data."
+alternatives = [
+    "HTTP transport — rejected: MCP stdio is the standard for local tool servers, HTTP adds unnecessary complexity and port management",
+    "Length-prefixed framing (Content-Length header like LSP) — rejected: newline-delimited JSON is simpler, sufficient for single-line messages, and matches MCP convention",
+]
+tags = [
+    "protocol",
+    "security",
+]
+attribution = "user"
+created = "2026-06-15T09:44:33.385781549Z"

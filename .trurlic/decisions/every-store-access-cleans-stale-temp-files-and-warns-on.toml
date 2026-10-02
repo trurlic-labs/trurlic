@@ -1,0 +1,14 @@
+[decision]
+component = "commands"
+choice = "Every store access cleans stale temp files and warns on consistency issues"
+reason = "discover_store (called by every command) runs clean_stale_tmp and check_version before returning. open_store and open_store_mut additionally call validate() and warn on stderr if errors exist. This self-healing pattern ensures interrupted atomic writes from previous crashes are cleaned up on the next operation, and the user is always informed about graph inconsistencies without blocking their work (warnings go to stderr, not errors). The version check prevents silent corruption from running an incompatible store format."
+alternatives = [
+    "Only clean on explicit 'trurlic check' — rejected: stale temp files accumulate silently after crashes; users may not run check regularly, and the leaked files waste disk space and could confuse debugging",
+    "Fail hard on any consistency issue — rejected: overly strict; many warnings (e.g., hash mismatches from manual edits) are informational and should not block normal workflow operations",
+]
+tags = [
+    "data-integrity",
+    "error-handling",
+]
+attribution = "user"
+created = "2026-06-15T09:43:22.612061329Z"

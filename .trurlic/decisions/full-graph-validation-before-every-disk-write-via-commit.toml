@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "Full graph validation before every disk write via commit_with_graph"
+reason = "Every graph-mutating operation (record_decision, add_component, add_connection, remove_decision, etc.) goes through commit_with_graph(), which builds a fresh InMemoryGraph from the mutated state, runs all 11 validation checks (edge endpoints, type constraints, self-edges, duplicates, pattern membership, DependsOn cycles, BelongsTo integrity, content integrity, name integrity, node-content coherence), and refuses to write if any Error-severity issue exists. This ensures invalid graphs are never committed to disk. On validation failure, in-memory state is rolled back via checkpoints."
+alternatives = [
+    "Validate only on read (lazy validation) — rejected: allows corrupt state to persist on disk and propagate to other consumers",
+    "Partial validation of only the changed subgraph — rejected: edge cases in cross-node constraints (cycles, pattern membership counts) require full-graph visibility; the graph is small enough that full validation is fast",
+    "Schema-only validation without semantic checks — rejected: misses logical errors like dangling references, cycles, and BelongsTo mismatches",
+]
+tags = [
+    "reliability",
+    "consistency",
+]
+attribution = "user"
+created = "2026-06-15T09:44:49.521491347Z"

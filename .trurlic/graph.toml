@@ -1,0 +1,1068 @@
+version = 1
+rebuilt = "2026-10-02T09:55:00.682488835Z"
+
+[[nodes]]
+name = "256-bit-csprng-token-with-constant-time-comparison-for"
+kind = "decision"
+tags = [
+    "security",
+    "api-design",
+]
+hash = "9941137bd3001d337e9499278c8300856323bdf3bdc37c30d2b58b024b3e9329"
+
+[[nodes]]
+name = "advance-is-a-pure-function-read-only-stateless-idempotent"
+kind = "decision"
+tags = [
+    "concurrency",
+    "scope",
+]
+hash = "a25a8b690f0f0e0f833dc1a5a09de3d1a00d5db149250089685b419681f7eb38"
+
+[[nodes]]
+name = "arc-wrapped-content-values-in-btreemap-with-oncelock-free"
+kind = "decision"
+tags = [
+    "performance",
+    "storage",
+]
+hash = "372bf5329b370eb49b0259d83e8e8d23890624bcbdad2edefc0c41065d2baf3a"
+
+[[nodes]]
+name = "atomic-write-with-round-trip-verification"
+kind = "pattern"
+hash = "6fd82ec05775e38fb57953b7e5b506fc83f711131d7fcc90e39b4b0382186530"
+
+[[nodes]]
+name = "atomic-writes-via-serialize-to-temp-verify-round-trip"
+kind = "decision"
+tags = [
+    "reliability",
+    "storage",
+]
+hash = "a00f88d3619d04226d27fd801c1803c29d65720894c9b44f6a78362352dd0135"
+
+[[nodes]]
+name = "axum-as-the-http-websocket-server-framework"
+kind = "decision"
+tags = [
+    "framework",
+    "dependencies",
+]
+hash = "2b4d698b72e5bbc8c09d206e74e5df0c0e60733e38da0db2752cf186cd266d50"
+
+[[nodes]]
+name = "blake3-content-hashing-for-tamper-detection-and-change"
+kind = "decision"
+tags = [
+    "security",
+    "storage",
+]
+hash = "6e7c32c057a8de920d1991c8fff5567826553523036c052b98ac5527a5a921e6"
+
+[[nodes]]
+name = "cascade-analysis-gates-destructive-graph-mutations"
+kind = "decision"
+tags = [
+    "data-integrity",
+    "error-handling",
+]
+hash = "10f745930be3b1c1a7a0dc27297d3b6440fdf671f1c09af29295e5c91623ffb8"
+
+[[nodes]]
+name = "cascade-pre-flight-checks-with-blockers-warnings-and"
+kind = "decision"
+tags = [
+    "consistency",
+    "data-integrity",
+]
+hash = "2e2f3005e26538ba4d5575e61ed3945fe123f1bd5996a4f597aae5b642cb99d3"
+
+[[nodes]]
+name = "centralized-limits-at-trust-boundaries"
+kind = "pattern"
+tags = [
+    "integrity",
+    "security",
+]
+hash = "d48bd8ad32ad082965f4d0530e8668d34af07aa59dcebda644d09d88f2f77d2c"
+
+[[nodes]]
+name = "centralized-size-limits-in-limits-rs-shared-across-all"
+kind = "decision"
+tags = [
+    "security",
+    "consistency",
+]
+hash = "6665da3f8db01639645e967ad05078803e4ce0e67f8821912a9482f44ddea9e9"
+
+[[nodes]]
+name = "checkpoint-based-rollback-for-graph-mutations-with-o-1"
+kind = "decision"
+tags = [
+    "reliability",
+    "performance",
+]
+hash = "c24bad6aac8cf27a6a1f3ffa61f61765a37316daa2d5261ec74127a04cbf0803"
+
+[[nodes]]
+name = "claude-code-install-delegates-to-claude-cli-subprocess"
+kind = "decision"
+tags = [
+    "extensibility",
+    "error-handling",
+]
+hash = "6833cadb2eb1744ce11a169fd2cfd119b8c036c110dc4396af52fd7ccc3984e2"
+
+[[nodes]]
+name = "claude-md-and-trurlic-are-tracked-claude-and-tasks-md-are"
+kind = "decision"
+tags = [
+    "scope",
+    "coding-standards",
+]
+hash = "71f8ea209e35167d3a3d5589353fda711599e3d93acf3de039e44129c292cd6d"
+
+[[nodes]]
+name = "commands"
+kind = "component"
+hash = "06248165860f44f1c8e7617dc57ec36fa22b071731028a512e4ceabec2482828"
+
+[[nodes]]
+name = "commands-reads-workflow-concerns-to-report-concern-coverage"
+kind = "decision"
+tags = [
+    "architecture",
+    "module-boundary",
+]
+hash = "c6498ec4664fda46275fbed7210a85e179885d52821bf63e9a7b0f77ba1f8ca7"
+
+[[nodes]]
+name = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
+kind = "decision"
+tags = ["scope"]
+hash = "331ede53afd47571829cdc98fd7fb1efbc35791ca291de6777d350c6a6c9ec5c"
+
+[[nodes]]
+name = "deny-unsafe-code-project-wide-via-cargo-lint"
+kind = "decision"
+tags = [
+    "safety",
+    "coding-standards",
+]
+hash = "bd1ff9ab23a1666a7e30e81a2f3538b05e4858e56596e477832fa761fd052672"
+
+[[nodes]]
+name = "deny-unwrap-expect-outside-test-code"
+kind = "decision"
+tags = [
+    "error-handling",
+    "safety",
+]
+hash = "4d098dd6f8447a8c3ef35f89a5d908253ac28bc6bc4d323fdd17b11af7dee005"
+
+[[nodes]]
+name = "every-store-access-cleans-stale-temp-files-and-warns-on"
+kind = "decision"
+tags = [
+    "data-integrity",
+    "error-handling",
+]
+hash = "0c40e152435032ddaae031323daa0f45110b8b5898d339698994bdf2a81a3ee5"
+
+[[nodes]]
+name = "exclusive-advisory-file-locking-via-fs2-with-5-second"
+kind = "decision"
+tags = [
+    "concurrency",
+    "reliability",
+]
+hash = "ea4d44e1fb90945cd75bed7984cf7f705d15cb45930551c58f7b41dba117aad2"
+
+[[nodes]]
+name = "fail-closed-validation"
+kind = "pattern"
+tags = [
+    "integrity",
+    "security",
+]
+hash = "c1ba73078f5c932eb81e977dd3ee98a3d1cbf3cb3df07718e1621613ee600850"
+
+[[nodes]]
+name = "file-watcher-debounced-live-reload"
+kind = "pattern"
+tags = [
+    "concurrency",
+    "performance",
+]
+hash = "d9bc6bfc586cf83520f09afc213202a5283f1b7e585522b62745fe2406c1c61f"
+
+[[nodes]]
+name = "file-watcher-with-100ms-debounce-for-non-fatal-live-reload"
+kind = "decision"
+tags = [
+    "concurrency",
+    "reliability",
+]
+hash = "690283ca73dd7519e7cc8c6ef7bc34d5148c5402385c5836b6f52b051c35dfa2"
+
+[[nodes]]
+name = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
+kind = "decision"
+tags = [
+    "concurrency",
+    "performance",
+]
+hash = "5621d13278602f65254ac3d5d678f3886b83aa03df4428c58d1f013ef9e72ab4"
+
+[[nodes]]
+name = "file-watcher-with-debounce-state-dir-filtering-and-post"
+kind = "decision"
+tags = [
+    "concurrency",
+    "reliability",
+]
+hash = "3830f3b0b931f9144ce07f3901d2b8d72c0308f7bf30deaeb764663132c9b53a"
+
+[[nodes]]
+name = "full-graph-validation-before-every-disk-write-via-commit"
+kind = "decision"
+tags = [
+    "reliability",
+    "consistency",
+]
+hash = "39f85a2f5c8442b004fee65c7094df2269bd2ca077cb297984f091d7f8ce0911"
+
+[[nodes]]
+name = "gated-steps-require-user-input-ungated-steps-are-autonomous"
+kind = "decision"
+tags = [
+    "integrity",
+    "security",
+]
+hash = "b3c036821aab02b2cea46a6a888928ad128d368db85c0fe9febe097f454485f1"
+
+[[nodes]]
+name = "initialization-gate-tools-list-and-tools-call-require-prior"
+kind = "decision"
+tags = [
+    "protocol",
+    "security",
+]
+hash = "798ac60752039ecefa23ac21931004a7a3b22b0203ad3b6e1701adf420473c01"
+
+[[nodes]]
+name = "inmemorygraph-with-forward-and-reverse-adjacency-maps-using"
+kind = "decision"
+tags = [
+    "performance",
+    "data-structures",
+]
+hash = "411c695db3b17998f47eb8bba9f0989f9166ecc8087a3a6f92b758c5e88dd6f5"
+
+[[nodes]]
+name = "input-hardening-with-size-limits-control-character"
+kind = "decision"
+tags = [
+    "security",
+    "data-integrity",
+]
+hash = "7502604814d096555b0a87406d9674e9caa1198d0ae77a6a0447d9ad6fde6e67"
+
+[[nodes]]
+name = "install-uses-atomic-writes-with-round-trip-verification-and"
+kind = "decision"
+tags = [
+    "security",
+    "data-integrity",
+]
+hash = "17d4a12571ec6f69e44c67ca967b98d555eb48f48f1aee92b08284bc27b66712"
+
+[[nodes]]
+name = "json-rpc-2-0-over-newline-delimited-stdio-transport"
+kind = "decision"
+tags = [
+    "protocol",
+    "security",
+]
+hash = "b4c8e834ca6cb79a6b979e450c8e3cadb9acb9485cb222ba1a48da2c5133107e"
+
+[[nodes]]
+name = "layout-state-stored-in-trurlic-state-layout-json-with"
+kind = "decision"
+tags = [
+    "data-model",
+    "api-design",
+]
+hash = "30a2780066539e250117111902065930b842aac41f4bef5edd33a3dae228489b"
+
+[[nodes]]
+name = "localhost-only-binding-with-restrictive-security-headers"
+kind = "decision"
+tags = ["security"]
+hash = "42c76119657e2e9c62ff0c3468161c2c0a334bc2e2fb701c910e6bef05ae28a7"
+
+[[nodes]]
+name = "map"
+kind = "component"
+hash = "caf42b748e79854398bfec915b3bb96fa156ecd5974e9ed81fa8f58978fbb0e0"
+
+[[nodes]]
+name = "map-detach-pre-binds-port-then-re-execs-to-avoid-toctou"
+kind = "decision"
+tags = [
+    "concurrency",
+    "extensibility",
+]
+hash = "a2f20a526fe283998ad14037d6fe61f25d3d369964c7f2a9ed9f3f074c30cca0"
+
+[[nodes]]
+name = "mcp"
+kind = "component"
+hash = "5068e541357d1648f8762dc8e7a643a6f4cc10c065675558e0ea3d8afcbfc06f"
+
+[[nodes]]
+name = "mcp-server-delegates-all-disk-writes-to-store-methods-never"
+kind = "decision"
+tags = [
+    "data-integrity",
+    "module-boundary",
+]
+hash = "c705ad9dcd453e7a2b50c6b5fdf1e5a634c85672fef31773292000dbcd4ad056"
+
+[[nodes]]
+name = "module-visibility-pub-crate-default-only-cli-and-store-are"
+kind = "decision"
+tags = ["coding-standards"]
+hash = "caeb5b5cad4681d9d831bb6b412c763b90400a4441beba0c81a06cf5ee00e20b"
+
+[[nodes]]
+name = "no-panic-production-code"
+kind = "pattern"
+tags = [
+    "safety",
+    "error-handling",
+]
+hash = "ae33363799c9b8f8ce6b9eee57b54351d5aa1e677f47313130f41386e90ac9e3"
+
+[[nodes]]
+name = "parallel-file-loading-via-rayon-for-load-state-with-single"
+kind = "decision"
+tags = [
+    "performance",
+    "storage",
+]
+hash = "7c033f2361a78df84ab90caf7722b919ab4d04f9f09b3138495c7ef0e3c86e6e"
+
+[[nodes]]
+name = "path-traversal-defense-with-verify-path-rejecting-parent"
+kind = "decision"
+tags = [
+    "security",
+    "data-integrity",
+]
+hash = "baa7f8f8adf30fc42b1e5eeb8193a3f6558ecaf7820b62fbc51a24c93a3fb9c5"
+
+[[nodes]]
+name = "pattern-removal-skips-cascade-analysis-and-takes-the"
+kind = "decision"
+tags = [
+    "data-integrity",
+    "consistency",
+]
+hash = "955a6ad619cb1944caa22502b3d59922a744396102c0def11dc9301f7b8b70af"
+
+[[nodes]]
+name = "poisoned-lock-recovery-instead-of-panic"
+kind = "decision"
+tags = [
+    "reliability",
+    "error-handling",
+]
+hash = "708e4fb4adeae80261aec648c1b3264ae41085ddd47fb5d91d323a76461b07d9"
+
+[[nodes]]
+name = "project"
+kind = "component"
+hash = "9b658bcc3bdf39842a63d8741149671acb1b723deb1da81d21fae39c78319ac5"
+
+[[nodes]]
+name = "prompt-value-sanitization-control-character-stripping-512"
+kind = "decision"
+tags = ["security"]
+hash = "bfb6eb848b6e26c21db016aaa2f89f2ab45758b8cc4cea6a48ec2d27ce64e1fe"
+
+[[nodes]]
+name = "read-write-lock-split-read-tools-acquire-rwlock-read-lock"
+kind = "decision"
+tags = [
+    "concurrency",
+    "performance",
+]
+hash = "098b3b53b362b64a6d3936d8afb4e74138da1f104765da6581927d8c10f76430"
+
+[[nodes]]
+name = "release-profile-fat-lto-single-codegen-unit-strip-symbols"
+kind = "decision"
+tags = [
+    "build",
+    "performance",
+]
+hash = "8a8a411f1f429a76cd8faaee745f2efa1095b779bf7be4bbdecee4657dbbc2b6"
+
+[[nodes]]
+name = "rest-api-validates-inputs-against-store-limits-and-uses"
+kind = "decision"
+tags = [
+    "data-model",
+    "security",
+]
+hash = "3c7844fb334a7a30dcd8896857ebbec095e1b5a51624a2983d0f18b530b6cf0e"
+
+[[nodes]]
+name = "rust-embed-for-zero-build-step-frontend-embedding"
+kind = "decision"
+tags = [
+    "dependencies",
+    "build",
+]
+hash = "35f2610dcb150e38c4ac72a337b7f48732e0bdaa7ebe60a972f46fc45a8aca84"
+
+[[nodes]]
+name = "seven-task-types-with-distinct-step-sequences-newcomponent"
+kind = "decision"
+tags = ["scope"]
+hash = "542b8c80752461d29fc3a46dfcdcf1a6e3e892dab0dba2ab61ae5fbad0df60f7"
+
+[[nodes]]
+name = "single-error-enum-with-thiserror-project-wide-result-alias"
+kind = "decision"
+tags = ["error-handling"]
+hash = "b6807024e4f91f85870f6fb2616ebc5142b3490e62035ff0e3e9963e963f805f"
+
+[[nodes]]
+name = "spawn-blocking-for-synchronous-store-writes-in-async"
+kind = "decision"
+tags = [
+    "concurrency",
+    "performance",
+]
+hash = "6b1f4a4c888a66c467ebc99542a4ab8908e21a9b08dbef2cc5f1f05614792b1e"
+
+[[nodes]]
+name = "staleness-detection-at-90-day-threshold-triggers-review"
+kind = "decision"
+tags = ["integrity"]
+hash = "832307239e7f8b761670a5cc9ad34ab013335b33839d44c2ba3b587e7ced6ff0"
+
+[[nodes]]
+name = "state-diffing-with-hash-based-change-detection-and"
+kind = "decision"
+tags = [
+    "performance",
+    "api-design",
+]
+hash = "4d52bf385ca85cb36a6b6b104c02de81e3ef73531fe92991800dc83f89fc81c5"
+
+[[nodes]]
+name = "static-tool-catalogue-via-lazylock-returned-by-reference"
+kind = "decision"
+tags = ["performance"]
+hash = "f9f37001b9c8fce70bdb201da556bbcf12f10cef1adff65ab49e640a1d5ff4d4"
+
+[[nodes]]
+name = "step-deduction-via-graph-postcondition-checking-with"
+kind = "decision"
+tags = ["integrity"]
+hash = "076d1c3e5ca119298bcb6dd904b1fe45611b45ac143338b2566911fcb4c72b98"
+
+[[nodes]]
+name = "store"
+kind = "component"
+hash = "d7f44c4f48f46a014d607dacba2742010740b036409ae5fbe32e36645846bd0e"
+
+[[nodes]]
+name = "task-type-inference-from-graph-state-when-not-explicitly"
+kind = "decision"
+tags = ["error"]
+hash = "2b39296d49fbb0001fe1c396bf4cbd9785f36401c3a9d244fa5f32df0ece891b"
+
+[[nodes]]
+name = "ten-concern-areas-with-keyword-matching-for-coverage"
+kind = "decision"
+tags = [
+    "integrity",
+    "scope",
+]
+hash = "6bd5941c25b852426138f4b5db44cd844c2d9aadd2531b9e84f88c60757e1745"
+
+[[nodes]]
+name = "tiered-store-access-helpers-separate-read-only-from-mutable"
+kind = "decision"
+tags = [
+    "concurrency",
+    "error-handling",
+]
+hash = "f500b467dd5383dfb71be25e230334a0062bfc67a0dac538ee02471e471cb477"
+
+[[nodes]]
+name = "toml-as-the-sole-serialization-format-with-one-file-per"
+kind = "decision"
+tags = [
+    "storage",
+    "developer-experience",
+]
+hash = "29c712d17d836b8f59530b58127c2da5a1fdbd13b6df10caca54543213d4af15"
+
+[[nodes]]
+name = "transport-agnostic-prompt-generation-shared-preamble-step"
+kind = "decision"
+tags = ["scope"]
+hash = "11bc8d77e5800cdc54b9435c795a615a47fd664cd075936da1b275057130ba02"
+
+[[nodes]]
+name = "typed-toolenvelope-serialized-directly-into-json-rpc"
+kind = "decision"
+tags = [
+    "performance",
+    "protocol",
+]
+hash = "8165d439a9f6ab3f8e51ad0afd64a83c0b9c81a8f31c9a259ca9a1f779fa0b5d"
+
+[[nodes]]
+name = "unidirectional-server-to-client-websocket-push-with"
+kind = "decision"
+tags = [
+    "api-design",
+    "concurrency",
+]
+hash = "40d512b3d7a8bc54270e917d64eaa3261a45ceca951f06276b35cc9bb8a53c44"
+
+[[nodes]]
+name = "verify-against-decisions-matches-changed-files-to-code-refs"
+kind = "decision"
+tags = [
+    "verify",
+    "matching",
+]
+hash = "243f811ccb3e11be999463a74d0d4479518dec95b12a1dfbf7a3d5866bbbbd7a"
+
+[[nodes]]
+name = "verify-against-decisions-omits-constraint-type-in-v1"
+kind = "decision"
+tags = [
+    "api",
+    "verify",
+]
+hash = "5dced37fb3cbe4ebd07d5172b43a6433303d333c5d704731adfed80c694b878a"
+
+[[nodes]]
+name = "verify-against-decisions-rejects-invalid-changed-file-paths"
+kind = "decision"
+tags = [
+    "verify",
+    "validation",
+    "security",
+]
+hash = "841f223107eda7259b947690d2785e053727018568fc025845d025b6ee6555e9"
+
+[[nodes]]
+name = "workflow"
+kind = "component"
+hash = "cc2701e3970a2d719fdbb7636175467fff4318e5580c7844fc90f4ac46462595"
+
+[[nodes]]
+name = "workflow-prompts-delegated-to-workflow-steps-context"
+kind = "decision"
+tags = ["module-boundary"]
+hash = "c2a5365666d18ba53fbbfe6bd01fe9557a92d01880d7e628cb8890710c66661c"
+
+[[edges]]
+from = "256-bit-csprng-token-with-constant-time-comparison-for"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "advance-is-a-pure-function-read-only-stateless-idempotent"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "arc-wrapped-content-values-in-btreemap-with-oncelock-free"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "atomic-write-with-round-trip-verification"
+to = "atomic-writes-via-serialize-to-temp-verify-round-trip"
+kind = "member_of"
+
+[[edges]]
+from = "atomic-write-with-round-trip-verification"
+to = "commands"
+kind = "applies_to"
+
+[[edges]]
+from = "atomic-write-with-round-trip-verification"
+to = "install-uses-atomic-writes-with-round-trip-verification-and"
+kind = "member_of"
+
+[[edges]]
+from = "atomic-write-with-round-trip-verification"
+to = "store"
+kind = "applies_to"
+
+[[edges]]
+from = "atomic-writes-via-serialize-to-temp-verify-round-trip"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "axum-as-the-http-websocket-server-framework"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "blake3-content-hashing-for-tamper-detection-and-change"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "cascade-analysis-gates-destructive-graph-mutations"
+to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "cascade-pre-flight-checks-with-blockers-warnings-and"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "centralized-limits-at-trust-boundaries"
+to = "centralized-size-limits-in-limits-rs-shared-across-all"
+kind = "member_of"
+
+[[edges]]
+from = "centralized-limits-at-trust-boundaries"
+to = "input-hardening-with-size-limits-control-character"
+kind = "member_of"
+
+[[edges]]
+from = "centralized-limits-at-trust-boundaries"
+to = "map"
+kind = "applies_to"
+
+[[edges]]
+from = "centralized-limits-at-trust-boundaries"
+to = "mcp"
+kind = "applies_to"
+
+[[edges]]
+from = "centralized-limits-at-trust-boundaries"
+to = "rest-api-validates-inputs-against-store-limits-and-uses"
+kind = "member_of"
+
+[[edges]]
+from = "centralized-limits-at-trust-boundaries"
+to = "store"
+kind = "applies_to"
+
+[[edges]]
+from = "centralized-size-limits-in-limits-rs-shared-across-all"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "checkpoint-based-rollback-for-graph-mutations-with-o-1"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "claude-code-install-delegates-to-claude-cli-subprocess"
+to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "claude-md-and-trurlic-are-tracked-claude-and-tasks-md-are"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "commands"
+to = "store"
+kind = "connects_to"
+
+[[edges]]
+from = "commands-reads-workflow-concerns-to-report-concern-coverage"
+to = "advance-is-a-pure-function-read-only-stateless-idempotent"
+kind = "depends_on"
+
+[[edges]]
+from = "commands-reads-workflow-concerns-to-report-concern-coverage"
+to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "deny-unsafe-code-project-wide-via-cargo-lint"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "deny-unwrap-expect-outside-test-code"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "every-store-access-cleans-stale-temp-files-and-warns-on"
+to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "exclusive-advisory-file-locking-via-fs2-with-5-second"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "cascade-analysis-gates-destructive-graph-mutations"
+kind = "member_of"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "cascade-pre-flight-checks-with-blockers-warnings-and"
+kind = "member_of"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "commands"
+kind = "applies_to"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "full-graph-validation-before-every-disk-write-via-commit"
+kind = "member_of"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "input-hardening-with-size-limits-control-character"
+kind = "member_of"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "map"
+kind = "applies_to"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "mcp"
+kind = "applies_to"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "rest-api-validates-inputs-against-store-limits-and-uses"
+kind = "member_of"
+
+[[edges]]
+from = "fail-closed-validation"
+to = "store"
+kind = "applies_to"
+
+[[edges]]
+from = "file-watcher-debounced-live-reload"
+to = "file-watcher-with-100ms-debounce-for-non-fatal-live-reload"
+kind = "member_of"
+
+[[edges]]
+from = "file-watcher-debounced-live-reload"
+to = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
+kind = "member_of"
+
+[[edges]]
+from = "file-watcher-debounced-live-reload"
+to = "file-watcher-with-debounce-state-dir-filtering-and-post"
+kind = "member_of"
+
+[[edges]]
+from = "file-watcher-debounced-live-reload"
+to = "map"
+kind = "applies_to"
+
+[[edges]]
+from = "file-watcher-debounced-live-reload"
+to = "mcp"
+kind = "applies_to"
+
+[[edges]]
+from = "file-watcher-debounced-live-reload"
+to = "store"
+kind = "applies_to"
+
+[[edges]]
+from = "file-watcher-with-100ms-debounce-for-non-fatal-live-reload"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "file-watcher-with-debounce-state-dir-filtering-and-post"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "full-graph-validation-before-every-disk-write-via-commit"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "gated-steps-require-user-input-ungated-steps-are-autonomous"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "initialization-gate-tools-list-and-tools-call-require-prior"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "inmemorygraph-with-forward-and-reverse-adjacency-maps-using"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "input-hardening-with-size-limits-control-character"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "install-uses-atomic-writes-with-round-trip-verification-and"
+to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "json-rpc-2-0-over-newline-delimited-stdio-transport"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "layout-state-stored-in-trurlic-state-layout-json-with"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "localhost-only-binding-with-restrictive-security-headers"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "map"
+to = "store"
+kind = "connects_to"
+
+[[edges]]
+from = "map-detach-pre-binds-port-then-re-execs-to-avoid-toctou"
+to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "mcp"
+to = "store"
+kind = "connects_to"
+
+[[edges]]
+from = "mcp"
+to = "workflow"
+kind = "connects_to"
+
+[[edges]]
+from = "mcp-server-delegates-all-disk-writes-to-store-methods-never"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "module-visibility-pub-crate-default-only-cli-and-store-are"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "no-panic-production-code"
+to = "deny-unsafe-code-project-wide-via-cargo-lint"
+kind = "member_of"
+
+[[edges]]
+from = "no-panic-production-code"
+to = "deny-unwrap-expect-outside-test-code"
+kind = "member_of"
+
+[[edges]]
+from = "no-panic-production-code"
+to = "mcp"
+kind = "applies_to"
+
+[[edges]]
+from = "no-panic-production-code"
+to = "poisoned-lock-recovery-instead-of-panic"
+kind = "member_of"
+
+[[edges]]
+from = "no-panic-production-code"
+to = "single-error-enum-with-thiserror-project-wide-result-alias"
+kind = "member_of"
+
+[[edges]]
+from = "parallel-file-loading-via-rayon-for-load-state-with-single"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "path-traversal-defense-with-verify-path-rejecting-parent"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "pattern-removal-skips-cascade-analysis-and-takes-the"
+to = "cascade-pre-flight-checks-with-blockers-warnings-and"
+kind = "depends_on"
+
+[[edges]]
+from = "pattern-removal-skips-cascade-analysis-and-takes-the"
+to = "full-graph-validation-before-every-disk-write-via-commit"
+kind = "depends_on"
+
+[[edges]]
+from = "pattern-removal-skips-cascade-analysis-and-takes-the"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "poisoned-lock-recovery-instead-of-panic"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "prompt-value-sanitization-control-character-stripping-512"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "read-write-lock-split-read-tools-acquire-rwlock-read-lock"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "release-profile-fat-lto-single-codegen-unit-strip-symbols"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "rest-api-validates-inputs-against-store-limits-and-uses"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "rust-embed-for-zero-build-step-frontend-embedding"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "seven-task-types-with-distinct-step-sequences-newcomponent"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "single-error-enum-with-thiserror-project-wide-result-alias"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "spawn-blocking-for-synchronous-store-writes-in-async"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "staleness-detection-at-90-day-threshold-triggers-review"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "state-diffing-with-hash-based-change-detection-and"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "static-tool-catalogue-via-lazylock-returned-by-reference"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "step-deduction-via-graph-postcondition-checking-with"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "task-type-inference-from-graph-state-when-not-explicitly"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "ten-concern-areas-with-keyword-matching-for-coverage"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "tiered-store-access-helpers-separate-read-only-from-mutable"
+to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "toml-as-the-sole-serialization-format-with-one-file-per"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "transport-agnostic-prompt-generation-shared-preamble-step"
+to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "typed-toolenvelope-serialized-directly-into-json-rpc"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "unidirectional-server-to-client-websocket-push-with"
+to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "verify-against-decisions-matches-changed-files-to-code-refs"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "verify-against-decisions-omits-constraint-type-in-v1"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "verify-against-decisions-rejects-invalid-changed-file-paths"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "workflow"
+to = "store"
+kind = "connects_to"
+
+[[edges]]
+from = "workflow-prompts-delegated-to-workflow-steps-context"
+to = "mcp"
+kind = "belongs_to"

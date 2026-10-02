@@ -1,0 +1,12 @@
+[decision]
+component = "map"
+choice = "Localhost-only binding with restrictive security headers and CORS denial"
+reason = "The server binds exclusively to 127.0.0.1, never 0.0.0.0, preventing network exposure. Three security headers are set on every response: Content-Security-Policy (restricting script/style/connect sources to self and the specific bound port for WebSocket), X-Content-Type-Options: nosniff, and X-Frame-Options: DENY. The CSP is dynamically constructed with the actual bound port — no wildcard. CorsLayer::new() denies all cross-origin requests. A 1 MB body limit caps request size. These layers defend against DNS rebinding, clickjacking, and MIME confusion attacks on the local server."
+alternatives = [
+    "bind to 0.0.0.0 with firewall rules: exposes the server to the network, relies on external configuration",
+    "permissive CORS with origin whitelist: unnecessary attack surface for a localhost tool",
+    "no CSP: allows injected scripts to exfiltrate data or connect to arbitrary endpoints",
+]
+tags = ["security"]
+attribution = "user"
+created = "2026-06-15T09:45:08.554324145Z"

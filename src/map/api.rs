@@ -97,6 +97,7 @@ fn error_status(err: &crate::Error) -> StatusCode {
         // Missing resources → 404.
         Error::ComponentNotFound(_)
         | Error::DecisionNotFound(_)
+        | Error::PatternNotFound(_)
         | Error::ConnectionNotFound { .. }
         | Error::StoreNotFound(_) => StatusCode::NOT_FOUND,
 

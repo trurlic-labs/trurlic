@@ -1,0 +1,14 @@
+[decision]
+component = "project"
+choice = "Release profile: fat LTO, single codegen unit, strip symbols, panic=abort"
+reason = 'Cargo.toml [profile.release] sets lto = "fat", codegen-units = 1, strip = true, panic = "abort", overflow-checks = true. This produces the smallest and fastest binary at the cost of longer compile times. panic=abort avoids unwinding overhead since there is no recovery from panics in a CLI tool. overflow-checks remain enabled for safety. Dev profile uses opt-level = 2 for dependencies only to keep debug builds fast.'
+alternatives = [
+    "Default release profile — rejected because the binary is distributed to users and size/performance matter",
+    "panic=unwind to allow catch_unwind — rejected because the crate denies panicking paths (unwrap/expect denied) so unwinding machinery is dead weight",
+]
+tags = [
+    "build",
+    "performance",
+]
+attribution = "user"
+created = "2026-06-15T09:47:45.759040420Z"

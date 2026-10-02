@@ -1,0 +1,14 @@
+[decision]
+component = "store"
+choice = "Atomic writes via serialize-to-temp, verify round-trip, rename-into-place"
+reason = "Prevents partial writes from corrupting on-disk state. Content is serialized to TOML, written to .state/tmp/, deserialized back to verify the round-trip, then renamed to the final path. Rename is atomic on POSIX. graph.toml is always renamed last, serving as the commit point — if the process crashes mid-transaction, the graph index still references the previous consistent state. Stale temp files are cleaned up on next startup via clean_stale_tmp()."
+alternatives = [
+    "Direct write to final path — rejected: partial writes on crash would leave corrupt TOML files that break all subsequent reads",
+    "Write-ahead log (WAL) — rejected: adds complexity disproportionate to the write frequency; TOML files are small and rename-based atomicity is sufficient",
+]
+tags = [
+    "reliability",
+    "storage",
+]
+attribution = "user"
+created = "2026-06-15T09:44:23.486129858Z"

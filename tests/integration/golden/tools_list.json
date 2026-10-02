@@ -1,0 +1,589 @@
+{
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Advance workflow"
+      },
+      "description": "Compute the workflow step for a component and return the next action. Call before acting on a component and after completing each action. The returned `ready` field is the only signal that implementation can proceed.",
+      "inputSchema": {
+        "properties": {
+          "component": {
+            "description": "Component name (kebab-case) or 'project'.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Operating mode. agent: AI makes decisions autonomously from source code analysis. interactive: user participates in design through guided discussion. If omitted, advance returns requires_mode=true — present the choice to the user.",
+            "enum": [
+              "agent",
+              "interactive"
+            ],
+            "type": "string"
+          },
+          "step_evidence": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Evidence of user involvement for completed steps. Keys are step names, values are evidence strings. Gated (interactive) steps require evidence of at least 20 bytes. Ungated steps accept any value including empty string. The state machine skips steps present in this map to progress through steps whose postconditions are not verifiable from the graph alone.",
+            "type": "object"
+          },
+          "task": {
+            "description": "Optional task context passed through to design prompts.",
+            "type": "string"
+          },
+          "task_type": {
+            "description": "What the developer wants to accomplish. Inferred from graph state if omitted. new_component: build from scratch. feature: add to existing component. fix: apply a bugfix. learn: study existing decisions. review: challenge decisions for drift. harden: strengthen coverage gaps. bootstrap: autonomous project scan — agent reads source code and records components, decisions, and patterns without interactive dialogue.",
+            "enum": [
+              "new_component",
+              "feature",
+              "fix",
+              "learn",
+              "review",
+              "harden",
+              "bootstrap"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "component"
+        ],
+        "type": "object"
+      },
+      "name": "advance"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Get context"
+      },
+      "description": "Get the architectural context for a component. Returns decisions, project-wide rules, related decisions from connected components, and an authoritative brief for coding agents. Use depth=\"constraints\" for token-efficient mid-implementation checks (~60-70% fewer tokens).",
+      "inputSchema": {
+        "properties": {
+          "component": {
+            "description": "Component name (kebab-case) or 'project'.",
+            "type": "string"
+          },
+          "depth": {
+            "description": "full (default): complete context with reasoning. constraints: choice text only, compact brief, no related decisions. 60-70% fewer tokens for mid-implementation checks.",
+            "enum": [
+              "full",
+              "constraints"
+            ],
+            "type": "string"
+          },
+          "task": {
+            "description": "Optional current coding task description.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "component"
+        ],
+        "type": "object"
+      },
+      "name": "get_context"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Check pattern"
+      },
+      "description": "Check whether a pattern or approach is covered by existing decisions. Returns matching decisions sorted by relevance, or suggested_component if not covered.",
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "Pattern or approach to check.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "type": "object"
+      },
+      "name": "check_pattern"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Get architecture"
+      },
+      "description": "Full architectural overview: components, connections, decision counts, patterns, and project-wide decisions. Lists components with zero decisions as needing design.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      },
+      "name": "get_architecture"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Get decision history"
+      },
+      "description": "Trace how a decision evolved. Returns its current choice, reason, attribution, and creation time, plus every prior version in chronological order (oldest first) and a count of revisions.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Decision name (without .toml).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "get_decision_history"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Get decisions for file"
+      },
+      "description": "Reverse lookup: given a file path, find every decision whose code_refs reference it (exact match or directory prefix). Returns decisions sorted by component then name. Does NOT include project-wide rules — they apply everywhere; pair with get_context for full coverage.",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "description": "Relative file path or directory from project root (e.g. 'src/store/write.rs' or 'src/store'). Leading './' is stripped; backslashes, traversal (..), and absolute paths are rejected.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
+      "name": "get_decisions_for_file"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Verify against decisions"
+      },
+      "description": "Call after implementing code, before committing. Returns architectural decisions that apply to the files you changed, with instructions to verify your code respects them. Read each affected file and evaluate.",
+      "inputSchema": {
+        "properties": {
+          "changed_files": {
+            "description": "Relative file paths from project root that you changed (e.g. 'src/store/write.rs'). Leading './' is stripped; backslashes, traversal (..), and absolute paths are rejected.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "component": {
+            "description": "Component name (kebab-case) or 'project'.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "component",
+          "changed_files"
+        ],
+        "type": "object"
+      },
+      "name": "verify_against_decisions"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Record decision"
+      },
+      "description": "Record a single architectural decision. Validates all edges before writing. Atomic commit. Returns the decision name, path, warnings, and any detected pattern opportunities.",
+      "inputSchema": {
+        "properties": {
+          "alternatives": {
+            "description": "Rejected options with reasons.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "attribution": {
+            "description": "Who authored this decision: \"user\" (human present) or \"agent\" (autonomous).",
+            "enum": [
+              "user",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "choice": {
+            "description": "Concise decision title.",
+            "type": "string"
+          },
+          "code_refs": {
+            "description": "Source code locations where this decision manifests. Agent mode should always include these.",
+            "items": {
+              "properties": {
+                "file": {
+                  "description": "Relative path from project root (e.g. 'src/store/write.rs').",
+                  "type": "string"
+                },
+                "symbol": {
+                  "description": "Function, struct, constant, or method name.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "component": {
+            "description": "Component name or 'project'.",
+            "type": "string"
+          },
+          "constrains": {
+            "description": "Decision names this constrains.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "depends_on": {
+            "description": "Decision names this depends on.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "description": "Reasoning behind the decision.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Categorical tags for filtering.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "component",
+          "choice",
+          "reason",
+          "attribution"
+        ],
+        "type": "object"
+      },
+      "name": "record_decision"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Record pattern"
+      },
+      "description": "Record a pattern — a synthesis of multiple decisions into a reusable rule. Requires at least 2 decisions. Returns the pattern name (slug) for reference.",
+      "inputSchema": {
+        "properties": {
+          "components": {
+            "description": "Component names (inferred from decisions if omitted).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "decisions": {
+            "description": "Decision names (must all exist, minimum 2).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "description": "What this pattern means.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Human-readable pattern name.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "Categorical tags.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "decisions"
+        ],
+        "type": "object"
+      },
+      "name": "record_pattern"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Remove decision"
+      },
+      "description": "Remove a decision with cascade awareness. Refuses if other decisions depend on it or a pattern would shrink below 2 members. Reports affected patterns and edges.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Decision filename (without .toml).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "remove_decision"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Remove pattern"
+      },
+      "description": "Remove a pattern and its member_of and applies_to edges. Member decisions are kept. Remove the pattern first when its members must go, since a pattern cannot drop below 2 members.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Pattern name (the slug record_pattern returned).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "remove_pattern"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Update decision"
+      },
+      "description": "Modify an existing decision in place. 'revise' updates content and versions the previous choice/reason into history. 'promote' marks an agent decision as human-reviewed by changing its attribution to user. The decision's name and every edge survive unchanged.",
+      "inputSchema": {
+        "properties": {
+          "choice": {
+            "description": "New choice text (revise only, optional — omit to keep current).",
+            "type": "string"
+          },
+          "code_refs": {
+            "description": "New code refs (revise only, optional — omit to keep current).",
+            "items": {
+              "properties": {
+                "file": {
+                  "description": "Relative path from project root (e.g. 'src/store/write.rs').",
+                  "type": "string"
+                },
+                "symbol": {
+                  "description": "Function, struct, constant, or method name.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "description": "revise: update content, previous version saved to history. promote: mark an agent decision as human-reviewed. Call ONLY when the user has explicitly reviewed the decision and confirmed it in this conversation. Never promote autonomously; never promote in agent mode.",
+            "enum": [
+              "revise",
+              "promote"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "Existing decision name.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "New reason text (revise only, optional — omit to keep current).",
+            "type": "string"
+          },
+          "tags": {
+            "description": "New tags (revise only, optional — omit to keep current).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "name": "update_decision"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Get step prompt"
+      },
+      "description": "Get the prompt for a specific workflow step. Called as directed by advance. Returns system instructions, component context, and step metadata.",
+      "inputSchema": {
+        "properties": {
+          "component": {
+            "description": "Component name or 'project'.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Operating mode — determines prompt variant.",
+            "enum": [
+              "agent",
+              "interactive"
+            ],
+            "type": "string"
+          },
+          "step": {
+            "description": "Workflow step to get the prompt for.",
+            "enum": [
+              "register",
+              "define_scope",
+              "analyze_code",
+              "cover_concerns",
+              "walk_decisions",
+              "verify_constraints",
+              "impact_check",
+              "pattern_detection",
+              "design_check",
+              "drift_check",
+              "coverage_audit",
+              "scan_project",
+              "extract_decisions",
+              "project_rules",
+              "warm_up",
+              "ready"
+            ],
+            "type": "string"
+          },
+          "task": {
+            "description": "Optional task context.",
+            "type": "string"
+          },
+          "task_type": {
+            "description": "Optional task type for variant prompts.",
+            "enum": [
+              "new_component",
+              "feature",
+              "fix",
+              "learn",
+              "review",
+              "harden",
+              "bootstrap"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "component",
+          "step",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "name": "get_step_prompt"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Add component"
+      },
+      "description": "Add a new component to the architecture graph.",
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "One-line description of the component's role.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Kebab-case component name (e.g. 'rate-limiter').",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "add_component"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Add connection"
+      },
+      "description": "Add a directional connection between two components. Represents data or control flow. Connections provide context to get_context and get_step_prompt.",
+      "inputSchema": {
+        "properties": {
+          "from": {
+            "description": "Source component name.",
+            "type": "string"
+          },
+          "to": {
+            "description": "Target component name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "name": "add_connection"
+    }
+  ]
+}

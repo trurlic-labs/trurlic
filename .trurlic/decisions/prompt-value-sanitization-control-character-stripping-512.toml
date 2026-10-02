@@ -1,0 +1,11 @@
+[decision]
+component = "workflow"
+choice = "Prompt value sanitization: control character stripping, 512-byte truncation, word-boundary keyword matching"
+reason = "Decision values inlined into prompts are sanitized to prevent prompt injection from compromised .toml files and to bound prompt size. Control characters (except newline) are stripped, values are truncated at 512 chars with ellipsis, and keyword matching uses word-boundary splitting to prevent substring false positives. This is defense-in-depth: even if an attacker modifies a decision file, the sanitized value cannot inject directives into agent system prompts."
+alternatives = [
+    "No sanitization, trust TOML file integrity — rejected because TOML files are user-editable plaintext and could be modified by compromised tools or malicious actors",
+    "Full escaping with quotation marks — rejected because embedded quotes within decisions would create confusing prompt text; truncation + control stripping is simpler and sufficient",
+]
+tags = ["security"]
+attribution = "user"
+created = "2026-06-15T09:45:09.301509427Z"

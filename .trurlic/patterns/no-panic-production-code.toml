@@ -1,0 +1,3 @@
+[pattern]
+name = "no-panic-production-code"
+description = "Production code must never panic. Enforced at three levels: unsafe code denied via Cargo lint, unwrap/expect denied outside #[cfg(test)] via clippy attributes, and a single error enum with Result alias ensures all fallible paths use ? propagation. Poisoned locks are recovered instead of panicked."

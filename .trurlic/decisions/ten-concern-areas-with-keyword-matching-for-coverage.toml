@@ -1,0 +1,14 @@
+[decision]
+component = "workflow"
+choice = "Ten concern areas with keyword matching for coverage detection, priority-ordered by danger"
+reason = "Concern tracking uses a static array of 10 architectural concern areas (Security, Error handling, Concurrency, Integrity, Performance, APIs, Storage, Serialization, Dependencies, Migration), each with curated keyword lists. Array order IS priority order — Security gaps surface before stylistic ones. Coverage is computed by word-boundary matching decision text (choice + reason + tags) against keywords, preventing substring false positives (e.g., 'format' in 'information')."
+alternatives = [
+    "LLM-based concern classification — rejected because it would make advance() non-deterministic and require an API call in a read-only path",
+    "Tag-only matching without keyword expansion — rejected because decisions often describe concerns in prose without using the exact tag name",
+]
+tags = [
+    "integrity",
+    "scope",
+]
+attribution = "user"
+created = "2026-06-15T09:44:44.958340930Z"

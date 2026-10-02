@@ -25,6 +25,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets --features failpoints -- -D warnings
 
   test:
     name: Test
@@ -35,7 +36,8 @@ jobs:
         with:
           toolchain: "1.95"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo test --workspace --locked
+      # The only job that enables failpoints; release builds never do.
+      - run: cargo test --workspace --locked --features failpoints
 
   audit:
     name: Audit

@@ -1,0 +1,15 @@
+[decision]
+component = "map"
+choice = "Layout state stored in .trurlic/.state/layout.json with optimistic concurrency versioning"
+reason = "Node positions are personal preference, not architectural fact, so layout.json is gitignored and stored in .trurlic/.state/. An optimistic concurrency version counter prevents lost updates: PUT /api/layout must include layout_version matching the server's current version, or it gets 409 Conflict. The version increments on every successful write. Layout save uses the same atomic write pattern as the store (write to tmp, round-trip verify, rename into place). Positions support a pinned flag for user-anchored nodes. This separates ephemeral UI state from the architectural graph data."
+alternatives = [
+    "store positions in graph.toml: would pollute the architectural graph with ephemeral UI state, cause constant merge conflicts in version control",
+    "client-side-only layout (localStorage): lost across browsers/machines, no server-side persistence",
+    "no optimistic concurrency: concurrent browser tabs could silently overwrite each other's layout changes",
+]
+tags = [
+    "data-model",
+    "api-design",
+]
+attribution = "user"
+created = "2026-06-15T09:45:29.497796820Z"

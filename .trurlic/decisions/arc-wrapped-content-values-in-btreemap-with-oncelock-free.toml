@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "Arc-wrapped content values in BTreeMap with OnceLock-free eager graph caching"
+reason = "ProjectState holds BTreeMap<String, Arc<ComponentFile/DecisionFile/PatternFile>> so InMemoryGraph shares content via Arc::clone (pointer increment) instead of deep copies. Graph rebuilds on every write are O(n) pointer increments, not O(n) data copies. The cached InMemoryGraph is stored directly in ProjectState.graph and updated in-place by commit_with_graph() after successful validation. BTreeMap provides deterministic iteration order for sorted graph index output."
+alternatives = [
+    "Deep-copy content into InMemoryGraph — rejected: every write operation rebuilds the graph; deep copies would make writes O(n*k) where k is average node content size",
+    "HashMap for content maps — rejected: BTreeMap gives deterministic iteration order needed for reproducible graph.toml output without a separate sort step",
+    "Lazy graph construction behind OnceLock — rejected: write paths need post-mutation validation which requires a fresh graph build anyway; eager construction is simpler and equally efficient",
+]
+tags = [
+    "performance",
+    "storage",
+]
+attribution = "user"
+created = "2026-06-15T09:44:56.979455354Z"

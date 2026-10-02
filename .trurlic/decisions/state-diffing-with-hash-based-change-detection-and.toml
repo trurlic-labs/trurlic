@@ -1,0 +1,15 @@
+[decision]
+component = "map"
+choice = "State diffing with hash-based change detection and granularity cap"
+reason = "The diff engine compares two ProjectState snapshots by indexing nodes into HashMaps for O(1) lookup, using BLAKE3 content hashes to detect node updates without deep comparison, and computing edge diffs via set difference on (from, to, kind) triples. When the diff exceeds 50 granular events (e.g. a git checkout rewriting many files), it falls back to a single FullReload event — cheaper for the client than processing hundreds of incremental updates. This keeps the common case (1-5 node changes) fast and the worst case bounded."
+alternatives = [
+    "always send full state on every change: wastes bandwidth and forces full client re-render for single-node edits",
+    "deep structural comparison without hashes: slower for large graphs and requires comparing every field",
+    "no granularity cap: a mass rewrite could flood WebSocket clients with hundreds of events, causing rendering storms",
+]
+tags = [
+    "performance",
+    "api-design",
+]
+attribution = "user"
+created = "2026-06-15T09:44:57.583162277Z"

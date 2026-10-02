@@ -17,8 +17,6 @@ src/map/frontend/node_modules/
 
 # Coding tools
 .claude
-CLAUDE.md
 .trurlic/.state/
-.trurlic/
 .mcp.json
 

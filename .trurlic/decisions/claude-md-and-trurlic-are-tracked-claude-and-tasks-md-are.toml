@@ -1,0 +1,20 @@
+[decision]
+component = "project"
+choice = "CLAUDE.md and .trurlic/ are tracked; .claude/ and TASKS.md are local files, never committed"
+reason = "CLAUDE.md is the entry point every coding agent in this repo reads, and .trurlic/ (minus .trurlic/.state/) is the project's own decision graph, so both are versioned and reviewed with the code. The owner keeps .claude/ (skills, settings, worktrees) and TASKS.md as local working files: .gitignore ignores .claude, TASKS.md is excluded locally, and if either ever lands in the repo it is removed from tracking."
+alternatives = [
+    "Track .claude/skills/ next to CLAUDE.md so skill changes are reviewed: rejected by the owner, the skills are local working files",
+    "Keep .trurlic/ ignored: rejected, the graph agents read would be unreviewed, unversioned and invisible to anyone cloning the repo",
+]
+tags = [
+    "scope",
+    "coding-standards",
+]
+attribution = "user"
+created = "2026-10-02T09:47:31.816905883Z"
+
+[[decision.code_refs]]
+file = ".gitignore"
+
+[[decision.code_refs]]
+file = "CLAUDE.md"

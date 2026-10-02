@@ -215,6 +215,7 @@ verify_against_decisions(component, changed_files)
 | `record_pattern` | Synthesize a pattern from multiple related decisions |
 | `update_decision` | Revise a decision in place (with history) or promote an agent decision to reviewed |
 | `remove_decision` | Remove a decision with cascade and coverage-impact analysis |
+| `remove_pattern` | Remove a pattern and its edges; its member decisions are kept |
 
 All tools carry [annotations](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so MCP clients can reason about each invocation.
 

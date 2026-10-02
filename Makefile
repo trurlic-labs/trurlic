@@ -63,11 +63,13 @@ fmt:
 check:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
+	cargo clippy --locked --workspace --all-targets --features failpoints -- -D warnings
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
+# `failpoints` arms the crash sites in src/store/failpoint.rs; tests only.
 test:
-	cargo test --workspace --locked
+	cargo test --workspace --locked --features failpoints
 
 # ── Audit ─────────────────────────────────────────────────────────────────────
 # Rust:       requires `cargo install cargo-deny`

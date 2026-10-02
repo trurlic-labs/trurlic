@@ -1,0 +1,19 @@
+[decision]
+component = "store"
+choice = "Pattern removal skips cascade analysis and takes the pattern's own edges with it"
+reason = "No edge kind points at a pattern: a pattern only owns outgoing member_of edges to decisions and applies_to edges to components. Removing one therefore cannot strand another node, so Store::remove_pattern deletes the pattern file and its edges in one commit_with_graph call without a check_*_cascade pre-flight. Member decisions are kept. This is also the only way to remove a pattern's last members, since the decision cascade refuses to shrink a pattern below 2 members."
+alternatives = [
+    "Cascade pre-flight with blockers for patterns: rejected, there is no incoming edge that could block, so the check would always pass",
+    "Delete member decisions together with the pattern: rejected, decisions outlive the synthesis that grouped them",
+    "Allow the decision cascade to empty a pattern and delete it implicitly: rejected, a pattern would disappear as a side effect of removing a decision",
+]
+tags = [
+    "data-integrity",
+    "consistency",
+]
+attribution = "agent"
+created = "2026-10-02T09:55:00.681469031Z"
+
+[[decision.code_refs]]
+file = "src/store/pattern_removal.rs"
+symbol = "remove_pattern"

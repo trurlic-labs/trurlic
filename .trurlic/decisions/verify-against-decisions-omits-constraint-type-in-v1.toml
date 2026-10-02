@@ -1,0 +1,18 @@
+[decision]
+component = "mcp"
+choice = "verify_against_decisions omits constraint_type in v1"
+reason = """The task's response example named constraint_type:"positive", but the decision schema has no field, tag convention, or enum to derive it from. Omitting it is truthful; a tag heuristic would fabricate semantics, and adding a real Decision field is a schema change out of scope for a read-only tool and needs its own design session."""
+alternatives = [
+    "Heuristic from tags (boundary/scope -> boundary, else positive) — rejected: invented semantics, weak and misleading",
+    "Add a real constraint_type field to Decision — rejected: schema change, out of scope for a read-only tool",
+]
+tags = [
+    "api",
+    "verify",
+]
+attribution = "agent"
+created = "2026-07-10T19:59:39.776742384Z"
+
+[[decision.code_refs]]
+file = "src/mcp/verify.rs"
+symbol = "verify_entry"

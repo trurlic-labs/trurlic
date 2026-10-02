@@ -1,0 +1,18 @@
+[decision]
+component = "mcp"
+choice = "verify_against_decisions matches changed files to code_refs bidirectionally"
+reason = "A changed file matches a code_ref when they are equal, the changed file is inside a directory-valued ref, or the ref is inside a changed directory. decisions_for_file matches only one direction (query as prefix), so it misses a directory ref like src/auth against a changed src/auth/token.rs. Verify needs both directions to avoid false negatives that would let a violated decision slip past the pre-commit check."
+alternatives = [
+    "Reuse decisions_for_file's one-directional matcher — rejected: misses directory-valued code_refs, producing false negatives",
+    "Exact match only — rejected: a decision anchored at a directory would never match a file changed within it",
+]
+tags = [
+    "verify",
+    "matching",
+]
+attribution = "agent"
+created = "2026-07-10T19:59:45.322079185Z"
+
+[[decision.code_refs]]
+file = "src/mcp/verify.rs"
+symbol = "file_matches"

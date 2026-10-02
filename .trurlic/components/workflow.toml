@@ -1,0 +1,3 @@
+[component]
+name = "workflow"
+description = "Step deduction, concern tracking, prompt generation — pure functions, no I/O"

@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "File watcher with debounce, state-dir filtering, and post-reload drain"
+reason = "A shared watcher module (watcher.rs) watches .trurlic/ recursively via notify::RecommendedWatcher. Events inside .state/ (tmp files, lock, sessions) are filtered out as transient. Events are debounced (configurable duration) to coalesce multi-file operations like git checkout. After load_state() completes, pending events are drained to prevent double-reload from events generated during the reload itself. The callback runs with no locks held — consumers are responsible for swapping state under their own lock. WatcherGuard keeps the watcher alive; dropping it stops the watch thread via channel disconnect."
+alternatives = [
+    "Polling on a timer — rejected: wastes CPU between changes and introduces unnecessary latency (poll interval vs instant notification)",
+    "inotify/kqueue directly — rejected: notify crate abstracts platform differences (Linux inotify, macOS FSEvents, Windows ReadDirectoryChanges); direct use would require per-platform code",
+    "No file watching, require manual reload — rejected: MCP server and map server must reflect CLI changes in real time without user intervention",
+]
+tags = [
+    "concurrency",
+    "reliability",
+]
+attribution = "user"
+created = "2026-06-15T09:45:37.676016131Z"

@@ -9,6 +9,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Pattern removal: `remove_pattern` MCP tool and `trurlic remove pattern`.** A pattern could be recorded but never removed, and the cascade refuses to shrink a pattern below two members, so a pattern's last members could not be removed either. Both paths call one `Store::remove_pattern`, which deletes the pattern file with its `member_of` and `applies_to` edges in a single validated commit; member decisions are kept. An unknown name is a `PatternNotFound` error.
+
 ## [0.3.1] — 2026-07-10
 
 ### Added

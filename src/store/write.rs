@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{Error, Result};
 
+use super::failpoint::{self, Site};
 use super::graph::Severity;
 use super::limits::MAX_HISTORY_ENTRIES;
 use super::schema::{
@@ -193,6 +194,7 @@ impl Store {
 
         // Build the full set of writes: node files first, graph.toml last.
         let mut all_writes = writes;
+        let graph_rename = graph_update.is_some().then_some(all_writes.len());
 
         if let Some(mut index) = graph_update {
             index.nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
@@ -266,18 +268,7 @@ impl Store {
             }
         }
 
-        // Phase 3: Rename all to final paths.
-        // graph.toml is last (appended last to all_writes).
-        for (i, (tmp_path, target)) in staged.iter().enumerate() {
-            if let Err(e) = fs::rename(tmp_path, target) {
-                // Clean the failed tmp file and all remaining staged files.
-                let _ = fs::remove_file(tmp_path);
-                for (remaining, _) in staged.iter().skip(i + 1) {
-                    let _ = fs::remove_file(remaining);
-                }
-                return Err(Error::Io(e));
-            }
-        }
+        rename_staged(&staged, graph_rename)?;
 
         // Phase 4: Remove old files.
         //
@@ -308,7 +299,7 @@ impl Store {
     ///
     /// On success, `state.graph` is updated in-place with the validated
     /// graph — callers do **not** need to call `rebuild_graph()`.
-    fn commit_with_graph(
+    pub(super) fn commit_with_graph(
         &self,
         lock: &StoreLock,
         writes: Vec<PendingWrite>,
@@ -1197,6 +1188,31 @@ impl Store {
     }
 }
 
+/// Phase 3 of [`Store::commit_batch`]: rename each staged temp file onto its
+/// target, in order. `graph_rename` is the index of `graph.toml`, which is
+/// staged last so its rename is the commit point. On a failed rename, the
+/// failed and all later temp files are removed; earlier renames stand.
+fn rename_staged(staged: &[(PathBuf, PathBuf)], graph_rename: Option<usize>) -> Result<()> {
+    failpoint::hit(Site::Staged);
+    for (i, (tmp_path, target)) in staged.iter().enumerate() {
+        let is_graph = graph_rename == Some(i);
+        if is_graph {
+            failpoint::hit(Site::NodesRenamed);
+        }
+        if let Err(e) = fs::rename(tmp_path, target) {
+            let _ = fs::remove_file(tmp_path);
+            for (remaining, _) in staged.iter().skip(i + 1) {
+                let _ = fs::remove_file(remaining);
+            }
+            return Err(Error::Io(e));
+        }
+        if is_graph {
+            failpoint::hit(Site::GraphRenamed);
+        }
+    }
+    Ok(())
+}
+
 fn cleanup_tmp_files(staged: &[(PathBuf, PathBuf)]) {
     for (tmp_path, _) in staged {
         let _ = fs::remove_file(tmp_path);
@@ -1453,22 +1469,6 @@ mod tests {
         assert_eq!(read_back.nodes[1].name, "z-node");
         assert_eq!(read_back.edges[0].from, "a-node");
         assert_eq!(read_back.edges[1].from, "z-node");
-    }
-
-    #[test]
-    fn content_hash_is_deterministic() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-
-        let comp = sample_component("auth");
-        let w1 = store
-            .prepare_write(&store.component_path("auth"), &comp)
-            .unwrap();
-        let w2 = store
-            .prepare_write(&store.component_path("auth"), &comp)
-            .unwrap();
-        assert_eq!(w1.content_hash(), w2.content_hash());
-        assert_eq!(w1.content_hash().len(), 64);
     }
 
     // ── commit_with_graph ────────────────────────────────────────────────

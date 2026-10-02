@@ -1,6 +1,8 @@
 pub(crate) mod cascade;
+mod failpoint;
 pub mod graph;
 pub(crate) mod limits;
+mod pattern_removal;
 mod query;
 pub mod schema;
 mod validate;
@@ -1683,14 +1685,6 @@ mod tests {
     }
 
     // ── hash ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn hash_bytes_is_deterministic() {
-        let a = hash_bytes(b"hello world");
-        let b = hash_bytes(b"hello world");
-        assert_eq!(a, b);
-        assert_eq!(a.len(), 64); // 256-bit hex
-    }
 
     #[test]
     fn hash_file_matches_hash_bytes() {

@@ -1,0 +1,11 @@
+[decision]
+component = "workflow"
+choice = "Staleness detection at 90-day threshold triggers Review workflow"
+reason = "Decisions older than STALENESS_THRESHOLD_DAYS (90 days) are flagged as stale during advance(). Stale decisions trigger the Review task type via inference and drive the DriftCheck step, which instructs the agent to compare each decision against current source code and call update_decision for any that have drifted. This prevents architectural documentation from silently diverging from the implementation over time."
+alternatives = [
+    "No staleness detection, rely on manual review — rejected because decisions drift silently and manual reviews are easily forgotten",
+    "Shorter threshold (30 days) — rejected because it would trigger excessive review cycles for stable codebases; 90 days balances freshness against review fatigue",
+]
+tags = ["integrity"]
+attribution = "user"
+created = "2026-06-15T09:45:22.422885124Z"

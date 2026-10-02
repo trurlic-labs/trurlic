@@ -5,6 +5,7 @@ mod init;
 pub(crate) mod install;
 mod map;
 pub(crate) mod migrate;
+mod pattern;
 mod query;
 mod serve;
 
@@ -19,6 +20,7 @@ pub use init::init;
 pub use install::install;
 pub use map::map;
 pub use migrate::migrate;
+pub(crate) use pattern::remove_pattern;
 pub use query::{check, query_file, status};
 pub use serve::serve;
 

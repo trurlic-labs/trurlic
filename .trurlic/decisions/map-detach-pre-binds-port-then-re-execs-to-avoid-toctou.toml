@@ -1,0 +1,14 @@
+[decision]
+component = "commands"
+choice = "Map detach pre-binds port then re-execs to avoid TOCTOU races"
+reason = "The detach_server function binds a TCP listener to discover the actual port (resolving port 0 to a real port), then drops the listener and spawns a child process pinned to that port. The child's stderr is redirected to .trurlic/.state/map.log, and the parent polls the log for the URL line with a 10-second timeout. The child handle is intentionally leaked via mem::forget so the child outlives the parent. This avoids the race where another process grabs the port between discovery and binding, and gives the user deterministic output (URL, PID, log path)."
+alternatives = [
+    "Let the child pick its own port and communicate back via IPC — rejected: requires a communication channel (pipe, socket, shared file) adding complexity; polling the log file is simpler and the log is useful for debugging anyway",
+    "Use daemonize crate for proper daemon semantics — rejected: adds a dependency for a narrow use case; the current approach (stdin/stdout null, stderr to log, mem::forget) achieves sufficient detachment without platform-specific daemon machinery",
+]
+tags = [
+    "concurrency",
+    "extensibility",
+]
+attribution = "user"
+created = "2026-06-15T09:43:32.528893429Z"

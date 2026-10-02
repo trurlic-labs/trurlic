@@ -1,0 +1,11 @@
+[decision]
+component = "project"
+choice = "Single error enum with thiserror, project-wide Result alias"
+reason = 'All modules use a single Error enum (src/error.rs) with #[derive(thiserror::Error)] and a type alias Result<T> = std::result::Result<T, Error>. Every variant has a descriptive #[error("...")] message. From impls handle std::io::Error and toml errors. This gives uniform error propagation with ? across the entire codebase and consistent user-facing messages.'
+alternatives = [
+    "Per-module error types with conversions — rejected because the crate is a single binary and the added indirection provides no benefit",
+    "Use anyhow for ad-hoc errors — rejected because typed errors enable match-based handling and better compile-time guarantees",
+]
+tags = ["error-handling"]
+attribution = "user"
+created = "2026-06-15T09:47:24.656812573Z"

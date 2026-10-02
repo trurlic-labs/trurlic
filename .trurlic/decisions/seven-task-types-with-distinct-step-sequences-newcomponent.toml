@@ -1,0 +1,11 @@
+[decision]
+component = "workflow"
+choice = "Seven task types with distinct step sequences: NewComponent, Feature, Fix, Learn, Review, Harden, Bootstrap"
+reason = "Task-driven orchestration adapts to developer intent rather than requiring mode selection. Each task type defines a fixed sequence of steps with preconditions and postconditions, making the workflow predictable and testable. Task types cover the full lifecycle: creation, modification, debugging, learning, auditing, hardening, and autonomous extraction."
+alternatives = [
+    "Single generic workflow for all tasks — rejected because different intents require different step sequences (a fix needs ImpactCheck, a learn needs SummaryGate, a bootstrap skips Socratic dialogue)",
+    "Open-ended step selection by the agent — rejected because it would break determinism and make the advance contract untestable",
+]
+tags = ["scope"]
+attribution = "user"
+created = "2026-06-15T09:44:29.598755494Z"

@@ -1,0 +1,19 @@
+[decision]
+component = "mcp"
+choice = "Input hardening with size limits, control character rejection, and decision quality floor"
+reason = "All MCP tool arguments pass through hardened helpers: require_str and opt_str enforce MAX_TEXT_FIELD_BYTES limits and reject control characters (delegating to store::has_control_chars). Arrays are bounded by MAX_ARRAY_ITEMS. Decision-specific quality gates enforce MIN_REASON_BYTES for reasoning and MAX_CHOICE_BYTES for choice text, rejecting vague or malformed decisions at the MCP boundary before they reach the Store. Edge targets (depends_on, constrains) are validated to exist in state before write. These limits are defined centrally in store::limits and shared across MCP and other entry points."
+alternatives = [
+    "Trust client input and validate only at Store level — rejected: Store validation catches structural issues but MCP should reject obviously malformed input early with clear error messages",
+    "Per-tool bespoke validation — rejected: shared helpers (require_str, opt_str, opt_str_array) eliminate duplication and ensure consistent limits across all tools",
+]
+tags = [
+    "security",
+    "data-integrity",
+]
+attribution = "user"
+created = "2026-06-15T09:45:56.499943720Z"
+
+[[decision.history]]
+choice = "Input hardening with size limits, control character rejection, and decision quality floor"
+reason = "All MCP tool arguments pass through hardened helpers: require_str and opt_str enforce MAX_TEXT_FIELD_BYTES limits and reject control characters (delegating to store::has_control_chars). Arrays are bounded by MAX_ARRAY_ITEMS. Decision-specific quality gates enforce MIN_REASON_BYTES for reasoning and MAX_CHOICE_BYTES for choice text, rejecting vague or malformed decisions at the MCP boundary before they reach the Store. Edge targets (depends_on, constrains, supersedes) are validated to exist in state before write. These limits are defined centrally in store::limits and shared across MCP and other entry points."
+changed_at = "2026-10-02T09:46:52.625526965Z"

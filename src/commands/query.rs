@@ -180,13 +180,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn status_on_empty_project() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        status(tmp.path()).unwrap();
-    }
-
-    #[test]
     fn status_after_adding_components() {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();

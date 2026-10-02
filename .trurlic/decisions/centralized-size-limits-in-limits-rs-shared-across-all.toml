@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "Centralized size limits in limits.rs shared across all trust boundaries"
+reason = "All input validation constants (MAX_TEXT_FIELD_BYTES=50KB, MAX_ARRAY_ITEMS=100, MIN_REASON_BYTES=10, MAX_CHOICE_BYTES=200, MIN_STEP_EVIDENCE_BYTES=20) are defined in a single limits.rs module. Every entry point — MCP server, map REST API, CLI — imports from the same constants. This prevents silent drift between adapters where one boundary accepts larger input than another. A constant change here propagates to all trust boundaries via the compiler."
+alternatives = [
+    "Per-adapter limit constants — rejected: risk of drift where MCP accepts 100KB but CLI accepts 50KB, creating inconsistent behavior depending on entry point",
+    "No explicit limits, rely on TOML parser limits — rejected: TOML parsers accept arbitrarily large input; explicit bounds prevent denial-of-service and force concise decision content",
+    "Database-level constraints — rejected: the store is file-based; validation must happen before write, not after",
+]
+tags = [
+    "security",
+    "consistency",
+]
+attribution = "user"
+created = "2026-06-15T09:45:30.508496747Z"

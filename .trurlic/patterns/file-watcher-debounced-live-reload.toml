@@ -1,0 +1,3 @@
+[pattern]
+name = "file-watcher-debounced-live-reload"
+description = "Three independent file watchers monitor .trurlic/ for external changes, each with debounced reload and non-fatal failure handling. Store watcher filters state-dir events and drains during reload. MCP uses 100ms debounce (no interactive UI). Map uses 50ms debounce and pushes diffs over WebSocket broadcast. All use Arc pointer swaps for minimal lock contention."
