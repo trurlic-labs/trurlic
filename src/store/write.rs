@@ -154,7 +154,7 @@ impl Store {
 
         state.decisions.insert(stem.clone(), Arc::new(decision));
 
-        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![write], &[], state) {
             state.decisions.remove(&stem);
             state.rollback_graph(checkpoint);
             return Err(e);
@@ -214,7 +214,7 @@ impl Store {
         });
         state.components.insert(name.into(), Arc::new(comp));
 
-        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![write], &[], state) {
             state.rollback_graph(checkpoint);
             state.components.remove(name);
             return Err(e);
@@ -246,7 +246,7 @@ impl Store {
         let removed = state.remove_graph_node(name);
         let removes = vec![self.component_path(name)];
 
-        if let Err(e) = self.commit_with_graph(lock, vec![], removes, state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![], &removes, state) {
             if let Some(c) = comp_snapshot {
                 state.components.insert(name.into(), c);
             }
@@ -298,7 +298,7 @@ impl Store {
             kind: EdgeKind::ConnectsTo,
         });
 
-        if let Err(e) = self.commit_with_graph(lock, vec![], vec![], state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![], &[], state) {
             state.rollback_graph(checkpoint);
             return Err(e);
         }
@@ -341,7 +341,7 @@ impl Store {
             .edges
             .retain(|e| !(e.from == from && e.to == to && e.kind == EdgeKind::ConnectsTo));
 
-        if let Err(e) = self.commit_with_graph(lock, vec![], vec![], state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![], &[], state) {
             state.graph_index.edges.push(removed_edge);
             return Err(e);
         }
@@ -371,7 +371,7 @@ impl Store {
         let removed = state.remove_graph_node(name);
         let removes = vec![self.decision_path(name)];
 
-        if let Err(e) = self.commit_with_graph(lock, vec![], removes, state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![], &removes, state) {
             if let Some(d) = dec_snapshot {
                 state.decisions.insert(name.into(), d);
             }
@@ -467,7 +467,7 @@ impl Store {
 
         let mut index = graph.to_index(state.graph_index.rebuilt);
         state.generation = self
-            .commit_batch(lock, vec![], removes, Some(&mut index))
+            .commit_batch(lock, vec![], &removes, Some(&mut index))
             .inspect_err(|_| restore(state, restore_decisions, restore_nodes))?;
         state.graph_index = index;
         state.graph = graph;
@@ -602,7 +602,7 @@ impl Store {
             None
         };
 
-        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![write], &[], state) {
             state.decisions.insert(name.into(), old_dec);
             if let Some(h) = old_hash {
                 state.update_node_hash(name, h);
@@ -649,7 +649,7 @@ impl Store {
         state.decisions.insert(name.into(), Arc::new(promoted));
         let old_hash = state.update_node_hash(name, hash);
 
-        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![write], &[], state) {
             state.decisions.insert(name.into(), old_dec);
             if let Some(h) = old_hash {
                 state.update_node_hash(name, h);
@@ -762,7 +762,7 @@ impl Store {
 
         let removes = vec![self.component_path(old)];
 
-        if let Err(e) = self.commit_with_graph(lock, writes, removes, state) {
+        if let Err(e) = self.commit_with_graph(lock, writes, &removes, state) {
             // Rollback: revert component rename.
             if let Some(comp) = state.components.remove(new) {
                 let mut reverted = ComponentFile::clone(&comp);
@@ -883,7 +883,7 @@ impl Store {
 
         state.patterns.insert(slug.clone(), Arc::new(pattern));
 
-        if let Err(e) = self.commit_with_graph(lock, vec![write], vec![], state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![write], &[], state) {
             state.patterns.remove(&slug);
             state.rollback_graph(checkpoint);
             return Err(e);

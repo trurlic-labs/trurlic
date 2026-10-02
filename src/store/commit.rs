@@ -92,7 +92,7 @@ impl Store {
         &self,
         lock: &StoreLock,
         writes: Vec<PendingWrite>,
-        removes: Vec<PathBuf>,
+        removes: &[PathBuf],
         graph_update: Option<&mut GraphIndex>,
     ) -> Result<u64> {
         if writes.is_empty() && removes.is_empty() && graph_update.is_none() {
@@ -104,11 +104,11 @@ impl Store {
             index.sort();
             all_writes.push(self.prepare_write(&self.graph_path(), &*index)?);
         }
-        for path in all_writes.iter().map(|write| &write.target).chain(&removes) {
+        for path in all_writes.iter().map(|write| &write.target).chain(removes) {
             self.verify_path(path)?;
         }
 
-        let journal = self.stage_commit(&all_writes, &removes)?;
+        let journal = self.stage_commit(&all_writes, removes)?;
         // Raised before the journal, so a failure to record it leaves the
         // graph untouched. A crash after it leaves the counter ahead of the
         // graph, which still orders every later load correctly.
@@ -138,7 +138,7 @@ impl Store {
         &self,
         lock: &StoreLock,
         writes: Vec<PendingWrite>,
-        removes: Vec<PathBuf>,
+        removes: &[PathBuf],
         state: &mut ProjectState,
     ) -> Result<()> {
         self.ensure_current(lock, state)?;
@@ -253,7 +253,7 @@ mod tests {
                 .unwrap(),
         ];
 
-        store.commit_batch(&lock, writes, vec![], None).unwrap();
+        store.commit_batch(&lock, writes, &[], None).unwrap();
 
         let read1 = store.read_component("auth").unwrap();
         assert_eq!(read1, comp1);
@@ -280,7 +280,7 @@ mod tests {
         ];
         let removes = vec![store.component_path("old-name")];
 
-        store.commit_batch(&lock, writes, removes, None).unwrap();
+        store.commit_batch(&lock, writes, &removes, None).unwrap();
 
         assert!(store.component_path("new-name").exists());
         assert!(!store.component_path("old-name").exists());
@@ -299,7 +299,7 @@ mod tests {
                 .unwrap(),
         ];
 
-        store.commit_batch(&lock, writes, vec![], None).unwrap();
+        store.commit_batch(&lock, writes, &[], None).unwrap();
 
         let tmp_dir = store.root().join(STATE_DIR).join("tmp");
         if tmp_dir.exists() {
@@ -315,7 +315,7 @@ mod tests {
         let lock = store.lock().unwrap();
 
         let removes = vec![store.component_path("nonexistent")];
-        store.commit_batch(&lock, vec![], removes, None).unwrap();
+        store.commit_batch(&lock, vec![], &removes, None).unwrap();
     }
 
     #[test]
@@ -339,7 +339,7 @@ mod tests {
         };
 
         store
-            .commit_batch(&lock, vec![], vec![], Some(&mut index))
+            .commit_batch(&lock, vec![], &[], Some(&mut index))
             .unwrap();
 
         assert!(store.graph_path().exists());
@@ -390,7 +390,7 @@ mod tests {
         };
 
         store
-            .commit_batch(&lock, vec![], vec![], Some(&mut index))
+            .commit_batch(&lock, vec![], &[], Some(&mut index))
             .unwrap();
 
         let read_back: GraphIndex =
@@ -427,7 +427,7 @@ mod tests {
         state.components.insert("auth".into(), Arc::new(comp));
 
         store
-            .commit_with_graph(&lock, vec![write], vec![], &mut state)
+            .commit_with_graph(&lock, vec![write], &[], &mut state)
             .unwrap();
 
         assert!(store.component_path("auth").exists());
@@ -463,7 +463,7 @@ mod tests {
         );
 
         let err = store
-            .commit_with_graph(&lock, vec![], vec![], &mut state)
+            .commit_with_graph(&lock, vec![], &[], &mut state)
             .unwrap_err();
         assert!(matches!(err, Error::GraphIntegrity(_)));
     }
@@ -548,7 +548,7 @@ mod tests {
         state.components.insert("a-comp".into(), Arc::new(c2));
 
         store
-            .commit_with_graph(&lock, vec![w1, w2], vec![], &mut state)
+            .commit_with_graph(&lock, vec![w1, w2], &[], &mut state)
             .unwrap();
 
         let index: GraphIndex =
