@@ -45,19 +45,23 @@ impl PromptText {
     /// listing cut to its omission line when the fixed text alone exceeds
     /// them.
     pub(crate) fn render(&self, max_bytes: usize, measure: fn(&str) -> usize) -> String {
-        let mut fixed = 0;
+        let (mut fixed, mut whole) = (0, 0);
         let mut listings = Vec::new();
         for part in &self.parts {
             match part {
-                Part::Text(text) => fixed += measure(text),
+                Part::Text(text) => {
+                    fixed += measure(text);
+                    whole += text.len();
+                }
                 Part::Listing { noun, entries } => {
+                    whole += entries.iter().map(String::len).sum::<usize>();
                     listings.push(Measured::new(noun, entries, measure));
                 }
             }
         }
         let level = budget::level(&listings, fixed, max_bytes).unwrap_or(0);
 
-        let mut out = String::new();
+        let mut out = String::with_capacity(whole.min(max_bytes));
         let mut measured = listings.iter();
         for part in &self.parts {
             match part {
