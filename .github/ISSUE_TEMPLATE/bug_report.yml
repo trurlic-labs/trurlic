@@ -22,7 +22,7 @@ body:
     attributes:
       label: Rust version
       description: Output of `rustc --version` (if building from source).
-      placeholder: "rustc 1.88.0"
+      placeholder: "rustc 1.90.0"
 
   - type: dropdown
     id: install-method

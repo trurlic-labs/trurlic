@@ -39,6 +39,19 @@ jobs:
       # The only job that enables failpoints; release builds never do.
       - run: cargo test --workspace --locked --features failpoints
 
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: "1.90"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # Keep in step with `rust-version` in Cargo.toml. The explicit `+1.90`
+      # overrides rust-toolchain.toml, which pins the newer dev toolchain.
+      - run: cargo +1.90 check --locked --workspace --all-targets --all-features
+
   audit:
     name: Audit
     runs-on: ubuntu-latest

@@ -12,7 +12,7 @@ Trurlic stores architectural decisions and serves them to AI coding agents. Cont
 
 ## Development setup
 
-**Prerequisites:** Rust 1.88+ (`rustup update stable`), `make`, and `cargo-deny`:
+**Prerequisites:** Rust 1.90+ (`rustup update stable`), `make`, and `cargo-deny`:
 
 ```bash
 cargo install cargo-deny
