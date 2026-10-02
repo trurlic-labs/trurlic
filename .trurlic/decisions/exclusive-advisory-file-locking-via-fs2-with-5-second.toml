@@ -1,7 +1,7 @@
 [decision]
 component = "store"
 choice = "Advisory file locking via std File::try_lock and try_lock_shared with 5-second polling timeout"
-reason = "Prevents concurrent mutations from CLI, MCP server, and map server. Writers take the exclusive lock on .state/lock with std's File::try_lock (stable since 1.89) in a polling loop (50ms interval, 5s deadline); the blocking File::lock has no timeout, so a hung holder would hang every writer. Watchers load under the shared lock (try_lock_shared, same loop), which keeps writers out without excluding each other, so a reload never reads a commit halfway through its renames. std reports contention as TryLockError::WouldBlock on every platform, including Windows' ERROR_LOCK_VIOLATION, which fs2 surfaced as a raw OS error so a second Windows writer failed at once instead of waiting. The lock file is opened read+write because Windows refuses to lock append-only handles. StoreLock is a proof-of-lock type: all write methods require &StoreLock as a parameter, enforced at compile time. Lock file stores the exclusive holder's PID for diagnostics on timeout. The exclusive lock is held only for one reload, validation and commit."
+reason = "Prevents concurrent mutations from CLI, MCP server, and map server. Writers take the exclusive lock on .state/lock with std's File::try_lock (stable since 1.89) in a polling loop (50ms interval, 5s deadline); the blocking File::lock has no timeout, so a hung holder would hang every writer. Watchers load under the shared lock (try_lock_shared, same loop), which keeps writers out without excluding each other, so a reload never reads a commit halfway through its renames. Store::try_lock makes one attempt and returns None while the lock is held; only recovery at command start uses it, never a write. std reports contention as TryLockError::WouldBlock on every platform, including Windows' ERROR_LOCK_VIOLATION, which fs2 surfaced as a raw OS error so a second Windows writer failed at once instead of waiting. The lock file is opened read+write because Windows refuses to lock append-only handles. StoreLock is a proof-of-lock type: all write methods, temp cleanup and journal replay require &StoreLock as a parameter, enforced at compile time. Lock file stores the exclusive holder's PID for diagnostics on timeout. The exclusive lock is held only for one recovery, reload, validation and commit."
 alternatives = [
     "Mutex-based locking — rejected: does not work across separate processes (CLI vs MCP vs map)",
     "No locking with last-writer-wins — rejected: silent data loss when concurrent writes race",
@@ -21,6 +21,10 @@ symbol = "Store::lock"
 [[decision.code_refs]]
 file = "src/store/lock.rs"
 symbol = "Store::lock_shared"
+
+[[decision.code_refs]]
+file = "src/store/lock.rs"
+symbol = "Store::try_lock"
 
 [[decision.code_refs]]
 file = "src/store/lock.rs"
@@ -44,3 +48,8 @@ changed_at = "2026-10-02T10:50:09.308997033Z"
 choice = "Exclusive advisory file locking via std File::try_lock with 5-second polling timeout"
 reason = "Prevents concurrent mutations from CLI, MCP server, and map server. Uses std's File::try_lock (stable since 1.89) on .state/lock in a polling loop (50ms interval, 5s deadline); the blocking File::lock has no timeout, so a hung holder would hang every writer. std reports contention as TryLockError::WouldBlock on every platform, including Windows' ERROR_LOCK_VIOLATION, which fs2 surfaced as a raw OS error so a second Windows writer failed at once instead of waiting. The lock file is opened read+write because Windows refuses to lock append-only handles. StoreLock is a proof-of-lock type: all write methods require &StoreLock as a parameter, enforced at compile time. Lock file stores the holder PID for diagnostics on timeout. A non-blocking try_lock() variant exists for the map API to avoid stalling the tokio runtime. The lock is held only for the duration of one validated commit."
 changed_at = "2026-10-02T11:35:08.646138635Z"
+
+[[decision.history]]
+choice = "Advisory file locking via std File::try_lock and try_lock_shared with 5-second polling timeout"
+reason = "Prevents concurrent mutations from CLI, MCP server, and map server. Writers take the exclusive lock on .state/lock with std's File::try_lock (stable since 1.89) in a polling loop (50ms interval, 5s deadline); the blocking File::lock has no timeout, so a hung holder would hang every writer. Watchers load under the shared lock (try_lock_shared, same loop), which keeps writers out without excluding each other, so a reload never reads a commit halfway through its renames. std reports contention as TryLockError::WouldBlock on every platform, including Windows' ERROR_LOCK_VIOLATION, which fs2 surfaced as a raw OS error so a second Windows writer failed at once instead of waiting. The lock file is opened read+write because Windows refuses to lock append-only handles. StoreLock is a proof-of-lock type: all write methods require &StoreLock as a parameter, enforced at compile time. Lock file stores the exclusive holder's PID for diagnostics on timeout. The exclusive lock is held only for one reload, validation and commit."
+changed_at = "2026-10-02T12:18:54.802802769Z"

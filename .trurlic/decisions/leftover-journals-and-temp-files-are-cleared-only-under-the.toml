@@ -1,0 +1,31 @@
+[decision]
+component = "store"
+choice = "Leftover journals and temp files are cleared only under the exclusive lock; commands try the lock and skip recovery while it is busy"
+reason = "Every command used to delete everything in .state/tmp/ on start, through discover_store and migrate, without the lock, so a status, check, serve or map started mid-commit deleted that commit's staged files and the commit failed at its first rename. Store::recover(&StoreLock) applies a leftover journal, then removes every temp file: under the exclusive lock no commit is in flight, so each one is a leftover. begin_write calls it under its lock, so every write starts clean and applies a journal before it loads. discover_store calls Store::try_recover, which takes the lock only if Store::try_lock finds it free right now: a busy lock means a live commit owns .state/, and its own begin_write or the next writer recovers. migrate recovers after taking its lock."
+alternatives = [
+    "Clean .state/tmp/ on every command without the lock: rejected, deleted a concurrent commit's staged files (status during a commit made it fail)",
+    "Read commands wait for the lock to recover: rejected, a status would stall up to the 5 s lock timeout behind a writer, for a recovery the writer makes unnecessary",
+    "Recover only when a server starts: rejected, a crash would linger until a restart, and a write must apply a pending journal before it loads",
+]
+tags = [
+    "reliability",
+    "concurrency",
+]
+attribution = "agent"
+created = "2026-10-02T12:18:45.121734062Z"
+
+[[decision.code_refs]]
+file = "src/store/recovery.rs"
+symbol = "Store::recover"
+
+[[decision.code_refs]]
+file = "src/store/recovery.rs"
+symbol = "Store::try_recover"
+
+[[decision.code_refs]]
+file = "src/store/lock.rs"
+symbol = "Store::try_lock"
+
+[[decision.code_refs]]
+file = "src/commands/mod.rs"
+symbol = "discover_store"

@@ -1,7 +1,7 @@
 [decision]
 component = "commands"
-choice = "Every store access cleans stale temp files and warns on consistency issues"
-reason = "discover_store (called by every command) runs clean_stale_tmp and check_version before returning. open_store and open_store_mut additionally call validate() and warn on stderr if errors exist. This self-healing pattern ensures interrupted atomic writes from previous crashes are cleaned up on the next operation, and the user is always informed about graph inconsistencies without blocking their work (warnings go to stderr, not errors). The version check prevents silent corruption from running an incompatible store format."
+choice = "Every command finishes an interrupted write when the lock is free and warns on consistency issues"
+reason = "discover_store (called by every command) runs check_version, then Store::try_recover: if no other process holds the exclusive lock, it applies a commit journal an interrupted write left and removes leftover temp files; while the lock is busy it does nothing, because a live commit owns .state/. open_store and open_store_mut additionally call validate() and warn on stderr if errors exist. A crash therefore heals on the next command without ever touching another process's commit, and the user is always informed about graph inconsistencies without blocking their work (warnings go to stderr, not errors). The version check prevents silent corruption from running an incompatible store format."
 alternatives = [
     "Only clean on explicit 'trurlic check' — rejected: stale temp files accumulate silently after crashes; users may not run check regularly, and the leaked files waste disk space and could confuse debugging",
     "Fail hard on any consistency issue — rejected: overly strict; many warnings (e.g., hash mismatches from manual edits) are informational and should not block normal workflow operations",
@@ -12,3 +12,16 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:43:22.612061329Z"
+
+[[decision.code_refs]]
+file = "src/commands/mod.rs"
+symbol = "discover_store"
+
+[[decision.code_refs]]
+file = "src/commands/mod.rs"
+symbol = "open_store"
+
+[[decision.history]]
+choice = "Every store access cleans stale temp files and warns on consistency issues"
+reason = "discover_store (called by every command) runs clean_stale_tmp and check_version before returning. open_store and open_store_mut additionally call validate() and warn on stderr if errors exist. This self-healing pattern ensures interrupted atomic writes from previous crashes are cleaned up on the next operation, and the user is always informed about graph inconsistencies without blocking their work (warnings go to stderr, not errors). The version check prevents silent corruption from running an incompatible store format."
+changed_at = "2026-10-02T12:18:48.328836684Z"

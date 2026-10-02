@@ -1,7 +1,7 @@
 [decision]
 component = "commands"
 choice = "Tiered store access helpers separate read-only from mutable paths"
-reason = "open_store returns (Store, ProjectState) for read-only commands; open_store_mut returns (Store, StoreLock, ProjectState) acquiring the file lock upfront. This ensures write commands always hold the lock before loading state (preventing TOCTOU between load and write), while read-only commands like status and bootstrap never pay locking cost. The StoreLock proof type makes it impossible to call store write methods without holding the lock."
+reason = "open_store returns (Store, ProjectState) for read-only commands; open_store_mut returns (Store, StoreLock, ProjectState) through Store::begin_write, acquiring the file lock before loading. This ensures write commands always hold the lock before loading state (preventing TOCTOU between load and write), while read-only commands like status never wait for the lock: they load without it, and discover_store only tries it once, to recover an interrupted write. The StoreLock proof type makes it impossible to call store write methods without holding the lock."
 alternatives = [
     "Single open function that always locks — rejected: unnecessary contention for read-only commands like status/check/bootstrap, and holding locks during long operations like map serving would block MCP writes",
     "Lock-on-demand inside individual command functions — rejected: scattered locking logic increases risk of forgetting to lock before writes, and the StoreLock proof-type pattern requires the lock to be acquired explicitly before any write call",
@@ -12,3 +12,8 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:42:30.260983965Z"
+
+[[decision.history]]
+choice = "Tiered store access helpers separate read-only from mutable paths"
+reason = "open_store returns (Store, ProjectState) for read-only commands; open_store_mut returns (Store, StoreLock, ProjectState) acquiring the file lock upfront. This ensures write commands always hold the lock before loading state (preventing TOCTOU between load and write), while read-only commands like status and bootstrap never pay locking cost. The StoreLock proof type makes it impossible to call store write methods without holding the lock."
+changed_at = "2026-10-02T12:18:50.307617290Z"
