@@ -52,9 +52,6 @@ blake3 = "1"
 # Parallel file I/O for load_state
 rayon = "1"
 
-# File locking (cross-platform flock)
-fs2 = "0.4"
-
 # File system watcher for live reload
 notify = "6"
 

@@ -3,12 +3,15 @@
 //! Every graph write runs under the exclusive lock on `.state/lock`, and
 //! [`StoreLock`] is the proof a write method takes. The holder writes its PID
 //! into the lock file so a timed-out waiter can name it.
+//!
+//! The lock is std's `File::try_lock`, polled until [`LOCK_TIMEOUT`]: the
+//! blocking `File::lock` has no timeout, so a hung holder would hang every
+//! writer. std maps each platform's contention error (`EWOULDBLOCK`,
+//! `ERROR_LOCK_VIOLATION`) to [`TryLockError::WouldBlock`].
 
-use std::fs::{self, File};
-use std::io::ErrorKind;
+use std::fs::{self, File, TryLockError};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::{Duration, Instant};
-
-use fs2::FileExt;
 
 use crate::{Error, Result};
 
@@ -24,51 +27,38 @@ pub struct StoreLock {
     _file: File,
 }
 
+impl StoreLock {
+    /// Wrap a file this process has just locked, recording its PID.
+    /// The PID is a diagnostic only, so a failed write still yields the lock.
+    fn claim(mut file: File) -> Self {
+        let _ = file.set_len(0);
+        let _ = file.seek(SeekFrom::Start(0));
+        let _ = write!(file, "{}", std::process::id());
+        Self { _file: file }
+    }
+}
+
 impl Store {
-    /// Acquire an exclusive advisory lock on `.trurlic/`.
-    /// Times out after 5 seconds. The lock is released when the returned
-    /// [`StoreLock`] is dropped.
+    /// Acquire an exclusive advisory lock on `.trurlic/`, waiting up to
+    /// 5 seconds for another holder to release it. The lock is released
+    /// when the returned [`StoreLock`] is dropped.
     pub fn lock(&self) -> Result<StoreLock> {
-        use std::io::{Read, Seek, SeekFrom, Write};
-
-        fs::create_dir_all(self.state_dir())?;
-
-        let mut file = File::options()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(self.lock_path())?;
-
+        let mut file = self.open_lock_file()?;
         let deadline = Instant::now() + LOCK_TIMEOUT;
 
         loop {
-            match file.try_lock_exclusive() {
-                Ok(()) => {
-                    let _ = file.set_len(0);
-                    let _ = file.seek(SeekFrom::Start(0));
-                    let _ = write!(file, "{}", std::process::id());
-                    return Ok(StoreLock { _file: file });
-                }
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        let mut contents = String::new();
-                        let _ = file.seek(SeekFrom::Start(0));
-                        let _ = file.read_to_string(&mut contents);
-                        let holder_pid = contents.trim().parse::<u32>().ok();
-
-                        let detail = match holder_pid {
-                            Some(pid) => format!("possibly held by PID {pid}"),
-                            None => "another trurlic process may be running".into(),
-                        };
-                        return Err(Error::LockTimeout {
-                            timeout_secs: LOCK_TIMEOUT.as_secs(),
-                            detail,
-                        });
-                    }
+            match file.try_lock() {
+                Ok(()) => return Ok(StoreLock::claim(file)),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
                     std::thread::sleep(LOCK_POLL_INTERVAL);
                 }
-                Err(e) => return Err(Error::Io(e)),
+                Err(TryLockError::WouldBlock) => {
+                    return Err(Error::LockTimeout {
+                        timeout_secs: LOCK_TIMEOUT.as_secs(),
+                        detail: holder_detail(&mut file),
+                    });
+                }
+                Err(TryLockError::Error(e)) => return Err(Error::Io(e)),
             }
         }
     }
@@ -78,30 +68,39 @@ impl Store {
     /// stalling the tokio runtime (and all WebSocket/HTTP reads) while
     /// waiting for a long-running CLI operation to release the lock.
     pub fn try_lock(&self) -> Result<StoreLock> {
-        use std::io::{Seek, SeekFrom, Write};
+        let file = self.open_lock_file()?;
+        match file.try_lock() {
+            Ok(()) => Ok(StoreLock::claim(file)),
+            Err(TryLockError::WouldBlock) => Err(Error::LockTimeout {
+                timeout_secs: 0,
+                detail: "store is locked by another process, try again shortly".into(),
+            }),
+            Err(TryLockError::Error(e)) => Err(Error::Io(e)),
+        }
+    }
 
+    /// Read+write rather than append: Windows refuses to lock a handle
+    /// opened for append only.
+    fn open_lock_file(&self) -> Result<File> {
         fs::create_dir_all(self.state_dir())?;
-
-        let mut file = File::options()
+        Ok(File::options()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(self.lock_path())?;
+            .open(self.lock_path())?)
+    }
+}
 
-        match file.try_lock_exclusive() {
-            Ok(()) => {
-                let _ = file.set_len(0);
-                let _ = file.seek(SeekFrom::Start(0));
-                let _ = write!(file, "{}", std::process::id());
-                Ok(StoreLock { _file: file })
-            }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => Err(Error::LockTimeout {
-                timeout_secs: 0,
-                detail: "store is locked by another process — try again shortly".into(),
-            }),
-            Err(e) => Err(Error::Io(e)),
-        }
+/// Name the holder from the PID it wrote. On Windows the holder's lock also
+/// blocks this read, so the detail falls back to the generic message.
+fn holder_detail(file: &mut File) -> String {
+    let mut contents = String::new();
+    let _ = file.seek(SeekFrom::Start(0));
+    let _ = file.read_to_string(&mut contents);
+    match contents.trim().parse::<u32>() {
+        Ok(pid) => format!("possibly held by PID {pid}"),
+        Err(_) => "another trurlic process may be running".into(),
     }
 }
 
@@ -109,17 +108,54 @@ impl Store {
 mod tests {
     use super::*;
     use crate::store::testing::setup_store;
+    use std::sync::mpsc;
     use tempfile::TempDir;
 
+    // Two handles on one lock file contend like two processes: flock and
+    // LockFileEx locks belong to the open file, not to the process.
     #[test]
-    fn lock_acquire_and_release() {
+    fn second_lock_waits_for_the_holder_then_acquires() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
+        let held = store.lock().unwrap();
 
-        {
-            let _lock = store.lock().unwrap();
-            assert!(store.lock_path().exists());
-        }
+        let (started_tx, started_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                started_tx.send(()).unwrap();
+                acquired_tx.send(store.lock()).unwrap();
+            });
+            started_rx.recv().unwrap();
+
+            // Several poll intervals: a waiter that failed fast instead of
+            // polling would have reported by now.
+            let still_waiting = acquired_rx.recv_timeout(LOCK_POLL_INTERVAL * 6);
+            assert!(
+                matches!(still_waiting, Err(mpsc::RecvTimeoutError::Timeout)),
+                "second handle returned while the lock was held: {still_waiting:?}"
+            );
+
+            drop(held);
+            let acquired = acquired_rx.recv_timeout(LOCK_TIMEOUT).unwrap();
+            assert!(acquired.is_ok(), "{acquired:?}");
+        });
+    }
+
+    #[test]
+    fn try_lock_refuses_while_held() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let _held = store.lock().unwrap();
+
+        let err = store.try_lock().unwrap_err();
+        assert!(matches!(
+            err,
+            Error::LockTimeout {
+                timeout_secs: 0,
+                ..
+            }
+        ));
     }
 
     #[test]

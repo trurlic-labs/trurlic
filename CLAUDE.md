@@ -47,7 +47,7 @@ Atomic writes: serialize → write to temp file → verify round-trip parse → 
 
 Content integrity: BLAKE3 hash per node file, stored in `graph.toml`. `trurlic check` verifies hashes. Tamper detection, not encryption.
 
-File locking: `fs2::FileExt` for cross-platform flock. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter.
+File locking: std `File::try_lock` on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter.
 
 In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex` and an eagerly built `InMemoryGraph` for graph queries.
 
