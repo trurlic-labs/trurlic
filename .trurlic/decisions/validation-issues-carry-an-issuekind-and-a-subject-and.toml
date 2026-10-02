@@ -1,0 +1,27 @@
+[decision]
+component = "store"
+choice = "Validation issues carry an IssueKind and a subject, and validate() returns them sorted once at its exit"
+reason = "An issue's identity is (kind, subject): the subject is a node name, an edge as `from -> to (kind)`, or a cycle's sorted members. The message is for people and may carry a count, so nothing matches on it. Severity is a const function of the kind, so a kind cannot be reported at the wrong severity. validate() sorts by severity, kind, subject and message, so neither the order of the checks nor the iteration order of InMemoryGraph's hash maps reaches check output, a write's refusal message or the no-new-errors comparison. One sort at the single exit holds for a check added later; per-check BTree iteration would have to be remembered in every check. Sets used only for membership inside a check stay hash sets: they never reach output, and BTree sets there made graph_validate twice as slow (measured, 500 components: 1.44 ms vs 0.69 ms)."
+alternatives = [
+    "Iterate every check in BTree order - rejected: twelve sites to keep sorted by convention, and a new check that iterates a hash map reintroduces nondeterminism silently",
+    "Identify issues by message - rejected: a pattern's member count and the cycle check's search root are in the message, so the same error compared unequal across validations",
+    "Keep a severity field beside the kind - rejected: two fields that can disagree",
+]
+tags = [
+    "integrity",
+    "determinism",
+]
+attribution = "agent"
+created = "2026-10-02T12:57:55.359394005Z"
+
+[[decision.code_refs]]
+file = "src/store/graph.rs"
+symbol = "IssueKind"
+
+[[decision.code_refs]]
+file = "src/store/graph.rs"
+symbol = "Issue"
+
+[[decision.code_refs]]
+file = "src/store/validate.rs"
+symbol = "InMemoryGraph::validate"
