@@ -1,0 +1,11 @@
+[decision]
+component = "commands"
+choice = "Validate component existence before provider/API-key resolution"
+reason = "In design.rs and bootstrap.rs, component name validation and existence checks run before calling config::resolve_provider or provider::create_provider. This prevents a missing component from surfacing as a confusing API key error (the code comments this explicitly: 'Fail fast: verify component exists before provider/API key resolution'). The pattern ensures the cheapest, most user-comprehensible checks run first."
+alternatives = [
+    "Resolve provider first, then validate component — rejected: if the API key is missing, the user sees a key-related error for what is actually a component typo, leading to confusion and wasted debugging time",
+    "Validate everything in parallel — rejected: over-engineering for a sequential CLI flow, and the error ordering becomes non-deterministic",
+]
+tags = ["error-handling"]
+attribution = "user"
+created = "2026-06-15T09:42:39.107515236Z"

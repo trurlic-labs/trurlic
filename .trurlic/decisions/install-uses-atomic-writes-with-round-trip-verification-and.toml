@@ -1,0 +1,14 @@
+[decision]
+component = "commands"
+choice = "Install uses atomic writes with round-trip verification and 0600 permissions"
+reason = "The install command writes IDE config files through an atomic_write helper: write to temp file in the same directory, read back and compare (round-trip verification), then rename into place. On Unix, temp files are set to mode 0600 before persisting. This prevents partial writes from corrupting IDE configs (which could break the user's editor), and the restrictive permissions protect config files that may contain or sit alongside sensitive data. The write-then-verify pattern matches the store module's own atomic write strategy."
+alternatives = [
+    "Direct fs::write to the target path — rejected: a crash or power loss mid-write leaves a corrupted config file that could break the user's IDE, with no way to detect the corruption",
+    "Write without permission hardening — rejected: IDE config directories often contain API keys or tokens in adjacent files; using 0600 is a defense-in-depth measure consistent with the project's security posture",
+]
+tags = [
+    "security",
+    "data-integrity",
+]
+attribution = "user"
+created = "2026-06-15T09:42:47.466421715Z"

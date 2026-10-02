@@ -1,0 +1,14 @@
+[decision]
+component = "workflow"
+choice = "Gated steps require user input; ungated steps are autonomous (bootstrap, register, ready)"
+reason = "Steps are classified as gated (requires_user_input=true) or ungated. Gated steps enforce minimum evidence size (MIN_STEP_EVIDENCE_BYTES) to prevent agents from rubber-stamping interactive steps with empty or trivial responses. Bootstrap steps (ScanProject, ExtractDecisions, ProjectRules), Register, and Ready are ungated — they are autonomous or terminal. All substantive design steps (DefineScope, CoverConcerns, WalkDecisions, SummaryGate, etc.) are gated."
+alternatives = [
+    "All steps gated — rejected because bootstrap and register are inherently autonomous and do not benefit from user confirmation",
+    "No gating, trust the agent to provide quality evidence — rejected because agents can shortcut interactive steps without minimum-evidence enforcement",
+]
+tags = [
+    "integrity",
+    "security",
+]
+attribution = "user"
+created = "2026-06-15T09:44:55.820882397Z"

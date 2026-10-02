@@ -1,0 +1,14 @@
+[decision]
+component = "config"
+choice = "Environment variables override config file keys; resolution logic is pure and testable"
+reason = "For API keys and base URLs, environment variables take precedence over config file values. The resolution logic is factored into a pure function (resolve_from_sources) that takes pre-read EnvKeys and ConfigFile as parameters rather than reading env/filesystem directly. This decouples I/O from logic, enabling exhaustive unit testing of all resolution paths — including edge cases like multiple keys, missing keys, config-only keys, and env-overrides-config — without touching the real environment or filesystem."
+alternatives = [
+    "Config file overrides env vars — violates the standard Unix convention that env vars are the most dynamic/specific override layer",
+    "Read env vars inline during resolution — harder to test, requires test harness to manipulate process environment with potential race conditions",
+]
+tags = [
+    "testing",
+    "api",
+]
+attribution = "user"
+created = "2026-06-15T09:44:33.541387188Z"

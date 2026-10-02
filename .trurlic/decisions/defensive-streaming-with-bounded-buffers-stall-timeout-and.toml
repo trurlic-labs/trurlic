@@ -1,0 +1,14 @@
+[decision]
+component = "provider"
+choice = "Defensive streaming with bounded buffers, stall timeout, and response size limit"
+reason = "The SSE stream reader enforces three safety bounds: a 120-second stall timeout (no data received), a 2 MB maximum accumulated response size, and a 1 MB maximum SSE line buffer before a newline. Error body reads also have a 10-second timeout. These prevent memory exhaustion from runaway streams, hanging on stalled connections, and denial-of-service from malicious or broken servers. The limits are chosen conservatively — design conversations are typically 10-50 KB, so 2 MB is ~40x headroom."
+alternatives = [
+    "Unbounded streaming with caller-side limits — rejected because the provider module owns the network connection and is the right place to enforce resource bounds",
+    "Configurable limits — rejected as premature; the fixed limits have wide safety margins and no user has a legitimate need to receive >2 MB from an LLM in a design conversation",
+]
+tags = [
+    "security",
+    "reliability",
+]
+attribution = "user"
+created = "2026-06-15T09:44:42.847644361Z"

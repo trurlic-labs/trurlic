@@ -1,0 +1,14 @@
+[decision]
+component = "workflow"
+choice = "advance() is a pure function: read-only, stateless, idempotent, no I/O"
+reason = "Deterministic step deduction enables crash recovery, testability, and safe concurrent access. Called N times with the same graph state, it returns the same result every time. No writes, no locks, no LLM calls — it is a pure projection from graph contents to workflow step."
+alternatives = [
+    "Stateful workflow engine that tracks session progress internally — rejected because it couples the state machine to transport lifecycle and breaks crash recovery",
+    "advance() with side effects (writing progress markers to disk) — rejected because it would require locking and break the read-only contract that allows safe concurrent MCP reads",
+]
+tags = [
+    "concurrency",
+    "scope",
+]
+attribution = "user"
+created = "2026-06-15T09:44:24.644420147Z"

@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "InMemoryGraph with forward and reverse adjacency maps using Arc<str> name interning"
+reason = "InMemoryGraph maintains dual HashMap<Arc<str>, Vec<Edge>> adjacency maps (forward and reverse) for O(1) neighbor lookups in both directions. All node names are interned as Arc<str> via a build-time pool, enabling zero-cost sharing across adjacency maps, content caches, and query results. The graph is not Serialize/Deserialize — it is an internal query structure rebuilt from GraphIndex. Export via to_index() produces deterministically sorted output for stable graph.toml diffs."
+alternatives = [
+    "Single adjacency list with linear scan for reverse lookups — rejected: query methods like decisions_for() and connects_from() need efficient reverse traversal",
+    "Petgraph or similar graph library — rejected: the graph is small (hundreds of nodes), and custom adjacency maps give precise control over interning and Arc sharing without the dependency weight",
+    "String keys without interning — rejected: the same node name appears in nodes map, forward map, reverse map, and content maps; Arc<str> eliminates redundant allocations",
+]
+tags = [
+    "performance",
+    "data-structures",
+]
+attribution = "user"
+created = "2026-06-15T09:45:04.633490735Z"

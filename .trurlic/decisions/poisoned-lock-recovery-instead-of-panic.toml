@@ -1,0 +1,14 @@
+[decision]
+component = "mcp"
+choice = "Poisoned lock recovery instead of panic"
+reason = "Both read and write lock acquisitions use unwrap_or_else on PoisonError to recover the inner data via into_inner(), logging the recovery to stderr. This prevents the MCP server from crashing if a panic occurs in another thread (e.g., the file watcher). The server continues serving requests with the last-known state rather than terminating the entire process."
+alternatives = [
+    "Panic on poisoned lock — rejected: would crash the MCP server and disrupt the IDE session due to a transient watcher failure",
+    "Replace RwLock with parking_lot::RwLock (no poisoning) — rejected: unnecessary dependency when the recovery pattern is straightforward with std",
+]
+tags = [
+    "reliability",
+    "error-handling",
+]
+attribution = "user"
+created = "2026-06-15T09:44:50.823534975Z"

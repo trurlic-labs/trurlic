@@ -1,0 +1,14 @@
+[decision]
+component = "session"
+choice = "Exclusive session locking via create_new lock files with PID"
+reason = "Before starting a design session, `try_acquire_lock` creates a `.lock` file using `OpenOptions::create_new(true)` which fails atomically if the file exists. The PID is written into the lock file for diagnostics. The lock is always released in a cleanup path (both success and error). This prevents concurrent CLI sessions on the same component from corrupting the session state."
+alternatives = [
+    "fs2 flock-based locking (same as store) — rejected: session locking needs to survive process crashes for user-visible diagnostics; a lock file with PID gives actionable error messages pointing to the stale file for manual removal.",
+    "No locking — rejected: concurrent sessions would corrupt the session JSON and produce duplicate decisions.",
+]
+tags = [
+    "concurrency",
+    "resilience",
+]
+attribution = "user"
+created = "2026-06-15T09:44:58.245813748Z"

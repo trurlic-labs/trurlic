@@ -1,0 +1,15 @@
+[decision]
+component = "session"
+choice = "Bounded file context assembly with per-file and total size caps"
+reason = "The files module enforces hard limits: 64 KB per file (MAX_FILE_BYTES), 256 KB total context (MAX_CONTEXT_BYTES), and 12 levels of directory depth (MAX_DEPTH). Files exceeding limits are listed but not included. Binary files are detected via null-byte heuristic in the first 512 bytes. Build artifact directories (target/, node_modules/, etc.) are skipped entirely. This prevents OOM on large projects and avoids blowing the LLM context window."
+alternatives = [
+    "Unbounded file reading with token counting — rejected: requires a tokenizer dependency and still risks OOM during read; byte limits are simpler and provider-agnostic.",
+    "User-configured limits — rejected: sensible defaults cover virtually all cases; configurability adds complexity without clear benefit.",
+    "Read only files explicitly listed in a manifest — rejected: bootstrap needs to discover the project structure autonomously.",
+]
+tags = [
+    "data-flow",
+    "resilience",
+]
+attribution = "user"
+created = "2026-06-15T09:45:18.784039070Z"

@@ -1,0 +1,11 @@
+[decision]
+component = "workflow"
+choice = "Step deduction via graph postcondition checking, with completed_steps hint for non-verifiable steps"
+reason = "The state machine inspects graph contents to determine the next step by checking postconditions (e.g., 'scope' tag exists → DefineScope is done). Steps whose postconditions cannot be verified from the graph alone (VerifyConstraints, WalkDecisions, SummaryGate) accept a completed_steps hint from callers. This hybrid approach keeps the graph as primary state while supporting steps that produce no graph artifacts."
+alternatives = [
+    "Pure graph-only state machine with no completed_steps — rejected because some steps (VerifyConstraints, ImpactCheck) produce no verifiable graph changes",
+    "Session-tracked step progression stored on disk — rejected because it couples workflow to transport and complicates crash recovery",
+]
+tags = ["integrity"]
+attribution = "user"
+created = "2026-06-15T09:44:34.375580674Z"

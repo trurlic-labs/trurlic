@@ -1,0 +1,3 @@
+[component]
+name = "provider"
+description = "LLM API clients (Anthropic, OpenAI, OpenRouter, Gemini, Ollama, Custom), SSE streaming"

@@ -1,0 +1,15 @@
+[decision]
+component = "map"
+choice = "Unidirectional server-to-client WebSocket push with broadcast channel"
+reason = "The WebSocket is a one-way push channel: all mutations go through the REST API, and the WebSocket carries only diff events. A tokio broadcast channel (capacity 256) fans out events to all connected clients. Client-to-server messages are drained but ignored. When a client lags behind the buffer, it receives a full_reload event to re-sync via GET /api/graph. This separates the command path (REST, validated, authenticated) from the notification path (WS, read-only, eventually consistent)."
+alternatives = [
+    "bidirectional WebSocket for both mutations and events: mixes command and notification concerns, complicates auth and validation",
+    "server-sent events (SSE): cannot detect client disconnect as reliably, no native browser reconnection with token auth",
+    "polling from the client: higher latency and server load for interactive graph visualization",
+]
+tags = [
+    "api-design",
+    "concurrency",
+]
+attribution = "user"
+created = "2026-06-15T09:44:49.329506505Z"

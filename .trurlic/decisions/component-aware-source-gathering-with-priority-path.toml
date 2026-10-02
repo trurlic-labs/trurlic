@@ -1,0 +1,15 @@
+[decision]
+component = "session"
+choice = "Component-aware source gathering with priority path resolution and fallback"
+reason = "When gathering source files for a component, `gather_sources` tries a priority-ordered list of candidate paths: `src/{name}/`, `src/{name}.rs`, `src/commands/{name}.rs`, `{name}/`, `lib/{name}/`, `packages/{name}/`. The first match wins. If no component-specific path is found, it falls back to all source files under `src/`. This heuristic covers Rust modules, monorepo packages, and single-file modules without requiring explicit path configuration in the component definition."
+alternatives = [
+    "Require explicit source paths in component TOML — rejected: adds configuration burden and breaks the zero-config bootstrap experience.",
+    "Always read all source files regardless of component — rejected: wastes context budget on irrelevant code and degrades LLM extraction quality.",
+    "Use git blame or import graph to find component files — rejected: heavyweight dependency on git tooling and language-specific import parsing.",
+]
+tags = [
+    "data-flow",
+    "interface",
+]
+attribution = "user"
+created = "2026-06-15T09:45:44.716962473Z"

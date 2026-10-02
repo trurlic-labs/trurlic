@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "Checkpoint-based rollback for graph mutations with O(1) capture and O(K) undo"
+reason = "Write paths use append-only graph index mutations with O(1) checkpoints. GraphCheckpoint captures Vec lengths; rollback truncates to those lengths, undoing K appended items. For non-append mutations (remove_graph_node), RemovedGraphNode saves only the affected node and its incident edges (typically 1 node + 2-5 edges), not the entire index. On commit failure, state is restored via rollback_graph() or restore_graph_node(). This is cheaper than cloning the entire GraphIndex (O(N)) for every write operation, while still guaranteeing rollback correctness. Rename operations clone the full index as a special case since they mutate nodes/edges in-place."
+alternatives = [
+    "Clone entire GraphIndex before every mutation — rejected: O(N) clone on every write when most operations only append 1-3 items; wasteful for the common case",
+    "No rollback, rebuild from disk on failure — rejected: disk state may already be partially written; in-memory state must remain consistent even when disk commit fails",
+    "Event sourcing with undo log — rejected: overengineered for a graph with hundreds of nodes; checkpoint/truncate is simpler and sufficient",
+]
+tags = [
+    "reliability",
+    "performance",
+]
+attribution = "user"
+created = "2026-06-15T09:46:05.463712150Z"

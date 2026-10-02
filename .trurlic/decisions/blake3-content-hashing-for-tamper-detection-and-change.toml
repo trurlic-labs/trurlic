@@ -1,0 +1,15 @@
+[decision]
+component = "store"
+choice = "BLAKE3 content hashing for tamper detection and change tracking"
+reason = "Every node file gets a BLAKE3 hash stored in graph.toml. Hashes are computed over raw file bytes (not re-serialized TOML) so they match regardless of parse/serialize normalization. read_toml_with_hash() computes parse + hash in a single read pass, eliminating double I/O. verify_hashes() compares stored hashes against actual file content before load_state reconciliation, surfacing edits made outside Trurlic. This is integrity verification, not encryption."
+alternatives = [
+    "SHA-256 — rejected: BLAKE3 is faster (especially on parallel workloads) with equivalent security properties for content integrity",
+    "No hashing, trust file timestamps — rejected: timestamps can be preserved by copy/rsync, missing actual content changes",
+    "Git-based change detection — rejected: not all users keep .trurlic/ in git; detection must be self-contained",
+]
+tags = [
+    "security",
+    "storage",
+]
+attribution = "user"
+created = "2026-06-15T09:44:36.701110960Z"

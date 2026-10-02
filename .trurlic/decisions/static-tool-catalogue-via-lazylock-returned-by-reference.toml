@@ -1,0 +1,11 @@
+[decision]
+component = "mcp"
+choice = "Static tool catalogue via LazyLock, returned by reference"
+reason = "The tool definitions (12 tools with full JSON Schema, descriptions, and MCP annotations) are built once on first access using LazyLock<Value> and returned by reference on subsequent tools/list calls. Similarly, the initialize response is a static LazyLock<Value> since protocol version and server info are compile-time constants. This avoids rebuilding the schema tree on every tools/list request and eliminates per-request allocations for immutable data."
+alternatives = [
+    "Rebuild tool definitions on each request — rejected: wasteful for immutable data that never changes at runtime",
+    "Embed tool schemas as compiled-in byte slices — rejected: harder to maintain and no meaningful advantage over LazyLock JSON construction",
+]
+tags = ["performance"]
+attribution = "user"
+created = "2026-06-15T09:45:07.215781733Z"

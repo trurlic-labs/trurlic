@@ -1,0 +1,15 @@
+[decision]
+component = "map"
+choice = "256-bit CSPRNG token with constant-time comparison for localhost auth"
+reason = "A 256-bit random token generated from OsRng (hex-encoded to 64 characters) gates access to the local server. REST endpoints require Authorization: Bearer header via axum middleware. WebSocket uses a query parameter (?token=) because browser WebSocket APIs cannot set custom headers. Comparison uses constant-time XOR to prevent timing side-channels. While the threat model is localhost-only (preventing other local processes from accessing the API), constant-time comparison is defence-in-depth that costs nothing."
+alternatives = [
+    "no auth (rely on localhost binding alone): other local processes or malicious browser tabs could access the API",
+    "session cookies: more complex, requires cookie jar management, no benefit over bearer tokens for a single-session local tool",
+    "mTLS: massive complexity overhead for a localhost development tool",
+]
+tags = [
+    "security",
+    "api-design",
+]
+attribution = "user"
+created = "2026-06-15T09:45:01.811851857Z"

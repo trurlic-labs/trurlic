@@ -1,0 +1,15 @@
+[decision]
+component = "session"
+choice = "Bootstrap iteration cap at 200 with error on exceed"
+reason = "The bootstrap loop runs at most MAX_BOOTSTRAP_ITERATIONS (200) iterations before returning an error. Each iteration is one advance-step-LLM-record cycle. The completed-steps evidence map is cleared whenever the graph changes (new artifacts recorded), so the cap protects against pathological cases where the LLM never produces valid artifacts or the advance state machine cycles. The value 200 is generous enough for large projects (typical bootstrap is 10-30 iterations) while providing a hard safety bound."
+alternatives = [
+    "No iteration cap — rejected: a stuck LLM or cycling state machine would run forever, consuming API credits.",
+    "Timeout-based limit — rejected: wall-clock time varies wildly with LLM provider latency; iteration count is a more predictable bound.",
+    "Low cap (e.g. 20) — rejected: large projects with many components legitimately need many iterations.",
+]
+tags = [
+    "resilience",
+    "observability",
+]
+attribution = "user"
+created = "2026-06-15T09:45:54.977379248Z"

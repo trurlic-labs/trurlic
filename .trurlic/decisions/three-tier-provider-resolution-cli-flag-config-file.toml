@@ -1,0 +1,14 @@
+[decision]
+component = "config"
+choice = "Three-tier provider resolution: CLI flag > config file > environment auto-detect"
+reason = "Provider selection follows a strict priority cascade: (1) explicit --provider CLI flag wins unconditionally, (2) default_provider in config file is next, (3) auto-detection scans environment variables and config keys for exactly one available provider among the auto-detect set (Anthropic, OpenAi, OpenRouter). Multiple keys without explicit selection is an error, not silent priority. This makes behavior predictable and debuggable — the user always knows which source determined the provider."
+alternatives = [
+    "Always require explicit --provider flag — too verbose for single-provider users",
+    "Auto-detect with implicit priority order (e.g. always prefer Anthropic) — silent behavior surprises users who set multiple keys",
+]
+tags = [
+    "api",
+    "ergonomics",
+]
+attribution = "user"
+created = "2026-06-15T09:44:15.263827703Z"

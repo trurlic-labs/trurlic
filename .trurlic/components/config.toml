@@ -1,0 +1,3 @@
+[component]
+name = "config"
+description = "Provider resolution, API key handling"

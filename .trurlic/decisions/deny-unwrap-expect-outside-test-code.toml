@@ -1,0 +1,14 @@
+[decision]
+component = "project"
+choice = "Deny unwrap/expect outside test code"
+reason = "Panics in production are unrecoverable. lib.rs uses #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))] and main.rs uses #![deny(clippy::unwrap_used, clippy::expect_used)]. All fallible operations must return Result. Tests are exempted because panics are the natural assertion mechanism there."
+alternatives = [
+    "Allow unwrap/expect everywhere and rely on code review — rejected because human review is unreliable for this class of bug",
+    "Forbid unwrap/expect even in tests — rejected because test panics are idiomatic Rust and .unwrap() in tests is clearer than propagating errors",
+]
+tags = [
+    "error-handling",
+    "safety",
+]
+attribution = "user"
+created = "2026-06-15T09:47:19.603880721Z"

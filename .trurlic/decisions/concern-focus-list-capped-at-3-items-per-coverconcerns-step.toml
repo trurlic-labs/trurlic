@@ -1,0 +1,11 @@
+[decision]
+component = "workflow"
+choice = "Concern focus list capped at 3 items per CoverConcerns step (CONCERN_FOCUS_LIMIT)"
+reason = "When uncovered concerns exceed the coverage threshold, only the top 3 by priority are presented to the user per step. This bounds cognitive load per interaction — covering all 10 concerns at once would overwhelm both user and agent. Priority ordering ensures the most dangerous gaps (Security, Error handling, Concurrency) are addressed first. The limit also bounds prompt size."
+alternatives = [
+    "Present all uncovered concerns at once — rejected because it overwhelms the one-topic-per-message interaction protocol and leads to shallow coverage",
+    "Dynamic limit based on total uncovered count — rejected because a fixed limit is simpler, predictable, and the interaction protocol already handles sequencing",
+]
+tags = ["scope"]
+attribution = "user"
+created = "2026-06-15T09:45:13.801767934Z"

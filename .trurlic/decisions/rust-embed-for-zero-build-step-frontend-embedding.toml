@@ -1,0 +1,15 @@
+[decision]
+component = "map"
+choice = "rust-embed for zero-build-step frontend embedding"
+reason = "The TypeScript frontend is compiled to dist/ by esbuild at release time, then rust-embed includes those files in the binary at compile time. Users see zero build step — the frontend is always available. The fallback handler serves embedded static files with correct MIME types and SPA routing support (paths without file extensions return index.html). This eliminates runtime filesystem dependencies for serving the UI and ensures the frontend version always matches the backend version."
+alternatives = [
+    "serve from filesystem at runtime: requires shipping dist/ alongside the binary, version mismatch risk, path resolution issues",
+    "include_bytes! manually: no directory traversal, no MIME inference, requires hand-maintained file list",
+    "separate frontend deployment: overcomplicated for a local development tool",
+]
+tags = [
+    "dependencies",
+    "build",
+]
+attribution = "user"
+created = "2026-06-15T09:45:13.961171289Z"

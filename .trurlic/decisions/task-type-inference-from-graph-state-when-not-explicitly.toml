@@ -1,0 +1,11 @@
+[decision]
+component = "workflow"
+choice = "Task type inference from graph state when not explicitly provided"
+reason = "When advance() is called without an explicit task_type, the engine infers intent from graph health: empty decisions + no task = Learn; empty + task = NewComponent; uncovered > covered = Harden; stale decisions = Review; healthy + task = Feature; healthy + no task = Ready. This allows callers to omit the task type and let the graph state drive the workflow, reducing cognitive load on both agents and users."
+alternatives = [
+    "Always require explicit task_type — rejected because it forces callers to assess graph health themselves, duplicating logic that advance() already computes",
+    "Infer from task description keywords — rejected because task descriptions are too ambiguous for reliable classification; graph state is the objective signal",
+]
+tags = ["error"]
+attribution = "user"
+created = "2026-06-15T09:45:04.344843519Z"

@@ -1,0 +1,19 @@
+[decision]
+component = "mcp"
+choice = "verify_against_decisions rejects invalid changed-file paths as tool errors"
+reason = "Each changed_files entry is normalized via store::normalize_file_query; an absolute path, backslash, or .. traversal returns a tool error rather than being silently skipped. A missing or empty changed_files array is also an error. This matches get_decisions_for_file, and a silent skip would let a caller believe a file was verified when it was actually dropped."
+alternatives = [
+    "Silently skip invalid paths — rejected: caller would believe a dropped file was verified",
+    "Accept raw paths without normalization — rejected: inconsistent matching and path-traversal exposure",
+]
+tags = [
+    "verify",
+    "validation",
+    "security",
+]
+attribution = "agent"
+created = "2026-07-10T19:59:51.528810903Z"
+
+[[decision.code_refs]]
+file = "src/mcp/tools.rs"
+symbol = "dispatch_verify_against_decisions"

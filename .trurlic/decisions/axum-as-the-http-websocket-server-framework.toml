@@ -1,0 +1,15 @@
+[decision]
+component = "map"
+choice = "Axum as the HTTP/WebSocket server framework"
+reason = "Axum provides native tokio integration, type-safe extractors, middleware composition via tower layers, and first-class WebSocket support — all needed by the map server. It shares the tokio runtime with the file watcher and broadcast channel, avoiding cross-runtime bridging. Tower middleware enables composable security headers and CORS without custom code."
+alternatives = [
+    "warp: similar tower-based design but less ergonomic extractors and weaker ecosystem momentum",
+    "actix-web: different runtime model (actix actors) would conflict with tokio-native broadcast channels and file watcher",
+    "hyper directly: too low-level for REST+WS+static serving; would require reimplementing routing, extractors, and middleware",
+]
+tags = [
+    "framework",
+    "dependencies",
+]
+attribution = "user"
+created = "2026-06-15T09:44:40.492580153Z"

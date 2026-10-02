@@ -1,0 +1,15 @@
+[decision]
+component = "mcp"
+choice = "File watcher with 100ms debounce for non-fatal live reload"
+reason = "A background watcher thread monitors .trurlic/ for external changes (CLI writes, manual edits, git checkout) and reloads state via an Arc<RwLock<ProjectState>> pointer swap under write lock (microseconds). The 100ms debounce is higher than the map watcher (50ms) because MCP has no interactive UI and benefits from coalescing rapid multi-file operations. Watcher failure is non-fatal: if the watcher cannot be spawned (e.g., inotify limit reached), the server continues without live reload and logs the error. The watcher validates reloaded state and logs consistency issue counts to stderr."
+alternatives = [
+    "Poll-based reload on each request — rejected: adds latency to every tool call and misses changes between requests",
+    "No live reload (require restart) — rejected: would cause stale state when CLI and MCP are used simultaneously",
+    "Same debounce as map (50ms) — rejected: MCP has no interactive UI, coalescing rapid changes is more valuable than low latency",
+]
+tags = [
+    "concurrency",
+    "reliability",
+]
+attribution = "user"
+created = "2026-06-15T09:45:27.820791741Z"

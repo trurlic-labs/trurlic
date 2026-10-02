@@ -1,0 +1,3 @@
+[component]
+name = "store"
+description = "Decision graph persistence: TOML files, graph index, validation, atomic writes, file locking"

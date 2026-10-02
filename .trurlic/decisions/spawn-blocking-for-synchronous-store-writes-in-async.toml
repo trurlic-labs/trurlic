@@ -1,0 +1,15 @@
+[decision]
+component = "map"
+choice = "spawn_blocking for synchronous Store writes in async handlers"
+reason = "All mutation endpoints (POST component, POST connection, PUT/DELETE decision, DELETE component, DELETE connection) use tokio::task::spawn_blocking to run the synchronous Store write path. Store writes acquire a file lock (which can block up to 5 seconds) and perform filesystem I/O — running these on the tokio runtime would stall the event loop and block all other connections. Read operations (GET /api/graph) only acquire the in-memory RwLock read lock and run directly on the async runtime since they never touch the filesystem."
+alternatives = [
+    "run Store writes directly on the tokio runtime: file lock blocking would stall the entire server",
+    "make Store fully async: would require async file locking (not available cross-platform via fs2) and async TOML I/O, massive refactor for little gain",
+    "dedicated writer thread with message passing: higher complexity, same effect as spawn_blocking",
+]
+tags = [
+    "concurrency",
+    "performance",
+]
+attribution = "user"
+created = "2026-06-15T09:45:22.387689050Z"

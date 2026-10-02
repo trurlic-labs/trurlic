@@ -1,0 +1,14 @@
+[decision]
+component = "project"
+choice = "Deny unsafe code project-wide via Cargo lint"
+reason = 'The crate has no need for unsafe — all dependencies are pure Rust. Enforced in Cargo.toml with [lints.rust] unsafe_code = "deny", which makes any unsafe block a compile error. This eliminates an entire class of memory safety bugs.'
+alternatives = [
+    "Allow unsafe with clippy::allow annotations on a case-by-case basis — rejected because no use case requires it and the blanket deny is simpler to audit",
+    "Use #![forbid(unsafe_code)] in lib.rs — rejected because Cargo.toml [lints] is the canonical location and applies to the entire crate uniformly",
+]
+tags = [
+    "safety",
+    "coding-standards",
+]
+attribution = "user"
+created = "2026-06-15T09:47:15.801527744Z"

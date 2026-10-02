@@ -1,0 +1,14 @@
+[decision]
+component = "mcp"
+choice = "MCP server delegates all disk writes to Store methods, never writes directly"
+reason = "Write tools (record_decision, record_pattern, add_component, add_connection, remove_decision, update_decision) call Store methods that acquire a file lock (StoreLock), validate the graph, perform atomic writes (serialize to temp, verify round-trip, rename), and update in-memory state. The MCP module handles argument parsing, validation of edge targets and quality floors, and JSON response construction, but never touches the filesystem directly. This maintains Store as the single authority for disk mutations and ensures atomic write guarantees are never bypassed."
+alternatives = [
+    "MCP module writes TOML files directly — rejected: would bypass atomic write guarantees, file locking, and graph validation in Store",
+    "Separate write layer between MCP and Store — rejected: unnecessary indirection when Store already provides the correct abstraction",
+]
+tags = [
+    "data-integrity",
+    "module-boundary",
+]
+attribution = "user"
+created = "2026-06-15T09:44:59.411657570Z"

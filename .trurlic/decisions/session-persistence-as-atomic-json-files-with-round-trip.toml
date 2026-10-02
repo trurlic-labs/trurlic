@@ -1,0 +1,15 @@
+[decision]
+component = "session"
+choice = "Session persistence as atomic JSON files with round-trip verification"
+reason = "Sessions are serialized to JSON, written to a temp file, read back to verify the round-trip matches, then renamed into place. This follows the same atomic-write pattern used by the store for TOML files. The session file lives at `.trurlic/.state/sessions/{component}.json`. On error or Ctrl+D, the session is saved so the user can resume with `--continue`."
+alternatives = [
+    "SQLite session store — rejected: adds a heavy dependency for what is fundamentally a single-document write.",
+    "No persistence (in-memory only) — rejected: LLM sessions can be long and expensive; losing progress on crash or interrupt is unacceptable.",
+    "Append-only log of messages — rejected: complicates resume logic and requires replay; a single JSON snapshot is simpler.",
+]
+tags = [
+    "persistence",
+    "resilience",
+]
+attribution = "user"
+created = "2026-06-15T09:44:50.390834677Z"

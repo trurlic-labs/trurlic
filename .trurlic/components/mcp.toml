@@ -1,0 +1,3 @@
+[component]
+name = "mcp"
+description = "MCP server: JSON-RPC stdio, tool dispatch, context assembly, file watcher"
