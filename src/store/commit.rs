@@ -1,17 +1,17 @@
 //! The commit path: staging node files and `graph.toml`, validating the
 //! graph, and renaming everything into place with `graph.toml` last.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::{Error, Result};
 
+use super::durable::sync_dir;
 use super::failpoint::{self, Site};
 use super::graph::Severity;
 use super::schema::GraphIndex;
@@ -37,74 +37,33 @@ impl PendingWrite {
 }
 
 impl Store {
-    /// A fresh path in `.state/tmp/`, named after this process and a
-    /// counter. A name is never used twice, so no write stages onto a file
-    /// that a crashed write of another process left behind.
-    pub(super) fn temp_path(&self) -> PathBuf {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        self.tmp_dir().join(format!("{}-{n}", std::process::id()))
-    }
-
-    /// Write `value` to `target` atomically via `.state/tmp/`.
-    /// Serializes to TOML, writes to a temp file, validates by deserializing
-    /// back from disk, then renames to the final path. Caller **must** hold
-    /// a [`StoreLock`].
+    /// Write `value` to `target` on its own, outside a commit: staged and
+    /// flushed in `.state/tmp/`, renamed into place, and the directory
+    /// flushed. For `init` and `migrate`, which write before a graph exists
+    /// to commit.
     pub(crate) fn write_atomic<T: Serialize + DeserializeOwned>(
         &self,
         _lock: &StoreLock,
         target: &Path,
         value: &T,
     ) -> Result<()> {
-        self.verify_path(target)?;
-
-        let tmp_dir = self.tmp_dir();
-        fs::create_dir_all(&tmp_dir)?;
-
-        let tmp_path = self.temp_path();
-
-        let content = toml::to_string_pretty(value)?;
-
-        if let Err(e) = fs::write(&tmp_path, &content) {
-            return Err(Error::Io(e));
+        let write = self.prepare_write(target, value)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| Error::Validation(format!("{} has no parent", target.display())))?;
+        fs::create_dir_all(self.tmp_dir())?;
+        fs::create_dir_all(parent)?;
+        let staged = self.stage(write.content.as_bytes())?;
+        if let Err(e) = fs::rename(&staged, target) {
+            let _ = fs::remove_file(&staged);
+            return Err(e.into());
         }
-
-        // Validate written file by deserializing back — catches partial
-        // writes, encoding corruption, and serialization round-trip issues.
-        let readback = match fs::read_to_string(&tmp_path) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = fs::remove_file(&tmp_path);
-                return Err(Error::Io(e));
-            }
-        };
-        if let Err(e) = toml::from_str::<T>(&readback) {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(Error::Validation(format!(
-                "write verification failed: written file does not deserialize: {e}"
-            )));
-        }
-
-        if let Some(parent) = target.parent()
-            && let Err(e) = fs::create_dir_all(parent)
-        {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(Error::Io(e));
-        }
-
-        if let Err(e) = fs::rename(&tmp_path, target) {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(Error::Io(e));
-        }
-
-        Ok(())
+        Ok(sync_dir(parent)?)
     }
 
-    /// Serialize a value to TOML and verify the round-trip.
-    /// Returns a [`PendingWrite`] for use with [`commit_batch`](Self::commit_batch).
-    /// The content is deserialized back to `T` at this stage so that type-safe
-    /// verification happens while the type is still known; `commit_batch`
-    /// then verifies filesystem-level integrity via byte-compare.
+    /// Serialize `value` to TOML and parse it back as `T`, so a value that
+    /// does not survive the round trip is refused before anything touches
+    /// disk.
     pub(crate) fn prepare_write<T: Serialize + DeserializeOwned>(
         &self,
         target: &Path,
@@ -122,18 +81,14 @@ impl Store {
         })
     }
 
-    /// Execute a batch of writes and removes as a two-phase commit, and
-    /// return the store's generation after it.
+    /// Commit a batch of writes and removes, and return the store's
+    /// generation after it.
     ///
-    /// Phase 1: write all content to `.state/tmp/`.
-    /// Phase 2: verify each temp file (byte-compare; type-safe check was in `prepare_write`).
-    /// Phase 3: raise the generation, then rename all temp files to final
-    ///          paths (each atomic on POSIX). If `graph_update` is `Some`, it
-    ///          is sorted in place and `graph.toml` is the **last** rename,
-    ///          the commit point per the storage spec.
-    /// Phase 4: remove old files (best-effort — renames already committed).
-    ///
-    /// Caller **must** hold a [`StoreLock`].
+    /// Every write is staged and flushed in `.state/tmp/`, the generation
+    /// raised, then each staged file renamed onto its target. If
+    /// `graph_update` is `Some`, it is sorted in place and `graph.toml` is
+    /// the last rename, the commit point. The removed files go after it, and
+    /// the directories are flushed last.
     pub(crate) fn commit_batch(
         &self,
         lock: &StoreLock,
@@ -162,47 +117,19 @@ impl Store {
             self.verify_path(path)?;
         }
 
-        let tmp_dir = self.tmp_dir();
-        fs::create_dir_all(&tmp_dir)?;
-
-        // Phase 1: Write all to tmp
+        fs::create_dir_all(self.tmp_dir())?;
         let mut staged: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(all_writes.len());
-
         for write in &all_writes {
-            let tmp_path = self.temp_path();
-            if let Err(e) = fs::write(&tmp_path, &write.content) {
-                cleanup_tmp_files(&staged);
-                return Err(Error::Io(e));
-            }
-            staged.push((tmp_path, write.target.clone()));
-        }
-
-        // Phase 2: Verify write integrity — type-safe deserialization already
-        // happened in prepare_write; this byte-compare catches filesystem-level
-        // corruption (partial writes, bitflips) on the validated content.
-        for (i, (tmp_path, _)) in staged.iter().enumerate() {
-            let readback = match fs::read_to_string(tmp_path) {
-                Ok(s) => s,
+            let parent = write.target.parent().unwrap_or(&self.root);
+            match fs::create_dir_all(parent)
+                .map_err(Error::from)
+                .and_then(|()| self.stage(write.content.as_bytes()))
+            {
+                Ok(temp) => staged.push((temp, write.target.clone())),
                 Err(e) => {
                     cleanup_tmp_files(&staged);
-                    return Err(Error::Io(e));
+                    return Err(e);
                 }
-            };
-            if readback != all_writes[i].content {
-                cleanup_tmp_files(&staged);
-                return Err(Error::Validation(
-                    "batch write verification failed: content mismatch".into(),
-                ));
-            }
-        }
-
-        // Ensure parent directories exist before renaming.
-        for (_, target) in &staged {
-            if let Some(parent) = target.parent()
-                && let Err(e) = fs::create_dir_all(parent)
-            {
-                cleanup_tmp_files(&staged);
-                return Err(Error::Io(e));
             }
         }
 
@@ -214,18 +141,25 @@ impl Store {
             .inspect_err(|_| cleanup_tmp_files(&staged))?;
         rename_staged(&staged, graph_rename)?;
 
-        // Phase 4: Remove old files.
-        //
-        // Best-effort: renames (Phase 3) already committed the new state.
-        // A remove failure here leaves an orphan file but does NOT roll back
-        // the successful writes. Crash recovery and `trurlic check` will
-        // surface any resulting inconsistency.
+        // Best-effort: the renames already committed the new state. A
+        // remove failure leaves an orphan file but does not roll back the
+        // writes; `trurlic check` surfaces the inconsistency.
         for path in &removes {
             if let Err(e) = fs::remove_file(path)
                 && e.kind() != ErrorKind::NotFound
             {
                 eprintln!("warning: failed to remove {}: {e}", path.display());
             }
+        }
+
+        let dirs: BTreeSet<&Path> = staged
+            .iter()
+            .map(|(_, target)| target)
+            .chain(&removes)
+            .filter_map(|path| path.parent())
+            .collect();
+        for dir in dirs {
+            sync_dir(dir)?;
         }
 
         Ok(generation)
