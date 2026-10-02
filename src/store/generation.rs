@@ -4,7 +4,8 @@
 //! reads it with the node files, so the generations of two loads order
 //! them. A commit refuses a state whose generation is behind the store's:
 //! that state was loaded before another commit, and committing it would
-//! erase that commit.
+//! erase that commit. A watcher drops a load that a write of its own server
+//! overtook (see [`ProjectState::is_overtaken`]).
 //!
 //! `.state/` is never authoritative, so a missing file reads as 0.
 

@@ -7,8 +7,13 @@
 //!
 //! `abort` rather than `panic` or `exit`: a crash skips destructors and
 //! buffered writes, which is the state the tests need to reproduce.
+//!
+//! With `TRURLIC_FAILPOINT_PAUSE=<file>` also set, the hit pauses instead:
+//! it creates `<file>` and waits until the test deletes it, which lets a
+//! test act while the process holds whatever lock the site runs under.
 
-/// A point in the store's write path where a test may abort the process.
+/// A point in the store's lock-holding paths where a test may abort or
+/// pause the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Site {
     /// Temp files written and verified, generation raised; nothing renamed yet.
@@ -17,13 +22,20 @@ pub(crate) enum Site {
     NodesRenamed,
     /// `graph.toml` renamed; removed nodes' files still on disk.
     GraphRenamed,
+    /// A watcher holds the shared lock and has read nothing yet.
+    WatcherReload,
 }
 
 // Naming and parsing exist only where a spec can be read: the feature
 // build and the unit tests.
 #[cfg(any(test, feature = "failpoints"))]
 impl Site {
-    const ALL: [Self; 3] = [Self::Staged, Self::NodesRenamed, Self::GraphRenamed];
+    const ALL: [Self; 4] = [
+        Self::Staged,
+        Self::NodesRenamed,
+        Self::GraphRenamed,
+        Self::WatcherReload,
+    ];
 
     /// The name used in `TRURLIC_FAILPOINT`.
     const fn as_str(self) -> &'static str {
@@ -31,6 +43,7 @@ impl Site {
             Self::Staged => "commit.staged",
             Self::NodesRenamed => "commit.nodes_renamed",
             Self::GraphRenamed => "commit.graph_renamed",
+            Self::WatcherReload => "watcher.reload",
         }
     }
 
@@ -47,7 +60,8 @@ fn parse_spec(spec: &str) -> Option<(Site, u64)> {
     Some((Site::from_name(name)?, n))
 }
 
-/// Abort here if `TRURLIC_FAILPOINT` names this site and this is its `n`-th hit.
+/// Abort or pause here if `TRURLIC_FAILPOINT` names this site and this is
+/// its `n`-th hit.
 #[cfg(feature = "failpoints")]
 pub(crate) fn hit(site: Site) {
     use std::sync::OnceLock;
@@ -67,9 +81,29 @@ pub(crate) fn hit(site: Site) {
     let Some((armed_site, n)) = *armed else {
         return;
     };
-    if armed_site == site && HITS.fetch_add(1, Ordering::SeqCst) + 1 == n {
-        eprintln!("trurlic: failpoint {}:{n} hit, aborting", site.as_str());
+    if armed_site != site || HITS.fetch_add(1, Ordering::SeqCst) + 1 != n {
+        return;
+    }
+    match std::env::var_os("TRURLIC_FAILPOINT_PAUSE") {
+        Some(marker) => pause(site, n, std::path::Path::new(&marker)),
+        None => {
+            eprintln!("trurlic: failpoint {}:{n} hit, aborting", site.as_str());
+            std::process::abort();
+        }
+    }
+}
+
+/// Create `marker`, then wait until it is gone. A marker that cannot be
+/// created aborts, so the test fails instead of waiting for it forever.
+#[cfg(feature = "failpoints")]
+fn pause(site: Site, n: u64, marker: &std::path::Path) {
+    eprintln!("trurlic: failpoint {}:{n} hit, pausing", site.as_str());
+    if let Err(e) = std::fs::write(marker, b"") {
+        eprintln!("trurlic: cannot create {}: {e}", marker.display());
         std::process::abort();
+    }
+    while marker.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 

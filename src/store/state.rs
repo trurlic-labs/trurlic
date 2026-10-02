@@ -69,6 +69,25 @@ impl ProjectState {
         }
     }
 
+    /// The commit counter this state reflects.
+    #[must_use]
+    pub(crate) const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Whether a watcher must drop this state, loaded while the server served
+    /// generation `served_at_load`, instead of swapping it in for `current`.
+    ///
+    /// It must when `current` changed during the load and is newer: the change
+    /// was a write by this server, which reloaded under the exclusive lock
+    /// after the load, so the swap would undo that write in memory. A load
+    /// that is older although `current` did not change is the store as it is
+    /// now: the counter went back because `.state/` was deleted.
+    #[must_use]
+    pub(crate) fn is_overtaken(&self, current: &Self, served_at_load: u64) -> bool {
+        current.generation != served_at_load && self.generation < current.generation
+    }
+
     /// Read-only access to the cached in-memory graph.
     #[must_use]
     pub fn graph(&self) -> &InMemoryGraph {
@@ -361,6 +380,32 @@ mod tests {
     use crate::store::testing::*;
 
     use tempfile::TempDir;
+
+    // ── is_overtaken ─────────────────────────────────────────────────────
+
+    fn at_generation(generation: u64) -> ProjectState {
+        let mut state = empty_project_state();
+        state.generation = generation;
+        state
+    }
+
+    /// The server served 4, loaded 4, then committed 5 before the swap.
+    #[test]
+    fn a_load_overtaken_by_the_servers_own_write_is_dropped() {
+        assert!(at_generation(4).is_overtaken(&at_generation(5), 4));
+    }
+
+    /// The server served 4 and wrote 5 before the load began, which read it.
+    #[test]
+    fn a_load_that_read_the_servers_write_is_kept() {
+        assert!(!at_generation(5).is_overtaken(&at_generation(5), 4));
+    }
+
+    /// `.state/` was deleted: the counter reads 0, nothing was written here.
+    #[test]
+    fn a_load_after_the_counter_was_reset_is_kept() {
+        assert!(!at_generation(0).is_overtaken(&at_generation(7), 7));
+    }
 
     // ── is_valid_kebab_case ──────────────────────────────────────────────
 

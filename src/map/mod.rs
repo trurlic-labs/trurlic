@@ -62,8 +62,8 @@ impl MapState {
 
     /// Take the state write lock, then the file lock, and reload the graph
     /// from disk, so the write validates against what other processes
-    /// committed. Clients get the diff of that reload before the write's own
-    /// events, so they see the changes in commit order.
+    /// committed. Clients get the diff of that reload first, under the same
+    /// lock as the watcher's diffs, so every event arrives in commit order.
     pub(crate) fn begin_write(
         &self,
     ) -> crate::Result<(RwLockWriteGuard<'_, ProjectState>, StoreLock)> {
@@ -213,22 +213,21 @@ const MAP_DEBOUNCE: Duration = Duration::from_millis(50);
 fn spawn_watcher(state: Arc<MapState>) -> Option<WatcherGuard> {
     let store_root = state.store.root().to_path_buf();
 
+    let served = Arc::clone(&state);
     match crate::store::watcher::spawn(
         &store_root,
         MAP_DEBOUNCE,
         "trurlic-map-watcher",
-        move |new_state| {
-            let events = {
-                let old = state.read_project_state();
-                diff::diff_states(&old, &new_state)
-            };
-
-            if !events.is_empty() {
-                ws::broadcast(&state.ws_tx, &events);
+        move || served.read_project_state().generation(),
+        move |loaded, served_at_load| {
+            // Diff and swap under one write lock: an API write between the
+            // two would otherwise be overwritten, and its events reordered.
+            let mut current = state.write_project_state();
+            if loaded.is_overtaken(&current, served_at_load) {
+                return;
             }
-
-            let mut guard = state.write_project_state();
-            *guard = new_state;
+            ws::broadcast(&state.ws_tx, &diff::diff_states(&current, &loaded));
+            *current = loaded;
         },
     ) {
         Ok(guard) => {

@@ -2,10 +2,13 @@
 //!
 //! A write validates against the graph on disk, never against a state loaded
 //! before its lock: another process may have committed in between, and a
-//! commit built on the older state would erase that commit.
+//! commit built on the older state would erase that commit. A watcher loads
+//! under the shared lock, so it never reads a commit halfway through its
+//! renames.
 
 use crate::Result;
 
+use super::failpoint::{self, Site};
 use super::{ProjectState, Store, StoreLock};
 
 impl Store {
@@ -20,6 +23,14 @@ impl Store {
         let (guard, lock) = self.lock_after(take_guard)?;
         let state = self.load_checked()?;
         Ok((guard, lock, state))
+    }
+
+    /// Load the graph under the shared lock, released before returning so
+    /// the caller can take its state lock without holding the file lock.
+    pub(super) fn load_shared(&self) -> Result<ProjectState> {
+        let _shared = self.lock_shared()?;
+        failpoint::hit(Site::WatcherReload);
+        self.load_checked()
     }
 
     /// A store written in another format is refused before its node files
@@ -57,6 +68,8 @@ mod tests {
 
         let begun = store.begin_write(|| ());
         let err = begun.map(|_| ()).unwrap_err().to_string();
+        assert!(err.contains("trurlic migrate"), "{err}");
+        let err = store.load_shared().map(|_| ()).unwrap_err().to_string();
         assert!(err.contains("trurlic migrate"), "{err}");
     }
 }
