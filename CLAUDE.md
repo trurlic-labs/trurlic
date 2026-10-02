@@ -6,51 +6,50 @@ Named after Trurl (Stanisław Lem, *The Cyberiad*) — the constructor who think
 
 ### Architecture
 
-Single crate, eight modules. Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
+Single crate, seven modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
 
 ```
 store       → (no internal deps)         Decision graph: TOML files, graph index,
-                                          validation, atomic writes, file locking
+                                          validation, atomic writes, file locking,
+                                          file watcher
 workflow    → store                       Step deduction, concern tracking,
                                           prompt generation. Pure functions, no I/O.
 mcp         → store, workflow             MCP server: JSON-RPC stdio, tool dispatch,
-                                          context assembly, file watcher
-session     → store, workflow, provider   CLI design sessions, bootstrap driver,
-                                          LLM extraction, session persistence
-commands    → store, session, config,     CLI command handlers (including
-              workflow (read-only),        `install` for IDE MCP config). Reads
-              provider                     the pure workflow engine for status /
-                                          coverage display; resolves the LLM
-                                          provider itself for fail-fast UX.
+                                          context assembly, decision verification
 map         → store                       Interactive graph visualization,
                                           WebSocket live sync, REST API
-provider    → (no internal deps)          LLM API clients (Anthropic, OpenAI,
-                                          OpenRouter, Gemini, Ollama, Custom),
-                                          SSE streaming
-config      → (no internal deps)          Provider resolution, API key handling
+commands    → store, mcp, map,            CLI command handlers: init, add, rename,
+              workflow (read-only)        remove, decide, query, status, check, gc,
+                                          migrate, install (IDE MCP config), and
+                                          the `serve` and `map` entry points
+cli         → commands                    clap definitions and dispatch
+error       → (no internal deps)          The crate's single `Error` enum and
+                                          `Result` alias
 ```
 
-**store** is the foundation. It never imports from any other module. Every write goes through `Store` methods with `StoreLock` proof parameters.
+Every module uses `error`; the arrows leave it out.
 
-**workflow** is pure computation. It never calls an LLM, never touches the filesystem, never allocates beyond the response JSON. `advance()` is a deterministic function of graph state + inputs. Same inputs = same output, always.
+**store** is the foundation. It imports no other module except `error`. Every write goes through `Store` methods with `StoreLock` proof parameters.
 
-**mcp** never writes to the graph directly. It calls `Store` write methods. It never runs LLM calls. Prompt generation comes from `workflow::steps`.
+**workflow** is pure computation. It never touches the filesystem, never allocates beyond the response JSON. `advance()` is a deterministic function of graph state + inputs. Same inputs = same output, always.
 
-**session** is the only module that calls LLM APIs. It owns the CLI dialogue loop and the bootstrap driver.
+**mcp** never writes to the graph directly. It calls `Store` write methods. Prompt generation comes from `workflow::steps`.
 
-**provider** and **config** are leaf modules. They do not import from any other internal module.
+**commands** reads the pure workflow engine for status and coverage display, and starts the MCP server (`serve`) and the map server (`map`).
+
+Trurlic makes no LLM calls. Design work happens in the agent that calls the MCP tools.
 
 ### Store Internals
 
-Graph on disk: `.trurlic/` with `components/`, `decisions/`, `patterns/` subdirectories. Each node is a TOML file. `graph.toml` is a compiled edge index rebuilt deterministically from node files.
+Graph on disk: `.trurlic/` with `components/`, `decisions/`, `patterns/` subdirectories. Each node is a TOML file. `graph.toml` is a compiled edge index rebuilt deterministically from node files. `.trurlic/.state/` holds the lock file, temp files and map layout; it is never committed.
 
-Atomic writes: serialize → write to temp file → verify round-trip parse → rename into place. `graph.toml` renamed last as the commit point. Interrupted writes cleaned up on next startup.
+Atomic writes: serialize → write to temp file → verify round-trip parse → rename into place. `graph.toml` renamed last as the commit point. Leftover temp files are removed when the next CLI command opens the store.
 
 Content integrity: BLAKE3 hash per node file, stored in `graph.toml`. `trurlic check` verifies hashes. Tamper detection, not encryption.
 
-File locking: `fs2::FileExt` for cross-platform flock. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter. The lock is never held across LLM calls.
+File locking: `fs2::FileExt` for cross-platform flock. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter.
 
-In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex`. Graph queries go through a cached `InMemoryGraph` behind `OnceLock`.
+In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex` and an eagerly built `InMemoryGraph` for graph queries.
 
 Thread model: MCP server holds `Arc<RwLock<ProjectState>>`. File watcher thread detects external changes and swaps state under write lock (microseconds). MCP read tools acquire read lock only. Write tools acquire write lock, then file lock, then validate, then commit.
 
@@ -62,7 +61,7 @@ Seven task types, each with a distinct step sequence. Steps have preconditions (
 
 Concern tracking: 10 architectural concern areas with keyword matching against decision content. Priority-ordered — security gaps surface before stylistic ones.
 
-Step prompts: transport-agnostic instructions generated from graph state. MCP and CLI sessions consume the same prompts. The INTERACTION_PROTOCOL is embedded in every interactive step prompt.
+Step prompts: transport-agnostic instructions generated from graph state and served by `get_step_prompt`. Interactive mode embeds `INTERACTION_PROTOCOL` in every step prompt; agent mode embeds `AGENT_PROTOCOL`.
 
 ### Key Invariants
 
@@ -70,11 +69,10 @@ Step prompts: transport-agnostic instructions generated from graph state. MCP an
 2. `unwrap()` and `expect()` denied outside `#[cfg(test)]` (`#![cfg_attr(not(test), deny(...))]`)
 3. Every graph mutation validates the full graph before touching disk. Invalid writes refused, never silently committed.
 4. Atomic writes: serialize → temp → verify round-trip → rename. `graph.toml` renamed last.
-5. API keys wrapped in `Zeroizing<String>`. Zeroed from memory on drop. Never logged, never in error messages. Display/Debug show only last 4 characters.
-6. File locking prevents concurrent mutations from CLI + MCP + map.
-7. `workflow::advance` is a pure function. No I/O, no LLM calls, no side effects.
-8. Boundary types (`Decision`, `Pattern`, `Component`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`, `Engine`) do not.
-9. Every dependency justified. No proc macros at runtime (serde derive, thiserror are compile-time).
+5. File locking prevents concurrent mutations from CLI + MCP + map.
+6. `workflow::advance` is a pure function. No I/O, no side effects.
+7. Boundary types (`DecisionFile`, `PatternFile`, `ComponentFile`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`) do not.
+8. Every dependency justified. No proc macros at runtime (serde derive, thiserror are compile-time).
 
 ### Trurlic
 
@@ -121,7 +119,11 @@ During implementation in either mode:
 
 Unit tests: pure functions, same file. Every module has exhaustive tests for its public contract.
 
-Integration tests: full pipeline runs — advance through all steps for every task type, verify step sequences and postconditions. Schema round-trips for every serializable type.
+Pipeline tests: advance through all steps for every task type, verify step sequences and postconditions. Schema round-trips for every serializable type.
+
+Integration tests (`tests/integration/`): drive the built binary. `harness` spawns `trurlic serve` and speaks JSON-RPC over stdio; `golden` compares output with `tests/integration/golden/` (`TRURLIC_UPDATE_GOLDEN=1` rewrites the files). Every tool in `tools/list` is called once.
+
+Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` abort at the n-th hit of a named site in `src/store/failpoint.rs`. `make test` enables it.
 
 Property: determinism (same graph state → same advance result), exhaustive step coverage (every `Step::as_str()` value accepted by `build_step_prompt()`), graph validation catches all known violation classes.
 
