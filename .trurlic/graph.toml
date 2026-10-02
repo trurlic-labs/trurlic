@@ -1,5 +1,5 @@
 version = 1
-rebuilt = "2026-10-02T16:33:52.329908753Z"
+rebuilt = "2026-10-02T19:57:04.660965088Z"
 
 [[nodes]]
 name = "256-bit-csprng-token-with-constant-time-comparison-for"
@@ -216,7 +216,7 @@ tags = [
     "api",
     "reliability",
 ]
-hash = "3056ed0a34de3ce33c6658f0066535c5702fa65f85881fbae45d901f1aed7a8a"
+hash = "e841e8cae9208fdd4acd31bd522d7a3f134592766173ca5586a90fd28d3f9744"
 
 [[nodes]]
 name = "every-write-reloads-the-graph-under-the-exclusive-lock"
@@ -603,7 +603,7 @@ hash = "29c712d17d836b8f59530b58127c2da5a1fdbd13b6df10caca54543213d4af15"
 name = "transport-agnostic-prompt-generation-shared-preamble-step"
 kind = "decision"
 tags = ["scope"]
-hash = "05e7406f125622f673fe88e521590a22e19015418776e74c6ad6cbdcfd766f2a"
+hash = "b5e90f53b1b0bfc45987244fa63dad708761e7047215c0c617a27f27f42faab4"
 
 [[nodes]]
 name = "typed-toolenvelope-serialized-directly-into-json-rpc"
