@@ -41,15 +41,17 @@ Trurlic makes no LLM calls. Design work happens in the agent that calls the MCP 
 
 ### Store Internals
 
-Graph on disk: `.trurlic/` with `components/`, `decisions/`, `patterns/` subdirectories. Each node is a TOML file. `graph.toml` is a compiled edge index rebuilt deterministically from node files. `.trurlic/.state/` holds the lock file, temp files, the commit counter (`generation`) and map layout; it is never committed.
+Graph on disk: `.trurlic/` with `components/`, `decisions/`, `patterns/` subdirectories. Each node is a TOML file. `graph.toml` is a compiled edge index rebuilt deterministically from node files. `.trurlic/.state/` holds the lock file, temp files, the commit counter (`generation`), the commit journal (`txn.toml`) and map layout; it is never committed.
 
-Atomic writes: serialize → write to temp file → verify round-trip parse → rename into place. `graph.toml` renamed last as the commit point. Leftover temp files are removed when the next CLI command opens the store.
+Commits: serialize and parse back in memory → stage each file in `.state/tmp/` under a per-process name and flush it → raise `generation` → write and flush the journal, which names every staged file and its target: the commit point → rename the staged files into place, `graph.toml` last, remove deleted files, flush the directories → delete the journal. After the journal a failure returns `CommitPending`; the commit is not rolled back.
+
+Recovery: a leftover journal is applied, then leftover temp files removed, only under the exclusive lock: by every write before it loads, by a command that finds the lock free, and by a watcher that finds a journal.
 
 Content integrity: BLAKE3 hash per node file, stored in `graph.toml`. `trurlic check` verifies hashes. Tamper detection, not encryption.
 
 File locking: std `File::try_lock` (writers, exclusive) and `File::try_lock_shared` (watchers) on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter.
 
-Writer protocol: every write starts at `Store::begin_write`, which takes the caller's state write lock, then the exclusive file lock (dropping the state lock while the file lock is busy), then reloads the graph from disk. All validation runs against that reloaded state. Every commit raises `.state/generation`; a commit refuses a state whose generation is behind the store's.
+Writer protocol: every write starts at `Store::begin_write`, which takes the caller's state write lock, then the exclusive file lock (dropping the state lock while the file lock is busy), then recovers and reloads the graph from disk. All validation runs against that reloaded state. Every commit raises `.state/generation`; a commit refuses a state whose generation is behind the store's.
 
 In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex` and an eagerly built `InMemoryGraph` for graph queries.
 
@@ -70,7 +72,7 @@ Step prompts: transport-agnostic instructions generated from graph state and ser
 1. `unsafe` is denied (`[lints.rust] unsafe_code = "deny"` in Cargo.toml)
 2. `unwrap()` and `expect()` denied outside `#[cfg(test)]` (`#![cfg_attr(not(test), deny(...))]`)
 3. Every graph mutation validates the full graph before touching disk. Invalid writes refused, never silently committed.
-4. Atomic writes: serialize → temp → verify round-trip → rename. `graph.toml` renamed last.
+4. Atomic commits: round-trip in memory → flushed temp files → flushed journal (the commit point) → renames, `graph.toml` last → directory flushes. Recovery rolls a journal forward under the exclusive lock.
 5. File locking prevents concurrent mutations from CLI + MCP + map.
 6. `workflow::advance` is a pure function. No I/O, no side effects.
 7. Boundary types (`DecisionFile`, `PatternFile`, `ComponentFile`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`) do not.
@@ -125,7 +127,7 @@ Pipeline tests: advance through all steps for every task type, verify step seque
 
 Integration tests (`tests/integration/`): drive the built binary. `harness` spawns `trurlic serve` and speaks JSON-RPC over stdio; `golden` compares output with `tests/integration/golden/` (`TRURLIC_UPDATE_GOLDEN=1` rewrites the files). Every tool in `tools/list` is called once.
 
-Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` abort at the n-th hit of a named site in `src/store/failpoint.rs`. `make test` enables it.
+Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` act at the n-th hit of a named site in `src/store/failpoint.rs`: abort (or pause, with `TRURLIC_FAILPOINT_PAUSE`) at a `hit`, return an injected I/O error at a `fail`. `make test` enables it.
 
 Property: determinism (same graph state → same advance result), exhaustive step coverage (every `Step::as_str()` value accepted by `build_step_prompt()`), graph validation catches all known violation classes.
 
