@@ -818,13 +818,16 @@ mod tests {
 
         let state = store.load_state().unwrap();
         let issues = state.validate();
-        assert!(issues
-            .iter()
-            .any(|i| i.severity == Severity::Warning && i.message.contains("empty description")));
         assert!(
             issues
                 .iter()
-                .any(|i| i.severity == Severity::Error && i.message.contains("empty choice"))
+                .any(|i| i.severity() == Severity::Warning
+                    && i.message.contains("empty description"))
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.severity() == Severity::Error && i.message.contains("empty choice"))
         );
     }
 }

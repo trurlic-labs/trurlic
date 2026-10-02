@@ -1,5 +1,6 @@
 pub(crate) mod cascade;
 mod commit;
+mod cycles;
 mod durable;
 mod failpoint;
 mod generation;
@@ -232,6 +233,11 @@ pub(crate) fn hash_file(path: &Path) -> Result<String> {
 #[must_use]
 pub fn hash_bytes(data: &[u8]) -> String {
     blake3::hash(data).to_hex().to_string()
+}
+
+/// The first 12 hex digits of `hash`, as messages show it.
+fn abbreviate(hash: &str) -> &str {
+    hash.get(..12).unwrap_or(hash)
 }
 
 /// Canonical key for detecting decisions with the same choice text: every run
@@ -637,16 +643,16 @@ impl Store {
         let graph_path = self.graph_path();
         if !graph_path.exists() {
             return Ok(vec![graph::Issue {
-                severity: graph::Severity::Warning,
+                kind: graph::IssueKind::IndexMissing,
+                subject: GRAPH_FILE.into(),
                 message: "graph.toml is missing (will be rebuilt from node files)".into(),
-                node: None,
             }]);
         }
 
         let index: GraphIndex = self.read_toml(&graph_path)?;
         let mut issues = Vec::new();
 
-        for node in &index.nodes {
+        for node in index.nodes {
             let path = match node.kind {
                 NodeKind::Component if node.name == "project" => self.root.join("project.toml"),
                 NodeKind::Component => self.component_path(&node.name),
@@ -654,34 +660,33 @@ impl Store {
                 NodeKind::Pattern => self.pattern_path(&node.name),
             };
 
-            match hash_file(&path) {
-                Ok(actual) if actual != node.hash => {
-                    issues.push(graph::Issue {
-                        severity: graph::Severity::Warning,
-                        message: format!(
-                            "{} `{}` content changed since last indexed \
-                             (stored: {}…, actual: {}…)",
-                            node.kind.as_str(),
-                            node.name,
-                            &node.hash[..node.hash.len().min(12)],
-                            &actual[..actual.len().min(12)],
-                        ),
-                        node: Some(node.name.clone()),
-                    });
-                }
-                Ok(_) => {} // hash matches
-                Err(_) => {
-                    issues.push(graph::Issue {
-                        severity: graph::Severity::Warning,
-                        message: format!(
-                            "{} `{}` is in graph.toml but the file is missing or unreadable",
-                            node.kind.as_str(),
-                            node.name,
-                        ),
-                        node: Some(node.name.clone()),
-                    });
-                }
-            }
+            let (kind, message) = match hash_file(&path) {
+                Ok(actual) if actual != node.hash => (
+                    graph::IssueKind::HashMismatch,
+                    format!(
+                        "{} `{}` content changed since last indexed \
+                         (stored: {}..., actual: {}...)",
+                        node.kind.as_str(),
+                        node.name,
+                        abbreviate(&node.hash),
+                        abbreviate(&actual),
+                    ),
+                ),
+                Ok(_) => continue, // hash matches
+                Err(_) => (
+                    graph::IssueKind::NodeFileMissing,
+                    format!(
+                        "{} `{}` is in graph.toml but the file is missing or unreadable",
+                        node.kind.as_str(),
+                        node.name,
+                    ),
+                ),
+            };
+            issues.push(graph::Issue {
+                kind,
+                subject: node.name,
+                message,
+            });
         }
 
         Ok(issues)
@@ -1006,6 +1011,53 @@ pub(crate) mod testing {
 
     pub fn arc_map<T>(map: BTreeMap<String, T>) -> BTreeMap<String, Arc<T>> {
         map.into_iter().map(|(k, v)| (k, Arc::new(v))).collect()
+    }
+
+    /// Project-wide decisions joined by `depends_on` edges in the given
+    /// order: a graph whose only issues are the ones the edges make.
+    pub fn depends_on_graph(edges: &[(&str, &str)]) -> graph::InMemoryGraph {
+        let mut names: Vec<&str> = edges.iter().flat_map(|&(from, to)| [from, to]).collect();
+        names.sort_unstable();
+        names.dedup();
+        let mut index = GraphIndex {
+            version: 1,
+            rebuilt: None,
+            nodes: vec![NodeEntry {
+                name: "project".into(),
+                kind: NodeKind::Component,
+                tags: vec![],
+                hash: String::new(),
+            }],
+            edges: Vec::new(),
+        };
+        let mut decisions = BTreeMap::new();
+        for &name in &names {
+            index.nodes.push(NodeEntry {
+                name: name.into(),
+                kind: NodeKind::Decision,
+                tags: vec![],
+                hash: String::new(),
+            });
+            index.edges.push(EdgeEntry {
+                from: name.into(),
+                to: "project".into(),
+                kind: EdgeKind::BelongsTo,
+            });
+            decisions.insert(name.to_owned(), sample_decision(name, "project"));
+        }
+        index
+            .edges
+            .extend(edges.iter().map(|&(from, to)| EdgeEntry {
+                from: from.into(),
+                to: to.into(),
+                kind: EdgeKind::DependsOn,
+            }));
+        graph::InMemoryGraph::build(
+            &index,
+            &BTreeMap::new(),
+            &arc_map(decisions),
+            &BTreeMap::new(),
+        )
     }
 
     /// Realistic graph fixture shared by graph, query, and validate tests.

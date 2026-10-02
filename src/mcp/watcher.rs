@@ -45,7 +45,7 @@ pub(crate) fn spawn(
             let errors = loaded
                 .validate()
                 .iter()
-                .filter(|i| i.severity == Severity::Error)
+                .filter(|i| i.severity() == Severity::Error)
                 .count();
 
             let mut current = state.write().unwrap_or_else(|poisoned| {

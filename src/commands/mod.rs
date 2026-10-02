@@ -52,7 +52,7 @@ fn warn_on_issues(state: &ProjectState) {
     let issues = state.validate();
     let errors = issues
         .iter()
-        .filter(|i| i.severity == crate::store::graph::Severity::Error)
+        .filter(|i| i.severity() == crate::store::graph::Severity::Error)
         .count();
     if errors > 0 {
         eprintln!(

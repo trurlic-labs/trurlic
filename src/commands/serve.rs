@@ -11,7 +11,7 @@ pub fn serve(cwd: &Path) -> Result<()> {
     let issues = state.validate();
     let error_count = issues
         .iter()
-        .filter(|i| i.severity == crate::store::graph::Severity::Error)
+        .filter(|i| i.severity() == crate::store::graph::Severity::Error)
         .count();
     if error_count > 0 {
         eprintln!(

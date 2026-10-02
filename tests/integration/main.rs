@@ -7,6 +7,7 @@
 mod failpoints;
 mod golden;
 mod harness;
+mod invalid_graph;
 mod stdio;
 #[cfg(feature = "failpoints")]
 mod watchers;

@@ -171,6 +171,15 @@ tags = [
 hash = "4d098dd6f8447a8c3ef35f89a5d908253ac28bc6bc4d323fdd17b11af7dee005"
 
 [[nodes]]
+name = "depends-on-cycles-are-found-as-strongly-connected"
+kind = "decision"
+tags = [
+    "integrity",
+    "determinism",
+]
+hash = "1ae653541ae6948449a4e0f07bed560c25ecc7cc627fc421c986efcaf987cd36"
+
+[[nodes]]
 name = "every-commit-goes-through-a-flushed-journal-in-state-txn"
 kind = "decision"
 tags = [
@@ -259,7 +268,7 @@ tags = [
     "reliability",
     "consistency",
 ]
-hash = "39f85a2f5c8442b004fee65c7094df2269bd2ca077cb297984f091d7f8ce0911"
+hash = "6214668013afba9f19c0073e590c1c604678496a45c36261570733ed4543b785"
 
 [[nodes]]
 name = "gated-steps-require-user-input-ungated-steps-are-autonomous"
@@ -585,6 +594,15 @@ tags = [
 hash = "40d512b3d7a8bc54270e917d64eaa3261a45ceca951f06276b35cc9bb8a53c44"
 
 [[nodes]]
+name = "validation-issues-carry-an-issuekind-and-a-subject-and"
+kind = "decision"
+tags = [
+    "integrity",
+    "determinism",
+]
+hash = "b413a717657b6fae4d2e1a0273c10e0e9ee0ab57d23fb10a7972cd6878f43271"
+
+[[nodes]]
 name = "verify-against-decisions-matches-changed-files-to-code-refs"
 kind = "decision"
 tags = [
@@ -780,6 +798,11 @@ kind = "belongs_to"
 [[edges]]
 from = "deny-unwrap-expect-outside-test-code"
 to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "depends-on-cycles-are-found-as-strongly-connected"
+to = "store"
 kind = "belongs_to"
 
 [[edges]]
@@ -1140,6 +1163,11 @@ kind = "belongs_to"
 [[edges]]
 from = "unidirectional-server-to-client-websocket-push-with"
 to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "validation-issues-carry-an-issuekind-and-a-subject-and"
+to = "store"
 kind = "belongs_to"
 
 [[edges]]

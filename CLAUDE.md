@@ -71,7 +71,7 @@ Step prompts: transport-agnostic instructions generated from graph state and ser
 
 1. `unsafe` is denied (`[lints.rust] unsafe_code = "deny"` in Cargo.toml)
 2. `unwrap()` and `expect()` denied outside `#[cfg(test)]` (`#![cfg_attr(not(test), deny(...))]`)
-3. Every graph mutation validates the full graph before touching disk. Invalid writes refused, never silently committed.
+3. Every graph mutation validates the full graph before touching disk. A write that adds an error is refused, never silently committed; an error the graph already had, matched on kind and subject, does not block it.
 4. Atomic commits: round-trip in memory → flushed temp files → flushed journal (the commit point) → renames, `graph.toml` last → directory flushes. Recovery rolls a journal forward under the exclusive lock.
 5. File locking prevents concurrent mutations from CLI + MCP + map.
 6. `workflow::advance` is a pure function. No I/O, no side effects.
