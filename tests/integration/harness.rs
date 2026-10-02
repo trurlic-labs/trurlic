@@ -222,19 +222,26 @@ impl McpClient {
     /// Call a tool and return its decoded payload, failing if the tool
     /// reported `isError`.
     pub fn call_tool(&mut self, name: &str, arguments: Value) -> Value {
-        let envelope = self.request(
+        let text = self.call_tool_text(name, arguments);
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{name}: payload not JSON ({e})"))
+    }
+
+    /// Call a tool and return its payload as the server wrote it, failing if
+    /// the tool reported `isError`.
+    pub fn call_tool_text(&mut self, name: &str, arguments: Value) -> String {
+        let mut envelope = self.request(
             "tools/call",
             json!({ "name": name, "arguments": arguments }),
         );
-        let text = envelope["content"][0]["text"]
-            .as_str()
-            .unwrap_or_else(|| panic!("{name}: no text content in {envelope}"));
+        let Value::String(text) = envelope["content"][0]["text"].take() else {
+            panic!("{name}: no text content in {envelope}");
+        };
         assert_ne!(
             envelope.get("isError"),
             Some(&Value::Bool(true)),
             "{name} failed: {text}"
         );
-        serde_json::from_str(text).unwrap_or_else(|e| panic!("{name}: payload not JSON ({e})"))
+        text
     }
 }
 
