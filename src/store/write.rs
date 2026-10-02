@@ -171,26 +171,27 @@ impl Store {
         })
     }
 
-    /// Execute a batch of writes and removes as a two-phase commit.
+    /// Execute a batch of writes and removes as a two-phase commit, and
+    /// return the store's generation after it.
     ///
     /// Phase 1: write all content to `.state/tmp/`.
     /// Phase 2: verify each temp file (byte-compare; type-safe check was in `prepare_write`).
-    /// Phase 3: rename all temp files to final paths (each atomic on POSIX).
-    ///          If `graph_update` is `Some`, it is sorted in place and
-    ///          `graph.toml` is the **last** rename, the commit point per the
-    ///          storage spec.
+    /// Phase 3: raise the generation, then rename all temp files to final
+    ///          paths (each atomic on POSIX). If `graph_update` is `Some`, it
+    ///          is sorted in place and `graph.toml` is the **last** rename,
+    ///          the commit point per the storage spec.
     /// Phase 4: remove old files (best-effort — renames already committed).
     ///
     /// Caller **must** hold a [`StoreLock`].
     pub(crate) fn commit_batch(
         &self,
-        _lock: &StoreLock,
+        lock: &StoreLock,
         writes: Vec<PendingWrite>,
         removes: Vec<PathBuf>,
         graph_update: Option<&mut GraphIndex>,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         if writes.is_empty() && removes.is_empty() && graph_update.is_none() {
-            return Ok(());
+            return self.read_generation();
         }
 
         // Build the full set of writes: node files first, graph.toml last.
@@ -260,6 +261,12 @@ impl Store {
             }
         }
 
+        // Raised before the first rename, so a failure to record it leaves the
+        // graph untouched. A crash after it leaves the counter ahead of the
+        // graph, which still orders every later load correctly.
+        let generation = self
+            .raise_generation(lock)
+            .inspect_err(|_| cleanup_tmp_files(&staged))?;
         rename_staged(&staged, graph_rename)?;
 
         // Phase 4: Remove old files.
@@ -276,7 +283,7 @@ impl Store {
             }
         }
 
-        Ok(())
+        Ok(generation)
     }
 
     /// Validate the full graph derived from `state`, then commit node files
@@ -290,7 +297,9 @@ impl Store {
     /// as the commit point per the storage spec.
     ///
     /// On success, `state` matches disk: its index is the sorted one just
-    /// written and its graph the validated one.
+    /// written, its graph the validated one, its generation the new one.
+    /// A `state` loaded before another commit is refused with
+    /// [`Error::StaleState`].
     pub(super) fn commit_with_graph(
         &self,
         lock: &StoreLock,
@@ -298,6 +307,8 @@ impl Store {
         removes: Vec<PathBuf>,
         state: &mut ProjectState,
     ) -> Result<()> {
+        self.ensure_current(lock, state)?;
+
         // Pre-check: duplicate node names in the index would cause silent
         // data loss during InMemoryGraph construction (HashMap overwrite).
         {
@@ -323,7 +334,7 @@ impl Store {
             return Err(Error::GraphIntegrity(errors.join("; ")));
         }
         let mut index = graph.to_index(state.graph_index.rebuilt);
-        self.commit_batch(lock, writes, removes, Some(&mut index))?;
+        state.generation = self.commit_batch(lock, writes, removes, Some(&mut index))?;
         state.graph_index = index;
         state.graph = graph;
 
@@ -668,6 +679,8 @@ impl Store {
         state: &mut ProjectState,
         names: &[&str],
     ) -> Result<()> {
+        self.ensure_current(lock, state)?;
+
         // Violations present *before* the removal are tolerated (the collector
         // may be repairing an already-invalid store); anything not in this set
         // must not be introduced by the removal.
@@ -724,12 +737,9 @@ impl Store {
         }
 
         let mut index = graph.to_index(state.graph_index.rebuilt);
-        if let Err(e) = self.commit_batch(lock, vec![], removes, Some(&mut index)) {
-            restore(state, restore_decisions, restore_nodes);
-            return Err(e);
-        }
-
-        // The same refresh commit_with_graph performs on the validating path.
+        state.generation = self
+            .commit_batch(lock, vec![], removes, Some(&mut index))
+            .inspect_err(|_| restore(state, restore_decisions, restore_nodes))?;
         state.graph_index = index;
         state.graph = graph;
         Ok(())

@@ -52,6 +52,12 @@ pub enum Error {
     #[error("connection `{from}` \u{2192} `{to}` does not exist")]
     ConnectionNotFound { from: String, to: String },
 
+    #[error(
+        "the graph was loaded at generation {loaded}, but another commit has \
+         raised the store to {on_disk}; reload it under the lock before writing"
+    )]
+    StaleState { loaded: u64, on_disk: u64 },
+
     #[error("{0} consistency error(s) found")]
     CheckFailed(usize),
 

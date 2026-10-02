@@ -37,6 +37,9 @@ pub struct ProjectState {
     /// [`Store::commit_with_graph`], which assigns the validated graph
     /// on successful commit. Writable only from within `store/`.
     pub(super) graph: InMemoryGraph,
+    /// The commit counter this state reflects: read with the node files by
+    /// [`Store::load_state`], raised by every commit made through it.
+    pub(super) generation: u64,
 }
 
 impl ProjectState {
@@ -62,6 +65,7 @@ impl ProjectState {
             graph_index,
             project_root: PathBuf::new(),
             graph,
+            generation: 0,
         }
     }
 

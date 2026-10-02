@@ -114,6 +114,9 @@ fn error_status(err: &crate::Error) -> StatusCode {
         // Lock contention → 503, tell the client to retry.
         Error::LockTimeout { .. } => StatusCode::SERVICE_UNAVAILABLE,
 
+        // A write path that skipped the reload: a server bug.
+        Error::StaleState { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+
         // Internal faults the client cannot act on → 500.
         Error::Io(_)
         | Error::TomlRead(_)

@@ -76,6 +76,10 @@ fn staged_abort_commits_nothing() {
     assert!(!component_file_exists(&project, "auth"));
     assert!(!graph_lists(&project, "auth"));
     assert_recovers(&project);
+
+    // The aborted commit had raised the generation; that costs nothing.
+    project.run_ok(&["add", "component", "auth"]);
+    assert!(graph_lists(&project, "auth"));
 }
 
 /// The node file is in place but `graph.toml`, the commit point, is not.

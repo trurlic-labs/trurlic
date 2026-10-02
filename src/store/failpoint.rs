@@ -11,7 +11,7 @@
 /// A point in the store's write path where a test may abort the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Site {
-    /// Temp files written and verified; nothing renamed yet.
+    /// Temp files written and verified, generation raised; nothing renamed yet.
     Staged,
     /// Node files renamed into place; `graph.toml` (the commit point) not yet.
     NodesRenamed,
