@@ -21,8 +21,7 @@ pub use install::install;
 pub use map::map;
 pub use migrate::migrate;
 pub(crate) use pattern::remove_pattern;
-pub(crate) use query::check;
-pub use query::{query_file, status};
+pub(crate) use query::{check, query_file, status};
 pub use serve::serve;
 
 use std::path::Path;
