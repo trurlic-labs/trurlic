@@ -268,22 +268,7 @@ impl Store {
             }
         }
 
-        // Phase 3: Rename all to final paths.
-        // graph.toml is last (appended last to all_writes).
-        failpoint::hit(Site::Staged);
-        for (i, (tmp_path, target)) in staged.iter().enumerate() {
-            if graph_rename == Some(i) {
-                failpoint::hit(Site::NodesRenamed);
-            }
-            if let Err(e) = fs::rename(tmp_path, target) {
-                // Clean the failed tmp file and all remaining staged files.
-                let _ = fs::remove_file(tmp_path);
-                for (remaining, _) in staged.iter().skip(i + 1) {
-                    let _ = fs::remove_file(remaining);
-                }
-                return Err(Error::Io(e));
-            }
-        }
+        rename_staged(&staged, graph_rename)?;
 
         // Phase 4: Remove old files.
         //
@@ -1202,6 +1187,27 @@ impl Store {
         }
         Ok(count)
     }
+}
+
+/// Phase 3 of [`Store::commit_batch`]: rename each staged temp file onto its
+/// target, in order. `graph_rename` is the index of `graph.toml`, which is
+/// staged last so its rename is the commit point. On a failed rename, the
+/// failed and all later temp files are removed; earlier renames stand.
+fn rename_staged(staged: &[(PathBuf, PathBuf)], graph_rename: Option<usize>) -> Result<()> {
+    failpoint::hit(Site::Staged);
+    for (i, (tmp_path, target)) in staged.iter().enumerate() {
+        if graph_rename == Some(i) {
+            failpoint::hit(Site::NodesRenamed);
+        }
+        if let Err(e) = fs::rename(tmp_path, target) {
+            let _ = fs::remove_file(tmp_path);
+            for (remaining, _) in staged.iter().skip(i + 1) {
+                let _ = fs::remove_file(remaining);
+            }
+            return Err(Error::Io(e));
+        }
+    }
+    Ok(())
 }
 
 fn cleanup_tmp_files(staged: &[(PathBuf, PathBuf)]) {
