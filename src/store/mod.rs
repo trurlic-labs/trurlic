@@ -407,45 +407,34 @@ impl Store {
 
     // ── load_state ──────────────────────────────────────────────────────
 
+    /// Read and hash the named node files in parallel, each in one pass.
+    fn read_nodes<T: DeserializeOwned + Send>(
+        &self,
+        names: &[String],
+        path: fn(&Self, &str) -> PathBuf,
+    ) -> Result<Vec<(String, T, String)>> {
+        names
+            .par_iter()
+            .map(|name| {
+                let (file, hash) = self.read_toml_with_hash::<T>(&path(self, name))?;
+                Ok((name.clone(), file, hash))
+            })
+            .collect()
+    }
+
     pub fn load_state(&self) -> Result<ProjectState> {
         let (project, project_hash) =
             self.read_toml_with_hash::<ProjectFile>(&self.root.join("project.toml"))?;
 
-        // List all node files up front, then read + hash in parallel.
-        let comp_names = self.list_components()?;
-        let dec_names = self.list_decisions()?;
-        let pat_names = self.list_patterns()?;
-
-        // Read all node files concurrently via rayon. Each closure reads
-        // a TOML file and computes its BLAKE3 hash in a single pass.
-        // On a cold cache with 260 files, this reduces wall time from
-        // ~300ms (sequential) to ~50ms (parallel).
-        let comp_items: Vec<(String, ComponentFile, String)> = comp_names
-            .par_iter()
-            .map(|name| {
-                let (file, hash) =
-                    self.read_toml_with_hash::<ComponentFile>(&self.component_path(name))?;
-                Ok((name.clone(), file, hash))
-            })
-            .collect::<Result<_>>()?;
-
-        let dec_items: Vec<(String, DecisionFile, String)> = dec_names
-            .par_iter()
-            .map(|name| {
-                let (file, hash) =
-                    self.read_toml_with_hash::<DecisionFile>(&self.decision_path(name))?;
-                Ok((name.clone(), file, hash))
-            })
-            .collect::<Result<_>>()?;
-
-        let pat_items: Vec<(String, PatternFile, String)> = pat_names
-            .par_iter()
-            .map(|name| {
-                let (file, hash) =
-                    self.read_toml_with_hash::<PatternFile>(&self.pattern_path(name))?;
-                Ok((name.clone(), file, hash))
-            })
-            .collect::<Result<_>>()?;
+        // Read all node files concurrently via rayon, each file read and
+        // BLAKE3-hashed in a single pass. On a cold cache with 260 files,
+        // this reduces wall time from ~300ms (sequential) to ~50ms (parallel).
+        let comp_items =
+            self.read_nodes::<ComponentFile>(&self.list_components()?, Self::component_path)?;
+        let dec_items =
+            self.read_nodes::<DecisionFile>(&self.list_decisions()?, Self::decision_path)?;
+        let pat_items =
+            self.read_nodes::<PatternFile>(&self.list_patterns()?, Self::pattern_path)?;
 
         let mut hashes =
             HashMap::with_capacity(1 + comp_items.len() + dec_items.len() + pat_items.len());
