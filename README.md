@@ -217,6 +217,8 @@ verify_against_decisions(component, changed_files)
 | `remove_decision` | Remove a decision with cascade and coverage-impact analysis |
 | `remove_pattern` | Remove a pattern and its edges; its member decisions are kept |
 
+Every result fits 24 KiB, which Claude Code shows inline. A larger answer keeps its shape: its longest lists and strings lose their tails, and a `truncated` array names each cut with what it omitted.
+
 All tools carry [annotations](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so MCP clients can reason about each invocation.
 
 ## Development
