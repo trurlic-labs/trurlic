@@ -3,8 +3,12 @@
 //! Used by the file watcher: on external change, reload state from disk,
 //! diff against the previous snapshot, broadcast only the delta. Falls
 //! back to `FullReload` when the change is too large or ambiguous.
+//!
+//! Events come in a fixed order, so every client sees the same sequence:
+//! removed nodes, then added and updated nodes, both by name, then removed
+//! edges, then added edges, both by `(from, to, kind)`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -64,14 +68,13 @@ pub(crate) struct EdgeSnapshot {
 pub(crate) fn diff_states(old: &ProjectState, new: &ProjectState) -> Vec<WsEvent> {
     let mut events = Vec::new();
 
-    // Index old and new nodes by name for O(1) lookup.
-    let old_nodes: HashMap<&str, &NodeEntry> = old
+    let old_nodes: BTreeMap<&str, &NodeEntry> = old
         .graph_index
         .nodes
         .iter()
         .map(|n| (n.name.as_str(), n))
         .collect();
-    let new_nodes: HashMap<&str, &NodeEntry> = new
+    let new_nodes: BTreeMap<&str, &NodeEntry> = new
         .graph_index
         .nodes
         .iter()
@@ -104,13 +107,13 @@ pub(crate) fn diff_states(old: &ProjectState, new: &ProjectState) -> Vec<WsEvent
     }
 
     // Edge diffs — set comparison on (from, to, kind) triples.
-    let old_edges: HashSet<(&str, &str, EdgeKind)> = old
+    let old_edges: BTreeSet<(&str, &str, EdgeKind)> = old
         .graph_index
         .edges
         .iter()
         .map(|e| (e.from.as_str(), e.to.as_str(), e.kind))
         .collect();
-    let new_edges: HashSet<(&str, &str, EdgeKind)> = new
+    let new_edges: BTreeSet<(&str, &str, EdgeKind)> = new
         .graph_index
         .edges
         .iter()
@@ -229,6 +232,63 @@ mod tests {
         let events = diff_states(&old, &new);
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], WsEvent::NodeUpdated { name, .. } if name == "auth"));
+    }
+
+    fn edge(from: &str, to: &str) -> EdgeEntry {
+        EdgeEntry {
+            from: from.into(),
+            to: to.into(),
+            kind: EdgeKind::ConnectsTo,
+        }
+    }
+
+    fn describe(event: &WsEvent) -> String {
+        match event {
+            WsEvent::NodeAdded { node } => format!("+{}", node.name),
+            WsEvent::NodeUpdated { name, .. } => format!("~{name}"),
+            WsEvent::NodeRemoved { name } => format!("-{name}"),
+            WsEvent::EdgeAdded { edge } => format!("+{}->{}", edge.from, edge.to),
+            WsEvent::EdgeRemoved { from, to, .. } => format!("-{from}->{to}"),
+            WsEvent::FullReload => "reload".into(),
+        }
+    }
+
+    #[test]
+    fn events_arrive_in_name_order() {
+        let old = minimal_state(
+            vec![
+                node("zeta", NodeKind::Component, "z"),
+                node("mike", NodeKind::Component, "m1"),
+                node("hub", NodeKind::Component, "h"),
+                node("alpha", NodeKind::Component, "a"),
+            ],
+            vec![edge("zeta", "hub"), edge("alpha", "hub")],
+        );
+        let new = minimal_state(
+            vec![
+                node("yankee", NodeKind::Component, "y"),
+                node("mike", NodeKind::Component, "m2"),
+                node("hub", NodeKind::Component, "h"),
+                node("bravo", NodeKind::Component, "b"),
+            ],
+            vec![edge("yankee", "hub"), edge("bravo", "hub")],
+        );
+
+        let events: Vec<String> = diff_states(&old, &new).iter().map(describe).collect();
+        assert_eq!(
+            events,
+            [
+                "-alpha",
+                "-zeta",
+                "+bravo",
+                "~mike",
+                "+yankee",
+                "-alpha->hub",
+                "-zeta->hub",
+                "+bravo->hub",
+                "+yankee->hub",
+            ]
+        );
     }
 
     #[test]
