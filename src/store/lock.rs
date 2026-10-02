@@ -21,6 +21,8 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Proof that this process holds the store's exclusive file lock. Write
+/// methods take `&StoreLock`; dropping it releases the lock.
 #[derive(Debug)]
 #[must_use = "dropping the lock immediately releases it"]
 pub struct StoreLock {
@@ -28,7 +30,7 @@ pub struct StoreLock {
 }
 
 impl StoreLock {
-    /// Wrap a file this process has just locked, recording its PID.
+    /// Wrap the file whose lock this process now holds, and record its PID.
     /// The PID is a diagnostic only, so a failed write still yields the lock.
     fn claim(mut file: File) -> Self {
         let _ = file.set_len(0);
