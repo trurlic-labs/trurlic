@@ -1,12 +1,13 @@
 //! `TRURLIC_FAILPOINT` aborts the binary at a named store write site, and
 //! the next run starts from a graph `trurlic check` accepts.
 
+use std::collections::BTreeSet;
 use std::fs;
-use std::process::ExitStatus;
+use std::process::{ExitStatus, Stdio};
 
 use serde_json::json;
 
-use crate::harness::{McpClient, Project};
+use crate::harness::{McpClient, Pause, Project};
 
 const FAILPOINT: &str = "TRURLIC_FAILPOINT";
 
@@ -46,6 +47,13 @@ fn assert_recovers(project: &Project) {
         .unwrap()
         .count();
     assert_eq!(leftovers, 0, "temp files survived the next run");
+}
+
+fn temp_files(project: &Project) -> BTreeSet<String> {
+    fs::read_dir(project.path().join(".trurlic/.state/tmp"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect()
 }
 
 fn graph_lists(project: &Project, name: &str) -> bool {
@@ -122,6 +130,34 @@ fn graph_renamed_abort_leaves_the_removed_node_file() {
 
     assert!(!graph_lists(&project, "use-jwt"));
     assert!(decision_file_exists(&project, "use-jwt"));
+    assert_recovers(&project);
+}
+
+/// A read command runs while another process holds the lock with its files
+/// staged. It leaves them alone, and the commit completes.
+#[test]
+fn status_during_a_staged_commit_leaves_it_to_complete() {
+    let project = Project::init();
+    let pause = Pause::arm(&project, "commit.staged:1");
+    let mut writer = project
+        .command()
+        .args(["add", "component", "auth"])
+        .envs(pause.env())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    pause.wait();
+    let staged = temp_files(&project);
+    assert!(!staged.is_empty());
+
+    let output = project.run_ok(&["status"]);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("components: 0"), "{stdout}");
+    assert_eq!(temp_files(&project), staged);
+    pause.resume();
+    assert!(writer.wait().unwrap().success());
+    assert!(graph_lists(&project, "auth"));
     assert_recovers(&project);
 }
 

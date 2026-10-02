@@ -38,16 +38,13 @@ pub enum DryRun {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Locate the store for `cwd`, verify its format version, and clean up any
-/// temp files left by an interrupted atomic write. Every command funnels
-/// through here so a prior crash self-heals on the next invocation.
+/// Locate the store for `cwd`, verify its format version, and clear what an
+/// interrupted write left, if no other process holds the lock. Every command
+/// funnels through here so a prior crash heals on the next invocation.
 pub(crate) fn discover_store(cwd: &Path) -> Result<Store> {
     let store = Store::discover(cwd)?;
     store.check_version()?;
-    let stale = store.clean_stale_tmp()?;
-    if stale > 0 {
-        eprintln!("warning: cleaned {stale} stale temp file(s) from interrupted write");
-    }
+    store.try_recover()?;
     Ok(store)
 }
 
@@ -65,8 +62,8 @@ fn warn_on_issues(state: &ProjectState) {
 }
 
 /// Open the store for a read-only command: discover, load state, and warn on
-/// any consistency issues. Acquires no lock — read commands never pay locking
-/// cost (see `tiered-store-access-helpers-separate-read-only-from-mutable`).
+/// any consistency issues. Waits for no lock: the load runs unlocked, and
+/// recovery in [`discover_store`] is skipped while another process holds it.
 pub(crate) fn open_store(cwd: &Path) -> Result<(Store, ProjectState)> {
     let store = discover_store(cwd)?;
     let state = store.load_state()?;

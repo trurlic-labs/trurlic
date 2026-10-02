@@ -55,7 +55,7 @@ impl Store {
     /// renamed, so a reader sees the old counter or the new one.
     pub(super) fn raise_generation(&self, _lock: &StoreLock) -> Result<u64> {
         let next = self.read_generation()?.saturating_add(1);
-        let staged = self.tmp_dir().join("generation");
+        let staged = self.temp_path();
         fs::write(&staged, format!("{next}\n"))?;
         fs::rename(&staged, self.generation_path())?;
         Ok(next)

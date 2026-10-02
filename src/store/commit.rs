@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -36,6 +37,15 @@ impl PendingWrite {
 }
 
 impl Store {
+    /// A fresh path in `.state/tmp/`, named after this process and a
+    /// counter. A name is never used twice, so no write stages onto a file
+    /// that a crashed write of another process left behind.
+    pub(super) fn temp_path(&self) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        self.tmp_dir().join(format!("{}-{n}", std::process::id()))
+    }
+
     /// Write `value` to `target` atomically via `.state/tmp/`.
     /// Serializes to TOML, writes to a temp file, validates by deserializing
     /// back from disk, then renames to the final path. Caller **must** hold
@@ -51,10 +61,7 @@ impl Store {
         let tmp_dir = self.tmp_dir();
         fs::create_dir_all(&tmp_dir)?;
 
-        let filename = target
-            .file_name()
-            .ok_or_else(|| Error::Validation("target path has no filename".into()))?;
-        let tmp_path = tmp_dir.join(filename);
+        let tmp_path = self.temp_path();
 
         let content = toml::to_string_pretty(value)?;
 
@@ -161,14 +168,8 @@ impl Store {
         // Phase 1: Write all to tmp
         let mut staged: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(all_writes.len());
 
-        for (i, write) in all_writes.iter().enumerate() {
-            let filename = write
-                .target
-                .file_name()
-                .ok_or_else(|| Error::Validation("target path has no filename".into()))?;
-            let tmp_name = format!("{i}_{}", filename.to_string_lossy());
-            let tmp_path = tmp_dir.join(tmp_name);
-
+        for write in &all_writes {
+            let tmp_path = self.temp_path();
             if let Err(e) = fs::write(&tmp_path, &write.content) {
                 cleanup_tmp_files(&staged);
                 return Err(Error::Io(e));

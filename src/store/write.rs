@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -892,30 +891,6 @@ impl Store {
 
         Ok(slug)
     }
-
-    // ── Crash recovery ───────────────────────────────────────────────────
-
-    pub fn clean_stale_tmp(&self) -> Result<usize> {
-        let tmp_dir = self.tmp_dir();
-        let entries = match fs::read_dir(&tmp_dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(0),
-            Err(e) => return Err(Error::Io(e)),
-        };
-
-        let mut count = 0;
-        for entry in entries {
-            let entry = entry?;
-            if entry.path().is_file() {
-                match fs::remove_file(entry.path()) {
-                    Ok(()) => count += 1,
-                    Err(e) if e.kind() == ErrorKind::NotFound => {}
-                    Err(e) => return Err(Error::Io(e)),
-                }
-            }
-        }
-        Ok(count)
-    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -923,34 +898,8 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::STATE_DIR;
     use crate::store::testing::*;
     use tempfile::TempDir;
-
-    // ── crash recovery ───────────────────────────────────────────────────
-
-    #[test]
-    fn clean_stale_tmp_removes_leftovers() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-
-        let tmp_dir = store.root().join(STATE_DIR).join("tmp");
-        fs::create_dir_all(&tmp_dir).unwrap();
-        fs::write(tmp_dir.join("stale.toml"), "leftover").unwrap();
-        fs::write(tmp_dir.join("another.toml"), "leftover").unwrap();
-
-        let count = store.clean_stale_tmp().unwrap();
-        assert_eq!(count, 2);
-
-        assert_eq!(store.clean_stale_tmp().unwrap(), 0);
-    }
-
-    #[test]
-    fn clean_stale_tmp_no_tmp_dir() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        assert_eq!(store.clean_stale_tmp().unwrap(), 0);
-    }
 
     // ── remove_file ──────────────────────────────────────────────────────
 

@@ -13,15 +13,17 @@ use super::{ProjectState, Store, StoreLock};
 
 impl Store {
     /// Take the guard `take_guard` returns, then the exclusive lock, then
-    /// load the graph under it. A server passes its state write lock as the
-    /// guard and replaces the state it guards with the loaded one; the CLI
-    /// passes `|| ()`.
+    /// clear what an interrupted write left and load the graph under it. A
+    /// server passes its state write lock as the guard and replaces the state
+    /// it guards with the loaded one; the CLI passes `|| ()`.
     pub(crate) fn begin_write<G>(
         &self,
         take_guard: impl FnMut() -> G,
     ) -> Result<(G, StoreLock, ProjectState)> {
         let (guard, lock) = self.lock_after(take_guard)?;
-        let state = self.load_checked()?;
+        self.check_version()?;
+        self.recover(&lock)?;
+        let state = self.load_state()?;
         Ok((guard, lock, state))
     }
 

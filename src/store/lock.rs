@@ -71,6 +71,17 @@ impl Store {
         Ok((guard, StoreLock::claim(file)))
     }
 
+    /// Take the exclusive lock only if it is free now; `None` while another
+    /// process holds it.
+    pub(super) fn try_lock(&self) -> Result<Option<StoreLock>> {
+        let file = self.open_lock_file()?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(StoreLock::claim(file))),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(e)) => Err(Error::Io(e)),
+        }
+    }
+
     /// Acquire the shared lock, waiting up to 5 seconds for a writer.
     pub(super) fn lock_shared(&self) -> Result<SharedLock> {
         let mut file = self.open_lock_file()?;
@@ -217,6 +228,17 @@ mod tests {
             let acquired = acquired_rx.recv_timeout(LOCK_TIMEOUT).unwrap();
             assert!(acquired.is_ok(), "{acquired:?}");
         });
+    }
+
+    #[test]
+    fn try_lock_declines_a_held_lock_and_takes_a_free_one() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let held = store.lock().unwrap();
+
+        assert!(store.try_lock().unwrap().is_none());
+        drop(held);
+        assert!(store.try_lock().unwrap().is_some());
     }
 
     #[test]
