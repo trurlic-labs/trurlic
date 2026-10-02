@@ -58,6 +58,22 @@ pub enum Error {
     )]
     StaleState { loaded: u64, on_disk: u64 },
 
+    #[error(
+        "the commit is recorded in {} but not applied ({source}); the next write applies it",
+        journal.display()
+    )]
+    CommitPending {
+        journal: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error(
+        "cannot apply the commit recorded in {}: {detail}; delete that file to drop \
+         the commit, then run `trurlic check`",
+        journal.display()
+    )]
+    BadJournal { journal: PathBuf, detail: String },
+
     #[error("{0} consistency error(s) found")]
     CheckFailed(usize),
 

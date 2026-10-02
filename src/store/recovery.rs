@@ -1,9 +1,11 @@
-//! Clearing what an interrupted write left in `.state/tmp/`.
+//! Finishing what an interrupted write left in `.state/`: the journal of a
+//! commit that did not complete, then temp files.
 //!
-//! Only the holder of the exclusive lock touches `.state/tmp/`: a commit
-//! stages its files there before renaming them into place, so a cleanup
-//! without the lock could delete a staged file mid-commit. Under the lock
-//! no commit is in flight, and every temp file is a leftover.
+//! Only the holder of the exclusive lock touches either: a commit stages
+//! its files in `.state/tmp/` and applies its journal under the lock, so a
+//! cleanup without it could delete a staged file mid-commit. Under the lock
+//! no commit is in flight, a journal is a commit to finish, and once it is
+//! applied every temp file is a leftover.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -13,8 +15,12 @@ use crate::Result;
 use super::{Store, StoreLock};
 
 impl Store {
-    /// Remove the temp files an interrupted write left behind.
-    pub(crate) fn recover(&self, _lock: &StoreLock) -> Result<()> {
+    /// Apply the journal an interrupted commit left, then remove the temp
+    /// files left behind.
+    pub(crate) fn recover(&self, lock: &StoreLock) -> Result<()> {
+        if self.replay_journal(lock)? {
+            eprintln!("warning: applied a commit an interrupted write left unfinished");
+        }
         let removed = self.remove_temps()?;
         if removed > 0 {
             eprintln!("warning: removed {removed} temp file(s) left by an interrupted write");
@@ -23,8 +29,8 @@ impl Store {
     }
 
     /// [`recover`](Self::recover) if the exclusive lock is free now. While
-    /// another process holds it, its commit may be using `.state/tmp/`; the
-    /// next writer recovers under its own lock.
+    /// another process holds it, its commit may be using `.state/`; the next
+    /// writer recovers under its own lock.
     pub(crate) fn try_recover(&self) -> Result<()> {
         match self.try_lock()? {
             Some(lock) => self.recover(&lock),

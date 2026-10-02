@@ -1,9 +1,8 @@
-//! The commit path: staging node files and `graph.toml`, validating the
-//! graph, and renaming everything into place with `graph.toml` last.
+//! The commit path: validating the graph, then putting node files and
+//! `graph.toml` on disk through the journal (see `journal.rs`).
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -18,14 +17,12 @@ use super::schema::GraphIndex;
 use super::state::ProjectState;
 use super::{Store, StoreLock};
 
-// ── PendingWrite ─────────────────────────────────────────────────────────────
-
 /// A file write staged for batch commit.
 /// Created via [`Store::prepare_write`], executed via [`Store::commit_batch`].
 #[must_use = "a pending write must be passed to commit_batch or commit_with_graph"]
 pub(crate) struct PendingWrite {
-    target: PathBuf,
-    content: String,
+    pub(super) target: PathBuf,
+    pub(super) content: String,
 }
 
 impl PendingWrite {
@@ -81,14 +78,16 @@ impl Store {
         })
     }
 
-    /// Commit a batch of writes and removes, and return the store's
-    /// generation after it.
+    /// Commit a batch of writes and removes through the journal, and
+    /// return the store's generation after it.
     ///
-    /// Every write is staged and flushed in `.state/tmp/`, the generation
-    /// raised, then each staged file renamed onto its target. If
-    /// `graph_update` is `Some`, it is sorted in place and `graph.toml` is
-    /// the last rename, the commit point. The removed files go after it, and
-    /// the directories are flushed last.
+    /// The writes are staged and flushed, the generation raised, and the
+    /// journal put in place, which commits them; then each staged file is
+    /// renamed onto its target and the removed files go. If `graph_update`
+    /// is `Some`, it is sorted in place and `graph.toml` is the last rename,
+    /// so a reader without the lock sees the old index until every node
+    /// file is in place. After the journal, a failure is
+    /// [`Error::CommitPending`]: the commit lands at the next write.
     pub(crate) fn commit_batch(
         &self,
         lock: &StoreLock,
@@ -100,80 +99,36 @@ impl Store {
             return self.read_generation();
         }
 
-        // Build the full set of writes: node files first, graph.toml last.
         let mut all_writes = writes;
-        let graph_rename = graph_update.is_some().then_some(all_writes.len());
-
         if let Some(index) = graph_update {
             index.sort();
             all_writes.push(self.prepare_write(&self.graph_path(), &*index)?);
         }
-
-        // Verify all target paths up-front before touching the filesystem.
-        for write in &all_writes {
-            self.verify_path(&write.target)?;
-        }
-        for path in &removes {
+        for path in all_writes.iter().map(|write| &write.target).chain(&removes) {
             self.verify_path(path)?;
         }
 
-        fs::create_dir_all(self.tmp_dir())?;
-        let mut staged: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(all_writes.len());
-        for write in &all_writes {
-            let parent = write.target.parent().unwrap_or(&self.root);
-            match fs::create_dir_all(parent)
-                .map_err(Error::from)
-                .and_then(|()| self.stage(write.content.as_bytes()))
-            {
-                Ok(temp) => staged.push((temp, write.target.clone())),
-                Err(e) => {
-                    cleanup_tmp_files(&staged);
-                    return Err(e);
-                }
-            }
-        }
-
-        // Raised before the first rename, so a failure to record it leaves the
+        let journal = self.stage_commit(&all_writes, &removes)?;
+        // Raised before the journal, so a failure to record it leaves the
         // graph untouched. A crash after it leaves the counter ahead of the
         // graph, which still orders every later load correctly.
         let generation = self
             .raise_generation(lock)
-            .inspect_err(|_| cleanup_tmp_files(&staged))?;
-        rename_staged(&staged, graph_rename)?;
-
-        // Best-effort: the renames already committed the new state. A
-        // remove failure leaves an orphan file but does not roll back the
-        // writes; `trurlic check` surfaces the inconsistency.
-        for path in &removes {
-            if let Err(e) = fs::remove_file(path)
-                && e.kind() != ErrorKind::NotFound
-            {
-                eprintln!("warning: failed to remove {}: {e}", path.display());
-            }
-        }
-
-        let dirs: BTreeSet<&Path> = staged
-            .iter()
-            .map(|(_, target)| target)
-            .chain(&removes)
-            .filter_map(|path| path.parent())
-            .collect();
-        for dir in dirs {
-            sync_dir(dir)?;
-        }
-
+            .inspect_err(|_| self.discard(&journal))?;
+        failpoint::hit(Site::Staged);
+        self.write_journal(lock, &journal)?;
+        failpoint::hit(Site::Journaled);
+        self.apply_journal(lock, &journal)?;
         Ok(generation)
     }
 
     /// Validate the full graph derived from `state`, then commit node files
-    /// and a normalized `graph.toml` in one atomic transaction.
+    /// and a normalized `graph.toml` in one journaled commit.
     ///
-    /// This is the primary write path for all graph-mutating operations.
-    /// It builds an [`InMemoryGraph`] from the current state, runs all
-    /// validation checks, and — only if the graph is error-free — exports
-    /// a deterministically sorted index and commits it alongside the
-    /// provided node file writes. `graph.toml` is renamed last, serving
-    /// as the commit point per the storage spec.
+    /// This is the write path for every graph mutation. It builds an
+    /// [`InMemoryGraph`](super::graph::InMemoryGraph) from `state`, runs all
+    /// validation checks, and only if the graph has no error exports a
+    /// sorted index and commits it with the node file writes.
     ///
     /// On success, `state` matches disk: its index is the sorted one just
     /// written, its graph the validated one, its generation the new one.
@@ -221,39 +176,6 @@ impl Store {
     }
 }
 
-/// Phase 3 of [`Store::commit_batch`]: rename each staged temp file onto its
-/// target, in order. `graph_rename` is the index of `graph.toml`, which is
-/// staged last so its rename is the commit point. On a failed rename, the
-/// failed and all later temp files are removed; earlier renames stand.
-fn rename_staged(staged: &[(PathBuf, PathBuf)], graph_rename: Option<usize>) -> Result<()> {
-    failpoint::hit(Site::Staged);
-    for (i, (tmp_path, target)) in staged.iter().enumerate() {
-        let is_graph = graph_rename == Some(i);
-        if is_graph {
-            failpoint::hit(Site::NodesRenamed);
-        }
-        if let Err(e) = fs::rename(tmp_path, target) {
-            let _ = fs::remove_file(tmp_path);
-            for (remaining, _) in staged.iter().skip(i + 1) {
-                let _ = fs::remove_file(remaining);
-            }
-            return Err(Error::Io(e));
-        }
-        if is_graph {
-            failpoint::hit(Site::GraphRenamed);
-        }
-    }
-    Ok(())
-}
-
-fn cleanup_tmp_files(staged: &[(PathBuf, PathBuf)]) {
-    for (tmp_path, _) in staged {
-        let _ = fs::remove_file(tmp_path);
-    }
-}
-
-// ── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -263,7 +185,7 @@ mod tests {
     use crate::store::testing::*;
     use tempfile::TempDir;
 
-    // ── atomic write guarantees ──────────────────────────────────────────
+    // atomic write guarantees
 
     #[test]
     fn atomic_write_leaves_no_tmp_on_success() {
@@ -311,7 +233,7 @@ mod tests {
         assert!(matches!(err, Error::Validation(_)));
     }
 
-    // ── commit_batch ─────────────────────────────────────────────────────
+    // commit_batch
 
     #[test]
     fn commit_batch_writes_multiple_files() {
@@ -479,7 +401,7 @@ mod tests {
         assert_eq!(read_back.edges[1].from, "z-node");
     }
 
-    // ── commit_with_graph ────────────────────────────────────────────────
+    // commit_with_graph
 
     #[test]
     fn commit_with_graph_validates_and_writes() {

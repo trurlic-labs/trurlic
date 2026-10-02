@@ -1,6 +1,7 @@
 //! Both servers' watchers, with a reload paused at `watcher.reload` while it
 //! holds the shared lock. A write from another process waits for the reload
-//! and is then picked up, and a write from the server itself completes.
+//! and is then picked up, and a write from the server itself completes. A
+//! commit another process left unfinished is applied by the watcher.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -175,4 +176,32 @@ fn mcp_watcher_serves_writes_after_the_counter_is_deleted() {
     assert_converges(&project, || {
         names(&client.call_tool("get_architecture", json!({}))["components"])
     });
+}
+
+/// A CLI commit fails after its journal is in place. The server's watcher
+/// sees its renames, finds the journal, applies the commit and serves it,
+/// with no write of its own.
+#[test]
+fn mcp_watcher_applies_a_commit_another_process_left_unfinished() {
+    let project = Project::init();
+    let (mut client, _) = McpClient::connect(&project);
+
+    let output = project
+        .command()
+        .args(["add", "component", "auth"])
+        .env("TRURLIC_FAILPOINT", "commit.rename:2")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
+    let journal = project.path().join(".trurlic/.state/txn.toml");
+    let deadline = Instant::now() + SETTLE;
+    while journal.exists() {
+        assert!(Instant::now() < deadline, "the journal was never applied");
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_converges(&project, || {
+        names(&client.call_tool("get_architecture", json!({}))["components"])
+    });
+    assert!(components_on_disk(&project).contains("auth"));
 }
