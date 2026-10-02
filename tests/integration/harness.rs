@@ -3,8 +3,8 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Output, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
@@ -66,8 +66,14 @@ pub struct McpClient {
 impl McpClient {
     /// Spawn `trurlic serve` in `project`, without initializing the session.
     pub fn spawn(project: &Project) -> Self {
+        Self::spawn_with_env(project, &[])
+    }
+
+    /// Spawn `trurlic serve` with extra environment variables.
+    pub fn spawn_with_env(project: &Project, vars: &[(&str, &str)]) -> Self {
         let mut child = project
             .command()
+            .envs(vars.iter().copied())
             .arg("serve")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -100,8 +106,13 @@ impl McpClient {
     /// Spawn and complete the `initialize` handshake. Returns the
     /// `initialize` result.
     pub fn connect(project: &Project) -> (Self, Value) {
-        let mut client = Self::spawn(project);
-        let result = client.request(
+        Self::connect_with_env(project, &[])
+    }
+
+    /// [`connect`](Self::connect) with extra environment variables.
+    pub fn connect_with_env(project: &Project, vars: &[(&str, &str)]) -> (Self, Value) {
+        let mut client = Self::spawn_with_env(project, vars);
+        let handshake = client.request(
             "initialize",
             json!({
                 "protocolVersion": "2025-11-25",
@@ -110,7 +121,7 @@ impl McpClient {
             }),
         );
         client.notify("notifications/initialized");
-        (client, result)
+        (client, handshake)
     }
 
     fn send(&mut self, message: &Value) {
@@ -125,19 +136,27 @@ impl McpClient {
 
     /// Send a request and return the full JSON-RPC response.
     pub fn exchange(&mut self, method: &str, params: Value) -> Value {
+        self.try_exchange(method, params)
+            .unwrap_or_else(|| panic!("server closed stdout instead of answering {method}"))
+    }
+
+    /// Send a request and return the full JSON-RPC response, or `None` if
+    /// the server exited without answering.
+    pub fn try_exchange(&mut self, method: &str, params: Value) -> Option<Value> {
         let id = self.next_id;
         self.next_id += 1;
         self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
 
-        let line = self
-            .lines
-            .recv_timeout(RESPONSE_TIMEOUT)
-            .unwrap_or_else(|e| panic!("no response to {method} (id {id}): {e}"));
+        let line = match self.lines.recv_timeout(RESPONSE_TIMEOUT) {
+            Ok(line) => line,
+            Err(RecvTimeoutError::Disconnected) => return None,
+            Err(RecvTimeoutError::Timeout) => panic!("no response to {method} (id {id})"),
+        };
         let response: Value = serde_json::from_str(&line)
             .unwrap_or_else(|e| panic!("response to {method} is not JSON ({e}): {line}"));
         assert_eq!(response["jsonrpc"], "2.0", "{response}");
         assert_eq!(response["id"], id, "response id mismatch: {response}");
-        response
+        Some(response)
     }
 
     /// Send a request and return its `result`, failing on a JSON-RPC error.
@@ -153,19 +172,31 @@ impl McpClient {
     /// Call a tool and return its decoded payload, failing if the tool
     /// reported `isError`.
     pub fn call_tool(&mut self, name: &str, arguments: Value) -> Value {
-        let result = self.request(
+        let envelope = self.request(
             "tools/call",
             json!({ "name": name, "arguments": arguments }),
         );
-        let text = result["content"][0]["text"]
+        let text = envelope["content"][0]["text"]
             .as_str()
-            .unwrap_or_else(|| panic!("{name}: no text content in {result}"));
+            .unwrap_or_else(|| panic!("{name}: no text content in {envelope}"));
         assert_ne!(
-            result.get("isError"),
+            envelope.get("isError"),
             Some(&Value::Bool(true)),
             "{name} failed: {text}"
         );
         serde_json::from_str(text).unwrap_or_else(|e| panic!("{name}: payload not JSON ({e})"))
+    }
+}
+
+impl McpClient {
+    /// Close stdin and wait for the server to exit.
+    #[cfg_attr(
+        not(feature = "failpoints"),
+        expect(dead_code, reason = "only the failpoint tests need it")
+    )]
+    pub fn finish(mut self) -> ExitStatus {
+        drop(self.stdin.take());
+        self.child.wait().unwrap()
     }
 }
 
