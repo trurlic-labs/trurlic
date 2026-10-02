@@ -4,8 +4,9 @@
 //! instructions, sandwiched between a shared preamble (source code mandate)
 //! and a shared protocol (interaction or agent, depending on mode).
 //!
-//! Prompts are transport-agnostic. The MCP tool `get_step_prompt` calls
-//! `build_step_prompt` and combines the result with `get_context` output.
+//! Prompts are transport-agnostic. The MCP tool `get_step_prompt` returns
+//! the output of `build_step_prompt` without the component's context, which
+//! `get_context` serves.
 
 use std::borrow::Cow;
 
@@ -35,8 +36,6 @@ pub struct StepPrompt {
 /// Build the system instructions for a specific workflow step.
 ///
 /// Returns the prompt text and optional metadata (like focus concerns).
-/// The caller (MCP tool dispatch) combines this with `get_context` output
-/// to form the full tool response.
 ///
 /// `task_type` is optional context for steps that generate variant prompts
 /// (e.g. `design_check` varies by Feature vs Review vs NewComponent).

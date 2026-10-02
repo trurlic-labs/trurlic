@@ -472,8 +472,8 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
             {
                 "name": "get_step_prompt",
                 "description": "Get the prompt for a specific workflow step. \
-                    Called as directed by advance. Returns system instructions, \
-                    component context, and step metadata.",
+                    Called as directed by advance. Returns the step's system \
+                    instructions; call get_context for the component's brief.",
                 "annotations": {
                     "title": "Get step prompt",
                     "readOnlyHint": true,
@@ -781,14 +781,8 @@ fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope 
         Err(msg) => return tool_error(&msg),
     };
 
-    let ctx = match context::get_context(state, component, task, context::ContextDepth::Full) {
-        Ok(c) => c,
-        Err(msg) => return tool_error(&msg),
-    };
-
     let mut result = serde_json::json!({
         "system_instructions": prompt.instructions,
-        "context": ctx,
         "step": step,
     });
     if !prompt.focus.is_empty() {
@@ -1203,6 +1197,36 @@ mod tests {
             "error should mention mode: {}",
             envelope.content[0].text,
         );
+    }
+
+    #[test]
+    fn get_step_prompt_returns_the_step_without_the_component_context() {
+        let mut state = empty_state();
+        state.components.insert(
+            "auth".into(),
+            std::sync::Arc::new(crate::store::schema::ComponentFile {
+                component: crate::store::schema::Component {
+                    name: "auth".into(),
+                    description: "Auth".into(),
+                },
+            }),
+        );
+        state.rebuild_graph();
+
+        let args = serde_json::json!({
+            "component": "auth",
+            "step": "define_scope",
+            "mode": "agent",
+        });
+        let envelope = call_read_tool(&state, "get_step_prompt", &args);
+        let payload: Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        let keys: Vec<&str> = payload
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["step", "system_instructions"]);
     }
 
     #[test]
