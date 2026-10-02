@@ -1,7 +1,7 @@
 [decision]
 component = "map"
 choice = "State diffing with hash-based change detection and granularity cap"
-reason = "The diff engine compares two ProjectState snapshots by indexing nodes into HashMaps for O(1) lookup, using BLAKE3 content hashes to detect node updates without deep comparison, and computing edge diffs via set difference on (from, to, kind) triples. When the diff exceeds 50 granular events (e.g. a git checkout rewriting many files), it falls back to a single FullReload event — cheaper for the client than processing hundreds of incremental updates. This keeps the common case (1-5 node changes) fast and the worst case bounded."
+reason = "The diff engine compares two ProjectState snapshots by indexing nodes into BTreeMaps by name, using BLAKE3 content hashes to detect node updates without deep comparison, and computing edge diffs via BTreeSet difference on (from, to, kind) triples. Events come in a fixed order: removed nodes, then added and updated nodes, both by name, then removed edges, then added edges, both by (from, to, kind) as in graph.toml. Hash maps made the order of one change's events differ between server runs. When the diff exceeds 50 granular events (e.g. a git checkout rewriting many files), it falls back to a single FullReload event, cheaper for the client than processing hundreds of incremental updates. This keeps the common case (1-5 node changes) fast and the worst case bounded."
 alternatives = [
     "always send full state on every change: wastes bandwidth and forces full client re-render for single-node edits",
     "deep structural comparison without hashes: slower for large graphs and requires comparing every field",
@@ -13,3 +13,12 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:44:57.583162277Z"
+
+[[decision.code_refs]]
+file = "src/map/diff.rs"
+symbol = "diff_states"
+
+[[decision.history]]
+choice = "State diffing with hash-based change detection and granularity cap"
+reason = "The diff engine compares two ProjectState snapshots by indexing nodes into HashMaps for O(1) lookup, using BLAKE3 content hashes to detect node updates without deep comparison, and computing edge diffs via set difference on (from, to, kind) triples. When the diff exceeds 50 granular events (e.g. a git checkout rewriting many files), it falls back to a single FullReload event — cheaper for the client than processing hundreds of incremental updates. This keeps the common case (1-5 node changes) fast and the worst case bounded."
+changed_at = "2026-10-02T13:32:54.813395187Z"

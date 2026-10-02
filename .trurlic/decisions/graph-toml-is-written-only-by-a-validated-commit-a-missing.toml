@@ -1,0 +1,23 @@
+[decision]
+component = "store"
+choice = "graph.toml is written only by a validated commit; a missing one is rebuilt in memory at load, and no command deletes it"
+reason = "check --rebuild deleted graph.toml before loading, so a load that failed left the store with no index; it then committed without validation through a direct file removal outside the journal, and dropped every edge other than belongs_to, which only graph.toml records. load_graph_index already rebuilds the node list, hashes, tags and belongs_to edges of a missing graph.toml from the node files, and the next commit stores it. A damaged graph.toml is restored from version control, which keeps the edges no node file can reproduce."
+alternatives = [
+    "Keep check --rebuild but validate and journal it - rejected: it still discards connects_to, depends_on, constrains, member_of and applies_to edges, and a load that already tolerates a missing index makes the command redundant",
+    "Rebuild only when graph.toml fails to parse - rejected: silently dropping edges on a parse error turns a recoverable file into lost data",
+]
+tags = [
+    "integrity",
+    "storage",
+    "recovery",
+]
+attribution = "agent"
+created = "2026-10-02T13:33:05.197194358Z"
+
+[[decision.code_refs]]
+file = "src/store/mod.rs"
+symbol = "Store::load_graph_index"
+
+[[decision.code_refs]]
+file = "src/commands/query.rs"
+symbol = "check"

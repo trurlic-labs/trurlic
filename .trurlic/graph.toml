@@ -1,5 +1,5 @@
 version = 1
-rebuilt = "2026-10-02T10:50:09.311016785Z"
+rebuilt = "2026-10-02T13:33:21.630791999Z"
 
 [[nodes]]
 name = "256-bit-csprng-token-with-constant-time-comparison-for"
@@ -190,6 +190,16 @@ tags = [
 hash = "ec7c39efe845a6118c788ffd16e64b65c7bbaac568f9de46d6bb4ff868e10741"
 
 [[nodes]]
+name = "every-list-a-tool-response-or-map-event-carries-has-a-fixed"
+kind = "decision"
+tags = [
+    "determinism",
+    "serialization",
+    "api",
+]
+hash = "ea9ad30c315cfe77a50fc47c631c0d9e2d1505e16fcf029ab0abbf8516cfb527"
+
+[[nodes]]
 name = "every-store-access-cleans-stale-temp-files-and-warns-on"
 kind = "decision"
 tags = [
@@ -278,6 +288,16 @@ tags = [
     "security",
 ]
 hash = "b3c036821aab02b2cea46a6a888928ad128d368db85c0fe9febe097f454485f1"
+
+[[nodes]]
+name = "graph-toml-is-written-only-by-a-validated-commit-a-missing"
+kind = "decision"
+tags = [
+    "integrity",
+    "storage",
+    "recovery",
+]
+hash = "0bf7958a2749b4d4da4fd195093b822c9ea63624b96dd8057ddfafa621fa4e8a"
 
 [[nodes]]
 name = "graph-toml-s-rebuilt-stamp-is-carried-over-unchanged"
@@ -517,7 +537,7 @@ tags = [
     "performance",
     "api-design",
 ]
-hash = "4d52bf385ca85cb36a6b6b104c02de81e3ef73531fe92991800dc83f89fc81c5"
+hash = "ecffd1756be7a7f7ad2c9d488cba6b2fa23ae1ca3bce41a992c44c827b09a7df"
 
 [[nodes]]
 name = "static-tool-catalogue-via-lazylock-returned-by-reference"
@@ -821,6 +841,11 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
+from = "every-list-a-tool-response-or-map-event-carries-has-a-fixed"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
 from = "every-store-access-cleans-stale-temp-files-and-warns-on"
 to = "commands"
 kind = "belongs_to"
@@ -933,6 +958,11 @@ kind = "belongs_to"
 [[edges]]
 from = "gated-steps-require-user-input-ungated-steps-are-autonomous"
 to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "graph-toml-is-written-only-by-a-validated-commit-a-missing"
+to = "store"
 kind = "belongs_to"
 
 [[edges]]
