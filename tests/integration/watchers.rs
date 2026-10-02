@@ -4,13 +4,12 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::harness::{MapServer, McpClient, Project};
+use crate::harness::{MapServer, McpClient, Pause, Project};
 
 /// Longer than several lock polls, shorter than the 5 s lock timeout.
 const HOLD: Duration = Duration::from_millis(500);
@@ -18,37 +17,15 @@ const HOLD: Duration = Duration::from_millis(500);
 /// How long a reload may take to show up before the test fails.
 const SETTLE: Duration = Duration::from_secs(10);
 
-/// The first watcher reload, armed to pause until `marker` is deleted.
-struct PausedReload {
-    marker: PathBuf,
-}
-
-impl PausedReload {
-    fn arm(project: &Project) -> Self {
-        Self {
-            marker: project.path().join("reload.paused"),
-        }
-    }
-
-    fn env(&self) -> [(&str, &str); 2] {
-        [
-            ("TRURLIC_FAILPOINT", "watcher.reload:1"),
-            ("TRURLIC_FAILPOINT_PAUSE", self.marker.to_str().unwrap()),
-        ]
-    }
-}
-
-fn wait_until_paused(marker: &Path) {
-    let deadline = Instant::now() + SETTLE;
-    while !marker.exists() {
-        assert!(Instant::now() < deadline, "the watcher never reloaded");
-        thread::sleep(Duration::from_millis(10));
-    }
+/// The first watcher reload, armed to pause.
+fn pause_first_reload(project: &Project) -> Pause {
+    Pause::arm(project, "watcher.reload:1")
 }
 
 /// Delete the marker after [`HOLD`], from another thread, so the test thread
 /// can block on a request meanwhile.
-fn resume_after_hold(marker: PathBuf) -> thread::JoinHandle<()> {
+fn resume_after_hold(pause: &Pause) -> thread::JoinHandle<()> {
+    let marker = pause.marker().to_path_buf();
     thread::spawn(move || {
         thread::sleep(HOLD);
         fs::remove_file(marker).unwrap();
@@ -95,11 +72,11 @@ fn assert_converges(project: &Project, mut served: impl FnMut() -> BTreeSet<Stri
 /// the reload ends, the write lands and its events start another reload.
 fn external_write_waits_for_the_reload_and_is_served(
     project: &Project,
-    marker: &Path,
+    pause: &Pause,
     served: impl FnMut() -> BTreeSet<String>,
 ) {
     project.run_ok(&["add", "component", "beta"]);
-    wait_until_paused(marker);
+    pause.wait();
 
     let mut writer = project
         .command()
@@ -114,7 +91,7 @@ fn external_write_waits_for_the_reload_and_is_served(
     );
     assert!(!components_on_disk(project).contains("gamma"));
 
-    fs::remove_file(marker).unwrap();
+    pause.resume();
     assert!(writer.wait().unwrap().success());
     assert_converges(project, served);
 }
@@ -123,10 +100,10 @@ fn external_write_waits_for_the_reload_and_is_served(
 fn mcp_watcher_serves_a_write_that_waited_for_its_reload() {
     let project = Project::init();
     project.run_ok(&["add", "component", "alpha"]);
-    let paused = PausedReload::arm(&project);
+    let paused = pause_first_reload(&project);
     let (mut client, _) = McpClient::connect_with_env(&project, &paused.env());
 
-    external_write_waits_for_the_reload_and_is_served(&project, &paused.marker, || {
+    external_write_waits_for_the_reload_and_is_served(&project, &paused, || {
         names(&client.call_tool("get_architecture", json!({}))["components"])
     });
 }
@@ -135,10 +112,10 @@ fn mcp_watcher_serves_a_write_that_waited_for_its_reload() {
 fn map_watcher_serves_a_write_that_waited_for_its_reload() {
     let project = Project::init();
     project.run_ok(&["add", "component", "alpha"]);
-    let paused = PausedReload::arm(&project);
+    let paused = pause_first_reload(&project);
     let map = MapServer::start_with_env(&project, &paused.env());
 
-    external_write_waits_for_the_reload_and_is_served(&project, &paused.marker, || {
+    external_write_waits_for_the_reload_and_is_served(&project, &paused, || {
         let (status, graph) = map.request("GET", "/api/graph", None);
         assert_eq!(status, 200, "{graph}");
         names(&graph["components"])
@@ -148,12 +125,12 @@ fn map_watcher_serves_a_write_that_waited_for_its_reload() {
 #[test]
 fn mcp_write_during_a_reload_completes() {
     let project = Project::init();
-    let paused = PausedReload::arm(&project);
+    let paused = pause_first_reload(&project);
     let (mut client, _) = McpClient::connect_with_env(&project, &paused.env());
     project.run_ok(&["add", "component", "alpha"]);
-    wait_until_paused(&paused.marker);
+    paused.wait();
 
-    let resume = resume_after_hold(paused.marker);
+    let resume = resume_after_hold(&paused);
     client.call_tool("add_component", json!({ "name": "beta" }));
     resume.join().unwrap();
 
@@ -166,12 +143,12 @@ fn mcp_write_during_a_reload_completes() {
 #[test]
 fn map_write_during_a_reload_completes() {
     let project = Project::init();
-    let paused = PausedReload::arm(&project);
+    let paused = pause_first_reload(&project);
     let map = MapServer::start_with_env(&project, &paused.env());
     project.run_ok(&["add", "component", "alpha"]);
-    wait_until_paused(&paused.marker);
+    paused.wait();
 
-    let resume = resume_after_hold(paused.marker);
+    let resume = resume_after_hold(&paused);
     let (status, body) = map.request("POST", "/api/component", Some(&json!({ "name": "beta" })));
     resume.join().unwrap();
 

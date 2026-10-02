@@ -57,6 +57,54 @@ impl Project {
     }
 }
 
+/// A failpoint armed to pause instead of abort: the process that reaches
+/// the site creates the marker file and waits there until the test deletes
+/// it, holding whatever lock the site runs under.
+#[cfg(feature = "failpoints")]
+pub struct Pause {
+    spec: &'static str,
+    marker: std::path::PathBuf,
+}
+
+#[cfg(feature = "failpoints")]
+impl Pause {
+    /// Arm `spec` (`<site>:<n>`) for the processes given [`env`](Self::env).
+    pub fn arm(project: &Project, spec: &'static str) -> Self {
+        Self {
+            spec,
+            marker: project.path().join("failpoint.paused"),
+        }
+    }
+
+    pub fn env(&self) -> [(&str, &str); 2] {
+        [
+            ("TRURLIC_FAILPOINT", self.spec),
+            ("TRURLIC_FAILPOINT_PAUSE", self.marker.to_str().unwrap()),
+        ]
+    }
+
+    pub fn marker(&self) -> &Path {
+        &self.marker
+    }
+
+    /// Block until a process is paused at the site.
+    pub fn wait(&self) {
+        let deadline = std::time::Instant::now() + RESPONSE_TIMEOUT;
+        while !self.marker.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no process reached {}",
+                self.spec
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    pub fn resume(&self) {
+        std::fs::remove_file(&self.marker).unwrap();
+    }
+}
+
 /// An MCP client connected to `trurlic serve` over stdio.
 pub struct McpClient {
     child: Child,
