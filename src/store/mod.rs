@@ -2,6 +2,7 @@ pub(crate) mod cascade;
 mod failpoint;
 pub mod graph;
 pub(crate) mod limits;
+mod pattern_removal;
 mod query;
 pub mod schema;
 mod validate;

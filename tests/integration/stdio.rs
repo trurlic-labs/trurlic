@@ -80,6 +80,7 @@ struct Session<'a> {
 const JWT: &str = "use-jwt-access-tokens";
 const ROTATION: &str = "rotate-signing-keys-daily";
 const AUDIT: &str = "log-every-failed-login";
+const PATTERN: &str = "token-hygiene";
 
 impl Session<'_> {
     fn call(&mut self, name: &str, arguments: Value) -> Value {
@@ -130,7 +131,7 @@ impl Session<'_> {
         );
         assert_eq!(audit, AUDIT);
 
-        self.call(
+        let pattern = self.call(
             "record_pattern",
             json!({
                 "name": "Token hygiene",
@@ -138,6 +139,7 @@ impl Session<'_> {
                 "decisions": [JWT, ROTATION],
             }),
         );
+        assert_eq!(pattern["name"], PATTERN);
         self.call(
             "update_decision",
             json!({
@@ -191,5 +193,12 @@ impl Session<'_> {
         self.call("remove_decision", json!({ "name": AUDIT }));
         let context = self.call("get_context", json!({ "component": "auth" }));
         assert!(!context.to_string().contains(AUDIT), "{context}");
+
+        self.call("remove_pattern", json!({ "name": PATTERN }));
+        let architecture = self.call("get_architecture", json!({}));
+        assert!(
+            !architecture.to_string().contains(PATTERN),
+            "{architecture}"
+        );
     }
 }

@@ -315,7 +315,7 @@ impl Store {
     ///
     /// On success, `state.graph` is updated in-place with the validated
     /// graph — callers do **not** need to call `rebuild_graph()`.
-    fn commit_with_graph(
+    pub(super) fn commit_with_graph(
         &self,
         lock: &StoreLock,
         writes: Vec<PendingWrite>,

@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::context;
-use super::{update, verify, write};
+use super::{pattern, update, verify, write};
 use crate::store::{ProjectState, Store};
 use crate::workflow;
 
@@ -386,6 +386,29 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                 }
             },
             {
+                "name": "remove_pattern",
+                "description": "Remove a pattern and its member_of and applies_to \
+                    edges. Member decisions are kept. Remove the pattern first when \
+                    its members must go, since a pattern cannot drop below 2 members.",
+                "annotations": {
+                    "title": "Remove pattern",
+                    "readOnlyHint": false,
+                    "destructiveHint": true,
+                    "idempotentHint": true,
+                    "openWorldHint": false
+                },
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Pattern name (the slug record_pattern returned)."
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
                 "name": "update_decision",
                 "description": "Modify an existing decision in place. 'revise' \
                     updates content and versions the previous choice/reason into \
@@ -584,6 +607,7 @@ pub(crate) fn is_write_tool(name: &str) -> bool {
         "record_decision"
             | "record_pattern"
             | "remove_decision"
+            | "remove_pattern"
             | "update_decision"
             | "add_component"
             | "add_connection"
@@ -622,6 +646,7 @@ pub(crate) fn call_write_tool(
         "record_decision" => write::record_decision(store, state, args),
         "record_pattern" => write::record_pattern(store, state, args),
         "remove_decision" => update::remove_decision(store, state, args),
+        "remove_pattern" => pattern::remove_pattern(store, state, args),
         "update_decision" => update::update_decision(store, state, args),
         "add_component" => write::add_component(store, state, args),
         "add_connection" => write::add_connection(store, state, args),

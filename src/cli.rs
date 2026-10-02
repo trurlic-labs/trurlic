@@ -33,7 +33,7 @@ pub enum Command {
     #[command(subcommand)]
     Rename(RenameCommand),
 
-    /// Remove a component or decision.
+    /// Remove a component, decision, pattern or connection.
     #[command(subcommand)]
     Remove(RemoveCommand),
 
@@ -226,6 +226,12 @@ pub enum RemoveCommand {
         component: Option<String>,
     },
 
+    /// Remove a pattern and its edges; its member decisions are kept.
+    Pattern {
+        /// Pattern name (without `.toml`).
+        name: String,
+    },
+
     /// Remove a connection between two components.
     Connection {
         /// Source component name.
@@ -278,6 +284,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 )),
             },
             RemoveCommand::Connection { from, to } => commands::remove_connection(&cwd, &from, &to),
+            RemoveCommand::Pattern { name } => commands::remove_pattern(&cwd, &name),
         },
         Command::Decide {
             component,

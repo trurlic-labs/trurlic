@@ -1,4 +1,5 @@
 mod context;
+mod pattern;
 mod protocol;
 mod tools;
 mod update;

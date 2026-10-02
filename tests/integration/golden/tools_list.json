@@ -370,6 +370,29 @@
     },
     {
       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Remove pattern"
+      },
+      "description": "Remove a pattern and its member_of and applies_to edges. Member decisions are kept. Remove the pattern first when its members must go, since a pattern cannot drop below 2 members.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Pattern name (the slug record_pattern returned).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "remove_pattern"
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "idempotentHint": false,
         "openWorldHint": false,
