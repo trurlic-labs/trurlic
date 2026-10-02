@@ -35,7 +35,7 @@ Every module uses `error`; the arrows leave it out.
 
 **mcp** never writes to the graph directly. It calls `Store` write methods. Prompt generation comes from `workflow::steps`.
 
-**commands** reads the pure workflow engine for status and coverage display, and starts the MCP server (`serve`) and the map server (`map`).
+**commands** reads `workflow::concerns` to report the concern coverage a removal loses (`remove decision`, `gc`), never mutating the graph through it, and starts the MCP server (`serve`) and the map server (`map`).
 
 Trurlic makes no LLM calls. Design work happens in the agent that calls the MCP tools.
 
