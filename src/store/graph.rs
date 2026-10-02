@@ -37,7 +37,8 @@ pub enum Severity {
     Warning,
 }
 
-/// What an [`Issue`] reports.
+/// What an [`Issue`] reports. A write may keep an error the graph already
+/// had, matched on kind and subject, but never add one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IssueKind {
     EdgeSourceMissing,

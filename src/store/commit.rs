@@ -12,7 +12,6 @@ use crate::{Error, Result};
 
 use super::durable::sync_dir;
 use super::failpoint::{self, Site};
-use super::graph::Severity;
 use super::schema::GraphIndex;
 use super::state::ProjectState;
 use super::{Store, StoreLock};
@@ -126,9 +125,12 @@ impl Store {
     /// and a normalized `graph.toml` in one journaled commit.
     ///
     /// This is the write path for every graph mutation. It builds an
-    /// [`InMemoryGraph`](super::graph::InMemoryGraph) from `state`, runs all
-    /// validation checks, and only if the graph has no error exports a
-    /// sorted index and commits it with the node file writes.
+    /// [`InMemoryGraph`](super::graph::InMemoryGraph) from `state` and
+    /// refuses it when it has an error that `state`'s cached graph, the one
+    /// last loaded or committed, does not have. A store that is already
+    /// invalid stays writable, and no write adds to what is wrong with it.
+    /// The new graph's index is exported sorted and committed with the node
+    /// file writes.
     ///
     /// On success, `state` matches disk: its index is the sorted one just
     /// written, its graph the validated one, its generation the new one.
@@ -158,14 +160,10 @@ impl Store {
         }
 
         let graph = state.build_graph();
-        let issues = graph.validate();
-        let errors: Vec<&str> = issues
-            .iter()
-            .filter(|i| i.severity() == Severity::Error)
-            .map(|i| i.message.as_str())
-            .collect();
-        if !errors.is_empty() {
-            return Err(Error::GraphIntegrity(errors.join("; ")));
+        let introduced = graph.introduced_errors(&state.graph);
+        if !introduced.is_empty() {
+            let messages: Vec<&str> = introduced.iter().map(|i| i.message.as_str()).collect();
+            return Err(Error::GraphIntegrity(messages.join("; ")));
         }
         let mut index = graph.to_index(state.graph_index.rebuilt);
         state.generation = self.commit_batch(lock, writes, removes, Some(&mut index))?;

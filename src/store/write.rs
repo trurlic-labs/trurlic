@@ -7,7 +7,6 @@ use chrono::Utc;
 
 use crate::{Error, Result};
 
-use super::graph::Severity;
 use super::limits::MAX_HISTORY_ENTRIES;
 use super::schema::{
     Attribution, CodeRef, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
@@ -366,61 +365,26 @@ impl Store {
         if !state.decisions.contains_key(name) {
             return Err(Error::DecisionNotFound(name.into()));
         }
-
-        let dec_snapshot = state.decisions.remove(name);
-        let removed = state.remove_graph_node(name);
-        let removes = vec![self.decision_path(name)];
-
-        if let Err(e) = self.commit_with_graph(lock, vec![], &removes, state) {
-            if let Some(d) = dec_snapshot {
-                state.decisions.insert(name.into(), d);
-            }
-            state.restore_graph_node(removed);
-            return Err(e);
-        }
-
-        Ok(())
+        self.remove_decisions(lock, state, &[name])
     }
 
     /// Remove several decisions from disk and the graph index in one atomic
-    /// commit.
+    /// commit: the garbage-collection path.
     ///
-    /// This is the garbage-collection path. Unlike [`remove_decision`], it does
-    /// not route through the strictly-validating [`commit_with_graph`], because
-    /// that refuses to commit while *any* error remains — which would block the
-    /// collector from repairing a store that is *already* invalid (decisions
-    /// orphaned when a component file was deleted out of band). Instead it is
-    /// fail-closed against **new** violations only: it tolerates errors that
-    /// already existed before the removal but refuses to introduce any that did
-    /// not. Removing a node is not unconditionally safe — dropping a pattern's
-    /// member below the two-decision minimum, for instance, is a fresh
-    /// `Severity::Error` — so the pre/post error-set comparison, not a bare
-    /// monotonicity assumption, is what keeps the graph consistent.
+    /// Like every write, the commit is refused only for an error the removal
+    /// adds, such as a pattern left below its two-member minimum, so the
+    /// collector can clear orphans from a store that is already invalid.
     ///
-    /// **Callers should** still run cascade pre-flight per name and exclude
-    /// blocked ones for a clean user-facing report; this method is the
-    /// last-line guarantee that a mis-computed pre-flight can never commit a
-    /// newly-invalid graph. Names absent from `state` are skipped. On failure
-    /// the in-memory `state` is restored and no files change.
+    /// **Callers should** run the batch cascade pre-flight and leave out the
+    /// names it blocks, so the report says why; the refusal is the backstop.
+    /// Names absent from `state` are skipped. On failure `state` is restored
+    /// and no files change.
     pub fn remove_decisions(
         &self,
         lock: &StoreLock,
         state: &mut ProjectState,
         names: &[&str],
     ) -> Result<()> {
-        self.ensure_current(lock, state)?;
-
-        // Violations present *before* the removal are tolerated (the collector
-        // may be repairing an already-invalid store); anything not in this set
-        // must not be introduced by the removal.
-        let pre_existing_errors: HashSet<String> = state
-            .build_graph()
-            .validate()
-            .into_iter()
-            .filter(|issue| issue.severity() == Severity::Error)
-            .map(|issue| issue.message)
-            .collect();
-
         let mut restore_decisions: Vec<(String, Arc<DecisionFile>)> = Vec::new();
         let mut restore_nodes: Vec<super::state::RemovedGraphNode> = Vec::new();
         let mut removes: Vec<PathBuf> = Vec::new();
@@ -437,40 +401,15 @@ impl Store {
             return Ok(());
         }
 
-        let restore = |state: &mut ProjectState,
-                       decisions: Vec<(String, Arc<DecisionFile>)>,
-                       nodes: Vec<super::state::RemovedGraphNode>| {
-            for (name, dec) in decisions {
+        if let Err(e) = self.commit_with_graph(lock, vec![], &removes, state) {
+            for (name, dec) in restore_decisions {
                 state.decisions.insert(name, dec);
             }
-            for removed in nodes {
+            for removed in restore_nodes {
                 state.restore_graph_node(removed);
             }
-        };
-
-        let graph = state.build_graph();
-
-        // Fail closed against newly-introduced errors (e.g. a pattern dropping
-        // below its minimum membership); pre-existing errors are permitted so
-        // the collector can still clear orphaned nodes from a broken store.
-        let new_errors: Vec<String> = graph
-            .validate()
-            .into_iter()
-            .filter(|issue| issue.severity() == Severity::Error)
-            .map(|issue| issue.message)
-            .filter(|message| !pre_existing_errors.contains(message))
-            .collect();
-        if !new_errors.is_empty() {
-            restore(state, restore_decisions, restore_nodes);
-            return Err(Error::GraphIntegrity(new_errors.join("; ")));
+            return Err(e);
         }
-
-        let mut index = graph.to_index(state.graph_index.rebuilt);
-        state.generation = self
-            .commit_batch(lock, vec![], &removes, Some(&mut index))
-            .inspect_err(|_| restore(state, restore_decisions, restore_nodes))?;
-        state.graph_index = index;
-        state.graph = graph;
         Ok(())
     }
 
@@ -898,6 +837,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::graph::IssueKind;
     use crate::store::testing::*;
     use tempfile::TempDir;
 
@@ -1512,6 +1452,59 @@ mod tests {
             .unwrap()
     }
 
+    fn depends_on(from: &str, to: &str) -> EdgeEntry {
+        EdgeEntry {
+            from: from.into(),
+            to: to.into(),
+            kind: EdgeKind::DependsOn,
+        }
+    }
+
+    /// No write can freeze a store with a cycle, and none can add one.
+    #[test]
+    fn a_store_with_a_cycle_takes_writes_but_no_second_cycle() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let [a, b, c, d] = [
+            "Use JWT",
+            "Rotate tokens",
+            "Encrypt at rest",
+            "Audit logins",
+        ]
+        .map(|choice| record(&store, &lock, &mut state, choice));
+        // A hand edit of graph.toml: no write path accepts the cycle.
+        state
+            .graph_index
+            .edges
+            .extend([depends_on(&a, &b), depends_on(&b, &a)]);
+        store
+            .commit_batch(&lock, vec![], &[], Some(&mut state.graph_index))
+            .unwrap();
+        let mut state = store.load_state().unwrap();
+
+        record(&store, &lock, &mut state, "Hash passwords");
+
+        state
+            .graph_index
+            .edges
+            .extend([depends_on(&c, &d), depends_on(&d, &c)]);
+        let err = store
+            .commit_with_graph(&lock, vec![], &[], &mut state)
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "graph integrity violation: depends_on cycle among `audit-logins`, `encrypt-at-rest`"
+        );
+        assert!(
+            store
+                .load_state()
+                .unwrap()
+                .decisions
+                .contains_key("hash-passwords")
+        );
+    }
+
     #[test]
     fn remove_decisions_deletes_the_whole_set_atomically() {
         let tmp = TempDir::new().unwrap();
@@ -1543,8 +1536,10 @@ mod tests {
         );
     }
 
+    /// An invalid store stays writable: removing one orphan keeps the errors
+    /// of the other, which the removal did not add.
     #[test]
-    fn remove_decisions_repairs_orphaned_store() {
+    fn removals_repair_an_orphaned_store_one_decision_at_a_time() {
         let tmp = TempDir::new().unwrap();
         let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
         let lock = store.lock().unwrap();
@@ -1558,17 +1553,17 @@ mod tests {
         let mut orphaned = store.load_state().unwrap();
         assert!(!orphaned.components.contains_key("auth"));
 
-        // A single validating removal cannot proceed: the sibling orphan keeps
-        // the graph invalid, so the fail-closed commit refuses.
         let lock = store.lock().unwrap();
+        store.remove_decision(&lock, &mut orphaned, &a).unwrap();
         assert!(
-            store.remove_decision(&lock, &mut orphaned, &a).is_err(),
-            "validating removal must refuse while another orphan remains"
+            orphaned
+                .validate()
+                .iter()
+                .any(|i| i.kind == IssueKind::DecisionComponentMissing && i.subject == b),
+            "the other orphan is still invalid"
         );
-
-        // The garbage-collection path clears the whole orphaned set.
         store
-            .remove_decisions(&lock, &mut orphaned, &[a.as_str(), b.as_str()])
+            .remove_decisions(&lock, &mut orphaned, &[b.as_str()])
             .unwrap();
         drop(lock);
 

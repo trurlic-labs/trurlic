@@ -2,9 +2,11 @@
 //!
 //! [`InMemoryGraph::validate`] runs every check and sorts what they find, so
 //! neither the order of the checks nor the iteration order of the graph's
-//! hash maps reaches a caller.
+//! hash maps reaches a caller. [`InMemoryGraph::introduced_errors`] is the
+//! rule every write commits under: a write may keep an error the graph
+//! already had, never add one.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use super::graph::{Edge, InMemoryGraph, Issue, IssueKind, Severity};
 use super::schema::{EdgeKind, NodeKind};
@@ -28,6 +30,26 @@ impl InMemoryGraph {
         self.check_node_content_coherence(&mut issues);
         issues.sort_unstable_by(|a, b| order(a).cmp(&order(b)));
         issues
+    }
+
+    /// The errors of this graph that `before` does not have, matched on kind
+    /// and subject: a message may change with a count while the error stays
+    /// the same. `before` is validated only when this graph has an error.
+    #[must_use]
+    pub(super) fn introduced_errors(&self, before: &Self) -> Vec<Issue> {
+        let mut errors = self.validate();
+        errors.retain(|issue| issue.severity() == Severity::Error);
+        if errors.is_empty() {
+            return errors;
+        }
+        let before_issues = before.validate();
+        let known: BTreeSet<(IssueKind, &str)> = before_issues
+            .iter()
+            .filter(|issue| issue.severity() == Severity::Error)
+            .map(|issue| (issue.kind, issue.subject.as_str()))
+            .collect();
+        errors.retain(|issue| !known.contains(&(issue.kind, issue.subject.as_str())));
+        errors
     }
 
     // ── Validation checks ────────────────────────────────────────────────
@@ -360,9 +382,11 @@ fn edge_subject(from: &str, edge: &Edge) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::graph::NodeMeta;
     use crate::store::schema::*;
     use crate::store::testing::{arc_map, depends_on_graph, test_graph, ts};
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     // ── validate: clean graph ────────────────────────────────────────────
 
@@ -616,6 +640,64 @@ mod tests {
             ]
         );
         assert!(forward.is_sorted_by_key(|i| (i.severity(), i.kind, i.subject.clone())));
+    }
+
+    // introduced_errors
+
+    #[test]
+    fn a_cycle_the_graph_had_is_not_introduced() {
+        let before = depends_on_graph(&[("a", "b"), ("b", "a")]);
+        let after = depends_on_graph(&[("a", "b"), ("b", "a"), ("c", "a")]);
+        assert_eq!(after.introduced_errors(&before), []);
+    }
+
+    #[test]
+    fn a_second_cycle_is_introduced() {
+        let before = depends_on_graph(&[("a", "b"), ("b", "a")]);
+        let after = depends_on_graph(&[("a", "b"), ("b", "a"), ("c", "d"), ("d", "c")]);
+        assert_eq!(after.introduced_errors(&before), [cycle(&["c", "d"])]);
+    }
+
+    #[test]
+    fn a_cycle_that_gains_a_member_is_introduced() {
+        let before = depends_on_graph(&[("a", "b"), ("b", "a")]);
+        let after = depends_on_graph(&[("a", "b"), ("b", "a"), ("b", "c"), ("c", "a")]);
+        assert_eq!(after.introduced_errors(&before), [cycle(&["a", "b", "c"])]);
+    }
+
+    /// The pattern's member count is in the message, not in the subject.
+    #[test]
+    fn an_error_whose_message_changes_is_not_introduced() {
+        let with_members = |members: &[&str]| {
+            let mut g = depends_on_graph(&[("a", "b")]);
+            g.nodes.insert(
+                "pat".into(),
+                NodeMeta {
+                    kind: NodeKind::Pattern,
+                    tags: vec![],
+                    hash: String::new(),
+                },
+            );
+            g.patterns.insert(
+                "pat".into(),
+                Arc::new(PatternFile {
+                    pattern: Pattern {
+                        name: "Pattern".into(),
+                        description: "Shared approach".into(),
+                    },
+                }),
+            );
+            let edges = members.iter().map(|&member| Edge {
+                target: member.into(),
+                kind: EdgeKind::MemberOf,
+            });
+            g.forward.entry("pat".into()).or_default().extend(edges);
+            g
+        };
+        let before = with_members(&["a"]);
+        let after = with_members(&[]);
+        assert_ne!(before.validate(), after.validate());
+        assert_eq!(after.introduced_errors(&before), []);
     }
 
     // ── validate: empty choice / reason ──────────────────────────────────
