@@ -20,7 +20,7 @@ pub use init::init;
 pub use install::install;
 pub use map::map;
 pub use migrate::migrate;
-pub use pattern::remove_pattern;
+pub(crate) use pattern::remove_pattern;
 pub use query::{check, query_file, status};
 pub use serve::serve;
 

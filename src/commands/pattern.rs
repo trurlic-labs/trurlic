@@ -6,7 +6,7 @@ use super::open_store_mut;
 
 /// `trurlic remove pattern`: delete a pattern and its edges. Member
 /// decisions are kept.
-pub fn remove_pattern(cwd: &Path, name: &str) -> Result<()> {
+pub(crate) fn remove_pattern(cwd: &Path, name: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.remove_pattern(&lock, &mut state, name)?;
     println!("Removed pattern `{name}`");
