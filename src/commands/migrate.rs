@@ -16,7 +16,6 @@ use super::DryRun;
 /// schema retired. `DryRun::Yes` reports the plan without writing.
 pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     let store = Store::discover(cwd)?;
-    store.clean_stale_tmp()?;
 
     let old_version = store.read_project()?.trurlic_version;
 
@@ -41,6 +40,7 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     }
 
     let lock = store.lock()?;
+    store.recover(&lock)?;
 
     // Re-check version under lock to close the TOCTOU window: another process
     // could have migrated between the initial unlocked read and lock

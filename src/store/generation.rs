@@ -51,13 +51,15 @@ impl Store {
         }
     }
 
-    /// Record the next generation and return it. Written to a temp file and
-    /// renamed, so a reader sees the old counter or the new one.
+    /// Record the next generation and return it. Staged and renamed, so a
+    /// reader sees the old counter or the new one, never an empty file.
     pub(super) fn raise_generation(&self, _lock: &StoreLock) -> Result<u64> {
         let next = self.read_generation()?.saturating_add(1);
-        let staged = self.tmp_dir().join("generation");
-        fs::write(&staged, format!("{next}\n"))?;
-        fs::rename(&staged, self.generation_path())?;
+        let staged = self.stage(format!("{next}\n").as_bytes())?;
+        if let Err(e) = fs::rename(&staged, self.generation_path()) {
+            let _ = fs::remove_file(&staged);
+            return Err(e.into());
+        }
         Ok(next)
     }
 }

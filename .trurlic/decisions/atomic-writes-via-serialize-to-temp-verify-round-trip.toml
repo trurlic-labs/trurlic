@@ -1,7 +1,7 @@
 [decision]
 component = "store"
-choice = "Atomic writes via serialize-to-temp, verify round-trip, rename-into-place"
-reason = "Prevents partial writes from corrupting on-disk state. Content is serialized to TOML, written to .state/tmp/, deserialized back to verify the round-trip, then renamed to the final path. Rename is atomic on POSIX. graph.toml is always renamed last, serving as the commit point — if the process crashes mid-transaction, the graph index still references the previous consistent state. Stale temp files are cleaned up on next startup via clean_stale_tmp()."
+choice = "Atomic file writes: round-trip in memory, stage and flush in .state/tmp/, rename into place, flush the directory"
+reason = "Prevents partial writes from corrupting on-disk state. prepare_write serializes to TOML and parses the text back as its type before anything touches disk. Store::stage writes the bytes to a fresh temp file in .state/tmp/ (create_new, named after the process id and a counter, so no write reuses a leftover) and flushes them with sync_data; the file is then renamed into place and its directory flushed with sync_dir, because a rename is atomic but not durable: after a power loss the new name can survive without its data. The old read-back of the temp file is gone: it read the page cache, never the disk. Multi-file commits are made atomic as a whole by the commit journal (see the journal decision), which replaces the earlier reliance on graph.toml as the only commit point; the WAL alternative rejected below was reversed for that reason. Temp files are removed only under the exclusive lock. write_atomic is the single-file form, used by init and migrate."
 alternatives = [
     "Direct write to final path — rejected: partial writes on crash would leave corrupt TOML files that break all subsequent reads",
     "Write-ahead log (WAL) — rejected: adds complexity disproportionate to the write frequency; TOML files are small and rename-based atomicity is sufficient",
@@ -12,3 +12,28 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:44:23.486129858Z"
+
+[[decision.code_refs]]
+file = "src/store/durable.rs"
+symbol = "Store::stage"
+
+[[decision.code_refs]]
+file = "src/store/durable.rs"
+symbol = "sync_dir"
+
+[[decision.code_refs]]
+file = "src/store/durable.rs"
+symbol = "Store::temp_path"
+
+[[decision.code_refs]]
+file = "src/store/commit.rs"
+symbol = "Store::prepare_write"
+
+[[decision.code_refs]]
+file = "src/store/commit.rs"
+symbol = "Store::write_atomic"
+
+[[decision.history]]
+choice = "Atomic writes via serialize-to-temp, verify round-trip, rename-into-place"
+reason = "Prevents partial writes from corrupting on-disk state. Content is serialized to TOML, written to .state/tmp/, deserialized back to verify the round-trip, then renamed to the final path. Rename is atomic on POSIX. graph.toml is always renamed last, serving as the commit point — if the process crashes mid-transaction, the graph index still references the previous consistent state. Stale temp files are cleaned up on next startup via clean_stale_tmp()."
+changed_at = "2026-10-02T12:18:24.965619207Z"

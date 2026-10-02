@@ -1,12 +1,15 @@
-//! `TRURLIC_FAILPOINT` aborts the binary at a named store write site, and
-//! the next run starts from a graph `trurlic check` accepts.
+//! `TRURLIC_FAILPOINT` stops the binary at a named site of a commit, with
+//! an abort or an injected I/O error. The next run recovers the graph as
+//! it was before the commit or as the commit leaves it, never in between.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::process::ExitStatus;
+use std::path::Path;
+use std::process::{ExitStatus, Stdio};
 
 use serde_json::json;
 
-use crate::harness::{McpClient, Project};
+use crate::harness::{McpClient, Pause, Project};
 
 const FAILPOINT: &str = "TRURLIC_FAILPOINT";
 
@@ -37,15 +40,25 @@ fn run_aborting(project: &Project, args: &[&str], spec: &str) {
     );
 }
 
-/// The next CLI run cleans the interrupted write and finds a consistent graph.
+/// The next CLI run finishes the interrupted write and finds a consistent
+/// graph, with no journal or temp file left.
 fn assert_recovers(project: &Project) {
     let output = project.run_ok(&["check"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("is consistent"), "{stdout}");
-    let leftovers = fs::read_dir(project.path().join(".trurlic/.state/tmp"))
+    assert_eq!(temp_files(project), BTreeSet::new(), "temp files survived");
+    assert!(!journal_exists(project), "the journal survived");
+}
+
+fn temp_files(project: &Project) -> BTreeSet<String> {
+    fs::read_dir(project.path().join(".trurlic/.state/tmp"))
         .unwrap()
-        .count();
-    assert_eq!(leftovers, 0, "temp files survived the next run");
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect()
+}
+
+fn journal_exists(project: &Project) -> bool {
+    project.path().join(".trurlic/.state/txn.toml").exists()
 }
 
 fn graph_lists(project: &Project, name: &str) -> bool {
@@ -60,68 +73,206 @@ fn component_file_exists(project: &Project, name: &str) -> bool {
         .exists()
 }
 
-fn decision_file_exists(project: &Project, name: &str) -> bool {
-    project
-        .path()
-        .join(format!(".trurlic/decisions/{name}.toml"))
-        .exists()
+/// Every file of a store outside `.state/`, by path below `.trurlic/`.
+type Snapshot = BTreeMap<String, String>;
+
+fn snapshot(project: &Project) -> Snapshot {
+    fn walk(root: &Path, dir: &Path, files: &mut Snapshot) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if !path.ends_with(".state") {
+                    walk(root, &path, files);
+                }
+            } else {
+                let key = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+                files.insert(key, fs::read_to_string(&path).unwrap());
+            }
+        }
+    }
+    let root = project.path().join(".trurlic");
+    let mut files = Snapshot::new();
+    walk(&root, &root, &mut files);
+    files
 }
 
-#[test]
-fn staged_abort_commits_nothing() {
-    let project = Project::init();
-
-    run_aborting(&project, &["add", "component", "auth"], "commit.staged:1");
-
-    assert!(!component_file_exists(&project, "auth"));
-    assert!(!graph_lists(&project, "auth"));
-    assert_recovers(&project);
-
-    // The aborted commit had raised the generation; that costs nothing.
-    project.run_ok(&["add", "component", "auth"]);
-    assert!(graph_lists(&project, "auth"));
+/// Replace the store's files outside `.state/` with `files`.
+fn restore(project: &Project, files: &Snapshot) {
+    let root = project.path().join(".trurlic");
+    for path in snapshot(project).keys() {
+        fs::remove_file(root.join(path)).unwrap();
+    }
+    for (path, content) in files {
+        fs::write(root.join(path), content).unwrap();
+    }
 }
 
-/// The node file is in place but `graph.toml`, the commit point, is not.
-#[test]
-fn nodes_renamed_abort_leaves_graph_uncommitted() {
-    let project = Project::init();
-
-    run_aborting(
-        &project,
-        &["add", "component", "auth"],
-        "commit.nodes_renamed:1",
-    );
-
-    assert!(component_file_exists(&project, "auth"));
-    assert!(!graph_lists(&project, "auth"));
-    assert_recovers(&project);
+/// One commit, run on copies of one store.
+struct Scenario {
+    args: &'static [&'static str],
+    /// The store the commit starts from.
+    before: Snapshot,
+    /// The store the commit leaves when nothing stops it.
+    after: Snapshot,
 }
 
-/// `graph.toml` no longer lists the decision, but its node file, which
-/// phase 4 would have deleted, is still on disk.
-#[test]
-fn graph_renamed_abort_leaves_the_removed_node_file() {
-    let project = Project::init();
-    project.run_ok(&["add", "component", "auth"]);
-    project.run_ok(&[
+impl Scenario {
+    fn new(setup: &[&[&str]], args: &'static [&'static str]) -> Self {
+        let project = Project::init();
+        for command in setup {
+            project.run_ok(command);
+        }
+        let before = snapshot(&project);
+        project.run_ok(args);
+        Self {
+            args,
+            before,
+            after: snapshot(&project),
+        }
+    }
+
+    fn fresh_copy(&self) -> Project {
+        let project = Project::init();
+        restore(&project, &self.before);
+        project
+    }
+
+    /// Stop the commit at `spec` on a fresh copy, recover, and return what
+    /// the store holds then.
+    fn recovered_from(&self, spec: &str) -> Snapshot {
+        let project = self.fresh_copy();
+        run_aborting(&project, self.args, spec);
+        assert_recovers(&project);
+        snapshot(&project)
+    }
+
+    /// Abort before the journal, at the journal, and after each of the
+    /// commit's `entries` renames and removals. A stop before the journal
+    /// recovers the old store, every later one the new store.
+    fn assert_every_stop_recovers(&self, entries: usize) {
+        assert_ne!(self.before, self.after);
+        assert_eq!(self.recovered_from("commit.staged:1"), self.before);
+        assert_eq!(self.recovered_from("commit.journaled:1"), self.after);
+        for n in 1..=entries {
+            let spec = format!("commit.applied:{n}");
+            assert_eq!(self.recovered_from(&spec), self.after, "stopped at {spec}");
+        }
+
+        // The commit has no further entry: armed past it, the run completes.
+        let project = self.fresh_copy();
+        let past = format!("commit.applied:{}", entries + 1);
+        let output = project
+            .command()
+            .args(self.args)
+            .env(FAILPOINT, &past)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{past}: {}", output.status);
+    }
+}
+
+const ADD_DECISION: &[&[&str]] = &[
+    &["add", "component", "auth"],
+    &[
         "decide",
         "auth",
         "--choice",
         "Use JWT",
         "--reason",
         "Stateless verification",
-    ]);
-    assert!(graph_lists(&project, "use-jwt"));
+    ],
+];
 
-    run_aborting(
-        &project,
-        &["remove", "decision", "use-jwt"],
-        "commit.graph_renamed:1",
+/// Renamed: the new component file, its decision, then `graph.toml`;
+/// removed: the old component file.
+#[test]
+fn every_stop_in_a_rename_recovers_the_old_or_the_new_graph() {
+    Scenario::new(ADD_DECISION, &["rename", "component", "auth", "identity"])
+        .assert_every_stop_recovers(4);
+}
+
+/// Renamed: `graph.toml`; removed: the decision file. A stop between the
+/// two used to leave the file behind, so `status` counted the decision.
+#[test]
+fn every_stop_in_a_decision_removal_recovers_the_old_or_the_new_graph() {
+    Scenario::new(ADD_DECISION, &["remove", "decision", "use-jwt"]).assert_every_stop_recovers(2);
+}
+
+/// The second rename fails once the journal is in place: the command
+/// reports the commit as not applied, and the next command applies it.
+#[test]
+fn a_failed_rename_is_applied_by_the_next_command() {
+    let project = Project::init();
+
+    let output = project
+        .command()
+        .args(["add", "component", "auth"])
+        .env(FAILPOINT, "commit.rename:2")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "{}", output.status);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not applied"), "{stderr}");
+    assert!(component_file_exists(&project, "auth"));
+    assert!(!graph_lists(&project, "auth"));
+    assert!(journal_exists(&project));
+    assert_recovers(&project);
+    assert!(graph_lists(&project, "auth"));
+}
+
+/// The server's own commit fails at its first rename; its next write
+/// applies that commit before its own.
+#[test]
+fn a_server_write_applies_its_failed_commit_first() {
+    let project = Project::init();
+    let (mut client, _) = McpClient::connect_with_env(&project, &[(FAILPOINT, "commit.rename:1")]);
+
+    let envelope = client.request(
+        "tools/call",
+        json!({ "name": "add_component", "arguments": { "name": "auth" } }),
     );
+    assert_eq!(envelope["isError"], true, "{envelope}");
+    let text = envelope["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("not applied"), "{text}");
 
-    assert!(!graph_lists(&project, "use-jwt"));
-    assert!(decision_file_exists(&project, "use-jwt"));
+    client.call_tool("add_component", json!({ "name": "storage" }));
+
+    assert!(graph_lists(&project, "auth"));
+    assert!(graph_lists(&project, "storage"));
+    assert_recovers(&project);
+}
+
+/// A read command runs while another process holds the lock with its files
+/// staged. It leaves them alone, and the commit completes.
+#[test]
+fn status_during_a_staged_commit_leaves_it_to_complete() {
+    let project = Project::init();
+    let pause = Pause::arm(&project, "commit.staged:1");
+    let mut writer = project
+        .command()
+        .args(["add", "component", "auth"])
+        .envs(pause.env())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    pause.wait();
+    let staged = temp_files(&project);
+    assert!(!staged.is_empty());
+
+    let output = project.run_ok(&["status"]);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("components: 0"), "{stdout}");
+    assert_eq!(temp_files(&project), staged);
+    pause.resume();
+    assert!(writer.wait().unwrap().success());
+    assert!(graph_lists(&project, "auth"));
     assert_recovers(&project);
 }
 

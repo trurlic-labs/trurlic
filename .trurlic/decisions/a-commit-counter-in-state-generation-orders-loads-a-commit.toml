@@ -1,7 +1,7 @@
 [decision]
 component = "store"
 choice = "A commit counter in .state/generation orders loads; a commit refuses a state behind it"
-reason = "commit_batch raises the counter under the exclusive lock after staging and before the first rename, so a failure to record it leaves the graph untouched and a crash after it leaves the counter ahead of the graph, which still orders later loads. load_state reads it into ProjectState.generation. commit_with_graph and remove_decisions refuse a state whose generation differs from the store's with Error::StaleState, so a write path that skipped the reload fails instead of erasing a newer commit. A watcher drops a load only when ProjectState::is_overtaken: the served generation changed while the load ran and the load is older, i.e. the server's own write landed after it. Comparing generations alone would freeze a watcher once the counter went back, and .state/ is never authoritative: a missing file reads as 0; an unparsable one is an error that names the file."
+reason = "commit_batch raises the counter under the exclusive lock after staging and before the journal, the commit point, so a failure to record it leaves the graph untouched and a crash after it leaves the counter ahead of the graph, which still orders later loads. The counter is staged and flushed before its rename, so a power loss cannot leave an empty file, and the flush of .state/ after the journal makes the rename durable. load_state reads it into ProjectState.generation. commit_with_graph and remove_decisions refuse a state whose generation differs from the store's with Error::StaleState, so a write path that skipped the reload fails instead of erasing a newer commit. A watcher drops a load only when ProjectState::is_overtaken: the served generation changed while the load ran and the load is older, i.e. the server's own write landed after it. Comparing generations alone would freeze a watcher once the counter went back, and .state/ is never authoritative: a missing file reads as 0; an unparsable one is an error that names the file."
 alternatives = [
     "Raise the counter after the renames: rejected, a failure to record it after the commit leaves the counter behind the graph and a watcher could swap a load that predates it",
     "Keep the counter in graph.toml: rejected, a committed file would change on every write and conflict on every merge",
@@ -25,3 +25,8 @@ symbol = "Store::ensure_current"
 [[decision.code_refs]]
 file = "src/store/state.rs"
 symbol = "ProjectState::is_overtaken"
+
+[[decision.history]]
+choice = "A commit counter in .state/generation orders loads; a commit refuses a state behind it"
+reason = "commit_batch raises the counter under the exclusive lock after staging and before the first rename, so a failure to record it leaves the graph untouched and a crash after it leaves the counter ahead of the graph, which still orders later loads. load_state reads it into ProjectState.generation. commit_with_graph and remove_decisions refuse a state whose generation differs from the store's with Error::StaleState, so a write path that skipped the reload fails instead of erasing a newer commit. A watcher drops a load only when ProjectState::is_overtaken: the served generation changed while the load ran and the load is older, i.e. the server's own write landed after it. Comparing generations alone would freeze a watcher once the counter went back, and .state/ is never authoritative: a missing file reads as 0; an unparsable one is an error that names the file."
+changed_at = "2026-10-02T12:19:01.596441223Z"

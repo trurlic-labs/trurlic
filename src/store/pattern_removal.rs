@@ -24,7 +24,7 @@ impl Store {
         let removed = state.remove_graph_node(name);
         let removes = vec![self.pattern_path(name)];
 
-        if let Err(e) = self.commit_with_graph(lock, vec![], removes, state) {
+        if let Err(e) = self.commit_with_graph(lock, vec![], &removes, state) {
             state.patterns.insert(name.into(), snapshot);
             state.restore_graph_node(removed);
             return Err(e);

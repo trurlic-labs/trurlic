@@ -119,6 +119,8 @@ fn error_status(err: &crate::Error) -> StatusCode {
 
         // Internal faults the client cannot act on → 500.
         Error::Io(_)
+        | Error::CommitPending { .. }
+        | Error::BadJournal { .. }
         | Error::TomlRead(_)
         | Error::TomlWrite(_)
         | Error::StoreExists(_)

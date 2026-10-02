@@ -1,11 +1,15 @@
 pub(crate) mod cascade;
+mod commit;
+mod durable;
 mod failpoint;
 mod generation;
 pub mod graph;
+mod journal;
 pub(crate) mod limits;
 mod lock;
 mod pattern_removal;
 mod query;
+mod recovery;
 mod reload;
 pub mod schema;
 mod validate;

@@ -4,7 +4,7 @@
 //! before its lock: another process may have committed in between, and a
 //! commit built on the older state would erase that commit. A watcher loads
 //! under the shared lock, so it never reads a commit halfway through its
-//! renames.
+//! renames. Either one first finishes a commit an interrupted writer left.
 
 use crate::Result;
 
@@ -13,30 +13,42 @@ use super::{ProjectState, Store, StoreLock};
 
 impl Store {
     /// Take the guard `take_guard` returns, then the exclusive lock, then
-    /// load the graph under it. A server passes its state write lock as the
-    /// guard and replaces the state it guards with the loaded one; the CLI
-    /// passes `|| ()`.
+    /// recover and load the graph under it. A server passes its state write
+    /// lock as the guard and replaces the state it guards with the loaded
+    /// one; the CLI passes `|| ()`.
     pub(crate) fn begin_write<G>(
         &self,
         take_guard: impl FnMut() -> G,
     ) -> Result<(G, StoreLock, ProjectState)> {
         let (guard, lock) = self.lock_after(take_guard)?;
-        let state = self.load_checked()?;
+        let state = self.load_recovered(&lock)?;
         Ok((guard, lock, state))
     }
 
     /// Load the graph under the shared lock, released before returning so
     /// the caller can take its state lock without holding the file lock.
+    ///
+    /// A journal seen under the shared lock belongs to a commit that stopped
+    /// before it finished, since a live commit holds the exclusive lock. The
+    /// load then takes the exclusive lock and finishes it: loading around it
+    /// would serve a graph halfway between two commits.
     pub(super) fn load_shared(&self) -> Result<ProjectState> {
-        let _shared = self.lock_shared()?;
-        failpoint::hit(Site::WatcherReload);
-        self.load_checked()
+        {
+            let _shared = self.lock_shared()?;
+            failpoint::hit(Site::WatcherReload);
+            self.check_version()?;
+            if !self.has_journal()? {
+                return self.load_state();
+            }
+        }
+        self.load_recovered(&self.lock()?)
     }
 
-    /// A store written in another format is refused before its node files
-    /// are parsed.
-    fn load_checked(&self) -> Result<ProjectState> {
+    /// A store written in another format is refused before anything in it
+    /// is touched.
+    fn load_recovered(&self, lock: &StoreLock) -> Result<ProjectState> {
         self.check_version()?;
+        self.recover(lock)?;
         self.load_state()
     }
 }

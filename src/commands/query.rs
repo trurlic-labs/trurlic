@@ -143,7 +143,7 @@ fn check_rebuild(cwd: &Path) -> Result<()> {
     let edge_count = state.graph_index.edges.len();
     let issues = state.validate();
 
-    store.commit_batch(&lock, vec![], vec![], Some(&mut state.graph_index))?;
+    store.commit_batch(&lock, vec![], &[], Some(&mut state.graph_index))?;
 
     println!("Rebuilt graph.toml from node files: {node_count} nodes, {edge_count} edges");
     let error_count = issues

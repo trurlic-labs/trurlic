@@ -17,7 +17,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "21490e1bb4898025bc7d612c738e2ab266b86e21d3968fd87c3508def2192f53"
+hash = "02d03d9ae5831e347d2c65f15bb84abde1b4a072ce8b29f1a71d3d065370a422"
 
 [[nodes]]
 name = "advance-is-a-pure-function-read-only-stateless-idempotent"
@@ -49,7 +49,7 @@ tags = [
     "reliability",
     "storage",
 ]
-hash = "a00f88d3619d04226d27fd801c1803c29d65720894c9b44f6a78362352dd0135"
+hash = "8e1a03d0af704fb044e4c58b82b6b1de2b60a85078b648e66b334bc9c428b3fc"
 
 [[nodes]]
 name = "axum-as-the-http-websocket-server-framework"
@@ -171,13 +171,23 @@ tags = [
 hash = "4d098dd6f8447a8c3ef35f89a5d908253ac28bc6bc4d323fdd17b11af7dee005"
 
 [[nodes]]
+name = "every-commit-goes-through-a-flushed-journal-in-state-txn"
+kind = "decision"
+tags = [
+    "reliability",
+    "storage",
+    "concurrency",
+]
+hash = "ec7c39efe845a6118c788ffd16e64b65c7bbaac568f9de46d6bb4ff868e10741"
+
+[[nodes]]
 name = "every-store-access-cleans-stale-temp-files-and-warns-on"
 kind = "decision"
 tags = [
     "data-integrity",
     "error-handling",
 ]
-hash = "0c40e152435032ddaae031323daa0f45110b8b5898d339698994bdf2a81a3ee5"
+hash = "128349166c7dbc27a1def746c70bc60d6cb2450864d438607ba3537521c39a3a"
 
 [[nodes]]
 name = "every-write-reloads-the-graph-under-the-exclusive-lock"
@@ -195,7 +205,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "d929800b0e6782b649ecbb91ef56edb7690488ca1994f770943bc4f06df7eea9"
+hash = "e35251f66bc1229f1cc07e8c05085336fba3f2db94ea29aeef7fe8bcecf6655f"
 
 [[nodes]]
 name = "fail-closed-validation"
@@ -240,7 +250,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "6782bab4fb23c9c62bc3e919dd4ad347823bc2fd2c4d6ded46f96c9a211cf195"
+hash = "697b81addf2b352f6ce1cb32a991e5ef627eab6ad009d706d02feef8c4034bfd"
 
 [[nodes]]
 name = "full-graph-validation-before-every-disk-write-via-commit"
@@ -322,6 +332,15 @@ tags = [
     "api-design",
 ]
 hash = "30a2780066539e250117111902065930b842aac41f4bef5edd33a3dae228489b"
+
+[[nodes]]
+name = "leftover-journals-and-temp-files-are-cleared-only-under-the"
+kind = "decision"
+tags = [
+    "reliability",
+    "concurrency",
+]
+hash = "26eced42966c9532b549f9f6268a5158bec7cbc48689063f273d53ac9474c0c9"
 
 [[nodes]]
 name = "localhost-only-binding-with-restrictive-security-headers"
@@ -530,7 +549,7 @@ tags = [
     "concurrency",
     "error-handling",
 ]
-hash = "f500b467dd5383dfb71be25e230334a0062bfc67a0dac538ee02471e471cb477"
+hash = "83bd21cef07a44addbce79f409ae5819830d6b23c5e74c489274bc94a63bf68e"
 
 [[nodes]]
 name = "toml-as-the-sole-serialization-format-with-one-file-per"
@@ -764,6 +783,21 @@ to = "project"
 kind = "belongs_to"
 
 [[edges]]
+from = "every-commit-goes-through-a-flushed-journal-in-state-txn"
+to = "atomic-writes-via-serialize-to-temp-verify-round-trip"
+kind = "depends_on"
+
+[[edges]]
+from = "every-commit-goes-through-a-flushed-journal-in-state-txn"
+to = "exclusive-advisory-file-locking-via-fs2-with-5-second"
+kind = "depends_on"
+
+[[edges]]
+from = "every-commit-goes-through-a-flushed-journal-in-state-txn"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
 from = "every-store-access-cleans-stale-temp-files-and-warns-on"
 to = "commands"
 kind = "belongs_to"
@@ -911,6 +945,16 @@ kind = "belongs_to"
 [[edges]]
 from = "layout-state-stored-in-trurlic-state-layout-json-with"
 to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "leftover-journals-and-temp-files-are-cleared-only-under-the"
+to = "every-commit-goes-through-a-flushed-journal-in-state-txn"
+kind = "depends_on"
+
+[[edges]]
+from = "leftover-journals-and-temp-files-are-cleared-only-under-the"
+to = "store"
 kind = "belongs_to"
 
 [[edges]]
