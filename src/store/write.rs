@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -749,7 +749,7 @@ impl Store {
 
         // Resolve component list: explicit or inferred from decisions.
         let components: Vec<String> = if params.components.is_empty() {
-            let mut inferred: HashSet<String> = HashSet::new();
+            let mut inferred: BTreeSet<String> = BTreeSet::new();
             for dname in params.decisions {
                 if let Some(dec) = state.decisions.get(dname.as_str()) {
                     let comp = &dec.decision.component;
