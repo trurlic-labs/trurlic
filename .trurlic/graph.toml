@@ -1,5 +1,5 @@
 version = 1
-rebuilt = "2026-10-02T09:52:28.917871804Z"
+rebuilt = "2026-10-02T09:55:00.682488835Z"
 
 [[nodes]]
 name = "256-bit-csprng-token-with-constant-time-comparison-for"
@@ -362,6 +362,15 @@ tags = [
     "data-integrity",
 ]
 hash = "baa7f8f8adf30fc42b1e5eeb8193a3f6558ecaf7820b62fbc51a24c93a3fb9c5"
+
+[[nodes]]
+name = "pattern-removal-skips-cascade-analysis-and-takes-the"
+kind = "decision"
+tags = [
+    "data-integrity",
+    "consistency",
+]
+hash = "955a6ad619cb1944caa22502b3d59922a744396102c0def11dc9301f7b8b70af"
 
 [[nodes]]
 name = "poisoned-lock-recovery-instead-of-panic"
@@ -915,6 +924,21 @@ kind = "belongs_to"
 
 [[edges]]
 from = "path-traversal-defense-with-verify-path-rejecting-parent"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "pattern-removal-skips-cascade-analysis-and-takes-the"
+to = "cascade-pre-flight-checks-with-blockers-warnings-and"
+kind = "depends_on"
+
+[[edges]]
+from = "pattern-removal-skips-cascade-analysis-and-takes-the"
+to = "full-graph-validation-before-every-disk-write-via-commit"
+kind = "depends_on"
+
+[[edges]]
+from = "pattern-removal-skips-cascade-analysis-and-takes-the"
 to = "store"
 kind = "belongs_to"
 
