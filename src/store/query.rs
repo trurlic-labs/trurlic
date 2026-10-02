@@ -434,7 +434,7 @@ mod tests {
     fn patterns_for_returns_matching() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -584,7 +584,7 @@ mod tests {
     fn chain_graph() -> InMemoryGraph {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -781,7 +781,7 @@ mod tests {
         // Build a cycle: a → b → a (via DependsOn).
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -878,7 +878,7 @@ mod tests {
     fn graph_with_code_refs() -> InMemoryGraph {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),

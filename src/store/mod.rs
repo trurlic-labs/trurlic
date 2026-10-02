@@ -490,7 +490,7 @@ impl Store {
         } else {
             GraphIndex {
                 version: 1,
-                rebuilt: Utc::now(),
+                rebuilt: Some(Utc::now()),
                 nodes: vec![],
                 edges: vec![],
             }
@@ -559,6 +559,8 @@ impl Store {
             });
         }
 
+        let rebuilt = existing.rebuilt;
+
         // Preserve non-BelongsTo edges from existing graph that reference valid nodes.
         // BelongsTo edges are always re-derived from decision files (source of truth).
         // This prevents stale BelongsTo edges when decision.component is edited on disk.
@@ -593,7 +595,7 @@ impl Store {
 
         Ok(GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt,
             nodes,
             edges,
         })
@@ -730,7 +732,7 @@ pub(crate) mod testing {
         let project_hash = hash_bytes(project_content.as_bytes());
         let index = GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "project".into(),
                 kind: NodeKind::Component,
@@ -790,7 +792,7 @@ pub(crate) mod testing {
             BTreeMap::new(),
             GraphIndex {
                 version: 1,
-                rebuilt: Utc::now(),
+                rebuilt: None,
                 nodes: vec![],
                 edges: vec![],
             },
@@ -876,7 +878,7 @@ pub(crate) mod testing {
 
         let graph_index = GraphIndex {
             version: 1,
-            rebuilt: ts,
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -1011,7 +1013,7 @@ pub(crate) mod testing {
     pub fn test_graph() -> graph::InMemoryGraph {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -1359,7 +1361,7 @@ mod tests {
 
         let index = GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -1589,7 +1591,7 @@ mod tests {
 
         let index = GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "database".into(),

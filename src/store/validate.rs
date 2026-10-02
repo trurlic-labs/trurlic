@@ -405,7 +405,7 @@ mod tests {
     fn validate_catches_dangling_edge_target() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "a".into(),
                 kind: NodeKind::Decision,
@@ -429,7 +429,7 @@ mod tests {
     fn validate_catches_belongs_to_wrong_types() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "c1".into(),
@@ -466,7 +466,7 @@ mod tests {
     fn validate_catches_connects_to_wrong_types() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "d1".into(),
@@ -498,7 +498,7 @@ mod tests {
     fn validate_catches_self_edge() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "a".into(),
                 kind: NodeKind::Component,
@@ -522,7 +522,7 @@ mod tests {
     fn validate_catches_duplicate_edge() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "a".into(),
@@ -561,7 +561,7 @@ mod tests {
     fn validate_catches_pattern_too_few_members() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "pat".into(),
@@ -593,7 +593,7 @@ mod tests {
     fn validate_catches_depends_on_cycle() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "d1".into(),
@@ -656,7 +656,7 @@ mod tests {
     fn validate_catches_empty_choice() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "bad".into(),
                 kind: NodeKind::Decision,
@@ -696,7 +696,7 @@ mod tests {
     fn validate_catches_empty_reason() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "bad".into(),
                 kind: NodeKind::Decision,
@@ -738,7 +738,7 @@ mod tests {
     fn validate_catches_component_name_mismatch() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "auth".into(),
                 kind: NodeKind::Component,
@@ -771,7 +771,7 @@ mod tests {
     fn validate_catches_non_kebab_component() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "Bad_Name".into(),
                 kind: NodeKind::Component,
@@ -805,7 +805,7 @@ mod tests {
     fn validate_catches_missing_belongs_to() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "comp".into(),
@@ -863,7 +863,7 @@ mod tests {
     fn validate_catches_duplicate_belongs_to() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "comp-a".into(),
@@ -951,7 +951,7 @@ mod tests {
     fn validate_catches_belongs_to_target_mismatch() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "comp-a".into(),
@@ -1034,7 +1034,7 @@ mod tests {
     fn validate_catches_empty_pattern_name() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "pat".into(),
                 kind: NodeKind::Pattern,
@@ -1067,7 +1067,7 @@ mod tests {
     fn validate_allows_pattern_name_different_from_key() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -1168,7 +1168,7 @@ mod tests {
     fn validate_catches_orphan_node_without_content() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -1201,7 +1201,7 @@ mod tests {
     fn validate_allows_project_virtual_node_without_content() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "project".into(),
                 kind: NodeKind::Component,
@@ -1226,7 +1226,7 @@ mod tests {
     fn validate_catches_non_kebab_decision_key() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),

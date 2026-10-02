@@ -211,7 +211,12 @@ pub struct EdgeEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GraphIndex {
     pub version: u32,
-    pub rebuilt: DateTime<Utc>,
+    /// When the index was first written. Nothing reads it; a commit carries
+    /// it over unchanged so that `graph.toml` changes only with the graph.
+    /// 0.3.1 refuses an index without it, so stores written by `init` and
+    /// repaired by `load_state` still carry one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebuilt: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<NodeEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -360,7 +365,7 @@ created = "2025-06-01T10:30:00Z"
     fn graph_index_round_trip() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+            rebuilt: Some(Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap()),
             nodes: vec![
                 NodeEntry {
                     name: "auth".into(),
@@ -390,11 +395,12 @@ created = "2025-06-01T10:30:00Z"
     fn graph_index_empty_round_trip() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+            rebuilt: None,
             nodes: vec![],
             edges: vec![],
         };
         let serialized = toml::to_string_pretty(&index).expect("serialize");
+        assert!(!serialized.contains("rebuilt"));
         assert!(!serialized.contains("[[nodes]]"));
         assert!(!serialized.contains("[[edges]]"));
         let deserialized: GraphIndex = toml::from_str(&serialized).expect("deserialize");

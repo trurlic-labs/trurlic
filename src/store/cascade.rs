@@ -341,7 +341,7 @@ mod tests {
     fn cascade_graph() -> InMemoryGraph {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -551,7 +551,7 @@ mod tests {
         // Rebuild without the decision to test warnings only.
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -609,7 +609,7 @@ mod tests {
     fn cascade_component_allows_empty() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "project".into(),
@@ -729,7 +729,7 @@ mod tests {
         }
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes,
             edges,
         };
@@ -791,7 +791,7 @@ mod tests {
     fn depends_graph() -> InMemoryGraph {
         let index = GraphIndex {
             version: 1,
-            rebuilt: ts(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "auth".into(),

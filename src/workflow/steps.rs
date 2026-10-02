@@ -1486,7 +1486,7 @@ mod tests {
             BTreeMap::new(),
             GraphIndex {
                 version: 1,
-                rebuilt: Utc::now(),
+                rebuilt: None,
                 nodes,
                 edges,
             },

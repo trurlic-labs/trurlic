@@ -330,7 +330,7 @@ impl Store {
         if !errors.is_empty() {
             return Err(Error::GraphIntegrity(errors.join("; ")));
         }
-        let index = graph.to_index();
+        let index = graph.to_index(state.graph_index.rebuilt);
         self.commit_batch(lock, writes, removes, Some(index))?;
 
         // Reuse the validated graph — avoids a redundant rebuild_graph() in
@@ -733,7 +733,7 @@ impl Store {
             return Err(Error::GraphIntegrity(new_errors.join("; ")));
         }
 
-        let index = graph.to_index();
+        let index = graph.to_index(state.graph_index.rebuilt);
         if let Err(e) = self.commit_batch(lock, vec![], removes, Some(index)) {
             restore(state, restore_decisions, restore_nodes);
             return Err(e);
@@ -1389,7 +1389,6 @@ mod tests {
     #[test]
     fn commit_batch_writes_graph_update() {
         use crate::store::schema::*;
-        use chrono::Utc;
 
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
@@ -1397,7 +1396,7 @@ mod tests {
 
         let index = GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "test".into(),
                 kind: NodeKind::Component,
@@ -1421,7 +1420,6 @@ mod tests {
     #[test]
     fn commit_batch_sorts_graph_index() {
         use crate::store::schema::*;
-        use chrono::Utc;
 
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
@@ -1430,7 +1428,7 @@ mod tests {
         // Deliberately unsorted nodes and edges.
         let index = GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "z-node".into(),
@@ -1536,6 +1534,28 @@ mod tests {
             .commit_with_graph(&lock, vec![], vec![], &mut state)
             .unwrap_err();
         assert!(matches!(err, Error::GraphIntegrity(_)));
+    }
+
+    /// A commit that restamped the index would change `graph.toml` even when
+    /// the graph did not, and conflict on every concurrent branch.
+    #[test]
+    fn commits_keep_the_index_stamp() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        fs::remove_file(store.graph_path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        let stamp = state.graph_index.rebuilt;
+        assert!(stamp.is_some(), "a repaired index is stamped once");
+
+        store.add_component(&lock, &mut state, "auth", "").unwrap();
+        store
+            .add_component(&lock, &mut state, "billing", "")
+            .unwrap();
+
+        let on_disk: GraphIndex =
+            toml::from_str(&fs::read_to_string(store.graph_path()).unwrap()).unwrap();
+        assert_eq!(on_disk.rebuilt, stamp);
     }
 
     #[test]

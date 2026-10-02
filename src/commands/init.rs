@@ -44,7 +44,7 @@ pub fn init(cwd: &Path) -> Result<()> {
     let project_hash = store::hash_file(&store.root().join("project.toml"))?;
     let index = GraphIndex {
         version: 1,
-        rebuilt: Utc::now(),
+        rebuilt: Some(Utc::now()),
         nodes: vec![NodeEntry {
             name: "project".into(),
             kind: NodeKind::Component,

@@ -1397,7 +1397,7 @@ mod tests {
             std::collections::BTreeMap::new(),
             GraphIndex {
                 version: 1,
-                rebuilt: chrono::Utc::now(),
+                rebuilt: None,
                 nodes: vec![],
                 edges: vec![],
             },
