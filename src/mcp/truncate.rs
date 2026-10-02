@@ -8,9 +8,10 @@
 //! whole, so every kept value is one the tool produced. Sizes are bytes of
 //! the payload's compact serialization, the text the client receives.
 //!
-//! An oversized payload is never serialized whole, and each unit is measured
-//! only until it passes the budget, so a cut costs in proportion to the
-//! budget, not to the payload.
+//! Each unit, and each array item in it, is measured only until it passes
+//! the budget, so a cut costs in proportion to the budget, not to the
+//! payload. Only a payload whose skeleton alone exceeds the budget is
+//! measured whole, to report the bytes it omitted.
 
 use std::io;
 
@@ -58,7 +59,7 @@ pub(crate) fn fit_payload(payload: &Value, max_bytes: usize) -> String {
                     cut.len()
                 );
             }
-            omitted_whole(serialized_len(payload))
+            omitted_whole(serialized_len(payload, usize::MAX))
         }
     }
 }
@@ -157,7 +158,7 @@ fn skeleton_len(value: &Value) -> usize {
     match value {
         Value::Object(map) => object_skeleton_len(map),
         Value::Array(_) | Value::String(_) => 2,
-        Value::Null | Value::Bool(_) | Value::Number(_) => serialized_len(value),
+        Value::Null | Value::Bool(_) | Value::Number(_) => serialized_len(value, usize::MAX),
     }
 }
 
@@ -198,8 +199,7 @@ fn rebuild<'u>(
     notice: &mut Vec<Value>,
 ) -> Value {
     match value {
-        // clone: the cut payload is built anew; keys and scalars are copied
-        // as they are.
+        // clone: the cut payload is built anew; its keys are the original's.
         Value::Object(map) => Value::Object(
             map.iter()
                 .map(|(key, child)| (key.clone(), rebuild(child, cuts, notice)))
@@ -212,6 +212,7 @@ fn rebuild<'u>(
             // clone: never reached, see above.
             None => value.clone(),
         },
+        // clone: a scalar is copied into the cut payload as it is.
         Value::Null | Value::Bool(_) | Value::Number(_) => value.clone(),
     }
 }
@@ -219,8 +220,8 @@ fn rebuild<'u>(
 /// An array or string that can shrink, with the pointer that names it.
 ///
 /// A unit is measured only until its size passes the budget: no longer
-/// prefix can be kept, so `full` of a larger unit is the size of that first
-/// prefix past the budget, which every search treats alike.
+/// prefix can be kept, so `full` of a larger unit is some size past the
+/// budget, which every search treats alike.
 struct Unit<'a> {
     pointer: String,
     shape: Shape<'a>,
@@ -230,7 +231,8 @@ struct Unit<'a> {
 
 enum Shape<'a> {
     /// `ends[k]`: bytes of the first `k + 1` items and the commas between
-    /// them, up to the first that passes the budget.
+    /// them, up to the first that passes the budget, which is counted only
+    /// past it.
     Items {
         items: &'a [Value],
         ends: Vec<usize>,
@@ -255,10 +257,8 @@ impl<'a> Unit<'a> {
         let mut ends = Vec::new();
         let mut end = 0usize;
         for (index, item) in items.iter().enumerate() {
-            let comma = usize::from(index > 0);
-            end = end
-                .saturating_add(comma)
-                .saturating_add(serialized_len(item));
+            end = end.saturating_add(usize::from(index > 0));
+            end = end.saturating_add(serialized_len(item, max_bytes.saturating_sub(end)));
             ends.push(end);
             if end > max_bytes {
                 break;
@@ -367,22 +367,29 @@ impl Cut<'_> {
 
 /// Bytes of `{"at":<pointer>,"<field>":<count>}` and the comma before it.
 fn note_len(pointer: &str, field: &str, count: usize) -> usize {
-    serialized_len(&json!({ "at": pointer, field: count })) + 1
+    serialized_len(&json!({ "at": pointer, field: count }), usize::MAX) + 1
 }
 
-/// Bytes of `value` serialized. A `Value` written to a sink that cannot
-/// fail cannot fail either; if it ever did, the item would count as too
-/// large to keep.
-fn serialized_len(value: &Value) -> usize {
-    let mut sink = ByteCount(0);
-    serde_json::to_writer(&mut sink, value).map_or(usize::MAX, |()| sink.0)
+/// Bytes of `value` serialized, or `cap + 1` once they pass `cap`, so a
+/// value larger than `cap` is not serialized whole. The sink refusing bytes
+/// is the only error serializing a `Value` can raise.
+fn serialized_len(value: &Value, cap: usize) -> usize {
+    let mut sink = ByteCount { bytes: 0, cap };
+    serde_json::to_writer(&mut sink, value).map_or(cap.saturating_add(1), |()| sink.bytes)
 }
 
-struct ByteCount(usize);
+/// A byte count that refuses to grow past `cap`.
+struct ByteCount {
+    bytes: usize,
+    cap: usize,
+}
 
 impl io::Write for ByteCount {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0 += bytes.len();
+        self.bytes = self.bytes.saturating_add(bytes.len());
+        if self.bytes > self.cap {
+            return Err(io::ErrorKind::FileTooLarge.into());
+        }
         Ok(bytes.len())
     }
 
