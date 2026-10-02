@@ -129,7 +129,7 @@ Integration tests (`tests/integration/`): drive the built binary. `harness` spaw
 
 Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` act at the n-th hit of a named site in `src/store/failpoint.rs`: abort (or pause, with `TRURLIC_FAILPOINT_PAUSE`) at a `hit`, return an injected I/O error at a `fail`. `make test` enables it.
 
-Property: determinism (same graph state → same advance result), exhaustive step coverage (every `Step::as_str()` value accepted by `build_step_prompt()`), graph validation catches all known violation classes.
+Property: determinism (same graph state → same advance result; every read tool answers with the same bytes in two processes), exhaustive step coverage (every `Step::as_str()` value accepted by `build_step_prompt()`), graph validation catches all known violation classes.
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 
