@@ -1,4 +1,5 @@
 pub(crate) mod cascade;
+mod commit;
 mod failpoint;
 mod generation;
 pub mod graph;
