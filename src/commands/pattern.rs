@@ -17,7 +17,7 @@ pub(crate) fn remove_pattern(cwd: &Path, name: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::Error;
-    use crate::commands::{add_component, decide, init};
+    use crate::commands::{add_component, decide, init, remove_decision};
     use crate::store::{RecordPatternParams, Store};
     use tempfile::TempDir;
 
@@ -51,20 +51,11 @@ mod tests {
         drop(lock);
 
         // The pattern's two-member floor blocks removing either member.
-        let blocked = crate::commands::remove_decision(tmp.path(), "use-jwt").unwrap_err();
+        let blocked = remove_decision(tmp.path(), "use-jwt").unwrap_err();
         assert!(matches!(blocked, Error::CascadeBlocked(_)), "{blocked}");
 
         remove_pattern(tmp.path(), "token-hygiene").unwrap();
-        crate::commands::remove_decision(tmp.path(), "use-jwt").unwrap();
+        remove_decision(tmp.path(), "use-jwt").unwrap();
         assert!(!store.pattern_path("token-hygiene").exists());
-    }
-
-    #[test]
-    fn remove_pattern_rejects_unknown_name() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-
-        let err = remove_pattern(tmp.path(), "ghost").unwrap_err();
-        assert!(matches!(err, Error::PatternNotFound(ref n) if n == "ghost"));
     }
 }

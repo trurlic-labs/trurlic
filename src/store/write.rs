@@ -276,7 +276,6 @@ impl Store {
         // A remove failure here leaves an orphan file but does NOT roll back
         // the successful writes. Crash recovery and `trurlic check` will
         // surface any resulting inconsistency.
-        failpoint::hit(Site::GraphRenamed);
         for path in &removes {
             if let Err(e) = fs::remove_file(path)
                 && e.kind() != ErrorKind::NotFound
@@ -1196,7 +1195,8 @@ impl Store {
 fn rename_staged(staged: &[(PathBuf, PathBuf)], graph_rename: Option<usize>) -> Result<()> {
     failpoint::hit(Site::Staged);
     for (i, (tmp_path, target)) in staged.iter().enumerate() {
-        if graph_rename == Some(i) {
+        let is_graph = graph_rename == Some(i);
+        if is_graph {
             failpoint::hit(Site::NodesRenamed);
         }
         if let Err(e) = fs::rename(tmp_path, target) {
@@ -1205,6 +1205,9 @@ fn rename_staged(staged: &[(PathBuf, PathBuf)], graph_rename: Option<usize>) -> 
                 let _ = fs::remove_file(remaining);
             }
             return Err(Error::Io(e));
+        }
+        if is_graph {
+            failpoint::hit(Site::GraphRenamed);
         }
     }
     Ok(())

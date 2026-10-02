@@ -60,6 +60,13 @@ fn component_file_exists(project: &Project, name: &str) -> bool {
         .exists()
 }
 
+fn decision_file_exists(project: &Project, name: &str) -> bool {
+    project
+        .path()
+        .join(format!(".trurlic/decisions/{name}.toml"))
+        .exists()
+}
+
 #[test]
 fn staged_abort_commits_nothing() {
     let project = Project::init();
@@ -87,8 +94,10 @@ fn nodes_renamed_abort_leaves_graph_uncommitted() {
     assert_recovers(&project);
 }
 
+/// `graph.toml` no longer lists the decision, but its node file, which
+/// phase 4 would have deleted, is still on disk.
 #[test]
-fn graph_renamed_abort_has_committed_the_removal() {
+fn graph_renamed_abort_leaves_the_removed_node_file() {
     let project = Project::init();
     project.run_ok(&["add", "component", "auth"]);
     project.run_ok(&[
@@ -108,6 +117,7 @@ fn graph_renamed_abort_has_committed_the_removal() {
     );
 
     assert!(!graph_lists(&project, "use-jwt"));
+    assert!(decision_file_exists(&project, "use-jwt"));
     assert_recovers(&project);
 }
 

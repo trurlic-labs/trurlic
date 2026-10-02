@@ -75,7 +75,7 @@ pub(crate) fn hit(site: Site) {
 
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
-#[inline(always)]
+#[inline]
 pub(crate) fn hit(_site: Site) {}
 
 #[cfg(test)]

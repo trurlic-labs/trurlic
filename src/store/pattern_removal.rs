@@ -36,7 +36,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::schema::{Attribution, EdgeKind};
+    use crate::store::schema::{Attribution, EdgeEntry, EdgeKind};
     use crate::store::testing::setup_store_with_components;
     use crate::store::{RecordDecisionParams, RecordPatternParams};
     use tempfile::TempDir;
@@ -112,5 +112,35 @@ mod tests {
 
         assert!(matches!(err, Error::PatternNotFound(ref n) if n == "no-such-pattern"));
         assert!(state.patterns.contains_key("token-hygiene"));
+    }
+
+    #[test]
+    fn remove_pattern_restores_state_when_the_commit_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state, members) = store_with_pattern(tmp.path());
+        // A dangling edge makes the whole graph invalid, so the commit is refused.
+        state.graph_index.edges.push(EdgeEntry {
+            from: members[0].clone(),
+            to: "ghost".into(),
+            kind: EdgeKind::DependsOn,
+        });
+        let edges_before = state.graph_index.edges.len();
+        let lock = store.lock().unwrap();
+
+        let err = store
+            .remove_pattern(&lock, &mut state, "token-hygiene")
+            .unwrap_err();
+
+        assert!(matches!(err, Error::GraphIntegrity(_)), "{err}");
+        assert!(state.patterns.contains_key("token-hygiene"));
+        assert!(
+            state
+                .graph_index
+                .nodes
+                .iter()
+                .any(|n| n.name == "token-hygiene")
+        );
+        assert_eq!(state.graph_index.edges.len(), edges_before);
+        assert!(store.pattern_path("token-hygiene").exists());
     }
 }
