@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::context;
 use super::{pattern, update, verify, write};
-use crate::store::{ProjectState, Store};
+use crate::store::{ProjectState, Store, StoreLock};
 use crate::workflow;
 
 // ── Tool definitions ────────────────────────────────────────────────────────
@@ -634,22 +634,23 @@ pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> 
 
 // ── Write tool dispatch ─────────────────────────────────────────────────────
 
-/// Dispatch a mutating tool call. Requires `&mut ProjectState` and `&Store`.
-/// Only called for tools where [`is_write_tool`] returns `true`.
+/// Dispatch a mutating tool call against `state`, which the caller loaded
+/// under `lock`. Only called for tools where [`is_write_tool`] returns `true`.
 pub(crate) fn call_write_tool(
     store: &Store,
+    lock: &StoreLock,
     state: &mut ProjectState,
     name: &str,
     args: &Value,
 ) -> ToolEnvelope {
     let result = match name {
-        "record_decision" => write::record_decision(store, state, args),
-        "record_pattern" => write::record_pattern(store, state, args),
-        "remove_decision" => update::remove_decision(store, state, args),
-        "remove_pattern" => pattern::remove_pattern(store, state, args),
-        "update_decision" => update::update_decision(store, state, args),
-        "add_component" => write::add_component(store, state, args),
-        "add_connection" => write::add_connection(store, state, args),
+        "record_decision" => write::record_decision(store, lock, state, args),
+        "record_pattern" => write::record_pattern(store, lock, state, args),
+        "remove_decision" => update::remove_decision(store, lock, state, args),
+        "remove_pattern" => pattern::remove_pattern(store, lock, state, args),
+        "update_decision" => update::update_decision(store, lock, state, args),
+        "add_component" => write::add_component(store, lock, state, args),
+        "add_connection" => write::add_connection(store, lock, state, args),
         _ => return tool_error(&format!("unhandled write tool: {name}")),
     };
     match result {

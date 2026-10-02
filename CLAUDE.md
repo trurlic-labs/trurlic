@@ -41,17 +41,19 @@ Trurlic makes no LLM calls. Design work happens in the agent that calls the MCP 
 
 ### Store Internals
 
-Graph on disk: `.trurlic/` with `components/`, `decisions/`, `patterns/` subdirectories. Each node is a TOML file. `graph.toml` is a compiled edge index rebuilt deterministically from node files. `.trurlic/.state/` holds the lock file, temp files and map layout; it is never committed.
+Graph on disk: `.trurlic/` with `components/`, `decisions/`, `patterns/` subdirectories. Each node is a TOML file. `graph.toml` is a compiled edge index rebuilt deterministically from node files. `.trurlic/.state/` holds the lock file, temp files, the commit counter (`generation`) and map layout; it is never committed.
 
 Atomic writes: serialize → write to temp file → verify round-trip parse → rename into place. `graph.toml` renamed last as the commit point. Leftover temp files are removed when the next CLI command opens the store.
 
 Content integrity: BLAKE3 hash per node file, stored in `graph.toml`. `trurlic check` verifies hashes. Tamper detection, not encryption.
 
-File locking: std `File::try_lock` on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter.
+File locking: std `File::try_lock` (writers, exclusive) and `File::try_lock_shared` (watchers) on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter.
+
+Writer protocol: every write starts at `Store::begin_write`, which takes the caller's state write lock, then the exclusive file lock (dropping the state lock while the file lock is busy), then reloads the graph from disk. All validation runs against that reloaded state. Every commit raises `.state/generation`; a commit refuses a state whose generation is behind the store's.
 
 In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex` and an eagerly built `InMemoryGraph` for graph queries.
 
-Thread model: MCP server holds `Arc<RwLock<ProjectState>>`. File watcher thread detects external changes and swaps state under write lock (microseconds). MCP read tools acquire read lock only. Write tools acquire write lock, then file lock, then validate, then commit.
+Thread model: MCP server holds `Arc<RwLock<ProjectState>>`. File watcher thread detects external changes, loads under the shared file lock, releases it, then swaps state under the write lock (microseconds) unless a write of its own server overtook the load (`ProjectState::is_overtaken`). Events that arrive during a reload start the next one. MCP read tools acquire read lock only. Write tools acquire write lock, then file lock, then reload, validate, and commit. A thread holding a file lock never waits on the state lock.
 
 ### Workflow Engine
 

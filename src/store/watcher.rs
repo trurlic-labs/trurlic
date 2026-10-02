@@ -2,13 +2,19 @@
 //!
 //! Both the MCP server and the map server need to detect external
 //! changes to `.trurlic/` (CLI writes, manual edits, git checkout) and
-//! reload state from disk. This module provides the shared
-//! watch → filter → debounce → reload → drain loop. Consumers supply
-//! a callback that receives the freshly loaded [`ProjectState`]; all
-//! watcher plumbing is handled here.
+//! reload state from disk. This module runs the shared
+//! watch -> filter -> debounce -> reload loop; consumers supply a callback
+//! that receives each freshly loaded [`ProjectState`].
 //!
-//! Events inside `.state/` (tmp files, lock, sessions) are ignored —
-//! they are transient and never affect the graph.
+//! The reload holds the shared file lock, so it never reads a commit
+//! halfway through its renames, and releases it before the callback runs:
+//! the callback takes the consumer's state lock, and writers take that lock
+//! before the file lock, so no thread may hold a file lock while waiting for
+//! it. Events that arrive during a reload stay queued and start the next
+//! one: they may stem from a commit that landed after this load.
+//!
+//! Events inside `.state/` (tmp files, lock, generation) are ignored:
+//! they never change the graph.
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -34,16 +40,17 @@ pub(crate) struct WatcherGuard {
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /// Spawn a background thread that watches `.trurlic/` and calls
-/// `on_change` with a freshly loaded [`ProjectState`] whenever
+/// `on_load` with a freshly loaded [`ProjectState`] whenever
 /// relevant files change on disk.
 ///
 /// `debounce` controls how long to batch events before reloading.
 /// Lower values give faster UI updates; higher values coalesce
 /// multi-file operations (e.g. `git checkout`).
 ///
-/// The callback runs on the watcher thread with no locks held.
-/// It is responsible for swapping the new state into whatever
-/// shared structure the consumer uses.
+/// `served_generation` reads the generation the consumer serves; it is read
+/// before each load and passed to `on_load` with the loaded state. The
+/// callback runs on the watcher thread with no file lock held, and swaps the
+/// loaded state in unless it [`is_overtaken`](ProjectState::is_overtaken).
 ///
 /// Failure to create the watcher is non-fatal — the caller should
 /// log the error and continue without live reload.
@@ -51,7 +58,8 @@ pub(crate) fn spawn(
     store_root: &Path,
     debounce: Duration,
     thread_name: &str,
-    on_change: impl Fn(ProjectState) + Send + 'static,
+    served_generation: impl Fn() -> u64 + Send + 'static,
+    on_load: impl Fn(ProjectState, u64) + Send + 'static,
 ) -> Result<WatcherGuard, String> {
     let (tx, rx) = mpsc::channel();
 
@@ -70,11 +78,10 @@ pub(crate) fn spawn(
         .map_err(|e| format!("failed to watch {}: {e}", store_root.display()))?;
 
     let store = Store::at(store_root.to_path_buf());
-    let state_dir = store_root.join(STATE_DIR);
 
     thread::Builder::new()
         .name(thread_name.into())
-        .spawn(move || watch_loop(&store, &state_dir, debounce, rx, on_change))
+        .spawn(move || watch_loop(&store, debounce, &rx, served_generation, on_load))
         .map_err(|e| format!("failed to spawn watcher thread: {e}"))?;
 
     Ok(WatcherGuard { _watcher: watcher })
@@ -82,41 +89,32 @@ pub(crate) fn spawn(
 
 // ── Internals ──────────────────────────────────────────────────────────────
 
-/// Event loop: block → filter → debounce → reload → callback → drain → repeat.
+/// Event loop: block -> filter -> debounce -> reload -> callback -> repeat.
+/// Returns when the channel closes, i.e. when the guard is dropped.
 fn watch_loop(
     store: &Store,
-    state_dir: &Path,
     debounce: Duration,
-    rx: mpsc::Receiver<notify::Event>,
-    on_change: impl Fn(ProjectState),
+    rx: &mpsc::Receiver<notify::Event>,
+    served_generation: impl Fn() -> u64,
+    on_load: impl Fn(ProjectState, u64),
 ) {
-    loop {
-        // Block until an event arrives.
-        let event = match rx.recv() {
-            Ok(e) => e,
-            Err(_) => return, // channel closed — server shutting down
-        };
-
-        // Skip events inside .state/ (tmp files, lock, sessions).
-        if !is_relevant(&event, state_dir) {
+    let state_dir = store.root().join(STATE_DIR);
+    while let Ok(event) = rx.recv() {
+        if !is_relevant(&event, &state_dir) {
             continue;
         }
+        debounce_events(rx, debounce);
 
-        // Debounce: drain all events that arrive within the window.
-        debounce_events(&rx, debounce);
-
-        // Full reload: parse all files with no locks held, then hand
-        // the new state to the consumer callback.
-        match store.load_state() {
-            Ok(new_state) => on_change(new_state),
-            Err(e) => eprintln!("trurlic: watcher reload failed: {e}"),
+        // A failed reload keeps the served state; the write or edit that
+        // completes the store sends the events for the next attempt.
+        let served_at_load = served_generation();
+        match store.load_shared() {
+            Ok(loaded) => on_load(loaded, served_at_load),
+            Err(e) => eprintln!(
+                "trurlic: watcher reload of {} failed: {e}",
+                store.root().display()
+            ),
         }
-
-        // Drain events that arrived during reload — they reflect the state
-        // we just loaded. Without this, a single CLI write triggers two
-        // reloads: one from the debounced events, one from events that
-        // arrived during the ~150ms load_state.
-        drain_pending(&rx);
     }
 }
 
@@ -139,11 +137,6 @@ fn debounce_events(rx: &mpsc::Receiver<notify::Event>, duration: Duration) {
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
-}
-
-/// Consume all events currently queued without blocking.
-fn drain_pending(rx: &mpsc::Receiver<notify::Event>) {
-    while rx.try_recv().is_ok() {}
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -228,17 +221,5 @@ mod tests {
     fn irrelevant_for_empty_paths() {
         let sd = PathBuf::from("/repo/.trurlic/.state");
         assert!(!is_relevant(&event_at(&[]), &sd));
-    }
-
-    // ── drain_pending ───────────────────────────────────────────────────
-
-    #[test]
-    fn drain_pending_empties_channel() {
-        let (tx, rx) = mpsc::channel();
-        for _ in 0..5 {
-            tx.send(notify::Event::new(notify::EventKind::Any)).ok();
-        }
-        drain_pending(&rx);
-        assert!(rx.try_recv().is_err());
     }
 }

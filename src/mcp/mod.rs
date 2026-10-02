@@ -175,17 +175,38 @@ fn handle_tools_call(
     // blocking the file watcher's state swap and (if the transport ever
     // supports concurrency) other read requests.
     if tools::is_write_tool(name) {
-        let mut guard = state.write().unwrap_or_else(|poisoned| {
-            eprintln!("trurlic: recovered from poisoned state lock");
-            poisoned.into_inner()
-        });
-        Ok(tools::call_write_tool(store, &mut guard, name, arguments))
+        Ok(call_write_tool(store, state, name, arguments))
     } else {
         let guard = state.read().unwrap_or_else(|poisoned| {
             eprintln!("trurlic: recovered from poisoned state lock");
             poisoned.into_inner()
         });
         Ok(tools::call_read_tool(&guard, name, arguments))
+    }
+}
+
+/// Run a write tool against the graph on disk, not the state this server
+/// last loaded: another process may have committed since. Lock order: the
+/// state write lock, then the file lock. A refused write keeps the reloaded
+/// state.
+fn call_write_tool(
+    store: &Store,
+    state: &RwLock<ProjectState>,
+    name: &str,
+    arguments: &Value,
+) -> tools::ToolEnvelope {
+    let take_state = || {
+        state.write().unwrap_or_else(|poisoned| {
+            eprintln!("trurlic: recovered from poisoned state lock");
+            poisoned.into_inner()
+        })
+    };
+    match store.begin_write(take_state) {
+        Ok((mut current, lock, loaded)) => {
+            *current = loaded;
+            tools::call_write_tool(store, &lock, &mut current, name, arguments)
+        }
+        Err(e) => tools::tool_error(&e.to_string()),
     }
 }
 
@@ -382,6 +403,37 @@ mod tests {
         );
         let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
         assert!(json.get("result").is_some(), "read tool should succeed");
+    }
+
+    /// The lost update: another process commits after this server loaded its
+    /// state. The write must validate against that commit and keep it.
+    #[test]
+    fn write_tool_validates_against_commits_made_since_the_last_load() {
+        let (_tmp, store) = empty_store();
+        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
+        let mut other = store.load_state().unwrap();
+        let lock = store.lock().unwrap();
+        store.add_component(&lock, &mut other, "auth", "").unwrap();
+        store
+            .add_component(&lock, &mut other, "billing", "")
+            .unwrap();
+        drop(lock);
+
+        let req = make_request(
+            Some(json!(13)),
+            "tools/call",
+            Some(json!({
+                "name": "add_connection",
+                "arguments": { "from": "auth", "to": "billing" }
+            })),
+        );
+        let json = handle_to_json(&store, &state, req, &mut true).unwrap();
+
+        assert_ne!(json["result"]["isError"], json!(true), "{json}");
+        let on_disk = store.load_state().unwrap();
+        assert!(on_disk.components.contains_key("auth"));
+        assert!(on_disk.components.contains_key("billing"));
+        assert_eq!(state.read().unwrap().graph_index, on_disk.graph_index);
     }
 
     #[test]

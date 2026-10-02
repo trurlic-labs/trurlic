@@ -9,6 +9,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **Concurrent writers no longer lose each other's writes.** MCP and the map validated a write against the state they last loaded, before taking the file lock, and then committed the whole graph index from it, so a commit another process made in between was silently dropped (an edge, a node, a revision), and two processes could give two decisions the same file stem. Every write now takes the file lock, reloads the graph from disk and validates against that. A commit counter in `.trurlic/.state/generation` is raised by every commit, and a commit built on a state older than the store is refused. The map now takes its state lock before the file lock, like every other writer, and waits for a busy lock instead of answering 503 at once.
+- **Watchers serve what is on disk.** The MCP and map watchers reloaded without a lock, so they could read a commit halfway through; dropped the events of a write that landed during a reload, so they kept serving removed nodes; and swapped a load in even when it predated the server's own last write. They now reload under a shared file lock, keep every event, check the format version, log failures with the store's path, and skip a load only when the server's own write overtook it, so deleting `.trurlic/.state/` does not freeze them. The map diffs and swaps under one lock, so its WebSocket events arrive in commit order.
+- **`graph.toml` changes only with the graph.** Its `rebuilt` timestamp was rewritten by every commit, which changed the file on every write and conflicted across branches. The stamp is now kept as it was; files without it are read too. After a write, the in-memory index is the sorted one on disk.
+
 ### Added
 
 - **Pattern removal: `remove_pattern` MCP tool and `trurlic remove pattern`.** A pattern could be recorded but never removed, and the cascade refuses to shrink a pattern below two members, so a pattern's last members could not be removed either. Both paths call one `Store::remove_pattern`, which deletes the pattern file with its `member_of` and `applies_to` edges in a single validated commit; member decisions are kept. An unknown name is a `PatternNotFound` error.

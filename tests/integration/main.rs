@@ -8,3 +8,6 @@ mod failpoints;
 mod golden;
 mod harness;
 mod stdio;
+#[cfg(feature = "failpoints")]
+mod watchers;
+mod writers;

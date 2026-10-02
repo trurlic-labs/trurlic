@@ -626,7 +626,7 @@ mod tests {
                 kind: crate::store::schema::EdgeKind::DependsOn,
             });
         store
-            .commit_batch(&lock, vec![], vec![], Some(state.graph_index.clone()))
+            .commit_batch(&lock, vec![], vec![], Some(&mut state.graph_index))
             .unwrap();
         drop(lock);
 

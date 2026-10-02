@@ -1,7 +1,9 @@
 //! Drives the built `trurlic` binary: CLI invocations against a scratch
-//! project, and an MCP client speaking JSON-RPC over `trurlic serve` stdio.
+//! project, an MCP client speaking JSON-RPC over `trurlic serve` stdio, and
+//! an HTTP client for the REST API of `trurlic map`.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -204,6 +206,107 @@ impl Drop for McpClient {
     fn drop(&mut self) {
         // Closing stdin is the server's shutdown signal (EOF).
         drop(self.stdin.take());
+        let _ = self.child.wait();
+    }
+}
+
+/// A `trurlic map` server and an HTTP/1.1 client for its REST API.
+pub struct MapServer {
+    child: Child,
+    /// `host:port` the server listens on.
+    address: String,
+    token: String,
+}
+
+impl MapServer {
+    /// Start `trurlic map` in `project` and wait until its file watcher runs.
+    pub fn start(project: &Project) -> Self {
+        Self::start_with_env(project, &[])
+    }
+
+    /// [`start`](Self::start) with extra environment variables.
+    pub fn start_with_env(project: &Project, vars: &[(&str, &str)]) -> Self {
+        let mut child = project
+            .command()
+            .envs(vars.iter().copied())
+            .args(["map", "--no-open"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        // The server prints its URL, then starts the watcher. The reader
+        // thread keeps draining stderr so the server never blocks on it.
+        let stderr = child.stderr.take().unwrap();
+        let (sender, lines) = mpsc::channel();
+        thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                let Ok(line) = line else { break };
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let mut url = None;
+        loop {
+            let line = lines
+                .recv_timeout(RESPONSE_TIMEOUT)
+                .expect("map server exited or stalled before its watcher started");
+            if let Some((_, found)) = line.split_once("http://") {
+                url = Some(found.to_owned());
+            }
+            if line.contains("file watcher active") {
+                break;
+            }
+        }
+        let url = url.expect("map server printed no URL");
+        let (address, token) = url.split_once("/?token=").unwrap();
+
+        Self {
+            child,
+            address: address.to_owned(),
+            token: token.to_owned(),
+        }
+    }
+
+    /// Send a request to the REST API and return the status code and the
+    /// decoded JSON body.
+    pub fn request(&self, method: &str, path: &str, body: Option<&Value>) -> (u16, Value) {
+        let body = body.map(Value::to_string).unwrap_or_default();
+        let mut stream = TcpStream::connect(&self.address).unwrap();
+        stream.set_read_timeout(Some(RESPONSE_TIMEOUT)).unwrap();
+        write!(
+            stream,
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{body}",
+            self.address,
+            self.token,
+            body.len()
+        )
+        .unwrap();
+
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let (head, payload) = response
+            .split_once("\r\n\r\n")
+            .unwrap_or_else(|| panic!("malformed HTTP response: {response}"));
+        let status = head
+            .split(' ')
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .unwrap_or_else(|| panic!("no status in {head}"));
+        let json = serde_json::from_str(payload)
+            .unwrap_or_else(|e| panic!("{method} {path}: body is not JSON ({e}): {payload}"));
+        (status, json)
+    }
+}
+
+impl Drop for MapServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }

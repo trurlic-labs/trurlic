@@ -1,7 +1,7 @@
 [decision]
 component = "store"
-choice = "File watcher with debounce, state-dir filtering, and post-reload drain"
-reason = "A shared watcher module (watcher.rs) watches .trurlic/ recursively via notify::RecommendedWatcher. Events inside .state/ (tmp files, lock, sessions) are filtered out as transient. Events are debounced (configurable duration) to coalesce multi-file operations like git checkout. After load_state() completes, pending events are drained to prevent double-reload from events generated during the reload itself. The callback runs with no locks held — consumers are responsible for swapping state under their own lock. WatcherGuard keeps the watcher alive; dropping it stops the watch thread via channel disconnect."
+choice = "File watcher with debounce, state-dir filtering, and reloads under the shared lock"
+reason = "A shared watcher module (store/watcher.rs) watches .trurlic/ recursively via notify::RecommendedWatcher. Events inside .state/ (tmp files, lock, generation) are filtered out: they never change the graph. Events are debounced (configurable duration) to coalesce multi-file operations like git checkout. The reload goes through Store::load_shared: format check and load_state under the shared file lock, so it never reads a commit halfway through its renames, released before the consumer callback runs, because the callback takes the consumer's state write lock and writers take that lock before the file lock, so no thread may hold a file lock while waiting for it. Events that arrive during a reload stay queued and start the next reload, because they may come from a commit that landed after the load; draining them lost such commits until the next unrelated change. A failed reload is logged with the store path and keeps the served state. Before each load the watcher reads the generation the consumer serves; the consumer drops the load only when ProjectState::is_overtaken: its state changed during the load and is newer, i.e. a write of its own server landed after the load. A load that is merely older (the counter reset because .state/ was deleted) is swapped in. WatcherGuard keeps the watcher alive; dropping it stops the watch thread via channel disconnect."
 alternatives = [
     "Polling on a timer — rejected: wastes CPU between changes and introduces unnecessary latency (poll interval vs instant notification)",
     "inotify/kqueue directly — rejected: notify crate abstracts platform differences (Linux inotify, macOS FSEvents, Windows ReadDirectoryChanges); direct use would require per-platform code",
@@ -13,3 +13,16 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:45:37.676016131Z"
+
+[[decision.code_refs]]
+file = "src/store/watcher.rs"
+symbol = "watch_loop"
+
+[[decision.code_refs]]
+file = "src/store/reload.rs"
+symbol = "Store::load_shared"
+
+[[decision.history]]
+choice = "File watcher with debounce, state-dir filtering, and post-reload drain"
+reason = "A shared watcher module (watcher.rs) watches .trurlic/ recursively via notify::RecommendedWatcher. Events inside .state/ (tmp files, lock, sessions) are filtered out as transient. Events are debounced (configurable duration) to coalesce multi-file operations like git checkout. After load_state() completes, pending events are drained to prevent double-reload from events generated during the reload itself. The callback runs with no locks held — consumers are responsible for swapping state under their own lock. WatcherGuard keeps the watcher alive; dropping it stops the watch thread via channel disconnect."
+changed_at = "2026-10-02T11:35:08.652715433Z"

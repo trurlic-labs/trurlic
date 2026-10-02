@@ -226,7 +226,7 @@ fn generate_fixture(n_components: usize) -> Fixture {
 
     let index = GraphIndex {
         version: 1,
-        rebuilt: created,
+        rebuilt: Some(created),
         nodes,
         edges,
     };
@@ -341,15 +341,15 @@ fn bench_graph_serialize(c: &mut Criterion) {
     let graph_500 = build_graph_at(500);
 
     group.bench_function("to_index_50_components", |b| {
-        b.iter(|| black_box(&graph_50).to_index());
+        b.iter(|| black_box(&graph_50).to_index(None));
     });
 
     group.bench_function("to_index_500_components", |b| {
-        b.iter(|| black_box(&graph_500).to_index());
+        b.iter(|| black_box(&graph_500).to_index(None));
     });
 
     // TOML round-trip for a 50-component GraphIndex.
-    let exported = graph_50.to_index();
+    let exported = graph_50.to_index(None);
 
     group.bench_function("toml_serialize_graph_index", |b| {
         b.iter(|| toml::to_string_pretty(black_box(&exported)));

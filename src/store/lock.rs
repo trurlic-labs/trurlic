@@ -2,12 +2,14 @@
 //!
 //! Every graph write runs under the exclusive lock on `.state/lock`, and
 //! [`StoreLock`] is the proof a write method takes. The holder writes its PID
-//! into the lock file so a timed-out waiter can name it.
+//! into the lock file so a timed-out waiter can name it. A watcher loads
+//! under the shared lock, which keeps writers out without excluding other
+//! readers.
 //!
-//! The lock is std's `File::try_lock`, polled until [`LOCK_TIMEOUT`]: the
-//! blocking `File::lock` has no timeout, so a hung holder would hang every
-//! writer. std maps each platform's contention error (`EWOULDBLOCK`,
-//! `ERROR_LOCK_VIOLATION`) to [`TryLockError::WouldBlock`].
+//! Locks are std's `File::try_lock` and `try_lock_shared`, polled until
+//! [`LOCK_TIMEOUT`]: the blocking calls have no timeout, so a hung holder
+//! would hang every waiter. std maps each platform's contention error
+//! (`EWOULDBLOCK`, `ERROR_LOCK_VIOLATION`) to [`TryLockError::WouldBlock`].
 
 use std::fs::{self, File, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -40,45 +42,40 @@ impl StoreLock {
     }
 }
 
-impl Store {
-    /// Acquire an exclusive advisory lock on `.trurlic/`, waiting up to
-    /// 5 seconds for another holder to release it. The lock is released
-    /// when the returned [`StoreLock`] is dropped.
-    pub fn lock(&self) -> Result<StoreLock> {
-        let mut file = self.open_lock_file()?;
-        let deadline = Instant::now() + LOCK_TIMEOUT;
+/// Proof that this process holds the store's shared file lock: no commit
+/// lands while it lives. Dropping it releases the lock.
+#[must_use = "dropping the lock immediately releases it"]
+pub(super) struct SharedLock {
+    _file: File,
+}
 
-        loop {
-            match file.try_lock() {
-                Ok(()) => return Ok(StoreLock::claim(file)),
-                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
-                    std::thread::sleep(LOCK_POLL_INTERVAL);
-                }
-                Err(TryLockError::WouldBlock) => {
-                    return Err(Error::LockTimeout {
-                        timeout_secs: LOCK_TIMEOUT.as_secs(),
-                        detail: holder_detail(&mut file),
-                    });
-                }
-                Err(TryLockError::Error(e)) => return Err(Error::Io(e)),
-            }
-        }
+impl Store {
+    /// Acquire the exclusive lock, waiting up to 5 seconds for another
+    /// holder to release it.
+    pub fn lock(&self) -> Result<StoreLock> {
+        let ((), lock) = self.lock_after(|| ())?;
+        Ok(lock)
     }
 
-    /// Non-blocking lock attempt. Returns immediately with an error if
-    /// the lock is held by another process. Used by the map API to avoid
-    /// stalling the tokio runtime (and all WebSocket/HTTP reads) while
-    /// waiting for a long-running CLI operation to release the lock.
-    pub fn try_lock(&self) -> Result<StoreLock> {
-        let file = self.open_lock_file()?;
-        match file.try_lock() {
-            Ok(()) => Ok(StoreLock::claim(file)),
-            Err(TryLockError::WouldBlock) => Err(Error::LockTimeout {
-                timeout_secs: 0,
-                detail: "store is locked by another process, try again shortly".into(),
-            }),
-            Err(TryLockError::Error(e)) => Err(Error::Io(e)),
-        }
+    /// Take the guard `take_guard` returns, then the exclusive lock. While
+    /// the file lock is busy the guard is dropped for each poll interval, so
+    /// the caller never waits on the file lock while holding the guard.
+    ///
+    /// The guard is a server's state write lock. Readers and the watcher take
+    /// that lock without holding the file lock, so this order cannot
+    /// deadlock, and dropping the guard while waiting keeps readers and the
+    /// watcher from stalling behind a writer that cannot commit yet.
+    pub(crate) fn lock_after<G>(&self, take_guard: impl FnMut() -> G) -> Result<(G, StoreLock)> {
+        let mut file = self.open_lock_file()?;
+        let guard = poll(&mut file, File::try_lock, take_guard)?;
+        Ok((guard, StoreLock::claim(file)))
+    }
+
+    /// Acquire the shared lock, waiting up to 5 seconds for a writer.
+    pub(super) fn lock_shared(&self) -> Result<SharedLock> {
+        let mut file = self.open_lock_file()?;
+        poll(&mut file, File::try_lock_shared, || ())?;
+        Ok(SharedLock { _file: file })
     }
 
     /// Read+write rather than append: Windows refuses to lock a handle
@@ -91,6 +88,33 @@ impl Store {
             .create(true)
             .truncate(false)
             .open(self.lock_path())?)
+    }
+}
+
+/// Take a guard, then try the file lock; on contention drop the guard and
+/// retry after [`LOCK_POLL_INTERVAL`], until [`LOCK_TIMEOUT`].
+fn poll<G>(
+    file: &mut File,
+    try_lock: fn(&File) -> std::result::Result<(), TryLockError>,
+    mut take_guard: impl FnMut() -> G,
+) -> Result<G> {
+    let deadline = Instant::now() + LOCK_TIMEOUT;
+    loop {
+        let guard = take_guard();
+        match try_lock(file) {
+            Ok(()) => return Ok(guard),
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                drop(guard);
+                std::thread::sleep(LOCK_POLL_INTERVAL);
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(Error::LockTimeout {
+                    timeout_secs: LOCK_TIMEOUT.as_secs(),
+                    detail: holder_detail(file),
+                });
+            }
+            Err(TryLockError::Error(e)) => return Err(Error::Io(e)),
+        }
     }
 }
 
@@ -110,7 +134,7 @@ fn holder_detail(file: &mut File) -> String {
 mod tests {
     use super::*;
     use crate::store::testing::setup_store;
-    use std::sync::mpsc;
+    use std::sync::{Mutex, mpsc};
     use tempfile::TempDir;
 
     // Two handles on one lock file contend like two processes: flock and
@@ -144,20 +168,55 @@ mod tests {
         });
     }
 
+    /// While the file lock is busy, the waiter holds its guard only for the
+    /// instant of each attempt, so another thread can take the guard.
     #[test]
-    fn try_lock_refuses_while_held() {
+    fn lock_after_releases_the_guard_while_the_file_lock_is_busy() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
-        let _held = store.lock().unwrap();
+        let state = Mutex::new(0_u32);
+        let held = store.lock().unwrap();
 
-        let err = store.try_lock().unwrap_err();
-        assert!(matches!(
-            err,
-            Error::LockTimeout {
-                timeout_secs: 0,
-                ..
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| {
+                let (guard, _lock) = store.lock_after(|| state.lock().unwrap())?;
+                Ok::<_, Error>(*guard)
+            });
+
+            // Taking the guard from here needs the waiter to have released it
+            // between two attempts; the waiter keeps polling meanwhile.
+            for _ in 0..3 {
+                *state.lock().unwrap() += 1;
+                std::thread::sleep(LOCK_POLL_INTERVAL);
             }
-        ));
+            drop(held);
+
+            assert_eq!(waiter.join().unwrap().unwrap(), 3);
+        });
+    }
+
+    #[test]
+    fn shared_locks_coexist_and_exclude_a_writer() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let first = store.lock_shared().unwrap();
+        let second = store.lock_shared().unwrap();
+
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| acquired_tx.send(store.lock()).unwrap());
+
+            let still_waiting = acquired_rx.recv_timeout(LOCK_POLL_INTERVAL * 6);
+            assert!(
+                matches!(still_waiting, Err(mpsc::RecvTimeoutError::Timeout)),
+                "writer acquired under a shared lock: {still_waiting:?}"
+            );
+
+            drop(first);
+            drop(second);
+            let acquired = acquired_rx.recv_timeout(LOCK_TIMEOUT).unwrap();
+            assert!(acquired.is_ok(), "{acquired:?}");
+        });
     }
 
     #[test]

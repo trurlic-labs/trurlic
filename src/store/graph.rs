@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use super::schema::{
     ComponentFile, DecisionFile, EdgeEntry, EdgeKind, GraphIndex, NodeEntry, NodeKind, PatternFile,
@@ -163,10 +163,11 @@ impl InMemoryGraph {
 
     // ── Serialization ────────────────────────────────────────────────────
 
-    /// Export current state as [`GraphIndex`] (sorted for deterministic output).
+    /// Export as a sorted [`GraphIndex`]. `rebuilt` is the stamp of the index
+    /// this one replaces, carried over unchanged.
     #[must_use]
-    pub fn to_index(&self) -> GraphIndex {
-        let mut nodes: Vec<NodeEntry> = self
+    pub fn to_index(&self, rebuilt: Option<DateTime<Utc>>) -> GraphIndex {
+        let nodes = self
             .nodes
             .iter()
             .map(|(name, meta)| NodeEntry {
@@ -176,7 +177,6 @@ impl InMemoryGraph {
                 hash: meta.hash.clone(),
             })
             .collect();
-        nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
         let edge_count: usize = self.forward.values().map(Vec::len).sum();
         let mut edges: Vec<EdgeEntry> = Vec::with_capacity(edge_count);
@@ -189,14 +189,15 @@ impl InMemoryGraph {
                 });
             }
         }
-        edges.sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
 
-        GraphIndex {
+        let mut index = GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt,
             nodes,
             edges,
-        }
+        };
+        index.sort();
+        index
     }
 }
 
@@ -243,7 +244,7 @@ mod tests {
     #[test]
     fn to_index_sorted_deterministic() {
         let g = test_graph();
-        let idx = g.to_index();
+        let idx = g.to_index(None);
 
         // Nodes sorted by name.
         let names: Vec<&str> = idx.nodes.iter().map(|n| n.name.as_str()).collect();
@@ -267,7 +268,7 @@ mod tests {
     #[test]
     fn to_index_round_trips() {
         let g = test_graph();
-        let idx = g.to_index();
+        let idx = g.to_index(None);
 
         // Rebuild from the exported index.
         let mut components = BTreeMap::new();
@@ -283,7 +284,7 @@ mod tests {
         assert_eq!(g2.component_count(), g.component_count());
         assert_eq!(g2.decision_count(), g.decision_count());
 
-        let idx2 = g2.to_index();
+        let idx2 = g2.to_index(None);
         assert_eq!(idx.nodes.len(), idx2.nodes.len());
         assert_eq!(idx.edges.len(), idx2.edges.len());
         for (a, b) in idx.nodes.iter().zip(idx2.nodes.iter()) {

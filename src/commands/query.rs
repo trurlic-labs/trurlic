@@ -138,13 +138,12 @@ fn check_rebuild(cwd: &Path) -> Result<()> {
 
     // load_state infers BelongsTo edges from decision.component fields.
     // Non-inferable edges (ConnectsTo, DependsOn, etc.) are not recovered.
-    let state = store.load_state()?;
+    let mut state = store.load_state()?;
     let node_count = state.graph_index.nodes.len();
     let edge_count = state.graph_index.edges.len();
     let issues = state.validate();
 
-    // Move graph_index into the commit; state is consumed.
-    store.commit_batch(&lock, vec![], vec![], Some(state.graph_index))?;
+    store.commit_batch(&lock, vec![], vec![], Some(&mut state.graph_index))?;
 
     println!("Rebuilt graph.toml from node files: {node_count} nodes, {edge_count} edges");
     let error_count = issues

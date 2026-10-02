@@ -1,7 +1,7 @@
 [decision]
 component = "map"
 choice = "File watcher with 50ms debounce pushes diffs over WebSocket broadcast"
-reason = "A file watcher monitors .trurlic/ for external changes (from MCP writes, CLI commands, or git operations). On change, it reloads state from disk, diffs against the previous snapshot, and broadcasts only the delta over the WebSocket channel. The 50ms debounce is lower than the MCP watcher's 100ms because the interactive UI benefits from faster updates at the cost of slightly more reloads during multi-file operations. The watcher swaps the in-memory ProjectState under a write lock after broadcasting events, so WebSocket clients see the diff before the state changes — ensuring they can process events against a consistent baseline."
+reason = "A file watcher monitors .trurlic/ for external changes (from MCP writes, CLI commands, or git operations). On change, it reloads state from disk, diffs against the served snapshot, and broadcasts only the delta over the WebSocket channel. The 50ms debounce is lower than the MCP watcher's 100ms because the interactive UI benefits from faster updates at the cost of slightly more reloads during multi-file operations. Diff, broadcast and swap happen under one ProjectState write lock: diffing under the read lock and swapping later let an API write that landed in between be overwritten and its events reordered. A load overtaken by an API write of this server (ProjectState::is_overtaken) is skipped. API writes broadcast the diff of their own reload, then their own events, under the same write lock, so clients receive every event in commit order."
 alternatives = [
     "poll-based change detection: higher latency and CPU cost compared to OS-native file notifications",
     "require all mutations through the map API (no external watcher): would break the multi-writer model where MCP, CLI, and map coexist",
@@ -13,3 +13,16 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:45:37.055046272Z"
+
+[[decision.code_refs]]
+file = "src/map/mod.rs"
+symbol = "spawn_watcher"
+
+[[decision.code_refs]]
+file = "src/map/mod.rs"
+symbol = "MapState::begin_write"
+
+[[decision.history]]
+choice = "File watcher with 50ms debounce pushes diffs over WebSocket broadcast"
+reason = "A file watcher monitors .trurlic/ for external changes (from MCP writes, CLI commands, or git operations). On change, it reloads state from disk, diffs against the previous snapshot, and broadcasts only the delta over the WebSocket channel. The 50ms debounce is lower than the MCP watcher's 100ms because the interactive UI benefits from faster updates at the cost of slightly more reloads during multi-file operations. The watcher swaps the in-memory ProjectState under a write lock after broadcasting events, so WebSocket clients see the diff before the state changes — ensuring they can process events against a consistent baseline."
+changed_at = "2026-10-02T11:35:08.664075248Z"

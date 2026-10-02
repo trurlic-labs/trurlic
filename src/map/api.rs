@@ -114,6 +114,9 @@ fn error_status(err: &crate::Error) -> StatusCode {
         // Lock contention → 503, tell the client to retry.
         Error::LockTimeout { .. } => StatusCode::SERVICE_UNAVAILABLE,
 
+        // A write path that skipped the reload: a server bug.
+        Error::StaleState { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+
         // Internal faults the client cannot act on → 500.
         Error::Io(_)
         | Error::TomlRead(_)
@@ -308,11 +311,9 @@ fn write_component(state: Arc<MapState>, body: CreateComponent) -> ApiResult {
     check_field_len("name", &body.name)?;
     check_field_len("description", &body.description)?;
 
-    let lock = state
-        .store
-        .try_lock()
-        .map_err(|e| api_err(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    let mut ps = state.write_project_state();
+    let (mut ps, lock) = state
+        .begin_write()
+        .map_err(|e| api_err(error_status(&e), e.to_string()))?;
     state
         .store
         .add_component(&lock, &mut ps, &body.name, &body.description)
@@ -349,11 +350,9 @@ fn write_connection(state: Arc<MapState>, body: CreateConnection) -> ApiResult {
     check_field_len("from", &body.from)?;
     check_field_len("to", &body.to)?;
 
-    let lock = state
-        .store
-        .try_lock()
-        .map_err(|e| api_err(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    let mut ps = state.write_project_state();
+    let (mut ps, lock) = state
+        .begin_write()
+        .map_err(|e| api_err(error_status(&e), e.to_string()))?;
     state
         .store
         .add_connection(&lock, &mut ps, &body.from, &body.to)
@@ -447,11 +446,9 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
         code_refs: body.code_refs.as_deref(),
     };
 
-    let lock = state
-        .store
-        .try_lock()
-        .map_err(|e| api_err(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    let mut ps = state.write_project_state();
+    let (mut ps, lock) = state
+        .begin_write()
+        .map_err(|e| api_err(error_status(&e), e.to_string()))?;
     state
         .store
         .revise_decision(&lock, &mut ps, &name, params)
@@ -487,11 +484,9 @@ pub(crate) async fn delete_component(
 }
 
 fn remove_component(state: Arc<MapState>, name: String) -> ApiResult {
-    let lock = state
-        .store
-        .try_lock()
-        .map_err(|e| api_err(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    let mut ps = state.write_project_state();
+    let (mut ps, lock) = state
+        .begin_write()
+        .map_err(|e| api_err(error_status(&e), e.to_string()))?;
 
     if !ps.components.contains_key(&name) {
         return Err(api_err(StatusCode::NOT_FOUND, "component not found"));
@@ -528,11 +523,9 @@ pub(crate) async fn delete_decision(
 }
 
 fn remove_decision(state: Arc<MapState>, name: String) -> ApiResult {
-    let lock = state
-        .store
-        .try_lock()
-        .map_err(|e| api_err(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    let mut ps = state.write_project_state();
+    let (mut ps, lock) = state
+        .begin_write()
+        .map_err(|e| api_err(error_status(&e), e.to_string()))?;
 
     if !ps.decisions.contains_key(&name) {
         return Err(api_err(StatusCode::NOT_FOUND, "decision not found"));
@@ -569,11 +562,9 @@ pub(crate) async fn delete_connection(
 }
 
 fn remove_connection(state: Arc<MapState>, from: String, to: String) -> ApiResult {
-    let lock = state
-        .store
-        .try_lock()
-        .map_err(|e| api_err(StatusCode::SERVICE_UNAVAILABLE, e.to_string()))?;
-    let mut ps = state.write_project_state();
+    let (mut ps, lock) = state
+        .begin_write()
+        .map_err(|e| api_err(error_status(&e), e.to_string()))?;
     state
         .store
         .remove_connection(&lock, &mut ps, &from, &to)

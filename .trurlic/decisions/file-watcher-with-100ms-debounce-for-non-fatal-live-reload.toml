@@ -1,7 +1,7 @@
 [decision]
 component = "mcp"
 choice = "File watcher with 100ms debounce for non-fatal live reload"
-reason = "A background watcher thread monitors .trurlic/ for external changes (CLI writes, manual edits, git checkout) and reloads state via an Arc<RwLock<ProjectState>> pointer swap under write lock (microseconds). The 100ms debounce is higher than the map watcher (50ms) because MCP has no interactive UI and benefits from coalescing rapid multi-file operations. Watcher failure is non-fatal: if the watcher cannot be spawned (e.g., inotify limit reached), the server continues without live reload and logs the error. The watcher validates reloaded state and logs consistency issue counts to stderr."
+reason = "A background watcher thread monitors .trurlic/ for external changes (CLI writes, manual edits, git checkout) and reloads state via an Arc<RwLock<ProjectState>> pointer swap under write lock (microseconds). The swap is skipped when the load is overtaken: the served state changed while the load ran and is newer by generation, which means this server's own write committed after the load, and swapping would undo that write in memory. The 100ms debounce is higher than the map watcher (50ms) because MCP has no interactive UI and benefits from coalescing rapid multi-file operations. Watcher failure is non-fatal: if the watcher cannot be spawned (e.g., inotify limit reached), the server continues without live reload and logs the error. The watcher validates reloaded state and logs consistency issue counts to stderr."
 alternatives = [
     "Poll-based reload on each request — rejected: adds latency to every tool call and misses changes between requests",
     "No live reload (require restart) — rejected: would cause stale state when CLI and MCP are used simultaneously",
@@ -13,3 +13,12 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:45:27.820791741Z"
+
+[[decision.code_refs]]
+file = "src/mcp/watcher.rs"
+symbol = "spawn"
+
+[[decision.history]]
+choice = "File watcher with 100ms debounce for non-fatal live reload"
+reason = "A background watcher thread monitors .trurlic/ for external changes (CLI writes, manual edits, git checkout) and reloads state via an Arc<RwLock<ProjectState>> pointer swap under write lock (microseconds). The 100ms debounce is higher than the map watcher (50ms) because MCP has no interactive UI and benefits from coalescing rapid multi-file operations. Watcher failure is non-fatal: if the watcher cannot be spawned (e.g., inotify limit reached), the server continues without live reload and logs the error. The watcher validates reloaded state and logs consistency issue counts to stderr."
+changed_at = "2026-10-02T11:35:08.658494782Z"

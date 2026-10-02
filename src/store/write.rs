@@ -171,43 +171,36 @@ impl Store {
         })
     }
 
-    /// Execute a batch of writes and removes as a two-phase commit.
+    /// Execute a batch of writes and removes as a two-phase commit, and
+    /// return the store's generation after it.
     ///
     /// Phase 1: write all content to `.state/tmp/`.
     /// Phase 2: verify each temp file (byte-compare; type-safe check was in `prepare_write`).
-    /// Phase 3: rename all temp files to final paths (each atomic on POSIX).
-    ///          If `graph_update` is `Some`, `graph.toml` is appended as the
-    ///          **last** rename — serving as the commit point per the storage spec.
+    /// Phase 3: raise the generation, then rename all temp files to final
+    ///          paths (each atomic on POSIX). If `graph_update` is `Some`, it
+    ///          is sorted in place and `graph.toml` is the **last** rename,
+    ///          the commit point per the storage spec.
     /// Phase 4: remove old files (best-effort — renames already committed).
     ///
     /// Caller **must** hold a [`StoreLock`].
     pub(crate) fn commit_batch(
         &self,
-        _lock: &StoreLock,
+        lock: &StoreLock,
         writes: Vec<PendingWrite>,
         removes: Vec<PathBuf>,
-        graph_update: Option<GraphIndex>,
-    ) -> Result<()> {
+        graph_update: Option<&mut GraphIndex>,
+    ) -> Result<u64> {
         if writes.is_empty() && removes.is_empty() && graph_update.is_none() {
-            return Ok(());
+            return self.read_generation();
         }
 
         // Build the full set of writes: node files first, graph.toml last.
         let mut all_writes = writes;
         let graph_rename = graph_update.is_some().then_some(all_writes.len());
 
-        if let Some(mut index) = graph_update {
-            index.nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-            index
-                .edges
-                .sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
-            let content = toml::to_string_pretty(&index)?;
-            toml::from_str::<GraphIndex>(&content).map_err(|e| {
-                Error::Validation(format!("graph index round-trip verification failed: {e}"))
-            })?;
-            let target = self.graph_path();
-            self.verify_path(&target)?;
-            all_writes.push(PendingWrite { target, content });
+        if let Some(index) = graph_update {
+            index.sort();
+            all_writes.push(self.prepare_write(&self.graph_path(), &*index)?);
         }
 
         // Verify all target paths up-front before touching the filesystem.
@@ -268,6 +261,12 @@ impl Store {
             }
         }
 
+        // Raised before the first rename, so a failure to record it leaves the
+        // graph untouched. A crash after it leaves the counter ahead of the
+        // graph, which still orders every later load correctly.
+        let generation = self
+            .raise_generation(lock)
+            .inspect_err(|_| cleanup_tmp_files(&staged))?;
         rename_staged(&staged, graph_rename)?;
 
         // Phase 4: Remove old files.
@@ -284,7 +283,7 @@ impl Store {
             }
         }
 
-        Ok(())
+        Ok(generation)
     }
 
     /// Validate the full graph derived from `state`, then commit node files
@@ -297,8 +296,10 @@ impl Store {
     /// provided node file writes. `graph.toml` is renamed last, serving
     /// as the commit point per the storage spec.
     ///
-    /// On success, `state.graph` is updated in-place with the validated
-    /// graph — callers do **not** need to call `rebuild_graph()`.
+    /// On success, `state` matches disk: its index is the sorted one just
+    /// written, its graph the validated one, its generation the new one.
+    /// A `state` loaded before another commit is refused with
+    /// [`Error::StaleState`].
     pub(super) fn commit_with_graph(
         &self,
         lock: &StoreLock,
@@ -306,6 +307,8 @@ impl Store {
         removes: Vec<PathBuf>,
         state: &mut ProjectState,
     ) -> Result<()> {
+        self.ensure_current(lock, state)?;
+
         // Pre-check: duplicate node names in the index would cause silent
         // data loss during InMemoryGraph construction (HashMap overwrite).
         {
@@ -330,11 +333,9 @@ impl Store {
         if !errors.is_empty() {
             return Err(Error::GraphIntegrity(errors.join("; ")));
         }
-        let index = graph.to_index();
-        self.commit_batch(lock, writes, removes, Some(index))?;
-
-        // Reuse the validated graph — avoids a redundant rebuild_graph() in
-        // every caller.
+        let mut index = graph.to_index(state.graph_index.rebuilt);
+        state.generation = self.commit_batch(lock, writes, removes, Some(&mut index))?;
+        state.graph_index = index;
         state.graph = graph;
 
         Ok(())
@@ -678,6 +679,8 @@ impl Store {
         state: &mut ProjectState,
         names: &[&str],
     ) -> Result<()> {
+        self.ensure_current(lock, state)?;
+
         // Violations present *before* the removal are tolerated (the collector
         // may be repairing an already-invalid store); anything not in this set
         // must not be introduced by the removal.
@@ -733,14 +736,11 @@ impl Store {
             return Err(Error::GraphIntegrity(new_errors.join("; ")));
         }
 
-        let index = graph.to_index();
-        if let Err(e) = self.commit_batch(lock, vec![], removes, Some(index)) {
-            restore(state, restore_decisions, restore_nodes);
-            return Err(e);
-        }
-
-        // Reuse the graph built from the reduced index — mirrors the cache
-        // refresh commit_with_graph performs on the validating path.
+        let mut index = graph.to_index(state.graph_index.rebuilt);
+        state.generation = self
+            .commit_batch(lock, vec![], removes, Some(&mut index))
+            .inspect_err(|_| restore(state, restore_decisions, restore_nodes))?;
+        state.graph_index = index;
         state.graph = graph;
         Ok(())
     }
@@ -1389,15 +1389,14 @@ mod tests {
     #[test]
     fn commit_batch_writes_graph_update() {
         use crate::store::schema::*;
-        use chrono::Utc;
 
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
         let lock = store.lock().unwrap();
 
-        let index = GraphIndex {
+        let mut index = GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt: None,
             nodes: vec![NodeEntry {
                 name: "test".into(),
                 kind: NodeKind::Component,
@@ -1408,7 +1407,7 @@ mod tests {
         };
 
         store
-            .commit_batch(&lock, vec![], vec![], Some(index))
+            .commit_batch(&lock, vec![], vec![], Some(&mut index))
             .unwrap();
 
         assert!(store.graph_path().exists());
@@ -1421,16 +1420,15 @@ mod tests {
     #[test]
     fn commit_batch_sorts_graph_index() {
         use crate::store::schema::*;
-        use chrono::Utc;
 
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
         let lock = store.lock().unwrap();
 
         // Deliberately unsorted nodes and edges.
-        let index = GraphIndex {
+        let mut index = GraphIndex {
             version: 1,
-            rebuilt: Utc::now(),
+            rebuilt: None,
             nodes: vec![
                 NodeEntry {
                     name: "z-node".into(),
@@ -1460,7 +1458,7 @@ mod tests {
         };
 
         store
-            .commit_batch(&lock, vec![], vec![], Some(index))
+            .commit_batch(&lock, vec![], vec![], Some(&mut index))
             .unwrap();
 
         let read_back: GraphIndex =
@@ -1536,6 +1534,46 @@ mod tests {
             .commit_with_graph(&lock, vec![], vec![], &mut state)
             .unwrap_err();
         assert!(matches!(err, Error::GraphIntegrity(_)));
+    }
+
+    /// A commit that restamped the index would change `graph.toml` even when
+    /// the graph did not, and conflict on every concurrent branch.
+    #[test]
+    fn commits_keep_the_index_stamp() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        fs::remove_file(store.graph_path()).unwrap();
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+        let stamp = state.graph_index.rebuilt;
+        assert!(stamp.is_some(), "a repaired index is stamped once");
+
+        store.add_component(&lock, &mut state, "auth", "").unwrap();
+        store
+            .add_component(&lock, &mut state, "billing", "")
+            .unwrap();
+
+        let on_disk: GraphIndex =
+            toml::from_str(&fs::read_to_string(store.graph_path()).unwrap()).unwrap();
+        assert_eq!(on_disk.rebuilt, stamp);
+    }
+
+    /// Readers serialize `state.graph_index` (the map's edge list), so after a
+    /// commit it must be the sorted index on disk, not the append order.
+    #[test]
+    fn a_commit_leaves_the_in_memory_index_equal_to_disk() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+        let mut state = store.load_state().unwrap();
+
+        store.add_component(&lock, &mut state, "zeta", "").unwrap();
+        store.add_component(&lock, &mut state, "alpha", "").unwrap();
+        store
+            .add_connection(&lock, &mut state, "zeta", "alpha")
+            .unwrap();
+
+        assert_eq!(state.graph_index, store.load_state().unwrap().graph_index);
     }
 
     #[test]

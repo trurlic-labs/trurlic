@@ -6,7 +6,7 @@
 //! and benefits more from coalescing rapid changes (e.g. `git checkout`
 //! touching many files) into a single reload.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use crate::store::ProjectState;
@@ -29,21 +29,38 @@ pub(crate) fn spawn(
     store_root: &std::path::Path,
     state: Arc<RwLock<ProjectState>>,
 ) -> Result<WatcherGuard, String> {
-    crate::store::watcher::spawn(store_root, DEBOUNCE, "trurlic-watcher", move |new_state| {
-        let errors = new_state
-            .validate()
-            .iter()
-            .filter(|i| i.severity == Severity::Error)
-            .count();
+    let served = Arc::clone(&state);
+    let served_generation = move || {
+        served
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .generation()
+    };
+    crate::store::watcher::spawn(
+        store_root,
+        DEBOUNCE,
+        "trurlic-watcher",
+        served_generation,
+        move |loaded, served_at_load| {
+            let errors = loaded
+                .validate()
+                .iter()
+                .filter(|i| i.severity == Severity::Error)
+                .count();
 
-        let mut guard = state.write().unwrap_or_else(|poisoned| {
-            eprintln!("trurlic: recovered from poisoned state lock");
-            poisoned.into_inner()
-        });
-        *guard = new_state;
+            let mut current = state.write().unwrap_or_else(|poisoned| {
+                eprintln!("trurlic: recovered from poisoned state lock");
+                poisoned.into_inner()
+            });
+            if loaded.is_overtaken(&current, served_at_load) {
+                return;
+            }
+            *current = loaded;
+            drop(current);
 
-        if errors > 0 {
-            eprintln!("trurlic: reloaded state ({errors} consistency issue(s))");
-        }
-    })
+            if errors > 0 {
+                eprintln!("trurlic: reloaded state ({errors} consistency issue(s))");
+            }
+        },
+    )
 }
