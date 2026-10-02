@@ -6,7 +6,7 @@ use crate::store::limits::{
     MAX_ARRAY_ITEMS, MAX_CHOICE_BYTES, MAX_TEXT_FIELD_BYTES, MIN_REASON_BYTES,
 };
 use crate::store::schema::{Attribution, CodeRef};
-use crate::store::{self, Store};
+use crate::store::{self, Store, StoreLock};
 
 // ── Argument helpers ────────────────────────────────────────────────────────
 
@@ -142,6 +142,7 @@ pub(super) fn parse_code_refs(args: &Value) -> Result<Vec<CodeRef>, String> {
 
 pub(crate) fn record_decision(
     store: &Store,
+    lock: &StoreLock,
     state: &mut store::ProjectState,
     args: &Value,
 ) -> Result<Value, String> {
@@ -216,11 +217,9 @@ pub(crate) fn record_decision(
         }
     }
 
-    let lock = store.lock().map_err(|e| e.to_string())?;
-
     let stem = store
         .record_decision(
-            &lock,
+            lock,
             state,
             store::RecordDecisionParams {
                 component,
@@ -314,6 +313,7 @@ fn word_overlap(a: &str, b: &str) -> f64 {
 
 pub(crate) fn record_pattern(
     store: &Store,
+    lock: &StoreLock,
     state: &mut store::ProjectState,
     args: &Value,
 ) -> Result<Value, String> {
@@ -323,10 +323,9 @@ pub(crate) fn record_pattern(
     let components = opt_str_array(args, "components")?;
     let tags = opt_str_array(args, "tags")?;
 
-    let lock = store.lock().map_err(|e| e.to_string())?;
     let slug = store
         .record_pattern(
-            &lock,
+            lock,
             state,
             store::RecordPatternParams {
                 name,
@@ -348,15 +347,15 @@ pub(crate) fn record_pattern(
 
 pub(crate) fn add_component(
     store: &Store,
+    lock: &StoreLock,
     state: &mut store::ProjectState,
     args: &Value,
 ) -> Result<Value, String> {
     let name = require_str(args, "name")?;
     let description = opt_str(args, "description")?.unwrap_or_default();
 
-    let lock = store.lock().map_err(|e| e.to_string())?;
     store
-        .add_component(&lock, state, name, description)
+        .add_component(lock, state, name, description)
         .map_err(|e| e.to_string())?;
 
     let mut warnings: Vec<String> = Vec::new();
@@ -379,15 +378,15 @@ pub(crate) fn add_component(
 
 pub(crate) fn add_connection(
     store: &Store,
+    lock: &StoreLock,
     state: &mut store::ProjectState,
     args: &Value,
 ) -> Result<Value, String> {
     let from = require_str(args, "from")?;
     let to = require_str(args, "to")?;
 
-    let lock = store.lock().map_err(|e| e.to_string())?;
     store
-        .add_connection(&lock, state, from, to)
+        .add_connection(lock, state, from, to)
         .map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
@@ -506,7 +505,7 @@ mod tests {
             "reason": "Stateless, no session store needed",
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert_eq!(result["name"], "jwt-with-dpop");
         assert!(state.decisions.contains_key("jwt-with-dpop"));
     }
@@ -522,7 +521,7 @@ mod tests {
             "reason": "Stateless, no server session",
             "attribution": "user",
         });
-        record_decision(&store, &mut state, &base).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &base).unwrap();
 
         let args = json!({
             "component": "auth",
@@ -533,7 +532,7 @@ mod tests {
             "tags": ["security", "auth"],
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert!(!result["name"].as_str().unwrap().is_empty());
 
         // Verify edges exist.
@@ -564,7 +563,7 @@ mod tests {
             "reason": "Never silently succeed with wrong data",
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         let dec = state
             .decisions
             .get(result["name"].as_str().unwrap())
@@ -581,7 +580,7 @@ mod tests {
             "reason": "test validation target",
             "attribution": "user",
         });
-        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(err.contains("ghost"));
     }
 
@@ -595,7 +594,7 @@ mod tests {
             "depends_on": ["ghost"],
             "attribution": "user",
         });
-        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(err.contains("ghost"));
     }
 
@@ -608,15 +607,15 @@ mod tests {
         // Record two decisions first.
         let d1 = json!({ "component": "auth", "choice": "Use Redis", "reason": "Fast in-memory reads", "attribution": "user" });
         let d2 = json!({ "component": "database", "choice": "Redis pool", "reason": "Shared pool reduces overhead", "attribution": "user" });
-        record_decision(&store, &mut state, &d1).unwrap();
-        record_decision(&store, &mut state, &d2).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
 
         let args = json!({
             "name": "All state in Redis",
             "description": "Shared Redis pool for all persistent state",
             "decisions": ["use-redis", "redis-pool"],
         });
-        let result = record_pattern(&store, &mut state, &args).unwrap();
+        let result = record_pattern(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         let slug = result["name"].as_str().unwrap();
         assert!(!slug.is_empty());
         assert!(state.patterns.contains_key(slug));
@@ -646,14 +645,14 @@ mod tests {
     fn record_pattern_rejects_single_decision() {
         let (_tmp, store, mut state) = setup();
         let d = json!({ "component": "auth", "choice": "X", "reason": "test reason placeholder", "attribution": "user" });
-        record_decision(&store, &mut state, &d).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
 
         let args = json!({
             "name": "Lone pattern",
             "description": "Only one decision",
             "decisions": ["x"],
         });
-        let err = record_pattern(&store, &mut state, &args).unwrap_err();
+        let err = record_pattern(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(err.contains("at least 2"));
     }
 
@@ -665,7 +664,7 @@ mod tests {
             "description": "References nothing",
             "decisions": ["ghost-a", "ghost-b"],
         });
-        let err = record_pattern(&store, &mut state, &args).unwrap_err();
+        let err = record_pattern(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(err.contains("does not exist"));
     }
 
@@ -675,7 +674,7 @@ mod tests {
     fn add_component_basic() {
         let (_tmp, store, mut state) = setup();
         let args = json!({ "name": "rate-limiter", "description": "Per-key rate limiting" });
-        let result = add_component(&store, &mut state, &args).unwrap();
+        let result = add_component(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert_eq!(result["name"], "rate-limiter");
         assert!(state.components.contains_key("rate-limiter"));
     }
@@ -684,7 +683,7 @@ mod tests {
     fn add_component_without_description() {
         let (_tmp, store, mut state) = setup();
         let args = json!({ "name": "cache" });
-        let result = add_component(&store, &mut state, &args).unwrap();
+        let result = add_component(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert_eq!(result["name"], "cache");
         let comp = state.components.get("cache").unwrap();
         assert!(comp.component.description.is_empty());
@@ -693,21 +692,39 @@ mod tests {
     #[test]
     fn add_component_rejects_duplicate() {
         let (_tmp, store, mut state) = setup();
-        let err = add_component(&store, &mut state, &json!({ "name": "auth" })).unwrap_err();
+        let err = add_component(
+            &store,
+            &store.lock().unwrap(),
+            &mut state,
+            &json!({ "name": "auth" }),
+        )
+        .unwrap_err();
         assert!(err.contains("already exists"));
     }
 
     #[test]
     fn add_component_rejects_invalid_name() {
         let (_tmp, store, mut state) = setup();
-        let err = add_component(&store, &mut state, &json!({ "name": "Not-Valid" })).unwrap_err();
+        let err = add_component(
+            &store,
+            &store.lock().unwrap(),
+            &mut state,
+            &json!({ "name": "Not-Valid" }),
+        )
+        .unwrap_err();
         assert!(err.contains("kebab-case"));
     }
 
     #[test]
     fn add_component_rejects_reserved_name() {
         let (_tmp, store, mut state) = setup();
-        let err = add_component(&store, &mut state, &json!({ "name": "project" })).unwrap_err();
+        let err = add_component(
+            &store,
+            &store.lock().unwrap(),
+            &mut state,
+            &json!({ "name": "project" }),
+        )
+        .unwrap_err();
         assert!(err.contains("reserved"));
     }
 
@@ -717,7 +734,7 @@ mod tests {
     fn add_connection_basic() {
         let (_tmp, store, mut state) = setup();
         let args = json!({ "from": "auth", "to": "database" });
-        let result = add_connection(&store, &mut state, &args).unwrap();
+        let result = add_connection(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert_eq!(result["from"], "auth");
         assert_eq!(result["to"], "database");
         assert!(
@@ -734,6 +751,7 @@ mod tests {
         let (_tmp, store, mut state) = setup();
         let err = add_connection(
             &store,
+            &store.lock().unwrap(),
             &mut state,
             &json!({ "from": "ghost", "to": "auth" }),
         )
@@ -744,8 +762,13 @@ mod tests {
     #[test]
     fn add_connection_rejects_self_connection() {
         let (_tmp, store, mut state) = setup();
-        let err = add_connection(&store, &mut state, &json!({ "from": "auth", "to": "auth" }))
-            .unwrap_err();
+        let err = add_connection(
+            &store,
+            &store.lock().unwrap(),
+            &mut state,
+            &json!({ "from": "auth", "to": "auth" }),
+        )
+        .unwrap_err();
         assert!(err.contains("cannot connect to itself"));
     }
 
@@ -754,12 +777,14 @@ mod tests {
         let (_tmp, store, mut state) = setup();
         add_connection(
             &store,
+            &store.lock().unwrap(),
             &mut state,
             &json!({ "from": "auth", "to": "database" }),
         )
         .unwrap();
         let err = add_connection(
             &store,
+            &store.lock().unwrap(),
             &mut state,
             &json!({ "from": "auth", "to": "database" }),
         )
@@ -773,7 +798,7 @@ mod tests {
     fn add_component_no_workflow() {
         let (_tmp, store, mut state) = setup();
         let args = json!({ "name": "cache", "description": "Caching layer" });
-        let result = add_component(&store, &mut state, &args).unwrap();
+        let result = add_component(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert!(result.get("workflow").is_none());
     }
 
@@ -786,7 +811,7 @@ mod tests {
             "reason": "Stateless auth, no session store",
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert!(result.get("workflow").is_none());
         assert!(result.get("coverage_gap").is_none());
     }
@@ -796,15 +821,15 @@ mod tests {
         let (_tmp, store, mut state) = setup();
         let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Fast in-memory reads", "attribution": "user" });
         let d2 = json!({ "component": "database", "choice": "JWT verify", "reason": "Authentication verification", "attribution": "user" });
-        record_decision(&store, &mut state, &d1).unwrap();
-        record_decision(&store, &mut state, &d2).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
 
         let args = json!({
             "name": "Token pattern",
             "description": "Token handling",
             "decisions": ["use-jwt", "jwt-verify"],
         });
-        let result = record_pattern(&store, &mut state, &args).unwrap();
+        let result = record_pattern(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert!(
             result.get("name").is_some(),
             "must return 'name', not 'slug'"
@@ -816,7 +841,7 @@ mod tests {
     fn add_connection_no_workflow() {
         let (_tmp, store, mut state) = setup();
         let args = json!({ "from": "auth", "to": "database" });
-        let result = add_connection(&store, &mut state, &args).unwrap();
+        let result = add_connection(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert!(result.get("workflow").is_none());
     }
 
@@ -831,7 +856,7 @@ mod tests {
             "reason": "ok",
             "attribution": "user",
         });
-        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(
             err.contains("at least") && err.contains("bytes"),
             "should reject short reason: {err}"
@@ -848,7 +873,7 @@ mod tests {
             "reason": "This is a valid reason",
             "attribution": "user",
         });
-        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(err.contains("200"), "should reject long choice: {err}");
     }
 
@@ -861,7 +886,7 @@ mod tests {
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             warnings
@@ -881,7 +906,7 @@ mod tests {
             "alternatives": ["Session cookies — server-side state"],
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             !warnings
@@ -905,7 +930,7 @@ mod tests {
             "tags": ["redis"],
             "attribution": "user",
         });
-        record_decision(&store, &mut state, &d1).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
 
         // Record a tagged decision in database with overlapping tag.
         let d2 = json!({
@@ -915,7 +940,7 @@ mod tests {
             "tags": ["redis"],
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &d2).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
 
         let opp = &result["pattern_opportunity"];
         assert!(!opp.is_null(), "should detect pattern opportunity");
@@ -933,7 +958,7 @@ mod tests {
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert!(
             result["pattern_opportunity"].is_null(),
             "should not suggest patterns when decision has no tags"
@@ -952,7 +977,7 @@ mod tests {
             "tags": ["redis"],
             "attribution": "user",
         });
-        record_decision(&store, &mut state, &d1).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
 
         let d2 = json!({
             "component": "auth",
@@ -961,7 +986,7 @@ mod tests {
             "tags": ["redis"],
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &d2).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
         assert!(
             result["pattern_opportunity"].is_null(),
             "same-component tag overlap is not a cross-component pattern"
@@ -992,7 +1017,7 @@ mod tests {
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        record_decision(&store, &mut state, &d1).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
 
         // Same choice text (case-insensitive), same component — hard error.
         let d2 = json!({
@@ -1001,7 +1026,7 @@ mod tests {
             "reason": "Different reasoning entirely",
             "attribution": "user",
         });
-        let err = record_decision(&store, &mut state, &d2).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap_err();
         assert!(
             err.contains("identical choice") && err.contains("revise"),
             "should reject duplicate and point at revise: {err}"
@@ -1019,7 +1044,7 @@ mod tests {
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        record_decision(&store, &mut state, &d1).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
 
         // Same significant words plus one — high Jaccard overlap, not identical.
         let d2 = json!({
@@ -1028,7 +1053,7 @@ mod tests {
             "reason": "Slightly different framing of the same idea",
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &d2).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             warnings
@@ -1047,7 +1072,7 @@ mod tests {
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        record_decision(&store, &mut state, &d1).unwrap();
+        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
 
         // Unrelated wording in the same component — no near-duplicate warning.
         let d2 = json!({
@@ -1056,7 +1081,7 @@ mod tests {
             "reason": "Limit blast radius of a key compromise",
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &d2).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             !warnings
@@ -1087,7 +1112,7 @@ mod tests {
             "choice": "Use JWT",
             "reason": "Stateless, no server session",
         });
-        let err = record_decision(&store, &mut state, &d).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap_err();
         assert!(
             err.contains("attribution"),
             "should require attribution parameter: {err}"
@@ -1103,7 +1128,7 @@ mod tests {
             "reason": "Stateless, no server session",
             "attribution": "maybe",
         });
-        let err = record_decision(&store, &mut state, &d).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap_err();
         assert!(
             err.contains("invalid attribution"),
             "should reject invalid attribution value: {err}"
@@ -1114,7 +1139,7 @@ mod tests {
     fn add_component_warns_on_empty_description() {
         let (_tmp, store, mut state) = setup();
         let args = json!({ "name": "cache" });
-        let result = add_component(&store, &mut state, &args).unwrap();
+        let result = add_component(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             warnings
@@ -1139,7 +1164,7 @@ mod tests {
                 { "file": "src/auth/middleware.rs" }
             ],
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         let name = result["name"].as_str().unwrap();
 
         let dec = state.decisions.get(name).unwrap();
@@ -1167,7 +1192,7 @@ mod tests {
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        let result = record_decision(&store, &mut state, &args).unwrap();
+        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         let refs = result["code_refs"].as_array().unwrap();
         assert!(refs.is_empty());
     }
@@ -1182,7 +1207,7 @@ mod tests {
             "attribution": "user",
             "code_refs": [{ "file": "/absolute/path.rs" }],
         });
-        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(err.contains("relative"), "{err}");
     }
 
@@ -1199,7 +1224,7 @@ mod tests {
             "attribution": "user",
             "code_refs": refs,
         });
-        let err = record_decision(&store, &mut state, &args).unwrap_err();
+        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(err.contains("too many"), "{err}");
     }
 

@@ -79,8 +79,7 @@ pub(crate) fn open_store(cwd: &Path) -> Result<(Store, ProjectState)> {
 /// write), then load and warn on consistency issues.
 pub(crate) fn open_store_mut(cwd: &Path) -> Result<(Store, store::StoreLock, ProjectState)> {
     let store = discover_store(cwd)?;
-    let lock = store.lock()?;
-    let state = store.load_state()?;
+    let ((), lock, state) = store.begin_write(|| ())?;
     warn_on_issues(&state);
     Ok((store, lock, state))
 }

@@ -27,7 +27,7 @@ use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
 use crate::store::watcher::WatcherGuard;
-use crate::store::{ProjectState, Store};
+use crate::store::{ProjectState, Store, StoreLock};
 
 use layout::LayoutState;
 
@@ -58,6 +58,19 @@ impl MapState {
         self.project_state
             .write()
             .unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Take the state write lock, then the file lock, and reload the graph
+    /// from disk, so the write validates against what other processes
+    /// committed. Clients get the diff of that reload before the write's own
+    /// events, so they see the changes in commit order.
+    pub(crate) fn begin_write(
+        &self,
+    ) -> crate::Result<(RwLockWriteGuard<'_, ProjectState>, StoreLock)> {
+        let (mut current, lock, loaded) = self.store.begin_write(|| self.write_project_state())?;
+        ws::broadcast(&self.ws_tx, &diff::diff_states(&current, &loaded));
+        *current = loaded;
+        Ok((current, lock))
     }
 
     pub(crate) fn read_layout(&self) -> RwLockReadGuard<'_, LayoutState> {

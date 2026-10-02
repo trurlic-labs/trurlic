@@ -6,6 +6,7 @@ pub(crate) mod limits;
 mod lock;
 mod pattern_removal;
 mod query;
+mod reload;
 pub mod schema;
 mod validate;
 pub(crate) mod watcher;
