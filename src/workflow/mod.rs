@@ -24,6 +24,7 @@
 mod action;
 pub mod advance;
 pub mod concerns;
+mod prompt;
 pub mod steps;
 
 // ── Constants ─────────────────────────────────────────────────────────────
@@ -532,7 +533,7 @@ mod integration_tests {
 
         // Every prompt must include the source code preamble.
         assert!(
-            prompt.instructions.contains("source code"),
+            prompt.text().contains("source code"),
             "step `{step_name}` prompt missing source code preamble"
         );
 

@@ -749,19 +749,15 @@ fn dispatch_verify_against_decisions(state: &ProjectState, args: &Value) -> Tool
 }
 
 fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope {
-    let component = match args.get("component").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return tool_error("missing required parameter: component"),
+    let Some(component) = args.get("component").and_then(Value::as_str) else {
+        return tool_error("missing required parameter: component");
     };
-    let step = match args.get("step").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return tool_error("missing required parameter: step"),
+    let Some(step) = args.get("step").and_then(Value::as_str) else {
+        return tool_error("missing required parameter: step");
     };
-    let task = args.get("task").and_then(|v| v.as_str());
-
-    let task_type = args.get("task_type").and_then(|v| v.as_str());
-
-    let mode = match args.get("mode").and_then(|v| v.as_str()) {
+    let task = args.get("task").and_then(Value::as_str);
+    let task_type = args.get("task_type").and_then(Value::as_str);
+    let mode = match args.get("mode").and_then(Value::as_str) {
         Some(s) => match workflow::Mode::parse(s) {
             Ok(m) => m,
             Err(msg) => return tool_error(&msg),
@@ -782,14 +778,21 @@ fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope 
         Err(msg) => return tool_error(&msg),
     };
 
-    let mut result = serde_json::json!({
-        "system_instructions": prompt.instructions,
-        "step": step,
-    });
+    let mut result = serde_json::Map::new();
+    result.insert("step".into(), Value::from(step));
     if !prompt.focus.is_empty() {
-        result["focus"] = serde_json::json!(prompt.focus);
+        result.insert("focus".into(), Value::from(prompt.focus));
     }
-    tool_result(&result)
+    // The instructions get the room the rest of the result leaves, counted
+    // in the escaped bytes they take once serialized.
+    result.insert("system_instructions".into(), Value::from(""));
+    let rest = serde_json::to_string(&result).map_or(0, |text| text.len());
+    let instructions = prompt.instructions.render(
+        MAX_TOOL_RESULT_BYTES.saturating_sub(rest),
+        truncate::json_str_len,
+    );
+    result.insert("system_instructions".into(), Value::from(instructions));
+    tool_result(&Value::Object(result))
 }
 
 fn dispatch_advance(state: &ProjectState, args: &Value) -> ToolEnvelope {
@@ -1226,6 +1229,69 @@ mod tests {
             .map(String::as_str)
             .collect();
         assert_eq!(keys, ["step", "system_instructions"]);
+    }
+
+    /// `auth` with `count` decisions, each with a long reason.
+    fn state_with_decisions(count: usize) -> ProjectState {
+        use crate::store::schema::{EdgeEntry, EdgeKind, NodeEntry, NodeKind};
+        use crate::store::testing::{sample_component, sample_decision};
+
+        let mut state = empty_state();
+        state
+            .components
+            .insert("auth".into(), std::sync::Arc::new(sample_component("auth")));
+        state.graph_index.nodes.push(NodeEntry {
+            name: "auth".into(),
+            kind: NodeKind::Component,
+            tags: vec![],
+            hash: String::new(),
+        });
+        for i in 0..count {
+            let name = format!("decision-{i:04}");
+            let mut decision = sample_decision(&name, "auth");
+            decision.decision.reason = "Because the code needs it. ".repeat(10);
+            state
+                .decisions
+                .insert(name.clone(), std::sync::Arc::new(decision));
+            state.graph_index.nodes.push(NodeEntry {
+                name: name.clone(),
+                kind: NodeKind::Decision,
+                tags: vec![],
+                hash: String::new(),
+            });
+            state.graph_index.edges.push(EdgeEntry {
+                from: name,
+                to: "auth".into(),
+                kind: EdgeKind::BelongsTo,
+            });
+        }
+        state.rebuild_graph();
+        state
+    }
+
+    #[test]
+    fn a_step_prompt_over_the_budget_keeps_its_protocol_and_cuts_the_listing() {
+        let state = state_with_decisions(400);
+        for mode in ["agent", "interactive"] {
+            let args = serde_json::json!({
+                "component": "auth",
+                "step": "walk_decisions",
+                "mode": mode,
+            });
+            let text = &call_read_tool(&state, "get_step_prompt", &args).content[0].text;
+            assert!(
+                text.len() <= MAX_TOOL_RESULT_BYTES,
+                "{mode}: {}",
+                text.len()
+            );
+
+            let payload: Value = serde_json::from_str(text).unwrap();
+            assert!(payload.get("truncated").is_none(), "{mode}");
+            let instructions = payload["system_instructions"].as_str().unwrap();
+            assert!(instructions.contains("decisions omitted to fit"), "{mode}");
+            assert!(instructions.contains("PROTOCOL:"), "{mode}");
+            assert!(instructions.contains("decision-0000"), "{mode}");
+        }
     }
 
     #[test]
