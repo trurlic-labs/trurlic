@@ -2,7 +2,7 @@
 name = "trurlic"
 version = "0.3.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 license = "Apache-2.0"
 authors = ["m2papierz@gmail.com"]
 repository = "https://github.com/trurlic-labs/trurlic"
@@ -51,9 +51,6 @@ blake3 = "1"
 
 # Parallel file I/O for load_state
 rayon = "1"
-
-# File locking (cross-platform flock)
-fs2 = "0.4"
 
 # File system watcher for live reload
 notify = "6"

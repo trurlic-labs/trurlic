@@ -11,7 +11,7 @@
   <a href="https://github.com/trurlic-labs/trurlic/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/trurlic-labs/trurlic/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://codspeed.io/trurlic-labs/trurlic"><img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json&style=flat-square" alt="CodSpeed"></a>
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/rust-1.88%2B-orange?style=flat-square" alt="Rust">
+  <img src="https://img.shields.io/badge/rust-1.90%2B-orange?style=flat-square" alt="Rust">
   <br>
   <a href="https://trurlic-docs.pages.dev/"><b>Documentation</b></a> · <a href="SECURITY.md">Report a vulnerability</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
@@ -89,7 +89,7 @@ Agent-mode decisions are never silently trusted — they land marked `agent · u
 curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/master/install.sh | bash
 ```
 
-Or with Rust: `cargo install trurlic` (requires Rust 1.88+).
+Or with Rust: `cargo install trurlic` (requires Rust 1.90+).
 
 Pre-built binaries for Linux, macOS, and Windows are on the [Releases](https://github.com/trurlic-labs/trurlic/releases) page.
 
