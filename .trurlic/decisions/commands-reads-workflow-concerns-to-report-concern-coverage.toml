@@ -1,0 +1,20 @@
+[decision]
+component = "commands"
+choice = "commands reads workflow::concerns to report concern coverage lost by removals, never mutating graph state through it"
+reason = "concerns::coverage_lost is a pure, read-only projection of graph state. `trurlic remove decision` and `trurlic gc` call it to report which concern areas lost their last covering decision. Reading a pure function from the CLI layer adds no runtime coupling and no cycle (workflow depends only on store), and mirrors how mcp consumes the same engine. The full commands dependency set is store, workflow (read-only), mcp (for serve) and map (for map)."
+alternatives = [
+    "Duplicate the coverage computation inside commands: rejected, forks the concern-area definitions and guarantees drift from the workflow engine as the single source of truth",
+    "Report coverage loss from the store's removal methods: rejected, store must not import workflow and concern areas are workflow knowledge",
+]
+tags = [
+    "architecture",
+    "module-boundary",
+]
+attribution = "agent"
+created = "2026-10-02T09:47:20.583296875Z"
+
+[[decision.code_refs]]
+file = "src/commands/decision.rs"
+
+[[decision.code_refs]]
+file = "src/commands/gc.rs"

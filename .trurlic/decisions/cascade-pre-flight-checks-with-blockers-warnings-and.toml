@@ -1,7 +1,7 @@
 [decision]
 component = "store"
 choice = "Cascade pre-flight checks with blockers, warnings, and cleanups before node removal"
-reason = "Before removing a decision or component, check_decision_cascade() / check_component_cascade() categorize all incident edges into: blockers (hard-prevent removal, e.g. other decisions DependsOn this one, or pattern would drop below 2 members), warnings (side-effects like broken supersede chains or removed connections), and cleanups (outgoing edges silently removed). Callers must handle blockers before calling remove_decision/remove_component. This is shared across CLI, MCP, and map API to enforce identical deletion semantics regardless of entry point."
+reason = "Before removing a decision or component, check_decision_cascade() / check_component_cascade() categorize all incident edges into: blockers (hard-prevent removal, e.g. other decisions DependsOn this one, or a pattern would drop below 2 members), warnings (side-effects such as a pattern losing a member or its applies_to association, or a removed incoming connection or constraint), and cleanups (outgoing edges silently removed). Callers must handle blockers before calling remove_decision/remove_component. This is shared across CLI, MCP, and map API to enforce identical deletion semantics regardless of entry point."
 alternatives = [
     "Cascade delete all dependents automatically — rejected: silent recursive deletion is dangerous for architectural decisions; the user must explicitly choose what to do with dependents",
     "Refuse deletion if any edges exist — rejected: too restrictive; outgoing edges (BelongsTo, DependsOn on targets) can be safely cleaned up without user intervention",
@@ -13,3 +13,8 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:45:22.593090249Z"
+
+[[decision.history]]
+choice = "Cascade pre-flight checks with blockers, warnings, and cleanups before node removal"
+reason = "Before removing a decision or component, check_decision_cascade() / check_component_cascade() categorize all incident edges into: blockers (hard-prevent removal, e.g. other decisions DependsOn this one, or pattern would drop below 2 members), warnings (side-effects like broken supersede chains or removed connections), and cleanups (outgoing edges silently removed). Callers must handle blockers before calling remove_decision/remove_component. This is shared across CLI, MCP, and map API to enforce identical deletion semantics regardless of entry point."
+changed_at = "2026-10-02T09:46:56.586112708Z"

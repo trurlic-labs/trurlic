@@ -1,7 +1,7 @@
 [decision]
 component = "store"
 choice = "Exclusive advisory file locking via fs2 with 5-second polling timeout"
-reason = "Prevents concurrent mutations from CLI, MCP server, and map server. Uses fs2::FileExt::try_lock_exclusive() with a polling loop (50ms interval, 5s deadline). StoreLock is a proof-of-lock type — all write methods require &StoreLock as a parameter, enforced at compile time. Lock file stores the holder PID for diagnostics on timeout. A non-blocking try_lock() variant exists for the map API to avoid stalling the tokio runtime. The lock is never held across LLM calls."
+reason = "Prevents concurrent mutations from CLI, MCP server, and map server. Uses fs2::FileExt::try_lock_exclusive() with a polling loop (50ms interval, 5s deadline). StoreLock is a proof-of-lock type: all write methods require &StoreLock as a parameter, enforced at compile time. Lock file stores the holder PID for diagnostics on timeout. A non-blocking try_lock() variant exists for the map API to avoid stalling the tokio runtime. The lock is held only for the duration of one validated commit."
 alternatives = [
     "Mutex-based locking — rejected: does not work across separate processes (CLI vs MCP vs map)",
     "No locking with last-writer-wins — rejected: silent data loss when concurrent writes race",
@@ -13,3 +13,8 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:44:30.756424330Z"
+
+[[decision.history]]
+choice = "Exclusive advisory file locking via fs2 with 5-second polling timeout"
+reason = "Prevents concurrent mutations from CLI, MCP server, and map server. Uses fs2::FileExt::try_lock_exclusive() with a polling loop (50ms interval, 5s deadline). StoreLock is a proof-of-lock type — all write methods require &StoreLock as a parameter, enforced at compile time. Lock file stores the holder PID for diagnostics on timeout. A non-blocking try_lock() variant exists for the map API to avoid stalling the tokio runtime. The lock is never held across LLM calls."
+changed_at = "2026-10-02T09:47:51.780960157Z"

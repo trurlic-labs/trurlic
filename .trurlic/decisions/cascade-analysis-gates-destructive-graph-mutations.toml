@@ -1,7 +1,7 @@
 [decision]
 component = "commands"
 choice = "Cascade analysis gates destructive graph mutations"
-reason = "remove_component and remove_decision call graph().check_component_cascade() or check_decision_cascade() before performing the deletion. If the cascade analysis returns blockers (e.g., decisions reference the component, or other decisions depend on the target), the operation is refused with CascadeBlocked. Warnings (e.g., broken supersede chains) are printed to stderr but do not block. This prevents orphaned references and broken dependency chains in the graph while allowing non-critical cleanup to proceed."
+reason = "remove_component and remove_decision call graph().check_component_cascade() or check_decision_cascade() before performing the deletion. If the cascade analysis returns blockers (decisions reference the component, other decisions depend on the target, or a pattern would drop below 2 members), the operation is refused with CascadeBlocked. Warnings (a pattern losing a member or its applies_to association, a removed incoming connection or constraint) are printed to stderr but do not block. This prevents orphaned references and broken dependency chains in the graph while allowing non-critical cleanup to proceed."
 alternatives = [
     "Allow deletion and clean up dangling references automatically — rejected: silent data loss; removing a component that has decisions would destroy decision context without the user understanding the impact",
     "Require --force flag to override blockers — rejected: adds CLI complexity and encourages bypassing safety; the correct workflow is to remove dependents first, making the operation sequence explicit",
@@ -12,3 +12,8 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:43:06.212104883Z"
+
+[[decision.history]]
+choice = "Cascade analysis gates destructive graph mutations"
+reason = "remove_component and remove_decision call graph().check_component_cascade() or check_decision_cascade() before performing the deletion. If the cascade analysis returns blockers (e.g., decisions reference the component, or other decisions depend on the target), the operation is refused with CascadeBlocked. Warnings (e.g., broken supersede chains) are printed to stderr but do not block. This prevents orphaned references and broken dependency chains in the graph while allowing non-critical cleanup to proceed."
+changed_at = "2026-10-02T09:46:54.612661141Z"
