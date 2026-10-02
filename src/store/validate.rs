@@ -1,17 +1,18 @@
-//! Graph integrity validation.
+//! Graph integrity checks for [`InMemoryGraph`].
 //!
-//! All validation checks for [`InMemoryGraph`]. Separated from the core
-//! graph module for readability — the validation surface is ~350 lines
-//! across 11 checks and does not affect the query or build paths.
+//! [`InMemoryGraph::validate`] runs every check and sorts what they find, so
+//! neither the order of the checks nor the iteration order of the graph's
+//! hash maps reaches a caller.
 
 use std::collections::HashSet;
 
-use super::graph::{InMemoryGraph, Issue, Severity};
+use super::graph::{Edge, InMemoryGraph, Issue, IssueKind, Severity};
 use super::schema::{EdgeKind, NodeKind};
 use super::state::is_valid_kebab_case;
 
 impl InMemoryGraph {
-    /// Full graph integrity check. Returns empty vec when valid.
+    /// Every issue in the graph, sorted by severity, kind, subject and
+    /// message. Empty when the graph is valid.
     #[must_use]
     pub fn validate(&self) -> Vec<Issue> {
         let mut issues = Vec::new();
@@ -25,38 +26,39 @@ impl InMemoryGraph {
         self.check_content_integrity(&mut issues);
         self.check_name_integrity(&mut issues);
         self.check_node_content_coherence(&mut issues);
+        issues.sort_unstable_by(|a, b| order(a).cmp(&order(b)));
         issues
     }
 
     // ── Validation checks ────────────────────────────────────────────────
 
-    /// Checks 1-2: every edge endpoint exists in nodes.
+    /// Every edge endpoint exists in nodes.
     fn check_edge_endpoints(&self, issues: &mut Vec<Issue>) {
         for (from, edge_list) in &self.forward {
             if !self.nodes.contains_key(from) {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::EdgeSourceMissing,
+                    subject: from.to_string(),
                     message: format!("edge source `{from}` is not a known node"),
-                    node: Some(from.to_string()),
                 });
             }
             for edge in edge_list {
                 if !self.nodes.contains_key(&edge.target) {
                     issues.push(Issue {
-                        severity: Severity::Error,
+                        kind: IssueKind::EdgeTargetMissing,
+                        subject: edge_subject(from, edge),
                         message: format!(
                             "edge target `{}` (from `{from}`, {}) is not a known node",
                             edge.target,
                             edge.kind.as_str()
                         ),
-                        node: Some(edge.target.to_string()),
                     });
                 }
             }
         }
     }
 
-    /// Checks 3-7: edge kind → node kind constraints.
+    /// Each edge kind joins the node kinds it is defined for.
     fn check_edge_type_constraints(&self, issues: &mut Vec<Issue>) {
         for (from, edge_list) in &self.forward {
             let from_kind = self.nodes.get(from).map(|m| m.kind);
@@ -85,58 +87,56 @@ impl InMemoryGraph {
 
                 if violation {
                     issues.push(Issue {
-                        severity: Severity::Error,
+                        kind: IssueKind::EdgeKindMismatch,
+                        subject: edge_subject(from, edge),
                         message: format!(
-                            "{} edge `{from}` ({}) → `{}` ({}): \
-                             invalid node kinds",
+                            "{} edge `{from}` ({}) -> `{}` ({}): invalid node kinds",
                             edge.kind.as_str(),
                             from_k.as_str(),
                             edge.target,
                             to_k.as_str()
                         ),
-                        node: Some(from.to_string()),
                     });
                 }
             }
         }
     }
 
-    /// Check 14: no self-edges.
     fn check_self_edges(&self, issues: &mut Vec<Issue>) {
         for (from, edge_list) in &self.forward {
             for edge in edge_list {
                 if *from == edge.target {
                     issues.push(Issue {
-                        severity: Severity::Error,
+                        kind: IssueKind::SelfEdge,
+                        subject: edge_subject(from, edge),
                         message: format!("self-edge on `{from}` ({})", edge.kind.as_str()),
-                        node: Some(from.to_string()),
                     });
                 }
             }
         }
     }
 
-    /// Check 10: no duplicate edges (same from + to + kind).
+    /// No two edges share source, target and kind.
     fn check_duplicate_edges(&self, issues: &mut Vec<Issue>) {
         let mut seen: HashSet<(&str, &str, EdgeKind)> = HashSet::new();
         for (from, edge_list) in &self.forward {
             for edge in edge_list {
                 if !seen.insert((from, &edge.target, edge.kind)) {
                     issues.push(Issue {
-                        severity: Severity::Error,
+                        kind: IssueKind::DuplicateEdge,
+                        subject: edge_subject(from, edge),
                         message: format!(
-                            "duplicate {} edge `{from}` → `{}`",
+                            "duplicate {} edge `{from}` -> `{}`",
                             edge.kind.as_str(),
                             edge.target
                         ),
-                        node: Some(from.to_string()),
                     });
                 }
             }
         }
     }
 
-    /// Check 8: every pattern has ≥ 2 MemberOf edges.
+    /// Every pattern has at least two `MemberOf` edges.
     fn check_pattern_membership(&self, issues: &mut Vec<Issue>) {
         for (name, meta) in &self.nodes {
             if meta.kind != NodeKind::Pattern {
@@ -154,114 +154,79 @@ impl InMemoryGraph {
                 .unwrap_or(0);
             if member_count < 2 {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::PatternTooFewMembers,
+                    subject: name.to_string(),
                     message: format!(
                         "pattern `{name}` has {member_count} member decision(s) (minimum 2)"
                     ),
-                    node: Some(name.to_string()),
                 });
             }
         }
     }
 
-    /// Check 9: no cycles in the DependsOn subgraph.
     fn check_depends_on_cycles(&self, issues: &mut Vec<Issue>) {
-        let mut visited: HashSet<&str> = HashSet::new();
-        let mut in_stack: HashSet<&str> = HashSet::new();
-
-        for (name, meta) in &self.nodes {
-            if meta.kind == NodeKind::Decision
-                && !visited.contains(name.as_ref())
-                && self.dfs_has_cycle(name, &mut visited, &mut in_stack)
-            {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    message: format!("cycle in depends_on chain involving `{name}`"),
-                    node: Some(name.to_string()),
-                });
-            }
+        for members in self.depends_on_cycles() {
+            let listed: Vec<String> = members.iter().map(|name| format!("`{name}`")).collect();
+            issues.push(Issue {
+                kind: IssueKind::DependsOnCycle,
+                subject: members.join(", "),
+                message: format!("depends_on cycle among {}", listed.join(", ")),
+            });
         }
     }
 
-    fn dfs_has_cycle<'a>(
-        &'a self,
-        node: &'a str,
-        visited: &mut HashSet<&'a str>,
-        in_stack: &mut HashSet<&'a str>,
-    ) -> bool {
-        visited.insert(node);
-        in_stack.insert(node);
-
-        if let Some(edges) = self.forward.get(node) {
-            for edge in edges {
-                if edge.kind != EdgeKind::DependsOn {
-                    continue;
-                }
-                let target: &str = &edge.target;
-                if in_stack.contains(target) {
-                    return true;
-                }
-                if !visited.contains(target) && self.dfs_has_cycle(target, visited, in_stack) {
-                    return true;
-                }
-            }
-        }
-
-        in_stack.remove(node);
-        false
-    }
-
-    /// Checks 11-13: content integrity.
+    /// Decision and pattern fields that must not be empty, and the component
+    /// each decision names.
     fn check_content_integrity(&self, issues: &mut Vec<Issue>) {
         for (name, dec) in &self.decisions {
             if dec.decision.choice.trim().is_empty() {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::EmptyChoice,
+                    subject: name.to_string(),
                     message: format!("decision `{name}` has empty choice"),
-                    node: Some(name.to_string()),
                 });
             }
             if dec.decision.reason.trim().is_empty() {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::EmptyReason,
+                    subject: name.to_string(),
                     message: format!("decision `{name}` has empty reason"),
-                    node: Some(name.to_string()),
                 });
             }
             let comp = &dec.decision.component;
             if comp != "project" && !self.components.contains_key(comp.as_str()) {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::DecisionComponentMissing,
+                    subject: name.to_string(),
                     message: format!(
                         "decision `{name}` references component `{comp}` which does not exist"
                     ),
-                    node: Some(name.to_string()),
                 });
             }
             if comp != "project" && !is_valid_kebab_case(comp) {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::DecisionComponentInvalid,
+                    subject: name.to_string(),
                     message: format!(
                         "decision `{name}` has invalid component `{comp}` \
                          (must be kebab-case or \"project\")"
                     ),
-                    node: Some(name.to_string()),
                 });
             }
         }
         for (name, pat) in &self.patterns {
             if pat.pattern.name.trim().is_empty() {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::EmptyPatternName,
+                    subject: name.to_string(),
                     message: format!("pattern `{name}` has empty name"),
-                    node: Some(name.to_string()),
                 });
             }
             if pat.pattern.description.trim().is_empty() {
                 issues.push(Issue {
-                    severity: Severity::Warning,
+                    kind: IssueKind::EmptyPatternDescription,
+                    subject: name.to_string(),
                     message: format!("pattern `{name}` has empty description"),
-                    node: Some(name.to_string()),
                 });
             }
         }
@@ -281,17 +246,17 @@ impl InMemoryGraph {
 
             if belongs_to_count == 0 {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::MissingBelongsTo,
+                    subject: name.to_string(),
                     message: format!("decision `{name}` has no BelongsTo edge"),
-                    node: Some(name.to_string()),
                 });
             } else if belongs_to_count > 1 {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::MultipleBelongsTo,
+                    subject: name.to_string(),
                     message: format!(
                         "decision `{name}` has {belongs_to_count} BelongsTo edges (must be exactly 1)",
                     ),
-                    node: Some(name.to_string()),
                 });
             }
 
@@ -299,13 +264,13 @@ impl InMemoryGraph {
                 for edge in el.iter().filter(|e| e.kind == EdgeKind::BelongsTo) {
                     if edge.target.as_ref() != dec.decision.component {
                         issues.push(Issue {
-                            severity: Severity::Error,
+                            kind: IssueKind::BelongsToMismatch,
+                            subject: edge_subject(name, edge),
                             message: format!(
                                 "decision `{name}` BelongsTo target `{}` does not match \
                                  decision.component `{}`",
                                 edge.target, dec.decision.component
                             ),
-                            node: Some(name.to_string()),
                         });
                     }
                 }
@@ -317,39 +282,39 @@ impl InMemoryGraph {
         for (key, comp) in &self.components {
             if key.as_ref() != comp.component.name {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::ComponentNameMismatch,
+                    subject: key.to_string(),
                     message: format!(
                         "component key `{key}` does not match internal name `{}`",
                         comp.component.name
                     ),
-                    node: Some(key.to_string()),
                 });
             }
             if !is_valid_kebab_case(&comp.component.name) {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::ComponentNameInvalid,
+                    subject: key.to_string(),
                     message: format!(
                         "component `{key}` has invalid name `{}` (must be kebab-case)",
                         comp.component.name
                     ),
-                    node: Some(key.to_string()),
                 });
             }
         }
-        // Decision keys (filenames) must be kebab-case — enforced by slugify
-        // on creation, but manual edits or external tools could violate this.
+        // Decision keys (filenames) must be kebab-case: slugify enforces it on
+        // creation, but manual edits or external tools could violate it.
         for key in self.decisions.keys() {
             if !is_valid_kebab_case(key) {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::DecisionNameInvalid,
+                    subject: key.to_string(),
                     message: format!("decision key `{key}` is not valid kebab-case"),
-                    node: Some(key.to_string()),
                 });
             }
         }
         // Pattern names are human-readable (e.g. "All persistent state uses Redis")
         // and intentionally differ from the kebab-case filename key. No key-vs-name
-        // check — only content checks (empty name/description) apply.
+        // check: only content checks (empty name/description) apply.
     }
 
     /// Every node in the index must have matching content in the typed cache.
@@ -368,17 +333,26 @@ impl InMemoryGraph {
             };
             if !has_content {
                 issues.push(Issue {
-                    severity: Severity::Error,
+                    kind: IssueKind::NodeContentMissing,
+                    subject: name.to_string(),
                     message: format!(
                         "{} node `{name}` exists in index but has no content \
                          (file may be missing or unparseable)",
                         meta.kind.as_str()
                     ),
-                    node: Some(name.to_string()),
                 });
             }
         }
     }
+}
+
+/// Sort key of [`InMemoryGraph::validate`]: errors first, then by kind.
+fn order(issue: &Issue) -> (Severity, IssueKind, &str, &str) {
+    (issue.severity(), issue.kind, &issue.subject, &issue.message)
+}
+
+fn edge_subject(from: &str, edge: &Edge) -> String {
+    format!("{from} -> {} ({})", edge.target, edge.kind.as_str())
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────
@@ -387,7 +361,7 @@ impl InMemoryGraph {
 mod tests {
     use super::*;
     use crate::store::schema::*;
-    use crate::store::testing::{arc_map, test_graph, ts};
+    use crate::store::testing::{arc_map, depends_on_graph, test_graph, ts};
     use std::collections::BTreeMap;
 
     // ── validate: clean graph ────────────────────────────────────────────
@@ -458,7 +432,7 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|i| i.severity == Severity::Error && i.message.contains("belongs_to"))
+                .any(|i| i.severity() == Severity::Error && i.message.contains("belongs_to"))
         );
     }
 
@@ -589,65 +563,59 @@ mod tests {
 
     // ── validate: cycle in depends_on ────────────────────────────────────
 
-    #[test]
-    fn validate_catches_depends_on_cycle() {
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![
-                NodeEntry {
-                    name: "d1".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "1".into(),
-                },
-                NodeEntry {
-                    name: "d2".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "2".into(),
-                },
-            ],
-            edges: vec![
-                EdgeEntry {
-                    from: "d1".into(),
-                    to: "d2".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-                EdgeEntry {
-                    from: "d2".into(),
-                    to: "d1".into(),
-                    kind: EdgeKind::DependsOn,
-                },
-            ],
-        };
-        let mut decisions = BTreeMap::new();
-        for n in ["d1", "d2"] {
-            decisions.insert(
-                n.into(),
-                DecisionFile {
-                    decision: Decision {
-                        component: "project".into(),
-                        choice: n.into(),
-                        reason: n.into(),
-                        alternatives: vec![],
-                        tags: vec![],
-                        attribution: Attribution::User,
-                        created: ts(),
-                        code_refs: vec![],
-                        history: vec![],
-                    },
-                },
-            );
+    fn cycle(members: &[&str]) -> Issue {
+        let listed: Vec<String> = members.iter().map(|name| format!("`{name}`")).collect();
+        Issue {
+            kind: IssueKind::DependsOnCycle,
+            subject: members.join(", "),
+            message: format!("depends_on cycle among {}", listed.join(", ")),
         }
-        let g = InMemoryGraph::build(
-            &index,
-            &BTreeMap::new(),
-            &arc_map(decisions),
-            &BTreeMap::new(),
+    }
+
+    #[test]
+    fn a_cycle_with_a_tail_is_one_issue_naming_exactly_its_members() {
+        let g = depends_on_graph(&[("tail", "a"), ("a", "b"), ("b", "c"), ("c", "a")]);
+        assert_eq!(g.validate(), [cycle(&["a", "b", "c"])]);
+    }
+
+    /// A depth-first search that returns at the first cycle it meets leaves
+    /// `r` marked as on its path, and later reports `s` as a cycle.
+    #[test]
+    fn nodes_upstream_of_a_cycle_raise_no_issue() {
+        let g = depends_on_graph(&[("r", "a"), ("a", "b"), ("b", "a"), ("s", "r")]);
+        assert_eq!(g.validate(), [cycle(&["a", "b"])]);
+    }
+
+    /// Two graphs equal but for edge order, each with its own hash maps,
+    /// validate to the same sorted list.
+    #[test]
+    fn issues_are_sorted_whatever_the_input_order() {
+        let mut edges = vec![
+            ("a", "b"),
+            ("b", "a"),
+            ("a", "b"),
+            ("x", "y"),
+            ("y", "x"),
+            ("m", "m"),
+            ("n", "n"),
+        ];
+        let forward = depends_on_graph(&edges).validate();
+        edges.reverse();
+        let backward = depends_on_graph(&edges).validate();
+
+        assert_eq!(forward, backward);
+        let kinds: Vec<IssueKind> = forward.iter().map(|i| i.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                IssueKind::SelfEdge,
+                IssueKind::SelfEdge,
+                IssueKind::DuplicateEdge,
+                IssueKind::DependsOnCycle,
+                IssueKind::DependsOnCycle,
+            ]
         );
-        let issues = g.validate();
-        assert!(issues.iter().any(|i| i.message.contains("cycle")));
+        assert!(forward.is_sorted_by_key(|i| (i.severity(), i.kind, i.subject.clone())));
     }
 
     // ── validate: empty choice / reason ──────────────────────────────────

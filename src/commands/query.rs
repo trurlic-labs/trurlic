@@ -104,10 +104,10 @@ pub fn check(cwd: &Path, rebuild: bool) -> Result<()> {
 
     let error_count = all_issues
         .iter()
-        .filter(|i| i.severity == Severity::Error)
+        .filter(|i| i.severity() == Severity::Error)
         .count();
     for issue in &all_issues {
-        let prefix = match issue.severity {
+        let prefix = match issue.severity() {
             Severity::Error => "error",
             Severity::Warning => "warning",
         };
@@ -148,7 +148,7 @@ fn check_rebuild(cwd: &Path) -> Result<()> {
     println!("Rebuilt graph.toml from node files: {node_count} nodes, {edge_count} edges");
     let error_count = issues
         .iter()
-        .filter(|i| i.severity == Severity::Error)
+        .filter(|i| i.severity() == Severity::Error)
         .count();
 
     if issues.is_empty() {
@@ -156,7 +156,7 @@ fn check_rebuild(cwd: &Path) -> Result<()> {
         Ok(())
     } else {
         for issue in &issues {
-            let prefix = match issue.severity {
+            let prefix = match issue.severity() {
                 Severity::Error => "error",
                 Severity::Warning => "warning",
             };
@@ -175,6 +175,7 @@ mod tests {
     use super::*;
     use crate::commands::{add_component, add_connection, decide, init};
     use crate::store::Store;
+    use crate::store::graph::IssueKind;
     use crate::store::schema::EdgeKind;
     use tempfile::TempDir;
 
@@ -283,8 +284,9 @@ mod tests {
 
         let issues = store.verify_hashes().unwrap();
         assert!(
-            issues.iter().any(|i| i.node.as_deref() == Some("auth")
-                && i.message.contains("content changed")),
+            issues
+                .iter()
+                .any(|i| i.kind == IssueKind::HashMismatch && i.subject == "auth"),
             "should detect the modified file: {issues:?}"
         );
     }
@@ -304,8 +306,9 @@ mod tests {
 
         let issues = store.verify_hashes().unwrap();
         assert!(
-            issues.iter().any(|i| i.node.as_deref() == Some("auth")
-                && i.message.contains("missing or unreadable")),
+            issues
+                .iter()
+                .any(|i| i.kind == IssueKind::NodeFileMissing && i.subject == "auth"),
             "should detect the missing file: {issues:?}"
         );
     }
@@ -322,9 +325,7 @@ mod tests {
 
         let issues = store.verify_hashes().unwrap();
         assert!(
-            issues
-                .iter()
-                .any(|i| i.message.contains("graph.toml is missing")),
+            issues.iter().any(|i| i.kind == IssueKind::IndexMissing),
             "should warn about missing graph.toml: {issues:?}"
         );
     }

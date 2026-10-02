@@ -161,7 +161,7 @@ impl Store {
         let issues = graph.validate();
         let errors: Vec<&str> = issues
             .iter()
-            .filter(|i| i.severity == Severity::Error)
+            .filter(|i| i.severity() == Severity::Error)
             .map(|i| i.message.as_str())
             .collect();
         if !errors.is_empty() {

@@ -23,7 +23,7 @@ pub fn map(cwd: &Path, port: Option<u16>, no_open: bool, detach: bool) -> Result
     let errors = state
         .validate()
         .iter()
-        .filter(|i| i.severity == Severity::Error)
+        .filter(|i| i.severity() == Severity::Error)
         .count();
     if errors > 0 {
         eprintln!("warning: .trurlic/ has {errors} consistency issue(s) — run `trurlic check`");

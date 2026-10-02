@@ -417,7 +417,7 @@ impl Store {
             .build_graph()
             .validate()
             .into_iter()
-            .filter(|issue| issue.severity == Severity::Error)
+            .filter(|issue| issue.severity() == Severity::Error)
             .map(|issue| issue.message)
             .collect();
 
@@ -456,7 +456,7 @@ impl Store {
         let new_errors: Vec<String> = graph
             .validate()
             .into_iter()
-            .filter(|issue| issue.severity == Severity::Error)
+            .filter(|issue| issue.severity() == Severity::Error)
             .map(|issue| issue.message)
             .filter(|message| !pre_existing_errors.contains(message))
             .collect();

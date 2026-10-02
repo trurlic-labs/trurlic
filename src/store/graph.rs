@@ -30,17 +30,90 @@ pub enum Direction {
     Reverse,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Errors sort before warnings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
     Error,
     Warning,
 }
 
-#[derive(Debug, Clone)]
+/// What an [`Issue`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IssueKind {
+    EdgeSourceMissing,
+    EdgeTargetMissing,
+    EdgeKindMismatch,
+    SelfEdge,
+    DuplicateEdge,
+    PatternTooFewMembers,
+    DependsOnCycle,
+    MissingBelongsTo,
+    MultipleBelongsTo,
+    BelongsToMismatch,
+    EmptyChoice,
+    EmptyReason,
+    DecisionComponentMissing,
+    DecisionComponentInvalid,
+    ComponentNameMismatch,
+    ComponentNameInvalid,
+    DecisionNameInvalid,
+    EmptyPatternName,
+    EmptyPatternDescription,
+    NodeContentMissing,
+    /// `graph.toml` is absent; the next load rebuilds it.
+    IndexMissing,
+    /// A node file's hash differs from the one in `graph.toml`.
+    HashMismatch,
+    /// `graph.toml` names a node whose file cannot be read.
+    NodeFileMissing,
+}
+
+impl IssueKind {
+    #[must_use]
+    pub const fn severity(self) -> Severity {
+        match self {
+            Self::EmptyPatternDescription
+            | Self::IndexMissing
+            | Self::HashMismatch
+            | Self::NodeFileMissing => Severity::Warning,
+            Self::EdgeSourceMissing
+            | Self::EdgeTargetMissing
+            | Self::EdgeKindMismatch
+            | Self::SelfEdge
+            | Self::DuplicateEdge
+            | Self::PatternTooFewMembers
+            | Self::DependsOnCycle
+            | Self::MissingBelongsTo
+            | Self::MultipleBelongsTo
+            | Self::BelongsToMismatch
+            | Self::EmptyChoice
+            | Self::EmptyReason
+            | Self::DecisionComponentMissing
+            | Self::DecisionComponentInvalid
+            | Self::ComponentNameMismatch
+            | Self::ComponentNameInvalid
+            | Self::DecisionNameInvalid
+            | Self::EmptyPatternName
+            | Self::NodeContentMissing => Severity::Error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Issue {
-    pub severity: Severity,
+    pub kind: IssueKind,
+    /// What the issue is about: a node name, an edge as `from -> to (kind)`,
+    /// or a cycle's members, sorted and comma-separated. Stable across
+    /// validations of the same graph, unlike `message`, which may carry counts.
+    pub subject: String,
     pub message: String,
-    pub node: Option<String>,
+}
+
+impl Issue {
+    #[must_use]
+    pub const fn severity(&self) -> Severity {
+        self.kind.severity()
+    }
 }
 
 // ── InMemoryGraph ───────────────────────────────────────────────────────────
