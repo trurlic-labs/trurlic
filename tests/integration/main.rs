@@ -8,3 +8,4 @@ mod failpoints;
 mod golden;
 mod harness;
 mod stdio;
+mod writers;
