@@ -7,8 +7,11 @@
 //! cut by JSON pointer with what it omitted. Array items are kept or dropped
 //! whole, so every kept value is one the tool produced. Sizes are bytes of
 //! the payload's compact serialization, the text the client receives.
+//!
+//! An oversized payload is never serialized whole, and each unit is measured
+//! only until it passes the budget, so a cut costs in proportion to the
+//! budget, not to the payload.
 
-use std::borrow::Cow;
 use std::io;
 
 use serde_json::{Map, Value, json};
@@ -21,38 +24,55 @@ const NOTICE_KEY: &str = "truncated";
 /// Upper bound on the bytes `,"truncated":[]` adds to the root object.
 const NOTICE_FRAME: usize = 15;
 
+/// Bytes between the size checkpoints of a string, so a cut scans at most
+/// this many bytes past a binary search.
+const CHECKPOINT: usize = 64;
+
 /// Serialize `payload` within `max_bytes`, cutting it as the module
 /// describes when it does not fit. A payload that is not an object is
 /// wrapped as `{"value": payload}` before it is cut.
 pub(crate) fn fit_payload(payload: &Value, max_bytes: usize) -> String {
-    let text = serde_json::to_string(payload).unwrap_or_else(|e| {
-        eprintln!("trurlic: tool result serialization error: {e}");
-        "{}".into()
-    });
-    if text.len() <= max_bytes {
+    if let Some(text) = serialize_within(payload, max_bytes) {
         return text;
     }
 
-    let (root, root_bytes) = match payload {
-        Value::Object(map) => (Cow::Borrowed(map), text.len()),
+    let wrapped;
+    let root = match payload {
+        Value::Object(map) => map,
         other => {
             // clone: a non-object payload is wrapped so the notice has a root.
-            let wrapped = Map::from_iter([("value".to_owned(), other.clone())]);
-            (Cow::Owned(wrapped), text.len() + r#"{"value":}"#.len())
+            wrapped = Map::from_iter([("value".to_owned(), other.clone())]);
+            &wrapped
         }
     };
-    let cut = cut_root(&root, root_bytes, max_bytes);
-    match cut {
-        Some(cut) if cut.len() <= max_bytes => cut,
-        Some(cut) => {
-            eprintln!(
-                "trurlic: a cut tool result took {} of {max_bytes} bytes; sent as omitted",
-                cut.len()
-            );
-            omitted_whole(text.len())
-        }
-        None => omitted_whole(text.len()),
+    let mut units = Vec::new();
+    for (key, value) in root {
+        collect(value, &mut pointer_to(key), &mut units, max_bytes);
     }
+    match cut_root(root, &units, object_skeleton_len(root), max_bytes) {
+        Some(cut) if cut.len() <= max_bytes => cut,
+        cut => {
+            if let Some(cut) = cut {
+                eprintln!(
+                    "trurlic: a cut tool result took {} of {max_bytes} bytes; sent as omitted",
+                    cut.len()
+                );
+            }
+            omitted_whole(serialized_len(payload))
+        }
+    }
+}
+
+/// `payload` serialized, or `None` once it passes `max_bytes`: a payload
+/// over the budget is never serialized whole.
+fn serialize_within(payload: &Value, max_bytes: usize) -> Option<String> {
+    let mut sink = Bounded {
+        bytes: Vec::with_capacity(128),
+        max_bytes,
+    };
+    // The only error a Value can raise here is the sink refusing bytes.
+    serde_json::to_writer(&mut sink, payload).ok()?;
+    String::from_utf8(sink.bytes).ok()
 }
 
 /// Cut `message` at a character boundary so that it and the note of the
@@ -102,25 +122,43 @@ fn omitted_whole(bytes: usize) -> String {
 
 /// Cut every unit of `root` to the highest level that fits, or `None` when
 /// the skeleton does not fit even with every unit emptied.
-fn cut_root(root: &Map<String, Value>, root_bytes: usize, max_bytes: usize) -> Option<String> {
-    let mut units = Vec::new();
-    for (key, value) in root {
-        collect(value, &mut pointer_to(key), &mut units);
-    }
-    let unit_bytes: usize = units.iter().map(Shrinkable::full).sum();
-    let fixed = root_bytes.saturating_sub(unit_bytes) + NOTICE_FRAME;
-    let level = budget::level(&units, fixed, max_bytes)?;
+fn cut_root(
+    root: &Map<String, Value>,
+    units: &[Unit<'_>],
+    skeleton: usize,
+    max_bytes: usize,
+) -> Option<String> {
+    let level = budget::level(units, skeleton + NOTICE_FRAME, max_bytes)?;
 
     let mut cuts = units.iter().map(|unit| unit.cut(level));
     let mut kept = Map::with_capacity(root.len() + 1);
     let mut notice = Vec::new();
     for (key, value) in root {
+        // clone: the cut payload is a new map; its keys are the original's.
         kept.insert(key.clone(), rebuild(value, &mut cuts, &mut notice));
     }
     if !notice.is_empty() {
         kept.insert(NOTICE_KEY.to_owned(), Value::Array(notice));
     }
     Some(Value::Object(kept).to_string())
+}
+
+/// Bytes of `map` serialized with every unit [`collect`] finds in it emptied.
+fn object_skeleton_len(map: &Map<String, Value>) -> usize {
+    let entries = map.iter().fold(0usize, |sum, (key, value)| {
+        // `"key":` and the value.
+        sum.saturating_add(json_str_len(key) + 3)
+            .saturating_add(skeleton_len(value))
+    });
+    entries + 2 + map.len().saturating_sub(1)
+}
+
+fn skeleton_len(value: &Value) -> usize {
+    match value {
+        Value::Object(map) => object_skeleton_len(map),
+        Value::Array(_) | Value::String(_) => 2,
+        Value::Null | Value::Bool(_) | Value::Number(_) => serialized_len(value),
+    }
 }
 
 /// `/key` with `~` and `/` escaped as RFC 6901 requires.
@@ -130,18 +168,24 @@ fn pointer_to(key: &str) -> String {
 
 /// Push a unit for every array and string under `value`, descending
 /// through objects only, in the order [`rebuild`] visits them.
-fn collect<'a>(value: &'a Value, pointer: &mut String, units: &mut Vec<Unit<'a>>) {
+fn collect<'a>(
+    value: &'a Value,
+    pointer: &mut String,
+    units: &mut Vec<Unit<'a>>,
+    max_bytes: usize,
+) {
     match value {
         Value::Object(map) => {
             for (key, child) in map {
                 let parent = pointer.len();
                 pointer.push_str(&pointer_to(key));
-                collect(child, pointer, units);
+                collect(child, pointer, units, max_bytes);
                 pointer.truncate(parent);
             }
         }
-        Value::Array(items) => units.push(Unit::items(pointer.clone(), items)),
-        Value::String(text) => units.push(Unit::text(pointer.clone(), text)),
+        // clone: each unit owns the pointer that names it in the notice.
+        Value::Array(items) => units.push(Unit::items(pointer.clone(), items, max_bytes)),
+        Value::String(text) => units.push(Unit::text(pointer.clone(), text, max_bytes)),
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
@@ -154,6 +198,8 @@ fn rebuild<'u>(
     notice: &mut Vec<Value>,
 ) -> Value {
     match value {
+        // clone: the cut payload is built anew; keys and scalars are copied
+        // as they are.
         Value::Object(map) => Value::Object(
             map.iter()
                 .map(|(key, child)| (key.clone(), rebuild(child, cuts, notice)))
@@ -171,6 +217,10 @@ fn rebuild<'u>(
 }
 
 /// An array or string that can shrink, with the pointer that names it.
+///
+/// A unit is measured only until its size passes the budget: no longer
+/// prefix can be kept, so `full` of a larger unit is the size of that first
+/// prefix past the budget, which every search treats alike.
 struct Unit<'a> {
     pointer: String,
     shape: Shape<'a>,
@@ -179,12 +229,18 @@ struct Unit<'a> {
 }
 
 enum Shape<'a> {
-    /// `ends[k]`: bytes of the first `k + 1` items and the commas between them.
+    /// `ends[k]`: bytes of the first `k + 1` items and the commas between
+    /// them, up to the first that passes the budget.
     Items {
         items: &'a [Value],
         ends: Vec<usize>,
     },
-    Text(&'a str),
+    /// `checkpoints[k]`: escaped bytes of the first `k * CHECKPOINT` bytes,
+    /// up to the first that passes the budget.
+    Text {
+        text: &'a str,
+        checkpoints: Vec<usize>,
+    },
 }
 
 /// A unit at the chosen level: whole, or the number of items or bytes of
@@ -195,8 +251,8 @@ struct Cut<'u> {
 }
 
 impl<'a> Unit<'a> {
-    fn items(pointer: String, items: &'a [Value]) -> Self {
-        let mut ends = Vec::with_capacity(items.len());
+    fn items(pointer: String, items: &'a [Value], max_bytes: usize) -> Self {
+        let mut ends = Vec::new();
         let mut end = 0usize;
         for (index, item) in items.iter().enumerate() {
             let comma = usize::from(index > 0);
@@ -204,6 +260,9 @@ impl<'a> Unit<'a> {
                 .saturating_add(comma)
                 .saturating_add(serialized_len(item));
             ends.push(end);
+            if end > max_bytes {
+                break;
+            }
         }
         let note = note_len(&pointer, "omitted_items", items.len());
         Self {
@@ -214,12 +273,23 @@ impl<'a> Unit<'a> {
         }
     }
 
-    fn text(pointer: String, text: &'a str) -> Self {
+    fn text(pointer: String, text: &'a str, max_bytes: usize) -> Self {
+        let mut checkpoints = Vec::new();
+        let mut full = 0usize;
+        for (index, &byte) in text.as_bytes().iter().enumerate() {
+            if index % CHECKPOINT == 0 {
+                if full > max_bytes {
+                    break;
+                }
+                checkpoints.push(full);
+            }
+            full = full.saturating_add(escaped_len(byte));
+        }
         let note = note_len(&pointer, "omitted_bytes", text.len());
         Self {
             pointer,
-            shape: Shape::Text(text),
-            full: json_str_len(text),
+            shape: Shape::Text { text, checkpoints },
+            full,
             note,
         }
     }
@@ -232,17 +302,22 @@ impl<'a> Unit<'a> {
                 let bytes = count.checked_sub(1).and_then(|last| ends.get(last));
                 (count, bytes.copied().unwrap_or(0))
             }
-            Shape::Text(text) => {
-                let mut bytes = 0;
-                for (index, character) in text.char_indices() {
-                    let mut buffer = [0; 4];
-                    let size = json_str_len(character.encode_utf8(&mut buffer));
-                    if bytes + size > limit {
-                        return (index, bytes);
+            Shape::Text { text, checkpoints } => {
+                let block = checkpoints
+                    .partition_point(|&size| size <= limit)
+                    .saturating_sub(1);
+                let mut end = block * CHECKPOINT;
+                let mut size = checkpoints.get(block).copied().unwrap_or(0);
+                for &byte in text.as_bytes().get(end..).unwrap_or_default() {
+                    let next = size + escaped_len(byte);
+                    if next > limit {
+                        break;
                     }
-                    bytes += size;
+                    (end, size) = (end + 1, next);
                 }
-                (text.len(), bytes)
+                // The bytes of a character cut in half are non-ASCII, one each.
+                let boundary = floor_char_boundary(text, end);
+                (boundary, size - (end - boundary))
             }
         }
     }
@@ -279,13 +354,13 @@ impl Cut<'_> {
                 notice.push(json!({ "at": pointer, "omitted_items": tail.len() }));
                 Value::Array(head.to_vec())
             }
-            (Shape::Text(text), Some(end)) => {
+            (Shape::Text { text, .. }, Some(end)) => {
                 let (head, tail) = text.split_at(floor_char_boundary(text, end));
                 notice.push(json!({ "at": pointer, "omitted_bytes": tail.len() }));
                 Value::String(head.to_owned())
             }
             (Shape::Items { items, .. }, None) => Value::Array(items.to_vec()),
-            (Shape::Text(text), None) => Value::String((*text).to_owned()),
+            (Shape::Text { text, .. }, None) => Value::String((*text).to_owned()),
         }
     }
 }
@@ -308,6 +383,26 @@ struct ByteCount(usize);
 impl io::Write for ByteCount {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A buffer that refuses to grow past `max_bytes`.
+struct Bounded {
+    bytes: Vec<u8>,
+    max_bytes: usize,
+}
+
+impl io::Write for Bounded {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.bytes.len() + bytes.len() > self.max_bytes {
+            return Err(io::ErrorKind::FileTooLarge.into());
+        }
+        self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
@@ -394,7 +489,7 @@ mod tests {
             "count": 100,
             "rules": ["one", "two"],
             "decisions": decisions,
-            "brief": "line \"quoted\" ünïcödé\n".repeat(200),
+            "brief": "line \"quoted\" \u{fc}n\u{ef}c\u{f6}d\u{e9}\n".repeat(200),
         });
 
         let kept = fit(&payload, 2_000);
@@ -444,7 +539,7 @@ mod tests {
 
     #[test]
     fn a_long_message_is_cut_at_a_character_boundary_with_its_loss() {
-        let message = "é".repeat(100);
+        let message = "\u{e9}".repeat(100);
         let fitted = fit_message(&message, 61);
         assert!(fitted.len() <= 61, "{}", fitted.len());
         let (head, note) = fitted.split_once('\n').unwrap();
