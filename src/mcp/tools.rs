@@ -4,7 +4,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::context;
-use super::{pattern, update, verify, write};
+use super::{pattern, truncate, update, verify, write};
+use crate::budget::MAX_TOOL_RESULT_BYTES;
 use crate::store::{ProjectState, Store, StoreLock};
 use crate::workflow;
 
@@ -859,25 +860,23 @@ struct TextBlock {
     text: String,
 }
 
+/// `payload` serialized within [`MAX_TOOL_RESULT_BYTES`]; see [`truncate`].
 pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
-    let text = serde_json::to_string(payload).unwrap_or_else(|e| {
-        eprintln!("trurlic: tool result serialization error: {e}");
-        "{}".into()
-    });
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",
-            text,
+            text: truncate::fit_payload(payload, MAX_TOOL_RESULT_BYTES),
         }],
         is_error: None,
     }
 }
 
+/// `message`, cut to [`MAX_TOOL_RESULT_BYTES`] with a note of what it lost.
 pub(crate) fn tool_error(message: &str) -> ToolEnvelope {
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",
-            text: message.into(),
+            text: truncate::fit_message(message, MAX_TOOL_RESULT_BYTES),
         }],
         is_error: Some(true),
     }
