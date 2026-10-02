@@ -1,0 +1,22 @@
+[decision]
+component = "store"
+choice = "graph.toml's rebuilt stamp is carried over unchanged; commits never rewrite it"
+reason = "GraphIndex.rebuilt was set to the current time by every commit and load, so graph.toml changed on every write even when the graph did not, and concurrent branches always conflicted on it; nothing reads it. It is now an optional timestamp: InMemoryGraph::to_index takes the stamp of the index it replaces, load_state keeps the one on disk, and only init and the repair of a missing graph.toml set one. It is still written because 0.3.1 refuses an index without it, and an index without it parses."
+alternatives = [
+    "Drop the field or stop serializing it: rejected, 0.3.1 cannot read a graph.toml without it",
+    "Keep restamping it: rejected, every commit then changes graph.toml and conflicts across branches",
+]
+tags = [
+    "determinism",
+    "compatibility",
+]
+attribution = "agent"
+created = "2026-10-02T11:35:08.691455442Z"
+
+[[decision.code_refs]]
+file = "src/store/schema.rs"
+symbol = "GraphIndex"
+
+[[decision.code_refs]]
+file = "src/store/graph.rs"
+symbol = "InMemoryGraph::to_index"

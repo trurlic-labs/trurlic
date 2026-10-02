@@ -1,0 +1,19 @@
+[decision]
+component = "store"
+choice = "Writers take the server's state lock before the file lock and drop it while the file lock is busy"
+reason = "Store::lock_after takes the guard the caller passes (a server's ProjectState write lock, or nothing for the CLI), then tries the exclusive file lock; on contention it drops the guard, sleeps one poll interval and retries until the 5 s timeout. So no thread ever waits on the file lock while holding the state lock, and no thread holding a file lock waits on the state lock: the watcher releases its shared file lock before taking the state write lock. Readers and the watcher therefore never stall behind a writer that cannot commit yet, and the two servers use one order. Store::lock is lock_after with a unit guard."
+alternatives = [
+    "File lock first, then the state lock (the map's old order): rejected, it inverts the order of every other writer and stalls the state lock behind any slow commit",
+    "Hold the state lock while blocking on the file lock: rejected, map readers on async worker threads and the watcher would wait up to 5 s",
+    "Non-blocking try_lock that fails with 503: rejected, every write that meets a watcher reload holding the shared lock would fail",
+]
+tags = [
+    "concurrency",
+    "reliability",
+]
+attribution = "agent"
+created = "2026-10-02T11:35:08.683671803Z"
+
+[[decision.code_refs]]
+file = "src/store/lock.rs"
+symbol = "Store::lock_after"

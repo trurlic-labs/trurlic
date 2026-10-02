@@ -1,0 +1,31 @@
+[decision]
+component = "store"
+choice = "Every write reloads the graph under the exclusive lock before validating it"
+reason = "A write validated against the state its server last loaded, before taking the file lock, and then committed the whole graph index from that state, so another process's commit in between was silently lost (two serve processes, add_connection then record_decision within 100 ms: the edge vanished and check still said consistent). Store::begin_write takes the caller's guard, then the exclusive lock, then checks the format version and loads the graph under the lock; every surface starts its writes there and validates only after it: MCP in one call_write_tool that hands the handlers the reloaded state plus the &StoreLock, the map in MapState::begin_write, the CLI in open_store_mut. A refused write keeps the reloaded state. The reload is unconditional; it costs one load_state per write."
+alternatives = [
+    "Validate against the in-memory state, then lock and commit: rejected, that is the lost update",
+    "Lock and reload inside each MCP handler: rejected, every handler must remember to validate after the reload; one call site cannot forget",
+    "Skip the reload when node-file fingerprints match: deferred, the store has no per-file fingerprints yet and the unconditional reload is correct now",
+]
+tags = [
+    "concurrency",
+    "reliability",
+]
+attribution = "agent"
+created = "2026-10-02T11:35:08.670219118Z"
+
+[[decision.code_refs]]
+file = "src/store/reload.rs"
+symbol = "Store::begin_write"
+
+[[decision.code_refs]]
+file = "src/mcp/mod.rs"
+symbol = "call_write_tool"
+
+[[decision.code_refs]]
+file = "src/map/mod.rs"
+symbol = "MapState::begin_write"
+
+[[decision.code_refs]]
+file = "src/commands/mod.rs"
+symbol = "open_store_mut"

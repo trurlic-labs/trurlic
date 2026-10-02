@@ -11,6 +11,15 @@ tags = [
 hash = "9941137bd3001d337e9499278c8300856323bdf3bdc37c30d2b58b024b3e9329"
 
 [[nodes]]
+name = "a-commit-counter-in-state-generation-orders-loads-a-commit"
+kind = "decision"
+tags = [
+    "concurrency",
+    "reliability",
+]
+hash = "21490e1bb4898025bc7d612c738e2ab266b86e21d3968fd87c3508def2192f53"
+
+[[nodes]]
 name = "advance-is-a-pure-function-read-only-stateless-idempotent"
 kind = "decision"
 tags = [
@@ -171,13 +180,22 @@ tags = [
 hash = "0c40e152435032ddaae031323daa0f45110b8b5898d339698994bdf2a81a3ee5"
 
 [[nodes]]
+name = "every-write-reloads-the-graph-under-the-exclusive-lock"
+kind = "decision"
+tags = [
+    "concurrency",
+    "reliability",
+]
+hash = "4f2ec98382e778117fc3a26b3c97182894c8beb589cea3199c55f10df81db004"
+
+[[nodes]]
 name = "exclusive-advisory-file-locking-via-fs2-with-5-second"
 kind = "decision"
 tags = [
     "concurrency",
     "reliability",
 ]
-hash = "4cc580fc584b27800a1104184e8a609073347bd83f0e02e503e0ed0a2d4a6d19"
+hash = "d929800b0e6782b649ecbb91ef56edb7690488ca1994f770943bc4f06df7eea9"
 
 [[nodes]]
 name = "fail-closed-validation"
@@ -195,7 +213,7 @@ tags = [
     "concurrency",
     "performance",
 ]
-hash = "d9bc6bfc586cf83520f09afc213202a5283f1b7e585522b62745fe2406c1c61f"
+hash = "7f445a953d858ff36f74e342dc12a58a329e2f9b9d69050411f6d503616b757e"
 
 [[nodes]]
 name = "file-watcher-with-100ms-debounce-for-non-fatal-live-reload"
@@ -204,7 +222,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "690283ca73dd7519e7cc8c6ef7bc34d5148c5402385c5836b6f52b051c35dfa2"
+hash = "a75fb6c80b4d015abcf517453da621b1c3fdba37db2e0dd44f21750639cbd9a2"
 
 [[nodes]]
 name = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
@@ -213,7 +231,7 @@ tags = [
     "concurrency",
     "performance",
 ]
-hash = "5621d13278602f65254ac3d5d678f3886b83aa03df4428c58d1f013ef9e72ab4"
+hash = "47b68cb4f983a84e1d384d2b2713a2baa475e451d088daf3e4b7619cc2833159"
 
 [[nodes]]
 name = "file-watcher-with-debounce-state-dir-filtering-and-post"
@@ -222,7 +240,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "3830f3b0b931f9144ce07f3901d2b8d72c0308f7bf30deaeb764663132c9b53a"
+hash = "6782bab4fb23c9c62bc3e919dd4ad347823bc2fd2c4d6ded46f96c9a211cf195"
 
 [[nodes]]
 name = "full-graph-validation-before-every-disk-write-via-commit"
@@ -241,6 +259,15 @@ tags = [
     "security",
 ]
 hash = "b3c036821aab02b2cea46a6a888928ad128d368db85c0fe9febe097f454485f1"
+
+[[nodes]]
+name = "graph-toml-s-rebuilt-stamp-is-carried-over-unchanged"
+kind = "decision"
+tags = [
+    "determinism",
+    "compatibility",
+]
+hash = "c1e5a6ffe77ca818c5f533972cedbae1ff754828fa7ccf772b8535257656a7c7"
 
 [[nodes]]
 name = "initialization-gate-tools-list-and-tools-call-require-prior"
@@ -577,9 +604,28 @@ kind = "decision"
 tags = ["module-boundary"]
 hash = "c2a5365666d18ba53fbbfe6bd01fe9557a92d01880d7e628cb8890710c66661c"
 
+[[nodes]]
+name = "writers-take-the-server-s-state-lock-before-the-file-lock"
+kind = "decision"
+tags = [
+    "concurrency",
+    "reliability",
+]
+hash = "c381c0e86458d3f8989bd81c331d15f737acb3784daed4597bcf81cacb8f2d7b"
+
 [[edges]]
 from = "256-bit-csprng-token-with-constant-time-comparison-for"
 to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "a-commit-counter-in-state-generation-orders-loads-a-commit"
+to = "every-write-reloads-the-graph-under-the-exclusive-lock"
+kind = "depends_on"
+
+[[edges]]
+from = "a-commit-counter-in-state-generation-orders-loads-a-commit"
+to = "store"
 kind = "belongs_to"
 
 [[edges]]
@@ -723,6 +769,11 @@ to = "commands"
 kind = "belongs_to"
 
 [[edges]]
+from = "every-write-reloads-the-graph-under-the-exclusive-lock"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
 from = "exclusive-advisory-file-locking-via-fs2-with-5-second"
 to = "store"
 kind = "belongs_to"
@@ -825,6 +876,11 @@ kind = "belongs_to"
 [[edges]]
 from = "gated-steps-require-user-input-ungated-steps-are-autonomous"
 to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "graph-toml-s-rebuilt-stamp-is-carried-over-unchanged"
+to = "store"
 kind = "belongs_to"
 
 [[edges]]
@@ -1065,4 +1121,14 @@ kind = "connects_to"
 [[edges]]
 from = "workflow-prompts-delegated-to-workflow-steps-context"
 to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "writers-take-the-server-s-state-lock-before-the-file-lock"
+to = "every-write-reloads-the-graph-under-the-exclusive-lock"
+kind = "constrains"
+
+[[edges]]
+from = "writers-take-the-server-s-state-lock-before-the-file-lock"
+to = "store"
 kind = "belongs_to"
