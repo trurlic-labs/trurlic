@@ -559,8 +559,6 @@ impl Store {
             });
         }
 
-        let rebuilt = existing.rebuilt;
-
         // Preserve non-BelongsTo edges from existing graph that reference valid nodes.
         // BelongsTo edges are always re-derived from decision files (source of truth).
         // This prevents stale BelongsTo edges when decision.component is edited on disk.
@@ -590,15 +588,14 @@ impl Store {
             }
         }
 
-        nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-        edges.sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
-
-        Ok(GraphIndex {
+        let mut index = GraphIndex {
             version: 1,
-            rebuilt,
+            rebuilt: existing.rebuilt,
             nodes,
             edges,
-        })
+        };
+        index.sort();
+        Ok(index)
     }
 
     // ── Version check ────────────────────────────────────────────────────

@@ -223,6 +223,16 @@ pub struct GraphIndex {
     pub edges: Vec<EdgeEntry>,
 }
 
+impl GraphIndex {
+    /// Nodes by name, edges by `(from, to, kind)`: the order `graph.toml` is
+    /// written in, so the bytes depend only on the graph.
+    pub(crate) fn sort(&mut self) {
+        self.nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        self.edges
+            .sort_unstable_by(|a, b| (&a.from, &a.to, a.kind).cmp(&(&b.from, &b.to, b.kind)));
+    }
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 pub const FORMAT_VERSION: &str = "0.4.0";

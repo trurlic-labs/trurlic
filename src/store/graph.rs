@@ -167,7 +167,7 @@ impl InMemoryGraph {
     /// this one replaces, carried over unchanged.
     #[must_use]
     pub fn to_index(&self, rebuilt: Option<DateTime<Utc>>) -> GraphIndex {
-        let mut nodes: Vec<NodeEntry> = self
+        let nodes = self
             .nodes
             .iter()
             .map(|(name, meta)| NodeEntry {
@@ -177,7 +177,6 @@ impl InMemoryGraph {
                 hash: meta.hash.clone(),
             })
             .collect();
-        nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
         let edge_count: usize = self.forward.values().map(Vec::len).sum();
         let mut edges: Vec<EdgeEntry> = Vec::with_capacity(edge_count);
@@ -190,14 +189,15 @@ impl InMemoryGraph {
                 });
             }
         }
-        edges.sort_unstable_by(|a, b| (&a.from, &a.to, &a.kind).cmp(&(&b.from, &b.to, &b.kind)));
 
-        GraphIndex {
+        let mut index = GraphIndex {
             version: 1,
             rebuilt,
             nodes,
             edges,
-        }
+        };
+        index.sort();
+        index
     }
 }
 
