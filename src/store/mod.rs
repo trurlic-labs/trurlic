@@ -1,4 +1,5 @@
 pub(crate) mod cascade;
+mod failpoint;
 pub mod graph;
 pub(crate) mod limits;
 mod query;

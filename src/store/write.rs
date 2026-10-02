@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{Error, Result};
 
+use super::failpoint::{self, Site};
 use super::graph::Severity;
 use super::limits::MAX_HISTORY_ENTRIES;
 use super::schema::{
@@ -193,6 +194,7 @@ impl Store {
 
         // Build the full set of writes: node files first, graph.toml last.
         let mut all_writes = writes;
+        let graph_rename = graph_update.is_some().then_some(all_writes.len());
 
         if let Some(mut index) = graph_update {
             index.nodes.sort_unstable_by(|a, b| a.name.cmp(&b.name));
@@ -268,7 +270,11 @@ impl Store {
 
         // Phase 3: Rename all to final paths.
         // graph.toml is last (appended last to all_writes).
+        failpoint::hit(Site::Staged);
         for (i, (tmp_path, target)) in staged.iter().enumerate() {
+            if graph_rename == Some(i) {
+                failpoint::hit(Site::NodesRenamed);
+            }
             if let Err(e) = fs::rename(tmp_path, target) {
                 // Clean the failed tmp file and all remaining staged files.
                 let _ = fs::remove_file(tmp_path);
@@ -285,6 +291,7 @@ impl Store {
         // A remove failure here leaves an orphan file but does NOT roll back
         // the successful writes. Crash recovery and `trurlic check` will
         // surface any resulting inconsistency.
+        failpoint::hit(Site::GraphRenamed);
         for path in &removes {
             if let Err(e) = fs::remove_file(path)
                 && e.kind() != ErrorKind::NotFound
