@@ -1,5 +1,5 @@
 version = 1
-rebuilt = "2026-10-02T13:33:21.630791999Z"
+rebuilt = "2026-10-02T16:33:52.329908753Z"
 
 [[nodes]]
 name = "256-bit-csprng-token-with-constant-time-comparison-for"
@@ -207,6 +207,16 @@ tags = [
     "error-handling",
 ]
 hash = "128349166c7dbc27a1def746c70bc60d6cb2450864d438607ba3537521c39a3a"
+
+[[nodes]]
+name = "every-tool-result-fits-max-tool-result-bytes-24-kib-a"
+kind = "decision"
+tags = [
+    "performance",
+    "api",
+    "reliability",
+]
+hash = "3056ed0a34de3ce33c6658f0066535c5702fa65f85881fbae45d901f1aed7a8a"
 
 [[nodes]]
 name = "every-write-reloads-the-graph-under-the-exclusive-lock"
@@ -593,7 +603,7 @@ hash = "29c712d17d836b8f59530b58127c2da5a1fdbd13b6df10caca54543213d4af15"
 name = "transport-agnostic-prompt-generation-shared-preamble-step"
 kind = "decision"
 tags = ["scope"]
-hash = "11bc8d77e5800cdc54b9435c795a615a47fd664cd075936da1b275057130ba02"
+hash = "05e7406f125622f673fe88e521590a22e19015418776e74c6ad6cbdcfd766f2a"
 
 [[nodes]]
 name = "typed-toolenvelope-serialized-directly-into-json-rpc"
@@ -602,7 +612,7 @@ tags = [
     "performance",
     "protocol",
 ]
-hash = "8165d439a9f6ab3f8e51ad0afd64a83c0b9c81a8f31c9a259ca9a1f779fa0b5d"
+hash = "b547b2f7a5cd13f0a62203546ff21ffb5673e0934eb1ecae725074f2cf0311af"
 
 [[nodes]]
 name = "unidirectional-server-to-client-websocket-push-with"
@@ -659,7 +669,7 @@ hash = "cc2701e3970a2d719fdbb7636175467fff4318e5580c7844fc90f4ac46462595"
 name = "workflow-prompts-delegated-to-workflow-steps-context"
 kind = "decision"
 tags = ["module-boundary"]
-hash = "c2a5365666d18ba53fbbfe6bd01fe9557a92d01880d7e628cb8890710c66661c"
+hash = "e5ed856cd44a94553329f3a264c53fb1913a9567fcef0480d263e7546888b5ef"
 
 [[nodes]]
 name = "writers-take-the-server-s-state-lock-before-the-file-lock"
@@ -848,6 +858,11 @@ kind = "belongs_to"
 [[edges]]
 from = "every-store-access-cleans-stale-temp-files-and-warns-on"
 to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "every-tool-result-fits-max-tool-result-bytes-24-kib-a"
+to = "mcp"
 kind = "belongs_to"
 
 [[edges]]

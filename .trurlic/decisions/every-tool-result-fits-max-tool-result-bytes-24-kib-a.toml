@@ -1,0 +1,36 @@
+[decision]
+component = "mcp"
+choice = "Every tool result fits MAX_TOOL_RESULT_BYTES (24 KiB); a larger payload keeps its shape, cuts tails to one level and names each cut"
+reason = "Claude Code warns above 10,000 tokens of tool output and moves a result above 25,000 tokens to a file the agent reads in part; on a seeded 600-decision graph 1033 of 2305 calls exceeded 24 KB, up to 1.07 MB. tool_result and tool_error wrap every result, so the cap lives there: truncate::fit_payload serializes into a buffer that stops at the budget and sends a payload that fits as it is; otherwise it cuts every array and string reachable from the root through objects to the highest common level budget::level finds, arrays by trailing items (kept or dropped whole) and strings at a character boundary, sizes counted in compact JSON bytes. A truncated array at the root names each cut by RFC 6901 pointer with omitted_items or omitted_bytes; a skeleton that alone exceeds the budget is sent as one whole-payload omission. fit_message cuts an error at a character and appends the bytes it lost. Each unit is measured only until it passes the budget (no longer prefix can be kept) and a string keeps escaped-size checkpoints every 64 bytes, so a cut costs in proportion to the budget: cutting that graph's 738 KB get_context payload takes 78 us against 180 us to serialize it whole (release, measured). The budget module has no internal dependencies so workflow can fit step prompt listings with the same level search. A seeded property test checks fit, parse, prefix-only cuts and exact counts over 1000 payloads; tests/integration/budget.rs holds every tool to the cap through the binary."
+alternatives = [
+    "Cut the serialized text at the byte limit - rejected: the agent receives invalid JSON and cannot tell what is missing",
+    "Refuse an over-budget result with an error - rejected: the agent loses the answer entirely and has no argument to ask for less until the cursor contract lands",
+    "Give each list an equal share of the budget - rejected: short lists lose entries to empty shares while long ones waste none; a common level keeps short lists whole",
+    "Add max_bytes and cursor arguments now - rejected: that is the budget-and-cursor contract with deterministic ranking, a separate change; the cap is the guarantee it builds on",
+]
+tags = [
+    "performance",
+    "api",
+    "reliability",
+]
+attribution = "agent"
+created = "2026-10-02T16:33:52.329619019Z"
+
+[[decision.code_refs]]
+file = "src/mcp/truncate.rs"
+symbol = "fit_payload"
+
+[[decision.code_refs]]
+file = "src/mcp/truncate.rs"
+symbol = "fit_message"
+
+[[decision.code_refs]]
+file = "src/budget.rs"
+symbol = "level"
+
+[[decision.code_refs]]
+file = "src/mcp/tools.rs"
+symbol = "tool_result"
+
+[[decision.code_refs]]
+file = "tests/integration/budget.rs"
