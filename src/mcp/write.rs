@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use serde_json::Value;
 
@@ -427,12 +427,11 @@ fn detect_pattern_opportunity(state: &store::ProjectState, new_stem: &str) -> Va
     let new_component = &new_dec.decision.component;
     let mut best_tag: Option<&str> = None;
     let mut best_decisions: Vec<&str> = Vec::new();
-    let mut best_components: HashSet<&str> = HashSet::new();
+    let mut best_components: BTreeSet<&str> = BTreeSet::new();
 
     for tag in new_tags {
         let mut decisions = vec![new_stem];
-        let mut components: HashSet<&str> = HashSet::new();
-        components.insert(new_component);
+        let mut components: BTreeSet<&str> = BTreeSet::from([new_component.as_str()]);
 
         for (name, dec) in &state.decisions {
             if name.as_str() == new_stem {
@@ -947,6 +946,32 @@ mod tests {
         assert_eq!(opp["shared_tag"], "redis");
         let decisions = opp["decisions"].as_array().unwrap();
         assert!(decisions.len() >= 2);
+    }
+
+    #[test]
+    fn pattern_opportunity_lists_components_in_name_order() {
+        let tmp = TempDir::new().unwrap();
+        let names = ["billing", "mail", "search", "storage", "auth"];
+        let components: Vec<(&str, &str)> = names.iter().map(|n| (*n, "")).collect();
+        let (store, mut state) =
+            store::testing::setup_store_with_components(tmp.path(), &components);
+
+        let mut result = Value::Null;
+        for component in names {
+            let args = json!({
+                "component": component,
+                "choice": format!("Sign {component} requests"),
+                "reason": "Every hop verifies who sent the request",
+                "tags": ["signing"],
+                "attribution": "user",
+            });
+            result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        }
+
+        assert_eq!(
+            result["pattern_opportunity"]["components"],
+            json!(["auth", "billing", "mail", "search", "storage"])
+        );
     }
 
     #[test]

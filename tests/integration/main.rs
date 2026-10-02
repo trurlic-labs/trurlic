@@ -3,6 +3,8 @@
 //! One test crate, so the binary and the harness link once. Modules that
 //! need the `failpoints` feature compile only when it is enabled.
 
+mod budget;
+mod determinism;
 #[cfg(feature = "failpoints")]
 mod failpoints;
 mod golden;

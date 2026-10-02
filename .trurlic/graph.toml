@@ -1,5 +1,5 @@
 version = 1
-rebuilt = "2026-10-02T10:50:09.311016785Z"
+rebuilt = "2026-10-02T19:57:04.660965088Z"
 
 [[nodes]]
 name = "256-bit-csprng-token-with-constant-time-comparison-for"
@@ -190,6 +190,16 @@ tags = [
 hash = "ec7c39efe845a6118c788ffd16e64b65c7bbaac568f9de46d6bb4ff868e10741"
 
 [[nodes]]
+name = "every-list-a-tool-response-or-map-event-carries-has-a-fixed"
+kind = "decision"
+tags = [
+    "determinism",
+    "serialization",
+    "api",
+]
+hash = "ea9ad30c315cfe77a50fc47c631c0d9e2d1505e16fcf029ab0abbf8516cfb527"
+
+[[nodes]]
 name = "every-store-access-cleans-stale-temp-files-and-warns-on"
 kind = "decision"
 tags = [
@@ -197,6 +207,16 @@ tags = [
     "error-handling",
 ]
 hash = "128349166c7dbc27a1def746c70bc60d6cb2450864d438607ba3537521c39a3a"
+
+[[nodes]]
+name = "every-tool-result-fits-max-tool-result-bytes-24-kib-a"
+kind = "decision"
+tags = [
+    "performance",
+    "api",
+    "reliability",
+]
+hash = "e841e8cae9208fdd4acd31bd522d7a3f134592766173ca5586a90fd28d3f9744"
 
 [[nodes]]
 name = "every-write-reloads-the-graph-under-the-exclusive-lock"
@@ -278,6 +298,16 @@ tags = [
     "security",
 ]
 hash = "b3c036821aab02b2cea46a6a888928ad128d368db85c0fe9febe097f454485f1"
+
+[[nodes]]
+name = "graph-toml-is-written-only-by-a-validated-commit-a-missing"
+kind = "decision"
+tags = [
+    "integrity",
+    "storage",
+    "recovery",
+]
+hash = "0bf7958a2749b4d4da4fd195093b822c9ea63624b96dd8057ddfafa621fa4e8a"
 
 [[nodes]]
 name = "graph-toml-s-rebuilt-stamp-is-carried-over-unchanged"
@@ -517,7 +547,7 @@ tags = [
     "performance",
     "api-design",
 ]
-hash = "4d52bf385ca85cb36a6b6b104c02de81e3ef73531fe92991800dc83f89fc81c5"
+hash = "ecffd1756be7a7f7ad2c9d488cba6b2fa23ae1ca3bce41a992c44c827b09a7df"
 
 [[nodes]]
 name = "static-tool-catalogue-via-lazylock-returned-by-reference"
@@ -573,7 +603,7 @@ hash = "29c712d17d836b8f59530b58127c2da5a1fdbd13b6df10caca54543213d4af15"
 name = "transport-agnostic-prompt-generation-shared-preamble-step"
 kind = "decision"
 tags = ["scope"]
-hash = "11bc8d77e5800cdc54b9435c795a615a47fd664cd075936da1b275057130ba02"
+hash = "b5e90f53b1b0bfc45987244fa63dad708761e7047215c0c617a27f27f42faab4"
 
 [[nodes]]
 name = "typed-toolenvelope-serialized-directly-into-json-rpc"
@@ -582,7 +612,7 @@ tags = [
     "performance",
     "protocol",
 ]
-hash = "8165d439a9f6ab3f8e51ad0afd64a83c0b9c81a8f31c9a259ca9a1f779fa0b5d"
+hash = "b547b2f7a5cd13f0a62203546ff21ffb5673e0934eb1ecae725074f2cf0311af"
 
 [[nodes]]
 name = "unidirectional-server-to-client-websocket-push-with"
@@ -639,7 +669,7 @@ hash = "cc2701e3970a2d719fdbb7636175467fff4318e5580c7844fc90f4ac46462595"
 name = "workflow-prompts-delegated-to-workflow-steps-context"
 kind = "decision"
 tags = ["module-boundary"]
-hash = "c2a5365666d18ba53fbbfe6bd01fe9557a92d01880d7e628cb8890710c66661c"
+hash = "e5ed856cd44a94553329f3a264c53fb1913a9567fcef0480d263e7546888b5ef"
 
 [[nodes]]
 name = "writers-take-the-server-s-state-lock-before-the-file-lock"
@@ -821,8 +851,18 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
+from = "every-list-a-tool-response-or-map-event-carries-has-a-fixed"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
 from = "every-store-access-cleans-stale-temp-files-and-warns-on"
 to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "every-tool-result-fits-max-tool-result-bytes-24-kib-a"
+to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
@@ -933,6 +973,11 @@ kind = "belongs_to"
 [[edges]]
 from = "gated-steps-require-user-input-ungated-steps-are-autonomous"
 to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "graph-toml-is-written-only-by-a-validated-commit-a-missing"
+to = "store"
 kind = "belongs_to"
 
 [[edges]]

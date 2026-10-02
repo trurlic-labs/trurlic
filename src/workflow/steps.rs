@@ -4,10 +4,12 @@
 //! instructions, sandwiched between a shared preamble (source code mandate)
 //! and a shared protocol (interaction or agent, depending on mode).
 //!
-//! Prompts are transport-agnostic. The MCP tool `get_step_prompt` calls
-//! `build_step_prompt` and combines the result with `get_context` output.
+//! Prompts are transport-agnostic. The MCP tool `get_step_prompt` returns
+//! the output of `build_step_prompt` without the component's context, which
+//! `get_context` serves.
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
@@ -20,23 +22,37 @@ use super::Mode;
 use super::Step;
 use super::action::top_n;
 use super::concerns;
+use super::prompt::PromptText;
+
+mod listings;
+
+use listings::{
+    Existing, concern_status, existing_constraints, walk_entry_agent, walk_entry_interactive,
+};
 
 // ── Public API ────────────────────────────────────────────────────────────
 
 /// Result of building a step prompt.
 #[derive(Debug)]
-pub struct StepPrompt {
-    /// Full system instructions string for the agent.
-    pub instructions: String,
+pub(crate) struct StepPrompt {
+    /// System instructions for the agent, rendered by the caller within its
+    /// response budget.
+    pub(crate) instructions: PromptText,
     /// Concern areas in focus (only for `cover_concerns` and `coverage_audit`).
-    pub focus: Vec<String>,
+    pub(crate) focus: Vec<String>,
+}
+
+#[cfg(test)]
+impl StepPrompt {
+    /// The instructions rendered without a budget.
+    pub(crate) fn text(&self) -> String {
+        self.instructions.render(usize::MAX, str::len)
+    }
 }
 
 /// Build the system instructions for a specific workflow step.
 ///
 /// Returns the prompt text and optional metadata (like focus concerns).
-/// The caller (MCP tool dispatch) combines this with `get_context` output
-/// to form the full tool response.
 ///
 /// `task_type` is optional context for steps that generate variant prompts
 /// (e.g. `design_check` varies by Feature vs Review vs NewComponent).
@@ -75,7 +91,7 @@ pub fn build_step_prompt(
         .collect();
     let (covered, uncovered) = concerns::compute_concern_coverage(&all_decs);
 
-    let mut out = String::with_capacity(2048);
+    let mut out = PromptText::default();
     let mut focus = Vec::new();
 
     // ── Shared preamble ───────────────────────────────────────────────
@@ -97,7 +113,7 @@ pub fn build_step_prompt(
             | Step::ProjectRules
     );
     if needs_constraints {
-        out.push_str(&existing_constraints(graph, component));
+        existing_constraints(&mut out, graph, component, Existing::for_step(&parsed));
     }
 
     // ── Component graph (conditional) ─────────────────────────────────
@@ -123,22 +139,18 @@ pub fn build_step_prompt(
         Step::AnalyzeCode => out.push_str(&step_analyze_code(component, task_type, mode)),
         Step::CoverConcerns { .. } => {
             focus = top_n(&uncovered, CONCERN_FOCUS_LIMIT);
-            out.push_str(&step_cover_concerns(&focus, &all_decs, task_type, mode));
+            step_cover_concerns(&mut out, &focus, &all_decs, task_type, mode);
         }
-        Step::WalkDecisions => {
-            out.push_str(&step_walk_decisions(graph, component, task_type, mode));
-        }
+        Step::WalkDecisions => step_walk_decisions(&mut out, graph, component, task_type, mode),
         Step::VerifyConstraints => {
-            out.push_str(&step_verify_constraints(graph, component, task_type, mode));
+            step_verify_constraints(&mut out, graph, component, task_type, mode);
         }
         Step::ImpactCheck => {
             out.push_str(&step_impact_check(graph, component, task_type, mode));
         }
-        Step::PatternDetection => {
-            out.push_str(&step_pattern_detection(graph, component, mode));
-        }
+        Step::PatternDetection => step_pattern_detection(&mut out, graph, component, mode),
         Step::DesignCheck => out.push_str(&step_design_check(task_type)),
-        Step::DriftCheck => out.push_str(&step_drift_check(graph, component, mode, now)),
+        Step::DriftCheck => step_drift_check(&mut out, graph, component, mode, now),
         Step::CoverageAudit => {
             focus = uncovered.iter().map(|s| (*s).to_string()).collect();
             out.push_str(&step_coverage_audit(&covered, &uncovered, mode));
@@ -163,14 +175,12 @@ pub fn build_step_prompt(
     // ── Existing patterns (informational) ─────────────────────────────
     if !patterns.is_empty() && matches!(parsed, Step::PatternDetection | Step::WalkDecisions) {
         out.push_str("EXISTING PATTERNS (do not re-record):\n");
-        for (name, p) in &patterns {
-            out.push_str(&format!(
-                "- {}: {}\n",
-                name,
-                sanitize(&p.pattern.description)
-            ));
-        }
-        out.push('\n');
+        let entries = patterns
+            .iter()
+            .map(|(name, p)| format!("- {}: {}\n", name, sanitize(&p.pattern.description)))
+            .collect();
+        out.push_listing("patterns", entries);
+        out.push_str("\n");
     }
 
     Ok(StepPrompt {
@@ -381,37 +391,6 @@ fn scope_boundary(component: &str) -> String {
     }
 }
 
-/// List existing constraints for context.
-fn existing_constraints(graph: &InMemoryGraph, component: &str) -> String {
-    let project_rules = graph.project_decisions();
-    let existing = graph.decisions_for(component);
-
-    if project_rules.is_empty() && existing.is_empty() {
-        return String::new();
-    }
-
-    let mut out = String::with_capacity(512);
-    out.push_str("EXISTING DECISIONS (do not re-ask):\n");
-    for (name, d) in &project_rules {
-        out.push_str(&format!(
-            "  [project] {}: {} ({})\n",
-            name,
-            sanitize(&d.decision.choice),
-            sanitize(&d.decision.reason)
-        ));
-    }
-    for (name, d) in &existing {
-        out.push_str(&format!(
-            "  {}: {} ({})\n",
-            name,
-            sanitize(&d.decision.choice),
-            sanitize(&d.decision.reason)
-        ));
-    }
-    out.push('\n');
-    out
-}
-
 /// Component graph context — connections.
 fn component_graph(graph: &InMemoryGraph, component: &str) -> String {
     let connects_to = graph.connects_to(component);
@@ -584,14 +563,14 @@ fn step_analyze_code(component: &str, task_type: Option<&str>, mode: Mode) -> St
 }
 
 fn step_cover_concerns(
+    out: &mut PromptText,
     focus: &[String],
     all_decs: &[&DecisionFile],
     task_type: Option<&str>,
     mode: Mode,
-) -> String {
-    let mut out = String::with_capacity(512);
+) {
     out.push_str("STEP: Cover Concerns\n\n");
-    out.push_str(&concerns::concern_status(all_decs));
+    concern_status(out, all_decs);
     match mode {
         Mode::Interactive => match task_type {
             Some("feature") => {
@@ -647,141 +626,71 @@ fn step_cover_concerns(
             );
         }
     }
-    out
 }
 
 fn step_walk_decisions(
+    out: &mut PromptText,
     graph: &InMemoryGraph,
     component: &str,
     task_type: Option<&str>,
     mode: Mode,
-) -> String {
+) {
     let decisions = graph.decisions_for(component);
 
     if decisions.is_empty() {
-        return "STEP: Walk Decisions\n\nNo decisions recorded.\n".into();
+        out.push_str("STEP: Walk Decisions\n\nNo decisions recorded.\n");
+        return;
     }
-
-    let mut out = String::with_capacity(1024);
 
     match mode {
         Mode::Interactive => {
-            match task_type {
+            out.push_str(match task_type {
                 Some("review") => {
-                    out.push_str(
-                        "STEP: Walk Decisions\n\n\
-                         Review each decision against the current code. Focus on \
-                         freshness \u{2014} has the code evolved past this decision?\n\n",
-                    );
+                    "STEP: Walk Decisions\n\n\
+                     Review each decision against the current code. Focus on \
+                     freshness \u{2014} has the code evolved past this decision?\n\n"
                 }
                 Some("learn") => {
-                    out.push_str(
-                        "STEP: Walk Decisions\n\n\
-                         Walk through each decision as a design discussion. The \
-                         goal is understanding why, not confirming what.\n\n",
-                    );
+                    "STEP: Walk Decisions\n\n\
+                     Walk through each decision as a design discussion. The \
+                     goal is understanding why, not confirming what.\n\n"
                 }
                 _ => {
-                    out.push_str(
-                        "STEP: Walk Decisions\n\n\
-                         Discuss each decision \u{2014} don\u{2019}t just present and ask for \
-                         confirmation.\n\n",
-                    );
+                    "STEP: Walk Decisions\n\n\
+                     Discuss each decision \u{2014} don\u{2019}t just present and ask for \
+                     confirmation.\n\n"
                 }
-            }
-
-            for (name, d) in &decisions {
-                let code_line = format_code_refs_line(&d.decision);
-                let history_note = if !d.decision.history.is_empty() {
-                    format!(
-                        "Revised {} time(s) \u{2014} earliest recorded: \"{}\"\n",
-                        d.decision.history.len(),
-                        sanitize_short(&d.decision.history[0].choice, 60),
-                    )
-                } else {
-                    String::new()
-                };
-
-                let question = match task_type {
-                    Some("review") => {
-                        format!(
-                            "\u{2192} Read the code at these locations\n\
-                             \u{2192} Ask: \"This decision is from {}. Does the code \
-                             still match? Has anything drifted?\"\n",
-                            d.decision.created.format("%Y-%m-%d"),
-                        )
-                    }
-                    Some("learn") => "\u{2192} Read the code where this lives\n\
-                         \u{2192} Ask: \"Why was this approach chosen over the \
-                         alternatives? What\u{2019}s the trade-off?\"\n"
-                        .into(),
-                    _ => {
-                        format!(
-                            "\u{2192} Read the code where this lives\n\
-                             \u{2192} Ask: \"This was decided because of {reason} \u{2014} is \
-                             that still the right trade-off?\"\n",
-                            reason = sanitize_short(&d.decision.reason, 60),
-                        )
-                    }
-                };
-
-                out.push_str(&format!(
-                    "DECISION: {name}\n\
-                     Choice: {choice}\n\
-                     Reason: {reason}\n\
-                     {code_line}\
-                     {history_note}\
-                     {question}\
-                     \u{2192} STOP. Wait.\n\n",
-                    choice = sanitize(&d.decision.choice),
-                    reason = sanitize(&d.decision.reason),
-                ));
-            }
-
-            match task_type {
+            });
+            let entries = decisions
+                .iter()
+                .map(|(name, d)| walk_entry_interactive(name, &d.decision, task_type))
+                .collect();
+            out.push_listing("decisions", entries);
+            out.push_str(match task_type {
                 Some("review") => {
-                    out.push_str(
-                        "After walking all decisions, ask: \"Are there decisions \
-                         in the code that should be recorded but aren\u{2019}t?\" Look \
-                         for undocumented patterns.\n",
-                    );
+                    "After walking all decisions, ask: \"Are there decisions \
+                     in the code that should be recorded but aren\u{2019}t?\" Look \
+                     for undocumented patterns.\n"
                 }
                 _ => {
-                    out.push_str(
-                        "After walking all decisions, ask: \"What\u{2019}s the one \
-                         decision in this component you\u{2019}d change if you were \
-                         starting over today?\" This surfaces latent design debt.\n\n\
-                         Then check for undocumented decisions in the code. \
-                         For each, discuss and record.\n",
-                    );
+                    "After walking all decisions, ask: \"What\u{2019}s the one \
+                     decision in this component you\u{2019}d change if you were \
+                     starting over today?\" This surfaces latent design debt.\n\n\
+                     Then check for undocumented decisions in the code. \
+                     For each, discuss and record.\n"
                 }
-            }
+            });
         }
         Mode::Agent => {
             out.push_str(
                 "STEP: Walk Decisions\n\n\
                  Verify each recorded decision against the current source code:\n\n",
             );
-
-            for (name, d) in &decisions {
-                out.push_str(&format!(
-                    "DECISION: {name} \u{2014} {}\n\
-                     Reason: {}\n",
-                    sanitize(&d.decision.choice),
-                    sanitize(&d.decision.reason),
-                ));
-                if !d.decision.code_refs.is_empty() {
-                    out.push_str(&format!(
-                        "Code: {}\n",
-                        store::format_code_refs(&d.decision.code_refs)
-                    ));
-                }
-                out.push_str(
-                    "\u{2192} Locate in source code and verify accuracy\n\
-                     \u{2192} If drifted, call update_decision(mode=\"revise\")\n\n",
-                );
-            }
-
+            let entries = decisions
+                .iter()
+                .map(|(name, d)| walk_entry_agent(name, &d.decision))
+                .collect();
+            out.push_listing("decisions", entries);
             out.push_str(
                 "After verification, identify decisions in the code that are \
                  NOT yet recorded. Record each with record_decision and \
@@ -789,102 +698,98 @@ fn step_walk_decisions(
             );
         }
     }
-    out
 }
 
 fn step_verify_constraints(
+    out: &mut PromptText,
     graph: &InMemoryGraph,
     component: &str,
     task_type: Option<&str>,
     mode: Mode,
-) -> String {
+) {
     let decisions = graph.decisions_for(component);
 
     if decisions.is_empty() {
-        return "STEP: Verify Constraints\n\n\
-                No constraints recorded. Component is ready.\n"
-            .into();
+        out.push_str(
+            "STEP: Verify Constraints\n\n\
+             No constraints recorded. Component is ready.\n",
+        );
+        return;
     }
-
-    let mut out = String::with_capacity(512);
 
     match mode {
         Mode::Interactive => {
-            match task_type {
+            out.push_str(match task_type {
                 Some("fix") => {
-                    out.push_str(
-                        "STEP: Verify Constraints\n\n\
-                         Start by understanding the fix:\n\
-                         \"Tell me about this bug \u{2014} what's happening, what should \
-                         happen, and what's your plan to fix it?\"\n\
-                         STOP. Wait.\n\n\
-                         Then check each constraint the fix might affect:\n\n",
-                    );
+                    "STEP: Verify Constraints\n\n\
+                     Start by understanding the fix:\n\
+                     \"Tell me about this bug \u{2014} what's happening, what should \
+                     happen, and what's your plan to fix it?\"\n\
+                     STOP. Wait.\n\n\
+                     Then check each constraint the fix might affect:\n\n"
                 }
                 _ => {
-                    out.push_str(
-                        "STEP: Verify Constraints\n\n\
-                         Start by understanding the feature:\n\
-                         \"Walk me through this feature \u{2014} what are you adding \
-                         and which parts of the code will it touch?\"\n\
-                         STOP. Wait.\n\n\
-                         Based on their answer, check relevant constraints:\n\n",
-                    );
+                    "STEP: Verify Constraints\n\n\
+                     Start by understanding the feature:\n\
+                     \"Walk me through this feature \u{2014} what are you adding \
+                     and which parts of the code will it touch?\"\n\
+                     STOP. Wait.\n\n\
+                     Based on their answer, check relevant constraints:\n\n"
                 }
-            }
-
-            for (name, d) in &decisions {
-                let code_line = format_code_refs_line(&d.decision);
-                out.push_str(&format!(
-                    "CONSTRAINT: {name} \u{2014} {choice}\n\
-                     Reason: {reason}\n\
-                     {code_line}\
-                     \u{2192} Read the constraint's code location\n\
-                     \u{2192} Ask: \"Does your change respect this, or does it need \
-                     to change?\"\n\
-                     \u{2192} If it needs to change, discuss why. Call \
-                     update_decision(mode=\"revise\") if agreed.\n\
-                     \u{2192} STOP. Wait.\n\n",
-                    choice = sanitize(&d.decision.choice),
-                    reason = sanitize(&d.decision.reason),
-                ));
-            }
-
-            match task_type {
+            });
+            let entries = decisions
+                .iter()
+                .map(|(name, d)| {
+                    format!(
+                        "CONSTRAINT: {name} \u{2014} {choice}\n\
+                         Reason: {reason}\n\
+                         {code_line}\
+                         \u{2192} Read the constraint's code location\n\
+                         \u{2192} Ask: \"Does your change respect this, or does it need \
+                         to change?\"\n\
+                         \u{2192} If it needs to change, discuss why. Call \
+                         update_decision(mode=\"revise\") if agreed.\n\
+                         \u{2192} STOP. Wait.\n\n",
+                        choice = sanitize(&d.decision.choice),
+                        reason = sanitize(&d.decision.reason),
+                        code_line = format_code_refs_line(&d.decision),
+                    )
+                })
+                .collect();
+            out.push_listing("constraints", entries);
+            out.push_str(match task_type {
                 Some("fix") => {
-                    out.push_str(
-                        "After checking constraints, ask: \"If this fix ships \
-                         and causes a regression, what's the most likely thing \
-                         to break and why?\"\n",
-                    );
+                    "After checking constraints, ask: \"If this fix ships \
+                     and causes a regression, what's the most likely thing \
+                     to break and why?\"\n"
                 }
                 _ => {
-                    out.push_str(
-                        "After checking constraints, ask: \"Is there anything \
-                         this feature needs that the current architecture doesn't \
-                         support?\"\n\
-                         If yes, discuss whether to adapt the architecture or \
-                         the feature.\n",
-                    );
+                    "After checking constraints, ask: \"Is there anything \
+                     this feature needs that the current architecture doesn't \
+                     support?\"\n\
+                     If yes, discuss whether to adapt the architecture or \
+                     the feature.\n"
                 }
-            }
+            });
         }
         Mode::Agent => {
             out.push_str(
                 "STEP: Verify Constraints\n\n\
                  Present each existing constraint that the task may affect:\n\n",
             );
-
-            for (name, d) in &decisions {
-                out.push_str(&format!(
-                    "CONSTRAINT: {name} \u{2014} {} ({})\n\
-                     \u{2192} Locate in source code and verify it is still enforced\n\
-                     \u{2192} Check if the current task conflicts with this constraint\n\n",
-                    sanitize(&d.decision.choice),
-                    sanitize(&d.decision.reason),
-                ));
-            }
-
+            let entries = decisions
+                .iter()
+                .map(|(name, d)| {
+                    format!(
+                        "CONSTRAINT: {name} \u{2014} {} ({})\n\
+                         \u{2192} Locate in source code and verify it is still enforced\n\
+                         \u{2192} Check if the current task conflicts with this constraint\n\n",
+                        sanitize(&d.decision.choice),
+                        sanitize(&d.decision.reason),
+                    )
+                })
+                .collect();
+            out.push_listing("constraints", entries);
             out.push_str(
                 "If any constraint has drifted \u{2192} call update_decision(mode=\"revise\").\n\
                  If any constraint conflicts with the task \u{2192} note the conflict \
@@ -895,7 +800,6 @@ fn step_verify_constraints(
             );
         }
     }
-    out
 }
 
 fn step_impact_check(
@@ -952,25 +856,27 @@ fn step_impact_check(
     out
 }
 
-fn step_pattern_detection(graph: &InMemoryGraph, component: &str, mode: Mode) -> String {
-    let decisions = graph.decisions_for(component);
-    let project_rules = graph.project_decisions();
-
-    let mut out = String::with_capacity(512);
+fn step_pattern_detection(
+    out: &mut PromptText,
+    graph: &InMemoryGraph,
+    component: &str,
+    mode: Mode,
+) {
     out.push_str(
         "STEP: Pattern Detection\n\n\
          Review all recorded decisions:\n\n",
     );
-
-    for (name, d) in &project_rules {
-        out.push_str(&format!(
-            "  [project] {name}: {}\n",
-            sanitize(&d.decision.choice)
-        ));
-    }
-    for (name, d) in &decisions {
-        out.push_str(&format!("  {name}: {}\n", sanitize(&d.decision.choice)));
-    }
+    let entries = |decisions: &[(&Arc<str>, &DecisionFile)], scope: &str| -> Vec<String> {
+        decisions
+            .iter()
+            .map(|(name, d)| format!("  {scope}{name}: {}\n", sanitize(&d.decision.choice)))
+            .collect()
+    };
+    out.push_listing(
+        "project rules",
+        entries(&graph.project_decisions(), "[project] "),
+    );
+    out.push_listing("decisions", entries(&graph.decisions_for(component), ""));
 
     match mode {
         Mode::Interactive => {
@@ -998,7 +904,6 @@ fn step_pattern_detection(graph: &InMemoryGraph, component: &str, mode: Mode) ->
             );
         }
     }
-    out
 }
 
 fn step_design_check(task_type: Option<&str>) -> String {
@@ -1036,19 +941,19 @@ fn step_design_check(task_type: Option<&str>) -> String {
 }
 
 fn step_drift_check(
+    out: &mut PromptText,
     graph: &InMemoryGraph,
     component: &str,
     mode: Mode,
     now: DateTime<Utc>,
-) -> String {
+) {
     let mut decisions: Vec<_> = graph.decisions_for(component);
     decisions.sort_by_key(|(_, d)| d.decision.created);
 
     if decisions.is_empty() {
-        return "STEP: Drift Check\n\nNo decisions to check.\n".into();
+        out.push_str("STEP: Drift Check\n\nNo decisions to check.\n");
+        return;
     }
-
-    let mut out = String::with_capacity(512);
 
     match mode {
         Mode::Interactive => {
@@ -1057,24 +962,27 @@ fn step_drift_check(
                  Check each decision against current source code. Oldest first \
                  \u{2014} older decisions are more likely to have drifted.\n\n",
             );
-
-            for (name, d) in &decisions {
-                let code_line = format_code_refs_line(&d.decision);
-                let age_note = format!("Created: {}", d.decision.created.format("%Y-%m-%d"));
-                out.push_str(&format!(
-                    "DECISION: {name}\n\
-                     Choice: {choice}\n\
-                     {code_line}\
-                     {age_note}\n\
-                     \u{2192} Read the code at these locations\n\
-                     \u{2192} Ask: \"This is {age} old. Does the code still do this?\"\n\
-                     \u{2192} If drifted: discuss what changed and why, then call \
-                     update_decision(mode=\"revise\")\n\
-                     \u{2192} STOP. Wait.\n\n",
-                    choice = sanitize(&d.decision.choice),
-                    age = format_age(d.decision.created, now),
-                ));
-            }
+            let entries = decisions
+                .iter()
+                .map(|(name, d)| {
+                    format!(
+                        "DECISION: {name}\n\
+                         Choice: {choice}\n\
+                         {code_line}\
+                         Created: {created}\n\
+                         \u{2192} Read the code at these locations\n\
+                         \u{2192} Ask: \"This is {age} old. Does the code still do this?\"\n\
+                         \u{2192} If drifted: discuss what changed and why, then call \
+                         update_decision(mode=\"revise\")\n\
+                         \u{2192} STOP. Wait.\n\n",
+                        choice = sanitize(&d.decision.choice),
+                        code_line = format_code_refs_line(&d.decision),
+                        created = d.decision.created.format("%Y-%m-%d"),
+                        age = format_age(d.decision.created, now),
+                    )
+                })
+                .collect();
+            out.push_listing("decisions", entries);
         }
         Mode::Agent => {
             out.push_str(
@@ -1082,35 +990,30 @@ fn step_drift_check(
                  Compare each decision against the current source code. \
                  Oldest decisions first:\n\n",
             );
-
-            for (name, d) in &decisions {
-                out.push_str(&format!(
-                    "DECISION: {name} (created {})\n\
-                     Choice: {}\n\
-                     Reason: {}\n",
-                    d.decision.created.format("%Y-%m-%d"),
-                    sanitize(&d.decision.choice),
-                    sanitize(&d.decision.reason),
-                ));
-                if !d.decision.code_refs.is_empty() {
-                    out.push_str(&format!(
-                        "Code: {}\n",
-                        store::format_code_refs(&d.decision.code_refs),
-                    ));
-                }
-                out.push_str(
-                    "\u{2192} Verify this matches the current implementation\n\
-                     \u{2192} If drifted, call update_decision(mode=\"revise\")\n\n",
-                );
-            }
-
+            let entries = decisions
+                .iter()
+                .map(|(name, d)| {
+                    format!(
+                        "DECISION: {name} (created {})\n\
+                         Choice: {}\n\
+                         Reason: {}\n\
+                         {}\
+                         \u{2192} Verify this matches the current implementation\n\
+                         \u{2192} If drifted, call update_decision(mode=\"revise\")\n\n",
+                        d.decision.created.format("%Y-%m-%d"),
+                        sanitize(&d.decision.choice),
+                        sanitize(&d.decision.reason),
+                        format_code_refs_line(&d.decision),
+                    )
+                })
+                .collect();
+            out.push_listing("decisions", entries);
             out.push_str(
                 "Verify each decision automatically against source code. \
                  Revise any that have drifted. Call advance again when done.\n",
             );
         }
     }
-    out
 }
 
 fn step_coverage_audit(covered: &[&str], uncovered: &[&str], mode: Mode) -> String {
@@ -1345,6 +1248,20 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
+    #[test]
+    fn steps_that_list_the_decisions_render_each_once() {
+        let state = test_state();
+        for step in ["walk_decisions", "verify_constraints", "drift_check"] {
+            for mode in [Mode::Agent, Mode::Interactive] {
+                let text = build_step_prompt(&state, "auth", step, None, None, mode, Utc::now())
+                    .unwrap()
+                    .text();
+                assert_eq!(text.matches("JWT with DPoP").count(), 1, "{step} {mode:?}");
+                assert!(text.contains("Result<T, AppError>"), "{step} {mode:?}");
+            }
+        }
+    }
+
     fn test_state() -> ProjectState {
         let mut comps = BTreeMap::new();
         comps.insert(
@@ -1520,7 +1437,7 @@ mod tests {
             )
             .unwrap();
             assert!(
-                result.instructions.contains("Read the source code"),
+                result.text().contains("Read the source code"),
                 "step `{step}` missing preamble"
             );
         }
@@ -1548,7 +1465,7 @@ mod tests {
             )
             .unwrap();
             assert!(
-                result.instructions.contains("ONE topic per exchange"),
+                result.text().contains("ONE topic per exchange"),
                 "step `{step}` missing interaction protocol"
             );
         }
@@ -1567,7 +1484,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(!reg.instructions.contains("ONE topic per exchange"));
+        assert!(!reg.text().contains("ONE topic per exchange"));
 
         let ready = build_step_prompt(
             &state,
@@ -1579,7 +1496,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(!ready.instructions.contains("ONE topic per exchange"));
+        assert!(!ready.text().contains("ONE topic per exchange"));
     }
 
     // ── Step-specific behavior ────────────────────────────────────────
@@ -1597,9 +1514,9 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("responsible for"));
-        assert!(result.instructions.contains("NOT its responsibility"));
-        assert!(result.instructions.contains("[\"scope\"]"));
+        assert!(result.text().contains("responsible for"));
+        assert!(result.text().contains("NOT its responsibility"));
+        assert!(result.text().contains("[\"scope\"]"));
     }
 
     #[test]
@@ -1615,9 +1532,9 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("Data structures"));
-        assert!(result.instructions.contains("Error handling"));
-        assert!(result.instructions.contains("security measures"));
+        assert!(result.text().contains("Data structures"));
+        assert!(result.text().contains("Error handling"));
+        assert!(result.text().contains("security measures"));
     }
 
     #[test]
@@ -1651,8 +1568,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("COVERED"));
-        assert!(result.instructions.contains("UNCOVERED"));
+        assert!(result.text().contains("COVERED"));
+        assert!(result.text().contains("UNCOVERED"));
     }
 
     #[test]
@@ -1668,9 +1585,9 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("auth-jwt"));
-        assert!(result.instructions.contains("JWT with DPoP binding"));
-        assert!(result.instructions.contains("STOP. Wait"));
+        assert!(result.text().contains("auth-jwt"));
+        assert!(result.text().contains("JWT with DPoP binding"));
+        assert!(result.text().contains("STOP. Wait"));
     }
 
     #[test]
@@ -1687,19 +1604,19 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("freshness"),
+            result.text().contains("freshness"),
             "review variant should focus on freshness"
         );
         assert!(
-            result.instructions.contains("drifted"),
+            result.text().contains("drifted"),
             "review variant should ask about drift"
         );
         assert!(
-            result.instructions.contains("2025-01-15"),
+            result.text().contains("2025-01-15"),
             "review variant should include decision date"
         );
         assert!(
-            result.instructions.contains("recorded but aren"),
+            result.text().contains("recorded but aren"),
             "review closing should ask about unrecorded decisions"
         );
     }
@@ -1718,15 +1635,15 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("understanding why"),
+            result.text().contains("understanding why"),
             "learn variant should focus on understanding"
         );
         assert!(
-            result.instructions.contains("trade-off"),
+            result.text().contains("trade-off"),
             "learn variant should probe trade-offs"
         );
         assert!(
-            result.instructions.contains("Why was this approach chosen"),
+            result.text().contains("Why was this approach chosen"),
             "learn variant should ask about alternatives"
         );
     }
@@ -1745,15 +1662,15 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Discuss each decision"),
+            result.text().contains("Discuss each decision"),
             "default should frame as discussion"
         );
         assert!(
-            !result.instructions.contains("confirm or correct"),
+            !result.text().contains("confirm or correct"),
             "default should not use confirm-or-correct language"
         );
         assert!(
-            result.instructions.contains("starting over today"),
+            result.text().contains("starting over today"),
             "default closing should surface design debt"
         );
     }
@@ -1794,11 +1711,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Revised 1 time(s)"),
+            result.text().contains("Revised 1 time(s)"),
             "should show revision count"
         );
         assert!(
-            result.instructions.contains("JWT with static keys"),
+            result.text().contains("JWT with static keys"),
             "should show earliest recorded choice"
         );
     }
@@ -1827,7 +1744,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            without.instructions, with_review.instructions,
+            without.text(),
+            with_review.text(),
             "agent mode should not vary by task_type"
         );
     }
@@ -1845,11 +1763,11 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("CONSTRAINT:"));
-        assert!(result.instructions.contains("JWT with DPoP binding"));
+        assert!(result.text().contains("CONSTRAINT:"));
+        assert!(result.text().contains("JWT with DPoP binding"));
         assert!(
             result
-                .instructions
+                .text()
                 .contains("Does your change respect this, or does it need")
         );
     }
@@ -1868,7 +1786,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("code location"),
+            result.text().contains("code location"),
             "verify_constraints must direct agent to constraint code"
         );
     }
@@ -1887,11 +1805,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Tell me about this bug"),
+            result.text().contains("Tell me about this bug"),
             "fix variant should open by understanding the bug"
         );
         assert!(
-            result.instructions.contains("regression"),
+            result.text().contains("regression"),
             "fix variant closing should ask about regression risk"
         );
     }
@@ -1910,11 +1828,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Walk me through this feature"),
+            result.text().contains("Walk me through this feature"),
             "feature variant should open by understanding the feature"
         );
         assert!(
-            result.instructions.contains("architecture doesn't"),
+            result.text().contains("architecture doesn't"),
             "feature variant closing should ask about architecture gaps"
         );
     }
@@ -1943,7 +1861,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            no_type.instructions, feature.instructions,
+            no_type.text(),
+            feature.text(),
             "default (no task_type) should match feature variant"
         );
     }
@@ -1963,11 +1882,11 @@ mod tests {
             )
             .unwrap();
             let understanding_pos = result
-                .instructions
+                .text()
                 .find("Start by understanding")
                 .expect("should start by understanding the change");
             let constraint_pos = result
-                .instructions
+                .text()
                 .find("CONSTRAINT:")
                 .expect("should list constraints");
             assert!(
@@ -1990,7 +1909,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("store"));
+        assert!(result.text().contains("store"));
     }
 
     #[test]
@@ -2007,9 +1926,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result
-                .instructions
-                .contains("Could this fix change the behavior"),
+            result.text().contains("Could this fix change the behavior"),
             "fix variant should ask about behavioral change from the fix"
         );
     }
@@ -2029,7 +1946,7 @@ mod tests {
         .unwrap();
         assert!(
             result
-                .instructions
+                .text()
                 .contains("Which of these connections does your feature"),
             "feature variant should ask which connections the feature affects"
         );
@@ -2059,7 +1976,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            no_type.instructions, feature.instructions,
+            no_type.text(),
+            feature.text(),
             "default (no task_type) should match feature variant"
         );
     }
@@ -2077,8 +1995,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("auth-jwt"));
-        assert!(result.instructions.contains("defense-in-depth"));
+        assert!(result.text().contains("auth-jwt"));
+        assert!(result.text().contains("defense-in-depth"));
     }
 
     #[test]
@@ -2096,12 +2014,12 @@ mod tests {
         .unwrap();
         assert!(
             result
-                .instructions
+                .text()
                 .contains("Does that match how you think about it?"),
             "pattern_detection should frame as discussion"
         );
         assert!(
-            !result.instructions.contains("Should I record it?"),
+            !result.text().contains("Should I record it?"),
             "pattern_detection should not ask for confirmation"
         );
     }
@@ -2120,23 +2038,23 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("practical check"),
+            result.text().contains("practical check"),
             "design_check should frame as practical check"
         );
         assert!(
-            !result.instructions.contains("Do NOT help"),
+            !result.text().contains("Do NOT help"),
             "design_check should not contain adversarial gating"
         );
         assert!(
-            !result.instructions.contains("Do NOT give hints"),
+            !result.text().contains("Do NOT give hints"),
             "design_check should not contain adversarial gating"
         );
         assert!(
-            !result.instructions.contains("Without looking at the list"),
+            !result.text().contains("Without looking at the list"),
             "design_check should not demand unprompted recall"
         );
         assert!(
-            !result.instructions.contains("demonstrates ownership"),
+            !result.text().contains("demonstrates ownership"),
             "design_check should not use demonstrate-ownership language"
         );
     }
@@ -2157,7 +2075,7 @@ mod tests {
         // store has 0 decisions → project-errors covers Error handling.
         // All remaining concern areas are in the focus list.
         assert!(!result.focus.is_empty());
-        assert!(result.instructions.contains("WITHOUT decisions"));
+        assert!(result.text().contains("WITHOUT decisions"));
     }
 
     // ── INTERACTION_PROTOCOL tone ────────────────────────────────────
@@ -2238,19 +2156,19 @@ mod tests {
             .unwrap();
 
             assert!(
-                !result.instructions.contains("confirm or correct"),
+                !result.text().contains("confirm or correct"),
                 "step `{step}` must not use confirm-or-correct language"
             );
             assert!(
-                !result.instructions.contains("Without looking at the list"),
+                !result.text().contains("Without looking at the list"),
                 "step `{step}` must not demand unprompted recall"
             );
             assert!(
-                !result.instructions.contains("demonstrate understanding"),
+                !result.text().contains("demonstrate understanding"),
                 "step `{step}` must not use demonstrate-understanding language"
             );
             assert!(
-                !result.instructions.contains("demonstrate ownership"),
+                !result.text().contains("demonstrate ownership"),
                 "step `{step}` must not use demonstrate-ownership language"
             );
         }
@@ -2303,7 +2221,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("PROJECT LEVEL"));
+        assert!(result.text().contains("PROJECT LEVEL"));
     }
 
     // ── Task passthrough ──────────────────────────────────────────────
@@ -2321,7 +2239,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("add rate limiting"));
+        assert!(result.text().contains("add rate limiting"));
     }
 
     // ── Scope boundary ────────────────────────────────────────────────
@@ -2339,7 +2257,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("COMPONENT [auth]"));
+        assert!(result.text().contains("COMPONENT [auth]"));
     }
 
     #[test]
@@ -2355,8 +2273,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("PROJECT LEVEL"));
-        assert!(result.instructions.contains("cross-cutting principles"));
+        assert!(result.text().contains("PROJECT LEVEL"));
+        assert!(result.text().contains("cross-cutting principles"));
     }
 
     // ── Bootstrap steps ──────────────────────────────────────────────
@@ -2374,7 +2292,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("source code"));
+        assert!(result.text().contains("source code"));
     }
 
     #[test]
@@ -2391,7 +2309,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("ONE topic per exchange"),
+            !result.text().contains("ONE topic per exchange"),
             "scan_project must skip interaction protocol"
         );
     }
@@ -2409,9 +2327,9 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("add_component"));
-        assert!(result.instructions.contains("add_connection"));
-        assert!(result.instructions.contains("Do NOT ask the user"));
+        assert!(result.text().contains("add_component"));
+        assert!(result.text().contains("add_connection"));
+        assert!(result.text().contains("Do NOT ask the user"));
     }
 
     #[test]
@@ -2427,7 +2345,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("source code"));
+        assert!(result.text().contains("source code"));
     }
 
     #[test]
@@ -2444,7 +2362,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("ONE topic per exchange"),
+            !result.text().contains("ONE topic per exchange"),
             "extract_decisions must skip interaction protocol"
         );
     }
@@ -2462,8 +2380,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("[auth]"));
-        assert!(result.instructions.contains("record_decision"));
+        assert!(result.text().contains("[auth]"));
+        assert!(result.text().contains("record_decision"));
     }
 
     #[test]
@@ -2480,7 +2398,7 @@ mod tests {
         )
         .unwrap();
         // auth has existing decisions → they appear as constraints context.
-        assert!(result.instructions.contains("EXISTING DECISIONS"));
+        assert!(result.text().contains("EXISTING DECISIONS"));
     }
 
     #[test]
@@ -2497,7 +2415,7 @@ mod tests {
         )
         .unwrap();
         // auth connects to store → graph context present.
-        assert!(result.instructions.contains("store"));
+        assert!(result.text().contains("store"));
     }
 
     #[test]
@@ -2513,7 +2431,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("source code"));
+        assert!(result.text().contains("source code"));
     }
 
     #[test]
@@ -2530,7 +2448,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("ONE topic per exchange"),
+            !result.text().contains("ONE topic per exchange"),
             "project_rules must skip interaction protocol"
         );
     }
@@ -2548,9 +2466,9 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("cross-cutting"));
-        assert!(result.instructions.contains("record_decision"));
-        assert!(result.instructions.contains("project"));
+        assert!(result.text().contains("cross-cutting"));
+        assert!(result.text().contains("record_decision"));
+        assert!(result.text().contains("project"));
     }
 
     // ── warm_up step (and user_explains alias) ─────────────────────
@@ -2568,7 +2486,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("first thing you'd check"));
+        assert!(result.text().contains("first thing you'd check"));
     }
 
     #[test]
@@ -2584,7 +2502,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("first thing you'd check"));
+        assert!(result.text().contains("first thing you'd check"));
     }
 
     #[test]
@@ -2601,7 +2519,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("ONE topic per exchange"),
+            result.text().contains("ONE topic per exchange"),
             "warm_up must include interaction protocol"
         );
     }
@@ -2620,7 +2538,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("should never do"),
+            result.text().contains("should never do"),
             "warm_up must probe component boundaries"
         );
     }
@@ -2639,7 +2557,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("from memory"),
+            !result.text().contains("from memory"),
             "warm_up should not ask for recall from memory"
         );
     }
@@ -2659,7 +2577,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("Design Check"));
+        assert!(result.text().contains("Design Check"));
     }
 
     #[test]
@@ -2675,7 +2593,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("Design Check"));
+        assert!(result.text().contains("Design Check"));
     }
 
     #[test]
@@ -2692,11 +2610,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("explain this component"),
+            result.text().contains("explain this component"),
             "learn variant should use explain-over-coffee framing"
         );
         assert!(
-            result.instructions.contains("over coffee"),
+            result.text().contains("over coffee"),
             "learn variant should use casual peer framing"
         );
     }
@@ -2715,11 +2633,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("opening the PR"),
+            result.text().contains("opening the PR"),
             "feature variant should use PR framing"
         );
         assert!(
-            result.instructions.contains("architectural impact"),
+            result.text().contains("architectural impact"),
             "feature variant should ask about architectural impact"
         );
     }
@@ -2738,11 +2656,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("what\u{2019}s changed"),
+            result.text().contains("what\u{2019}s changed"),
             "review variant should ask what changed"
         );
         assert!(
-            result.instructions.contains("needs attention"),
+            result.text().contains("needs attention"),
             "review variant should surface what needs attention"
         );
     }
@@ -2761,11 +2679,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("new team member"),
+            result.text().contains("new team member"),
             "default variant should use new-team-member framing"
         );
         assert!(
-            result.instructions.contains("need to know before they"),
+            result.text().contains("need to know before they"),
             "default variant should ask what to know before touching code"
         );
     }
@@ -2786,11 +2704,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("warm-up") || result.instructions.contains("mental model"),
+            result.text().contains("warm-up") || result.text().contains("mental model"),
             "learn variant should reference the warm-up step"
         );
         assert!(
-            result.instructions.contains("discussion points"),
+            result.text().contains("discussion points"),
             "learn variant should frame discrepancies as discussion"
         );
     }
@@ -2809,7 +2727,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !result.instructions.contains("warm-up"),
+            !result.text().contains("warm-up"),
             "non-learn variant should not include learn preamble"
         );
     }
@@ -2828,11 +2746,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("One decision at a time"),
+            result.text().contains("One decision at a time"),
             "interactive variant should walk decisions one at a time"
         );
         assert!(
-            !result.instructions.contains("Build a\n"),
+            !result.text().contains("Build a\n"),
             "interactive variant should not instruct building a list"
         );
     }
@@ -2856,11 +2774,11 @@ mod tests {
                 build_step_prompt(&state, "auth", step, None, None, Mode::Agent, Utc::now())
                     .unwrap();
             assert!(
-                result.instructions.contains("AGENT PROTOCOL"),
+                result.text().contains("AGENT PROTOCOL"),
                 "step `{step}` in agent mode missing AGENT PROTOCOL"
             );
             assert!(
-                !result.instructions.contains("ONE topic per exchange"),
+                !result.text().contains("ONE topic per exchange"),
                 "step `{step}` in agent mode should not have INTERACTION PROTOCOL"
             );
         }
@@ -2890,11 +2808,11 @@ mod tests {
             )
             .unwrap();
             assert!(
-                result.instructions.contains("ONE topic per exchange"),
+                result.text().contains("ONE topic per exchange"),
                 "step `{step}` in interactive mode missing INTERACTION PROTOCOL"
             );
             assert!(
-                !result.instructions.contains("AGENT PROTOCOL"),
+                !result.text().contains("AGENT PROTOCOL"),
                 "step `{step}` in interactive mode should not have AGENT PROTOCOL"
             );
         }
@@ -2914,11 +2832,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Read the source code"),
+            result.text().contains("Read the source code"),
             "agent define_scope should instruct reading source code"
         );
         assert!(
-            !result.instructions.contains("Ask the user"),
+            !result.text().contains("Ask the user"),
             "agent define_scope should not ask the user"
         );
     }
@@ -2937,7 +2855,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("component's job"),
+            result.text().contains("component's job"),
             "interactive define_scope should ask about component's job"
         );
     }
@@ -2956,11 +2874,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("probe the boundary"),
+            result.text().contains("probe the boundary"),
             "interactive define_scope should probe boundaries"
         );
         assert!(
-            result.instructions.contains("scope creep"),
+            result.text().contains("scope creep"),
             "interactive define_scope should emphasize boundary importance"
         );
     }
@@ -2994,7 +2912,8 @@ mod tests {
             )
             .unwrap();
             assert_ne!(
-                agent.instructions, interactive.instructions,
+                agent.text(),
+                interactive.text(),
                 "step `{step}` should produce different prompts for agent vs interactive"
             );
         }
@@ -3013,12 +2932,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(
-            result
-                .instructions
-                .contains("Record each decision immediately")
-        );
-        assert!(result.instructions.contains("Do not discuss"));
+        assert!(result.text().contains("Record each decision immediately"));
+        assert!(result.text().contains("Do not discuss"));
     }
 
     #[test]
@@ -3034,8 +2949,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("attribution=\"agent\""));
-        assert!(result.instructions.contains("without user interaction"));
+        assert!(result.text().contains("attribution=\"agent\""));
+        assert!(result.text().contains("without user interaction"));
     }
 
     #[test]
@@ -3052,17 +2967,17 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("affect your feature"),
+            result.text().contains("affect your feature"),
             "feature variant should ask how concern affects the feature"
         );
         assert!(
             result
-                .instructions
+                .text()
                 .contains("Focus only on concerns the feature actually impacts"),
             "feature variant should scope to relevant concerns"
         );
         assert!(
-            !result.instructions.contains("How are you thinking about"),
+            !result.text().contains("How are you thinking about"),
             "feature variant should not use the default question"
         );
     }
@@ -3081,17 +2996,17 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("How are you thinking about"),
+            result.text().contains("How are you thinking about"),
             "default variant should start with the user's opinion"
         );
         assert!(
             result
-                .instructions
+                .text()
                 .contains("Start with their thinking, not a menu of options"),
             "default variant should emphasize user-first discussion"
         );
         assert!(
-            !result.instructions.contains("affect your feature"),
+            !result.text().contains("affect your feature"),
             "default variant should not use feature-specific question"
         );
     }
@@ -3120,7 +3035,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            without.instructions, with_feature.instructions,
+            without.text(),
+            with_feature.text(),
             "agent mode should not vary by task_type"
         );
     }
@@ -3138,12 +3054,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(
-            result
-                .instructions
-                .contains("Verify each recorded decision")
-        );
-        assert!(result.instructions.contains("revise"));
+        assert!(result.text().contains("Verify each recorded decision"));
+        assert!(result.text().contains("revise"));
     }
 
     #[test]
@@ -3159,8 +3071,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("Locate in source code"));
-        assert!(!result.instructions.contains("STOP. Wait"));
+        assert!(result.text().contains("Locate in source code"));
+        assert!(!result.text().contains("STOP. Wait"));
     }
 
     #[test]
@@ -3176,8 +3088,8 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("read the interface code"));
-        assert!(!result.instructions.contains("STOP. Wait"));
+        assert!(result.text().contains("read the interface code"));
+        assert!(!result.text().contains("STOP. Wait"));
     }
 
     #[test]
@@ -3193,7 +3105,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("attribution=\"agent\""));
+        assert!(result.text().contains("attribution=\"agent\""));
     }
 
     #[test]
@@ -3209,11 +3121,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(
-            result
-                .instructions
-                .contains("Verify each decision automatically")
-        );
+        assert!(result.text().contains("Verify each decision automatically"));
     }
 
     #[test]
@@ -3230,13 +3138,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result
-                .instructions
-                .contains("old. Does the code still do this?"),
+            result.text().contains("old. Does the code still do this?"),
             "interactive drift_check should include age in question"
         );
         assert!(
-            result.instructions.contains("Created: 2025-01-15"),
+            result.text().contains("Created: 2025-01-15"),
             "interactive drift_check should show creation date"
         );
     }
@@ -3255,7 +3161,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("STOP. Wait"),
+            result.text().contains("STOP. Wait"),
             "interactive drift_check should stop after each decision"
         );
     }
@@ -3274,13 +3180,11 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("discuss what changed"),
+            result.text().contains("discuss what changed"),
             "interactive drift_check should discuss changes before revising"
         );
         assert!(
-            result
-                .instructions
-                .contains("update_decision(mode=\"revise\")"),
+            result.text().contains("update_decision(mode=\"revise\")"),
             "interactive drift_check should use revise mode"
         );
     }
@@ -3319,7 +3223,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("src/auth/jwt.rs::verify_dpop"),
+            result.text().contains("src/auth/jwt.rs::verify_dpop"),
             "interactive drift_check should show code references via format_code_refs_line"
         );
     }
@@ -3338,7 +3242,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            result.instructions.contains("Oldest first"),
+            result.text().contains("Oldest first"),
             "interactive drift_check should explain oldest-first ordering"
         );
     }
@@ -3371,7 +3275,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            a.instructions, b.instructions,
+            a.text(),
+            b.text(),
             "same injected `now` must produce byte-identical prompts"
         );
     }
@@ -3407,18 +3312,19 @@ mod tests {
 
         // 2025-01-15 to 2025-04-20 ≈ 95 days → 3 months
         assert!(
-            prompt_a.instructions.contains("3 months"),
+            prompt_a.text().contains("3 months"),
             "decision created 2025-01-15, now 2025-04-20 → 3 months old, got:\n{}",
-            prompt_a.instructions,
+            prompt_a.text(),
         );
         // 2025-01-15 to 2027-02-15 ≈ 761 days → 2 years
         assert!(
-            prompt_b.instructions.contains("2 years"),
+            prompt_b.text().contains("2 years"),
             "decision created 2025-01-15, now 2027-02-15 → 2 years old, got:\n{}",
-            prompt_b.instructions,
+            prompt_b.text(),
         );
         assert_ne!(
-            prompt_a.instructions, prompt_b.instructions,
+            prompt_a.text(),
+            prompt_b.text(),
             "different injected `now` must produce different age text"
         );
     }
@@ -3436,7 +3342,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert!(result.instructions.contains("read the source code"));
+        assert!(result.text().contains("read the source code"));
     }
 
     #[test]
@@ -3458,8 +3364,8 @@ mod tests {
                 let result =
                     build_step_prompt(&state, comp, step, None, None, mode, Utc::now()).unwrap();
                 assert!(
-                    !result.instructions.contains("AGENT PROTOCOL")
-                        && !result.instructions.contains("ONE topic per exchange"),
+                    !result.text().contains("AGENT PROTOCOL")
+                        && !result.text().contains("ONE topic per exchange"),
                     "step `{step}` should skip both protocols in {:?}",
                     mode
                 );
@@ -3668,20 +3574,20 @@ mod tests {
         .unwrap();
 
         assert!(
-            result.instructions.contains("Revised 1 time(s)"),
+            result.text().contains("Revised 1 time(s)"),
             "should show revision count"
         );
         assert!(
-            result.instructions.contains("earliest recorded:"),
+            result.text().contains("earliest recorded:"),
             "should use 'earliest recorded:' label, not 'original:'"
         );
         assert!(
-            !result.instructions.contains("original:"),
+            !result.text().contains("original:"),
             "must never claim 'original:' — history is a ring buffer and \
              the true original may have been evicted"
         );
         assert!(
-            result.instructions.contains("JWT with static keys"),
+            result.text().contains("JWT with static keys"),
             "should still show the earliest retained choice text"
         );
     }
@@ -3730,21 +3636,21 @@ mod tests {
 
         assert!(
             result
-                .instructions
+                .text()
                 .contains(&format!("Revised {MAX_HISTORY_ENTRIES} time(s)")),
             "should show full revision count even at cap"
         );
         assert!(
-            result.instructions.contains("earliest recorded:"),
+            result.text().contains("earliest recorded:"),
             "saturated history should use 'earliest recorded:' label"
         );
         assert!(
-            !result.instructions.contains("original:"),
+            !result.text().contains("original:"),
             "saturated history must never claim 'original:' — \
              the true original was evicted from the ring buffer"
         );
         assert!(
-            result.instructions.contains("Revision 0"),
+            result.text().contains("Revision 0"),
             "should show the earliest retained choice text"
         );
     }

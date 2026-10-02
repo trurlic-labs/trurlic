@@ -5,7 +5,7 @@
 //! graph module for navigability — the query surface is ~180 lines
 //! across 15 methods and does not affect the build or validation paths.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use super::graph::{Direction, Edge, InMemoryGraph};
@@ -66,9 +66,10 @@ impl InMemoryGraph {
             .unwrap_or_default()
     }
 
-    /// Decisions from directly connected components (both directions, depth 1).
+    /// Decisions from directly connected components (both directions, depth 1),
+    /// ordered by component name, then decision name.
     pub fn related_decisions(&self, component: &str) -> Vec<(&Arc<str>, &DecisionFile)> {
-        let mut connected: HashSet<&str> = HashSet::new();
+        let mut connected: BTreeSet<&str> = BTreeSet::new();
         if let Some(edges) = self.forward.get(component) {
             for e in edges.iter().filter(|e| e.kind == EdgeKind::ConnectsTo) {
                 connected.insert(e.target.as_ref());

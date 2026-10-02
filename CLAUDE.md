@@ -6,16 +6,17 @@ Named after Trurl (Stanisław Lem, *The Cyberiad*) — the constructor who think
 
 ### Architecture
 
-Single crate, seven modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
+Single crate, eight modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
 
 ```
 store       → (no internal deps)         Decision graph: TOML files, graph index,
                                           validation, atomic writes, file locking,
                                           file watcher
-workflow    → store                       Step deduction, concern tracking,
+workflow    → store, budget               Step deduction, concern tracking,
                                           prompt generation. Pure functions, no I/O.
-mcp         → store, workflow             MCP server: JSON-RPC stdio, tool dispatch,
-                                          context assembly, decision verification
+mcp         → store, workflow, budget     MCP server: JSON-RPC stdio, tool dispatch,
+                                          context assembly, decision verification,
+                                          the 24 KiB cap on every tool result
 map         → store                       Interactive graph visualization,
                                           WebSocket live sync, REST API
 commands    → store, mcp, map,            CLI command handlers: init, add, rename,
@@ -23,6 +24,9 @@ commands    → store, mcp, map,            CLI command handlers: init, add, ren
                                           migrate, install (IDE MCP config), and
                                           the `serve` and `map` entry points
 cli         → commands                    clap definitions and dispatch
+budget      → (no internal deps)          Fitting output into a byte budget: the
+                                          level search behind the result cap and
+                                          the step prompt listings
 error       → (no internal deps)          The crate's single `Error` enum and
                                           `Result` alias
 ```
@@ -65,7 +69,7 @@ Seven task types, each with a distinct step sequence. Steps have preconditions (
 
 Concern tracking: 10 architectural concern areas with keyword matching against decision content. Priority-ordered — security gaps surface before stylistic ones.
 
-Step prompts: transport-agnostic instructions generated from graph state and served by `get_step_prompt`. Interactive mode embeds `INTERACTION_PROTOCOL` in every step prompt; agent mode embeds `AGENT_PROTOCOL`.
+Step prompts: transport-agnostic instructions generated from graph state and served by `get_step_prompt`. Their decision listings shrink to fit the result budget; the instructions around them never do. Interactive mode embeds `INTERACTION_PROTOCOL` in every step prompt; agent mode embeds `AGENT_PROTOCOL`.
 
 ### Key Invariants
 
@@ -77,6 +81,7 @@ Step prompts: transport-agnostic instructions generated from graph state and ser
 6. `workflow::advance` is a pure function. No I/O, no side effects.
 7. Boundary types (`DecisionFile`, `PatternFile`, `ComponentFile`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`) do not.
 8. Every dependency justified. No proc macros at runtime (serde derive, thiserror are compile-time).
+9. Every MCP tool result fits `budget::MAX_TOOL_RESULT_BYTES` (24 KiB) and stays valid JSON; a cut is named in its `truncated` array.
 
 ### Trurlic
 
@@ -129,7 +134,7 @@ Integration tests (`tests/integration/`): drive the built binary. `harness` spaw
 
 Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` act at the n-th hit of a named site in `src/store/failpoint.rs`: abort (or pause, with `TRURLIC_FAILPOINT_PAUSE`) at a `hit`, return an injected I/O error at a `fail`. `make test` enables it.
 
-Property: determinism (same graph state → same advance result), exhaustive step coverage (every `Step::as_str()` value accepted by `build_step_prompt()`), graph validation catches all known violation classes.
+Property: determinism (same graph state → same advance result; every read tool answers with the same bytes in two processes), exhaustive step coverage (every `Step::as_str()` value accepted by `build_step_prompt()`), graph validation catches all known violation classes.
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 

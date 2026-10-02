@@ -1,0 +1,34 @@
+[decision]
+component = "project"
+choice = "Every list a tool response or map event carries has a fixed order; hash collections are only looked up, never iterated into output"
+reason = "Each process seeds its hash collections afresh, so a list built by walking a HashMap or HashSet comes out in a different order in every server: two serve processes on one graph answered get_context with different bytes, record_decision's pattern suggestion listed its components differently, and map clients saw one change's events in a different sequence per run. A list that reaches a tool payload, a WebSocket event, disk or a hash is built from BTreeMap/BTreeSet or a Vec sorted by name; a ranked list (check_pattern matches) sorts stably from name order, so ties keep name order. A hash set used only for membership (seen sets, lookups) stays, since it never decides an order. tests/integration/determinism.rs builds a graph in one serve process and requires every read tool, taken from tools/list, to answer with the same bytes there and in a freshly started second process."
+alternatives = [
+    "Sort each response at the MCP boundary - rejected: the payloads are nested JSON whose list order carries meaning (relevance, priority), so a generic sort would reorder results that are ranked on purpose",
+    "Fix the hasher seed - rejected: output order would then follow hash values, which change with the hasher or the keys, and still not be an order a reader can predict",
+]
+tags = [
+    "determinism",
+    "serialization",
+    "api",
+]
+attribution = "agent"
+created = "2026-10-02T13:33:21.627819553Z"
+
+[[decision.code_refs]]
+file = "tests/integration/determinism.rs"
+
+[[decision.code_refs]]
+file = "src/store/query.rs"
+symbol = "InMemoryGraph::related_decisions"
+
+[[decision.code_refs]]
+file = "src/mcp/write.rs"
+symbol = "detect_pattern_opportunity"
+
+[[decision.code_refs]]
+file = "src/store/write.rs"
+symbol = "Store::record_pattern"
+
+[[decision.code_refs]]
+file = "src/map/diff.rs"
+symbol = "diff_states"

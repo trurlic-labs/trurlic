@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
+pub(crate) mod budget;
 pub mod cli;
 
 pub(crate) mod commands;

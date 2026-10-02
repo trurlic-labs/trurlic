@@ -272,49 +272,24 @@ pub fn coverage_lost(removed: &DecisionFile, remaining: &[&DecisionFile]) -> Vec
         .collect()
 }
 
-/// Formatted concern status for inclusion in prompts.
-///
-/// Shows covered areas (with the decision choices that cover them) and
-/// uncovered areas (for the agent to systematically explore).
-pub fn concern_status(decisions: &[&DecisionFile]) -> String {
+/// Every concern area in priority order, with the choices of the
+/// decisions that cover it. An area with no choices is uncovered.
+pub(crate) fn concern_status<'d>(
+    decisions: &[&'d DecisionFile],
+) -> Vec<(&'static str, Vec<&'d str>)> {
     let word_sets: Vec<Vec<String>> = decisions.iter().map(|d| decision_words(d)).collect();
-    let mut covered: Vec<(&str, Vec<&str>)> = Vec::with_capacity(CONCERNS.len());
-    let mut uncovered: Vec<&str> = Vec::with_capacity(CONCERNS.len());
-
-    for &(concern_name, keywords) in CONCERNS {
-        let matching: Vec<&str> = decisions
-            .iter()
-            .zip(&word_sets)
-            .filter(|(_, words)| words_match_keywords(words, keywords))
-            .map(|(d, _)| d.decision.choice.as_str())
-            .collect();
-
-        if matching.is_empty() {
-            uncovered.push(concern_name);
-        } else {
-            covered.push((concern_name, matching));
-        }
-    }
-
-    let mut out = String::with_capacity(512);
-
-    if !covered.is_empty() {
-        out.push_str("COVERED (decisions exist — do not re-ask):\n");
-        for (name, choices) in &covered {
-            out.push_str(&format!("  ✓ {name}: \"{}\"\n", choices.join("\", \"")));
-        }
-        out.push('\n');
-    }
-
-    if !uncovered.is_empty() {
-        out.push_str("UNCOVERED (systematically ask about each):\n");
-        for name in &uncovered {
-            out.push_str(&format!("  □ {name}\n"));
-        }
-        out.push('\n');
-    }
-
-    out
+    CONCERNS
+        .iter()
+        .map(|&(concern_name, keywords)| {
+            let choices = decisions
+                .iter()
+                .zip(&word_sets)
+                .filter(|(_, words)| words_match_keywords(words, keywords))
+                .map(|(d, _)| d.decision.choice.as_str())
+                .collect();
+            (concern_name, choices)
+        })
+        .collect()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -386,14 +361,22 @@ mod tests {
     }
 
     #[test]
-    fn concern_status_shows_both_sections() {
+    fn concern_status_lists_the_covering_choices_of_each_area() {
         let dec = make_decision("store", "BLAKE3 content hashing", "Fast integrity", &[]);
-        let output = concern_status(&[&dec]);
+        let status = concern_status(&[&dec]);
 
-        assert!(output.contains("COVERED"));
-        assert!(output.contains("Integrity"));
-        assert!(output.contains("UNCOVERED"));
-        assert!(output.contains("Concurrency"));
+        let names: Vec<&str> = status.iter().map(|(name, _)| *name).collect();
+        let expected: Vec<&str> = CONCERNS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(names, expected);
+        let choices = |area: &str| {
+            &status
+                .iter()
+                .find(|(name, _)| name.contains(area))
+                .unwrap()
+                .1
+        };
+        assert_eq!(choices("Integrity"), &["BLAKE3 content hashing"]);
+        assert!(choices("Concurrency").is_empty());
     }
 
     #[test]

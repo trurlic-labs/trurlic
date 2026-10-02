@@ -2027,7 +2027,7 @@ mod tests {
         .expect("build_step_prompt must accept cover_concerns from fix workflow");
 
         assert!(
-            prompt.instructions.contains("source code"),
+            prompt.text().contains("source code"),
             "missing source code preamble"
         );
         assert!(

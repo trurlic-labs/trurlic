@@ -1,6 +1,5 @@
-use std::collections::HashSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -69,11 +68,6 @@ pub struct RecordPatternParams<'a> {
 }
 
 impl Store {
-    pub(crate) fn remove_file(&self, _lock: &StoreLock, target: &Path) -> Result<()> {
-        self.verify_path(target)?;
-        Ok(fs::remove_file(target)?)
-    }
-
     // ── Record decision (shared write path) ────────────────────────────
 
     /// Record a new decision to disk with full graph validation and rollback.
@@ -755,7 +749,7 @@ impl Store {
 
         // Resolve component list: explicit or inferred from decisions.
         let components: Vec<String> = if params.components.is_empty() {
-            let mut inferred: HashSet<String> = HashSet::new();
+            let mut inferred: BTreeSet<String> = BTreeSet::new();
             for dname in params.decisions {
                 if let Some(dec) = state.decisions.get(dname.as_str()) {
                     let comp = &dec.decision.component;
@@ -836,41 +830,13 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::Path;
+
     use super::*;
     use crate::store::graph::IssueKind;
     use crate::store::testing::*;
     use tempfile::TempDir;
-
-    // ── remove_file ──────────────────────────────────────────────────────
-
-    #[test]
-    fn remove_file_deletes() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let comp = sample_component("auth");
-        let path = store.component_path("auth");
-        store.write_atomic(&lock, &path, &comp).unwrap();
-        assert!(path.exists());
-
-        store.remove_file(&lock, &path).unwrap();
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn remove_file_rejects_path_outside_root() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let outside = tmp.path().join("important-file");
-        fs::write(&outside, "do not delete").unwrap();
-
-        let err = store.remove_file(&lock, &outside).unwrap_err();
-        assert!(matches!(err, Error::Validation(_)));
-        assert!(outside.exists(), "file outside root must not be deleted");
-    }
 
     // ── code_refs validation at the store boundary ───────────────────────
 

@@ -4,7 +4,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::context;
-use super::{pattern, update, verify, write};
+use super::{pattern, truncate, update, verify, write};
+use crate::budget::MAX_TOOL_RESULT_BYTES;
 use crate::store::{ProjectState, Store, StoreLock};
 use crate::workflow;
 
@@ -472,8 +473,8 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
             {
                 "name": "get_step_prompt",
                 "description": "Get the prompt for a specific workflow step. \
-                    Called as directed by advance. Returns system instructions, \
-                    component context, and step metadata.",
+                    Called as directed by advance. Returns the step's system \
+                    instructions; call get_context for the component's brief.",
                 "annotations": {
                     "title": "Get step prompt",
                     "readOnlyHint": true,
@@ -748,19 +749,15 @@ fn dispatch_verify_against_decisions(state: &ProjectState, args: &Value) -> Tool
 }
 
 fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope {
-    let component = match args.get("component").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return tool_error("missing required parameter: component"),
+    let Some(component) = args.get("component").and_then(Value::as_str) else {
+        return tool_error("missing required parameter: component");
     };
-    let step = match args.get("step").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return tool_error("missing required parameter: step"),
+    let Some(step) = args.get("step").and_then(Value::as_str) else {
+        return tool_error("missing required parameter: step");
     };
-    let task = args.get("task").and_then(|v| v.as_str());
-
-    let task_type = args.get("task_type").and_then(|v| v.as_str());
-
-    let mode = match args.get("mode").and_then(|v| v.as_str()) {
+    let task = args.get("task").and_then(Value::as_str);
+    let task_type = args.get("task_type").and_then(Value::as_str);
+    let mode = match args.get("mode").and_then(Value::as_str) {
         Some(s) => match workflow::Mode::parse(s) {
             Ok(m) => m,
             Err(msg) => return tool_error(&msg),
@@ -781,20 +778,21 @@ fn dispatch_get_step_prompt(state: &ProjectState, args: &Value) -> ToolEnvelope 
         Err(msg) => return tool_error(&msg),
     };
 
-    let ctx = match context::get_context(state, component, task, context::ContextDepth::Full) {
-        Ok(c) => c,
-        Err(msg) => return tool_error(&msg),
-    };
-
-    let mut result = serde_json::json!({
-        "system_instructions": prompt.instructions,
-        "context": ctx,
-        "step": step,
-    });
+    let mut result = serde_json::Map::new();
+    result.insert("step".into(), Value::from(step));
     if !prompt.focus.is_empty() {
-        result["focus"] = serde_json::json!(prompt.focus);
+        result.insert("focus".into(), Value::from(prompt.focus));
     }
-    tool_result(&result)
+    // The instructions get the room the rest of the result leaves, counted
+    // in the escaped bytes they take once serialized.
+    result.insert("system_instructions".into(), Value::from(""));
+    let rest = serde_json::to_string(&result).map_or(0, |text| text.len());
+    let instructions = prompt.instructions.render(
+        MAX_TOOL_RESULT_BYTES.saturating_sub(rest),
+        truncate::json_str_len,
+    );
+    result.insert("system_instructions".into(), Value::from(instructions));
+    tool_result(&Value::Object(result))
 }
 
 fn dispatch_advance(state: &ProjectState, args: &Value) -> ToolEnvelope {
@@ -865,25 +863,23 @@ struct TextBlock {
     text: String,
 }
 
+/// `payload` serialized within [`MAX_TOOL_RESULT_BYTES`]; see [`truncate`].
 pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
-    let text = serde_json::to_string(payload).unwrap_or_else(|e| {
-        eprintln!("trurlic: tool result serialization error: {e}");
-        "{}".into()
-    });
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",
-            text,
+            text: truncate::fit_payload(payload, MAX_TOOL_RESULT_BYTES),
         }],
         is_error: None,
     }
 }
 
+/// `message`, cut to [`MAX_TOOL_RESULT_BYTES`] with a note of what it lost.
 pub(crate) fn tool_error(message: &str) -> ToolEnvelope {
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",
-            text: message.into(),
+            text: truncate::fit_message(message, MAX_TOOL_RESULT_BYTES),
         }],
         is_error: Some(true),
     }
@@ -1203,6 +1199,99 @@ mod tests {
             "error should mention mode: {}",
             envelope.content[0].text,
         );
+    }
+
+    #[test]
+    fn get_step_prompt_returns_the_step_without_the_component_context() {
+        let mut state = empty_state();
+        state.components.insert(
+            "auth".into(),
+            std::sync::Arc::new(crate::store::schema::ComponentFile {
+                component: crate::store::schema::Component {
+                    name: "auth".into(),
+                    description: "Auth".into(),
+                },
+            }),
+        );
+        state.rebuild_graph();
+
+        let args = serde_json::json!({
+            "component": "auth",
+            "step": "define_scope",
+            "mode": "agent",
+        });
+        let envelope = call_read_tool(&state, "get_step_prompt", &args);
+        let payload: Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        let keys: Vec<&str> = payload
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["step", "system_instructions"]);
+    }
+
+    /// `auth` with `count` decisions, each with a long reason.
+    fn state_with_decisions(count: usize) -> ProjectState {
+        use crate::store::schema::{EdgeEntry, EdgeKind, NodeEntry, NodeKind};
+        use crate::store::testing::{sample_component, sample_decision};
+
+        let mut state = empty_state();
+        state
+            .components
+            .insert("auth".into(), std::sync::Arc::new(sample_component("auth")));
+        state.graph_index.nodes.push(NodeEntry {
+            name: "auth".into(),
+            kind: NodeKind::Component,
+            tags: vec![],
+            hash: String::new(),
+        });
+        for i in 0..count {
+            let name = format!("decision-{i:04}");
+            let mut decision = sample_decision(&name, "auth");
+            decision.decision.reason = "Because the code needs it. ".repeat(10);
+            state
+                .decisions
+                .insert(name.clone(), std::sync::Arc::new(decision));
+            state.graph_index.nodes.push(NodeEntry {
+                name: name.clone(),
+                kind: NodeKind::Decision,
+                tags: vec![],
+                hash: String::new(),
+            });
+            state.graph_index.edges.push(EdgeEntry {
+                from: name,
+                to: "auth".into(),
+                kind: EdgeKind::BelongsTo,
+            });
+        }
+        state.rebuild_graph();
+        state
+    }
+
+    #[test]
+    fn a_step_prompt_over_the_budget_keeps_its_protocol_and_cuts_the_listing() {
+        let state = state_with_decisions(400);
+        for mode in ["agent", "interactive"] {
+            let args = serde_json::json!({
+                "component": "auth",
+                "step": "walk_decisions",
+                "mode": mode,
+            });
+            let text = &call_read_tool(&state, "get_step_prompt", &args).content[0].text;
+            assert!(
+                text.len() <= MAX_TOOL_RESULT_BYTES,
+                "{mode}: {}",
+                text.len()
+            );
+
+            let payload: Value = serde_json::from_str(text).unwrap();
+            assert!(payload.get("truncated").is_none(), "{mode}");
+            let instructions = payload["system_instructions"].as_str().unwrap();
+            assert!(instructions.contains("decisions omitted to fit"), "{mode}");
+            assert!(instructions.contains("PROTOCOL:"), "{mode}");
+            assert!(instructions.contains("decision-0000"), "{mode}");
+        }
     }
 
     #[test]

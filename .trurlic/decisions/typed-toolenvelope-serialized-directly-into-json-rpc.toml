@@ -1,7 +1,7 @@
 [decision]
 component = "mcp"
 choice = "Typed ToolEnvelope serialized directly into JSON-RPC response, single serialization pass"
-reason = "Tool responses use a typed ToolEnvelope struct (content array with TextBlock, optional isError flag) that is serialized directly by write_success via a generic SuccessEnvelope<R: Serialize>. This avoids intermediate serde_json::Value allocation: cold-path responses (initialize, ping, tools/list) pass Value, while hot-path tool calls pass the typed ToolEnvelope. The text field in ToolEnvelope contains pre-serialized JSON (one to_string call), so the final wire write is a single serialization pass. The handle() function writes inline to the writer for the same reason, avoiding boxing or enum-wrapping different result types."
+reason = "Tool responses use a typed ToolEnvelope struct (content array with TextBlock, optional isError flag) that is serialized directly by write_success via a generic SuccessEnvelope<R: Serialize>. This avoids intermediate serde_json::Value allocation: cold-path responses (initialize, ping, tools/list) pass Value, while hot-path tool calls pass the typed ToolEnvelope. The text field holds the payload serialized once by truncate::fit_payload into a buffer that stops at MAX_TOOL_RESULT_BYTES; a payload that fits costs that one serialization, and one that does not is never serialized whole but cut and serialized from its cut. The handle() function writes inline to the writer for the same reason, avoiding boxing or enum-wrapping different result types."
 alternatives = [
     "Serialize everything through serde_json::Value intermediate — rejected: double serialization (to_value then to_writer) wastes allocations on the hot path",
     "Custom wire-format writer — rejected: serde_json::to_writer with typed structs is already zero-intermediate-allocation",
@@ -12,3 +12,16 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:45:18.917975440Z"
+
+[[decision.code_refs]]
+file = "src/mcp/tools.rs"
+symbol = "tool_result"
+
+[[decision.code_refs]]
+file = "src/mcp/truncate.rs"
+symbol = "fit_payload"
+
+[[decision.history]]
+choice = "Typed ToolEnvelope serialized directly into JSON-RPC response, single serialization pass"
+reason = "Tool responses use a typed ToolEnvelope struct (content array with TextBlock, optional isError flag) that is serialized directly by write_success via a generic SuccessEnvelope<R: Serialize>. This avoids intermediate serde_json::Value allocation: cold-path responses (initialize, ping, tools/list) pass Value, while hot-path tool calls pass the typed ToolEnvelope. The text field in ToolEnvelope contains pre-serialized JSON (one to_string call), so the final wire write is a single serialization pass. The handle() function writes inline to the writer for the same reason, avoiding boxing or enum-wrapping different result types."
+changed_at = "2026-10-02T16:33:37.355372816Z"

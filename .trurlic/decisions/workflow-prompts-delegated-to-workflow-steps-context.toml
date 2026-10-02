@@ -1,7 +1,7 @@
 [decision]
 component = "mcp"
 choice = "Workflow prompts delegated to workflow::steps, context assembly in context module"
-reason = "The MCP module never generates prompts or computes workflow steps itself. advance() delegates to workflow::advance::advance() which is a pure function of graph state. get_step_prompt dispatches to workflow::steps::build_step_prompt() for prompt generation and then enriches it with context from context::get_context(). get_context assembles a tailored spec including component decisions, project-wide rules, related decisions from connected components, transitive dependencies, applicable patterns, concern coverage analysis, and an authoritative brief. This keeps MCP as a thin transport layer while workflow remains the pure computation engine. Both MCP and CLI sessions consume the same transport-agnostic prompts."
+reason = "The MCP module never generates prompts or computes workflow steps itself. advance() delegates to workflow::advance::advance(), a pure function of graph state. get_step_prompt dispatches to workflow::steps::build_step_prompt() and renders its PromptText within the room the rest of the result leaves of MAX_TOOL_RESULT_BYTES, measured with truncate::json_str_len. It no longer appends get_context: the prompt already carries the decisions the step works on, and the appended copy made 960 of 1025 step prompts on a seeded 600-decision graph overflow the budget. get_context assembles a tailored spec including component decisions, project-wide rules, related decisions from connected components, transitive dependencies, applicable patterns, concern coverage analysis, and an authoritative brief. This keeps MCP as a thin transport layer while workflow remains the pure computation engine. Both MCP and CLI sessions consume the same transport-agnostic prompts."
 alternatives = [
     "MCP generates prompts directly — rejected: would violate workflow module's role as the single source of step logic and create divergence between MCP and CLI prompt behavior",
     "Inline context assembly in tool dispatch functions — rejected: context assembly is complex enough (graph traversal, concern coverage, brief generation) to warrant its own module",
@@ -9,3 +9,16 @@ alternatives = [
 tags = ["module-boundary"]
 attribution = "user"
 created = "2026-06-15T09:45:37.115413458Z"
+
+[[decision.code_refs]]
+file = "src/mcp/tools.rs"
+symbol = "dispatch_get_step_prompt"
+
+[[decision.code_refs]]
+file = "src/workflow/steps.rs"
+symbol = "build_step_prompt"
+
+[[decision.history]]
+choice = "Workflow prompts delegated to workflow::steps, context assembly in context module"
+reason = "The MCP module never generates prompts or computes workflow steps itself. advance() delegates to workflow::advance::advance() which is a pure function of graph state. get_step_prompt dispatches to workflow::steps::build_step_prompt() for prompt generation and then enriches it with context from context::get_context(). get_context assembles a tailored spec including component decisions, project-wide rules, related decisions from connected components, transitive dependencies, applicable patterns, concern coverage analysis, and an authoritative brief. This keeps MCP as a thin transport layer while workflow remains the pure computation engine. Both MCP and CLI sessions consume the same transport-agnostic prompts."
+changed_at = "2026-10-02T16:33:40.769580182Z"

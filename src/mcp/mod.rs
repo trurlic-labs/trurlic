@@ -2,6 +2,7 @@ mod context;
 mod pattern;
 mod protocol;
 mod tools;
+mod truncate;
 mod update;
 mod verify;
 mod watcher;

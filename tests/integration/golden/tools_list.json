@@ -466,7 +466,7 @@
         "readOnlyHint": true,
         "title": "Get step prompt"
       },
-      "description": "Get the prompt for a specific workflow step. Called as directed by advance. Returns system instructions, component context, and step metadata.",
+      "description": "Get the prompt for a specific workflow step. Called as directed by advance. Returns the step's system instructions; call get_context for the component's brief.",
       "inputSchema": {
         "properties": {
           "component": {

@@ -548,7 +548,8 @@ impl Store {
 
         for (name, dec) in decisions {
             let hash = hashes.remove(name.as_str()).unwrap_or_default();
-            // Decision file tags are the source of truth — they survive --rebuild.
+            // Decision file tags are the source of truth, so they survive a
+            // missing or stale graph.toml.
             let tags = dec.decision.tags.clone();
             nodes.push(NodeEntry {
                 name: name.clone(),
@@ -1382,10 +1383,33 @@ mod tests {
             .write_atomic(&lock, &store.component_path("auth"), &auth)
             .unwrap();
 
+        let mut dec = sample_decision("token-format", "auth");
+        dec.decision.tags = vec!["security".into(), "auth".into()];
+        store
+            .write_atomic(&lock, &store.decision_path("token-format"), &dec)
+            .unwrap();
+
         let state = store.load_state().unwrap();
         // Should still build a graph index from files
         assert!(state.graph_index.nodes.iter().any(|n| n.name == "project"));
         assert!(state.graph_index.nodes.iter().any(|n| n.name == "auth"));
+        // A decision's tags and owner live in its file, so no index is needed.
+        let node = state
+            .graph_index
+            .nodes
+            .iter()
+            .find(|n| n.name == "token-format")
+            .unwrap();
+        assert_eq!(node.tags, ["security", "auth"]);
+        assert!(
+            state
+                .graph_index
+                .edges
+                .iter()
+                .any(|e| e.from == "token-format"
+                    && e.to == "auth"
+                    && e.kind == EdgeKind::BelongsTo)
+        );
     }
 
     #[test]
