@@ -11,6 +11,7 @@
 )]
 
 mod budget;
+mod decision_text;
 mod determinism;
 #[cfg(feature = "failpoints")]
 mod failpoints;

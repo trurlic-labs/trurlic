@@ -253,6 +253,19 @@ impl McpClient {
     /// Call a tool and return its payload as the server wrote it, failing if
     /// the tool reported `isError`.
     pub fn call_tool_text(&mut self, name: &str, arguments: Value) -> String {
+        let (text, is_error) = self.call_tool_raw(name, arguments);
+        assert!(!is_error, "{name} failed: {text}");
+        text
+    }
+
+    /// Call a tool that must fail and return its error message.
+    pub fn call_tool_error(&mut self, name: &str, arguments: Value) -> String {
+        let (text, is_error) = self.call_tool_raw(name, arguments);
+        assert!(is_error, "{name} succeeded: {text}");
+        text
+    }
+
+    fn call_tool_raw(&mut self, name: &str, arguments: Value) -> (String, bool) {
         let mut envelope = self.request(
             "tools/call",
             json!({ "name": name, "arguments": arguments }),
@@ -260,12 +273,7 @@ impl McpClient {
         let Value::String(text) = envelope["content"][0]["text"].take() else {
             panic!("{name}: no text content in {envelope}");
         };
-        assert_ne!(
-            envelope.get("isError"),
-            Some(&Value::Bool(true)),
-            "{name} failed: {text}"
-        );
-        text
+        (text, envelope.get("isError") == Some(&Value::Bool(true)))
     }
 }
 
