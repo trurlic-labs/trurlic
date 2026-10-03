@@ -9,6 +9,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-10-03
+
 ### Fixed
 
 - **A second writer on Windows waits for the lock.** File locking went through `fs2`, and a writer retried only on `ErrorKind::WouldBlock`. On Windows `fs2` reports a held lock as the raw `ERROR_LOCK_VIOLATION`, which std does not map to that kind, so a second writer failed at once with an I/O error instead of waiting. Locking now uses std's `File::try_lock` and `File::try_lock_shared`, which report a held lock the same way on every platform; the 5 s timeout stays. `fs2` and `winapi` are dropped.
@@ -314,7 +316,8 @@ any MCP-compatible coding agent.
 - TypeScript frontend tests (force layout, camera, culling, edges, geometry, level-of-detail, graph state, drag, hover, selection, search).
 - CodSpeed benchmarks for store operations (via `criterion` / `codspeed-criterion-compat`).
 
-[Unreleased]: https://github.com/trurlic-labs/trurlic/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/trurlic-labs/trurlic/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/trurlic-labs/trurlic/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/trurlic-labs/trurlic/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.3.0
 [0.2.0]: https://github.com/trurlic-labs/trurlic/releases/tag/v0.2.0
