@@ -1,0 +1,34 @@
+[decision]
+component = "store"
+choice = "A decision's choice and reason are checked by the store, in store::text, on every record and revise"
+reason = '''Three surfaces kept their own copies of the text rules and disagreed: MCP compared raw lengths, the map trimmed the reason, and `trurlic decide` checked nothing, so the CLI recorded what agents were refused. Store::record_decision and revise_decision now call store::text::validate_text, so no surface can skip it and every surface refuses with the same message (tests/integration/decision_text.rs sends one table to MCP record and revise, the map and the CLI and requires identical refusals). The rules: a choice is one non-blank line of at most MAX_CHOICE_BYTES; a reason holds at least MIN_REASON_BYTES besides surrounding whitespace and may keep newline and tab; neither carries a C0 or C1 control, DEL, a bidi control (U+061C, U+200E/F, U+202A-E, U+2066-9), a zero-width character (U+200B-D, U+2060, U+FEFF) or U+2028/2029, since those render as nothing or reorder text, so a reader would not see what an agent is held to; and neither carries tool-call markup, `</?(parameter|invoke|function_calls)\b` bare or with the namespace prefix, or a closing argument tag such as `</reason>`, which only lands in an argument when a model's call was malformed. A refusal is Error::InvalidText { field, fault } naming the fault and its byte offset. The duplicate-choice check (same component, case and whitespace folded) lives beside it as ensure_new_choice and is Error::DuplicateChoice on both paths. Text already on disk is not re-checked at load.'''
+alternatives = [
+    "Keep the checks at each surface with shared constants: what drifted was the code around the constants (trim or not, which surface checks at all), not the numbers",
+    "Normalize instead of refusing (strip controls, join lines): silently changes what the author wrote, and a leaked tool-call fragment would be kept as content",
+    "Re-validate every node at load: a hand edit or older release would make the whole store unloadable over one character; the write path is where new text enters",
+]
+tags = [
+    "validation",
+    "security",
+]
+attribution = "agent"
+created = "2026-10-03T14:48:16.270508355Z"
+
+[[decision.code_refs]]
+file = "src/store/text.rs"
+symbol = "validate_text"
+
+[[decision.code_refs]]
+file = "src/store/text.rs"
+symbol = "ensure_new_choice"
+
+[[decision.code_refs]]
+file = "src/store/write.rs"
+symbol = "Store::record_decision"
+
+[[decision.code_refs]]
+file = "src/store/write.rs"
+symbol = "Store::revise_decision"
+
+[[decision.code_refs]]
+file = "tests/integration/decision_text.rs"

@@ -1,5 +1,5 @@
 version = 1
-rebuilt = "2026-10-03T13:56:06.561349545Z"
+rebuilt = "2026-10-03T14:48:51.624975071Z"
 
 [[nodes]]
 name = "256-bit-csprng-token-with-constant-time-comparison-for"
@@ -18,6 +18,15 @@ tags = [
     "reliability",
 ]
 hash = "02d03d9ae5831e347d2c65f15bb84abde1b4a072ce8b29f1a71d3d065370a422"
+
+[[nodes]]
+name = "a-decision-s-choice-and-reason-are-checked-by-the-store-in"
+kind = "decision"
+tags = [
+    "validation",
+    "security",
+]
+hash = "aead775d1488ae171516cd35b47826cd386ad5df16a2e5563946207240e03bf1"
 
 [[nodes]]
 name = "advance-is-a-pure-function-read-only-stateless-idempotent"
@@ -362,7 +371,7 @@ tags = [
     "security",
     "data-integrity",
 ]
-hash = "7502604814d096555b0a87406d9674e9caa1198d0ae77a6a0447d9ad6fde6e67"
+hash = "cc4761c1bd08c8b7a8f312a88890e9df2a56da4404becd233303fdcf89b379f3"
 
 [[nodes]]
 name = "install-uses-atomic-writes-with-round-trip-verification-and"
@@ -530,7 +539,7 @@ tags = [
     "data-model",
     "security",
 ]
-hash = "3c7844fb334a7a30dcd8896857ebbec095e1b5a51624a2983d0f18b530b6cf0e"
+hash = "c8ff4eb9b1f6b80b5774759f04d5163e224fa6667dd342f2b3281fee3b5fa1d1"
 
 [[nodes]]
 name = "rust-embed-for-zero-build-step-frontend-embedding"
@@ -551,7 +560,7 @@ hash = "542b8c80752461d29fc3a46dfcdcf1a6e3e892dab0dba2ab61ae5fbad0df60f7"
 name = "single-error-enum-with-thiserror-project-wide-result-alias"
 kind = "decision"
 tags = ["error-handling"]
-hash = "b6807024e4f91f85870f6fb2616ebc5142b3490e62035ff0e3e9963e963f805f"
+hash = "1771d2eb92180a0d092eaf2d834ba4d30033a0b4d8b8c44412f9f769eae3da2a"
 
 [[nodes]]
 name = "spawn-blocking-for-synchronous-store-writes-in-async"
@@ -590,7 +599,7 @@ tags = [
     "error-handling",
     "api",
 ]
-hash = "bf059853724bbec06b229b7dceb9e6169ee431269469c2f5cff0a6eb68234db0"
+hash = "69992a29ef458a9555b771448f6fbfbb106abc51b6e37de02c1497f89849019c"
 
 [[nodes]]
 name = "step-deduction-via-graph-postcondition-checking-with"
@@ -729,6 +738,11 @@ kind = "depends_on"
 
 [[edges]]
 from = "a-commit-counter-in-state-generation-orders-loads-a-commit"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "a-decision-s-choice-and-reason-are-checked-by-the-store-in"
 to = "store"
 kind = "belongs_to"
 
