@@ -27,8 +27,11 @@ jobs:
         with:
           toolchain: "1.95"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo install cargo-codspeed --locked
-      - run: cargo codspeed build
+      # Pinned to the codspeed-criterion-compat version in Cargo.lock. The
+      # rust cache keeps ~/.cargo/bin, so an unpinned install keeps whatever
+      # version an earlier run cached.
+      - run: cargo install cargo-codspeed --locked --version 5.0.2
+      - run: cargo codspeed build --features bench
       - uses: CodSpeedHQ/action@4296e51e7041e24dadb86d1d6e8b9320d223dbe8 # v4
         with:
           mode: simulation

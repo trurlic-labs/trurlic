@@ -138,7 +138,7 @@ Property: determinism (same graph state → same advance result; every read tool
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 
-Benchmarks (criterion + codspeed): `Store::load_state()` vs graph size.
+Benchmarks (`benches/corpus.rs`, criterion + CodSpeed, `make bench`): over the seeded corpus `store::corpus` at 50, 600 and 2000 decisions, `load_state`, graph build and validation, `record_decision` end to end, `advance` per task type and every read tool, the last three through `trurlic::bench::Server` in process. The `bench` feature builds the corpus and that server; release builds carry neither.
 
 ### Skills
 

@@ -21,8 +21,9 @@ name = "trurlic"
 path = "src/lib.rs"
 
 [[bench]]
-name = "store"
+name = "corpus"
 harness = false
+required-features = ["bench"]
 
 [features]
 # Test-only: `TRURLIC_FAILPOINT=<site>:<n>` aborts at a named store write
@@ -81,7 +82,7 @@ rand = "0.8"
 tempfile = "3"
 
 [dev-dependencies]
-criterion = { version = "2", package = "codspeed-criterion-compat", default-features = false }
+criterion = { version = "5", package = "codspeed-criterion-compat", default-features = false }
 tempfile = "3"
 
 [lints.rust]
