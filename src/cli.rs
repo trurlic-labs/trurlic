@@ -1,7 +1,9 @@
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+use crate::console::{self, diag, out};
 use crate::{Error, Result, commands};
 
 #[derive(Parser, Debug)]
@@ -250,6 +252,18 @@ pub enum QueryCommand {
     },
 }
 
+/// Parse the arguments and run the command, reporting a failure on stderr.
+#[must_use]
+pub fn main() -> ExitCode {
+    match run(Cli::parse()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            diag!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 pub fn run(cli: Cli) -> Result<()> {
     let cwd = std::env::current_dir()?;
     match cli.command {
@@ -330,19 +344,13 @@ pub fn run(cli: Cli) -> Result<()> {
                 commands::GcExecution::DryRun
             };
             if aggressive && apply {
-                use std::io::{IsTerminal, Write};
-                match commands::resolve_aggressive_confirm(yes, std::io::stdout().is_terminal())? {
+                match commands::resolve_aggressive_confirm(yes, console::stdout_is_terminal())? {
                     commands::AggressiveConfirm::Confirmed => {}
                     commands::AggressiveConfirm::PromptUser => {
-                        eprint!(
-                            "Aggressive gc will permanently remove orphaned-ref \
-                             and unreviewed agent decisions. Continue? [y/N] "
-                        );
-                        std::io::stderr().flush()?;
-                        let mut buf = String::new();
-                        std::io::stdin().read_line(&mut buf)?;
-                        if !buf.trim().eq_ignore_ascii_case("y") {
-                            println!("Aborted.");
+                        let question = "Aggressive gc will permanently remove orphaned-ref \
+                                        and unreviewed agent decisions. Continue?";
+                        if !console::confirm(question)? {
+                            out!("Aborted.")?;
                             return Ok(());
                         }
                     }

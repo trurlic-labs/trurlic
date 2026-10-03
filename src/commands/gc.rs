@@ -14,6 +14,7 @@ use std::path::Path;
 use chrono::{Duration, Utc};
 
 use crate::Result;
+use crate::console::out;
 use crate::store::schema::{Attribution, DecisionFile};
 use crate::store::{ProjectState, Store, StoreLock};
 use crate::workflow::concerns;
@@ -90,13 +91,13 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     let (orphaned, orphaned_ref, old_agent) = classify(&state);
     let surfaced = orphaned.len() + orphaned_ref.len() + old_agent.len();
     if surfaced == 0 {
-        println!("gc: nothing to collect.");
+        out!("gc: nothing to collect.")?;
         return Ok(());
     }
 
     let apply = matches!(execution, GcExecution::Apply);
     if !apply {
-        println!("Dry run — no changes written.");
+        out!("Dry run \u{2014} no changes written.")?;
     }
 
     let (removable, blocked) = plan_removals(
@@ -106,7 +107,7 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
         &old_agent,
         scope,
         execution,
-    );
+    )?;
 
     // `removable` is what leaves under Apply and what *would* leave under a dry
     // run; both report the same figure so the summary agrees with the sections.
@@ -119,9 +120,9 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
 
     let flagged = surfaced - acted - blocked;
     let verb = if apply { "removed" } else { "would remove" };
-    println!("\nSummary: {verb} {acted}, flagged {flagged}, blocked {blocked}");
+    out!("\nSummary: {verb} {acted}, flagged {flagged}, blocked {blocked}")?;
     if !apply {
-        println!("Run again with --apply to write.");
+        out!("Run again with --apply to write.")?;
     }
     Ok(())
 }
@@ -142,7 +143,7 @@ fn plan_removals<'a>(
     old_agent: &'a [Candidate],
     scope: GcScope,
     execution: GcExecution,
-) -> (Vec<&'a Candidate>, usize) {
+) -> Result<(Vec<&'a Candidate>, usize)> {
     // Orphaned decisions are always reclaimed; orphaned-ref and agent-review
     // debt join them only under `--aggressive`.
     let reclaim_extra = matches!(scope, GcScope::Aggressive);
@@ -171,23 +172,23 @@ fn plan_removals<'a>(
         (Vec::new(), Vec::new())
     };
 
-    print_removal_section("Orphaned", &orphan_removable, &orphan_blocked, execution);
+    print_removal_section("Orphaned", &orphan_removable, &orphan_blocked, execution)?;
     if reclaim_extra {
         print_removal_section(
             "Orphaned refs (all code refs dead)",
             &ref_removable,
             &ref_blocked,
             execution,
-        );
+        )?;
         print_removal_section(
             "Agent unreviewed > 90 days",
             &agent_removable,
             &agent_blocked,
             execution,
-        );
+        )?;
     } else {
-        print_report_section("Orphaned refs (all code refs dead)", orphaned_ref);
-        print_report_section("Agent unreviewed > 90 days", old_agent);
+        print_report_section("Orphaned refs (all code refs dead)", orphaned_ref)?;
+        print_report_section("Agent unreviewed > 90 days", old_agent)?;
     }
 
     let removable: Vec<&Candidate> = orphan_removable
@@ -196,7 +197,7 @@ fn plan_removals<'a>(
         .chain(agent_removable)
         .collect();
     let blocked = orphan_blocked.len() + ref_blocked.len() + agent_blocked.len();
-    (removable, blocked)
+    Ok((removable, blocked))
 }
 
 /// Snapshot the decisions about to leave, remove them in one atomic batch, and
@@ -226,7 +227,7 @@ fn apply_removals(
     let names: Vec<&str> = removable.iter().map(|c| c.name.as_str()).collect();
     store.remove_decisions(lock, state, &names)?;
 
-    report_lost_coverage(state, &snapshots);
+    report_lost_coverage(state, &snapshots)?;
     Ok(names.len())
 }
 
@@ -288,7 +289,10 @@ fn split_blocked<'a>(
 /// Print the concern coverage the removals erased, grouped by component.
 /// Components that no longer exist (the orphan case) are skipped — reporting
 /// lost coverage for a deleted component is noise.
-fn report_lost_coverage(state: &ProjectState, removed: &[(String, std::sync::Arc<DecisionFile>)]) {
+fn report_lost_coverage(
+    state: &ProjectState,
+    removed: &[(String, std::sync::Arc<DecisionFile>)],
+) -> Result<()> {
     let mut by_component: BTreeMap<&str, Vec<&DecisionFile>> = BTreeMap::new();
     for (component, dec) in removed {
         by_component.entry(component).or_default().push(dec);
@@ -309,9 +313,10 @@ fn report_lost_coverage(state: &ProjectState, removed: &[(String, std::sync::Arc
             }
         }
         if !lost.is_empty() {
-            println!("\u{26a0} [{component}] lost coverage: {}", lost.join(", "));
+            out!("\u{26a0} [{component}] lost coverage: {}", lost.join(", "))?;
         }
     }
+    Ok(())
 }
 
 fn print_removal_section(
@@ -319,34 +324,37 @@ fn print_removal_section(
     removable: &[&Candidate],
     blocked: &[(&Candidate, String)],
     execution: GcExecution,
-) {
+) -> Result<()> {
     if removable.is_empty() && blocked.is_empty() {
-        return;
+        return Ok(());
     }
     let (verb, mark) = match execution {
         GcExecution::Apply => ("removed", '\u{2713}'),
         GcExecution::DryRun => ("would remove", '\u{26a0}'),
     };
-    println!("\n{title} ({verb}):");
+    out!("\n{title} ({verb}):")?;
     for candidate in removable {
-        println!("  {mark} {} ({})", candidate.name, candidate.detail);
+        out!("  {mark} {} ({})", candidate.name, candidate.detail)?;
     }
     for (candidate, why) in blocked {
-        println!(
+        out!(
             "  \u{26a0} {} ({}) \u{2014} blocked: {why}",
-            candidate.name, candidate.detail
-        );
+            candidate.name,
+            candidate.detail
+        )?;
     }
+    Ok(())
 }
 
-fn print_report_section(title: &str, candidates: &[Candidate]) {
+fn print_report_section(title: &str, candidates: &[Candidate]) -> Result<()> {
     if candidates.is_empty() {
-        return;
+        return Ok(());
     }
-    println!("\n{title} (remove with --aggressive):");
+    out!("\n{title} (remove with --aggressive):")?;
     for candidate in candidates {
-        println!("  \u{26a0} {} ({})", candidate.name, candidate.detail);
+        out!("  \u{26a0} {} ({})", candidate.name, candidate.detail)?;
     }
+    Ok(())
 }
 
 #[cfg(test)]

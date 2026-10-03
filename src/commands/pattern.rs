@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::Result;
+use crate::console::out;
 
 use super::open_store_mut;
 
@@ -9,7 +10,7 @@ use super::open_store_mut;
 pub(crate) fn remove_pattern(cwd: &Path, name: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.remove_pattern(&lock, &mut state, name)?;
-    println!("Removed pattern `{name}`");
+    out!("Removed pattern `{name}`")?;
     Ok(())
 }
 

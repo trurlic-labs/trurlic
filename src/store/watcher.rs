@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
 use super::{STATE_DIR, Store};
+use crate::console::diag;
 use crate::store::ProjectState;
 
 // ── Guard ────────────────────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ fn watch_loop(
         let served_at_load = served_generation();
         match store.load_shared() {
             Ok(loaded) => on_load(loaded, served_at_load),
-            Err(e) => eprintln!(
+            Err(e) => diag!(
                 "trurlic: watcher reload of {} failed: {e}",
                 store.root().display()
             ),

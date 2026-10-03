@@ -5,6 +5,7 @@ use std::process::Command;
 use serde_json::Value;
 
 use crate::cli::InstallIde;
+use crate::console::{diag, out};
 use crate::{Error, Result};
 
 use super::DryRun;
@@ -21,7 +22,7 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> 
 
     if dry_run == DryRun::Yes {
         let snippet = build_dry_run_snippet(ide, bin_str)?;
-        println!("{snippet}");
+        out!("{snippet}")?;
         return Ok(());
     }
 
@@ -48,8 +49,8 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> 
         }
     }
 
-    println!("Installed trurlic MCP server for {}", ide_display_name(ide));
-    println!("Config: {}", path.display());
+    out!("Installed trurlic MCP server for {}", ide_display_name(ide))?;
+    out!("Config: {}", path.display())?;
     Ok(())
 }
 
@@ -274,7 +275,7 @@ fn write_json_with_key(path: &Path, key: &str, entry: &Value) -> Result<()> {
         })?;
 
     if servers_obj.contains_key("trurlic") {
-        eprintln!(
+        diag!(
             "warning: overwriting existing \"trurlic\" entry in {}",
             path.display()
         );
@@ -345,7 +346,7 @@ fn write_toml_config(path: &Path, binary: &str) -> Result<()> {
     );
 
     if servers_table.contains_key("trurlic") {
-        eprintln!(
+        diag!(
             "warning: overwriting existing \"trurlic\" entry in {}",
             path.display()
         );
@@ -402,7 +403,7 @@ fn write_yaml_config(path: &Path, binary: &str) -> Result<()> {
 
     let trurlic_key = serde_yaml_ng::Value::String("trurlic".into());
     if servers.contains_key(&trurlic_key) {
-        eprintln!(
+        diag!(
             "warning: overwriting existing \"trurlic\" entry in {}",
             path.display()
         );
@@ -472,7 +473,7 @@ fn install_claude_code(binary: &Path, dry_run: DryRun) -> Result<()> {
     let bin_str = binary_as_str(binary)?;
 
     if dry_run == DryRun::Yes {
-        println!("claude mcp add trurlic -s user -- {bin_str} serve");
+        out!("claude mcp add trurlic -s user -- {bin_str} serve")?;
         return Ok(());
     }
 
@@ -497,7 +498,7 @@ fn install_claude_code(binary: &Path, dry_run: DryRun) -> Result<()> {
         return Err(Error::ClaudeCliExec(stderr.trim().to_string()));
     }
 
-    println!("Installed trurlic MCP server for Claude Code");
+    out!("Installed trurlic MCP server for Claude Code")?;
     Ok(())
 }
 

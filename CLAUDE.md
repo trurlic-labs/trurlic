@@ -6,7 +6,7 @@ Named after Trurl (Stanisław Lem, *The Cyberiad*) — the constructor who think
 
 ### Architecture
 
-Single crate, eight modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
+Single crate, nine modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
 
 ```
 store       → (no internal deps)         Decision graph: TOML files, graph index,
@@ -29,11 +29,13 @@ budget      → (no internal deps)          Fitting output into a byte budget: t
                                           the step prompt listings
 error       → (no internal deps)          The crate's single `Error` enum and
                                           `Result` alias
+console     → (no internal deps)          Terminal I/O: `out!` to stdout, `diag!`
+                                          to stderr, the confirmation prompt
 ```
 
-Every module uses `error`; the arrows leave it out.
+Every module uses `error` and `console`; the arrows leave them out.
 
-**store** is the foundation. It imports no other module except `error`. Every write goes through `Store` methods with `StoreLock` proof parameters.
+**store** is the foundation. It imports no other module except `error` and `console`. Every write goes through `Store` methods with `StoreLock` proof parameters.
 
 **workflow** is pure computation. It never touches the filesystem, never allocates beyond the response JSON. `advance()` is a deterministic function of graph state + inputs. Same inputs = same output, always.
 

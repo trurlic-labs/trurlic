@@ -14,6 +14,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 use serde_json::Value;
 
 use crate::Result;
+use crate::console::diag;
 use crate::store::{ProjectState, Store};
 
 use protocol::{INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Request};
@@ -35,11 +36,11 @@ pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()
     // Spawn file watcher. Non-fatal if unavailable (e.g. inotify limit).
     let _watcher = match watcher::spawn(server.store.root(), server.state.clone()) {
         Ok(guard) => {
-            eprintln!("trurlic: file watcher active");
+            diag!("trurlic: file watcher active");
             Some(guard)
         }
         Err(e) => {
-            eprintln!("trurlic: file watcher unavailable: {e}");
+            diag!("trurlic: file watcher unavailable: {e}");
             None
         }
     };
@@ -47,20 +48,20 @@ pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()
     let mut reader = io::stdin().lock();
     let mut writer = io::stdout().lock();
 
-    eprintln!("trurlic: MCP server ready");
+    diag!("trurlic: MCP server ready");
 
     loop {
         match server.serve_one(&mut reader, &mut writer) {
             Ok(true) => {}
             Ok(false) => break,
             Err(e) => {
-                eprintln!("trurlic: stdout write error: {e}");
+                diag!("trurlic: stdout write error: {e}");
                 break;
             }
         }
     }
 
-    eprintln!("trurlic: MCP server stopped");
+    diag!("trurlic: MCP server stopped");
     Ok(())
 }
 
@@ -209,7 +210,7 @@ fn handle_tools_call(
         Ok(call_write_tool(store, state, name, arguments))
     } else {
         let guard = state.read().unwrap_or_else(|poisoned| {
-            eprintln!("trurlic: recovered from poisoned state lock");
+            diag!("trurlic: recovered from poisoned state lock");
             poisoned.into_inner()
         });
         Ok(tools::call_read_tool(&guard, name, arguments))
@@ -228,7 +229,7 @@ fn call_write_tool(
 ) -> tools::ToolEnvelope {
     let take_state = || {
         state.write().unwrap_or_else(|poisoned| {
-            eprintln!("trurlic: recovered from poisoned state lock");
+            diag!("trurlic: recovered from poisoned state lock");
             poisoned.into_inner()
         })
     };

@@ -5,6 +5,7 @@ use std::path::Path;
 use chrono::Utc;
 
 use crate::Result;
+use crate::console::out;
 use crate::store::Store;
 
 /// Create a new `.trurlic/` directory in `cwd`.
@@ -15,7 +16,7 @@ pub fn init(cwd: &Path) -> Result<()> {
         .unwrap_or("my-project");
     Store::create(cwd, name, Utc::now())?;
     append_gitignore(cwd)?;
-    println!("Initialized .trurlic/");
+    out!("Initialized .trurlic/")?;
     Ok(())
 }
 

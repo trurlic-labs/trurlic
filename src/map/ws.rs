@@ -16,6 +16,7 @@ use tokio::sync::broadcast;
 
 use super::MapState;
 use super::diff::WsEvent;
+use crate::console::diag;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<Arc<st
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         // Client fell behind — send full_reload so it re-syncs.
-                        eprintln!("trurlic: ws client lagged {n} events, sending full_reload");
+                        diag!("trurlic: ws client lagged {n} events, sending full_reload");
                         let reload = r#"{"type":"full_reload"}"#;
                         if socket.send(Message::Text(reload.into())).await.is_err() {
                             return;

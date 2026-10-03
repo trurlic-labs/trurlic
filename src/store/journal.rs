@@ -17,6 +17,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::console::diag;
 use crate::{Error, Result};
 
 use super::commit::PendingWrite;
@@ -147,7 +148,7 @@ impl Store {
         // Not flushed: a journal that reappears after a power loss applies
         // again as a no-op.
         if let Err(e) = fs::remove_file(self.journal_path()) {
-            eprintln!(
+            diag!(
                 "warning: the commit is applied, but {} remains: {e}",
                 self.journal_path().display()
             );

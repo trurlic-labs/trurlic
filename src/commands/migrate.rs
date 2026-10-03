@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::fs;
 use std::path::Path;
 
+use crate::console::{diag, out};
 use crate::store::schema::{
     COMPONENTS_DIR, ComponentFile, DECISIONS_DIR, DecisionFile, EdgeEntry, FORMAT_VERSION,
     GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile,
@@ -27,7 +28,7 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
             )));
         }
         Ordering::Equal => {
-            println!("Already up to date (format version {FORMAT_VERSION}).");
+            out!("Already up to date (format version {FORMAT_VERSION}).")?;
             return Ok(());
         }
         Ordering::Less => {}
@@ -49,7 +50,7 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
         != Ordering::Less
     {
         drop(lock);
-        println!("Already up to date (format version {FORMAT_VERSION}).");
+        out!("Already up to date (format version {FORMAT_VERSION}).")?;
         return Ok(());
     }
 
@@ -73,9 +74,9 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     drop(lock);
 
     if stripped_edges > 0 {
-        println!("Removed {stripped_edges} graph edge(s) not recognized by the current schema.");
+        out!("Removed {stripped_edges} graph edge(s) not recognized by the current schema.")?;
     }
-    println!("Migrated from {old_version} \u{2192} {FORMAT_VERSION}, backup at {backup_name}/");
+    out!("Migrated from {old_version} \u{2192} {FORMAT_VERSION}, backup at {backup_name}/")?;
     Ok(())
 }
 
@@ -202,8 +203,8 @@ where
 }
 
 fn print_dry_run(root: &Path, old_version: &str) -> Result<()> {
-    println!("Dry run: would migrate from {old_version} \u{2192} {FORMAT_VERSION}");
-    println!();
+    out!("Dry run: would migrate from {old_version} \u{2192} {FORMAT_VERSION}")?;
+    out!()?;
 
     let mut count = 0;
 
@@ -213,7 +214,7 @@ fn print_dry_run(root: &Path, old_version: &str) -> Result<()> {
     project.trurlic_version = FORMAT_VERSION.into();
     let new_content = toml::to_string_pretty(&project)?;
     if content != new_content {
-        println!("  would update: project.toml");
+        out!("  would update: project.toml")?;
         count += 1;
     }
 
@@ -232,19 +233,19 @@ fn print_dry_run(root: &Path, old_version: &str) -> Result<()> {
         // graph.toml is rewritten whenever a node file changed (hash refresh) or
         // a retired edge is stripped.
         if retired > 0 {
-            println!("  would strip {retired} retired graph edge(s) and rewrite: {GRAPH_FILE}");
+            out!("  would strip {retired} retired graph edge(s) and rewrite: {GRAPH_FILE}")?;
             count += 1;
         } else if node_changes > 0 {
-            println!("  would update: {GRAPH_FILE}");
+            out!("  would update: {GRAPH_FILE}")?;
             count += 1;
         }
     }
 
     if count == 0 {
-        println!("  no files would change (aside from version bump)");
+        out!("  no files would change (aside from version bump)")?;
     } else {
-        println!();
-        println!("{count} file(s) would be updated.");
+        out!()?;
+        out!("{count} file(s) would be updated.")?;
     }
 
     Ok(())
@@ -273,7 +274,7 @@ where
         let new_content = toml::to_string_pretty(&value)?;
         if content != new_content {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            println!("  would update: {subdir}/{name}");
+            out!("  would update: {subdir}/{name}")?;
             count += 1;
         }
     }
@@ -290,8 +291,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         if ft.is_symlink() {
             // Skip symlinks rather than follow them out of the store tree; warn
             // so an incomplete backup is never silent.
-            eprintln!(
-                "warning: backup skipped symlink {} — copy its target manually if needed",
+            diag!(
+                "warning: backup skipped symlink {} \u{2014} copy its target manually if needed",
                 src_path.display()
             );
             continue;

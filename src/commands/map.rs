@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::Result;
+use crate::console::{diag, out};
 use crate::store::STATE_DIR;
 use crate::store::graph::Severity;
 
@@ -26,10 +27,10 @@ pub fn map(cwd: &Path, port: Option<u16>, no_open: bool, detach: bool) -> Result
         .filter(|i| i.severity() == Severity::Error)
         .count();
     if errors > 0 {
-        eprintln!("warning: .trurlic/ has {errors} consistency issue(s) — run `trurlic check`");
+        diag!("warning: .trurlic/ has {errors} consistency issue(s) \u{2014} run `trurlic check`");
     }
 
-    eprintln!(
+    diag!(
         "trurlic: map for {} ({} components, {} decisions, {} patterns)",
         state.project.project.name,
         state.components.len(),
@@ -101,9 +102,9 @@ fn detach_server(store: &crate::store::Store, port: Option<u16>) -> Result<()> {
         std::thread::sleep(Duration::from_millis(50));
     };
 
-    println!("{url}");
-    println!("pid: {}", child.id());
-    println!("log: {}", log_path.display());
+    out!("{url}")?;
+    out!("pid: {}", child.id())?;
+    out!("log: {}", log_path.display())?;
 
     // Intentionally leak the Child handle so the child process is not
     // waited on (and therefore not killed) when the parent exits.

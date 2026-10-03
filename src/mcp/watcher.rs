@@ -9,6 +9,7 @@
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
+use crate::console::diag;
 use crate::store::ProjectState;
 use crate::store::graph::Severity;
 
@@ -49,7 +50,7 @@ pub(crate) fn spawn(
                 .count();
 
             let mut current = state.write().unwrap_or_else(|poisoned| {
-                eprintln!("trurlic: recovered from poisoned state lock");
+                diag!("trurlic: recovered from poisoned state lock");
                 poisoned.into_inner()
             });
             if loaded.is_overtaken(&current, served_at_load) {
@@ -59,7 +60,7 @@ pub(crate) fn spawn(
             drop(current);
 
             if errors > 0 {
-                eprintln!("trurlic: reloaded state ({errors} consistency issue(s))");
+                diag!("trurlic: reloaded state ({errors} consistency issue(s))");
             }
         },
     )
