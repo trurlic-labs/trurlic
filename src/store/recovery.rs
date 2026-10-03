@@ -11,6 +11,7 @@ use std::fs;
 use std::io::ErrorKind;
 
 use crate::Result;
+use crate::console::diag;
 
 use super::{Store, StoreLock};
 
@@ -19,11 +20,11 @@ impl Store {
     /// files left behind.
     pub(crate) fn recover(&self, lock: &StoreLock) -> Result<()> {
         if self.replay_journal(lock)? {
-            eprintln!("warning: applied a commit an interrupted write left unfinished");
+            diag!("warning: applied a commit an interrupted write left unfinished");
         }
         let removed = self.remove_temps()?;
         if removed > 0 {
-            eprintln!("warning: removed {removed} temp file(s) left by an interrupted write");
+            diag!("warning: removed {removed} temp file(s) left by an interrupted write");
         }
         Ok(())
     }

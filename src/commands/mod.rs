@@ -27,6 +27,7 @@ pub use serve::serve;
 use std::path::Path;
 
 use crate::Result;
+use crate::console::diag;
 use crate::store::{self, ProjectState, Store};
 
 /// Whether a mutating command should preview its plan or actually write.
@@ -55,8 +56,8 @@ fn warn_on_issues(state: &ProjectState) {
         .filter(|i| i.severity() == crate::store::graph::Severity::Error)
         .count();
     if errors > 0 {
-        eprintln!(
-            "warning: .trurlic/ has {errors} consistency issue(s) — run `trurlic check` for details"
+        diag!(
+            "warning: .trurlic/ has {errors} consistency issue(s) \u{2014} run `trurlic check` for details"
         );
     }
 }

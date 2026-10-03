@@ -26,6 +26,7 @@ use axum::routing::{delete, get, post, put};
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
+use crate::console::diag;
 use crate::store::watcher::WatcherGuard;
 use crate::store::{ProjectState, Store, StoreLock};
 
@@ -175,14 +176,14 @@ pub(crate) async fn start(
         .layer(CorsLayer::new()); // Deny all cross-origin requests (spec: §Security).
 
     let url = format!("http://{local_addr}/?token={token}");
-    eprintln!("trurlic: map → {url}");
+    diag!("trurlic: map \u{2192} {url}");
 
     // Start file watcher.
     let _watcher_guard = spawn_watcher(map_state.clone());
 
     // Open browser.
     if !no_open && let Err(e) = opener::open(&url) {
-        eprintln!("trurlic: failed to open browser: {e}");
+        diag!("trurlic: failed to open browser: {e}");
     }
 
     // Run until Ctrl+C.
@@ -191,13 +192,13 @@ pub(crate) async fn start(
         .await
         .map_err(crate::Error::Io)?;
 
-    eprintln!("trurlic: map server stopped");
+    diag!("trurlic: map server stopped");
     Ok(())
 }
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
-    eprintln!("\ntrurlic: shutting down...");
+    diag!("\ntrurlic: shutting down...");
 }
 
 // ── File watcher ───────────────────────────────────────────────────────────
@@ -231,11 +232,11 @@ fn spawn_watcher(state: Arc<MapState>) -> Option<WatcherGuard> {
         },
     ) {
         Ok(guard) => {
-            eprintln!("trurlic: file watcher active");
+            diag!("trurlic: file watcher active");
             Some(guard)
         }
         Err(e) => {
-            eprintln!("trurlic: file watcher unavailable: {e}");
+            diag!("trurlic: file watcher unavailable: {e}");
             None
         }
     }

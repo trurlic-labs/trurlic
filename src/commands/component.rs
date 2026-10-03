@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::console::{diag, out};
 use crate::{Error, Result};
 
 use super::open_store_mut;
@@ -8,7 +9,7 @@ use super::open_store_mut;
 pub fn add_component(cwd: &Path, name: &str, description: Option<&str>) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.add_component(&lock, &mut state, name, description.unwrap_or_default())?;
-    println!("Added component `{name}`");
+    out!("Added component `{name}`")?;
     Ok(())
 }
 
@@ -16,7 +17,7 @@ pub fn add_component(cwd: &Path, name: &str, description: Option<&str>) -> Resul
 pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.add_connection(&lock, &mut state, from, to)?;
-    println!("Connected `{from}` → `{to}`");
+    out!("Connected `{from}` \u{2192} `{to}`")?;
     Ok(())
 }
 
@@ -24,7 +25,7 @@ pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
 pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.rename_component(&lock, &mut state, old, new)?;
-    println!("Renamed component `{old}` → `{new}`");
+    out!("Renamed component `{old}` \u{2192} `{new}`")?;
     Ok(())
 }
 
@@ -39,11 +40,11 @@ pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
         return Err(Error::CascadeBlocked(cascade.blocker_summary()));
     }
     for w in &cascade.warnings {
-        eprintln!("warning: {}", w.message);
+        diag!("warning: {}", w.message);
     }
 
     store.remove_component(&lock, &mut state, name)?;
-    println!("Removed component `{name}`");
+    out!("Removed component `{name}`")?;
     Ok(())
 }
 
@@ -51,7 +52,7 @@ pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
 pub fn remove_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
     store.remove_connection(&lock, &mut state, from, to)?;
-    println!("Disconnected `{from}` → `{to}`");
+    out!("Disconnected `{from}` \u{2192} `{to}`")?;
     Ok(())
 }
 

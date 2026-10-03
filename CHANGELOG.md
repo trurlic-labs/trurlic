@@ -9,6 +9,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **A command whose output pipe closes fails instead of aborting.** CLI output went through `println!`, which panics when stdout is closed, and release builds abort on a panic: `trurlic status | head -0` died with SIGABRT. Output now goes through one writer that returns the error, and the command exits with status 1 and `error: I/O error: Broken pipe`.
+
 ## [0.3.2] — 2026-10-03
 
 ### Fixed

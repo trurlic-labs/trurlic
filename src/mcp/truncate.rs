@@ -18,6 +18,7 @@ use std::io;
 use serde_json::{Map, Value, json};
 
 use crate::budget::{self, Shrinkable};
+use crate::console::diag;
 
 /// The root key that lists the cuts. No tool payload uses it.
 const NOTICE_KEY: &str = "truncated";
@@ -54,7 +55,7 @@ pub(crate) fn fit_payload(payload: &Value, max_bytes: usize) -> String {
         Some(cut) if cut.len() <= max_bytes => cut,
         cut => {
             if let Some(cut) = cut {
-                eprintln!(
+                diag!(
                     "trurlic: a cut tool result took {} of {max_bytes} bytes; sent as omitted",
                     cut.len()
                 );

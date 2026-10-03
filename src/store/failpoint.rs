@@ -14,6 +14,9 @@
 //! it creates `<file>` and waits until the test deletes it, which lets a
 //! test act while the process holds whatever lock the site runs under.
 
+#[cfg(feature = "failpoints")]
+use crate::console::diag;
+
 /// A point in the store's lock-holding paths where a test may abort,
 /// pause or fail the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +84,7 @@ fn reached(site: Site) -> Option<u64> {
         let spec = std::env::var("TRURLIC_FAILPOINT").ok()?;
         let parsed = parse_spec(&spec);
         if parsed.is_none() {
-            eprintln!("trurlic: ignoring malformed TRURLIC_FAILPOINT={spec:?}");
+            diag!("trurlic: ignoring malformed TRURLIC_FAILPOINT={spec:?}");
         }
         parsed
     });
@@ -98,7 +101,7 @@ pub(crate) fn hit(site: Site) {
     match std::env::var_os("TRURLIC_FAILPOINT_PAUSE") {
         Some(marker) => pause(site, n, std::path::Path::new(&marker)),
         None => {
-            eprintln!("trurlic: failpoint {}:{n} hit, aborting", site.as_str());
+            diag!("trurlic: failpoint {}:{n} hit, aborting", site.as_str());
             std::process::abort();
         }
     }
@@ -108,9 +111,9 @@ pub(crate) fn hit(site: Site) {
 /// created aborts, so the test fails instead of waiting for it forever.
 #[cfg(feature = "failpoints")]
 fn pause(site: Site, n: u64, marker: &std::path::Path) {
-    eprintln!("trurlic: failpoint {}:{n} hit, pausing", site.as_str());
+    diag!("trurlic: failpoint {}:{n} hit, pausing", site.as_str());
     if let Err(e) = std::fs::write(marker, b"") {
-        eprintln!("trurlic: cannot create {}: {e}", marker.display());
+        diag!("trurlic: cannot create {}: {e}", marker.display());
         std::process::abort();
     }
     while marker.exists() {
@@ -123,7 +126,7 @@ fn pause(site: Site, n: u64, marker: &std::path::Path) {
 pub(crate) fn fail(site: Site) -> std::io::Result<()> {
     match reached(site) {
         Some(n) => {
-            eprintln!("trurlic: failpoint {}:{n} hit, failing", site.as_str());
+            diag!("trurlic: failpoint {}:{n} hit, failing", site.as_str());
             Err(std::io::Error::other(format!(
                 "injected failure at {}:{n}",
                 site.as_str()

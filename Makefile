@@ -1,5 +1,5 @@
 .PHONY: install build build-debug build-release build-frontend install-frontend \
-       test test-frontend check check-frontend \
+       test test-frontend bench check check-frontend \
        fmt fmt-frontend audit audit-js ci setup clean
 
 FRONTEND_DIR = src/map/frontend
@@ -63,13 +63,20 @@ fmt:
 check:
 	cargo fmt --all -- --check
 	cargo clippy --locked --workspace --all-targets -- -D warnings
-	cargo clippy --locked --workspace --all-targets --features failpoints -- -D warnings
+	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 # `failpoints` arms the crash sites in src/store/failpoint.rs; tests only.
 test:
 	cargo test --workspace --locked --features failpoints
+
+# ── Bench ─────────────────────────────────────────────────────────────────────
+
+# `bench` builds the seeded corpus and the in-process server the benches
+# drive; without it, `cargo bench` has no bench target to run.
+bench:
+	cargo bench --locked --features bench
 
 # ── Audit ─────────────────────────────────────────────────────────────────────
 # Rust:       requires `cargo install cargo-deny`

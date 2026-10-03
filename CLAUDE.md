@@ -6,7 +6,7 @@ Named after Trurl (Stanisław Lem, *The Cyberiad*) — the constructor who think
 
 ### Architecture
 
-Single crate, eight modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
+Single crate, nine modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
 
 ```
 store       → (no internal deps)         Decision graph: TOML files, graph index,
@@ -29,11 +29,13 @@ budget      → (no internal deps)          Fitting output into a byte budget: t
                                           the step prompt listings
 error       → (no internal deps)          The crate's single `Error` enum and
                                           `Result` alias
+console     → (no internal deps)          Terminal I/O: `out!` to stdout, `diag!`
+                                          to stderr, the confirmation prompt
 ```
 
-Every module uses `error`; the arrows leave it out.
+Every module uses `error` and `console`; the arrows leave them out.
 
-**store** is the foundation. It imports no other module except `error`. Every write goes through `Store` methods with `StoreLock` proof parameters.
+**store** is the foundation. It imports no other module except `error` and `console`. Every write goes through `Store` methods with `StoreLock` proof parameters.
 
 **workflow** is pure computation. It never touches the filesystem, never allocates beyond the response JSON. `advance()` is a deterministic function of graph state + inputs. Same inputs = same output, always.
 
@@ -73,8 +75,8 @@ Step prompts: transport-agnostic instructions generated from graph state and ser
 
 ### Key Invariants
 
-1. `unsafe` is denied (`[lints.rust] unsafe_code = "deny"` in Cargo.toml)
-2. `unwrap()` and `expect()` denied outside `#[cfg(test)]` (`#![cfg_attr(not(test), deny(...))]`)
+1. `unsafe` is forbidden (`[lints.rust] unsafe_code = "forbid"` in Cargo.toml): no `#[expect]` can lift it.
+2. Invariants a tool can check are lints, in Cargo.toml's `[lints]` and `clippy.toml`, and `tests/lints.rs` proves each refuses a seeded violation: no `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!` or `dbg!` outside tests; no `HashMap`/`HashSet`; stdout and stderr only through `console` (and the MCP transport, which owns stdout under `serve`). An exception is an `#[expect(lint, reason = "...")]` at its site; `#[allow]` is refused.
 3. Every graph mutation validates the full graph before touching disk. A write that adds an error is refused, never silently committed; an error the graph already had, matched on kind and subject, does not block it.
 4. Atomic commits: round-trip in memory → flushed temp files → flushed journal (the commit point) → renames, `graph.toml` last → directory flushes. Recovery rolls a journal forward under the exclusive lock.
 5. File locking prevents concurrent mutations from CLI + MCP + map.
@@ -138,7 +140,7 @@ Property: determinism (same graph state → same advance result; every read tool
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 
-Benchmarks (criterion + codspeed): `Store::load_state()` vs graph size.
+Benchmarks (`benches/corpus.rs`, criterion + CodSpeed, `make bench`): over the seeded corpus `store::corpus` at 50, 600 and 2000 decisions, `load_state`, graph build and validation, `record_decision` end to end, `advance` per task type and every read tool, the last three through `trurlic::bench::Server` in process. The `bench` feature builds the corpus and that server; release builds carry neither.
 
 ### Skills
 

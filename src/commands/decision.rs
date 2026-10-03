@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::console::{diag, out};
 use crate::store::schema::{Attribution, CodeRef, DecisionFile};
 use crate::store::{self, RecordDecisionParams};
 use crate::workflow::concerns;
@@ -64,7 +65,7 @@ pub fn decide(
         },
     )?;
 
-    println!("Recorded decision `{stem}`");
+    out!("Recorded decision `{stem}`")?;
     Ok(())
 }
 
@@ -97,7 +98,7 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
         .collect();
 
     if candidates.is_empty() {
-        println!("No agent decisions in [{component}] to remove.");
+        out!("No agent decisions in [{component}] to remove.")?;
         return Ok(());
     }
 
@@ -132,7 +133,7 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
 
     let count = names.len();
     let plural = if count == 1 { "" } else { "s" };
-    println!("Removed {count} agent decision{plural} from [{component}]");
+    out!("Removed {count} agent decision{plural} from [{component}]")?;
 
     let remaining = state.graph().coverage_baseline(component);
     let mut lost: Vec<&'static str> = Vec::new();
@@ -144,7 +145,7 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
         }
     }
     if !lost.is_empty() {
-        println!("⚠ [{component}] lost coverage: {}", lost.join(", "));
+        out!("\u{26a0} [{component}] lost coverage: {}", lost.join(", "))?;
     }
 
     Ok(())
@@ -161,7 +162,7 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
         return Err(Error::CascadeBlocked(cascade.blocker_summary()));
     }
     for w in &cascade.warnings {
-        eprintln!("warning: {}", w.message);
+        diag!("warning: {}", w.message);
     }
 
     // Capture the decision before removal so its lost concern coverage can be
@@ -169,14 +170,14 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
     let removed = state.decisions.get(name).map(Arc::clone);
 
     store.remove_decision(&lock, &mut state, name)?;
-    println!("Removed decision `{name}`");
+    out!("Removed decision `{name}`")?;
 
     if let Some(removed) = removed {
         let component = &removed.decision.component;
         let remaining = state.graph().coverage_baseline(component);
         let lost = concerns::coverage_lost(&removed, &remaining);
         if !lost.is_empty() {
-            println!("⚠ [{component}] lost coverage: {}", lost.join(", "));
+            out!("\u{26a0} [{component}] lost coverage: {}", lost.join(", "))?;
         }
     }
 

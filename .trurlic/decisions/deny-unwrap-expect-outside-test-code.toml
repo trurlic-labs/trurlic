@@ -1,7 +1,7 @@
 [decision]
 component = "project"
-choice = "Deny unwrap/expect outside test code"
-reason = "Panics in production are unrecoverable. lib.rs uses #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))] and main.rs uses #![deny(clippy::unwrap_used, clippy::expect_used)]. All fallible operations must return Result. Tests are exempted because panics are the natural assertion mechanism there."
+choice = "Deny unwrap, expect, panic, todo, unimplemented and dbg outside tests through Cargo lints"
+reason = "Panics in production are unrecoverable, and the release profile aborts on one. Cargo.toml's [lints.clippy] denies unwrap_used, expect_used, panic, todo, unimplemented and dbg_macro in every target; clippy.toml's allow-unwrap-in-tests, allow-expect-in-tests and allow-panic-in-tests exempt #[test] bodies and #[cfg(test)] items, where a panic is the assertion. The integration test crate and the bench carry one crate-level #[expect] each for their setup helpers, which clippy does not count as tests. An exception elsewhere is #[expect(lint, reason)] at its site: allow_attributes and allow_attributes_without_reason are denied, so no #[allow] lands and an expectation fails once it stops applying. tests/lints.rs proves each lint refuses a seeded violation."
 alternatives = [
     "Allow unwrap/expect everywhere and rely on code review — rejected because human review is unreliable for this class of bug",
     "Forbid unwrap/expect even in tests — rejected because test panics are idiomatic Rust and .unwrap() in tests is clearer than propagating errors",
@@ -12,3 +12,17 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:47:19.603880721Z"
+
+[[decision.code_refs]]
+file = "Cargo.toml"
+
+[[decision.code_refs]]
+file = "clippy.toml"
+
+[[decision.code_refs]]
+file = "tests/lints.rs"
+
+[[decision.history]]
+choice = "Deny unwrap/expect outside test code"
+reason = "Panics in production are unrecoverable. lib.rs uses #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))] and main.rs uses #![deny(clippy::unwrap_used, clippy::expect_used)]. All fallible operations must return Result. Tests are exempted because panics are the natural assertion mechanism there."
+changed_at = "2026-10-03T13:54:57.122017508Z"

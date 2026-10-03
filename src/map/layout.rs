@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::console::diag;
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +53,7 @@ pub(crate) fn load(store_root: &Path) -> LayoutState {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(e) if e.kind() == ErrorKind::NotFound => LayoutState::default(),
         Err(e) => {
-            eprintln!("trurlic: failed to read layout.json: {e}");
+            diag!("trurlic: failed to read layout.json: {e}");
             LayoutState::default()
         }
     }

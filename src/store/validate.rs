@@ -6,7 +6,7 @@
 //! rule every write commits under: a write may keep an error the graph
 //! already had, never add one.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use super::graph::{Edge, InMemoryGraph, Issue, IssueKind, Severity};
 use super::schema::{EdgeKind, NodeKind};
@@ -138,12 +138,14 @@ impl InMemoryGraph {
         }
     }
 
-    /// No two edges share source, target and kind.
+    /// No two edges share source, target and kind. Edges are grouped by
+    /// source, so a duplicate sits in the same list as the edge it repeats.
     fn check_duplicate_edges(&self, issues: &mut Vec<Issue>) {
-        let mut seen: HashSet<(&str, &str, EdgeKind)> = HashSet::new();
         for (from, edge_list) in &self.forward {
-            for edge in edge_list {
-                if !seen.insert((from, &edge.target, edge.kind)) {
+            let mut edges: Vec<&Edge> = edge_list.iter().collect();
+            edges.sort_unstable_by(|a, b| (&a.target, a.kind).cmp(&(&b.target, b.kind)));
+            for (earlier, edge) in edges.iter().zip(edges.iter().skip(1)) {
+                if (&earlier.target, earlier.kind) == (&edge.target, edge.kind) {
                     issues.push(Issue {
                         kind: IssueKind::DuplicateEdge,
                         subject: edge_subject(from, edge),
