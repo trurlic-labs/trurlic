@@ -10,6 +10,10 @@ use crate::{Error, Result};
 
 use super::DryRun;
 
+mod error;
+
+pub(crate) use error::InstallError;
+
 pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> Result<()> {
     let binary = resolve_binary(binary_path)?;
 
@@ -57,18 +61,18 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> 
 fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf> {
     let path = match explicit {
         Some(p) => p.to_path_buf(),
-        None => std::env::current_exe().map_err(|_| Error::BinaryNotFound)?,
+        None => std::env::current_exe().map_err(|_| InstallError::BinaryNotFound)?,
     };
     if !path.is_file() {
-        return Err(Error::BinaryNotFound);
+        return Err(InstallError::BinaryNotFound.into());
     }
-    fs::canonicalize(&path).map_err(|_| Error::BinaryNotFound)
+    Ok(fs::canonicalize(&path).map_err(|_| InstallError::BinaryNotFound)?)
 }
 
 fn binary_as_str(binary: &Path) -> Result<&str> {
     binary
         .to_str()
-        .ok_or_else(|| Error::InvalidBinaryPath(binary.to_path_buf()))
+        .ok_or_else(|| InstallError::InvalidBinaryPath(binary.to_path_buf()).into())
 }
 
 fn build_server_entry(binary: &str) -> Value {
@@ -83,18 +87,18 @@ fn home_dir() -> Result<PathBuf> {
     {
         std::env::var("HOME")
             .map(PathBuf::from)
-            .map_err(|_| Error::HomeNotFound)
+            .map_err(|_| InstallError::HomeNotFound.into())
     }
     #[cfg(windows)]
     {
         std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .map(PathBuf::from)
-            .map_err(|_| Error::HomeNotFound)
+            .map_err(|_| InstallError::HomeNotFound.into())
     }
     #[cfg(not(any(unix, windows)))]
     {
-        Err(Error::HomeNotFound)
+        Err(InstallError::HomeNotFound.into())
     }
 }
 
@@ -230,10 +234,7 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
 
     let readback = fs::read_to_string(tmp.path()).map_err(Error::Io)?;
     if readback != content {
-        return Err(Error::InvalidInstallConfig {
-            path: path.to_path_buf(),
-            detail: "round-trip verification failed: written content differs".into(),
-        });
+        return Err(InstallError::RoundTrip(path.to_path_buf()).into());
     }
     tmp.persist(path).map_err(|e| Error::Io(e.error))?;
     Ok(())
@@ -244,9 +245,12 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
 fn read_or_empty_json(path: &Path) -> Result<Value> {
     match fs::read_to_string(path) {
         Ok(s) if s.trim().is_empty() => Ok(Value::Object(serde_json::Map::new())),
-        Ok(s) => serde_json::from_str(&s).map_err(|e| Error::InvalidInstallConfig {
-            path: path.to_path_buf(),
-            detail: e.to_string(),
+        Ok(s) => serde_json::from_str(&s).map_err(|e| {
+            InstallError::InvalidJson {
+                path: path.to_path_buf(),
+                detail: e.to_string(),
+            }
+            .into()
         }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             Ok(Value::Object(serde_json::Map::new()))
@@ -259,7 +263,7 @@ fn write_json_with_key(path: &Path, key: &str, entry: &Value) -> Result<()> {
     let mut root = read_or_empty_json(path)?;
     let obj = root
         .as_object_mut()
-        .ok_or_else(|| Error::InvalidInstallStructure {
+        .ok_or_else(|| InstallError::UnexpectedStructure {
             path: path.to_path_buf(),
             detail: "root is not a JSON object".into(),
         })?;
@@ -269,7 +273,7 @@ fn write_json_with_key(path: &Path, key: &str, entry: &Value) -> Result<()> {
         .or_insert_with(|| Value::Object(serde_json::Map::new()));
     let servers_obj = servers
         .as_object_mut()
-        .ok_or_else(|| Error::InvalidInstallStructure {
+        .ok_or_else(|| InstallError::UnexpectedStructure {
             path: path.to_path_buf(),
             detail: format!("`{key}` is not a JSON object"),
         })?;
@@ -282,7 +286,7 @@ fn write_json_with_key(path: &Path, key: &str, entry: &Value) -> Result<()> {
     }
     servers_obj.insert("trurlic".into(), entry.clone());
 
-    let out = serde_json::to_string_pretty(&root).map_err(|e| Error::InvalidInstallConfig {
+    let out = serde_json::to_string_pretty(&root).map_err(|e| InstallError::InvalidJson {
         path: path.to_path_buf(),
         detail: e.to_string(),
     })?;
@@ -316,14 +320,14 @@ fn write_toml_config(path: &Path, binary: &str) -> Result<()> {
     };
 
     let mut table: toml::Value =
-        toml::from_str(&content).map_err(|e| Error::InvalidInstallToml {
+        toml::from_str(&content).map_err(|e| InstallError::InvalidToml {
             path: path.to_path_buf(),
             detail: e.to_string(),
         })?;
 
     let root = table
         .as_table_mut()
-        .ok_or_else(|| Error::InvalidInstallStructure {
+        .ok_or_else(|| InstallError::UnexpectedStructure {
             path: path.to_path_buf(),
             detail: "root is not a TOML table".into(),
         })?;
@@ -331,12 +335,13 @@ fn write_toml_config(path: &Path, binary: &str) -> Result<()> {
     let servers = root
         .entry("mcp_servers")
         .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    let servers_table = servers
-        .as_table_mut()
-        .ok_or_else(|| Error::InvalidInstallStructure {
-            path: path.to_path_buf(),
-            detail: "`mcp_servers` is not a TOML table".into(),
-        })?;
+    let servers_table =
+        servers
+            .as_table_mut()
+            .ok_or_else(|| InstallError::UnexpectedStructure {
+                path: path.to_path_buf(),
+                detail: "`mcp_servers` is not a TOML table".into(),
+            })?;
 
     let mut trurlic = toml::map::Map::new();
     trurlic.insert("command".into(), toml::Value::String(binary.to_string()));
@@ -353,7 +358,7 @@ fn write_toml_config(path: &Path, binary: &str) -> Result<()> {
     }
     servers_table.insert("trurlic".into(), toml::Value::Table(trurlic));
 
-    let out = toml::to_string_pretty(&table).map_err(|e| Error::InvalidInstallToml {
+    let out = toml::to_string_pretty(&table).map_err(|e| InstallError::InvalidToml {
         path: path.to_path_buf(),
         detail: e.to_string(),
     })?;
@@ -373,7 +378,7 @@ fn write_yaml_config(path: &Path, binary: &str) -> Result<()> {
     let mut root: serde_yaml_ng::Value = if content.is_empty() {
         serde_yaml_ng::Value::Mapping(serde_yaml_ng::Mapping::new())
     } else {
-        serde_yaml_ng::from_str(&content).map_err(|e| Error::InvalidInstallYaml {
+        serde_yaml_ng::from_str(&content).map_err(|e| InstallError::InvalidYaml {
             path: path.to_path_buf(),
             detail: e.to_string(),
         })?
@@ -381,7 +386,7 @@ fn write_yaml_config(path: &Path, binary: &str) -> Result<()> {
 
     let root_map = root
         .as_mapping_mut()
-        .ok_or_else(|| Error::InvalidInstallStructure {
+        .ok_or_else(|| InstallError::UnexpectedStructure {
             path: path.to_path_buf(),
             detail: "root is not a YAML mapping".into(),
         })?;
@@ -396,7 +401,7 @@ fn write_yaml_config(path: &Path, binary: &str) -> Result<()> {
     let servers = root_map
         .get_mut(&servers_key)
         .and_then(|v| v.as_mapping_mut())
-        .ok_or_else(|| Error::InvalidInstallStructure {
+        .ok_or_else(|| InstallError::UnexpectedStructure {
             path: path.to_path_buf(),
             detail: "`mcp_servers` is not a YAML mapping".into(),
         })?;
@@ -420,7 +425,7 @@ fn write_yaml_config(path: &Path, binary: &str) -> Result<()> {
     );
     servers.insert(trurlic_key, serde_yaml_ng::Value::Mapping(entry));
 
-    let out = serde_yaml_ng::to_string(&root).map_err(|e| Error::InvalidInstallYaml {
+    let out = serde_yaml_ng::to_string(&root).map_err(|e| InstallError::InvalidYaml {
         path: path.to_path_buf(),
         detail: e.to_string(),
     })?;
@@ -443,7 +448,7 @@ fn find_claude_cli() -> Result<PathBuf> {
             return Ok(c.clone());
         }
     }
-    Err(Error::ClaudeCliNotFound)
+    Err(InstallError::ClaudeCliNotFound.into())
 }
 
 fn which(name: &str) -> std::result::Result<PathBuf, ()> {
@@ -491,11 +496,11 @@ fn install_claude_code(binary: &Path, dry_run: DryRun) -> Result<()> {
             "mcp", "add", "trurlic", "-s", "user", "--", bin_str, "serve",
         ])
         .output()
-        .map_err(|e| Error::ClaudeCliExec(e.to_string()))?;
+        .map_err(|e| InstallError::ClaudeCliExec(e.to_string()))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::ClaudeCliExec(stderr.trim().to_string()));
+        return Err(InstallError::ClaudeCliExec(stderr.trim().to_string()).into());
     }
 
     out!("Installed trurlic MCP server for Claude Code")?;
@@ -613,7 +618,10 @@ mod tests {
 
         let entry = build_server_entry("/bin/trurlic");
         let err = write_json_mcp_servers(&path, &entry).unwrap_err();
-        assert!(matches!(err, Error::InvalidInstallConfig { .. }));
+        assert!(matches!(
+            err,
+            Error::Install(InstallError::InvalidJson { .. })
+        ));
     }
 
     #[test]
@@ -624,7 +632,10 @@ mod tests {
 
         let entry = build_server_entry("/bin/trurlic");
         let err = write_json_mcp_servers(&path, &entry).unwrap_err();
-        assert!(matches!(err, Error::InvalidInstallStructure { .. }));
+        assert!(matches!(
+            err,
+            Error::Install(InstallError::UnexpectedStructure { .. })
+        ));
     }
 
     // ── JSON servers writer (Copilot) ────────────────────────────────────────
@@ -744,7 +755,10 @@ mod tests {
         fs::write(&path, "not valid toml [[[").unwrap();
 
         let err = write_toml_config(&path, "/bin/trurlic").unwrap_err();
-        assert!(matches!(err, Error::InvalidInstallToml { .. }));
+        assert!(matches!(
+            err,
+            Error::Install(InstallError::InvalidToml { .. })
+        ));
     }
 
     // ── YAML writer (Hermes) ─────────────────────────────────────────────────
@@ -810,7 +824,10 @@ mod tests {
         fs::write(&path, ":\n  - :\n    bad: [").unwrap();
 
         let err = write_yaml_config(&path, "/bin/trurlic").unwrap_err();
-        assert!(matches!(err, Error::InvalidInstallYaml { .. }));
+        assert!(matches!(
+            err,
+            Error::Install(InstallError::InvalidYaml { .. })
+        ));
     }
 
     // ── Config paths ─────────────────────────────────────────────────────────
@@ -839,7 +856,7 @@ mod tests {
     #[test]
     fn resolve_binary_rejects_nonexistent() {
         let err = resolve_binary(Some(Path::new("/nonexistent/trurlic"))).unwrap_err();
-        assert!(matches!(err, Error::BinaryNotFound));
+        assert!(matches!(err, Error::Install(InstallError::BinaryNotFound)));
     }
 
     #[test]
@@ -922,7 +939,10 @@ mod tests {
 
         let entry = build_server_entry("/bin/trurlic");
         let err = write_json_mcp_servers(&path, &entry).unwrap_err();
-        assert!(matches!(err, Error::InvalidInstallStructure { .. }));
+        assert!(matches!(
+            err,
+            Error::Install(InstallError::UnexpectedStructure { .. })
+        ));
     }
 
     #[test]
@@ -932,7 +952,10 @@ mod tests {
         fs::write(&path, "- item1\n- item2\n").unwrap();
 
         let err = write_yaml_config(&path, "/bin/trurlic").unwrap_err();
-        assert!(matches!(err, Error::InvalidInstallStructure { .. }));
+        assert!(matches!(
+            err,
+            Error::Install(InstallError::UnexpectedStructure { .. })
+        ));
     }
 
     #[test]

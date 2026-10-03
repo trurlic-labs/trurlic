@@ -17,6 +17,7 @@ pub use decision::{decide, remove_agent_decisions, remove_decision};
 pub(crate) use gc::{AggressiveConfirm, resolve_aggressive_confirm};
 pub use gc::{GcExecution, GcScope, gc};
 pub use init::init;
+pub(crate) use install::InstallError;
 pub use install::install;
 pub use map::map;
 pub use migrate::migrate;

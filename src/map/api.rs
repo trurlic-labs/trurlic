@@ -125,15 +125,7 @@ fn error_status(err: &crate::Error) -> StatusCode {
         | Error::TomlWrite(_)
         | Error::StoreExists(_)
         | Error::CheckFailed(_)
-        | Error::HomeNotFound
-        | Error::BinaryNotFound
-        | Error::InvalidInstallConfig { .. }
-        | Error::InvalidInstallStructure { .. }
-        | Error::InvalidBinaryPath(_)
-        | Error::InvalidInstallToml { .. }
-        | Error::InvalidInstallYaml { .. }
-        | Error::ClaudeCliNotFound
-        | Error::ClaudeCliExec(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        | Error::Install(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 

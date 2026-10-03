@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::commands::InstallError;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -86,30 +88,6 @@ pub enum Error {
     #[error("operation blocked by cascade rule: {0}")]
     CascadeBlocked(String),
 
-    #[error("cannot determine home directory — set $HOME")]
-    HomeNotFound,
-
-    #[error("cannot determine trurlic binary path — use --binary-path")]
-    BinaryNotFound,
-
-    #[error("existing config at {path} is not valid JSON: {detail}")]
-    InvalidInstallConfig { path: PathBuf, detail: String },
-
-    #[error("existing config at {path} has unexpected structure: {detail}")]
-    InvalidInstallStructure { path: PathBuf, detail: String },
-
-    #[error("binary path is not valid UTF-8: {}", .0.display())]
-    InvalidBinaryPath(PathBuf),
-
-    #[error("existing config at {path} is not valid TOML: {detail}")]
-    InvalidInstallToml { path: PathBuf, detail: String },
-
-    #[error("existing config at {path} is not valid YAML: {detail}")]
-    InvalidInstallYaml { path: PathBuf, detail: String },
-
-    #[error("`claude` CLI not found in PATH — install Claude Code first")]
-    ClaudeCliNotFound,
-
-    #[error("`claude mcp add` failed: {0}")]
-    ClaudeCliExec(String),
+    #[error(transparent)]
+    Install(#[from] InstallError),
 }
