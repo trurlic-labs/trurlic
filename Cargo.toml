@@ -29,6 +29,10 @@ harness = false
 # site (src/store/failpoint.rs). Enabled only in the test job; release
 # builds never carry it.
 failpoints = []
+# Bench-only: the seeded corpus (`store::corpus`) and the in-process MCP
+# server the benches in benches/ drive. The library's public surface
+# stays `cli` and `store` without it.
+bench = []
 
 [dependencies]
 # CLI

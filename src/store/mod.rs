@@ -1,5 +1,7 @@
 pub(crate) mod cascade;
 mod commit;
+#[cfg(any(test, feature = "bench"))]
+pub mod corpus;
 mod create;
 mod cycles;
 mod durable;
