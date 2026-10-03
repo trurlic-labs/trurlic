@@ -1,7 +1,7 @@
 [decision]
 component = "store"
 choice = "depends_on cycles are found as strongly connected components by an iterative Tarjan search and reported once each, by their sorted members"
-reason = "A cycle is a set of decisions, so its identity is its members: the report is the same whatever node a search starts from, and the no-new-errors write rule can match it across validations. Tarjan finds every component in one pass over the depends_on edges. The search keeps its own stack of frames on the heap, so a dependency chain of any length runs in constant call-stack depth. A node that only depends into a cycle is not a member and is not reported. A one-node loop is a self-edge, which the self-edge check reports, so the search reports components of two or more members only. Visit state is a hash map that is looked up, never iterated; the cycles are sorted on return."
+reason = "A cycle is a set of decisions, so its identity is its members: the report is the same whatever node a search starts from, and the no-new-errors write rule can match it across validations. Tarjan finds every component in one pass over the depends_on edges. The search keeps its own stack of frames on the heap, so a dependency chain of any length runs in constant call-stack depth. A node that only depends into a cycle is not a member and is not reported. A one-node loop is a self-edge, which the self-edge check reports, so the search reports components of two or more members only. Visit state is a BTreeMap keyed by name, as the lint on hash collections requires, so roots are visited in name order; the cycles are sorted on return."
 alternatives = [
     "Recursive depth-first search with an on-stack set - rejected: an early return on the first cycle left the path marked, so a later root reached it and reported a false cycle; the report named the root, chosen by hash order; a 50,000-link chain overflowed a 64 KiB stack",
     "Kosaraju's algorithm - rejected: two passes over the graph where Tarjan needs one, for the same components",
@@ -21,3 +21,8 @@ symbol = "InMemoryGraph::depends_on_cycles"
 [[decision.code_refs]]
 file = "src/store/validate.rs"
 symbol = "InMemoryGraph::check_depends_on_cycles"
+
+[[decision.history]]
+choice = "depends_on cycles are found as strongly connected components by an iterative Tarjan search and reported once each, by their sorted members"
+reason = "A cycle is a set of decisions, so its identity is its members: the report is the same whatever node a search starts from, and the no-new-errors write rule can match it across validations. Tarjan finds every component in one pass over the depends_on edges. The search keeps its own stack of frames on the heap, so a dependency chain of any length runs in constant call-stack depth. A node that only depends into a cycle is not a member and is not reported. A one-node loop is a self-edge, which the self-edge check reports, so the search reports components of two or more members only. Visit state is a hash map that is looked up, never iterated; the cycles are sorted on return."
+changed_at = "2026-10-03T13:56:00.369372494Z"

@@ -1,0 +1,22 @@
+[decision]
+component = "store"
+choice = "No load cache: load_state parses every node file on each load until a bench shows the parse is the bottleneck"
+reason = "The owner decided a load cache is built only if the benches show it is needed, and that it would be JSON unless a binary serializer is approved. benches/corpus.rs measures load_state from disk on the seeded corpus: about 2 ms at 50 decisions, 9 ms at 600 and 24 ms at 2000 (WSL2 ext4, warm page cache, criterion medians). That is a small share of the pre-edit hook budget, and a cache would add a second representation to keep coherent with the node files, the opposite of node files being the only truth. The bench stays in CodSpeed, so a regression that changes this answer shows up on the PR that causes it."
+alternatives = [
+    "JSON snapshot of the parsed graph keyed by node hashes: saves TOML parsing but needs invalidation against every node file and a fallback path, for a load that is already well under budget",
+    "Binary serializer cache: same coherence cost plus a dependency the owner has not approved",
+]
+tags = [
+    "performance",
+    "persistence",
+]
+attribution = "user"
+created = "2026-10-03T13:55:16.018750992Z"
+
+[[decision.code_refs]]
+file = "src/store/mod.rs"
+symbol = "Store::load_state"
+
+[[decision.code_refs]]
+file = "benches/corpus.rs"
+symbol = "bench_load_state"

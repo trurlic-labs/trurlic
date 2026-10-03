@@ -1,0 +1,23 @@
+[decision]
+component = "store"
+choice = "Benches and property tests draw from a seeded corpus written through the store's own validated commit"
+reason = "store::corpus writes a production-shaped store (reasons around 900 bytes, 0 to 20 code refs, rare revisions up to 14 history entries, one depends_on per two decisions, patterns, a component per 40 decisions) plus a Rust source tree its code refs resolve in, with the share of anchored files a parameter. The graph lands in one commit_with_graph, so it passes the same validation as any write. Draws come from an inline SplitMix64 and timestamps are a fixed epoch plus offsets, so the same Corpus value writes the same bytes on any machine, rand release or day: benches compare commits only while the corpus is byte-identical. It compiles under cfg(test) and the bench feature only."
+alternatives = [
+    "rand's StdRng: its algorithm is not guaranteed stable across releases, which would move every bench baseline on a dependency bump",
+    "Record each decision through Store::record_decision: one commit per decision (minutes at 2000), wall-clock created stamps, and no way to write history entries",
+    "Commit a fixture corpus to the repo: megabytes of generated TOML in git, and no way to vary size or anchored share",
+]
+tags = [
+    "testing",
+    "performance",
+]
+attribution = "agent"
+created = "2026-10-03T13:55:20.745975078Z"
+
+[[decision.code_refs]]
+file = "src/store/corpus.rs"
+symbol = "Corpus"
+
+[[decision.code_refs]]
+file = "src/store/create.rs"
+symbol = "Store::create"

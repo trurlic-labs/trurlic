@@ -1,7 +1,7 @@
 [decision]
 component = "project"
-choice = "Every list a tool response or map event carries has a fixed order; hash collections are only looked up, never iterated into output"
-reason = "Each process seeds its hash collections afresh, so a list built by walking a HashMap or HashSet comes out in a different order in every server: two serve processes on one graph answered get_context with different bytes, record_decision's pattern suggestion listed its components differently, and map clients saw one change's events in a different sequence per run. A list that reaches a tool payload, a WebSocket event, disk or a hash is built from BTreeMap/BTreeSet or a Vec sorted by name; a ranked list (check_pattern matches) sorts stably from name order, so ties keep name order. A hash set used only for membership (seen sets, lookups) stays, since it never decides an order. tests/integration/determinism.rs builds a graph in one serve process and requires every read tool, taken from tools/list, to answer with the same bytes there and in a freshly started second process."
+choice = "Every list a tool response or map event carries has a fixed order; std's HashMap and HashSet are refused by lint"
+reason = "Each process seeds its hash collections afresh, so a list built by walking a HashMap or HashSet comes out in a different order in every server: two serve processes on one graph answered get_context with different bytes, record_decision's pattern suggestion listed its components differently, and map clients saw one change's events in a different sequence per run. Sorting at each output site was a convention a missed sort broke silently, so clippy.toml's disallowed-types now refuses std::collections::HashMap and HashSet everywhere, membership sets included: every map and set is a BTreeMap or BTreeSet, and a ranked list (check_pattern matches) sorts stably from name order, so ties keep name order. On the seeded corpus the switch left the read tools and writes within bench noise; InMemoryGraph::build collects each map in bulk to keep the graph build at its former cost, and validation costs about 0.7 ms more at 2000 decisions. tests/integration/determinism.rs requires every read tool, taken from tools/list, to answer with the same bytes in two serve processes, and tests/lints.rs requires the lint to refuse both types."
 alternatives = [
     "Sort each response at the MCP boundary - rejected: the payloads are nested JSON whose list order carries meaning (relevance, priority), so a generic sort would reorder results that are ranked on purpose",
     "Fix the hasher seed - rejected: output order would then follow hash values, which change with the hasher or the keys, and still not be an order a reader can predict",
@@ -15,20 +15,19 @@ attribution = "agent"
 created = "2026-10-02T13:33:21.627819553Z"
 
 [[decision.code_refs]]
+file = "clippy.toml"
+
+[[decision.code_refs]]
 file = "tests/integration/determinism.rs"
 
 [[decision.code_refs]]
-file = "src/store/query.rs"
-symbol = "InMemoryGraph::related_decisions"
+file = "src/store/graph.rs"
+symbol = "InMemoryGraph::build"
 
 [[decision.code_refs]]
-file = "src/mcp/write.rs"
-symbol = "detect_pattern_opportunity"
+file = "tests/lints.rs"
 
-[[decision.code_refs]]
-file = "src/store/write.rs"
-symbol = "Store::record_pattern"
-
-[[decision.code_refs]]
-file = "src/map/diff.rs"
-symbol = "diff_states"
+[[decision.history]]
+choice = "Every list a tool response or map event carries has a fixed order; hash collections are only looked up, never iterated into output"
+reason = "Each process seeds its hash collections afresh, so a list built by walking a HashMap or HashSet comes out in a different order in every server: two serve processes on one graph answered get_context with different bytes, record_decision's pattern suggestion listed its components differently, and map clients saw one change's events in a different sequence per run. A list that reaches a tool payload, a WebSocket event, disk or a hash is built from BTreeMap/BTreeSet or a Vec sorted by name; a ranked list (check_pattern matches) sorts stably from name order, so ties keep name order. A hash set used only for membership (seen sets, lookups) stays, since it never decides an order. tests/integration/determinism.rs builds a graph in one serve process and requires every read tool, taken from tools/list, to answer with the same bytes there and in a freshly started second process."
+changed_at = "2026-10-03T13:55:02.121077815Z"

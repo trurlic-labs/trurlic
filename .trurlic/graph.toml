@@ -1,5 +1,5 @@
 version = 1
-rebuilt = "2026-10-02T19:57:04.660965088Z"
+rebuilt = "2026-10-03T13:56:06.561349545Z"
 
 [[nodes]]
 name = "256-bit-csprng-token-with-constant-time-comparison-for"
@@ -59,6 +59,25 @@ tags = [
     "dependencies",
 ]
 hash = "2b4d698b72e5bbc8c09d206e74e5df0c0e60733e38da0db2752cf186cd266d50"
+
+[[nodes]]
+name = "benches-and-property-tests-draw-from-a-seeded-corpus"
+kind = "decision"
+tags = [
+    "testing",
+    "performance",
+]
+hash = "2cdcae6490773fc22d6c61581805e2ca609d87195e36d17b3c544f5f41abd38e"
+
+[[nodes]]
+name = "benches-drive-the-mcp-server-in-process-through-server"
+kind = "decision"
+tags = [
+    "performance",
+    "testing",
+    "api",
+]
+hash = "ca6c380a4f4425a7cc861cd4bf18543b20d6e5e65adf26fd71490393d10a4a54"
 
 [[nodes]]
 name = "blake3-content-hashing-for-tamper-detection-and-change"
@@ -159,7 +178,7 @@ tags = [
     "safety",
     "coding-standards",
 ]
-hash = "bd1ff9ab23a1666a7e30e81a2f3538b05e4858e56596e477832fa761fd052672"
+hash = "4da5f6bc50c38d944a9df39fce971c9f4ea0881b3a569ad2ed941ac013a6c5b2"
 
 [[nodes]]
 name = "deny-unwrap-expect-outside-test-code"
@@ -168,7 +187,7 @@ tags = [
     "error-handling",
     "safety",
 ]
-hash = "4d098dd6f8447a8c3ef35f89a5d908253ac28bc6bc4d323fdd17b11af7dee005"
+hash = "86f7eb827308699e4c2c2361bf90df28d445497b865eb4cecd2189313a24c10a"
 
 [[nodes]]
 name = "depends-on-cycles-are-found-as-strongly-connected"
@@ -177,7 +196,7 @@ tags = [
     "integrity",
     "determinism",
 ]
-hash = "1ae653541ae6948449a4e0f07bed560c25ecc7cc627fc421c986efcaf987cd36"
+hash = "e9fcf43af572aa99636d16162bd75ee6f616df2bcda3eea6ea22d5ba7823e9d2"
 
 [[nodes]]
 name = "every-commit-goes-through-a-flushed-journal-in-state-txn"
@@ -197,7 +216,7 @@ tags = [
     "serialization",
     "api",
 ]
-hash = "ea9ad30c315cfe77a50fc47c631c0d9e2d1505e16fcf029ab0abbf8516cfb527"
+hash = "0691353b2e1d035d1bffafd7c6887bf6c5eb0c0b3e14ce9a1ff8c82ba2ebb0d3"
 
 [[nodes]]
 name = "every-store-access-cleans-stale-temp-files-and-warns-on"
@@ -334,7 +353,7 @@ tags = [
     "performance",
     "data-structures",
 ]
-hash = "411c695db3b17998f47eb8bba9f0989f9166ecc8087a3a6f92b758c5e88dd6f5"
+hash = "82b2f949de0304d391fc9c9bcb820d1ff1a30149ce88ac3f915717b2f33a0ef7"
 
 [[nodes]]
 name = "input-hardening-with-size-limits-control-character"
@@ -419,7 +438,16 @@ hash = "c705ad9dcd453e7a2b50c6b5fdf1e5a634c85672fef31773292000dbcd4ad056"
 name = "module-visibility-pub-crate-default-only-cli-and-store-are"
 kind = "decision"
 tags = ["coding-standards"]
-hash = "caeb5b5cad4681d9d831bb6b412c763b90400a4441beba0c81a06cf5ee00e20b"
+hash = "87a387bce29b282b2fbacd39d33fb76b721e2e617666994acfbd82b9ae80018c"
+
+[[nodes]]
+name = "no-load-cache-load-state-parses-every-node-file-on-each"
+kind = "decision"
+tags = [
+    "performance",
+    "persistence",
+]
+hash = "cd82cf6fb2b3c83d6725d135749de52fcb6962d125692f6812134ba74464b183"
 
 [[nodes]]
 name = "no-panic-production-code"
@@ -556,6 +584,15 @@ tags = ["performance"]
 hash = "f9f37001b9c8fce70bdb201da556bbcf12f10cef1adff65ab49e640a1d5ff4d4"
 
 [[nodes]]
+name = "stdout-and-stderr-are-written-only-through-console-out-diag"
+kind = "decision"
+tags = [
+    "error-handling",
+    "api",
+]
+hash = "bf059853724bbec06b229b7dceb9e6169ee431269469c2f5cff0a6eb68234db0"
+
+[[nodes]]
 name = "step-deduction-via-graph-postcondition-checking-with"
 kind = "decision"
 tags = ["integrity"]
@@ -630,7 +667,7 @@ tags = [
     "integrity",
     "determinism",
 ]
-hash = "b413a717657b6fae4d2e1a0273c10e0e9ee0ab57d23fb10a7972cd6878f43271"
+hash = "80c18a4bad27c94a95e5dbe0c18523ca4fcabed0e7c5e12f1794850e22f39fc6"
 
 [[nodes]]
 name = "verify-against-decisions-matches-changed-files-to-code-refs"
@@ -733,6 +770,16 @@ kind = "belongs_to"
 [[edges]]
 from = "axum-as-the-http-websocket-server-framework"
 to = "map"
+kind = "belongs_to"
+
+[[edges]]
+from = "benches-and-property-tests-draw-from-a-seeded-corpus"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "benches-drive-the-mcp-server-in-process-through-server"
+to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
@@ -1061,6 +1108,11 @@ to = "project"
 kind = "belongs_to"
 
 [[edges]]
+from = "no-load-cache-load-state-parses-every-node-file-on-each"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
 from = "no-panic-production-code"
 to = "deny-unsafe-code-project-wide-via-cargo-lint"
 kind = "member_of"
@@ -1168,6 +1220,11 @@ kind = "belongs_to"
 [[edges]]
 from = "static-tool-catalogue-via-lazylock-returned-by-reference"
 to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "stdout-and-stderr-are-written-only-through-console-out-diag"
+to = "project"
 kind = "belongs_to"
 
 [[edges]]

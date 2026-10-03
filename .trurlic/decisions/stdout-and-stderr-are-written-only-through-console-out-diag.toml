@@ -1,0 +1,28 @@
+[decision]
+component = "project"
+choice = "stdout and stderr are written only through console (out!, diag!) and the MCP transport, enforced by lint"
+reason = "Under `serve`, stdout carries JSON-RPC, so one stray print corrupts the stream, and println! panics when stdout is closed, which the release profile turns into an abort (`trurlic status | head -0` died with SIGABRT). The console module owns the streams: out! returns the write's io::Error so the command fails with status 1, diag! drops a failed diagnostic since stderr is where it would be reported, and confirm asks the one interactive question. Cargo.toml denies print_stdout and print_stderr, and clippy.toml's disallowed-methods refuses std::io::stdout and stderr; console's two accessors and the transport's stdout lock in mcp::run_server are the only #[expect] sites. Under cfg(test) the console writers print through println!/eprintln!, which the test harness captures per test."
+alternatives = [
+    "Keep println!/eprintln! and only lint stray prints: the panic on a closed pipe stays, and every command keeps its own copy of the output path",
+    "Pass a writer into every command: tests could assert on output, but it threads a parameter through every command signature for one destination",
+    "A logging crate (log/tracing): a dependency for what two functions do, and stdout must stay protocol-only anyway",
+]
+tags = [
+    "error-handling",
+    "api",
+]
+attribution = "agent"
+created = "2026-10-03T13:55:11.254367052Z"
+
+[[decision.code_refs]]
+file = "src/console.rs"
+
+[[decision.code_refs]]
+file = "src/mcp/mod.rs"
+symbol = "run_server"
+
+[[decision.code_refs]]
+file = "clippy.toml"
+
+[[decision.code_refs]]
+file = "tests/integration/output.rs"

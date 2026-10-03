@@ -1,0 +1,27 @@
+[decision]
+component = "mcp"
+choice = "Benches drive the MCP server in process through Server::serve_one, reachable only with the bench feature"
+reason = "Server holds the shared state and the initialize gate, and serve_one runs one read-dispatch-write turn over any BufRead and Write: run_server loops it over stdin and stdout, and benches/corpus.rs over a byte slice, so a bench times the exact request path minus the transport. CodSpeed's simulation measures only the bench process, so a child `trurlic serve` would be invisible to it. The library's public surface stays cli and store: trurlic::bench re-exports Server only under the bench feature, the bench target requires it, and release builds never enable it. cargo-deny's wildcard ban rules out the alternative of a self dev-dependency that enables the feature for plain `cargo bench`, so `make bench` passes it."
+alternatives = [
+    "Spawn `trurlic serve` per bench: CodSpeed simulation cannot see the child's instructions",
+    "Make mcp a public module: widens the library surface the owner fixed at cli and store",
+    "Self dev-dependency enabling the feature: refused by cargo-deny's wildcard ban",
+]
+tags = [
+    "performance",
+    "testing",
+    "api",
+]
+attribution = "agent"
+created = "2026-10-03T13:55:25.112349576Z"
+
+[[decision.code_refs]]
+file = "src/mcp/mod.rs"
+symbol = "Server::serve_one"
+
+[[decision.code_refs]]
+file = "src/lib.rs"
+symbol = "bench"
+
+[[decision.code_refs]]
+file = "benches/corpus.rs"

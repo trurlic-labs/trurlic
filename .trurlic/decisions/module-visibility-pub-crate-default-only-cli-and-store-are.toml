@@ -1,7 +1,7 @@
 [decision]
 component = "project"
 choice = "Module visibility: pub(crate) default, only cli and store are pub"
-reason = "Enforced in lib.rs: pub mod cli and pub mod store are the only public modules. All others (commands, error, map, mcp, workflow) are pub(crate). This keeps the library surface minimal and internal module boundaries enforced: external consumers can only reach the CLI entry point and the store API."
+reason = "Enforced in lib.rs: pub mod cli and pub mod store are the only public modules. All others (budget, commands, console, error, map, mcp, workflow) are pub(crate). This keeps the library surface minimal and internal module boundaries enforced: external consumers can only reach the CLI entry point and the store API. One gated exception: with the `bench` feature, which only the bench target requires and no release build enables, lib.rs adds `pub mod bench` re-exporting mcp::Server, and store adds `pub mod corpus`, so benches/ can drive the server in process."
 alternatives = [
     "Make all modules pub for maximum flexibility — rejected because it exposes internal implementation details and makes breaking changes harder to track",
     "Make everything private and only expose a facade module — rejected because cli and store have legitimate external consumers (the binary and potential library users)",
@@ -10,7 +10,15 @@ tags = ["coding-standards"]
 attribution = "user"
 created = "2026-06-15T09:47:29.037434435Z"
 
+[[decision.code_refs]]
+file = "src/lib.rs"
+
 [[decision.history]]
 choice = "Module visibility: pub(crate) default, only cli and store are pub"
 reason = "Enforced in lib.rs: pub mod cli and pub mod store are the only public modules. All others (commands, config, error, map, mcp, provider, session, workflow) are pub(crate). This ensures the library surface is minimal and internal module boundaries are enforced — external consumers can only access the CLI entry point and the store API."
 changed_at = "2026-10-02T09:46:45.927276146Z"
+
+[[decision.history]]
+choice = "Module visibility: pub(crate) default, only cli and store are pub"
+reason = "Enforced in lib.rs: pub mod cli and pub mod store are the only public modules. All others (commands, error, map, mcp, workflow) are pub(crate). This keeps the library surface minimal and internal module boundaries enforced: external consumers can only reach the CLI entry point and the store API."
+changed_at = "2026-10-03T13:56:06.561046687Z"
