@@ -14,6 +14,7 @@ use super::schema::{
 use super::state::{
     ProjectState, is_reserved_node_name, is_valid_kebab_case, slugify, unique_decision_stem,
 };
+use super::text::{TextField, ensure_new_choice, validate_text};
 use super::{Store, StoreLock};
 
 // ── Store write methods ─────────────────────────────────────────────────
@@ -24,8 +25,8 @@ use super::{Store, StoreLock};
 ///
 /// Callers are responsible for validating that `component` exists (or is
 /// `"project"`), that all `depends_on`/`constrains` targets exist, and that
-/// names are valid kebab-case. The shared write path does not re-validate —
-/// it trusts the caller and focuses on atomic mutation.
+/// names are valid kebab-case. The store checks the choice and reason
+/// itself, against `store::text` and the component's other choices.
 pub struct RecordDecisionParams<'a> {
     pub component: &'a str,
     pub choice: &'a str,
@@ -36,6 +37,18 @@ pub struct RecordDecisionParams<'a> {
     pub tags: &'a [String],
     pub attribution: Attribution,
     pub code_refs: &'a [CodeRef],
+}
+
+impl RecordDecisionParams<'_> {
+    /// What the store checks whatever the caller checked, so no surface can
+    /// skip it: the code refs, the text of the choice and reason, and a
+    /// choice the component has already.
+    fn check(&self, state: &ProjectState) -> Result<()> {
+        super::validate_code_refs(self.code_refs)?;
+        validate_text(TextField::Choice, self.choice)?;
+        validate_text(TextField::Reason, self.reason)?;
+        ensure_new_choice(state, self.component, self.choice, None)
+    }
 }
 
 // ── ReviseDecisionParams ────────────────────────────────────────────
@@ -90,9 +103,7 @@ impl Store {
         state: &mut ProjectState,
         params: RecordDecisionParams<'_>,
     ) -> Result<String> {
-        // The store is the trust boundary — validate refs here even though
-        // MCP/map callers also validate, so no write path can bypass it.
-        super::validate_code_refs(params.code_refs)?;
+        params.check(state)?;
 
         let stem = unique_decision_stem(state, &slugify(params.choice))?;
 
@@ -424,9 +435,9 @@ impl Store {
     /// unchanged — revision never creates a new node, so no edge is ever
     /// orphaned.
     ///
-    /// **Callers** validate transport-specific quality constraints (field
-    /// lengths, reason minimums) before calling. This method enforces baseline
-    /// correctness only (non-empty fields, at least one change).
+    /// A new choice or reason meets the rules [`Store::record_decision`]
+    /// applies, and a new choice may not restate another decision of the
+    /// component.
     pub fn revise_decision(
         &self,
         lock: &StoreLock,
@@ -452,38 +463,15 @@ impl Store {
                 "at least one of choice, reason, tags, or code_refs is required".into(),
             ));
         }
-        if let Some(c) = params.choice
-            && c.trim().is_empty()
-        {
-            return Err(Error::Validation("choice must not be empty".into()));
+        if let Some(choice) = params.choice {
+            validate_text(TextField::Choice, choice)?;
+            ensure_new_choice(state, &old_dec.decision.component, choice, Some(name))?;
         }
-        if let Some(r) = params.reason
-            && r.trim().is_empty()
-        {
-            return Err(Error::Validation("reason must not be empty".into()));
+        if let Some(reason) = params.reason {
+            validate_text(TextField::Reason, reason)?;
         }
         if let Some(refs) = params.code_refs {
             super::validate_code_refs(refs)?;
-        }
-
-        // Reject revising the choice into a restatement of a *different*
-        // decision in the same component — the same duplicate the record path
-        // refuses. Forking two nodes onto identical choice text loses which one
-        // is authoritative; compared on the shared normalized key.
-        if let Some(new_choice) = params.choice {
-            let choice_key = super::normalize_choice(new_choice);
-            let component = old_dec.decision.component.as_str();
-            for (existing_name, existing_dec) in &state.decisions {
-                if existing_name.as_str() != name
-                    && existing_dec.decision.component == component
-                    && super::normalize_choice(&existing_dec.decision.choice) == choice_key
-                {
-                    return Err(Error::Validation(format!(
-                        "decision `{existing_name}` in [{component}] already has identical \
-                         choice text — revise that decision instead of duplicating it"
-                    )));
-                }
-            }
         }
 
         let mut revised = DecisionFile::clone(&old_dec);
@@ -858,7 +846,7 @@ mod tests {
                 RecordDecisionParams {
                     component: "auth",
                     choice: "Use JWT",
-                    reason: "Stateless",
+                    reason: "Stateless.",
                     depends_on: &[],
                     alternatives: &[],
                     constrains: &[],
@@ -884,7 +872,7 @@ mod tests {
                 RecordDecisionParams {
                     component: "auth",
                     choice: "Use JWT",
-                    reason: "Stateless",
+                    reason: "Stateless.",
                     depends_on: &[],
                     alternatives: &[],
                     constrains: &[],
@@ -1225,16 +1213,48 @@ mod tests {
     }
 
     #[test]
-    fn revise_rejects_duplicating_another_decisions_choice() {
+    fn record_refuses_a_choice_the_component_has_up_to_case_and_spacing() {
+        let tmp = TempDir::new().unwrap();
+        let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
+        let lock = store.lock().unwrap();
+        let first = record(&store, &lock, &mut state, "Use JWT tokens");
+
+        let err = store
+            .record_decision(
+                &lock,
+                &mut state,
+                RecordDecisionParams {
+                    component: "auth",
+                    choice: "use  jwt TOKENS ",
+                    reason: "Different reasoning entirely",
+                    depends_on: &[],
+                    alternatives: &[],
+                    constrains: &[],
+                    tags: &[],
+                    attribution: Attribution::User,
+                    code_refs: &[],
+                },
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, Error::DuplicateChoice { component, existing }
+                if component == "auth" && *existing == first),
+            "{err:?}"
+        );
+        assert_eq!(state.decisions.len(), 1);
+        assert_eq!(store.list_decisions().unwrap(), [first]);
+    }
+
+    #[test]
+    fn revise_refuses_another_decisions_choice_but_keeps_its_own() {
         let tmp = TempDir::new().unwrap();
         let (store, mut state) = setup_store_with_components(tmp.path(), &[("auth", "Auth")]);
         let lock = store.lock().unwrap();
 
-        record(&store, &lock, &mut state, "Use JWT");
+        let first = record(&store, &lock, &mut state, "Use JWT");
         let second = record(&store, &lock, &mut state, "Use sessions");
 
-        // Revising `second` onto `first`'s choice — modulo case and spacing — is
-        // exactly the fork the record path forbids; revise must refuse it too.
         let err = store
             .revise_decision(
                 &lock,
@@ -1243,9 +1263,20 @@ mod tests {
                 revise_params(Some("  use   JWT "), None, None, None),
             )
             .unwrap_err();
-        assert!(matches!(err, Error::Validation(_)), "{err}");
-        // The rejected revision left the decision untouched.
+        assert!(
+            matches!(&err, Error::DuplicateChoice { existing, .. } if *existing == first),
+            "{err:?}"
+        );
         assert_eq!(state.decisions[&second].decision.choice, "Use sessions");
+
+        store
+            .revise_decision(
+                &lock,
+                &mut state,
+                &second,
+                revise_params(Some("Use Sessions"), None, None, None),
+            )
+            .unwrap();
     }
 
     #[test]

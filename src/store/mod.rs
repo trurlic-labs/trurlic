@@ -20,6 +20,7 @@ mod validate;
 pub(crate) mod watcher;
 
 mod state;
+pub(crate) mod text;
 mod write;
 
 use std::cmp::Ordering;
@@ -228,7 +229,7 @@ pub(crate) fn decision_refs_all_missing(project_root: &Path, dec: &DecisionFile)
 
 /// BLAKE3 hash of raw file bytes, returned as lowercase hex.
 pub(crate) fn hash_file(path: &Path) -> Result<String> {
-    let bytes = fs::read(path)?;
+    let bytes = fs::read(path).map_err(Error::io(path))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
@@ -243,20 +244,6 @@ fn abbreviate(hash: &str) -> &str {
     hash.get(..12).unwrap_or(hash)
 }
 
-/// Canonical key for detecting decisions with the same choice text: every run
-/// of whitespace collapses to a single space, the ends are trimmed, and letters
-/// are folded to lowercase (Unicode-aware). Two choices that differ only in
-/// case or spacing normalize to the same key, so a trailing space or a doubled
-/// gap cannot sneak a duplicate past the guard. Shared by the record and revise
-/// write paths so both enforce the same notion of "identical".
-pub(crate) fn normalize_choice(choice: &str) -> String {
-    choice
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
 // ── Store ────────────────────────────────────────────────────────────────────
 
 /// Handle to a `.trurlic/` directory.
@@ -269,7 +256,7 @@ pub struct Store {
 
 impl Store {
     pub fn discover(start: &Path) -> Result<Self> {
-        let mut current = start.canonicalize()?;
+        let mut current = start.canonicalize().map_err(Error::io(start))?;
         loop {
             let candidate = current.join(STORE_DIR);
             if candidate.is_dir() {
@@ -362,8 +349,8 @@ impl Store {
     // ── Reading ──────────────────────────────────────────────────────────
 
     fn read_toml<T: DeserializeOwned>(&self, path: &Path) -> Result<T> {
-        let content = fs::read_to_string(path)?;
-        Ok(toml::from_str(&content)?)
+        let bytes = fs::read(path).map_err(Error::io(path))?;
+        toml::from_slice(&bytes).map_err(Error::toml(path))
     }
 
     /// Read a TOML file and compute its BLAKE3 hash in a single pass.
@@ -373,11 +360,10 @@ impl Store {
     /// semantics. This eliminates the double-read that would occur if
     /// parsing and hashing were done separately.
     fn read_toml_with_hash<T: DeserializeOwned>(&self, path: &Path) -> Result<(T, String)> {
-        let bytes = fs::read(path)?;
+        let bytes = fs::read(path).map_err(Error::io(path))?;
         let hash = blake3::hash(&bytes).to_hex().to_string();
-        let content = std::str::from_utf8(&bytes)
-            .map_err(|_| Error::Validation(format!("invalid UTF-8 in {}", path.display())))?;
-        Ok((toml::from_str(content)?, hash))
+        let parsed = toml::from_slice(&bytes).map_err(Error::toml(path))?;
+        Ok((parsed, hash))
     }
 
     pub fn read_project(&self) -> Result<ProjectFile> {
@@ -389,7 +375,7 @@ impl Store {
         let path = self.component_path(name);
         match self.read_toml(&path) {
             Ok(file) => Ok(file),
-            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
                 Err(Error::ComponentNotFound(name.into()))
             }
             Err(e) => Err(e),
@@ -401,7 +387,7 @@ impl Store {
         let path = self.decision_path(name);
         match self.read_toml(&path) {
             Ok(file) => Ok(file),
-            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
                 Err(Error::DecisionNotFound(name.into()))
             }
             Err(e) => Err(e),
@@ -617,20 +603,13 @@ impl Store {
 
     pub fn check_version(&self) -> Result<()> {
         let project = self.read_project()?;
-        let stored = &project.trurlic_version;
-        if stored == FORMAT_VERSION {
+        if project.trurlic_version == FORMAT_VERSION {
             return Ok(());
         }
-        match compare_versions(stored, FORMAT_VERSION) {
-            Ordering::Greater => Err(Error::Validation(format!(
-                ".trurlic/ format version `{stored}` is newer than this CLI \
-                 (expected `{FORMAT_VERSION}`). Please upgrade trurlic."
-            ))),
-            _ => Err(Error::Validation(format!(
-                ".trurlic/ format version `{stored}` is older than this CLI \
-                 (expected `{FORMAT_VERSION}`). Run `trurlic migrate` to upgrade."
-            ))),
-        }
+        Err(Error::VersionMismatch {
+            found: project.trurlic_version,
+            expected: FORMAT_VERSION,
+        })
     }
 
     // ── Hash verification ────────────────────────────────────────────────
@@ -1371,6 +1350,37 @@ mod tests {
     }
 
     #[test]
+    fn load_state_names_a_node_file_that_does_not_parse() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let broken = store.decision_path("broken");
+        fs::write(&broken, "[decision]\nchoice = [\n").unwrap();
+
+        let err = store.load_state().map(|_| ()).unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Toml { path, .. } if *path == broken),
+            "{err:?}"
+        );
+        assert!(err.to_string().starts_with(&broken.display().to_string()));
+    }
+
+    #[test]
+    fn load_state_names_a_node_file_that_cannot_be_read() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let unreadable = store.decision_path("unreadable");
+        fs::create_dir(&unreadable).unwrap();
+
+        let err = store.load_state().map(|_| ()).unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Io { path, .. } if *path == unreadable),
+            "{err:?}"
+        );
+    }
+
+    #[test]
     fn load_state_reconciles_missing_graph_toml() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
@@ -1537,14 +1547,16 @@ mod tests {
         let store = setup_store_with_version(tmp.path(), "99.0.0");
 
         let err = store.check_version().unwrap_err();
-        match err {
-            Error::Validation(msg) => {
-                assert!(msg.contains("99.0.0"));
-                assert!(msg.contains("newer"), "should mention 'newer': {msg}");
-                assert!(msg.contains("upgrade"), "should suggest upgrade: {msg}");
-            }
-            other => panic!("expected Validation, got: {other}"),
-        }
+        let msg = err.to_string();
+        assert!(
+            matches!(&err, Error::VersionMismatch { found, expected: FORMAT_VERSION } if found == "99.0.0"),
+            "{err:?}"
+        );
+        assert!(msg.contains("newer"), "should mention 'newer': {msg}");
+        assert!(
+            msg.contains("upgrade trurlic"),
+            "should suggest upgrade: {msg}"
+        );
     }
 
     #[test]
@@ -1553,17 +1565,16 @@ mod tests {
         let store = setup_store_with_version(tmp.path(), "0.0.1");
 
         let err = store.check_version().unwrap_err();
-        match err {
-            Error::Validation(msg) => {
-                assert!(msg.contains("0.0.1"));
-                assert!(msg.contains("older"), "should mention 'older': {msg}");
-                assert!(
-                    msg.contains("trurlic migrate"),
-                    "should mention trurlic migrate: {msg}"
-                );
-            }
-            other => panic!("expected Validation, got: {other}"),
-        }
+        let msg = err.to_string();
+        assert!(
+            matches!(&err, Error::VersionMismatch { found, expected: FORMAT_VERSION } if found == "0.0.1"),
+            "{err:?}"
+        );
+        assert!(msg.contains("older"), "should mention 'older': {msg}");
+        assert!(
+            msg.contains("trurlic migrate"),
+            "should mention trurlic migrate: {msg}"
+        );
     }
 
     // ── verify_path ──────────────────────────────────────────────────────

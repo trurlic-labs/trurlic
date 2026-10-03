@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 
-use crate::Result;
+use crate::{Error, Result};
 
 use super::commit::PendingWrite;
 use super::limits::MAX_CODE_REFS;
@@ -467,7 +467,7 @@ impl Plan {
     fn write_sources(&self, project_dir: &Path) -> Result<()> {
         for component in &self.components {
             let dir = project_dir.join("src").join(component);
-            fs::create_dir_all(&dir)?;
+            fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
             for file in 0..FILES_PER_COMPONENT {
                 let stem = module_stem(file);
                 let mut source = format!("//! The {stem} module of {component}.\n");
@@ -477,7 +477,8 @@ impl Plan {
                          input.wrapping_mul({factor}) ^ {file}\n}}\n"
                     ));
                 }
-                fs::write(dir.join(format!("{stem}.rs")), source)?;
+                let path = dir.join(format!("{stem}.rs"));
+                fs::write(&path, source).map_err(Error::io(&path))?;
             }
         }
         Ok(())

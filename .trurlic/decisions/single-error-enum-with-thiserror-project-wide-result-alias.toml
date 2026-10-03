@@ -1,7 +1,7 @@
 [decision]
 component = "project"
 choice = "Single error enum with thiserror, project-wide Result alias"
-reason = 'All modules use a single Error enum (src/error.rs) with #[derive(thiserror::Error)] and a type alias Result<T> = std::result::Result<T, Error>. Every variant has a descriptive #[error("...")] message. From impls handle std::io::Error and toml errors. This gives uniform error propagation with ? across the entire codebase and consistent user-facing messages.'
+reason = """All modules use a single Error enum (src/error.rs) with #[derive(thiserror::Error)] and a type alias Result<T> = std::result::Result<T, Error>; there is no separate store error. Every variant has a descriptive #[error("...")] message. A failure that comes from a file names it: Error::Io { path, source } and Error::Toml { path, source } (TomlSerialize for the file being written) print the path first, and there is no From impl for std::io::Error or the toml errors, so a `?` cannot drop the path: a malformed decision file used to stop serve and check with "invalid TOML: line 7" and no file name. Error::io(path) and Error::toml(path) are the map_err adapters. An I/O call with no file behind it (stdout, a socket, the async runtime, a child process) is Error::System { what, source }, naming the call. Cases callers branch on are data, not sentences: VersionMismatch { found, expected }, GraphIntegrity(Vec<Issue>) with each refused issue's kind and subject, InvalidText { field, fault } and DuplicateChoice. Failures only `trurlic install` has live in commands::install's InstallError, carried by one transparent Error::Install variant, so matches elsewhere (the map's status mapping) need one arm for them."""
 alternatives = [
     "Per-module error types with conversions — rejected because the crate is a single binary and the added indirection provides no benefit",
     "Use anyhow for ad-hoc errors — rejected because typed errors enable match-based handling and better compile-time guarantees",
@@ -9,3 +9,8 @@ alternatives = [
 tags = ["error-handling"]
 attribution = "user"
 created = "2026-06-15T09:47:24.656812573Z"
+
+[[decision.history]]
+choice = "Single error enum with thiserror, project-wide Result alias"
+reason = 'All modules use a single Error enum (src/error.rs) with #[derive(thiserror::Error)] and a type alias Result<T> = std::result::Result<T, Error>. Every variant has a descriptive #[error("...")] message. From impls handle std::io::Error and toml errors. This gives uniform error propagation with ? across the entire codebase and consistent user-facing messages.'
+changed_at = "2026-10-03T14:47:56.641263444Z"

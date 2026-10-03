@@ -1,17 +1,52 @@
-use std::path::PathBuf;
+//! The crate's one error type.
+//!
+//! A failure that comes from a file names the file: [`Error::Io`] and
+//! [`Error::Toml`] carry the path, and nothing converts a bare
+//! `io::Error` or TOML error into an [`Error`], so a `?` cannot drop it.
+
+use std::cmp::Ordering;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use crate::commands::InstallError;
+use crate::store::graph::Issue;
+use crate::store::text::{TextFault, TextField};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    /// `path` is the file or directory the failed call was given.
+    #[error("{}: {source}", path.display())]
+    Io { path: PathBuf, source: io::Error },
 
-    #[error("invalid TOML: {0}")]
-    TomlRead(#[from] toml::de::Error),
+    #[error("{}: invalid TOML: {source}", path.display())]
+    Toml {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
 
-    #[error("TOML serialization error: {0}")]
-    TomlWrite(#[from] toml::ser::Error),
+    /// `path` is the file the value was being serialized for.
+    #[error("{}: cannot serialize as TOML: {source}", path.display())]
+    TomlSerialize {
+        path: PathBuf,
+        source: toml::ser::Error,
+    },
+
+    /// An I/O call with no file behind it: a standard stream, a socket, the
+    /// async runtime, a child process. `what` names the call.
+    #[error("cannot {what}: {source}")]
+    System { what: String, source: io::Error },
+
+    #[error(
+        ".trurlic/ format version `{found}` is {} this CLI (expected `{expected}`); {}",
+        version_relation(found, expected),
+        version_fix(found, expected)
+    )]
+    VersionMismatch {
+        found: String,
+        expected: &'static str,
+    },
 
     #[error("not a trurlic project (no .trurlic/ found in {0} or any parent directory)")]
     StoreNotFound(PathBuf),
@@ -80,36 +115,82 @@ pub enum Error {
     #[error("{0}")]
     Validation(String),
 
-    #[error("graph integrity violation: {0}")]
-    GraphIntegrity(String),
+    /// A decision's choice or reason breaks a rule of `store::text`.
+    #[error("`{field}` {fault}")]
+    InvalidText { field: TextField, fault: TextFault },
+
+    /// Another decision of the component has the same choice, compared
+    /// without case and runs of whitespace.
+    #[error(
+        "decision `{existing}` in [{component}] already has this choice; revise \
+         `{existing}` instead of duplicating it"
+    )]
+    DuplicateChoice { component: String, existing: String },
+
+    /// The errors a refused write would have added to the graph, in
+    /// validation order.
+    #[error("graph integrity violation: {}", messages(.0))]
+    GraphIntegrity(Vec<Issue>),
 
     #[error("operation blocked by cascade rule: {0}")]
     CascadeBlocked(String),
 
-    #[error("cannot determine home directory — set $HOME")]
-    HomeNotFound,
+    #[error(transparent)]
+    Install(#[from] InstallError),
+}
 
-    #[error("cannot determine trurlic binary path — use --binary-path")]
-    BinaryNotFound,
+impl Error {
+    /// The `map_err` adapter for an I/O call on `path`.
+    pub(crate) fn io(path: &Path) -> impl FnOnce(io::Error) -> Self + '_ {
+        |source| Self::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
 
-    #[error("existing config at {path} is not valid JSON: {detail}")]
-    InvalidInstallConfig { path: PathBuf, detail: String },
+    /// The `map_err` adapter for an I/O call that `what` names, such as
+    /// "write to stdout".
+    pub(crate) fn system(what: impl Into<String>) -> impl FnOnce(io::Error) -> Self {
+        |source| Self::System {
+            what: what.into(),
+            source,
+        }
+    }
 
-    #[error("existing config at {path} has unexpected structure: {detail}")]
-    InvalidInstallStructure { path: PathBuf, detail: String },
+    /// The `map_err` adapter for parsing the TOML read from `path`.
+    pub(crate) fn toml(path: &Path) -> impl FnOnce(toml::de::Error) -> Self + '_ {
+        |source| Self::Toml {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
 
-    #[error("binary path is not valid UTF-8: {}", .0.display())]
-    InvalidBinaryPath(PathBuf),
+/// A version that does not parse reads as older, so `migrate` is offered.
+fn is_newer(found: &str, expected: &str) -> bool {
+    crate::store::compare_versions(found, expected) == Ordering::Greater
+}
 
-    #[error("existing config at {path} is not valid TOML: {detail}")]
-    InvalidInstallToml { path: PathBuf, detail: String },
+fn version_relation(found: &str, expected: &str) -> &'static str {
+    if is_newer(found, expected) {
+        "newer than"
+    } else {
+        "older than"
+    }
+}
 
-    #[error("existing config at {path} is not valid YAML: {detail}")]
-    InvalidInstallYaml { path: PathBuf, detail: String },
+fn version_fix(found: &str, expected: &str) -> &'static str {
+    if is_newer(found, expected) {
+        "upgrade trurlic"
+    } else {
+        "run `trurlic migrate` to upgrade the store"
+    }
+}
 
-    #[error("`claude` CLI not found in PATH — install Claude Code first")]
-    ClaudeCliNotFound,
-
-    #[error("`claude mcp add` failed: {0}")]
-    ClaudeCliExec(String),
+fn messages(issues: &[Issue]) -> String {
+    issues
+        .iter()
+        .map(|issue| issue.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ")
 }

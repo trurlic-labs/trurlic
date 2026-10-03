@@ -23,10 +23,12 @@ impl Store {
             return Err(Error::StoreExists(root));
         }
         for dir in [COMPONENTS_DIR, DECISIONS_DIR, PATTERNS_DIR] {
-            fs::create_dir_all(root.join(dir))?;
+            let dir = root.join(dir);
+            fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
         }
         let store = Self::at(root);
-        fs::create_dir_all(store.tmp_dir())?;
+        let tmp_dir = store.tmp_dir();
+        fs::create_dir_all(&tmp_dir).map_err(Error::io(&tmp_dir))?;
 
         let lock = store.lock()?;
         let project_path = store.root().join("project.toml");

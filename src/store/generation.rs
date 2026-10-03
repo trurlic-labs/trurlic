@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use crate::{Error, Result};
 
+use super::durable::place;
 use super::{ProjectState, Store, StoreLock};
 
 impl Store {
@@ -28,7 +29,7 @@ impl Store {
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(0),
-            Err(e) => return Err(e.into()),
+            Err(source) => return Err(Error::Io { path, source }),
         };
         text.trim().parse().map_err(|e| {
             Error::Validation(format!(
@@ -56,10 +57,7 @@ impl Store {
     pub(super) fn raise_generation(&self, _lock: &StoreLock) -> Result<u64> {
         let next = self.read_generation()?.saturating_add(1);
         let staged = self.stage(format!("{next}\n").as_bytes())?;
-        if let Err(e) = fs::rename(&staged, self.generation_path()) {
-            let _ = fs::remove_file(&staged);
-            return Err(e.into());
-        }
+        place(&staged, &self.generation_path())?;
         Ok(next)
     }
 }

@@ -1,7 +1,7 @@
 [decision]
 component = "map"
 choice = "REST API validates inputs against Store limits and uses cascade checks before destructive operations"
-reason = "Every mutation endpoint validates input fields against the same Store limits used by other writers (MAX_TEXT_FIELD_BYTES, MAX_CHOICE_BYTES, MIN_REASON_BYTES, MAX_ARRAY_ITEMS) and checks for control characters. DELETE operations check for cascade impacts via the graph's check_component_cascade/check_decision_cascade methods — blocked deletions return 409 Conflict with a blocker summary, and successful deletions include cascade warnings in the response. Layout PUT validates that all positions are finite floats and caps the positions map at 10,000 entries. This ensures the map API enforces the same invariants as direct Store usage."
+reason = "Every mutation endpoint validates input fields against the same Store limits used by other writers (MAX_TEXT_FIELD_BYTES, MAX_ARRAY_ITEMS) and checks for control characters. A revised decision's choice and reason are not checked here: Store::revise_decision applies store::text and the duplicate-choice check, and the endpoint answers its InvalidText or DuplicateChoice refusal with 400 and the store's message, the same one MCP and the CLI give. DELETE operations check for cascade impacts via the graph's check_component_cascade/check_decision_cascade methods — blocked deletions return 409 Conflict with a blocker summary, and successful deletions include cascade warnings in the response. Layout PUT validates that all positions are finite floats and caps the positions map at 10,000 entries. This ensures the map API enforces the same invariants as direct Store usage."
 alternatives = [
     "skip validation and rely on Store rejection: would produce less informative HTTP error responses and risk inconsistent error formats",
     "allow cascading deletes without checking: could silently destroy dependent decisions and patterns",
@@ -13,3 +13,8 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:45:44.595306003Z"
+
+[[decision.history]]
+choice = "REST API validates inputs against Store limits and uses cascade checks before destructive operations"
+reason = "Every mutation endpoint validates input fields against the same Store limits used by other writers (MAX_TEXT_FIELD_BYTES, MAX_CHOICE_BYTES, MIN_REASON_BYTES, MAX_ARRAY_ITEMS) and checks for control characters. DELETE operations check for cascade impacts via the graph's check_component_cascade/check_decision_cascade methods — blocked deletions return 409 Conflict with a blocker summary, and successful deletions include cascade warnings in the response. Layout PUT validates that all positions are finite floats and caps the positions map at 10,000 entries. This ensures the map API enforces the same invariants as direct Store usage."
+changed_at = "2026-10-03T14:48:02.994275551Z"

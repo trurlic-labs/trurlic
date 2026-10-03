@@ -1,7 +1,7 @@
 [decision]
 component = "mcp"
-choice = "Input hardening with size limits, control character rejection, and decision quality floor"
-reason = "All MCP tool arguments pass through hardened helpers: require_str and opt_str enforce MAX_TEXT_FIELD_BYTES limits and reject control characters (delegating to store::has_control_chars). Arrays are bounded by MAX_ARRAY_ITEMS. Decision-specific quality gates enforce MIN_REASON_BYTES for reasoning and MAX_CHOICE_BYTES for choice text, rejecting vague or malformed decisions at the MCP boundary before they reach the Store. Edge targets (depends_on, constrains) are validated to exist in state before write. These limits are defined centrally in store::limits and shared across MCP and other entry points."
+choice = "Input hardening with size limits and control character rejection; decision text is checked by the store"
+reason = "MCP tool arguments pass through hardened helpers: require_str and opt_str enforce MAX_TEXT_FIELD_BYTES limits and reject control characters (delegating to store::has_control_chars). Arrays are bounded by MAX_ARRAY_ITEMS. Edge targets (depends_on, constrains) are validated to exist in state before write. A decision's choice and reason are the exception: require_text and opt_text only check that they are strings and hand them to Store::record_decision and revise_decision, which apply store::text (length, single-line choice, refused characters, tool-call markup) and the duplicate-choice check. MCP keeps no copy of those rules, so its refusal is the store's message, identical to the map's and the CLI's; the copy it used to keep compared raw lengths while the map trimmed and the CLI checked nothing. These limits are defined centrally in store::limits."
 alternatives = [
     "Trust client input and validate only at Store level — rejected: Store validation catches structural issues but MCP should reject obviously malformed input early with clear error messages",
     "Per-tool bespoke validation — rejected: shared helpers (require_str, opt_str, opt_str_array) eliminate duplication and ensure consistent limits across all tools",
@@ -17,3 +17,8 @@ created = "2026-06-15T09:45:56.499943720Z"
 choice = "Input hardening with size limits, control character rejection, and decision quality floor"
 reason = "All MCP tool arguments pass through hardened helpers: require_str and opt_str enforce MAX_TEXT_FIELD_BYTES limits and reject control characters (delegating to store::has_control_chars). Arrays are bounded by MAX_ARRAY_ITEMS. Decision-specific quality gates enforce MIN_REASON_BYTES for reasoning and MAX_CHOICE_BYTES for choice text, rejecting vague or malformed decisions at the MCP boundary before they reach the Store. Edge targets (depends_on, constrains, supersedes) are validated to exist in state before write. These limits are defined centrally in store::limits and shared across MCP and other entry points."
 changed_at = "2026-10-02T09:46:52.625526965Z"
+
+[[decision.history]]
+choice = "Input hardening with size limits, control character rejection, and decision quality floor"
+reason = "All MCP tool arguments pass through hardened helpers: require_str and opt_str enforce MAX_TEXT_FIELD_BYTES limits and reject control characters (delegating to store::has_control_chars). Arrays are bounded by MAX_ARRAY_ITEMS. Decision-specific quality gates enforce MIN_REASON_BYTES for reasoning and MAX_CHOICE_BYTES for choice text, rejecting vague or malformed decisions at the MCP boundary before they reach the Store. Edge targets (depends_on, constrains) are validated to exist in state before write. These limits are defined centrally in store::limits and shared across MCP and other entry points."
+changed_at = "2026-10-03T14:48:00.136167687Z"

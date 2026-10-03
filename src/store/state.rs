@@ -355,12 +355,17 @@ pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(Error::Io(e)),
+        Err(source) => {
+            return Err(Error::Io {
+                path: dir.to_path_buf(),
+                source,
+            });
+        }
     };
 
     let mut names = Vec::new();
     for entry in entries {
-        let path = entry?.path();
+        let path = entry.map_err(Error::io(dir))?.path();
         let is_toml = path.extension().is_some_and(|ext| ext == "toml");
         if is_toml && let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
             names.push(stem.to_string());

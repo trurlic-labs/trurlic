@@ -67,6 +67,8 @@ pub enum IssueKind {
     HashMismatch,
     /// `graph.toml` names a node whose file cannot be read.
     NodeFileMissing,
+    /// Two index entries share a name; building the graph would keep one.
+    DuplicateNode,
 }
 
 impl IssueKind {
@@ -95,7 +97,8 @@ impl IssueKind {
             | Self::ComponentNameInvalid
             | Self::DecisionNameInvalid
             | Self::EmptyPatternName
-            | Self::NodeContentMissing => Severity::Error,
+            | Self::NodeContentMissing
+            | Self::DuplicateNode => Severity::Error,
         }
     }
 }

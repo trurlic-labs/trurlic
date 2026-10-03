@@ -11,12 +11,14 @@
 )]
 
 mod budget;
+mod decision_text;
 mod determinism;
 #[cfg(feature = "failpoints")]
 mod failpoints;
 mod golden;
 mod harness;
 mod invalid_graph;
+mod malformed_node;
 mod output;
 mod stdio;
 #[cfg(feature = "failpoints")]

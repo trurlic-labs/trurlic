@@ -22,10 +22,10 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
 
     match crate::store::compare_versions(&old_version, FORMAT_VERSION) {
         Ordering::Greater => {
-            return Err(Error::Validation(format!(
-                ".trurlic/ format version `{old_version}` is newer than this CLI \
-                 (expected `{FORMAT_VERSION}`). Please upgrade trurlic."
-            )));
+            return Err(Error::VersionMismatch {
+                found: old_version,
+                expected: FORMAT_VERSION,
+            });
         }
         Ordering::Equal => {
             out!("Already up to date (format version {FORMAT_VERSION}).")?;
@@ -130,10 +130,10 @@ fn sanitize_graph_edges(root: &Path, lock: &StoreLock, store: &Store) -> Result<
     let content = match fs::read_to_string(&path) {
         Ok(content) => content,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(Error::Io(e)),
+        Err(source) => return Err(Error::Io { path, source }),
     };
 
-    let mut index: toml::Table = toml::from_str(&content)?;
+    let mut index: toml::Table = toml::from_str(&content).map_err(Error::toml(&path))?;
     let Some(toml::Value::Array(edges)) = index.get_mut("edges") else {
         return Ok(0);
     };
@@ -152,8 +152,8 @@ fn sanitize_graph_edges(root: &Path, lock: &StoreLock, store: &Store) -> Result<
 /// Count graph edges the current schema can no longer parse, without a typed
 /// read that a single retired edge would reject outright. Used by the dry-run
 /// preview, which must not mutate the store.
-fn count_retired_edges(graph_content: &str) -> Result<usize> {
-    let index: toml::Table = toml::from_str(graph_content)?;
+fn count_retired_edges(graph_path: &Path, graph_content: &str) -> Result<usize> {
+    let index: toml::Table = toml::from_str(graph_content).map_err(Error::toml(graph_path))?;
     let Some(toml::Value::Array(edges)) = index.get("edges") else {
         return Ok(0);
     };
@@ -167,7 +167,7 @@ fn count_retired_edges(graph_content: &str) -> Result<usize> {
 /// migration commit point — see [`apply_migration`] for why it runs last.
 fn write_migrated_version(root: &Path, lock: &StoreLock, store: &Store) -> Result<()> {
     let path = root.join("project.toml");
-    let mut project: ProjectFile = toml::from_str(&fs::read_to_string(&path)?)?;
+    let mut project: ProjectFile = read_node(&path)?.0;
     project.trurlic_version = FORMAT_VERSION.into();
     store.write_atomic(lock, &path, &project)?;
     Ok(())
@@ -186,17 +186,15 @@ where
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(Error::Io(e)),
+        Err(source) => return Err(Error::Io { path: dir, source }),
     };
 
     for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
+        let path = entry.map_err(Error::io(&dir))?.path();
         if path.extension().and_then(|e| e.to_str()) != Some("toml") {
             continue;
         }
-        let content = fs::read_to_string(&path)?;
-        let value: T = toml::from_str(&content)?;
+        let (value, _): (T, _) = read_node(&path)?;
         store.write_atomic(lock, &path, &value)?;
     }
     Ok(())
@@ -209,11 +207,9 @@ fn print_dry_run(root: &Path, old_version: &str) -> Result<()> {
     let mut count = 0;
 
     let path = root.join("project.toml");
-    let content = fs::read_to_string(&path)?;
-    let mut project: ProjectFile = toml::from_str(&content)?;
+    let (mut project, content): (ProjectFile, _) = read_node(&path)?;
     project.trurlic_version = FORMAT_VERSION.into();
-    let new_content = toml::to_string_pretty(&project)?;
-    if content != new_content {
+    if content != to_toml(&path, &project)? {
         out!("  would update: project.toml")?;
         count += 1;
     }
@@ -225,11 +221,11 @@ fn print_dry_run(root: &Path, old_version: &str) -> Result<()> {
 
     let graph_path = root.join(GRAPH_FILE);
     if graph_path.exists() {
-        let content = fs::read_to_string(&graph_path)?;
+        let content = fs::read_to_string(&graph_path).map_err(Error::io(&graph_path))?;
         // Parse loosely: a retired edge (e.g. `supersedes`) makes a typed read
         // fail on the very store this command exists to repair, so the dry-run
         // must not attempt one.
-        let retired = count_retired_edges(&content)?;
+        let retired = count_retired_edges(&graph_path, &content)?;
         // graph.toml is rewritten whenever a node file changed (hash refresh) or
         // a retired edge is stripped.
         if retired > 0 {
@@ -259,20 +255,17 @@ where
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(Error::Io(e)),
+        Err(source) => return Err(Error::Io { path: dir, source }),
     };
 
     let mut count = 0;
     for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
+        let path = entry.map_err(Error::io(&dir))?.path();
         if path.extension().and_then(|e| e.to_str()) != Some("toml") {
             continue;
         }
-        let content = fs::read_to_string(&path)?;
-        let value: T = toml::from_str(&content)?;
-        let new_content = toml::to_string_pretty(&value)?;
-        if content != new_content {
+        let (value, content): (T, _) = read_node(&path)?;
+        if content != to_toml(&path, &value)? {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
             out!("  would update: {subdir}/{name}")?;
             count += 1;
@@ -281,13 +274,28 @@ where
     Ok(count)
 }
 
+/// Parse the TOML file at `path` as `T`, returning its text with it.
+fn read_node<T: serde::de::DeserializeOwned>(path: &Path) -> Result<(T, String)> {
+    let content = fs::read_to_string(path).map_err(Error::io(path))?;
+    let value = toml::from_str(&content).map_err(Error::toml(path))?;
+    Ok((value, content))
+}
+
+/// `value` as the TOML a migration would write to `path`.
+fn to_toml<T: serde::Serialize>(path: &Path, value: &T) -> Result<String> {
+    toml::to_string_pretty(value).map_err(|source| Error::TomlSerialize {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
+    fs::create_dir_all(dst).map_err(Error::io(dst))?;
+    for entry in fs::read_dir(src).map_err(Error::io(src))? {
+        let entry = entry.map_err(Error::io(src))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        let ft = entry.file_type()?;
+        let ft = entry.file_type().map_err(Error::io(&src_path))?;
         if ft.is_symlink() {
             // Skip symlinks rather than follow them out of the store tree; warn
             // so an incomplete backup is never silent.
@@ -304,7 +312,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
             }
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
-            fs::copy(&src_path, &dst_path)?;
+            fs::copy(&src_path, &dst_path).map_err(Error::io(&dst_path))?;
         }
     }
     Ok(())
@@ -332,13 +340,11 @@ mod tests {
         setup_store_with_version(tmp.path(), "99.0.0");
 
         let err = migrate(tmp.path(), DryRun::No).unwrap_err();
-        match err {
-            Error::Validation(msg) => {
-                assert!(msg.contains("newer"), "should mention 'newer': {msg}");
-                assert!(msg.contains("upgrade"), "should suggest upgrade: {msg}");
-            }
-            other => panic!("expected Validation, got: {other}"),
-        }
+        assert!(
+            matches!(&err, Error::VersionMismatch { found, .. } if found == "99.0.0"),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("upgrade trurlic"), "{err}");
     }
 
     #[test]
@@ -702,8 +708,8 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Auth module")).unwrap();
         add_component(tmp.path(), "api", Some("API module")).unwrap();
-        decide(tmp.path(), "auth", "JWT tokens", "Stateless", &[], &[]).unwrap();
-        decide(tmp.path(), "api", "REST API", "Standard", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT tokens", "Stateless.", &[], &[]).unwrap();
+        decide(tmp.path(), "api", "REST API", "Common verbs", &[], &[]).unwrap();
 
         // Create a pattern file directly (store::record_pattern is pub(crate)
         // in the private `write` module, so we write TOML by hand).

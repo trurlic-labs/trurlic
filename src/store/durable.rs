@@ -10,7 +10,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::Result;
+use crate::{Error, Result};
 
 use super::Store;
 
@@ -34,12 +34,24 @@ impl Store {
         });
         match written {
             Ok(()) => Ok(path),
-            Err(e) => {
+            Err(source) => {
                 let _ = fs::remove_file(&path);
-                Err(e.into())
+                Err(Error::Io { path, source })
             }
         }
     }
+}
+
+/// Rename the file [`Store::stage`] wrote to `target`, removing it when the
+/// rename fails.
+pub(super) fn place(staged: &Path, target: &Path) -> Result<()> {
+    fs::rename(staged, target).map_err(|source| {
+        let _ = fs::remove_file(staged);
+        Error::Io {
+            path: target.to_path_buf(),
+            source,
+        }
+    })
 }
 
 /// Flush `dir`'s entries, so the renames and removals in it survive a

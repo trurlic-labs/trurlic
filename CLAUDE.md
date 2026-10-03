@@ -27,15 +27,19 @@ cli         → commands                    clap definitions and dispatch
 budget      → (no internal deps)          Fitting output into a byte budget: the
                                           level search behind the result cap and
                                           the step prompt listings
-error       → (no internal deps)          The crate's single `Error` enum and
-                                          `Result` alias
+error       → store, commands (types)     The crate's single `Error` enum and
+                                          `Result` alias; it names the store's
+                                          `Issue` and text-fault types and
+                                          install's `InstallError`
 console     → (no internal deps)          Terminal I/O: `out!` to stdout, `diag!`
                                           to stderr, the confirmation prompt
 ```
 
 Every module uses `error` and `console`; the arrows leave them out.
 
-**store** is the foundation. It imports no other module except `error` and `console`. Every write goes through `Store` methods with `StoreLock` proof parameters.
+**store** is the foundation. It imports no other module except `error` and `console`. Every write goes through `Store` methods with `StoreLock` proof parameters. A decision's choice and reason are checked there (`store::text`), so every surface refuses the same text with the same message.
+
+**error** carries the path of the file behind every I/O and TOML failure (`Error::Io`, `Error::Toml`); nothing converts a bare `io::Error` into it, so a `?` cannot drop the path.
 
 **workflow** is pure computation. It never touches the filesystem, never allocates beyond the response JSON. `advance()` is a deterministic function of graph state + inputs. Same inputs = same output, always.
 

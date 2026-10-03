@@ -152,7 +152,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let issues = store.verify_hashes().unwrap();
@@ -287,7 +287,7 @@ mod tests {
             &[],
         )
         .unwrap();
-        decide(tmp.path(), "cli", "clap derive", "Type-safe", &[], &[]).unwrap();
+        decide(tmp.path(), "cli", "clap derive", "Typed flags", &[], &[]).unwrap();
 
         check(tmp.path()).unwrap();
 
