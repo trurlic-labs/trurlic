@@ -49,6 +49,7 @@ make test       # unit + integration tests
 make check      # cargo fmt --check + clippy -D warnings
 make audit      # cargo deny check (advisories, licenses, bans, sources)
 make ci         # all of the above — run before pushing
+make bench      # criterion benches over the seeded corpus (not part of ci)
 ```
 
 **Single test:**
@@ -123,4 +124,4 @@ Breaking changes: `BREAKING CHANGE:` in the commit footer.
 
 ## Code style
 
-`make fmt` handles formatting and auto-fixable lints. Clippy denies warnings. `thiserror` for error types. Every public function documented. No `unwrap()` or `expect()` in production code — the crate enforces this via `#![deny(clippy::unwrap_used, clippy::expect_used)]`.
+`make fmt` handles formatting and auto-fixable lints. Clippy denies warnings. `thiserror` for error types. Every public function documented. The `[lints]` table in `Cargo.toml` and `clippy.toml` refuse `unsafe`, `unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!` and `dbg!` outside tests, `HashMap`/`HashSet` (use the BTree collections), and printing anywhere but `console` (`out!`, `diag!`). An exception is `#[expect(lint, reason = "...")]` at its site; `#[allow]` is refused. `tests/lints.rs` checks that each lint fires.

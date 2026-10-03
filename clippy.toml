@@ -1,0 +1,14 @@
+# Tests assert by panicking.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iterates in a per-process order; use BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iterates in a per-process order; use BTreeSet" },
+]
+
+disallowed-methods = [
+    { path = "std::io::stdout", reason = "write command output through console::out!" },
+    { path = "std::io::stderr", reason = "write diagnostics through console::diag!" },
+]

@@ -46,6 +46,10 @@ pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()
     };
 
     let mut reader = io::stdin().lock();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the JSON-RPC transport owns stdout"
+    )]
     let mut writer = io::stdout().lock();
 
     diag!("trurlic: MCP server ready");

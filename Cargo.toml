@@ -85,8 +85,31 @@ tempfile = "3"
 criterion = { version = "5", package = "codspeed-criterion-compat", default-features = false }
 tempfile = "3"
 
+# Invariants a tool can check. Tests opt out of the panicking lints through
+# clippy.toml's allow-*-in-tests keys; any other exception is an
+# `#[expect(lint, reason = "...")]` at its site, which fails once it stops
+# applying.
 [lints.rust]
-unsafe_code = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+# Production code returns errors; it does not panic.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+# Under `serve`, stdout carries JSON-RPC: one stray line corrupts the
+# stream. `console` and the MCP transport are the only writers.
+print_stdout = "deny"
+print_stderr = "deny"
+disallowed_methods = "deny"
+# Every exception names its reason and expires with it.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+# Hash collections iterate in a per-process order.
+disallowed_types = "deny"
 
 # ── Build profiles ─────────────────────────────────────────────────────────────
 

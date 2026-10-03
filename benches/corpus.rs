@@ -8,6 +8,12 @@
 //! Setup also sends each request once and panics on an error response, so no
 //! bench times an error path.
 
+#![expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "a bench whose setup fails has nothing to measure"
+)]
+
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::fs;
