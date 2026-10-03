@@ -8,7 +8,7 @@ mod verify;
 mod watcher;
 mod write;
 
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use serde_json::Value;
@@ -24,17 +24,16 @@ const PROTOCOL_VERSION: &str = "2025-11-25";
 
 /// Run the MCP server on stdio.
 ///
-/// `initial_state` is wrapped in `Arc<RwLock<_>>` and shared with a
-/// background file watcher thread. The watcher detects external changes
-/// to `.trurlic/` (CLI writes, manual edits, git checkout) and reloads
-/// state from disk. The write lock is held only for pointer swaps
-/// (microseconds) — MCP read queries acquire only a read lock and never
-/// block the watcher or other reads.
+/// The state is shared with a background file watcher thread. The watcher
+/// detects external changes to `.trurlic/` (CLI writes, manual edits, git
+/// checkout) and reloads state from disk. The write lock is held only for
+/// pointer swaps (microseconds); MCP read queries acquire only a read lock
+/// and never block the watcher or other reads.
 pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()> {
-    let state = Arc::new(RwLock::new(initial_state));
+    let mut server = Server::new(store, initial_state);
 
     // Spawn file watcher. Non-fatal if unavailable (e.g. inotify limit).
-    let _watcher = match watcher::spawn(store.root(), state.clone()) {
+    let _watcher = match watcher::spawn(server.store.root(), server.state.clone()) {
         Ok(guard) => {
             eprintln!("trurlic: file watcher active");
             Some(guard)
@@ -45,36 +44,67 @@ pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()
         }
     };
 
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut reader = stdin.lock();
-    let mut writer = stdout.lock();
-    let mut initialized = false;
+    let mut reader = io::stdin().lock();
+    let mut writer = io::stdout().lock();
 
     eprintln!("trurlic: MCP server ready");
 
     loop {
-        match protocol::read_message(&mut reader) {
-            Ok(Some(request)) => {
-                if let Err(e) = handle(&store, &state, request, &mut initialized, &mut writer) {
-                    eprintln!("trurlic: stdout write error: {e}");
-                    break;
-                }
-            }
-            Ok(None) => break, // EOF — clean shutdown
+        match server.serve_one(&mut reader, &mut writer) {
+            Ok(true) => {}
+            Ok(false) => break,
             Err(e) => {
-                if let Err(we) =
-                    protocol::write_error(&mut writer, &Value::Null, PARSE_ERROR, &e.to_string())
-                {
-                    eprintln!("trurlic: stdout write error: {we}");
-                    break;
-                }
+                eprintln!("trurlic: stdout write error: {e}");
+                break;
             }
         }
     }
 
     eprintln!("trurlic: MCP server stopped");
     Ok(())
+}
+
+/// One MCP session over a store: the state its requests and its file
+/// watcher share, and whether the client has sent `initialize`.
+pub struct Server {
+    store: Store,
+    state: Arc<RwLock<ProjectState>>,
+    initialized: bool,
+}
+
+impl Server {
+    #[must_use]
+    pub fn new(store: Store, state: ProjectState) -> Self {
+        Self {
+            store,
+            state: Arc::new(RwLock::new(state)),
+            initialized: false,
+        }
+    }
+
+    /// Read one message from `reader` and write its response, if it has
+    /// one, to `writer`. `Ok(false)` at the end of the input; an error is a
+    /// failed write, after which the session cannot answer.
+    pub fn serve_one(
+        &mut self,
+        reader: &mut impl BufRead,
+        writer: &mut impl Write,
+    ) -> io::Result<bool> {
+        match protocol::read_message(reader) {
+            Ok(Some(request)) => {
+                handle(
+                    &self.store,
+                    &self.state,
+                    request,
+                    &mut self.initialized,
+                    writer,
+                )?;
+            }
+            Ok(None) => return Ok(false),
+            Err(e) => protocol::write_error(writer, &Value::Null, PARSE_ERROR, &e.to_string())?,
+        }
+        Ok(true)
+    }
 }
 
 // ── Request dispatch ──────────────────────────────────────────────────────
@@ -486,5 +516,33 @@ mod tests {
             "error response must be a single line"
         );
         assert!(output.ends_with('\n'));
+    }
+
+    #[test]
+    fn serve_one_answers_each_line_in_turn_until_the_input_ends() {
+        let (_tmp, store) = empty_store();
+        let state = store.load_state().unwrap();
+        let mut server = Server::new(store, state);
+        let input = concat!(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+            "\nnot json\n",
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+            "\n",
+        );
+        let mut reader = input.as_bytes();
+        let mut output = Vec::new();
+
+        while server.serve_one(&mut reader, &mut output).unwrap() {}
+
+        let responses: Vec<Value> = output
+            .split(|&b| b == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).unwrap())
+            .collect();
+        assert_eq!(responses.len(), 3);
+        assert_eq!(responses[0]["id"], 1);
+        assert_eq!(responses[1]["error"]["code"], PARSE_ERROR);
+        assert_eq!(responses[2]["id"], 2);
+        assert!(responses[2]["result"]["tools"].is_array());
     }
 }
