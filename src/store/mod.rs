@@ -616,20 +616,13 @@ impl Store {
 
     pub fn check_version(&self) -> Result<()> {
         let project = self.read_project()?;
-        let stored = &project.trurlic_version;
-        if stored == FORMAT_VERSION {
+        if project.trurlic_version == FORMAT_VERSION {
             return Ok(());
         }
-        match compare_versions(stored, FORMAT_VERSION) {
-            Ordering::Greater => Err(Error::Validation(format!(
-                ".trurlic/ format version `{stored}` is newer than this CLI \
-                 (expected `{FORMAT_VERSION}`). Please upgrade trurlic."
-            ))),
-            _ => Err(Error::Validation(format!(
-                ".trurlic/ format version `{stored}` is older than this CLI \
-                 (expected `{FORMAT_VERSION}`). Run `trurlic migrate` to upgrade."
-            ))),
-        }
+        Err(Error::VersionMismatch {
+            found: project.trurlic_version,
+            expected: FORMAT_VERSION,
+        })
     }
 
     // ── Hash verification ────────────────────────────────────────────────
@@ -1567,14 +1560,16 @@ mod tests {
         let store = setup_store_with_version(tmp.path(), "99.0.0");
 
         let err = store.check_version().unwrap_err();
-        match err {
-            Error::Validation(msg) => {
-                assert!(msg.contains("99.0.0"));
-                assert!(msg.contains("newer"), "should mention 'newer': {msg}");
-                assert!(msg.contains("upgrade"), "should suggest upgrade: {msg}");
-            }
-            other => panic!("expected Validation, got: {other}"),
-        }
+        let msg = err.to_string();
+        assert!(
+            matches!(&err, Error::VersionMismatch { found, expected: FORMAT_VERSION } if found == "99.0.0"),
+            "{err:?}"
+        );
+        assert!(msg.contains("newer"), "should mention 'newer': {msg}");
+        assert!(
+            msg.contains("upgrade trurlic"),
+            "should suggest upgrade: {msg}"
+        );
     }
 
     #[test]
@@ -1583,17 +1578,16 @@ mod tests {
         let store = setup_store_with_version(tmp.path(), "0.0.1");
 
         let err = store.check_version().unwrap_err();
-        match err {
-            Error::Validation(msg) => {
-                assert!(msg.contains("0.0.1"));
-                assert!(msg.contains("older"), "should mention 'older': {msg}");
-                assert!(
-                    msg.contains("trurlic migrate"),
-                    "should mention trurlic migrate: {msg}"
-                );
-            }
-            other => panic!("expected Validation, got: {other}"),
-        }
+        let msg = err.to_string();
+        assert!(
+            matches!(&err, Error::VersionMismatch { found, expected: FORMAT_VERSION } if found == "0.0.1"),
+            "{err:?}"
+        );
+        assert!(msg.contains("older"), "should mention 'older': {msg}");
+        assert!(
+            msg.contains("trurlic migrate"),
+            "should mention trurlic migrate: {msg}"
+        );
     }
 
     // ── verify_path ──────────────────────────────────────────────────────

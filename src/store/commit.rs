@@ -12,6 +12,7 @@ use crate::{Error, Result};
 
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
+use super::graph::{Issue, IssueKind};
 use super::schema::GraphIndex;
 use super::state::ProjectState;
 use super::{Store, StoreLock};
@@ -153,10 +154,12 @@ impl Store {
             let mut seen = BTreeSet::new();
             for node in &state.graph_index.nodes {
                 if !seen.insert(&node.name) {
-                    return Err(Error::GraphIntegrity(format!(
-                        "duplicate node name `{}` in graph index",
-                        node.name
-                    )));
+                    return Err(Error::GraphIntegrity(vec![Issue {
+                        kind: IssueKind::DuplicateNode,
+                        // clone: the issue outlives the borrowed index entry.
+                        subject: node.name.clone(),
+                        message: format!("duplicate node name `{}` in graph index", node.name),
+                    }]));
                 }
             }
         }
@@ -164,8 +167,7 @@ impl Store {
         let graph = state.build_graph();
         let introduced = graph.introduced_errors(&state.graph);
         if !introduced.is_empty() {
-            let messages: Vec<&str> = introduced.iter().map(|i| i.message.as_str()).collect();
-            return Err(Error::GraphIntegrity(messages.join("; ")));
+            return Err(Error::GraphIntegrity(introduced));
         }
         let mut index = graph.to_index(state.graph_index.rebuilt);
         state.generation = self.commit_batch(lock, writes, removes, Some(&mut index))?;
@@ -465,7 +467,23 @@ mod tests {
         let err = store
             .commit_with_graph(&lock, vec![], &[], &mut state)
             .unwrap_err();
-        assert!(matches!(err, Error::GraphIntegrity(_)));
+        let Error::GraphIntegrity(issues) = err else {
+            panic!("expected GraphIntegrity, got {err}");
+        };
+        let refused: Vec<(IssueKind, &str)> = issues
+            .iter()
+            .map(|issue| (issue.kind, issue.subject.as_str()))
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                (
+                    IssueKind::EdgeTargetMissing,
+                    "orphan -> nonexistent (belongs_to)"
+                ),
+                (IssueKind::DecisionComponentMissing, "orphan"),
+            ]
+        );
     }
 
     /// A commit that restamped the index would change `graph.toml` even when

@@ -22,10 +22,10 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
 
     match crate::store::compare_versions(&old_version, FORMAT_VERSION) {
         Ordering::Greater => {
-            return Err(Error::Validation(format!(
-                ".trurlic/ format version `{old_version}` is newer than this CLI \
-                 (expected `{FORMAT_VERSION}`). Please upgrade trurlic."
-            )));
+            return Err(Error::VersionMismatch {
+                found: old_version,
+                expected: FORMAT_VERSION,
+            });
         }
         Ordering::Equal => {
             out!("Already up to date (format version {FORMAT_VERSION}).")?;
@@ -340,13 +340,11 @@ mod tests {
         setup_store_with_version(tmp.path(), "99.0.0");
 
         let err = migrate(tmp.path(), DryRun::No).unwrap_err();
-        match err {
-            Error::Validation(msg) => {
-                assert!(msg.contains("newer"), "should mention 'newer': {msg}");
-                assert!(msg.contains("upgrade"), "should suggest upgrade: {msg}");
-            }
-            other => panic!("expected Validation, got: {other}"),
-        }
+        assert!(
+            matches!(&err, Error::VersionMismatch { found, .. } if found == "99.0.0"),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("upgrade trurlic"), "{err}");
     }
 
     #[test]

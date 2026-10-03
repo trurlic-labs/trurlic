@@ -122,6 +122,7 @@ fn error_status(err: &crate::Error) -> StatusCode {
         | Error::Toml { .. }
         | Error::TomlSerialize { .. }
         | Error::System { .. }
+        | Error::VersionMismatch { .. }
         | Error::CommitPending { .. }
         | Error::BadJournal { .. }
         | Error::StoreExists(_)

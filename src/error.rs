@@ -4,10 +4,12 @@
 //! [`Error::Toml`] carry the path, and nothing converts a bare
 //! `io::Error` or TOML error into an [`Error`], so a `?` cannot drop it.
 
+use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::commands::InstallError;
+use crate::store::graph::Issue;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -34,6 +36,16 @@ pub enum Error {
     /// async runtime, a child process. `what` names the call.
     #[error("cannot {what}: {source}")]
     System { what: String, source: io::Error },
+
+    #[error(
+        ".trurlic/ format version `{found}` is {} this CLI (expected `{expected}`); {}",
+        version_relation(found, expected),
+        version_fix(found, expected)
+    )]
+    VersionMismatch {
+        found: String,
+        expected: &'static str,
+    },
 
     #[error("not a trurlic project (no .trurlic/ found in {0} or any parent directory)")]
     StoreNotFound(PathBuf),
@@ -102,8 +114,10 @@ pub enum Error {
     #[error("{0}")]
     Validation(String),
 
-    #[error("graph integrity violation: {0}")]
-    GraphIntegrity(String),
+    /// The errors a refused write would have added to the graph, in
+    /// validation order.
+    #[error("graph integrity violation: {}", messages(.0))]
+    GraphIntegrity(Vec<Issue>),
 
     #[error("operation blocked by cascade rule: {0}")]
     CascadeBlocked(String),
@@ -137,4 +151,33 @@ impl Error {
             source,
         }
     }
+}
+
+/// A version that does not parse reads as older, so `migrate` is offered.
+fn is_newer(found: &str, expected: &str) -> bool {
+    crate::store::compare_versions(found, expected) == Ordering::Greater
+}
+
+fn version_relation(found: &str, expected: &str) -> &'static str {
+    if is_newer(found, expected) {
+        "newer than"
+    } else {
+        "older than"
+    }
+}
+
+fn version_fix(found: &str, expected: &str) -> &'static str {
+    if is_newer(found, expected) {
+        "upgrade trurlic"
+    } else {
+        "run `trurlic migrate` to upgrade the store"
+    }
+}
+
+fn messages(issues: &[Issue]) -> String {
+    issues
+        .iter()
+        .map(|issue| issue.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
