@@ -105,11 +105,39 @@ impl Pause {
     }
 }
 
+/// The lines `stream` yields, read on a thread of their own so that every
+/// receive can carry a timeout: a server that hangs or dies fails the test
+/// instead of blocking it.
+fn read_lines(stream: impl Read + Send + 'static) -> Receiver<String> {
+    let (sender, lines) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stream).lines() {
+            let Ok(line) = line else { break };
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    lines
+}
+
+/// Wait for the first line in `lines` that contains `needle`.
+fn wait_for_line(lines: &Receiver<String>, needle: &str) -> String {
+    loop {
+        match lines.recv_timeout(RESPONSE_TIMEOUT) {
+            Ok(line) if line.contains(needle) => return line,
+            Ok(_) => {}
+            Err(e) => panic!("no line containing {needle:?}: {e}"),
+        }
+    }
+}
+
 /// An MCP client connected to `trurlic serve` over stdio.
 pub struct McpClient {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: Receiver<String>,
+    diagnostics: Receiver<String>,
     next_id: u64,
 }
 
@@ -127,30 +155,26 @@ impl McpClient {
             .arg("serve")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
         let stdin = child.stdin.take();
-        let stdout = child.stdout.take().unwrap();
-
-        // A reader thread lets every receive carry a timeout, so a server
-        // that hangs or dies fails the test instead of blocking it.
-        let (sender, lines) = mpsc::channel();
-        thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if sender.send(line).is_err() {
-                    break;
-                }
-            }
-        });
+        let lines = read_lines(child.stdout.take().unwrap());
+        let diagnostics = read_lines(child.stderr.take().unwrap());
 
         Self {
             child,
             stdin,
             lines,
+            diagnostics,
             next_id: 1,
         }
+    }
+
+    /// Wait for the first line the server writes to stderr that contains
+    /// `needle`.
+    pub fn wait_for_diagnostic(&self, needle: &str) -> String {
+        wait_for_line(&self.diagnostics, needle)
     }
 
     /// Spawn and complete the `initialize` handshake. Returns the
@@ -291,18 +315,8 @@ impl MapServer {
             .spawn()
             .unwrap();
 
-        // The server prints its URL, then starts the watcher. The reader
-        // thread keeps draining stderr so the server never blocks on it.
-        let stderr = child.stderr.take().unwrap();
-        let (sender, lines) = mpsc::channel();
-        thread::spawn(move || {
-            for line in BufReader::new(stderr).lines() {
-                let Ok(line) = line else { break };
-                if sender.send(line).is_err() {
-                    break;
-                }
-            }
-        });
+        // The server prints its URL, then starts the watcher.
+        let lines = read_lines(child.stderr.take().unwrap());
 
         let mut url = None;
         loop {
