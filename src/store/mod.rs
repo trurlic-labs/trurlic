@@ -23,7 +23,7 @@ mod state;
 mod write;
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -451,8 +451,7 @@ impl Store {
         let pat_items =
             self.read_nodes::<PatternFile>(&self.list_patterns()?, Self::pattern_path)?;
 
-        let mut hashes =
-            HashMap::with_capacity(1 + comp_items.len() + dec_items.len() + pat_items.len());
+        let mut hashes = BTreeMap::new();
         hashes.insert("project".to_string(), project_hash);
 
         let mut components = BTreeMap::new();
@@ -496,7 +495,7 @@ impl Store {
         components: &BTreeMap<String, Arc<ComponentFile>>,
         decisions: &BTreeMap<String, Arc<DecisionFile>>,
         patterns: &BTreeMap<String, Arc<PatternFile>>,
-        mut hashes: HashMap<String, String>,
+        mut hashes: BTreeMap<String, String>,
     ) -> Result<schema::GraphIndex> {
         let graph_path = self.graph_path();
 
@@ -513,7 +512,7 @@ impl Store {
         };
 
         // Build lookup from existing index for O(1) tag preservation.
-        let existing_tags: HashMap<&str, &[String]> = existing
+        let existing_tags: BTreeMap<&str, &[String]> = existing
             .nodes
             .iter()
             .map(|n| (n.name.as_str(), n.tags.as_slice()))
@@ -579,8 +578,7 @@ impl Store {
         // Preserve non-BelongsTo edges from existing graph that reference valid nodes.
         // BelongsTo edges are always re-derived from decision files (source of truth).
         // This prevents stale BelongsTo edges when decision.component is edited on disk.
-        let valid_names: std::collections::HashSet<&str> =
-            nodes.iter().map(|n| n.name.as_str()).collect();
+        let valid_names: BTreeSet<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
 
         let mut edges: Vec<EdgeEntry> = existing
             .edges

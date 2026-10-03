@@ -7,7 +7,7 @@
 //! member. A one-node loop is a self-edge, which validation reports on its
 //! own.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::slice;
 
 use super::graph::{Edge, InMemoryGraph};
@@ -50,7 +50,7 @@ struct Frame<'g> {
 #[derive(Default)]
 struct Search<'g> {
     /// Looked up, never iterated: the cycles are sorted on return.
-    visits: HashMap<&'g str, Visit>,
+    visits: BTreeMap<&'g str, Visit>,
     /// Open nodes in discovery order; a component is a suffix of it.
     open: Vec<&'g str>,
     cycles: Vec<Vec<&'g str>>,

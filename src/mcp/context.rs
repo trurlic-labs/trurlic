@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -95,8 +95,7 @@ pub(crate) fn get_context(
                 orphaned_ref_names: &orphaned_ref_names,
             });
 
-            let mut seen: HashSet<&str> =
-                HashSet::with_capacity(component_decisions.len() + related_decisions.len());
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
             for (name, _) in &component_decisions {
                 seen.insert(name);
             }
@@ -216,7 +215,7 @@ struct BriefParams<'a> {
     uncovered_concerns: &'a [&'a str],
     /// Names of component decisions whose code_refs all point at deleted
     /// files. Flagged inline so the agent knows the reference is untrustworthy.
-    orphaned_ref_names: &'a HashSet<&'a str>,
+    orphaned_ref_names: &'a BTreeSet<&'a str>,
 }
 
 /// Format the authoritative brief that coding agents consume directly.
@@ -400,7 +399,7 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
 
     // Collect patterns from matched decisions via targeted reverse-MemberOf lookup.
     let mut matched_patterns: Vec<Value> = Vec::new();
-    let mut seen_patterns: HashSet<&str> = HashSet::new();
+    let mut seen_patterns: BTreeSet<&str> = BTreeSet::new();
     for m in &matches {
         for (pat_name, pat) in graph.patterns_containing(m.name) {
             if seen_patterns.insert(pat_name) {
@@ -620,7 +619,7 @@ const ORPHANED_REFS_FLAG: &str = "  \u{26a0} ORPHANED REFS \u{2014} all referenc
 fn orphaned_ref_names<'a>(
     project_root: &Path,
     component_decisions: &[(&'a Arc<str>, &'a DecisionFile)],
-) -> HashSet<&'a str> {
+) -> BTreeSet<&'a str> {
     component_decisions
         .iter()
         .filter(|(_, d)| store::decision_refs_all_missing(project_root, d))
@@ -1894,7 +1893,7 @@ mod tests {
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
         let comp_decs = vec![(&name, &dec)];
-        let orphaned_ref_names: HashSet<&str> = HashSet::new();
+        let orphaned_ref_names: BTreeSet<&str> = BTreeSet::new();
 
         let brief = build_brief(&BriefParams {
             component: "store",
@@ -1932,7 +1931,7 @@ mod tests {
         };
         let name: Arc<str> = Arc::from("blake3-hashing");
         let comp_decs = vec![(&name, &dec)];
-        let orphaned_ref_names: HashSet<&str> = HashSet::new();
+        let orphaned_ref_names: BTreeSet<&str> = BTreeSet::new();
 
         let brief = build_brief(&BriefParams {
             component: "store",

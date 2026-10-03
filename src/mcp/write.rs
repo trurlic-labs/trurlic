@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use serde_json::Value;
 
@@ -289,7 +289,7 @@ const NEAR_DUPLICATE_OVERLAP: f64 = 0.7;
 /// Returns a value in `[0.0, 1.0]`; `0.0` when either side has no significant
 /// words.
 fn word_overlap(a: &str, b: &str) -> f64 {
-    fn significant_words(text: &str) -> HashSet<String> {
+    fn significant_words(text: &str) -> BTreeSet<String> {
         text.split_whitespace()
             .map(|w| {
                 w.trim_matches(|c: char| !c.is_alphanumeric())
@@ -416,7 +416,7 @@ fn detect_pattern_opportunity(state: &store::ProjectState, new_stem: &str) -> Va
     }
 
     // Collect decisions already in a pattern with the new decision.
-    let mut co_patterned: HashSet<&str> = HashSet::new();
+    let mut co_patterned: BTreeSet<&str> = BTreeSet::new();
     for (pat_name, _) in state.graph().patterns_containing(new_stem) {
         for (member, _) in state.graph().decisions_for_pattern(pat_name) {
             co_patterned.insert(member);

@@ -5,7 +5,7 @@
 //! graph module for navigability — the query surface is ~180 lines
 //! across 15 methods and does not affect the build or validation paths.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use super::graph::{Direction, Edge, InMemoryGraph};
@@ -81,7 +81,7 @@ impl InMemoryGraph {
             }
         }
 
-        let mut seen: HashSet<&str> = HashSet::new();
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut result = Vec::new();
         for conn in connected {
             if let Some(edges) = self.reverse.get(conn) {
@@ -154,7 +154,7 @@ impl InMemoryGraph {
     ) -> Vec<(&Arc<str>, &DecisionFile)> {
         use std::collections::VecDeque;
 
-        let mut visited: HashSet<&str> = HashSet::with_capacity(seeds.len() * 4);
+        let mut visited: BTreeSet<&str> = BTreeSet::new();
         for &seed in seeds {
             visited.insert(seed);
         }
@@ -354,7 +354,7 @@ mod tests {
         // coverage baseline is its own decisions plus the project-wide rules.
         let baseline = g.coverage_baseline("auth");
         assert_eq!(baseline.len(), 2);
-        let owners: HashSet<&str> = baseline
+        let owners: BTreeSet<&str> = baseline
             .iter()
             .map(|d| d.decision.component.as_str())
             .collect();
@@ -398,7 +398,7 @@ mod tests {
         let g = test_graph();
         let sources = g.connects_from("database");
         assert_eq!(sources.len(), 2);
-        let names: HashSet<&str> = sources.iter().copied().collect();
+        let names: BTreeSet<&str> = sources.iter().copied().collect();
         assert!(names.contains("auth"));
         assert!(names.contains("rate-limiter"));
     }
@@ -425,7 +425,7 @@ mod tests {
         let g = test_graph();
         // database ← auth, database ← rate-limiter, so auth decisions are related to database.
         let related = g.related_decisions("database");
-        let names: HashSet<&str> = related.iter().map(|(n, _)| n.as_ref()).collect();
+        let names: BTreeSet<&str> = related.iter().map(|(n, _)| n.as_ref()).collect();
         assert!(names.contains("use-jwt"));
     }
 

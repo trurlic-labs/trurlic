@@ -1,7 +1,7 @@
 //! The commit path: validating the graph, then putting node files and
 //! `graph.toml` on disk through the journal (see `journal.rs`).
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -146,9 +146,10 @@ impl Store {
         self.ensure_current(lock, state)?;
 
         // Pre-check: duplicate node names in the index would cause silent
-        // data loss during InMemoryGraph construction (HashMap overwrite).
+        // data loss during InMemoryGraph construction: the later entry replaces
+        // the earlier one.
         {
-            let mut seen = HashSet::with_capacity(state.graph_index.nodes.len());
+            let mut seen = BTreeSet::new();
             for node in &state.graph_index.nodes {
                 if !seen.insert(&node.name) {
                     return Err(Error::GraphIntegrity(format!(

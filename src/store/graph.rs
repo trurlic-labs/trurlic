@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -121,12 +121,12 @@ impl Issue {
 
 #[derive(Debug)]
 pub struct InMemoryGraph {
-    pub(crate) nodes: HashMap<Arc<str>, NodeMeta>,
-    pub(crate) forward: HashMap<Arc<str>, Vec<Edge>>,
-    pub(crate) reverse: HashMap<Arc<str>, Vec<Edge>>,
-    pub(crate) components: HashMap<Arc<str>, Arc<ComponentFile>>,
-    pub(crate) decisions: HashMap<Arc<str>, Arc<DecisionFile>>,
-    pub(crate) patterns: HashMap<Arc<str>, Arc<PatternFile>>,
+    pub(crate) nodes: BTreeMap<Arc<str>, NodeMeta>,
+    pub(crate) forward: BTreeMap<Arc<str>, Vec<Edge>>,
+    pub(crate) reverse: BTreeMap<Arc<str>, Vec<Edge>>,
+    pub(crate) components: BTreeMap<Arc<str>, Arc<ComponentFile>>,
+    pub(crate) decisions: BTreeMap<Arc<str>, Arc<DecisionFile>>,
+    pub(crate) patterns: BTreeMap<Arc<str>, Arc<PatternFile>>,
 }
 
 impl InMemoryGraph {
@@ -142,49 +142,53 @@ impl InMemoryGraph {
         decisions: &BTreeMap<String, Arc<DecisionFile>>,
         patterns: &BTreeMap<String, Arc<PatternFile>>,
     ) -> Self {
-        // Intern every name that appears in nodes or edges. Borrow keys
-        // from `index` (which outlives this function) to avoid cloning
-        // Strings into the pool map.
-        let mut pool: HashMap<&str, Arc<str>> = HashMap::with_capacity(index.nodes.len());
-        for node in &index.nodes {
-            pool.entry(node.name.as_str())
-                .or_insert_with(|| Arc::from(node.name.as_str()));
-        }
-        for edge in &index.edges {
-            pool.entry(edge.from.as_str())
-                .or_insert_with(|| Arc::from(edge.from.as_str()));
-            pool.entry(edge.to.as_str())
-                .or_insert_with(|| Arc::from(edge.to.as_str()));
-        }
+        // One allocation per node name, shared by every map below. A name
+        // only an edge carries (a dangling edge, which validation reports)
+        // gets its own. Each map is collected whole, which sorts once and
+        // builds the tree in bulk instead of searching it per insert.
+        let pool: BTreeMap<&str, Arc<str>> = index
+            .nodes
+            .iter()
+            .map(|node| (node.name.as_str(), Arc::from(node.name.as_str())))
+            .collect();
         let intern =
             |name: &str| -> Arc<str> { pool.get(name).cloned().unwrap_or_else(|| Arc::from(name)) };
 
-        let mut nodes = HashMap::with_capacity(index.nodes.len());
-        for node in &index.nodes {
-            nodes.insert(
-                intern(&node.name),
-                NodeMeta {
+        let nodes = index
+            .nodes
+            .iter()
+            .map(|node| {
+                let meta = NodeMeta {
                     kind: node.kind,
                     tags: node.tags.iter().map(|t| Arc::from(t.as_str())).collect(),
                     hash: node.hash.clone(),
-                },
-            );
-        }
+                };
+                (intern(&node.name), meta)
+            })
+            .collect();
 
-        let mut forward: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.nodes.len());
-        let mut reverse: HashMap<Arc<str>, Vec<Edge>> = HashMap::with_capacity(index.nodes.len());
+        let mut outgoing = Vec::with_capacity(index.edges.len());
+        let mut incoming = Vec::with_capacity(index.edges.len());
         for edge in &index.edges {
             let from = intern(&edge.from);
             let to = intern(&edge.to);
-            forward.entry(from.clone()).or_default().push(Edge {
-                target: to.clone(),
-                kind: edge.kind,
-            });
-            reverse.entry(to).or_default().push(Edge {
-                target: from,
-                kind: edge.kind,
-            });
+            outgoing.push((
+                from.clone(),
+                Edge {
+                    target: to.clone(),
+                    kind: edge.kind,
+                },
+            ));
+            incoming.push((
+                to,
+                Edge {
+                    target: from,
+                    kind: edge.kind,
+                },
+            ));
         }
+        let forward = group_by_node(outgoing);
+        let reverse = group_by_node(incoming);
 
         Self {
             nodes,
@@ -276,6 +280,20 @@ impl InMemoryGraph {
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────
+
+/// Edges keyed by the node they leave or reach, each list in index order.
+fn group_by_node(mut edges: Vec<(Arc<str>, Edge)>) -> BTreeMap<Arc<str>, Vec<Edge>> {
+    // Stable, so edges of one node keep their index order.
+    edges.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut grouped: Vec<(Arc<str>, Vec<Edge>)> = Vec::new();
+    for (node, edge) in edges {
+        match grouped.last_mut() {
+            Some((last, list)) if *last == node => list.push(edge),
+            _ => grouped.push((node, vec![edge])),
+        }
+    }
+    grouped.into_iter().collect()
+}
 
 #[cfg(test)]
 mod tests {
