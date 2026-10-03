@@ -15,9 +15,7 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::store::limits::{
-    MAX_ARRAY_ITEMS, MAX_CHOICE_BYTES, MAX_TEXT_FIELD_BYTES, MIN_REASON_BYTES,
-};
+use crate::store::limits::{MAX_ARRAY_ITEMS, MAX_TEXT_FIELD_BYTES};
 use crate::store::schema::{EdgeKind, NodeKind};
 use crate::store::{self};
 
@@ -108,6 +106,8 @@ fn error_status(err: &crate::Error) -> StatusCode {
         | Error::ComponentExists(_)
         | Error::DuplicateConnection { .. }
         | Error::Validation(_)
+        | Error::InvalidText { .. }
+        | Error::DuplicateChoice { .. }
         | Error::GraphIntegrity(_)
         | Error::CascadeBlocked(_) => StatusCode::BAD_REQUEST,
 
@@ -391,32 +391,6 @@ fn revise_decision(state: Arc<MapState>, name: String, body: ReviseDecision) -> 
             StatusCode::BAD_REQUEST,
             "at least one of choice, reason, tags, or code_refs required",
         ));
-    }
-    if let Some(ref c) = body.choice {
-        check_field_len("choice", c)?;
-        if c.len() > MAX_CHOICE_BYTES {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "choice must be \u{2264}{MAX_CHOICE_BYTES} bytes \
-                     ({} given)",
-                    c.len()
-                ),
-            ));
-        }
-    }
-    if let Some(ref r) = body.reason {
-        check_field_len("reason", r)?;
-        if r.trim().len() < MIN_REASON_BYTES {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "reason must be at least {MIN_REASON_BYTES} bytes \
-                     ({} given)",
-                    r.trim().len()
-                ),
-            ));
-        }
     }
     if let Some(ref t) = body.tags {
         if t.len() > MAX_ARRAY_ITEMS {

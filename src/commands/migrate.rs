@@ -708,8 +708,8 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", Some("Auth module")).unwrap();
         add_component(tmp.path(), "api", Some("API module")).unwrap();
-        decide(tmp.path(), "auth", "JWT tokens", "Stateless", &[], &[]).unwrap();
-        decide(tmp.path(), "api", "REST API", "Standard", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT tokens", "Stateless.", &[], &[]).unwrap();
+        decide(tmp.path(), "api", "REST API", "Common verbs", &[], &[]).unwrap();
 
         // Create a pattern file directly (store::record_pattern is pub(crate)
         // in the private `write` module, so we write TOML by hand).

@@ -2,9 +2,7 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use crate::store::limits::{
-    MAX_ARRAY_ITEMS, MAX_CHOICE_BYTES, MAX_TEXT_FIELD_BYTES, MIN_REASON_BYTES,
-};
+use crate::store::limits::{MAX_ARRAY_ITEMS, MAX_TEXT_FIELD_BYTES};
 use crate::store::schema::{Attribution, CodeRef};
 use crate::store::{self, Store, StoreLock};
 
@@ -42,6 +40,22 @@ pub(super) fn opt_str<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>,
             Err(format!("`{key}` contains invalid control characters"))
         }
         other => Ok(other),
+    }
+}
+
+/// A decision text the store validates itself: present and a string, and
+/// nothing more is checked here, so the refusal the caller reads is the
+/// store's, the same on every surface.
+pub(super) fn require_text<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    opt_text(args, key)?.ok_or_else(|| format!("missing required parameter: {key}"))
+}
+
+/// [`require_text`] for an optional argument; `null` is absent.
+pub(super) fn opt_text<'a>(args: &'a Value, key: &str) -> Result<Option<&'a str>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => Ok(Some(text)),
+        Some(_) => Err(format!("`{key}` must be a string")),
     }
 }
 
@@ -147,8 +161,8 @@ pub(crate) fn record_decision(
     args: &Value,
 ) -> Result<Value, String> {
     let component = require_str(args, "component")?;
-    let choice = require_str(args, "choice")?;
-    let reason = require_str(args, "reason")?;
+    let choice = require_text(args, "choice")?;
+    let reason = require_text(args, "reason")?;
     let alternatives = opt_str_array(args, "alternatives")?;
     let depends_on = opt_str_array(args, "depends_on")?;
     let constrains = opt_str_array(args, "constrains")?;
@@ -172,22 +186,6 @@ pub(crate) fn record_decision(
         return Err(format!("component `{component}` does not exist"));
     }
 
-    // Decision quality floor — reject vague or malformed decisions.
-    if reason.len() < MIN_REASON_BYTES {
-        return Err(format!(
-            "reason must be at least {MIN_REASON_BYTES} bytes — \
-             a real decision needs actual reasoning ({} given)",
-            reason.len(),
-        ));
-    }
-    if choice.len() > MAX_CHOICE_BYTES {
-        return Err(format!(
-            "choice must be ≤{MAX_CHOICE_BYTES} bytes — \
-             use a concise title, not a paragraph ({} given)",
-            choice.len(),
-        ));
-    }
-
     // Validate edge targets exist.
     for dep in &depends_on {
         if !state.decisions.contains_key(dep.as_str()) {
@@ -197,23 +195,6 @@ pub(crate) fn record_decision(
     for con in &constrains {
         if !state.decisions.contains_key(con.as_str()) {
             return Err(format!("constrains target `{con}` does not exist"));
-        }
-    }
-
-    // Reject a restatement of an existing decision in the same component,
-    // comparing on normalized text (case-insensitive, whitespace-collapsed) so
-    // a trailing space or doubled gap can't sneak a near-duplicate past the
-    // guard. Forking the graph with a duplicate node loses the original's
-    // history and edges — revising it in place keeps both.
-    let choice_key = store::normalize_choice(choice);
-    for (existing_name, existing_dec) in &state.decisions {
-        if existing_dec.decision.component == component
-            && store::normalize_choice(&existing_dec.decision.choice) == choice_key
-        {
-            return Err(format!(
-                "decision `{existing_name}` in [{component}] has identical choice text — \
-                 use update_decision(mode=\"revise\") to update it"
-            ));
         }
     }
 
@@ -847,36 +828,6 @@ mod tests {
     // ── decision quality floor ────────────────────────────────────────
 
     #[test]
-    fn record_decision_rejects_short_reason() {
-        let (_tmp, store, mut state) = setup();
-        let args = json!({
-            "component": "auth",
-            "choice": "Use JWT",
-            "reason": "ok",
-            "attribution": "user",
-        });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
-        assert!(
-            err.contains("at least") && err.contains("bytes"),
-            "should reject short reason: {err}"
-        );
-    }
-
-    #[test]
-    fn record_decision_rejects_long_choice() {
-        let (_tmp, store, mut state) = setup();
-        let long_choice = "x".repeat(MAX_CHOICE_BYTES + 1);
-        let args = json!({
-            "component": "auth",
-            "choice": long_choice,
-            "reason": "This is a valid reason",
-            "attribution": "user",
-        });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
-        assert!(err.contains("200"), "should reject long choice: {err}");
-    }
-
-    #[test]
     fn record_decision_warns_no_alternatives() {
         let (_tmp, store, mut state) = setup();
         let args = json!({
@@ -1031,33 +982,6 @@ mod tests {
     fn require_str_allows_normal_whitespace() {
         let args = json!({ "key": "hello\nworld\ttab" });
         assert!(require_str(&args, "key").is_ok());
-    }
-
-    #[test]
-    fn record_decision_rejects_duplicate_choice() {
-        let (_tmp, store, mut state) = setup();
-        let d1 = json!({
-            "component": "auth",
-            "choice": "Use JWT tokens",
-            "reason": "Stateless authentication model",
-            "attribution": "user",
-        });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
-
-        // Same choice text (case-insensitive), same component — hard error.
-        let d2 = json!({
-            "component": "auth",
-            "choice": "use jwt TOKENS",
-            "reason": "Different reasoning entirely",
-            "attribution": "user",
-        });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap_err();
-        assert!(
-            err.contains("identical choice") && err.contains("revise"),
-            "should reject duplicate and point at revise: {err}"
-        );
-        // The rejected decision must never reach disk or state.
-        assert_eq!(state.decisions.len(), 1);
     }
 
     #[test]

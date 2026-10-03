@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::InstallError;
 use crate::store::graph::Issue;
+use crate::store::text::{TextFault, TextField};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -113,6 +114,18 @@ pub enum Error {
 
     #[error("{0}")]
     Validation(String),
+
+    /// A decision's choice or reason breaks a rule of `store::text`.
+    #[error("`{field}` {fault}")]
+    InvalidText { field: TextField, fault: TextFault },
+
+    /// Another decision of the component has the same choice, compared
+    /// without case and runs of whitespace.
+    #[error(
+        "decision `{existing}` in [{component}] already has this choice; revise \
+         `{existing}` instead of duplicating it"
+    )]
+    DuplicateChoice { component: String, existing: String },
 
     /// The errors a refused write would have added to the graph, in
     /// validation order.

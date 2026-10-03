@@ -199,7 +199,7 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless.", &[], &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-with-dpop").unwrap();
@@ -244,7 +244,7 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &[]).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let state = store.load_state().unwrap();
@@ -267,7 +267,15 @@ mod tests {
             "Session cookies — rejected: requires server-side state".into(),
             "Opaque tokens — rejected: introspection overhead".into(),
         ];
-        decide(tmp.path(), "auth", "JWT with DPoP", "Stateless", &alts, &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "JWT with DPoP",
+            "Stateless.",
+            &alts,
+            &[],
+        )
+        .unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt-with-dpop").unwrap();
@@ -280,11 +288,11 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        decide(tmp.path(), "auth", "Use Redis", "Fast", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use Redis", "Fast reads", &[], &[]).unwrap();
         decide(
             tmp.path(),
             "auth",
-            "Use Redis",
+            "Use Redis.",
             "Also for sessions",
             &[],
             &[],
@@ -303,7 +311,7 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
 
         let before = Utc::now();
-        decide(tmp.path(), "auth", "JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "JWT", "Stateless.", &[], &[]).unwrap();
         let after = Utc::now();
 
         let store = Store::discover(tmp.path()).unwrap();
@@ -326,7 +334,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
 
-        decide(tmp.path(), "project", "Test decision", "Testing", &[], &[]).unwrap();
+        decide(
+            tmp.path(),
+            "project",
+            "Test decision",
+            "Testing it",
+            &[],
+            &[],
+        )
+        .unwrap();
     }
 
     // ── remove decision ──────────────────────────────────────────────────
@@ -336,7 +352,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &[]).unwrap();
 
         remove_decision(tmp.path(), "use-jwt").unwrap();
 
@@ -349,7 +365,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &[]).unwrap();
 
         remove_decision(tmp.path(), "use-jwt").unwrap();
 
@@ -403,8 +419,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
-        decide(tmp.path(), "auth", "Token expiry", "15 min", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Token expiry", "15 min TTL", &[], &[]).unwrap();
 
         // Manually add DependsOn edge: token-expiry depends on use-jwt.
         let store = Store::discover(tmp.path()).unwrap();
@@ -439,8 +455,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
-        decide(tmp.path(), "auth", "Token refresh", "Rotate", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Token refresh", "Rotate keys", &[], &[]).unwrap();
 
         // Create a pattern with exactly 2 member decisions.
         let store = Store::discover(tmp.path()).unwrap();
@@ -736,8 +752,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &[]).unwrap();
-        decide(tmp.path(), "auth", "Short lived tokens", "15 min", &[], &[]).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &[]).unwrap();
+        decide(
+            tmp.path(),
+            "auth",
+            "Short lived tokens",
+            "15 min TTL",
+            &[],
+            &[],
+        )
+        .unwrap();
 
         // Manually add Constrains edge: short-lived-tokens constrains use-jwt.
         let store = Store::discover(tmp.path()).unwrap();
@@ -822,7 +846,7 @@ mod tests {
                 symbol: None,
             },
         ];
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &refs).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &refs).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("use-jwt").unwrap();
@@ -846,7 +870,7 @@ mod tests {
             .iter()
             .map(|r| parse_code_ref_arg(r))
             .collect();
-        decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &refs).unwrap();
+        decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &refs).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("use-jwt").unwrap();
@@ -867,7 +891,7 @@ mod tests {
                 symbol: None,
             })
             .collect();
-        let err = decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &refs).unwrap_err();
+        let err = decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &refs).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("too many"), "should mention limit: {msg}");
     }
@@ -879,7 +903,7 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
 
         let refs = vec![parse_code_ref_arg("src/a.rs::")];
-        let err = decide(tmp.path(), "auth", "Use JWT", "Stateless", &[], &refs).unwrap_err();
+        let err = decide(tmp.path(), "auth", "Use JWT", "Stateless.", &[], &refs).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("empty"), "should reject empty symbol: {msg}");
     }

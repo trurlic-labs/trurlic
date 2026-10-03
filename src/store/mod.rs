@@ -20,6 +20,7 @@ mod validate;
 pub(crate) mod watcher;
 
 mod state;
+pub(crate) mod text;
 mod write;
 
 use std::cmp::Ordering;
@@ -241,20 +242,6 @@ pub fn hash_bytes(data: &[u8]) -> String {
 /// The first 12 hex digits of `hash`, as messages show it.
 fn abbreviate(hash: &str) -> &str {
     hash.get(..12).unwrap_or(hash)
-}
-
-/// Canonical key for detecting decisions with the same choice text: every run
-/// of whitespace collapses to a single space, the ends are trimmed, and letters
-/// are folded to lowercase (Unicode-aware). Two choices that differ only in
-/// case or spacing normalize to the same key, so a trailing space or a doubled
-/// gap cannot sneak a duplicate past the guard. Shared by the record and revise
-/// write paths so both enforce the same notion of "identical".
-pub(crate) fn normalize_choice(choice: &str) -> String {
-    choice
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
 }
 
 // ── Store ────────────────────────────────────────────────────────────────────

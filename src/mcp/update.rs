@@ -1,12 +1,11 @@
 use serde_json::Value;
 
 use crate::store::cascade::CascadeResult;
-use crate::store::limits::{MAX_CHOICE_BYTES, MIN_REASON_BYTES};
 use crate::store::schema::{Attribution, DecisionFile};
 use crate::store::{self, Store, StoreLock};
 use crate::workflow::concerns;
 
-use super::write::{opt_str, opt_str_array, parse_code_refs, require_str};
+use super::write::{opt_str_array, opt_text, parse_code_refs, require_str};
 
 /// Cascade analysis → JSON arrays for MCP tool responses.
 ///
@@ -152,8 +151,8 @@ fn revise_decision(
     name: &str,
     args: &Value,
 ) -> Result<Value, String> {
-    let new_choice = opt_str(args, "choice")?;
-    let new_reason = opt_str(args, "reason")?;
+    let new_choice = opt_text(args, "choice")?;
+    let new_reason = opt_text(args, "reason")?;
 
     // Distinguish an omitted field from an empty one: a missing `tags`/
     // `code_refs` key leaves the current values intact, while an explicit
@@ -176,24 +175,6 @@ fn revise_decision(
         return Err(
             "revise requires at least one of `choice`, `reason`, `tags`, or `code_refs`".into(),
         );
-    }
-
-    // Quality floor: revised values must meet the same bar as new decisions.
-    if let Some(c) = new_choice
-        && c.len() > MAX_CHOICE_BYTES
-    {
-        return Err(format!(
-            "choice must be ≤{MAX_CHOICE_BYTES} bytes ({} given)",
-            c.len(),
-        ));
-    }
-    if let Some(r) = new_reason
-        && r.len() < MIN_REASON_BYTES
-    {
-        return Err(format!(
-            "reason must be at least {MIN_REASON_BYTES} bytes ({} given)",
-            r.len(),
-        ));
     }
 
     store
@@ -750,37 +731,6 @@ mod tests {
         let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "Use JWT v2" });
         let result = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert!(result.get("workflow").is_none());
-    }
-
-    // ── revise quality floor ──────────────────────────────────────────
-
-    #[test]
-    fn revise_rejects_short_reason() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
-
-        let args = json!({ "name": "use-jwt", "mode": "revise", "reason": "ok" });
-        let err = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
-        assert!(
-            err.contains("at least") && err.contains("bytes"),
-            "revise should enforce quality floor: {err}"
-        );
-    }
-
-    #[test]
-    fn revise_rejects_long_choice() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
-
-        let long = "x".repeat(201);
-        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": long });
-        let err = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
-        assert!(
-            err.contains("200"),
-            "revise should enforce choice length: {err}"
-        );
     }
 
     // ── revise: tags and code_refs ────────────────────────────────────
