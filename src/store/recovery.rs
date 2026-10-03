@@ -10,8 +10,8 @@
 use std::fs;
 use std::io::ErrorKind;
 
-use crate::Result;
 use crate::console::diag;
+use crate::{Error, Result};
 
 use super::{Store, StoreLock};
 
@@ -40,21 +40,28 @@ impl Store {
     }
 
     fn remove_temps(&self) -> Result<usize> {
-        let entries = match fs::read_dir(self.tmp_dir()) {
+        let tmp_dir = self.tmp_dir();
+        let entries = match fs::read_dir(&tmp_dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(0),
-            Err(e) => return Err(e.into()),
+            Err(source) => {
+                return Err(Error::Io {
+                    path: tmp_dir,
+                    source,
+                });
+            }
         };
         let mut removed = 0;
         for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
+            let entry = entry.map_err(Error::io(&tmp_dir))?;
+            let path = entry.path();
+            if !entry.file_type().map_err(Error::io(&path))?.is_file() {
                 continue;
             }
-            match fs::remove_file(entry.path()) {
+            match fs::remove_file(&path) {
                 Ok(()) => removed += 1,
                 Err(e) if e.kind() == ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
+                Err(source) => return Err(Error::Io { path, source }),
             }
         }
         Ok(removed)

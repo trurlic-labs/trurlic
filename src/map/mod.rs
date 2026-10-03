@@ -127,15 +127,15 @@ pub(crate) async fn start(
     // Bind to 127.0.0.1 only — never 0.0.0.0.
     // Bind before building the router so the CSP can reference the actual port.
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port.unwrap_or(0)));
-    let listener = TcpListener::bind(addr).map_err(|e| {
-        crate::Error::Io(std::io::Error::new(
-            e.kind(),
-            format!("failed to bind {addr}: {e}"),
-        ))
-    })?;
-    let local_addr = listener.local_addr().map_err(crate::Error::Io)?;
-    listener.set_nonblocking(true).map_err(crate::Error::Io)?;
-    let listener = tokio::net::TcpListener::from_std(listener).map_err(crate::Error::Io)?;
+    let listener = TcpListener::bind(addr).map_err(crate::Error::system(format!("bind {addr}")))?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(crate::Error::system("read the bound address"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(crate::Error::system("make the listener nonblocking"))?;
+    let listener = tokio::net::TcpListener::from_std(listener)
+        .map_err(crate::Error::system("register the listener"))?;
 
     // Build CSP with the actual bound port — no wildcard.
     let csp = format!(
@@ -190,7 +190,7 @@ pub(crate) async fn start(
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .map_err(crate::Error::Io)?;
+        .map_err(crate::Error::system("serve the map"))?;
 
     diag!("trurlic: map server stopped");
     Ok(())

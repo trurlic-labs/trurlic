@@ -4,9 +4,9 @@ use std::path::Path;
 
 use chrono::Utc;
 
-use crate::Result;
 use crate::console::out;
 use crate::store::Store;
+use crate::{Error, Result};
 
 /// Create a new `.trurlic/` directory in `cwd`.
 pub fn init(cwd: &Path) -> Result<()> {
@@ -25,19 +25,23 @@ fn append_gitignore(cwd: &Path) -> Result<()> {
     let entry = ".trurlic/.state/";
 
     if path.exists() {
-        let content = fs::read_to_string(&path)?;
+        let content = fs::read_to_string(&path).map_err(Error::io(&path))?;
         if content.lines().any(|line| line.trim() == entry) {
             return Ok(());
         }
-        let mut file = fs::OpenOptions::new().append(true).open(&path)?;
-        if !content.is_empty() && !content.ends_with('\n') {
-            writeln!(file)?;
-        }
-        writeln!(file, "{entry}")?;
+        let separator = if content.is_empty() || content.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| writeln!(file, "{separator}{entry}"))
+            .map_err(Error::io(&path))
     } else {
-        fs::write(&path, format!("{entry}\n"))?;
+        fs::write(&path, format!("{entry}\n")).map_err(Error::io(&path))
     }
-    Ok(())
 }
 
 #[cfg(test)]

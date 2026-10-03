@@ -118,11 +118,12 @@ fn error_status(err: &crate::Error) -> StatusCode {
         Error::StaleState { .. } => StatusCode::INTERNAL_SERVER_ERROR,
 
         // Internal faults the client cannot act on → 500.
-        Error::Io(_)
+        Error::Io { .. }
+        | Error::Toml { .. }
+        | Error::TomlSerialize { .. }
+        | Error::System { .. }
         | Error::CommitPending { .. }
         | Error::BadJournal { .. }
-        | Error::TomlRead(_)
-        | Error::TomlWrite(_)
         | Error::StoreExists(_)
         | Error::CheckFailed(_)
         | Error::Install(_) => StatusCode::INTERNAL_SERVER_ERROR,

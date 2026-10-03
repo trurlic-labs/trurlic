@@ -5,10 +5,11 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
-    #[error("cannot determine home directory — set $HOME")]
-    HomeNotFound,
+    #[error("cannot determine home directory ({0}); set $HOME")]
+    HomeNotFound(std::env::VarError),
 
-    #[error("cannot determine trurlic binary path — use --binary-path")]
+    /// The binary given or found is not a file.
+    #[error("cannot determine trurlic binary path; use --binary-path")]
     BinaryNotFound,
 
     #[error("binary path is not valid UTF-8: {}", .0.display())]
@@ -30,7 +31,7 @@ pub enum InstallError {
     #[error("config staged for {} did not read back as written", .0.display())]
     RoundTrip(PathBuf),
 
-    #[error("`claude` CLI not found in PATH — install Claude Code first")]
+    #[error("`claude` CLI not found in PATH; install Claude Code first")]
     ClaudeCliNotFound,
 
     #[error("`claude mcp add` failed: {0}")]

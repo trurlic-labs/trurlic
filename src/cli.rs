@@ -265,7 +265,7 @@ pub fn main() -> ExitCode {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
-    let cwd = std::env::current_dir()?;
+    let cwd = std::env::current_dir().map_err(Error::system("read the working directory"))?;
     match cli.command {
         Command::Init => commands::init(&cwd),
         Command::Add(sub) => match sub {

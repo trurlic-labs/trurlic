@@ -9,11 +9,13 @@
 use std::fmt;
 use std::io::{self, BufRead, IsTerminal, Write};
 
+use crate::{Error, Result};
+
 /// Write `line` and a newline to stdout. Unlike `println!`, a closed stdout,
 /// such as a pipe whose reader exited, is an error, not a panic.
 #[cfg(not(test))]
-pub(crate) fn write_out(line: fmt::Arguments<'_>) -> io::Result<()> {
-    writeln!(stdout().lock(), "{line}")
+pub(crate) fn write_out(line: fmt::Arguments<'_>) -> Result<()> {
+    writeln!(stdout().lock(), "{line}").map_err(Error::system("write to stdout"))
 }
 
 /// Write `line` and a newline to stderr. A failed write is dropped: stderr
@@ -28,7 +30,7 @@ pub(crate) fn write_diag(line: fmt::Arguments<'_>) {
 
 #[cfg(test)]
 #[expect(clippy::print_stdout, reason = "the test harness captures it")]
-pub(crate) fn write_out(line: fmt::Arguments<'_>) -> io::Result<()> {
+pub(crate) fn write_out(line: fmt::Arguments<'_>) -> Result<()> {
     println!("{line}");
     Ok(())
 }
@@ -45,12 +47,13 @@ pub(crate) fn stdout_is_terminal() -> bool {
 
 /// Ask `question` on stderr and read the answer from stdin: `true` only
 /// for `y` or `Y`.
-pub(crate) fn confirm(question: &str) -> io::Result<bool> {
+pub(crate) fn confirm(question: &str) -> Result<bool> {
     let mut prompt = stderr().lock();
-    write!(prompt, "{question} [y/N] ")?;
-    prompt.flush()?;
     let mut answer = String::new();
-    io::stdin().lock().read_line(&mut answer)?;
+    write!(prompt, "{question} [y/N] ")
+        .and_then(|()| prompt.flush())
+        .and_then(|()| io::stdin().lock().read_line(&mut answer))
+        .map_err(Error::system("ask for confirmation"))?;
     Ok(answer.trim().eq_ignore_ascii_case("y"))
 }
 
@@ -64,7 +67,7 @@ fn stderr() -> io::Stderr {
     io::stderr()
 }
 
-/// `println!` for command output, returning `io::Result<()>`.
+/// `println!` for command output, returning `crate::Result<()>`.
 macro_rules! out {
     () => {
         $crate::console::write_out(format_args!(""))

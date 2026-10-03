@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{Error, Result};
 
-use super::durable::sync_dir;
+use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
 use super::schema::GraphIndex;
 use super::state::ProjectState;
@@ -47,14 +47,12 @@ impl Store {
         let parent = target
             .parent()
             .ok_or_else(|| Error::Validation(format!("{} has no parent", target.display())))?;
-        fs::create_dir_all(self.tmp_dir())?;
-        fs::create_dir_all(parent)?;
+        let tmp_dir = self.tmp_dir();
+        fs::create_dir_all(&tmp_dir).map_err(Error::io(&tmp_dir))?;
+        fs::create_dir_all(parent).map_err(Error::io(parent))?;
         let staged = self.stage(write.content.as_bytes())?;
-        if let Err(e) = fs::rename(&staged, target) {
-            let _ = fs::remove_file(&staged);
-            return Err(e.into());
-        }
-        Ok(sync_dir(parent)?)
+        place(&staged, target)?;
+        sync_dir(parent).map_err(Error::io(parent))
     }
 
     /// Serialize `value` to TOML and parse it back as `T`, so a value that
@@ -67,7 +65,10 @@ impl Store {
     ) -> Result<PendingWrite> {
         self.verify_path(target)?;
 
-        let content = toml::to_string_pretty(value)?;
+        let content = toml::to_string_pretty(value).map_err(|source| Error::TomlSerialize {
+            path: target.to_path_buf(),
+            source,
+        })?;
         toml::from_str::<T>(&content).map_err(|e| {
             Error::Validation(format!("serialization round-trip verification failed: {e}"))
         })?;

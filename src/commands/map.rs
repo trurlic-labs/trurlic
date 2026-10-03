@@ -41,7 +41,7 @@ pub fn map(cwd: &Path, port: Option<u16>, no_open: bool, detach: bool) -> Result
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|e| crate::Error::Io(std::io::Error::other(e)))?;
+        .map_err(crate::Error::system("start the async runtime"))?;
 
     rt.block_on(crate::map::start(store, state, port, no_open))
 }
@@ -57,22 +57,20 @@ fn detach_server(store: &crate::store::Store, port: Option<u16>) -> Result<()> {
 
     // Bind to discover the actual port, then release so the child can bind.
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port.unwrap_or(0)));
-    let listener = TcpListener::bind(addr).map_err(|e| {
-        crate::Error::Io(std::io::Error::new(
-            e.kind(),
-            format!("failed to bind {addr}: {e}"),
-        ))
-    })?;
-    let actual_port = listener.local_addr().map_err(crate::Error::Io)?.port();
+    let listener = TcpListener::bind(addr).map_err(crate::Error::system(format!("bind {addr}")))?;
+    let actual_port = listener
+        .local_addr()
+        .map_err(crate::Error::system("read the bound address"))?
+        .port();
     drop(listener);
 
     // Prepare log file.
     let log_dir = store.root().join(STATE_DIR);
-    fs::create_dir_all(&log_dir)?;
+    fs::create_dir_all(&log_dir).map_err(crate::Error::io(&log_dir))?;
     let log_path = log_dir.join("map.log");
-    let log_file = fs::File::create(&log_path)?;
+    let log_file = fs::File::create(&log_path).map_err(crate::Error::io(&log_path))?;
 
-    let exe = std::env::current_exe().map_err(crate::Error::Io)?;
+    let exe = std::env::current_exe().map_err(crate::Error::system("locate the trurlic binary"))?;
     let child = Command::new(exe)
         .arg("map")
         .arg("--port")
@@ -82,7 +80,7 @@ fn detach_server(store: &crate::store::Store, port: Option<u16>) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::from(log_file))
         .spawn()
-        .map_err(crate::Error::Io)?;
+        .map_err(crate::Error::system("spawn the detached map server"))?;
 
     // Poll the log file for the URL line.
     let start = Instant::now();

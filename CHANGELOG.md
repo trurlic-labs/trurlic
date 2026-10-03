@@ -11,7 +11,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
-- **A command whose output pipe closes fails instead of aborting.** CLI output went through `println!`, which panics when stdout is closed, and release builds abort on a panic: `trurlic status | head -0` died with SIGABRT. Output now goes through one writer that returns the error, and the command exits with status 1 and `error: I/O error: Broken pipe`.
+- **A command whose output pipe closes fails instead of aborting.** CLI output went through `println!`, which panics when stdout is closed, and release builds abort on a panic: `trurlic status | head -0` died with SIGABRT. Output now goes through one writer that returns the error, and the command exits with status 1 and `error: cannot write to stdout: Broken pipe`.
+- **An unreadable or malformed node file is named in the error.** A decision file that was not valid TOML stopped `serve`, `check`, every other command and the watchers' reloads with `error: invalid TOML: … line 7, column 12`, without saying which of the graph's files it was. Every I/O and TOML error now carries the path of the file it came from (`error: <path>: invalid TOML: …`), and an I/O failure with no file behind it names the call instead (`cannot write to stdout`, `cannot bind 127.0.0.1:7878`).
 
 ## [0.3.2] — 2026-10-03
 

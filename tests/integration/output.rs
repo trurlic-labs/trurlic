@@ -22,7 +22,7 @@ fn a_closed_stdout_fails_the_command_without_a_panic() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{stderr}");
     assert!(
-        stderr.starts_with("error: I/O error: Broken pipe"),
+        stderr.starts_with("error: cannot write to stdout: Broken pipe"),
         "{stderr}"
     );
 }

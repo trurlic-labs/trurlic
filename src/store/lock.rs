@@ -13,6 +13,7 @@
 
 use std::fs::{self, File, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::{Error, Result};
@@ -67,7 +68,7 @@ impl Store {
     /// watcher from stalling behind a writer that cannot commit yet.
     pub(crate) fn lock_after<G>(&self, take_guard: impl FnMut() -> G) -> Result<(G, StoreLock)> {
         let mut file = self.open_lock_file()?;
-        let guard = poll(&mut file, File::try_lock, take_guard)?;
+        let guard = poll(&mut file, &self.lock_path(), File::try_lock, take_guard)?;
         Ok((guard, StoreLock::claim(file)))
     }
 
@@ -78,27 +79,33 @@ impl Store {
         match file.try_lock() {
             Ok(()) => Ok(Some(StoreLock::claim(file))),
             Err(TryLockError::WouldBlock) => Ok(None),
-            Err(TryLockError::Error(e)) => Err(Error::Io(e)),
+            Err(TryLockError::Error(source)) => Err(Error::Io {
+                path: self.lock_path(),
+                source,
+            }),
         }
     }
 
     /// Acquire the shared lock, waiting up to 5 seconds for a writer.
     pub(super) fn lock_shared(&self) -> Result<SharedLock> {
         let mut file = self.open_lock_file()?;
-        poll(&mut file, File::try_lock_shared, || ())?;
+        poll(&mut file, &self.lock_path(), File::try_lock_shared, || ())?;
         Ok(SharedLock { _file: file })
     }
 
     /// Read+write rather than append: Windows refuses to lock a handle
     /// opened for append only.
     fn open_lock_file(&self) -> Result<File> {
-        fs::create_dir_all(self.state_dir())?;
-        Ok(File::options()
+        let state_dir = self.state_dir();
+        fs::create_dir_all(&state_dir).map_err(Error::io(&state_dir))?;
+        let path = self.lock_path();
+        File::options()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(self.lock_path())?)
+            .open(&path)
+            .map_err(Error::io(&path))
     }
 }
 
@@ -106,6 +113,7 @@ impl Store {
 /// retry after [`LOCK_POLL_INTERVAL`], until [`LOCK_TIMEOUT`].
 fn poll<G>(
     file: &mut File,
+    path: &Path,
     try_lock: fn(&File) -> std::result::Result<(), TryLockError>,
     mut take_guard: impl FnMut() -> G,
 ) -> Result<G> {
@@ -124,7 +132,12 @@ fn poll<G>(
                     detail: holder_detail(file),
                 });
             }
-            Err(TryLockError::Error(e)) => return Err(Error::Io(e)),
+            Err(TryLockError::Error(source)) => {
+                return Err(Error::Io {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
         }
     }
 }

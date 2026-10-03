@@ -228,7 +228,7 @@ pub(crate) fn decision_refs_all_missing(project_root: &Path, dec: &DecisionFile)
 
 /// BLAKE3 hash of raw file bytes, returned as lowercase hex.
 pub(crate) fn hash_file(path: &Path) -> Result<String> {
-    let bytes = fs::read(path)?;
+    let bytes = fs::read(path).map_err(Error::io(path))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
@@ -269,7 +269,7 @@ pub struct Store {
 
 impl Store {
     pub fn discover(start: &Path) -> Result<Self> {
-        let mut current = start.canonicalize()?;
+        let mut current = start.canonicalize().map_err(Error::io(start))?;
         loop {
             let candidate = current.join(STORE_DIR);
             if candidate.is_dir() {
@@ -362,8 +362,8 @@ impl Store {
     // ── Reading ──────────────────────────────────────────────────────────
 
     fn read_toml<T: DeserializeOwned>(&self, path: &Path) -> Result<T> {
-        let content = fs::read_to_string(path)?;
-        Ok(toml::from_str(&content)?)
+        let bytes = fs::read(path).map_err(Error::io(path))?;
+        toml::from_slice(&bytes).map_err(Error::toml(path))
     }
 
     /// Read a TOML file and compute its BLAKE3 hash in a single pass.
@@ -373,11 +373,10 @@ impl Store {
     /// semantics. This eliminates the double-read that would occur if
     /// parsing and hashing were done separately.
     fn read_toml_with_hash<T: DeserializeOwned>(&self, path: &Path) -> Result<(T, String)> {
-        let bytes = fs::read(path)?;
+        let bytes = fs::read(path).map_err(Error::io(path))?;
         let hash = blake3::hash(&bytes).to_hex().to_string();
-        let content = std::str::from_utf8(&bytes)
-            .map_err(|_| Error::Validation(format!("invalid UTF-8 in {}", path.display())))?;
-        Ok((toml::from_str(content)?, hash))
+        let parsed = toml::from_slice(&bytes).map_err(Error::toml(path))?;
+        Ok((parsed, hash))
     }
 
     pub fn read_project(&self) -> Result<ProjectFile> {
@@ -389,7 +388,7 @@ impl Store {
         let path = self.component_path(name);
         match self.read_toml(&path) {
             Ok(file) => Ok(file),
-            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
                 Err(Error::ComponentNotFound(name.into()))
             }
             Err(e) => Err(e),
@@ -401,7 +400,7 @@ impl Store {
         let path = self.decision_path(name);
         match self.read_toml(&path) {
             Ok(file) => Ok(file),
-            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
                 Err(Error::DecisionNotFound(name.into()))
             }
             Err(e) => Err(e),
@@ -1367,6 +1366,37 @@ mod tests {
                 .any(|e| e.from == "token-format"
                     && e.to == "auth"
                     && e.kind == EdgeKind::BelongsTo)
+        );
+    }
+
+    #[test]
+    fn load_state_names_a_node_file_that_does_not_parse() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let broken = store.decision_path("broken");
+        fs::write(&broken, "[decision]\nchoice = [\n").unwrap();
+
+        let err = store.load_state().map(|_| ()).unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Toml { path, .. } if *path == broken),
+            "{err:?}"
+        );
+        assert!(err.to_string().starts_with(&broken.display().to_string()));
+    }
+
+    #[test]
+    fn load_state_names_a_node_file_that_cannot_be_read() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let unreadable = store.decision_path("unreadable");
+        fs::create_dir(&unreadable).unwrap();
+
+        let err = store.load_state().map(|_| ()).unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Io { path, .. } if *path == unreadable),
+            "{err:?}"
         );
     }
 

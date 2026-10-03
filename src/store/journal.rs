@@ -21,7 +21,7 @@ use crate::console::diag;
 use crate::{Error, Result};
 
 use super::commit::PendingWrite;
-use super::durable::sync_dir;
+use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
 use super::{Store, StoreLock, hash_bytes};
 
@@ -69,7 +69,8 @@ impl Store {
 
     /// Whether an interrupted commit left a journal to apply.
     pub(super) fn has_journal(&self) -> Result<bool> {
-        Ok(self.journal_path().try_exists()?)
+        let path = self.journal_path();
+        path.try_exists().map_err(Error::io(&path))
     }
 
     /// Stage `writes` and describe them, with `removes`, in a journal that
@@ -79,7 +80,8 @@ impl Store {
         writes: &[PendingWrite],
         removes: &[PathBuf],
     ) -> Result<Journal> {
-        fs::create_dir_all(self.tmp_dir())?;
+        let tmp_dir = self.tmp_dir();
+        fs::create_dir_all(&tmp_dir).map_err(Error::io(&tmp_dir))?;
         let mut journal = Journal {
             writes: Vec::with_capacity(writes.len()),
             removes: removes
@@ -94,14 +96,16 @@ impl Store {
             journal.writes.push(staged);
         }
         // The journal must not name a staged file a power loss can take back.
-        sync_dir(&self.tmp_dir()).inspect_err(|_| self.discard(&journal))?;
+        sync_dir(&tmp_dir)
+            .map_err(Error::io(&tmp_dir))
+            .inspect_err(|_| self.discard(&journal))?;
         Ok(journal)
     }
 
     fn stage_write(&self, write: &PendingWrite) -> Result<StagedWrite> {
         let target = self.relative(&write.target)?;
         if let Some(parent) = write.target.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(Error::io(parent))?;
         }
         let temp = self.stage(write.content.as_bytes())?;
         Ok(StagedWrite {
@@ -123,15 +127,15 @@ impl Store {
     /// discards the staged files; after it the commit is decided, and a
     /// failure is [`Error::CommitPending`].
     pub(super) fn write_journal(&self, _lock: &StoreLock, journal: &Journal) -> Result<()> {
+        let path = self.journal_path();
         let placed = toml::to_string(journal)
-            .map_err(Error::from)
+            .map_err(|source| Error::TomlSerialize {
+                // clone: `path` is still needed for the rename below.
+                path: path.clone(),
+                source,
+            })
             .and_then(|text| self.stage(text.as_bytes()))
-            .and_then(|staged| {
-                fs::rename(&staged, self.journal_path()).map_err(|e| {
-                    let _ = fs::remove_file(&staged);
-                    Error::from(e)
-                })
-            });
+            .and_then(|staged| place(&staged, &path));
         if let Err(e) = placed {
             self.discard(journal);
             return Err(e);
@@ -195,10 +199,11 @@ impl Store {
     }
 
     fn read_journal(&self) -> Result<Option<Journal>> {
-        let text = match fs::read_to_string(self.journal_path()) {
+        let path = self.journal_path();
+        let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.into()),
+            Err(source) => return Err(Error::Io { path, source }),
         };
         let journal: Journal =
             toml::from_str(&text).map_err(|e| self.bad_journal(e.to_string()))?;
@@ -238,10 +243,11 @@ impl Store {
 
     /// The bytes of `path`, relative to the store root; `None` when it is gone.
     fn read_if_present(&self, path: &Path) -> Result<Option<Vec<u8>>> {
-        match fs::read(self.root.join(path)) {
+        let path = self.root.join(path);
+        match fs::read(&path) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
+            Err(source) => Err(Error::Io { path, source }),
         }
     }
 

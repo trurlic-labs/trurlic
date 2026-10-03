@@ -61,12 +61,12 @@ pub fn install(ide: InstallIde, binary_path: Option<&Path>, dry_run: DryRun) -> 
 fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf> {
     let path = match explicit {
         Some(p) => p.to_path_buf(),
-        None => std::env::current_exe().map_err(|_| InstallError::BinaryNotFound)?,
+        None => std::env::current_exe().map_err(Error::system("locate the trurlic binary"))?,
     };
     if !path.is_file() {
         return Err(InstallError::BinaryNotFound.into());
     }
-    Ok(fs::canonicalize(&path).map_err(|_| InstallError::BinaryNotFound)?)
+    fs::canonicalize(&path).map_err(Error::io(&path))
 }
 
 fn binary_as_str(binary: &Path) -> Result<&str> {
@@ -83,23 +83,12 @@ fn build_server_entry(binary: &str) -> Value {
 }
 
 fn home_dir() -> Result<PathBuf> {
-    #[cfg(unix)]
-    {
-        std::env::var("HOME")
-            .map(PathBuf::from)
-            .map_err(|_| InstallError::HomeNotFound.into())
-    }
     #[cfg(windows)]
-    {
-        std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .map(PathBuf::from)
-            .map_err(|_| InstallError::HomeNotFound.into())
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        Err(InstallError::HomeNotFound.into())
-    }
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME"));
+    #[cfg(not(windows))]
+    let home = std::env::var("HOME");
+    home.map(PathBuf::from)
+        .map_err(|e| InstallError::HomeNotFound(e).into())
 }
 
 fn ide_config_path(ide: InstallIde) -> Result<PathBuf> {
@@ -217,46 +206,58 @@ fn dry_run_json(key: &str, bin: &str, add_type: bool) -> Result<String> {
 // ── Atomic file write ────────────────────────────────────────────────────────
 
 fn atomic_write(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let parent = path.parent().unwrap_or(path);
-    let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(Error::Io)?;
-    std::io::Write::write_all(&mut tmp, content.as_bytes()).map_err(Error::Io)?;
+    fs::create_dir_all(parent).map_err(Error::io(parent))?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(Error::io(parent))?;
+    std::io::Write::write_all(&mut tmp, content.as_bytes()).map_err(Error::io(tmp.path()))?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         tmp.as_file()
             .set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(Error::Io)?;
+            .map_err(Error::io(tmp.path()))?;
     }
 
-    let readback = fs::read_to_string(tmp.path()).map_err(Error::Io)?;
+    let readback = fs::read_to_string(tmp.path()).map_err(Error::io(tmp.path()))?;
     if readback != content {
         return Err(InstallError::RoundTrip(path.to_path_buf()).into());
     }
-    tmp.persist(path).map_err(|e| Error::Io(e.error))?;
+    tmp.persist(path).map_err(|e| Error::Io {
+        path: path.to_path_buf(),
+        source: e.error,
+    })?;
     Ok(())
 }
 
 // ── JSON writers ─────────────────────────────────────────────────────────────
 
-fn read_or_empty_json(path: &Path) -> Result<Value> {
+/// The text of the config at `path`, empty when there is none or it holds
+/// only whitespace.
+fn read_config(path: &Path) -> Result<String> {
     match fs::read_to_string(path) {
-        Ok(s) if s.trim().is_empty() => Ok(Value::Object(serde_json::Map::new())),
-        Ok(s) => serde_json::from_str(&s).map_err(|e| {
-            InstallError::InvalidJson {
-                path: path.to_path_buf(),
-                detail: e.to_string(),
-            }
-            .into()
+        Ok(text) if text.trim().is_empty() => Ok(String::new()),
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(source) => Err(Error::Io {
+            path: path.to_path_buf(),
+            source,
         }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok(Value::Object(serde_json::Map::new()))
-        }
-        Err(e) => Err(Error::Io(e)),
     }
+}
+
+fn read_or_empty_json(path: &Path) -> Result<Value> {
+    let content = read_config(path)?;
+    if content.is_empty() {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+    serde_json::from_str(&content).map_err(|e| {
+        InstallError::InvalidJson {
+            path: path.to_path_buf(),
+            detail: e.to_string(),
+        }
+        .into()
+    })
 }
 
 fn write_json_with_key(path: &Path, key: &str, entry: &Value) -> Result<()> {
@@ -312,12 +313,7 @@ fn write_json_opencode(path: &Path, entry: &Value) -> Result<()> {
 // ── TOML writer ──────────────────────────────────────────────────────────────
 
 fn write_toml_config(path: &Path, binary: &str) -> Result<()> {
-    let content = match fs::read_to_string(path) {
-        Ok(s) if s.trim().is_empty() => String::new(),
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(Error::Io(e)),
-    };
+    let content = read_config(path)?;
 
     let mut table: toml::Value =
         toml::from_str(&content).map_err(|e| InstallError::InvalidToml {
@@ -368,12 +364,7 @@ fn write_toml_config(path: &Path, binary: &str) -> Result<()> {
 // ── YAML writer ──────────────────────────────────────────────────────────────
 
 fn write_yaml_config(path: &Path, binary: &str) -> Result<()> {
-    let content = match fs::read_to_string(path) {
-        Ok(s) if s.trim().is_empty() => String::new(),
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(Error::Io(e)),
-    };
+    let content = read_config(path)?;
 
     let mut root: serde_yaml_ng::Value = if content.is_empty() {
         serde_yaml_ng::Value::Mapping(serde_yaml_ng::Mapping::new())
