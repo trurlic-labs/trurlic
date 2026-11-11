@@ -58,7 +58,7 @@ blake3 = "1"
 rayon = "1"
 
 # File system watcher for live reload
-notify = "6"
+notify = "8"
 
 # Async runtime
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "net", "signal", "sync"] }
