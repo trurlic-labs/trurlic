@@ -486,6 +486,15 @@ tags = [
 hash = "83bd21cef07a44addbce79f409ae5819830d6b23c5e74c489274bc94a63bf68e"
 
 [[nodes]]
+name = "timestamps-are-a-std-only-timestamp-type-in-the-store"
+kind = "decision"
+tags = [
+    "dependencies",
+    "serialization",
+]
+hash = "51dddd755a2ad9f53bead9dcca9bf30122713c0a5729ac5b1fb7b84b7489e416"
+
+[[nodes]]
 name = "toml-as-the-sole-serialization-format-with-one-file-per"
 kind = "decision"
 tags = [
@@ -947,6 +956,21 @@ kind = "belongs_to"
 from = "tiered-store-access-helpers-separate-read-only-from-mutable"
 to = "commands"
 kind = "belongs_to"
+
+[[edges]]
+from = "timestamps-are-a-std-only-timestamp-type-in-the-store"
+to = "blake3-content-hashing-for-tamper-detection-and-change"
+kind = "depends_on"
+
+[[edges]]
+from = "timestamps-are-a-std-only-timestamp-type-in-the-store"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "timestamps-are-a-std-only-timestamp-type-in-the-store"
+to = "toml-as-the-sole-serialization-format-with-one-file-per"
+kind = "depends_on"
 
 [[edges]]
 from = "toml-as-the-sole-serialization-format-with-one-file-per"

@@ -24,8 +24,8 @@ cli         → commands                    clap definitions and dispatch
 budget      → (no internal deps)          Fitting output into a byte budget: the
                                           level search behind the result cap
 error       → store (types)               The crate's `Error` enum and `Result`
-                                          alias; it names the store's `Issue`
-                                          and text-fault types
+                                          alias; it names the store's `Issue`,
+                                          text-fault and timestamp-fault types
 console     → (no internal deps)          Terminal I/O: `out!` to stdout, `diag!`
                                           to stderr, the confirmation prompt
 ```
@@ -50,6 +50,8 @@ Commits: serialize and parse back in memory → stage each file in `.state/tmp/`
 
 Recovery: a leftover journal is applied, then leftover temp files removed, only under the exclusive lock: by every write before it loads, by a command that finds the lock free, and by a watcher that finds a journal.
 
+Timestamps: `store::Timestamp`, a UTC instant to the nanosecond, written as an RFC 3339 string in the form 0.3 releases wrote (`2025-06-01T10:30:00Z`, a fraction of 0, 3, 6 or 9 digits), so a load and a write give back the same bytes. `Timestamp::now` is the crate's one clock read.
+
 Content integrity: BLAKE3 hash per node file, stored in `graph.toml`. `trurlic check` verifies hashes. Tamper detection, not encryption.
 
 File locking: std `File::try_lock` (writers, exclusive) and `File::try_lock_shared` (the watcher) on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter.
@@ -63,7 +65,7 @@ Thread model: MCP server holds `Arc<RwLock<ProjectState>>`. The file watcher thr
 ### Key Invariants
 
 1. `unsafe` is forbidden (`[lints.rust] unsafe_code = "forbid"` in Cargo.toml): no `#[expect]` can lift it.
-2. Invariants a tool can check are lints, in Cargo.toml's `[lints]` and `clippy.toml`, and `tests/lints.rs` proves each refuses a seeded violation: no `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!` or `dbg!` outside tests; no `HashMap`/`HashSet`; stdout and stderr only through `console` (and the MCP transport, which owns stdout under `serve`). An exception is an `#[expect(lint, reason = "...")]` at its site; `#[allow]` is refused.
+2. Invariants a tool can check are lints, in Cargo.toml's `[lints]` and `clippy.toml`, and `tests/lints.rs` proves each refuses a seeded violation: no `unwrap`, `expect`, `panic!`, `todo!`, `unimplemented!` or `dbg!` outside tests; no `HashMap`/`HashSet`; stdout and stderr only through `console` (and the MCP transport, which owns stdout under `serve`); the clock only through `Timestamp::now`. An exception is an `#[expect(lint, reason = "...")]` at its site; `#[allow]` is refused.
 3. Every graph mutation validates the full graph before touching disk. A write that adds an error is refused, never silently committed; an error the graph already had, matched on kind and subject, does not block it.
 4. Atomic commits: round-trip in memory → flushed temp files → flushed journal (the commit point) → renames, `graph.toml` last → directory flushes. Recovery rolls a journal forward under the exclusive lock.
 5. File locking prevents concurrent mutations from CLI and MCP processes.

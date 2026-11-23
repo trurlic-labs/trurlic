@@ -12,8 +12,7 @@ use std::fs;
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::sync::Arc;
-
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use std::time::Duration;
 
 use crate::{Error, Result};
 
@@ -23,7 +22,7 @@ use super::schema::{
     Attribution, CodeRef, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
     HistoryEntry, NodeEntry, NodeKind, Pattern, PatternFile,
 };
-use super::{ProjectState, Store, slugify};
+use super::{ProjectState, Store, Timestamp, slugify};
 
 /// The project-wide pseudo-component decisions may belong to.
 const PROJECT: &str = "project";
@@ -65,11 +64,22 @@ const MAX_HISTORY: usize = 14;
 
 /// Every timestamp is this instant plus an offset, so writing a corpus never
 /// reads the clock.
-fn epoch() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
-        .single()
-        .unwrap_or(DateTime::UNIX_EPOCH)
+fn epoch() -> Timestamp {
+    // A literal in range, so the parse holds.
+    "2025-01-01T00:00:00Z"
+        .parse()
+        .unwrap_or(Timestamp::UNIX_EPOCH)
 }
+
+/// `at` plus `offset`. A corpus spans months from [`epoch`], so the sum is
+/// in range and holds.
+fn later(at: Timestamp, offset: Duration) -> Timestamp {
+    at.checked_add(offset).unwrap_or(at)
+}
+
+const HOUR: Duration = Duration::from_secs(60 * 60);
+
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Prose vocabulary of architecture terms, so keyword queries such as
 /// `check_pattern` match decisions as they would in a production graph.
@@ -343,7 +353,7 @@ impl Plan {
             decisions.push(plan_decision(
                 &mut rng, index, component, created, code_refs,
             ));
-            created += Duration::hours(1);
+            created = later(created, HOUR);
         }
         let mut plan = Self {
             components,
@@ -562,7 +572,7 @@ fn plan_decision(
     rng: &mut SplitMix64,
     index: usize,
     component: &str,
-    created: DateTime<Utc>,
+    created: Timestamp,
     code_refs: Vec<CodeRef>,
 ) -> PlannedDecision {
     let history = history(rng, index, component, created);
@@ -601,7 +611,7 @@ fn history(
     rng: &mut SplitMix64,
     index: usize,
     component: &str,
-    created: DateTime<Utc>,
+    created: Timestamp,
 ) -> Vec<HistoryEntry> {
     let revisions = if rng.one_in(20) {
         1 + rng.below(MAX_HISTORY)
@@ -611,7 +621,7 @@ fn history(
     let mut changed_at = created;
     (0..revisions)
         .map(|_| {
-            changed_at += Duration::days(1);
+            changed_at = later(changed_at, DAY);
             HistoryEntry {
                 choice: choice(rng, index, component),
                 reason: rng.prose_within(&REASON_BYTES),

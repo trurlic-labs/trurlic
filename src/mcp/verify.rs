@@ -225,8 +225,8 @@ fn project_entry(name: &Arc<str>, decision: &DecisionFile) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Timestamp;
     use crate::store::schema::{Attribution, CodeRef, Decision, DecisionFile};
-    use chrono::{TimeZone, Utc};
 
     fn decision(
         component: &str,
@@ -241,7 +241,7 @@ mod tests {
                 alternatives: vec![],
                 tags: tags.iter().map(|t| (*t).into()).collect(),
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap(),
+                created: "2025-06-01T10:00:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: code_refs
                     .iter()
                     .map(|(file, symbol)| CodeRef {

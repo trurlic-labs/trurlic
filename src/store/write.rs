@@ -2,8 +2,6 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::Utc;
-
 use crate::{Error, Result};
 
 use super::limits::MAX_HISTORY_ENTRIES;
@@ -15,6 +13,7 @@ use super::state::{
     ProjectState, is_reserved_node_name, is_valid_kebab_case, slugify, unique_decision_stem,
 };
 use super::text::{TextField, ensure_new_choice, validate_text};
+use super::time::Timestamp;
 use super::{Store, StoreLock};
 
 // ── Store write methods ─────────────────────────────────────────────────
@@ -115,7 +114,7 @@ impl Store {
                 alternatives: params.alternatives.to_vec(),
                 tags: params.tags.to_vec(),
                 attribution: params.attribution,
-                created: Utc::now(),
+                created: Timestamp::now()?,
                 code_refs: params.code_refs.to_vec(),
                 history: Vec::new(),
             },
@@ -485,7 +484,7 @@ impl Store {
             revised.decision.history.push(HistoryEntry {
                 choice: revised.decision.choice.clone(),
                 reason: revised.decision.reason.clone(),
-                changed_at: Utc::now(),
+                changed_at: Timestamp::now()?,
             });
             // Ring buffer: the oldest entry falls off once the cap is exceeded.
             if revised.decision.history.len() > MAX_HISTORY_ENTRIES {

@@ -1032,8 +1032,8 @@ mod tests {
 
     #[test]
     fn brief_includes_transitive_dependencies() {
+        use crate::store::Timestamp;
         use crate::store::schema::*;
-        use chrono::{TimeZone, Utc};
 
         let mut state = test_state();
 
@@ -1048,7 +1048,7 @@ mod tests {
                     alternatives: vec![],
                     tags: vec![],
                     attribution: Attribution::User,
-                    created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+                    created: "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap(),
                     code_refs: vec![],
                     history: vec![],
                 },
@@ -1348,9 +1348,9 @@ mod tests {
 
     #[test]
     fn context_brief_flags_agent_attribution() {
-        use chrono::{TimeZone, Utc};
+        use crate::store::Timestamp;
 
-        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap();
+        let ts = "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap();
 
         let mut state = test_state();
         state.decisions.insert(
@@ -1434,7 +1434,7 @@ mod tests {
 
     #[test]
     fn health_counts_agent_unreviewed() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
 
         let user = DecisionFile {
             decision: Decision {
@@ -1444,7 +1444,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -1457,7 +1457,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::Agent,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -1506,7 +1506,7 @@ mod tests {
     // ── orphaned refs ─────────────────────────────────────────────────
 
     fn decision_with_refs(refs: Vec<CodeRef>) -> DecisionFile {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         DecisionFile {
             decision: Decision {
                 component: "auth".into(),
@@ -1515,7 +1515,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: refs,
                 history: vec![],
             },
@@ -1566,7 +1566,7 @@ mod tests {
 
     #[test]
     fn health_reports_and_flags_orphaned_ref_decisions() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
 
         let tmp = tempfile::TempDir::new().unwrap();
         let mut state = test_state();
@@ -1583,7 +1583,7 @@ mod tests {
                     alternatives: vec![],
                     tags: vec![],
                     attribution: Attribution::User,
-                    created: Utc::now(),
+                    created: Timestamp::now().unwrap(),
                     code_refs: vec![CodeRef {
                         file: "src/parsers/xml.rs".into(),
                         symbol: None,
@@ -1628,9 +1628,9 @@ mod tests {
 
     #[test]
     fn brief_agent_decision_has_review_call_to_action() {
-        use chrono::{TimeZone, Utc};
+        use crate::store::Timestamp;
 
-        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap();
+        let ts = "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap();
         let mut state = test_state();
         state.decisions.insert(
             "agent-dec".into(),
@@ -1684,7 +1684,7 @@ mod tests {
 
     #[test]
     fn brief_includes_code_refs_line() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         let dec = DecisionFile {
             decision: Decision {
                 component: "store".into(),
@@ -1693,7 +1693,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![
                     CodeRef {
                         file: "src/store/write.rs".into(),
@@ -1730,7 +1730,7 @@ mod tests {
 
     #[test]
     fn brief_omits_code_line_when_empty() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         let dec = DecisionFile {
             decision: Decision {
                 component: "store".into(),
@@ -1739,7 +1739,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -1767,7 +1767,7 @@ mod tests {
 
     #[test]
     fn format_decisions_includes_code_refs() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         let dec = DecisionFile {
             decision: Decision {
                 component: "store".into(),
@@ -1776,7 +1776,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![CodeRef {
                     file: "src/store/write.rs".into(),
                     symbol: Some("commit_with_graph".into()),
@@ -1815,7 +1815,7 @@ mod tests {
 
     #[test]
     fn get_decision_history_returns_chronological_entries() {
-        use chrono::{TimeZone, Utc};
+        use crate::store::Timestamp;
 
         let mut state = test_state();
         state.decisions.insert(
@@ -1828,18 +1828,18 @@ mod tests {
                     alternatives: vec![],
                     tags: vec![],
                     attribution: Attribution::User,
-                    created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                    created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                     code_refs: vec![],
                     history: vec![
                         HistoryEntry {
                             choice: "JWT tokens".into(),
                             reason: "Stateless authentication".into(),
-                            changed_at: Utc.with_ymd_and_hms(2025, 7, 15, 14, 0, 0).unwrap(),
+                            changed_at: "2025-07-15T14:00:00Z".parse::<Timestamp>().unwrap(),
                         },
                         HistoryEntry {
                             choice: "JWT with refresh tokens".into(),
                             reason: "Stateless auth with rotation".into(),
-                            changed_at: Utc.with_ymd_and_hms(2025, 8, 1, 9, 30, 0).unwrap(),
+                            changed_at: "2025-08-01T09:30:00Z".parse::<Timestamp>().unwrap(),
                         },
                     ],
                 },
@@ -1869,7 +1869,7 @@ mod tests {
 
     #[test]
     fn format_decisions_omits_code_refs_when_empty() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         let dec = DecisionFile {
             decision: Decision {
                 component: "store".into(),
@@ -1878,7 +1878,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },

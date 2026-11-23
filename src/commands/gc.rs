@@ -10,13 +10,12 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-
-use chrono::{Duration, Utc};
+use std::time::Duration;
 
 use crate::Result;
 use crate::console::out;
 use crate::store::schema::Attribution;
-use crate::store::{ProjectState, Store, StoreLock};
+use crate::store::{ProjectState, Store, StoreLock, Timestamp};
 
 use super::open_store_mut;
 
@@ -69,8 +68,8 @@ pub(crate) fn resolve_aggressive_confirm(
 }
 
 /// Agent decisions older than this without promotion are treated as review
-/// debt worth surfacing.
-const AGENT_REVIEW_STALE_DAYS: i64 = 90;
+/// debt worth surfacing: 90 days.
+const AGENT_REVIEW_STALE: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 
 /// A decision `gc` has flagged and the reason it was flagged.
 struct Candidate {
@@ -86,7 +85,7 @@ struct Candidate {
 pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
 
-    let (orphaned, orphaned_ref, old_agent) = classify(&state);
+    let (orphaned, orphaned_ref, old_agent) = classify(&state)?;
     let surfaced = orphaned.len() + orphaned_ref.len() + old_agent.len();
     if surfaced == 0 {
         out!("gc: nothing to collect.")?;
@@ -218,8 +217,9 @@ fn apply_removals(
 /// structural first: an orphaned decision is reported as orphaned even if its
 /// code refs are also dead, and an orphaned-ref decision is not double-counted
 /// as review debt.
-fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candidate>) {
-    let cutoff = Utc::now() - Duration::days(AGENT_REVIEW_STALE_DAYS);
+fn classify(state: &ProjectState) -> Result<(Vec<Candidate>, Vec<Candidate>, Vec<Candidate>)> {
+    // `None` only within 90 days of year 0, where no decision can be older.
+    let cutoff = Timestamp::now()?.checked_sub(AGENT_REVIEW_STALE);
     let mut orphaned = Vec::new();
     let mut orphaned_ref = Vec::new();
     let mut old_agent = Vec::new();
@@ -237,15 +237,19 @@ fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candid
                 name: name.clone(),
                 detail: format!("{} deleted", files.join(", ")),
             });
-        } else if d.attribution == Attribution::Agent && d.created < cutoff {
+        } else if d.attribution == Attribution::Agent && cutoff.is_some_and(|c| d.created < c) {
+            let created = d.created.civil();
             old_agent.push(Candidate {
                 name: name.clone(),
-                detail: format!("agent, created {}", d.created.format("%Y-%m-%d")),
+                detail: format!(
+                    "agent, created {:04}-{:02}-{:02}",
+                    created.year, created.month, created.day
+                ),
             });
         }
     }
 
-    (orphaned, orphaned_ref, old_agent)
+    Ok((orphaned, orphaned_ref, old_agent))
 }
 
 /// Bucket a category's candidates into those the batch pre-flight cleared and
@@ -311,7 +315,6 @@ mod tests {
     use crate::store::RecordDecisionParams;
     use crate::store::Store;
     use crate::store::schema::{Attribution, CodeRef, Decision, DecisionFile};
-    use chrono::Utc;
     use tempfile::TempDir;
 
     // ── resolve_aggressive_confirm ──────────────────────────────────────
@@ -425,6 +428,11 @@ mod tests {
             .unwrap();
     }
 
+    fn days_ago(days: u64) -> Timestamp {
+        let age = Duration::from_secs(days * 24 * 60 * 60);
+        Timestamp::now().unwrap().checked_sub(age).unwrap()
+    }
+
     fn base_decision(component: &str, choice: &str) -> Decision {
         Decision {
             component: component.into(),
@@ -433,7 +441,7 @@ mod tests {
             alternatives: vec![],
             tags: vec![],
             attribution: Attribution::User,
-            created: Utc::now(),
+            created: Timestamp::now().unwrap(),
             code_refs: vec![],
             history: vec![],
         }
@@ -471,7 +479,7 @@ mod tests {
 
         let mut old = base_decision("auth", "Auto-detected cache layer");
         old.attribution = Attribution::Agent;
-        old.created = Utc::now() - Duration::days(120);
+        old.created = days_ago(120);
         plant_decision(&store, "auto-cache", old);
 
         gc(tmp.path(), GcScope::Safe, GcExecution::Apply).unwrap();
@@ -498,7 +506,7 @@ mod tests {
 
         let mut old = base_decision("auth", "Auto-detected cache layer");
         old.attribution = Attribution::Agent;
-        old.created = Utc::now() - Duration::days(120);
+        old.created = days_ago(120);
         plant_decision(&store, "auto-cache", old);
 
         gc(tmp.path(), GcScope::Aggressive, GcExecution::Apply).unwrap();
@@ -518,7 +526,7 @@ mod tests {
         // Recent agent decision — under the review-debt threshold.
         let mut recent = base_decision("auth", "Recent agent choice");
         recent.attribution = Attribution::Agent;
-        recent.created = Utc::now() - Duration::days(3);
+        recent.created = days_ago(3);
         plant_decision(&store, "recent-agent", recent);
 
         gc(tmp.path(), GcScope::Aggressive, GcExecution::Apply).unwrap();

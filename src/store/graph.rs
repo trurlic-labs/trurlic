@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
-
 use super::schema::{
     ComponentFile, DecisionFile, EdgeEntry, EdgeKind, GraphIndex, NodeEntry, NodeKind, PatternFile,
 };
+use super::time::Timestamp;
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -247,7 +246,7 @@ impl InMemoryGraph {
     /// Export as a sorted [`GraphIndex`]. `rebuilt` is the stamp of the index
     /// this one replaces, carried over unchanged.
     #[must_use]
-    pub fn to_index(&self, rebuilt: Option<DateTime<Utc>>) -> GraphIndex {
+    pub fn to_index(&self, rebuilt: Option<Timestamp>) -> GraphIndex {
         let nodes = self
             .nodes
             .iter()

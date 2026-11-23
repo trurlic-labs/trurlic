@@ -52,9 +52,6 @@ toml  = "1"
 # Error handling
 thiserror = "2"
 
-# Utilities
-chrono = { version = "0.4", features = ["serde"] }
-
 # Content hashing (pure Rust, no C/OpenSSL dependency)
 blake3 = "1"
 

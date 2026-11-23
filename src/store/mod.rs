@@ -21,6 +21,7 @@ pub(crate) mod watcher;
 
 mod state;
 pub(crate) mod text;
+mod time;
 mod write;
 
 use std::cmp::Ordering;
@@ -29,7 +30,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::Utc;
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 
@@ -45,6 +45,7 @@ pub use schema::{
     GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile, STATE_DIR, STORE_DIR,
 };
 pub use state::{ProjectState, has_control_chars, is_valid_kebab_case, slugify};
+pub use time::{Timestamp, TimestampError};
 pub use write::{RecordDecisionParams, RecordPatternParams, ReviseDecisionParams};
 
 /// Syntactic validation for a code reference.
@@ -491,7 +492,7 @@ impl Store {
         } else {
             GraphIndex {
                 version: 1,
-                rebuilt: Some(Utc::now()),
+                rebuilt: Some(Timestamp::now()?),
                 nodes: vec![],
                 edges: vec![],
             }
@@ -696,7 +697,6 @@ pub(crate) mod testing {
         Attribution, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
         GraphIndex, NodeEntry, NodeKind, Project, ProjectFile,
     };
-    use chrono::{TimeZone, Utc};
 
     pub fn setup_store(dir: &Path) -> Store {
         setup_store_with_version(dir, FORMAT_VERSION)
@@ -758,7 +758,7 @@ pub(crate) mod testing {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+                created: "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -797,7 +797,7 @@ pub(crate) mod testing {
     pub fn rich_test_state() -> super::state::ProjectState {
         use crate::store::schema::{EdgeEntry, EdgeKind, FORMAT_VERSION, NodeKind};
 
-        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap();
+        let ts = "2025-06-01T10:00:00Z".parse::<Timestamp>().unwrap();
 
         let mut components = BTreeMap::new();
         for (name, desc) in [
@@ -986,8 +986,8 @@ pub(crate) mod testing {
 
     // ── Shared graph fixtures ────────────────────────────────────────────
 
-    pub fn ts() -> chrono::DateTime<chrono::Utc> {
-        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2025, 6, 1, 10, 0, 0).unwrap()
+    pub fn ts() -> Timestamp {
+        "2025-06-01T10:00:00Z".parse().unwrap()
     }
 
     pub fn arc_map<T>(map: BTreeMap<String, T>) -> BTreeMap<String, Arc<T>> {

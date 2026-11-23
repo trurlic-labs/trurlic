@@ -9,6 +9,7 @@ use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::store::TimestampError;
 use crate::store::graph::Issue;
 use crate::store::text::{TextFault, TextField};
 
@@ -108,6 +109,10 @@ pub enum Error {
         journal.display()
     )]
     BadJournal { journal: PathBuf, detail: String },
+
+    /// The system clock reads an instant a `Timestamp` cannot hold.
+    #[error("system clock: {source}")]
+    Clock { source: TimestampError },
 
     #[error("{0} consistency error(s) found")]
     CheckFailed(usize),

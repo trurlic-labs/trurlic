@@ -150,8 +150,8 @@ mod tests {
     use super::*;
     use crate::commands::{add_component, init};
     use crate::store::Store;
+    use crate::store::Timestamp;
     use crate::store::schema::EdgeKind;
-    use chrono::Utc;
     use tempfile::TempDir;
 
     #[test]
@@ -271,9 +271,9 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
 
-        let before = Utc::now();
+        let before = Timestamp::now().unwrap();
         decide(tmp.path(), "auth", "JWT", "Stateless.", &[], &[]).unwrap();
-        let after = Utc::now();
+        let after = Timestamp::now().unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
         let dec = store.read_decision("jwt").unwrap();

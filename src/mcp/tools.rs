@@ -917,10 +917,10 @@ mod tests {
 
     #[test]
     fn dispatch_get_decisions_for_file_finds_matching_decision() {
+        use crate::store::Timestamp;
         use crate::store::schema::*;
-        use chrono::{TimeZone, Utc};
 
-        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap();
+        let ts = "2025-06-01T10:00:00Z".parse::<Timestamp>().unwrap();
         let mut state = empty_state();
         state.components.insert(
             "store".into(),
@@ -991,10 +991,10 @@ mod tests {
 
     #[test]
     fn dispatch_get_decisions_for_file_directory_prefix() {
+        use crate::store::Timestamp;
         use crate::store::schema::*;
-        use chrono::{TimeZone, Utc};
 
-        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap();
+        let ts = "2025-06-01T10:00:00Z".parse::<Timestamp>().unwrap();
         let mut state = empty_state();
         state.components.insert(
             "store".into(),
@@ -1099,11 +1099,11 @@ mod tests {
     /// file, and one project-wide rule. Enough to exercise every branch of
     /// the response builder through the dispatch boundary.
     fn verify_state() -> ProjectState {
+        use crate::store::Timestamp;
         use crate::store::schema::*;
-        use chrono::{TimeZone, Utc};
         use std::sync::Arc;
 
-        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 10, 0, 0).unwrap();
+        let ts = "2025-06-01T10:00:00Z".parse::<Timestamp>().unwrap();
         let mut state = empty_state();
 
         state.components.insert(

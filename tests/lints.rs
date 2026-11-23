@@ -85,6 +85,11 @@ const CASES: &[(&str, &str, &str)] = &[
         "pub fn f() -> std::io::Stderr { std::io::stderr() }",
     ),
     (
+        "a clock read",
+        "clippy::disallowed_methods",
+        "pub fn f() -> std::time::SystemTime { std::time::SystemTime::now() }",
+    ),
+    (
         "allow",
         "clippy::allow_attributes",
         "#[allow(dead_code, reason = \"seeded\")]\nfn f() {}",

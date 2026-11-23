@@ -4,11 +4,10 @@
 use std::fs;
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
-
 use crate::{Error, Result};
 
 use super::schema::{GraphIndex, NodeEntry, NodeKind, Project, ProjectFile};
+use super::time::Timestamp;
 use super::{
     COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, PATTERNS_DIR, STORE_DIR, Store, hash_file,
 };
@@ -17,7 +16,7 @@ impl Store {
     /// Create `.trurlic/` in `project_dir` for a project named `name`.
     /// `rebuilt` stamps the first index, and every later commit carries it
     /// over. Fails with [`Error::StoreExists`] when `.trurlic/` is there.
-    pub fn create(project_dir: &Path, name: &str, rebuilt: DateTime<Utc>) -> Result<Self> {
+    pub fn create(project_dir: &Path, name: &str, rebuilt: Timestamp) -> Result<Self> {
         let root = project_dir.join(STORE_DIR);
         if root.exists() {
             return Err(Error::StoreExists(root));
