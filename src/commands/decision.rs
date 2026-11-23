@@ -1,10 +1,8 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::console::{diag, out};
-use crate::store::schema::{Attribution, CodeRef, DecisionFile};
+use crate::store::schema::{Attribution, CodeRef};
 use crate::store::{self, RecordDecisionParams};
-use crate::workflow::concerns;
 use crate::{Error, Result};
 
 use super::open_store_mut;
@@ -75,8 +73,7 @@ pub fn decide(
 /// `component`, then runs a cascade pre-flight over the whole set. The batch is
 /// atomic: if removing any candidate would break a dependent or shrink a
 /// pattern below its minimum, none are removed. Human-recorded decisions are
-/// never touched. On success, the concern coverage the batch erased is reported
-/// against what remains in the component.
+/// never touched.
 pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
     if component != "project" && !store::is_valid_kebab_case(component) {
         return Err(Error::InvalidName(component.into()));
@@ -121,39 +118,17 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
         )));
     }
 
-    // Snapshot before removal so the coverage the batch carried can be reported
-    // once the decisions are gone from the graph.
-    let snapshots: Vec<Arc<DecisionFile>> = candidates
-        .iter()
-        .filter_map(|name| state.decisions.get(name).map(Arc::clone))
-        .collect();
-
     store.remove_decisions(&lock, &mut state, &names)?;
     drop(lock);
 
     let count = names.len();
     let plural = if count == 1 { "" } else { "s" };
     out!("Removed {count} agent decision{plural} from [{component}]")?;
-
-    let remaining = state.graph().coverage_baseline(component);
-    let mut lost: Vec<&'static str> = Vec::new();
-    for dec in &snapshots {
-        for area in concerns::coverage_lost(dec, &remaining) {
-            if !lost.contains(&area) {
-                lost.push(area);
-            }
-        }
-    }
-    if !lost.is_empty() {
-        out!("\u{26a0} [{component}] lost coverage: {}", lost.join(", "))?;
-    }
-
     Ok(())
 }
 
 /// `trurlic remove decision` — delete a single decision after a cascade
-/// pre-flight, then report any concern areas that lost their last cover.
-/// Refused with `CascadeBlocked` if another decision depends on it.
+/// pre-flight. Refused with `CascadeBlocked` if another decision depends on it.
 pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
 
@@ -165,22 +140,8 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
         diag!("warning: {}", w.message);
     }
 
-    // Capture the decision before removal so its lost concern coverage can be
-    // reported once it is gone from the graph.
-    let removed = state.decisions.get(name).map(Arc::clone);
-
     store.remove_decision(&lock, &mut state, name)?;
     out!("Removed decision `{name}`")?;
-
-    if let Some(removed) = removed {
-        let component = &removed.decision.component;
-        let remaining = state.graph().coverage_baseline(component);
-        let lost = concerns::coverage_lost(&removed, &remaining);
-        if !lost.is_empty() {
-            out!("\u{26a0} [{component}] lost coverage: {}", lost.join(", "))?;
-        }
-    }
-
     Ok(())
 }
 
@@ -387,29 +348,6 @@ mod tests {
 
         let err = remove_decision(tmp.path(), "ghost").unwrap_err();
         assert!(matches!(err, Error::DecisionNotFound(ref n) if n == "ghost"));
-    }
-
-    #[test]
-    fn remove_decision_reports_lost_coverage() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", None).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Encrypt credentials at rest",
-            "Protect secrets from disk exposure",
-            &[],
-            &[],
-        )
-        .unwrap();
-
-        // The removed decision uniquely covered Security boundaries — the
-        // report branch must run and the removal must complete cleanly.
-        remove_decision(tmp.path(), "encrypt-credentials-at-rest").unwrap();
-
-        let store = Store::discover(tmp.path()).unwrap();
-        assert!(store.list_decisions().unwrap().is_empty());
     }
 
     #[test]

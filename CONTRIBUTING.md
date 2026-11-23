@@ -85,15 +85,6 @@ The MCP server assembles specs from stored decisions.
 - The server uses `Arc<RwLock<ProjectState>>` shared with a file watcher thread. Tool calls hold the write lock. Keep tool execution fast (<50ms for writes).
 - Test with a real MCP client to verify response format.
 
-## Working on the workflow engine
-
-`workflow` computes the next step for the coding agent — the `advance` state machine and the step prompts MCP serves.
-
-- `advance()` is a pure function of `(graph, now)` — no I/O, no LLM calls, no wall-clock reads, no side effects. Same inputs must always produce the same step. Inject `Utc::now()` at the call site; never read it inside the engine.
-- Steps have preconditions (what the graph must look like) and postconditions (what changes after the step succeeds). The state machine gates on `completed_steps` so it can't loop on a step whose postcondition it can't detect.
-- Prompts are transport-agnostic and mode-aware — the same text feeds MCP and any other caller. Agent-mode variants instruct autonomous code reading; interactive variants preserve the Socratic ask-then-record dialogue.
-- Every `Step::as_str()` value must be accepted by `build_step_prompt()`, and every `(Mode, TaskType)` pair must be resolved explicitly. These are property-tested — extend the tests when you add a variant.
-
 ## Commit conventions
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
@@ -104,12 +95,12 @@ The MCP server assembles specs from stored decisions.
 
 Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `security`.
 
-Scopes: `store`, `workflow`, `mcp`, `commands`, `cli`.
+Scopes: `store`, `mcp`, `budget`, `commands`, `cli`.
 
 ```
 feat(mcp): add related decisions from connected components to get_context
 fix(store): validate component references before writing decision
-fix(workflow): gate CoverConcerns on completed_steps to stop advance looping
+fix(mcp): keep a cut tool result valid JSON
 perf(store): single-pass file I/O in load_state
 ```
 

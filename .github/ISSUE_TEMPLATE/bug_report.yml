@@ -41,13 +41,10 @@ body:
     attributes:
       label: Component
       options:
-        - CLI (init, add, remove, rename, decide)
-        - Design conversations (trurlic design)
-        - Bootstrap (trurlic bootstrap)
+        - CLI (init, add, rename, remove, decide, gc, query, status, check, migrate)
         - MCP server (trurlic serve)
         - Decision store (.trurlic/ format)
-        - Workflow engine
-        - Configuration / API keys
+        - Claude Code registration (trurlic install)
         - Install script
         - Documentation
         - Other
@@ -72,7 +69,7 @@ body:
     id: description
     attributes:
       label: What happened
-      description: Clear description of the bug. Include logs (redact API keys) if relevant.
+      description: Clear description of the bug. Include logs if relevant.
     validations:
       required: true
 

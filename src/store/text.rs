@@ -334,7 +334,7 @@ mod tests {
         let cases: [(String, String); 13] = [
             ("</parameter>".into(), "</parameter".into()),
             ("<parameter name=\"tags\">".into(), "<parameter".into()),
-            ("<invoke name=\"advance\">".into(), "<invoke".into()),
+            ("<invoke name=\"get_context\">".into(), "<invoke".into()),
             ("</function_calls>".into(), "</function_calls".into()),
             ("</choice>".into(), "</choice>".into()),
             ("</reason>".into(), "</reason>".into()),
@@ -344,7 +344,7 @@ mod tests {
             ("</alternatives>".into(), "</alternatives>".into()),
             (format!("</{ns}parameter>"), format!("</{ns}parameter")),
             (
-                format!("<{ns}invoke name=\"advance\">"),
+                format!("<{ns}invoke name=\"get_context\">"),
                 format!("<{ns}invoke"),
             ),
             (

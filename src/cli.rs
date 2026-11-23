@@ -71,7 +71,7 @@ pub enum ProjectCommand {
     #[command(subcommand)]
     Remove(RemoveCommand),
 
-    /// Record a quick decision without the full Socratic flow.
+    /// Record a user-attributed decision on a component or `project`.
     Decide {
         /// Component this decision belongs to (or "project" for project-wide).
         component: String,

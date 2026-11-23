@@ -22,11 +22,6 @@ pub const MIN_REASON_BYTES: usize = 10;
 /// A choice is a concise title, not a paragraph.
 pub const MAX_CHOICE_BYTES: usize = 200;
 
-/// Minimum byte length for step evidence on gated (interactive) steps.
-/// Catches empty strings and trivial rubber stamps without requiring
-/// semantic analysis of user input.
-pub const MIN_STEP_EVIDENCE_BYTES: usize = 20;
-
 /// Maximum number of code references per decision.
 pub const MAX_CODE_REFS: usize = 20;
 

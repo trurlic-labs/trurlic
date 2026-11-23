@@ -31,7 +31,7 @@ pub struct ProjectState {
     /// Decision `code_refs` are resolved against this root to detect
     /// references to deleted files. [`Store::load_state`] fills it in;
     /// states built directly by tests default to an empty path (which,
-    /// with no `code_refs`, never triggers staleness).
+    /// with no `code_refs`, never reports an orphaned ref).
     pub(crate) project_root: PathBuf,
     /// Cached in-memory graph. Kept in sync by
     /// [`Store::commit_with_graph`], which assigns the validated graph

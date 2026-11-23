@@ -6,7 +6,6 @@ pub(crate) mod console;
 pub(crate) mod error;
 pub(crate) mod mcp;
 pub mod store;
-pub(crate) mod workflow;
 
 pub use error::{Error, Result};
 

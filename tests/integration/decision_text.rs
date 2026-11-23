@@ -58,7 +58,7 @@ fn cases() -> Vec<Case> {
         reason_with("paragraph separator", "\u{2029}"),
         reason_with("closing parameter tag", "</parameter>"),
         reason_with("opening parameter tag", "<parameter name=\"tags\">"),
-        reason_with("invoke tag", "<invoke name=\"advance\">"),
+        reason_with("invoke tag", "<invoke name=\"get_context\">"),
         reason_with("function_calls tag", "</function_calls>"),
         reason_with("argument tag in a reason", "</alternatives>"),
         Case {

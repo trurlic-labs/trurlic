@@ -66,9 +66,9 @@ fn every_listed_tool_round_trips() {
     };
     session.exercise_writes();
     session.exercise_reads();
-    session.exercise_workflow();
     session.exercise_removal();
 
+    assert_eq!(listed.len(), 13, "{listed:?}");
     assert_eq!(session.called, listed, "tools called vs tools listed");
 }
 
@@ -173,20 +173,6 @@ impl Session<'_> {
             json!({ "component": "auth", "changed_files": ["src/auth.rs"] }),
         );
         assert!(verdicts.to_string().contains(JWT), "{verdicts}");
-    }
-
-    fn exercise_workflow(&mut self) {
-        let step = self.call(
-            "advance",
-            json!({ "component": "auth", "task_type": "feature", "mode": "agent" }),
-        );
-        assert_eq!(step["component"], "auth", "{step}");
-
-        let prompt = self.call(
-            "get_step_prompt",
-            json!({ "component": "auth", "step": "verify_constraints", "mode": "agent" }),
-        );
-        assert!(prompt["system_instructions"].is_string(), "{prompt}");
     }
 
     fn exercise_removal(&mut self) {

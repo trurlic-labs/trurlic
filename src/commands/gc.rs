@@ -15,9 +15,8 @@ use chrono::{Duration, Utc};
 
 use crate::Result;
 use crate::console::out;
-use crate::store::schema::{Attribution, DecisionFile};
+use crate::store::schema::Attribution;
 use crate::store::{ProjectState, Store, StoreLock};
-use crate::workflow::concerns;
 
 use super::open_store_mut;
 
@@ -73,10 +72,9 @@ pub(crate) fn resolve_aggressive_confirm(
 /// debt worth surfacing.
 const AGENT_REVIEW_STALE_DAYS: i64 = 90;
 
-/// A decision `gc` has flagged, carrying the reason and its owning component.
+/// A decision `gc` has flagged and the reason it was flagged.
 struct Candidate {
     name: String,
-    component: String,
     /// Human-readable explanation for the report line.
     detail: String,
 }
@@ -200,8 +198,7 @@ fn plan_removals<'a>(
     Ok((removable, blocked))
 }
 
-/// Snapshot the decisions about to leave, remove them in one atomic batch, and
-/// report the concern coverage the removal erased. Returns the number removed.
+/// Remove the cleared decisions in one atomic batch. Returns the number removed.
 fn apply_removals(
     store: &Store,
     lock: &StoreLock,
@@ -212,22 +209,8 @@ fn apply_removals(
         return Ok(0);
     }
 
-    // Snapshot before removal so the coverage each decision carried can be
-    // reported once it is gone from the graph.
-    let snapshots: Vec<(String, std::sync::Arc<DecisionFile>)> = removable
-        .iter()
-        .filter_map(|c| {
-            state
-                .decisions
-                .get(&c.name)
-                .map(|d| (c.component.clone(), std::sync::Arc::clone(d)))
-        })
-        .collect();
-
     let names: Vec<&str> = removable.iter().map(|c| c.name.as_str()).collect();
     store.remove_decisions(lock, state, &names)?;
-
-    report_lost_coverage(state, &snapshots)?;
     Ok(names.len())
 }
 
@@ -246,20 +229,17 @@ fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candid
         if d.component != "project" && !state.components.contains_key(&d.component) {
             orphaned.push(Candidate {
                 name: name.clone(),
-                component: d.component.clone(),
                 detail: format!("component [{}] no longer exists", d.component),
             });
         } else if crate::store::decision_refs_all_missing(&state.project_root, dec) {
             let files: Vec<&str> = d.code_refs.iter().map(|r| r.file.as_str()).collect();
             orphaned_ref.push(Candidate {
                 name: name.clone(),
-                component: d.component.clone(),
                 detail: format!("{} deleted", files.join(", ")),
             });
         } else if d.attribution == Attribution::Agent && d.created < cutoff {
             old_agent.push(Candidate {
                 name: name.clone(),
-                component: d.component.clone(),
                 detail: format!("agent, created {}", d.created.format("%Y-%m-%d")),
             });
         }
@@ -284,39 +264,6 @@ fn split_blocked<'a>(
         }
     }
     (removable, blocked)
-}
-
-/// Print the concern coverage the removals erased, grouped by component.
-/// Components that no longer exist (the orphan case) are skipped — reporting
-/// lost coverage for a deleted component is noise.
-fn report_lost_coverage(
-    state: &ProjectState,
-    removed: &[(String, std::sync::Arc<DecisionFile>)],
-) -> Result<()> {
-    let mut by_component: BTreeMap<&str, Vec<&DecisionFile>> = BTreeMap::new();
-    for (component, dec) in removed {
-        by_component.entry(component).or_default().push(dec);
-    }
-
-    for (component, removed_decisions) in by_component {
-        if !state.components.contains_key(component) {
-            continue;
-        }
-        let remaining = state.graph().coverage_baseline(component);
-
-        let mut lost: Vec<&'static str> = Vec::new();
-        for dec in removed_decisions {
-            for area in concerns::coverage_lost(dec, &remaining) {
-                if !lost.contains(&area) {
-                    lost.push(area);
-                }
-            }
-        }
-        if !lost.is_empty() {
-            out!("\u{26a0} [{component}] lost coverage: {}", lost.join(", "))?;
-        }
-    }
-    Ok(())
 }
 
 fn print_removal_section(

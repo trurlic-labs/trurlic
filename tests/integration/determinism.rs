@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use crate::harness::{McpClient, Project};
 
-/// The hub every other component connects to or from, so its context and
-/// step prompts carry the decisions of six neighbours.
+/// The hub every other component connects to or from, so its context
+/// carries the decisions of six neighbours.
 const HUB: &str = "auth";
 const DOWNSTREAM: [&str; 4] = ["billing", "mail", "search", "storage"];
 const UPSTREAM: [&str; 2] = ["audit", "gateway"];
@@ -69,7 +69,7 @@ fn decide(writer: &mut McpClient, component: &str, choice: &str) -> String {
 /// One call per read tool and argument shape that reaches a different
 /// assembly path.
 fn read_calls() -> Vec<(&'static str, Value)> {
-    let mut calls = vec![
+    vec![
         ("get_architecture", json!({})),
         ("get_context", json!({ "component": HUB })),
         (
@@ -90,26 +90,7 @@ fn read_calls() -> Vec<(&'static str, Value)> {
             "verify_against_decisions",
             json!({ "component": HUB, "changed_files": ["src"] }),
         ),
-    ];
-    for task_type in ["feature", "review", "harden"] {
-        calls.push((
-            "advance",
-            json!({ "component": HUB, "task_type": task_type, "mode": "agent" }),
-        ));
-    }
-    for step in [
-        "verify_constraints",
-        "impact_check",
-        "pattern_detection",
-        "drift_check",
-        "coverage_audit",
-    ] {
-        calls.push((
-            "get_step_prompt",
-            json!({ "component": HUB, "step": step, "mode": "agent" }),
-        ));
-    }
-    calls
+    ]
 }
 
 fn read_only_tools(client: &mut McpClient) -> BTreeSet<String> {

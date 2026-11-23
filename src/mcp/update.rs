@@ -1,9 +1,8 @@
 use serde_json::Value;
 
 use crate::store::cascade::CascadeResult;
-use crate::store::schema::{Attribution, DecisionFile};
+use crate::store::schema::Attribution;
 use crate::store::{self, Store, StoreLock};
-use crate::workflow::concerns;
 
 use super::write::{opt_str_array, opt_text, parse_code_refs, require_str};
 
@@ -75,47 +74,16 @@ pub(crate) fn remove_decision(
         }));
     }
 
-    // Capture the decision before the write path deletes it — its content and
-    // component are needed to report the concern coverage the removal erases.
-    let removed = std::sync::Arc::clone(&state.decisions[name]);
-    let component = removed.decision.component.clone();
-
-    // Execute removal via shared write path.
     store
         .remove_decision(lock, state, name)
         .map_err(|e| e.to_string())?;
-
-    let coverage_impact = coverage_impact(state, &removed, &component);
 
     Ok(serde_json::json!({
         "removed": true,
         "blocked_by": blocked_by,
         "would_warn": would_warn,
         "would_clean": would_clean,
-        "coverage_impact": coverage_impact,
     }))
-}
-
-/// Concern coverage delta for the component after a decision is removed.
-///
-/// `lost_coverage` names areas the removed decision was the last to cover;
-/// the remaining counts partition every concern area across the decisions
-/// still belonging to the component.
-fn coverage_impact(state: &store::ProjectState, removed: &DecisionFile, component: &str) -> Value {
-    // Baseline includes project rules, matching get_context — a concern a
-    // project-wide rule still covers must not be reported as lost.
-    let remaining = state.graph().coverage_baseline(component);
-
-    let lost = concerns::coverage_lost(removed, &remaining);
-    let (covered, uncovered) = concerns::compute_concern_coverage(&remaining);
-
-    serde_json::json!({
-        "component": component,
-        "lost_coverage": lost,
-        "remaining_covered": covered.len(),
-        "remaining_uncovered": uncovered.len(),
-        "total_concerns": concerns::CONCERNS.len(),
-    })
 }
 
 // ── update_decision ─────────────────────────────────────────────────────────
@@ -259,6 +227,13 @@ mod tests {
         let args = json!({ "name": "use-jwt" });
         let result = remove_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
         assert_eq!(result["removed"], true);
+        let keys: Vec<&str> = result
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["blocked_by", "removed", "would_clean", "would_warn"]);
         assert!(!state.decisions.contains_key("use-jwt"));
     }
 
@@ -324,109 +299,6 @@ mod tests {
         let args = json!({ "name": "ghost" });
         let err = remove_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
         assert!(err.contains("ghost"));
-    }
-
-    #[test]
-    fn remove_decision_reports_coverage_impact() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "JWT security tokens", "reason": "Authentication boundary protection", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
-
-        let result = remove_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "name": "jwt-security-tokens" }),
-        )
-        .unwrap();
-        assert_eq!(result["removed"], true);
-
-        let impact = &result["coverage_impact"];
-        assert_eq!(impact["component"], "auth");
-        assert_eq!(impact["total_concerns"], concerns::CONCERNS.len());
-        assert_eq!(impact["remaining_uncovered"], concerns::CONCERNS.len());
-        assert_eq!(impact["remaining_covered"], 0);
-
-        let lost = impact["lost_coverage"].as_array().unwrap();
-        assert!(
-            lost.iter().any(|c| c == "Security boundaries"),
-            "removing the only security decision must report it as lost: {lost:?}"
-        );
-    }
-
-    #[test]
-    fn remove_decision_no_lost_coverage_when_area_still_covered() {
-        let (_tmp, store, mut state) = setup();
-        record_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "component": "auth", "choice": "JWT security tokens", "reason": "Authentication boundary protection", "attribution": "user" }),
-        )
-        .unwrap();
-        record_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "component": "auth", "choice": "OAuth delegated flow", "reason": "External identity security provider", "attribution": "user" }),
-        )
-        .unwrap();
-
-        let result = remove_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "name": "jwt-security-tokens" }),
-        )
-        .unwrap();
-
-        let impact = &result["coverage_impact"];
-        let lost = impact["lost_coverage"].as_array().unwrap();
-        assert!(
-            !lost.iter().any(|c| c == "Security boundaries"),
-            "a remaining security decision keeps the area covered: {lost:?}"
-        );
-        assert_eq!(impact["remaining_covered"], 1);
-    }
-
-    #[test]
-    fn remove_decision_no_lost_coverage_when_project_rule_covers_area() {
-        let (_tmp, store, mut state) = setup();
-        // A project-wide security rule covers the same concern as the
-        // component's only security decision.
-        record_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "component": "project", "choice": "Security boundaries enforced across every module", "reason": "Authentication and authorization security boundary protection", "attribution": "user" }),
-        )
-        .unwrap();
-        record_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "component": "auth", "choice": "JWT security tokens", "reason": "Authentication boundary protection", "attribution": "user" }),
-        )
-        .unwrap();
-
-        let result = remove_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "name": "jwt-security-tokens" }),
-        )
-        .unwrap();
-
-        let impact = &result["coverage_impact"];
-        let lost = impact["lost_coverage"].as_array().unwrap();
-        assert!(
-            !lost.iter().any(|c| c == "Security boundaries"),
-            "a project-wide security rule keeps the area covered: {lost:?}"
-        );
-        assert!(
-            impact["remaining_covered"].as_u64().unwrap() >= 1,
-            "the project rule counts toward remaining coverage"
-        );
     }
 
     // ── update_decision: revise ──────────────────────────────────────────
@@ -701,36 +573,6 @@ mod tests {
         assert_eq!(would_clean.len(), 1);
         assert_eq!(would_clean[0]["edge"], "belongs_to");
         assert_eq!(would_clean[0]["target"], "auth");
-    }
-
-    // ── no workflow hints ─────────────────────────────────────────────
-
-    #[test]
-    fn remove_decision_no_workflow() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
-
-        let result = remove_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "name": "use-jwt" }),
-        )
-        .unwrap();
-        assert_eq!(result["removed"], true);
-        assert!(result.get("workflow").is_none());
-    }
-
-    #[test]
-    fn revise_no_workflow() {
-        let (_tmp, store, mut state) = setup();
-        let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
-
-        let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "Use JWT v2" });
-        let result = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
-        assert!(result.get("workflow").is_none());
     }
 
     // ── revise: tags and code_refs ────────────────────────────────────

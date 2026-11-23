@@ -64,16 +64,15 @@ const MAX_TAGS: usize = 6;
 const MAX_HISTORY: usize = 14;
 
 /// Every timestamp is this instant plus an offset, so writing a corpus never
-/// reads the clock. The newest is under 100 days later: every decision has
-/// read as stale since late 2025, so a read answers the same on any day.
+/// reads the clock.
 fn epoch() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
         .single()
         .unwrap_or(DateTime::UNIX_EPOCH)
 }
 
-/// Prose vocabulary. It carries keywords of every concern area, so concern
-/// coverage is computed over text that matches.
+/// Prose vocabulary of architecture terms, so keyword queries such as
+/// `check_pattern` match decisions as they would in a production graph.
 const WORDS: &[&str] = &[
     "the",
     "store",

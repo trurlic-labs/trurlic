@@ -90,7 +90,7 @@ pub(crate) fn fit_message(message: &str, max_bytes: usize) -> String {
 }
 
 /// Bytes `text` takes inside a serialized JSON string, quotes excluded.
-pub(crate) fn json_str_len(text: &str) -> usize {
+fn json_str_len(text: &str) -> usize {
     text.bytes().map(escaped_len).sum()
 }
 

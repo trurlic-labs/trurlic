@@ -1,31 +1,28 @@
 ## Trurlic
 
-Architecture layer for AI-assisted codebases. Typed decision graph stored in `.trurlic/`, served to coding agents over MCP. Socratic design conversations, concern tracking, pattern detection, comprehension gates.
+Architecture layer for AI-assisted codebases. Typed decision graph stored in `.trurlic/`, served to coding agents over MCP: the decisions and project-wide rules that constrain a component before code is written, agent-recorded decisions flagged for human review, and changed files checked against the decisions that cover them.
 
 Named after Trurl (Stanisław Lem, *The Cyberiad*) — the constructor who thinks deeply about what he builds before building it.
 
 ### Architecture
 
-Single crate, eight modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
+Single crate, seven modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
 
 ```
 store       → (no internal deps)         Decision graph: TOML files, graph index,
                                           validation, atomic writes, file locking,
                                           file watcher
-workflow    → store, budget               Step deduction, concern tracking,
-                                          prompt generation. Pure functions, no I/O.
-mcp         → store, workflow, budget     MCP server: JSON-RPC stdio, tool dispatch,
+mcp         → store, budget               MCP server: JSON-RPC stdio, tool dispatch,
                                           context assembly, decision verification,
                                           the 24 KiB cap on every tool result
-commands    → store, mcp,                 CLI command handlers: init, add, rename,
-              workflow (read-only)        remove, decide, query, status, check, gc,
+commands    → store, mcp                  CLI command handlers: init, add, rename,
+                                          remove, decide, query, status, check, gc,
                                           migrate, install (registers the MCP
                                           server with Claude Code), and the
                                           `serve` entry point
 cli         → commands                    clap definitions and dispatch
 budget      → (no internal deps)          Fitting output into a byte budget: the
-                                          level search behind the result cap and
-                                          the step prompt listings
+                                          level search behind the result cap
 error       → store (types)               The crate's `Error` enum and `Result`
                                           alias; it names the store's `Issue`
                                           and text-fault types
@@ -39,11 +36,9 @@ Every module uses `error` and `console`; the arrows leave them out.
 
 **error** carries the path of the file behind every I/O and TOML failure (`Error::Io`, `Error::Toml`); nothing converts a bare `io::Error` into it, so a `?` cannot drop the path. `commands::install` alone returns its own `InstallError`, which wraps `Error`; `cli` prints either as `error: <message>` with exit status 1.
 
-**workflow** is pure computation. It never touches the filesystem, never allocates beyond the response JSON. `advance()` is a deterministic function of graph state + inputs. Same inputs = same output, always.
+**mcp** never writes to the graph directly. It calls `Store` write methods.
 
-**mcp** never writes to the graph directly. It calls `Store` write methods. Prompt generation comes from `workflow::steps`.
-
-**commands** reads `workflow::concerns` to report the concern coverage a removal loses (`remove decision`, `gc`), never mutating the graph through it, and starts the MCP server (`serve`).
+**commands** reaches `mcp` only to start the MCP server (`serve`); every other handler reads and writes the graph through `Store`.
 
 Trurlic makes no LLM calls. Design work happens in the agent that calls the MCP tools.
 
@@ -65,16 +60,6 @@ In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<
 
 Thread model: MCP server holds `Arc<RwLock<ProjectState>>`. The file watcher thread (`store::watcher`) detects external changes, loads under the shared file lock, releases it, then swaps state under the write lock (microseconds) unless a write of its own server overtook the load (`ProjectState::is_overtaken`). Events that arrive during a reload start the next one. MCP read tools acquire read lock only. Write tools acquire write lock, then file lock, then reload, validate, and commit. A thread holding a file lock never waits on the state lock.
 
-### Workflow Engine
-
-`advance()` is the orchestration hub. Read-only, stateless, idempotent. Computes the next step from graph contents every call. No session tracking, no persistent workflow state.
-
-Seven task types, each with a distinct step sequence. Steps have preconditions (graph must look like X) and postconditions (graph changes after step succeeds). The state machine checks preconditions to determine the next step.
-
-Concern tracking: 10 architectural concern areas with keyword matching against decision content. Priority-ordered — security gaps surface before stylistic ones.
-
-Step prompts: transport-agnostic instructions generated from graph state and served by `get_step_prompt`. Their decision listings shrink to fit the result budget; the instructions around them never do. Interactive mode embeds `INTERACTION_PROTOCOL` in every step prompt; agent mode embeds `AGENT_PROTOCOL`.
-
 ### Key Invariants
 
 1. `unsafe` is forbidden (`[lints.rust] unsafe_code = "forbid"` in Cargo.toml): no `#[expect]` can lift it.
@@ -82,70 +67,48 @@ Step prompts: transport-agnostic instructions generated from graph state and ser
 3. Every graph mutation validates the full graph before touching disk. A write that adds an error is refused, never silently committed; an error the graph already had, matched on kind and subject, does not block it.
 4. Atomic commits: round-trip in memory → flushed temp files → flushed journal (the commit point) → renames, `graph.toml` last → directory flushes. Recovery rolls a journal forward under the exclusive lock.
 5. File locking prevents concurrent mutations from CLI and MCP processes.
-6. `workflow::advance` is a pure function. No I/O, no side effects.
-7. Boundary types (`DecisionFile`, `PatternFile`, `ComponentFile`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`) do not.
-8. Every dependency justified. No proc macros at runtime (serde derive, thiserror are compile-time).
-9. Every MCP tool result fits `budget::MAX_TOOL_RESULT_BYTES` (24 KiB) and stays valid JSON; a cut is named in its `truncated` array.
+6. Boundary types (`DecisionFile`, `PatternFile`, `ComponentFile`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`) do not.
+7. Every dependency justified. No proc macros at runtime (serde derive, thiserror are compile-time).
+8. Every MCP tool result fits `budget::MAX_TOOL_RESULT_BYTES` (24 KiB) and stays valid JSON; a cut is named in its `truncated` array.
 
 ### Trurlic
 
-This project uses Trurlic for its own architectural decisions.
-
-**Before any task**, call `advance(component, task_type)`. If you haven't
-specified a mode, advance will ask — present the choice to the user:
-
-- **agent**: AI reads code and makes decisions autonomously. Fast,
-  no user interaction needed. Decisions flagged for later review.
-- **interactive**: User participates in design discussion. Slower,
-  but builds shared understanding.
-
-Then follow the returned action. Call advance again after each step.
-Repeat until `ready: true`. Then get_context → implement.
-
-When to suggest which mode:
-- "implement X" / "fix Y" / "add feature Z" → suggest agent
-- "design" / "architect" / "let's think about" → suggest interactive
-- When uncertain → ask
-
-**Implementation mode — get_context directly.** Use when implementing within existing constraints. No advance, no gates, fully autonomous.
+This project uses Trurlic for its own architectural decisions. Before a
+task, read the decisions that constrain it; implement within them; record
+the choices they leave open; verify before committing.
 
 ```
-1. get_context(component) → brief with all decisions and constraints
+1. get_context(component) → brief with every decision and project rule
+   the code must respect
 2. implement within the brief
-3. if undecided pattern encountered:
+3. a choice no decision covers:
    check_pattern(description) → if uncovered:
-     record_decision(component, choice, reason, attribution="agent")
-     continue — the decision is flagged ⚠ for human review
-4. get_context(component, depth="constraints") → verify compliance
-5. verify_against_decisions(component, changed_files) → read each
+     record_decision(component, choice, reason, alternatives, attribution)
+4. verify_against_decisions(component, changed_files) → read each
    verdict, fix any VIOLATED decision before committing
 ```
 
-When to use which: if the task says "add a feature," "fix a bug," or "implement X" and the component has existing decisions that cover the work, use implementation mode. If the task says "design," "architect," "add a new component," or you realize the existing decisions don't cover what you need to do, switch to design mode.
-
-During implementation in either mode:
 - When touching a second module, call `get_context` for that module's component too.
-- After implementation, re-read the brief and verify no decision was silently violated.
-- After implementing, call `verify_against_decisions` with the component and changed files. Review each verdict. Fix violations before committing.
+- Attribution: `user` when the user made the choice in this conversation, `agent` when you made it alone; an agent decision is flagged ⚠ for human review until the user confirms it.
+- When the task is to design something, discuss the choices with the user before implementing, and record each one they agree on.
+- After implementation, re-read the brief and check no decision was silently violated.
 
 ### Testing
 
-Unit tests: pure functions, same file. Every module has exhaustive tests for its public contract.
-
-Pipeline tests: advance through all steps for every task type, verify step sequences and postconditions. Schema round-trips for every serializable type.
+Unit tests: pure functions, same file. Every module has exhaustive tests for its public contract. Schema round-trips for every serializable type.
 
 Integration tests (`tests/integration/`): drive the built binary. `harness` spawns `trurlic serve` and speaks JSON-RPC over stdio; `golden` compares output with `tests/integration/golden/` (`TRURLIC_UPDATE_GOLDEN=1` rewrites the files). Every tool in `tools/list` is called once.
 
 Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` act at the n-th hit of a named site in `src/store/failpoint.rs`: abort (or pause, with `TRURLIC_FAILPOINT_PAUSE`) at a `hit`, return an injected I/O error at a `fail`. `make test` enables it.
 
-Property: determinism (same graph state → same advance result; every read tool answers with the same bytes in two processes), exhaustive step coverage (every `Step::as_str()` value accepted by `build_step_prompt()`), graph validation catches all known violation classes.
+Property: determinism (every read tool answers with the same bytes in two processes), graph validation catches all known violation classes.
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 
-Benchmarks (`benches/corpus.rs`, criterion + CodSpeed, `make bench`): over the seeded corpus `store::corpus` at 50, 600 and 2000 decisions, `load_state`, graph build and validation, `record_decision` end to end, `advance` per task type and every read tool, the last three through `trurlic::bench::Server` in process. The `bench` feature builds the corpus and that server; release builds carry neither.
+Benchmarks (`benches/corpus.rs`, criterion + CodSpeed, `make bench`): over the seeded corpus `store::corpus` at 50, 600 and 2000 decisions, `load_state`, graph build and validation, and, through `trurlic::bench::Server` in process, `record_decision` end to end and every read tool. The `bench` feature builds the corpus and that server; release builds carry neither.
 
 ### Skills
 
 - `rust` — Non-negotiable Rust code rules. Load before any implementation task.
 - `review` — Post-implementation quality gate. Load after any implementation task.
-- `trurlic` — How to use Trurlic's MCP tools and advance loop. Load before any task.
+- `trurlic` — How to use Trurlic's MCP tools. Load before any task.

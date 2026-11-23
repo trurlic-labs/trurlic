@@ -463,7 +463,7 @@ impl Store {
         let mut state = ProjectState::new(project, components, decisions, patterns, graph_index);
         state.generation = self.read_generation()?;
         // code_refs are relative to the project directory, which is the parent
-        // of `.trurlic/`. Staleness detection resolves them against this root.
+        // of `.trurlic/`. Orphaned-ref detection resolves them against this root.
         state.project_root = self.root.parent().unwrap_or(&self.root).to_path_buf();
         Ok(state)
     }

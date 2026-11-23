@@ -1,10 +1,9 @@
 //! Benches over the seeded corpus at each of `Corpus::SIZES`: loading the
-//! store from disk, building and validating its graph, one write end to end,
-//! and, through the MCP server in process, `advance` for every task type and
-//! every other read tool.
+//! store from disk, building and validating its graph, and, through the MCP
+//! server in process, one write end to end and every read tool.
 //!
-//! Read tools and task types come from `tools/list`, so a new one is benched
-//! without editing this file, and setup panics when no request here fits it.
+//! Read tools come from `tools/list`, so a new one is benched without editing
+//! this file, and setup panics when no request here fits it.
 //! Setup also sends each request once and panics on an error response, so no
 //! bench times an error path.
 
@@ -137,19 +136,12 @@ fn tool_call(tool: &str, arguments: Value) -> String {
 
 /// Send `line` and return the response, panicking on an error response.
 fn call(server: &mut Server, line: &str) -> Value {
-    let response = send(server, line);
-    assert!(succeeded(&response), "{line} -> {response}");
-    response
-}
-
-fn send(server: &mut Server, line: &str) -> Value {
     let mut output = Vec::new();
     server.serve_one(&mut line.as_bytes(), &mut output).unwrap();
-    serde_json::from_slice(&output).unwrap()
-}
-
-fn succeeded(response: &Value) -> bool {
-    response.get("error").is_none() && response["result"]["isError"] != true
+    let response: Value = serde_json::from_slice(&output).unwrap();
+    let failed = response.get("error").is_some() || response["result"]["isError"] == true;
+    assert!(!failed, "{line} -> {response}");
+    response
 }
 
 /// Bench one request on `server`, after checking that it succeeds.
@@ -171,20 +163,15 @@ fn bench_request(
     });
 }
 
-/// `(name, schema)` of every tool `tools/list` marks read-only.
-fn read_tools(server: &mut Server) -> Vec<(String, Value)> {
+/// Every tool `tools/list` marks read-only.
+fn read_tools(server: &mut Server) -> Vec<String> {
     let listing = call(server, &request("tools/list", json!({})));
     listing["result"]["tools"]
         .as_array()
         .unwrap()
         .iter()
         .filter(|tool| tool["annotations"]["readOnlyHint"] == true)
-        .map(|tool| {
-            (
-                tool["name"].as_str().unwrap().to_owned(),
-                tool["inputSchema"].clone(),
-            )
-        })
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect()
 }
 
@@ -203,9 +190,6 @@ fn read_tool_arguments(tool: &str, targets: &Targets) -> Value {
         "get_decision_history" => json!({ "name": decision }),
         "get_decisions_for_file" => json!({ "file": files[0] }),
         "verify_against_decisions" => json!({ "component": component, "changed_files": files }),
-        "get_step_prompt" => {
-            json!({ "component": component, "step": "walk_decisions", "mode": "agent" })
-        }
         other => panic!("no bench request for the read tool `{other}`"),
     }
 }
@@ -298,46 +282,11 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// `advance` for every task type its schema lists, each in the first mode
-/// of the schema that the task type accepts.
-fn bench_advance(c: &mut Criterion) {
-    let mut group = c.benchmark_group("advance");
-    for fixture in CORPORA.iter() {
-        let mut server = server_at(fixture.store.root().to_path_buf());
-        let schema = read_tools(&mut server)
-            .into_iter()
-            .find_map(|(name, schema)| (name == "advance").then_some(schema))
-            .unwrap();
-        let properties = &schema["properties"];
-        for task_type in properties["task_type"]["enum"].as_array().unwrap() {
-            let line = properties["mode"]["enum"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|mode| {
-                    let arguments = json!({
-                        "component": fixture.targets.component,
-                        "task_type": task_type,
-                        "mode": mode,
-                    });
-                    tool_call("advance", arguments)
-                })
-                .find(|line| succeeded(&send(&mut server, line)))
-                .unwrap_or_else(|| panic!("advance accepts `{task_type}` in no mode"));
-            let id = BenchmarkId::new(task_type.as_str().unwrap(), fixture.size);
-            bench_request(&mut group, id, &mut server, &line);
-        }
-    }
-}
-
 fn bench_read_tools(c: &mut Criterion) {
     let mut group = c.benchmark_group("read_tool");
     for fixture in CORPORA.iter() {
         let mut server = server_at(fixture.store.root().to_path_buf());
-        for (tool, _) in read_tools(&mut server) {
-            if tool == "advance" {
-                continue;
-            }
+        for tool in read_tools(&mut server) {
             let line = tool_call(&tool, read_tool_arguments(&tool, &fixture.targets));
             let id = BenchmarkId::new(tool, fixture.size);
             bench_request(&mut group, id, &mut server, &line);
@@ -350,6 +299,6 @@ criterion_group! {
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_graph, bench_record_decision, bench_advance, bench_read_tools
+    targets = bench_load_state, bench_graph, bench_record_decision, bench_read_tools
 }
 criterion_main!(benches);

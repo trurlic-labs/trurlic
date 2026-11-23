@@ -24,7 +24,7 @@ Trurlic makes you the architect again. Architectural decisions live in a typed g
 
 ## MCP-first
 
-Trurlic is an **MCP server**. Your coding agent — Claude Code or any other MCP client — talks to it directly: it pulls architectural context before implementing, runs design conversations when new territory appears, and records decisions as it goes. The graph is the agent's source of truth.
+Trurlic is an **MCP server**. Your coding agent — Claude Code or any other MCP client — talks to it directly: it pulls architectural context before implementing, records the decisions it makes or you agree on, and checks its changes against them before committing. The graph is the agent's source of truth.
 
 The `trurlic` CLI exists for the human: initialize the graph, sketch components, inspect and maintain it. **The CLI never calls an LLM.** All reasoning runs on your coding agent's own model, through MCP.
 
@@ -63,25 +63,23 @@ RELATED (from connected components):
 
 OVERRIDE POLICY:
 RULES are inviolable. Component decisions are strong defaults —
-follow them unless the user explicitly revises them via design.
+follow them unless the user explicitly revises them.
 Never silently deviate. WHEN UNCERTAIN: STOP and ask.
 ```
 
 Every decision came from a human decision or a review-flagged agent proposal. The agent generates code; the graph constrains it.
 
-## Two modes
+## Who decided
 
-Trurlic runs the same workflow in two modes. The agent picks one when it calls `advance` — or asks you when it's unsure.
+Every decision records who made it.
 
-|  | **Agent mode** | **Interactive mode** |
-|--|----------------|----------------------|
-| **Who decides** | The AI reads the source and decides autonomously | You and the AI reason it out together |
-| **Speed** | Fast, no interruptions | Slower, deliberate |
-| **Comprehension gates** | Off | On — the AI must confirm shared understanding |
-| **Attribution** | Recorded as `agent`, flagged ⚠ for your review | Recorded as `user` |
-| **Use it for** | "implement X", "fix Y", "add feature Z", bootstrapping an existing codebase | "design", "architect", "let's think about…" |
+|  | **`user`** | **`agent`** |
+|--|------------|-------------|
+| **Recorded when** | You made or confirmed the choice in the conversation | The agent chose on its own while implementing |
+| **In the brief** | A plain constraint | Marked `agent — unconfirmed`, with how to confirm or revise it |
+| **Leaves the flag** | — | When you confirm it and the agent promotes it (`update_decision`, mode `promote`) |
 
-Agent-mode decisions are never silently trusted — they land marked `agent · unreviewed` and surface in every context brief until you promote or revise them. Interactive mode is the Socratic path: the AI asks, you think, and the shared understanding becomes a decision. Some task types are pinned — bootstrapping an existing codebase is always autonomous (agent); a learning walkthrough is always interactive.
+Agent decisions are never silently trusted: they stay flagged in every context brief until you confirm them, and `trurlic gc --aggressive` reclaims the ones left unreviewed for over 90 days.
 
 ## Install
 
@@ -122,11 +120,13 @@ Then tell your agent how to use it — add to `CLAUDE.md` or your agent's equiva
 This project uses Trurlic for architectural decisions.
 
 Before implementing any task:
-1. Call `advance` with the component name and a mode (agent | interactive).
-2. Follow the returned action exactly.
-3. Call `advance` again after completing each action.
-4. Repeat until `ready: true`, then implement — constrained by every
-   decision in the context brief.
+1. Call `get_context` for the component and read every decision in the
+   brief: they constrain the code you write.
+2. Implement within the brief. For a choice no decision covers, call
+   `check_pattern`; if it is uncovered, record it with `record_decision`
+   (attribution `agent` when you chose alone, `user` when the user decided).
+3. Before committing, call `verify_against_decisions` with the files you
+   changed, and fix every decision it reports VIOLATED.
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the full recommended instructions.
@@ -142,15 +142,15 @@ trurlic install --ide claude-code  # wire up your coding agent over MCP
 
 **Have an existing codebase?** Ask your agent to map it:
 
-> Bootstrap the architecture with Trurlic.
+> Record this codebase's components and architectural decisions in Trurlic.
 
-It reads your source, then records components, decisions, and patterns autonomously — each flagged `agent · unreviewed` for you to promote or revise later.
+It reads your source and records components and decisions through the MCP tools, each attributed `agent` and flagged for you to promote or revise later.
 
 **Designing something new?** Talk it through:
 
-> Let's design the rate limiter. Walk me through it with Trurlic.
+> Let's design the rate limiter, and record each decision we agree on in Trurlic.
 
-The agent runs the Socratic flow in interactive mode — asking, reasoning, and recording each decision as you agree on it — then implements against the constraints it just captured.
+The agent reasons it out with you, records each decision you agree on as `user`, then implements against the constraints it just captured.
 
 **Implementing within what already exists?** Just say what you want:
 
@@ -174,28 +174,25 @@ Full documentation lives at **[trurlic-docs.pages.dev](https://trurlic-docs.page
 
 ## How the agent works with the graph
 
-Every task starts at `advance`, the orchestration hub. It reads the graph, computes the next step, and returns a concrete action — define scope, cover a security concern, verify a constraint, record a decision. The agent acts, calls `advance` again, and repeats until `ready: true`. Then it pulls the full brief and implements.
+Every task starts from the component's brief. The agent reads it, implements within it, records any choice the graph does not cover yet, and checks its changes against the decisions before committing.
 
 ```
-advance(component, task_type, mode)   →  next action
-  … agent acts, advance again …       →  ready: true
 get_context(component)                →  decisions + rules + related constraints
   … agent implements within the brief …
+check_pattern(description)            →  covered by a decision, or not
+record_decision(component, choice, reason, attribution)
+                                      →  a choice the graph did not cover yet
 verify_against_decisions(component, changed_files)
-                                      →  per-decision verdicts; fix violations before commit
+                                      →  the decisions to check; fix violations before commit
 ```
-
-`advance` is a **pure function** of the graph — same graph in, same step out, no clock, no I/O, no LLM. Seven task types (new component, feature, fix, learn, review, harden, bootstrap) each drive a distinct step sequence with preconditions and postconditions, so the workflow can't skip a security concern or a constraint check.
 
 ## MCP tools
 
 | Tool | Purpose |
 |------|---------|
-| `advance` | Compute the next workflow step and return the next action — the orchestration hub |
 | `get_context` | Architectural brief for a component: decisions, rules, related constraints, health |
 | `get_architecture` | Full system overview: components, connections, patterns |
 | `check_pattern` | Check whether an approach is already covered by existing decisions |
-| `get_step_prompt` | Structured prompt for a specific workflow step (mode-aware) |
 | `get_decisions_for_file` | Find every decision whose code references touch a file or directory |
 | `get_decision_history` | A decision's current state plus its full chronological revision history |
 | `verify_against_decisions` | After writing code, return the decisions that apply to the changed files so the agent can check compliance before committing |
@@ -204,7 +201,7 @@ verify_against_decisions(component, changed_files)
 | `record_decision` | Record a decision with edges, tags, rejected alternatives, and code references |
 | `record_pattern` | Synthesize a pattern from multiple related decisions |
 | `update_decision` | Revise a decision in place (with history) or promote an agent decision to reviewed |
-| `remove_decision` | Remove a decision with cascade and coverage-impact analysis |
+| `remove_decision` | Remove a decision with cascade analysis: refused while another decision depends on it |
 | `remove_pattern` | Remove a pattern and its edges; its member decisions are kept |
 
 Every result fits 24 KiB, which Claude Code shows inline. A larger answer keeps its shape: its longest lists and strings lose their tails, and a `truncated` array names each cut with what it omitted.

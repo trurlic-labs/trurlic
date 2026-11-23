@@ -20,15 +20,6 @@ tags = [
 hash = "5c1c4397b44a9761f42d1cd2ac1df3beb619e61d3f72042189ff6195b66a5346"
 
 [[nodes]]
-name = "advance-is-a-pure-function-read-only-stateless-idempotent"
-kind = "decision"
-tags = [
-    "concurrency",
-    "scope",
-]
-hash = "a25a8b690f0f0e0f833dc1a5a09de3d1a00d5db149250089685b419681f7eb38"
-
-[[nodes]]
 name = "arc-wrapped-content-values-in-btreemap-with-oncelock-free"
 kind = "decision"
 tags = [
@@ -104,7 +95,7 @@ tags = [
     "security",
     "consistency",
 ]
-hash = "7f43ae306ffbf15c9c3e42bcf99ad4e0b52aa676d47de18bde3a8717e59b556b"
+hash = "bcfa2025b55c84a583c748e749340312caa5ea96e8b260a4646d47475415f158"
 
 [[nodes]]
 name = "checkpoint-based-rollback-for-graph-mutations-with-o-1"
@@ -140,19 +131,10 @@ kind = "component"
 hash = "06248165860f44f1c8e7617dc57ec36fa22b071731028a512e4ceabec2482828"
 
 [[nodes]]
-name = "commands-reads-workflow-concerns-to-report-concern-coverage"
+name = "context-assembly-lives-in-mcp-context-tools-rs-only-parses"
 kind = "decision"
-tags = [
-    "architecture",
-    "module-boundary",
-]
-hash = "24489671af7ec55e76bb3c3af060c484f7328611f7b8cf61793e077248f2d641"
-
-[[nodes]]
-name = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
-kind = "decision"
-tags = ["scope"]
-hash = "331ede53afd47571829cdc98fd7fb1efbc35791ca291de6777d350c6a6c9ec5c"
+tags = ["module-boundary"]
+hash = "3a9ec4d2237a837db0911083838d9784a3d266f9a84811c3baab655d3e93974e"
 
 [[nodes]]
 name = "deny-unsafe-code-project-wide-via-cargo-lint"
@@ -218,7 +200,7 @@ tags = [
     "api",
     "reliability",
 ]
-hash = "e841e8cae9208fdd4acd31bd522d7a3f134592766173ca5586a90fd28d3f9744"
+hash = "b94b98fa0c1be7d9019cfd642fe9b58e57d93e2bd374fa4ed232ed9dc07f651e"
 
 [[nodes]]
 name = "every-write-reloads-the-graph-under-the-exclusive-lock"
@@ -274,15 +256,6 @@ tags = [
     "consistency",
 ]
 hash = "6214668013afba9f19c0073e590c1c604678496a45c36261570733ed4543b785"
-
-[[nodes]]
-name = "gated-steps-require-user-input-ungated-steps-are-autonomous"
-kind = "decision"
-tags = [
-    "integrity",
-    "security",
-]
-hash = "b3c036821aab02b2cea46a6a888928ad128d368db85c0fe9febe097f454485f1"
 
 [[nodes]]
 name = "graph-toml-is-written-only-by-a-validated-commit-a-missing"
@@ -375,7 +348,7 @@ hash = "c705ad9dcd453e7a2b50c6b5fdf1e5a634c85672fef31773292000dbcd4ad056"
 name = "module-visibility-pub-crate-default-only-cli-and-store-are"
 kind = "decision"
 tags = ["coding-standards"]
-hash = "86088bfc0458bcb4eabf10e07f6418f2d6da520b7d82f4796b6b9f58d7183aae"
+hash = "63142699bf5699b30619b5c4e48fd4d228ce30a0ed518b7c388c80d0eeb575d4"
 
 [[nodes]]
 name = "no-load-cache-load-state-parses-every-node-file-on-each"
@@ -399,6 +372,15 @@ tags = [
     "error-handling",
 ]
 hash = "ae33363799c9b8f8ce6b9eee57b54351d5aa1e677f47313130f41386e90ac9e3"
+
+[[nodes]]
+name = "no-workflow-engine-advance-get-step-prompt-steps-modes-and"
+kind = "decision"
+tags = [
+    "api",
+    "scope",
+]
+hash = "ee93a031b55245d28d9e6bf06d03bdc4561ea654ba5b26006d3ad7e8fdb53858"
 
 [[nodes]]
 name = "parallel-file-loading-via-rayon-for-load-state-with-single"
@@ -442,19 +424,13 @@ kind = "component"
 hash = "9b658bcc3bdf39842a63d8741149671acb1b723deb1da81d21fae39c78319ac5"
 
 [[nodes]]
-name = "prompt-value-sanitization-control-character-stripping-512"
-kind = "decision"
-tags = ["security"]
-hash = "bfb6eb848b6e26c21db016aaa2f89f2ab45758b8cc4cea6a48ec2d27ce64e1fe"
-
-[[nodes]]
 name = "read-write-lock-split-read-tools-acquire-rwlock-read-lock"
 kind = "decision"
 tags = [
     "concurrency",
     "performance",
 ]
-hash = "098b3b53b362b64a6d3936d8afb4e74138da1f104765da6581927d8c10f76430"
+hash = "fc1764274454b91041a7baf8898db3ade7a7b08f731a300281957a7f0ac487ef"
 
 [[nodes]]
 name = "release-profile-fat-lto-single-codegen-unit-strip-symbols"
@@ -466,22 +442,10 @@ tags = [
 hash = "8a8a411f1f429a76cd8faaee745f2efa1095b779bf7be4bbdecee4657dbbc2b6"
 
 [[nodes]]
-name = "seven-task-types-with-distinct-step-sequences-newcomponent"
-kind = "decision"
-tags = ["scope"]
-hash = "542b8c80752461d29fc3a46dfcdcf1a6e3e892dab0dba2ab61ae5fbad0df60f7"
-
-[[nodes]]
 name = "single-error-enum-with-thiserror-project-wide-result-alias"
 kind = "decision"
 tags = ["error-handling"]
 hash = "8e7891d9a29843f26bf309e042f6fc8a591ecd8d033c7072a02403c144327580"
-
-[[nodes]]
-name = "staleness-detection-at-90-day-threshold-triggers-review"
-kind = "decision"
-tags = ["integrity"]
-hash = "832307239e7f8b761670a5cc9ad34ab013335b33839d44c2ba3b587e7ced6ff0"
 
 [[nodes]]
 name = "static-tool-catalogue-via-lazylock-returned-by-reference"
@@ -499,30 +463,9 @@ tags = [
 hash = "69992a29ef458a9555b771448f6fbfbb106abc51b6e37de02c1497f89849019c"
 
 [[nodes]]
-name = "step-deduction-via-graph-postcondition-checking-with"
-kind = "decision"
-tags = ["integrity"]
-hash = "076d1c3e5ca119298bcb6dd904b1fe45611b45ac143338b2566911fcb4c72b98"
-
-[[nodes]]
 name = "store"
 kind = "component"
 hash = "d7f44c4f48f46a014d607dacba2742010740b036409ae5fbe32e36645846bd0e"
-
-[[nodes]]
-name = "task-type-inference-from-graph-state-when-not-explicitly"
-kind = "decision"
-tags = ["error"]
-hash = "2b39296d49fbb0001fe1c396bf4cbd9785f36401c3a9d244fa5f32df0ece891b"
-
-[[nodes]]
-name = "ten-concern-areas-with-keyword-matching-for-coverage"
-kind = "decision"
-tags = [
-    "integrity",
-    "scope",
-]
-hash = "6bd5941c25b852426138f4b5db44cd844c2d9aadd2531b9e84f88c60757e1745"
 
 [[nodes]]
 name = "the-cli-keeps-a-required-ide-whose-one-value-is-claude-code"
@@ -550,12 +493,6 @@ tags = [
     "developer-experience",
 ]
 hash = "29c712d17d836b8f59530b58127c2da5a1fdbd13b6df10caca54543213d4af15"
-
-[[nodes]]
-name = "transport-agnostic-prompt-generation-shared-preamble-step"
-kind = "decision"
-tags = ["scope"]
-hash = "b5e90f53b1b0bfc45987244fa63dad708761e7047215c0c617a27f27f42faab4"
 
 [[nodes]]
 name = "trurlic-install-has-one-target-claude-code-until-the"
@@ -613,17 +550,6 @@ tags = [
 hash = "841f223107eda7259b947690d2785e053727018568fc025845d025b6ee6555e9"
 
 [[nodes]]
-name = "workflow"
-kind = "component"
-hash = "cc2701e3970a2d719fdbb7636175467fff4318e5580c7844fc90f4ac46462595"
-
-[[nodes]]
-name = "workflow-prompts-delegated-to-workflow-steps-context"
-kind = "decision"
-tags = ["module-boundary"]
-hash = "e5ed856cd44a94553329f3a264c53fb1913a9567fcef0480d263e7546888b5ef"
-
-[[nodes]]
 name = "writers-take-the-server-s-state-lock-before-the-file-lock"
 kind = "decision"
 tags = [
@@ -645,11 +571,6 @@ kind = "belongs_to"
 [[edges]]
 from = "a-decision-s-choice-and-reason-are-checked-by-the-store-in"
 to = "store"
-kind = "belongs_to"
-
-[[edges]]
-from = "advance-is-a-pure-function-read-only-stateless-idempotent"
-to = "workflow"
 kind = "belongs_to"
 
 [[edges]]
@@ -733,18 +654,8 @@ to = "store"
 kind = "connects_to"
 
 [[edges]]
-from = "commands-reads-workflow-concerns-to-report-concern-coverage"
-to = "advance-is-a-pure-function-read-only-stateless-idempotent"
-kind = "depends_on"
-
-[[edges]]
-from = "commands-reads-workflow-concerns-to-report-concern-coverage"
-to = "commands"
-kind = "belongs_to"
-
-[[edges]]
-from = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
-to = "workflow"
+from = "context-assembly-lives-in-mcp-context-tools-rs-only-parses"
+to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
@@ -873,11 +784,6 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "gated-steps-require-user-input-ungated-steps-are-autonomous"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
 from = "graph-toml-is-written-only-by-a-validated-commit-a-missing"
 to = "store"
 kind = "belongs_to"
@@ -928,11 +834,6 @@ to = "store"
 kind = "connects_to"
 
 [[edges]]
-from = "mcp"
-to = "workflow"
-kind = "connects_to"
-
-[[edges]]
 from = "mcp-server-delegates-all-disk-writes-to-store-methods-never"
 to = "mcp"
 kind = "belongs_to"
@@ -978,6 +879,11 @@ to = "single-error-enum-with-thiserror-project-wide-result-alias"
 kind = "member_of"
 
 [[edges]]
+from = "no-workflow-engine-advance-get-step-prompt-steps-modes-and"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
 from = "parallel-file-loading-via-rayon-for-load-state-with-single"
 to = "store"
 kind = "belongs_to"
@@ -1008,11 +914,6 @@ to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
-from = "prompt-value-sanitization-control-character-stripping-512"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
 from = "read-write-lock-split-read-tools-acquire-rwlock-read-lock"
 to = "mcp"
 kind = "belongs_to"
@@ -1023,18 +924,8 @@ to = "project"
 kind = "belongs_to"
 
 [[edges]]
-from = "seven-task-types-with-distinct-step-sequences-newcomponent"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
 from = "single-error-enum-with-thiserror-project-wide-result-alias"
 to = "project"
-kind = "belongs_to"
-
-[[edges]]
-from = "staleness-detection-at-90-day-threshold-triggers-review"
-to = "workflow"
 kind = "belongs_to"
 
 [[edges]]
@@ -1045,21 +936,6 @@ kind = "belongs_to"
 [[edges]]
 from = "stdout-and-stderr-are-written-only-through-console-out-diag"
 to = "project"
-kind = "belongs_to"
-
-[[edges]]
-from = "step-deduction-via-graph-postcondition-checking-with"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
-from = "task-type-inference-from-graph-state-when-not-explicitly"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
-from = "ten-concern-areas-with-keyword-matching-for-coverage"
-to = "workflow"
 kind = "belongs_to"
 
 [[edges]]
@@ -1075,11 +951,6 @@ kind = "belongs_to"
 [[edges]]
 from = "toml-as-the-sole-serialization-format-with-one-file-per"
 to = "store"
-kind = "belongs_to"
-
-[[edges]]
-from = "transport-agnostic-prompt-generation-shared-preamble-step"
-to = "workflow"
 kind = "belongs_to"
 
 [[edges]]
@@ -1109,16 +980,6 @@ kind = "belongs_to"
 
 [[edges]]
 from = "verify-against-decisions-rejects-invalid-changed-file-paths"
-to = "mcp"
-kind = "belongs_to"
-
-[[edges]]
-from = "workflow"
-to = "store"
-kind = "connects_to"
-
-[[edges]]
-from = "workflow-prompts-delegated-to-workflow-steps-context"
 to = "mcp"
 kind = "belongs_to"
 
