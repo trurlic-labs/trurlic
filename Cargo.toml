@@ -57,9 +57,6 @@ blake3 = "1"
 # Parallel file I/O for load_state
 rayon = "1"
 
-# File system watcher for live reload
-notify = "6"
-
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
 tempfile = "3"

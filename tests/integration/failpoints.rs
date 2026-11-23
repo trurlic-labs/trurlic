@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::process::{ExitStatus, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use serde_json::json;
 
@@ -249,9 +251,10 @@ fn a_server_write_applies_its_failed_commit_first() {
 }
 
 /// A read command runs while another process holds the lock with its files
-/// staged. It leaves them alone, and the commit completes.
+/// staged. It waits for the commit, leaves its files alone, and then reads
+/// the commit whole.
 #[test]
-fn status_during_a_staged_commit_leaves_it_to_complete() {
+fn status_during_a_staged_commit_waits_for_it() {
     let project = Project::init();
     let pause = Pause::arm(&project, "commit.staged:1");
     let mut writer = project
@@ -265,14 +268,47 @@ fn status_during_a_staged_commit_leaves_it_to_complete() {
     let staged = temp_files(&project);
     assert!(!staged.is_empty());
 
-    let output = project.run_ok(&["status"]);
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("components: 0"), "{stdout}");
+    let status = project
+        .command()
+        .arg("status")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Several lock polls, well inside the lock timeout.
+    thread::sleep(Duration::from_millis(500));
     assert_eq!(temp_files(&project), staged);
     pause.resume();
+
+    let output = status.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", output.status);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("components: 1"), "{stdout}");
     assert!(writer.wait().unwrap().success());
-    assert!(graph_lists(&project, "auth"));
+    assert_recovers(&project);
+}
+
+/// A CLI commit fails after its journal is in place. The server's next
+/// read finishes that commit before it loads, and answers with it.
+#[test]
+fn a_server_read_applies_a_commit_another_process_left_unfinished() {
+    let project = Project::init();
+    let (mut client, _) = McpClient::connect(&project);
+    let output = project
+        .command()
+        .args(["add", "component", "auth"])
+        .env(FAILPOINT, "commit.rename:2")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", output.status);
+    assert!(journal_exists(&project));
+
+    let architecture = client.call_tool("get_architecture", json!({}));
+
+    assert_eq!(
+        architecture["components"][0]["name"], "auth",
+        "{architecture}"
+    );
+    assert!(!journal_exists(&project));
     assert_recovers(&project);
 }
 

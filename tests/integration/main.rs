@@ -16,6 +16,4 @@ mod invalid_graph;
 mod malformed_node;
 mod output;
 mod stdio;
-#[cfg(feature = "failpoints")]
-mod watchers;
 mod writers;

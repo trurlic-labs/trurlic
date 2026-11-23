@@ -3,13 +3,15 @@ use std::path::Path;
 use crate::Result;
 use crate::console::out;
 
-use super::open_store_mut;
+use crate::store::Store;
+
+use super::begin_write;
 
 /// `trurlic remove pattern`: delete a pattern and its edges. Member
 /// decisions are kept.
 pub(crate) fn remove_pattern(cwd: &Path, name: &str) -> Result<()> {
-    let (store, lock, mut state) = open_store_mut(cwd)?;
-    store.remove_pattern(&lock, &mut state, name)?;
+    let store = Store::discover(cwd)?;
+    begin_write(&store)?.remove_pattern(name)?;
     out!("Removed pattern `{name}`")?;
     Ok(())
 }
@@ -38,8 +40,6 @@ mod tests {
         )
         .unwrap();
         let store = Store::discover(tmp.path()).unwrap();
-        let mut state = store.load_state().unwrap();
-        let lock = store.lock().unwrap();
         let members = ["use-jwt".to_owned(), "rotate-keys".to_owned()];
         let params = RecordPatternParams {
             name: "token-hygiene",
@@ -48,8 +48,7 @@ mod tests {
             components: &[],
             tags: &[],
         };
-        store.record_pattern(&lock, &mut state, params).unwrap();
-        drop(lock);
+        store.begin_write().unwrap().record_pattern(params).unwrap();
 
         // The pattern's two-member floor blocks removing either member.
         let blocked = remove_decision(tmp.path(), "use-jwt").unwrap_err();

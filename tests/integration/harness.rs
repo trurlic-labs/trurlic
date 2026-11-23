@@ -81,10 +81,6 @@ impl Pause {
         ]
     }
 
-    pub fn marker(&self) -> &Path {
-        &self.marker
-    }
-
     /// Block until a process is paused at the site.
     pub fn wait(&self) {
         let deadline = std::time::Instant::now() + RESPONSE_TIMEOUT;
@@ -119,23 +115,11 @@ fn read_lines(stream: impl Read + Send + 'static) -> Receiver<String> {
     lines
 }
 
-/// Wait for the first line in `lines` that contains `needle`.
-fn wait_for_line(lines: &Receiver<String>, needle: &str) -> String {
-    loop {
-        match lines.recv_timeout(RESPONSE_TIMEOUT) {
-            Ok(line) if line.contains(needle) => return line,
-            Ok(_) => {}
-            Err(e) => panic!("no line containing {needle:?}: {e}"),
-        }
-    }
-}
-
 /// An MCP client connected to `trurlic serve` over stdio.
 pub struct McpClient {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: Receiver<String>,
-    diagnostics: Receiver<String>,
     next_id: u64,
 }
 
@@ -153,26 +137,18 @@ impl McpClient {
             .arg("serve")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
         let stdin = child.stdin.take();
         let lines = read_lines(child.stdout.take().unwrap());
-        let diagnostics = read_lines(child.stderr.take().unwrap());
 
         Self {
             child,
             stdin,
             lines,
-            diagnostics,
             next_id: 1,
         }
-    }
-
-    /// Wait for the first line the server writes to stderr that contains
-    /// `needle`.
-    pub fn wait_for_diagnostic(&self, needle: &str) -> String {
-        wait_for_line(&self.diagnostics, needle)
     }
 
     /// Spawn and complete the `initialize` handshake. Returns the

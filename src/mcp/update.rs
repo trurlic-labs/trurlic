@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::store::cascade::CascadeResult;
 use crate::store::schema::Attribution;
-use crate::store::{self, Store, StoreLock};
+use crate::store::{self, Writer};
 
 use super::write::{opt_str_array, opt_text, parse_code_refs, require_str};
 
@@ -49,20 +49,15 @@ fn cascade_to_json(cascade: &CascadeResult) -> (Vec<Value>, Vec<Value>, Vec<Valu
 
 // ── remove_decision ─────────────────────────────────────────────────────────
 
-pub(crate) fn remove_decision(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut store::ProjectState,
-    args: &Value,
-) -> Result<Value, String> {
+pub(crate) fn remove_decision(writer: &mut Writer<'_>, args: &Value) -> Result<Value, String> {
     let name = require_str(args, "name")?;
 
-    if !state.decisions.contains_key(name) {
+    if !writer.state().decisions.contains_key(name) {
         return Err(format!("decision `{name}` does not exist"));
     }
 
     // Cascade analysis via the shared graph method.
-    let cascade = state.graph().check_decision_cascade(name);
+    let cascade = writer.state().graph().check_decision_cascade(name);
     let (blocked_by, would_warn, would_clean) = cascade_to_json(&cascade);
 
     if cascade.is_blocked() {
@@ -74,9 +69,7 @@ pub(crate) fn remove_decision(
         }));
     }
 
-    store
-        .remove_decision(lock, state, name)
-        .map_err(|e| e.to_string())?;
+    writer.remove_decision(name).map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
         "removed": true,
@@ -88,22 +81,17 @@ pub(crate) fn remove_decision(
 
 // ── update_decision ─────────────────────────────────────────────────────────
 
-pub(crate) fn update_decision(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut store::ProjectState,
-    args: &Value,
-) -> Result<Value, String> {
+pub(crate) fn update_decision(writer: &mut Writer<'_>, args: &Value) -> Result<Value, String> {
     let name = require_str(args, "name")?;
     let mode = require_str(args, "mode")?;
 
-    if !state.decisions.contains_key(name) {
+    if !writer.state().decisions.contains_key(name) {
         return Err(format!("decision `{name}` does not exist"));
     }
 
     match mode {
-        "revise" => revise_decision(store, lock, state, name, args),
-        "promote" => promote_decision(store, lock, state, name),
+        "revise" => revise_decision(writer, name, args),
+        "promote" => promote_decision(writer, name),
         other => Err(format!(
             "invalid mode `{other}` — expected: revise, promote"
         )),
@@ -112,13 +100,7 @@ pub(crate) fn update_decision(
 
 /// Edit a decision in place, versioning the prior choice and reason into
 /// history. The name, `created` timestamp, and every edge survive unchanged.
-fn revise_decision(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut store::ProjectState,
-    name: &str,
-    args: &Value,
-) -> Result<Value, String> {
+fn revise_decision(writer: &mut Writer<'_>, name: &str, args: &Value) -> Result<Value, String> {
     let new_choice = opt_text(args, "choice")?;
     let new_reason = opt_text(args, "reason")?;
 
@@ -145,10 +127,8 @@ fn revise_decision(
         );
     }
 
-    store
+    writer
         .revise_decision(
-            lock,
-            state,
             name,
             store::ReviseDecisionParams {
                 choice: new_choice,
@@ -159,7 +139,8 @@ fn revise_decision(
         )
         .map_err(|e| e.to_string())?;
 
-    let history_length = state
+    let history_length = writer
+        .state()
         .decisions
         .get(name)
         .map_or(0, |d| d.decision.history.len());
@@ -168,19 +149,15 @@ fn revise_decision(
         "name": name,
         "revised": true,
         "history_length": history_length,
-        "path": store.decision_path(name).display().to_string(),
+        "path": writer.store().decision_path(name).display().to_string(),
     }))
 }
 
 /// Mark an agent decision as human-reviewed by flipping its attribution to
 /// `user`. Rejects decisions already attributed to the user.
-fn promote_decision(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut store::ProjectState,
-    name: &str,
-) -> Result<Value, String> {
-    let already_user = state
+fn promote_decision(writer: &mut Writer<'_>, name: &str) -> Result<Value, String> {
+    let already_user = writer
+        .state()
         .decisions
         .get(name)
         .is_some_and(|d| d.decision.attribution == Attribution::User);
@@ -188,9 +165,7 @@ fn promote_decision(
         return Err(format!("decision `{name}` already has attribution=user"));
     }
 
-    store
-        .promote_decision(lock, state, name)
-        .map_err(|e| e.to_string())?;
+    writer.promote_decision(name).map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
         "name": name,
@@ -207,25 +182,26 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
 
-    fn setup() -> (TempDir, Store, store::ProjectState) {
+    fn setup() -> (TempDir, Store) {
         let tmp = TempDir::new().unwrap();
-        let (store, state) = store::testing::setup_store_with_components(
+        let (store, _) = store::testing::setup_store_with_components(
             tmp.path(),
             &[("auth", "Authentication"), ("database", "Database layer")],
         );
-        (tmp, store, state)
+        (tmp, store)
     }
 
     // ── remove_decision ─────────────────────────────────────────────────
 
     #[test]
     fn remove_decision_basic() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt" });
-        let result = remove_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = remove_decision(&mut writer, &args).unwrap();
         assert_eq!(result["removed"], true);
         let keys: Vec<&str> = result
             .as_object()
@@ -234,25 +210,26 @@ mod tests {
             .map(String::as_str)
             .collect();
         assert_eq!(keys, ["blocked_by", "removed", "would_clean", "would_warn"]);
-        assert!(!state.decisions.contains_key("use-jwt"));
+        assert!(!writer.state().decisions.contains_key("use-jwt"));
     }
 
     #[test]
     fn remove_decision_blocked_by_dependent() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
 
         let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
+        record_decision(&mut writer, &d1).unwrap();
 
         let d2 = json!({
             "component": "auth", "choice": "Token expiry", "reason": "Fifteen-minute expiry window",
             "depends_on": ["use-jwt"],
             "attribution": "user",
         });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
+        record_decision(&mut writer, &d2).unwrap();
 
         let args = json!({ "name": "use-jwt" });
-        let result = remove_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = remove_decision(&mut writer, &args).unwrap();
         assert_eq!(result["removed"], false);
         let blocked = result["blocked_by"].as_array().unwrap();
         assert!(!blocked.is_empty());
@@ -261,28 +238,29 @@ mod tests {
                 .iter()
                 .any(|b| b["node"] == "token-expiry" && b["edge"] == "depends_on")
         );
-        assert!(state.decisions.contains_key("use-jwt"));
+        assert!(writer.state().decisions.contains_key("use-jwt"));
     }
 
     #[test]
     fn remove_decision_blocked_by_pattern() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
 
         let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
         let d2 = json!({ "component": "auth", "choice": "Token refresh", "reason": "Token rotation for security", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
+        record_decision(&mut writer, &d1).unwrap();
+        record_decision(&mut writer, &d2).unwrap();
 
         let pat = json!({
             "name": "Auth tokens",
             "description": "Token handling",
             "decisions": ["use-jwt", "token-refresh"],
         });
-        record_pattern(&store, &store.lock().unwrap(), &mut state, &pat).unwrap();
+        record_pattern(&mut writer, &pat).unwrap();
 
         // Pattern has exactly 2 members — removing one would violate minimum.
         let args = json!({ "name": "use-jwt" });
-        let result = remove_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = remove_decision(&mut writer, &args).unwrap();
         assert_eq!(result["removed"], false);
         let blocked = result["blocked_by"].as_array().unwrap();
         assert!(blocked.iter().any(|b| {
@@ -295,9 +273,10 @@ mod tests {
 
     #[test]
     fn remove_decision_rejects_nonexistent() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({ "name": "ghost" });
-        let err = remove_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = remove_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("ghost"));
     }
 
@@ -305,45 +284,43 @@ mod tests {
 
     #[test]
     fn update_decision_revise_choice() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "Use JWT v2" });
-        let result = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = update_decision(&mut writer, &args).unwrap();
         assert_eq!(result["name"], "use-jwt");
         assert_eq!(result["revised"], true);
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.choice, "Use JWT v2");
         assert_eq!(dec.decision.reason, "Stateless, no server session"); // unchanged
     }
 
     #[test]
     fn update_decision_revise_grows_history() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let first = update_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
+            &mut writer,
             &json!({ "name": "use-jwt", "mode": "revise", "choice": "Use OAuth" }),
         )
         .unwrap();
         assert_eq!(first["history_length"], 1);
 
         let second = update_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
+            &mut writer,
             &json!({ "name": "use-jwt", "mode": "revise", "reason": "Delegated identity provider" }),
         )
         .unwrap();
         assert_eq!(second["history_length"], 2);
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         // Oldest first: history traces the decision's evolution.
         assert_eq!(dec.decision.history[0].choice, "Use JWT");
         assert_eq!(dec.decision.history[1].choice, "Use OAuth");
@@ -351,62 +328,70 @@ mod tests {
 
     #[test]
     fn update_decision_revise_reason() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "revise", "reason": "Better reason text" });
-        let result = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = update_decision(&mut writer, &args).unwrap();
         assert_eq!(result["name"], "use-jwt");
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.choice, "Use JWT"); // unchanged
         assert_eq!(dec.decision.reason, "Better reason text");
     }
 
     #[test]
     fn update_decision_revise_preserves_timestamp() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
-        let original_ts = state.decisions["use-jwt"].decision.created;
+        record_decision(&mut writer, &d).unwrap();
+        let original_ts = writer.state().decisions["use-jwt"].decision.created;
 
         let args = json!({ "name": "use-jwt", "mode": "revise", "choice": "JWT v2" });
-        update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        update_decision(&mut writer, &args).unwrap();
 
-        assert_eq!(state.decisions["use-jwt"].decision.created, original_ts);
+        assert_eq!(
+            writer.state().decisions["use-jwt"].decision.created,
+            original_ts
+        );
     }
 
     #[test]
     fn update_decision_revise_rejects_no_changes() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "revise" });
-        let err = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = update_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("at least one"));
     }
 
     #[test]
     fn update_decision_rejects_invalid_mode() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "X", "reason": "test reason placeholder", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "x", "mode": "delete" });
-        let err = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = update_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("invalid mode"));
     }
 
     #[test]
     fn update_decision_rejects_legacy_amend_mode() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "amend", "choice": "X" });
-        let err = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = update_decision(&mut writer, &args).unwrap_err();
         assert!(
             err.contains("invalid mode"),
             "amend is no longer a mode: {err}"
@@ -415,12 +400,13 @@ mod tests {
 
     #[test]
     fn update_decision_rejects_legacy_supersede_mode() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "supersede", "choice": "X" });
-        let err = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = update_decision(&mut writer, &args).unwrap_err();
         assert!(
             err.contains("invalid mode"),
             "supersede is no longer a mode: {err}"
@@ -429,9 +415,10 @@ mod tests {
 
     #[test]
     fn update_decision_rejects_nonexistent() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({ "name": "ghost", "mode": "revise", "choice": "X" });
-        let err = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = update_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("ghost"));
     }
 
@@ -439,78 +426,82 @@ mod tests {
 
     #[test]
     fn update_decision_promote_flips_agent_to_user() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "agent" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "promote" });
-        let result = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = update_decision(&mut writer, &args).unwrap();
         assert_eq!(result["promoted"], true);
         assert_eq!(result["attribution"], "user");
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.attribution, Attribution::User);
     }
 
     #[test]
     fn update_decision_promote_rejects_user() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "promote" });
-        let err = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = update_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("already"), "{err}");
     }
 
     #[test]
     fn update_decision_promote_leaves_no_history() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "agent" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         update_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
+            &mut writer,
             &json!({ "name": "use-jwt", "mode": "promote" }),
         )
         .unwrap();
 
-        assert!(state.decisions["use-jwt"].decision.history.is_empty());
+        assert!(
+            writer.state().decisions["use-jwt"]
+                .decision
+                .history
+                .is_empty()
+        );
     }
 
     // ── full decision lifecycle ───────────────────────────────────────
 
     #[test]
     fn record_revise_history_promote_lifecycle() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
 
         // Record an agent decision.
         let d = json!({ "component": "auth", "choice": "JWT tokens", "reason": "Stateless authentication", "attribution": "agent" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         // Two substantive revisions grow the history chain.
         let first = update_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
+            &mut writer,
             &json!({ "name": "jwt-tokens", "mode": "revise", "choice": "JWT with refresh tokens" }),
         )
         .unwrap();
         assert_eq!(first["history_length"], 1);
 
         let second = update_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
+            &mut writer,
             &json!({ "name": "jwt-tokens", "mode": "revise", "choice": "JWT with DPoP binding", "reason": "Proof-of-possession prevents token replay" }),
         )
         .unwrap();
         assert_eq!(second["history_length"], 2);
 
         // get_decision_history exposes the full chronological chain.
-        let history = crate::mcp::context::get_decision_history(&state, "jwt-tokens").unwrap();
+        let history =
+            crate::mcp::context::get_decision_history(writer.state(), "jwt-tokens").unwrap();
         assert_eq!(history["current"]["choice"], "JWT with DPoP binding");
         assert_eq!(history["revision_count"], 2);
         let entries = history["history"].as_array().unwrap();
@@ -519,19 +510,23 @@ mod tests {
 
         // Promote flips the surviving decision from agent to user.
         let promoted = update_decision(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
+            &mut writer,
             &json!({ "name": "jwt-tokens", "mode": "promote" }),
         )
         .unwrap();
         assert_eq!(promoted["attribution"], "user");
         assert_eq!(
-            state.decisions["jwt-tokens"].decision.attribution,
+            writer.state().decisions["jwt-tokens"].decision.attribution,
             Attribution::User
         );
         // History survives the promotion untouched.
-        assert_eq!(state.decisions["jwt-tokens"].decision.history.len(), 2);
+        assert_eq!(
+            writer.state().decisions["jwt-tokens"]
+                .decision
+                .history
+                .len(),
+            2
+        );
     }
 
     // ── cascade_to_json ─────────────────────────────────────────────
@@ -579,29 +574,31 @@ mod tests {
 
     #[test]
     fn revise_tags_leaves_no_history() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "Use JWT", "reason": "Stateless, no server session", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({ "name": "use-jwt", "mode": "revise", "tags": ["security", "auth"] });
-        let result = update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = update_decision(&mut writer, &args).unwrap();
         assert_eq!(result["history_length"], 0);
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.tags, vec!["security", "auth"]);
         assert!(dec.decision.history.is_empty());
     }
 
     #[test]
     fn revise_code_refs() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({
             "component": "auth",
             "choice": "Use JWT",
             "reason": "Stateless, no server session",
             "attribution": "user",
         });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({
             "name": "use-jwt",
@@ -610,16 +607,17 @@ mod tests {
                 { "file": "src/auth/jwt.rs", "symbol": "verify" },
             ],
         });
-        update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        update_decision(&mut writer, &args).unwrap();
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.code_refs.len(), 1);
         assert_eq!(dec.decision.code_refs[0].file, "src/auth/jwt.rs");
     }
 
     #[test]
     fn revise_code_refs_replaces_existing() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({
             "component": "auth",
             "choice": "Use JWT",
@@ -627,23 +625,24 @@ mod tests {
             "attribution": "user",
             "code_refs": [{ "file": "src/old.rs" }],
         });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({
             "name": "use-jwt",
             "mode": "revise",
             "code_refs": [{ "file": "src/new.rs" }],
         });
-        update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        update_decision(&mut writer, &args).unwrap();
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.code_refs.len(), 1);
         assert_eq!(dec.decision.code_refs[0].file, "src/new.rs");
     }
 
     #[test]
     fn revise_empty_code_refs_clears() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({
             "component": "auth",
             "choice": "Use JWT",
@@ -651,23 +650,27 @@ mod tests {
             "attribution": "user",
             "code_refs": [{ "file": "src/old.rs" }],
         });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
-        assert_eq!(state.decisions["use-jwt"].decision.code_refs.len(), 1);
+        record_decision(&mut writer, &d).unwrap();
+        assert_eq!(
+            writer.state().decisions["use-jwt"].decision.code_refs.len(),
+            1
+        );
 
         let args = json!({
             "name": "use-jwt",
             "mode": "revise",
             "code_refs": [],
         });
-        update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        update_decision(&mut writer, &args).unwrap();
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         assert!(dec.decision.code_refs.is_empty());
     }
 
     #[test]
     fn revise_without_code_refs_key_preserves_existing() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({
             "component": "auth",
             "choice": "Use JWT",
@@ -675,7 +678,7 @@ mod tests {
             "attribution": "user",
             "code_refs": [{ "file": "src/keep.rs", "symbol": "verify" }],
         });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         // Revise an unrelated field — omitting code_refs must leave refs intact.
         let args = json!({
@@ -683,9 +686,9 @@ mod tests {
             "mode": "revise",
             "reason": "Stateless, avoids a server-side session store",
         });
-        update_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        update_decision(&mut writer, &args).unwrap();
 
-        let dec = state.decisions.get("use-jwt").unwrap();
+        let dec = writer.state().decisions.get("use-jwt").unwrap();
         assert_eq!(dec.decision.code_refs.len(), 1);
         assert_eq!(dec.decision.code_refs[0].file, "src/keep.rs");
     }

@@ -5,7 +5,8 @@
 //! its files in `.state/tmp/` and applies its journal under the lock, so a
 //! cleanup without it could delete a staged file mid-commit. Under the lock
 //! no commit is in flight, a journal is a commit to finish, and once it is
-//! applied every temp file is a leftover.
+//! applied every temp file is a leftover. Every write recovers before it
+//! loads, and so does a read that finds a leftover under the shared lock.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -29,14 +30,33 @@ impl Store {
         Ok(())
     }
 
-    /// [`recover`](Self::recover) if the exclusive lock is free now. While
-    /// another process holds it, its commit may be using `.state/`; the next
-    /// writer recovers under its own lock.
-    pub(crate) fn try_recover(&self) -> Result<()> {
-        match self.try_lock()? {
-            Some(lock) => self.recover(&lock),
-            None => Ok(()),
+    /// Whether an interrupted write left a journal or a temp file. Asked
+    /// under the shared lock, when no commit is in flight, so either one is
+    /// a leftover.
+    pub(super) fn has_leftovers(&self) -> Result<bool> {
+        if self.has_journal()? {
+            return Ok(true);
         }
+        let tmp_dir = self.tmp_dir();
+        let entries = match fs::read_dir(&tmp_dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(source) => {
+                return Err(Error::Io {
+                    path: tmp_dir,
+                    source,
+                });
+            }
+        };
+        // What `remove_temps` removes, so a recovery leaves no leftover behind.
+        for entry in entries {
+            let entry = entry.map_err(Error::io(&tmp_dir))?;
+            let path = entry.path();
+            if entry.file_type().map_err(Error::io(&path))?.is_file() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn remove_temps(&self) -> Result<usize> {
@@ -104,17 +124,21 @@ mod tests {
     }
 
     #[test]
-    fn try_recover_leaves_the_temps_of_a_lock_holder() {
+    fn leftovers_are_a_journal_or_a_temp_file() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
+        assert!(!store.has_leftovers().unwrap());
+        // A directory is not a file recovery removes.
+        fs::create_dir_all(store.tmp_dir().join("subdir")).unwrap();
+        assert!(!store.has_leftovers().unwrap());
+
         leave_temps(&store);
-        let held = store.lock().unwrap();
+        assert!(store.has_leftovers().unwrap());
 
-        store.try_recover().unwrap();
-        assert_eq!(temp_count(&store), 2);
+        store.recover(&store.lock().unwrap()).unwrap();
+        assert!(!store.has_leftovers().unwrap());
 
-        drop(held);
-        store.try_recover().unwrap();
-        assert_eq!(temp_count(&store), 0);
+        fs::write(store.journal_path(), "").unwrap();
+        assert!(store.has_leftovers().unwrap());
     }
 }

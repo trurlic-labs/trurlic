@@ -140,13 +140,11 @@ impl Store {
             self.discard(journal);
             return Err(e);
         }
-        // Also makes the generation raised before the journal durable: both
-        // live in `.state/`.
         sync_dir(&self.state_dir()).map_err(|e| self.pending(e))
     }
 
     /// Apply `journal`, then remove it. A failure leaves the journal for the
-    /// next process that takes the lock.
+    /// next read or write.
     pub(super) fn apply_journal(&self, _lock: &StoreLock, journal: &Journal) -> Result<()> {
         self.apply(journal).map_err(|e| self.pending(e))?;
         // Not flushed: a journal that reappears after a power loss applies

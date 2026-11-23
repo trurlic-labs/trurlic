@@ -15,9 +15,9 @@ use std::time::Duration;
 use crate::Result;
 use crate::console::out;
 use crate::store::schema::Attribution;
-use crate::store::{ProjectState, Store, StoreLock, Timestamp};
+use crate::store::{ProjectState, Store, Timestamp, Writer};
 
-use super::open_store_mut;
+use super::begin_write;
 
 /// How much `gc` is allowed to reclaim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,9 +83,10 @@ struct Candidate {
 /// pre-flight; those that would break a dependent or shrink a pattern below
 /// its minimum are reported as blocked and left in place.
 pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
-    let (store, lock, mut state) = open_store_mut(cwd)?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
 
-    let (orphaned, orphaned_ref, old_agent) = classify(&state)?;
+    let (orphaned, orphaned_ref, old_agent) = classify(writer.state())?;
     let surfaced = orphaned.len() + orphaned_ref.len() + old_agent.len();
     if surfaced == 0 {
         out!("gc: nothing to collect.")?;
@@ -98,7 +99,7 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     }
 
     let (removable, blocked) = plan_removals(
-        &state,
+        writer.state(),
         &orphaned,
         &orphaned_ref,
         &old_agent,
@@ -109,11 +110,11 @@ pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     // `removable` is what leaves under Apply and what *would* leave under a dry
     // run; both report the same figure so the summary agrees with the sections.
     let acted = if apply {
-        apply_removals(&store, &lock, &mut state, &removable)?
+        apply_removals(&mut writer, &removable)?
     } else {
         removable.len()
     };
-    drop(lock);
+    drop(writer);
 
     let flagged = surfaced - acted - blocked;
     let verb = if apply { "removed" } else { "would remove" };
@@ -198,18 +199,13 @@ fn plan_removals<'a>(
 }
 
 /// Remove the cleared decisions in one atomic batch. Returns the number removed.
-fn apply_removals(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut ProjectState,
-    removable: &[&Candidate],
-) -> Result<usize> {
+fn apply_removals(writer: &mut Writer<'_>, removable: &[&Candidate]) -> Result<usize> {
     if removable.is_empty() {
         return Ok(0);
     }
 
     let names: Vec<&str> = removable.iter().map(|c| c.name.as_str()).collect();
-    store.remove_decisions(lock, state, &names)?;
+    writer.remove_decisions(&names)?;
     Ok(names.len())
 }
 
@@ -578,7 +574,6 @@ mod tests {
             "orphan-dep",
             base_decision("widget", "Orphaned base"),
         );
-        let lock = store.lock().unwrap();
         let mut state = store.load_state().unwrap();
         state
             .graph_index
@@ -589,9 +584,13 @@ mod tests {
                 kind: crate::store::schema::EdgeKind::DependsOn,
             });
         store
-            .commit_batch(&lock, vec![], &[], Some(&mut state.graph_index))
+            .commit_batch(
+                &store.lock().unwrap(),
+                vec![],
+                &[],
+                Some(&mut state.graph_index),
+            )
             .unwrap();
-        drop(lock);
 
         gc(tmp.path(), GcScope::Safe, GcExecution::Apply).unwrap();
 
@@ -609,26 +608,21 @@ mod tests {
         init(tmp.path()).unwrap();
         add_component(tmp.path(), "auth", None).unwrap();
         let store = Store::discover(tmp.path()).unwrap();
-        let lock = store.lock().unwrap();
-        let mut state = store.load_state().unwrap();
         store
-            .record_decision(
-                &lock,
-                &mut state,
-                RecordDecisionParams {
-                    component: "auth",
-                    choice: "A healthy decision",
-                    reason: "Nothing to collect here",
-                    depends_on: &[],
-                    alternatives: &[],
-                    constrains: &[],
-                    tags: &[],
-                    attribution: Attribution::User,
-                    code_refs: &[],
-                },
-            )
+            .begin_write()
+            .unwrap()
+            .record_decision(RecordDecisionParams {
+                component: "auth",
+                choice: "A healthy decision",
+                reason: "Nothing to collect here",
+                depends_on: &[],
+                alternatives: &[],
+                constrains: &[],
+                tags: &[],
+                attribution: Attribution::User,
+                code_refs: &[],
+            })
             .unwrap();
-        drop(lock);
 
         // A clean store yields no removals and no error.
         gc(tmp.path(), GcScope::Aggressive, GcExecution::Apply).unwrap();

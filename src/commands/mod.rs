@@ -26,7 +26,7 @@ use std::path::Path;
 
 use crate::Result;
 use crate::console::diag;
-use crate::store::{self, ProjectState, Store};
+use crate::store::{ProjectState, Store, Writer};
 
 /// Whether a mutating command should preview its plan or actually write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,16 +36,6 @@ pub enum DryRun {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Locate the store for `cwd`, verify its format version, and clear what an
-/// interrupted write left, if no other process holds the lock. Every command
-/// funnels through here so a prior crash heals on the next invocation.
-pub(crate) fn discover_store(cwd: &Path) -> Result<Store> {
-    let store = Store::discover(cwd)?;
-    store.check_version()?;
-    store.try_recover()?;
-    Ok(store)
-}
 
 fn warn_on_issues(state: &ProjectState) {
     let issues = state.validate();
@@ -60,22 +50,18 @@ fn warn_on_issues(state: &ProjectState) {
     }
 }
 
-/// Open the store for a read-only command: discover, load state, and warn on
-/// any consistency issues. Waits for no lock: the load runs unlocked, and
-/// recovery in [`discover_store`] is skipped while another process holds it.
-pub(crate) fn open_store(cwd: &Path) -> Result<(Store, ProjectState)> {
-    let store = discover_store(cwd)?;
-    let state = store.load_state()?;
+/// Load the graph for a read-only command and warn on any consistency
+/// issues. The load waits only while a writer holds the lock.
+pub(crate) fn open_store(cwd: &Path) -> Result<ProjectState> {
+    let state = Store::discover(cwd)?.load_state()?;
     warn_on_issues(&state);
-    Ok((store, state))
+    Ok(state)
 }
 
-/// Open the store for a mutating command: discover, acquire the exclusive file
-/// lock *before* loading state (closing the TOCTOU window between load and
-/// write), then load and warn on consistency issues.
-pub(crate) fn open_store_mut(cwd: &Path) -> Result<(Store, store::StoreLock, ProjectState)> {
-    let store = discover_store(cwd)?;
-    let ((), lock, state) = store.begin_write(|| ())?;
-    warn_on_issues(&state);
-    Ok((store, lock, state))
+/// Begin the write of a mutating command and warn on any consistency issues
+/// of the graph it loaded under the lock.
+pub(crate) fn begin_write(store: &Store) -> Result<Writer<'_>> {
+    let writer = store.begin_write()?;
+    warn_on_issues(writer.state());
+    Ok(writer)
 }

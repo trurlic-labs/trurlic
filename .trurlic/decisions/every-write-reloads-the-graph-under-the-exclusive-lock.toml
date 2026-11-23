@@ -1,7 +1,7 @@
 [decision]
 component = "store"
-choice = "Every write reloads the graph under the exclusive lock before validating it"
-reason = "A write validated against the state its server last loaded, before taking the file lock, and then committed the whole graph index from that state, so another process's commit in between was silently lost (two serve processes, add_connection then record_decision within 100 ms: the edge vanished and check still said consistent). Store::begin_write takes the caller's guard, then the exclusive lock, then checks the format version and loads the graph under the lock; every surface starts its writes there and validates only after it: MCP in one call_write_tool that hands the handlers the reloaded state plus the &StoreLock, the CLI in open_store_mut. A refused write keeps the reloaded state. The reload is unconditional; it costs one load_state per write."
+choice = "Every write validates against the graph loaded under the exclusive lock, held with that lock in the Writer that begin_write returns"
+reason = "A write validated against the state its server last loaded, before taking the file lock, and then committed the whole graph index from it, so another process's commit in between was silently lost (two serve processes, add_connection then record_decision within 100 ms: the edge vanished and check still said consistent). Store::begin_write takes the exclusive lock, checks the format, recovers, loads the graph under the lock and returns a Writer that owns both. Every graph write is a Writer method and the Writer's fields are private to the store, so no caller can pair the lock with a graph loaded before it, and a graph a read loaded can never be committed. That replaces the commit counter which refused a stale state only at commit time, when any state could be passed with any lock. Each commit leaves the writer's graph equal to the files, so a second write of the same writer validates against the first, and a refused write rolls the writer's graph back. MCP begins one writer per write tool call, the CLI one per command."
 alternatives = [
     "Validate against the in-memory state, then lock and commit: rejected, that is the lost update",
     "Lock and reload inside each MCP handler: rejected, every handler must remember to validate after the reload; one call site cannot forget",
@@ -15,18 +15,27 @@ attribution = "agent"
 created = "2026-10-02T11:35:08.670219118Z"
 
 [[decision.code_refs]]
-file = "src/store/reload.rs"
+file = "src/store/access.rs"
 symbol = "Store::begin_write"
 
 [[decision.code_refs]]
+file = "src/store/access.rs"
+symbol = "Writer"
+
+[[decision.code_refs]]
 file = "src/mcp/mod.rs"
-symbol = "call_write_tool"
+symbol = "handle_tools_call"
 
 [[decision.code_refs]]
 file = "src/commands/mod.rs"
-symbol = "open_store_mut"
+symbol = "begin_write"
 
 [[decision.history]]
 choice = "Every write reloads the graph under the exclusive lock before validating it"
 reason = "A write validated against the state its server last loaded, before taking the file lock, and then committed the whole graph index from that state, so another process's commit in between was silently lost (two serve processes, add_connection then record_decision within 100 ms: the edge vanished and check still said consistent). Store::begin_write takes the caller's guard, then the exclusive lock, then checks the format version and loads the graph under the lock; every surface starts its writes there and validates only after it: MCP in one call_write_tool that hands the handlers the reloaded state plus the &StoreLock, the map in MapState::begin_write, the CLI in open_store_mut. A refused write keeps the reloaded state. The reload is unconditional; it costs one load_state per write."
 changed_at = "2026-11-23T19:22:16.919012099Z"
+
+[[decision.history]]
+choice = "Every write reloads the graph under the exclusive lock before validating it"
+reason = "A write validated against the state its server last loaded, before taking the file lock, and then committed the whole graph index from that state, so another process's commit in between was silently lost (two serve processes, add_connection then record_decision within 100 ms: the edge vanished and check still said consistent). Store::begin_write takes the caller's guard, then the exclusive lock, then checks the format version and loads the graph under the lock; every surface starts its writes there and validates only after it: MCP in one call_write_tool that hands the handlers the reloaded state plus the &StoreLock, the CLI in open_store_mut. A refused write keeps the reloaded state. The reload is unconditional; it costs one load_state per write."
+changed_at = "2026-11-23T22:27:14.885616910Z"

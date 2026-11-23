@@ -8,13 +8,13 @@ mod verify;
 mod write;
 
 use std::io::{self, BufRead, Write};
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::LazyLock;
 
 use serde_json::Value;
 
 use crate::Result;
 use crate::console::diag;
-use crate::store::{ProjectState, Store};
+use crate::store::Store;
 
 use protocol::{INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, Request};
 
@@ -22,27 +22,10 @@ const PROTOCOL_VERSION: &str = "2025-11-25";
 
 // ── Public entry point ────────────────────────────────────────────────────
 
-/// Run the MCP server on stdio.
-///
-/// The state is shared with a background file watcher thread. The watcher
-/// detects external changes to `.trurlic/` (CLI writes, manual edits, git
-/// checkout) and reloads state from disk. The write lock is held only for
-/// pointer swaps (microseconds); MCP read queries acquire only a read lock
-/// and never block the watcher or other reads.
-pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()> {
-    let mut server = Server::new(store, initial_state);
-
-    // Spawn file watcher. Non-fatal if unavailable (e.g. inotify limit).
-    let _watcher = match crate::store::watcher::spawn(server.store.root(), server.state.clone()) {
-        Ok(guard) => {
-            diag!("trurlic: file watcher active");
-            Some(guard)
-        }
-        Err(e) => {
-            diag!("trurlic: file watcher unavailable: {e}");
-            None
-        }
-    };
+/// Run the MCP server on stdio. Each tool call loads the graph from disk
+/// (see [`handle_tools_call`]), so the server holds no graph between calls.
+pub(crate) fn run_server(store: Store) -> Result<()> {
+    let mut server = Server::new(store);
 
     let mut reader = io::stdin().lock();
     #[expect(
@@ -68,20 +51,18 @@ pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()
     Ok(())
 }
 
-/// One MCP session over a store: the state its requests and its file
-/// watcher share, and whether the client has sent `initialize`.
+/// One MCP session over a store: the store its calls load, and whether the
+/// client has sent `initialize`.
 pub struct Server {
     store: Store,
-    state: Arc<RwLock<ProjectState>>,
     initialized: bool,
 }
 
 impl Server {
     #[must_use]
-    pub fn new(store: Store, state: ProjectState) -> Self {
+    pub const fn new(store: Store) -> Self {
         Self {
             store,
-            state: Arc::new(RwLock::new(state)),
             initialized: false,
         }
     }
@@ -95,15 +76,7 @@ impl Server {
         writer: &mut impl Write,
     ) -> io::Result<bool> {
         match protocol::read_message(reader) {
-            Ok(Some(request)) => {
-                handle(
-                    &self.store,
-                    &self.state,
-                    request,
-                    &mut self.initialized,
-                    writer,
-                )?;
-            }
+            Ok(Some(request)) => handle(&self.store, request, &mut self.initialized, writer)?,
             Ok(None) => return Ok(false),
             Err(e) => protocol::write_error(writer, &Value::Null, PARSE_ERROR, &e.to_string())?,
         }
@@ -120,7 +93,6 @@ impl Server {
 // `Value` allocation.
 fn handle(
     store: &Store,
-    state: &Arc<RwLock<ProjectState>>,
     request: Request,
     initialized: &mut bool,
     writer: &mut impl Write,
@@ -154,7 +126,7 @@ fn handle(
 
         // Gate: tool operations require initialization.
         "tools/list" if *initialized => protocol::write_success(writer, &id, tools::tool_list()),
-        "tools/call" if *initialized => match handle_tools_call(store, state, &request.params) {
+        "tools/call" if *initialized => match handle_tools_call(store, &request.params) {
             Ok(envelope) => protocol::write_success(writer, &id, &envelope),
             Err((code, msg)) => protocol::write_error(writer, &id, code, &msg),
         },
@@ -188,9 +160,12 @@ static INITIALIZE_RESULT: LazyLock<Value> = LazyLock::new(|| {
     })
 });
 
+/// A write tool runs on a [`Writer`](crate::store::Writer): the graph
+/// loaded under the exclusive lock, so it validates against every commit
+/// another process made. A read tool runs on the graph loaded under the
+/// shared lock. Either load fails as a tool error.
 fn handle_tools_call(
     store: &Store,
-    state: &Arc<RwLock<ProjectState>>,
     params: &Option<Value>,
 ) -> std::result::Result<tools::ToolEnvelope, (i32, String)> {
     let params = params
@@ -205,44 +180,16 @@ fn handle_tools_call(
     static EMPTY_ARGS: LazyLock<Value> = LazyLock::new(|| serde_json::json!({}));
     let arguments = params.get("arguments").unwrap_or(&EMPTY_ARGS);
 
-    // Write tools need &mut ProjectState; read tools (and unknown names)
-    // only need &ProjectState. Acquiring only a read lock for reads avoids
-    // blocking the file watcher's state swap and (if the transport ever
-    // supports concurrency) other read requests.
-    if tools::is_write_tool(name) {
-        Ok(call_write_tool(store, state, name, arguments))
+    let envelope = if tools::is_write_tool(name) {
+        store
+            .begin_write()
+            .map(|mut writer| tools::call_write_tool(&mut writer, name, arguments))
     } else {
-        let guard = state.read().unwrap_or_else(|poisoned| {
-            diag!("trurlic: recovered from poisoned state lock");
-            poisoned.into_inner()
-        });
-        Ok(tools::call_read_tool(&guard, name, arguments))
-    }
-}
-
-/// Run a write tool against the graph on disk, not the state this server
-/// last loaded: another process may have committed since. Lock order: the
-/// state write lock, then the file lock. A refused write keeps the reloaded
-/// state.
-fn call_write_tool(
-    store: &Store,
-    state: &RwLock<ProjectState>,
-    name: &str,
-    arguments: &Value,
-) -> tools::ToolEnvelope {
-    let take_state = || {
-        state.write().unwrap_or_else(|poisoned| {
-            diag!("trurlic: recovered from poisoned state lock");
-            poisoned.into_inner()
-        })
+        store
+            .load_state()
+            .map(|state| tools::call_read_tool(&state, name, arguments))
     };
-    match store.begin_write(take_state) {
-        Ok((mut current, lock, loaded)) => {
-            *current = loaded;
-            tools::call_write_tool(store, &lock, &mut current, name, arguments)
-        }
-        Err(e) => tools::tool_error(&e.to_string()),
-    }
+    Ok(envelope.unwrap_or_else(|e| tools::tool_error(&e.to_string())))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -264,23 +211,14 @@ mod tests {
     /// Dispatch a request through `handle`, capturing the wire output.
     /// Returns `None` for notifications (no bytes written), `Some(json)`
     /// for everything else. Panics on I/O error — acceptable in tests.
-    fn handle_to_json(
-        store: &Store,
-        state: &Arc<RwLock<ProjectState>>,
-        req: Request,
-        initialized: &mut bool,
-    ) -> Option<Value> {
+    fn handle_to_json(store: &Store, req: Request, initialized: &mut bool) -> Option<Value> {
         let mut buf = Vec::new();
-        handle(store, state, req, initialized, &mut buf).unwrap();
+        handle(store, req, initialized, &mut buf).unwrap();
         if buf.is_empty() {
             None
         } else {
             Some(serde_json::from_slice(&buf).unwrap())
         }
-    }
-
-    fn empty_state() -> Arc<RwLock<ProjectState>> {
-        Arc::new(RwLock::new(crate::store::testing::empty_project_state()))
     }
 
     fn empty_store() -> (tempfile::TempDir, Store) {
@@ -293,19 +231,17 @@ mod tests {
     #[test]
     fn notification_writes_nothing() {
         let (_tmp, store) = empty_store();
-        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
         let mut initialized = true;
         let req = make_request(None, "notifications/initialized", None);
-        assert!(handle_to_json(&store, &state, req, &mut initialized).is_none());
+        assert!(handle_to_json(&store, req, &mut initialized).is_none());
     }
 
     #[test]
     fn initialize_returns_capabilities() {
         let (_tmp, store) = empty_store();
-        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
         let mut initialized = false;
         let req = make_request(Some(json!(1)), "initialize", None);
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert!(initialized);
         let result = &json["result"];
         assert_eq!(result["protocolVersion"], PROTOCOL_VERSION);
@@ -315,58 +251,52 @@ mod tests {
 
     #[test]
     fn ping_returns_empty_object() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = true;
         let req = make_request(Some(json!(2)), "ping", None);
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert_eq!(json["result"], json!({}));
     }
 
     #[test]
     fn unknown_method_returns_error() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = true;
         let req = make_request(Some(json!(3)), "bogus/method", None);
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert_eq!(json["error"]["code"], METHOD_NOT_FOUND);
     }
 
     #[test]
     fn tools_call_missing_params_returns_error() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = true;
         let req = make_request(Some(json!(4)), "tools/call", None);
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert_eq!(json["error"]["code"], INVALID_PARAMS);
     }
 
     #[test]
     fn tools_call_missing_name_returns_error() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = true;
         let req = make_request(Some(json!(5)), "tools/call", Some(json!({"arguments": {}})));
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert_eq!(json["error"]["code"], INVALID_PARAMS);
     }
 
     #[test]
     fn tools_list_returns_all_tools() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = true;
         let req = make_request(Some(json!(6)), "tools/list", None);
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         let tools = json["result"]["tools"].as_array().unwrap();
         assert!(tools.len() >= 3);
     }
 
     #[test]
     fn tools_call_before_initialize_rejected() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = false;
         let req = make_request(
@@ -374,7 +304,7 @@ mod tests {
             "tools/call",
             Some(json!({"name": "get_architecture", "arguments": {}})),
         );
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert_eq!(json["error"]["code"], INVALID_REQUEST);
         assert!(
             json["error"]["message"]
@@ -386,17 +316,15 @@ mod tests {
 
     #[test]
     fn tools_list_before_initialize_rejected() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = false;
         let req = make_request(Some(json!(8)), "tools/list", None);
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert_eq!(json["error"]["code"], INVALID_REQUEST);
     }
 
     #[test]
     fn invalid_jsonrpc_version_rejected() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = true;
         let req = Request {
@@ -405,54 +333,66 @@ mod tests {
             method: "ping".into(),
             params: None,
         };
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert_eq!(json["error"]["code"], INVALID_REQUEST);
     }
 
     #[test]
     fn ping_allowed_before_initialize() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = false;
         let req = make_request(Some(json!(10)), "ping", None);
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         assert_eq!(json["result"], json!({}));
     }
 
-    #[test]
-    fn read_tool_does_not_acquire_write_lock() {
-        let (_tmp, store) = empty_store();
-        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
-        let mut initialized = true;
-
-        // Hold a read lock — if handle_tools_call tried to write-lock
-        // this would deadlock (single-threaded test) or panic.
-        let _read_guard = state.read().unwrap();
-
-        // get_architecture is a read tool — must succeed with the read
-        // lock already held by us (RwLock allows multiple readers).
-        let req = make_request(
+    fn get_architecture() -> Request {
+        make_request(
             Some(json!(11)),
             "tools/call",
             Some(json!({"name": "get_architecture", "arguments": {}})),
-        );
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
-        assert!(json.get("result").is_some(), "read tool should succeed");
+        )
     }
 
-    /// The lost update: another process commits after this server loaded its
-    /// state. The write must validate against that commit and keep it.
+    fn component_names(response: &Value) -> Vec<String> {
+        let text = response["result"]["content"][0]["text"].as_str().unwrap();
+        let payload: Value = serde_json::from_str(text).unwrap();
+        payload["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|component| component["name"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// No state survives a call: the next read loads what another process
+    /// committed after the previous one.
     #[test]
-    fn write_tool_validates_against_commits_made_since_the_last_load() {
+    fn a_read_tool_serves_a_commit_made_since_the_last_call() {
         let (_tmp, store) = empty_store();
-        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
-        let mut other = store.load_state().unwrap();
-        let lock = store.lock().unwrap();
-        store.add_component(&lock, &mut other, "auth", "").unwrap();
+        let first = handle_to_json(&store, get_architecture(), &mut true).unwrap();
+        assert!(component_names(&first).is_empty(), "{first}");
+
         store
-            .add_component(&lock, &mut other, "billing", "")
+            .begin_write()
+            .unwrap()
+            .add_component("auth", "")
             .unwrap();
-        drop(lock);
+
+        let second = handle_to_json(&store, get_architecture(), &mut true).unwrap();
+        assert_eq!(component_names(&second), ["auth"]);
+    }
+
+    /// The lost update: another process commits after this server's last
+    /// call. The write must validate against that commit and keep it.
+    #[test]
+    fn write_tool_validates_against_commits_made_since_the_last_call() {
+        let (_tmp, store) = empty_store();
+        handle_to_json(&store, get_architecture(), &mut true).unwrap();
+        let mut other = store.begin_write().unwrap();
+        other.add_component("auth", "").unwrap();
+        other.add_component("billing", "").unwrap();
+        drop(other);
 
         let req = make_request(
             Some(json!(13)),
@@ -462,13 +402,13 @@ mod tests {
                 "arguments": { "from": "auth", "to": "billing" }
             })),
         );
-        let json = handle_to_json(&store, &state, req, &mut true).unwrap();
+        let json = handle_to_json(&store, req, &mut true).unwrap();
 
         assert_ne!(json["result"]["isError"], json!(true), "{json}");
         let on_disk = store.load_state().unwrap();
         assert!(on_disk.components.contains_key("auth"));
         assert!(on_disk.components.contains_key("billing"));
-        assert_eq!(state.read().unwrap().graph_index, on_disk.graph_index);
+        assert_eq!(on_disk.graph().connects_to("auth"), ["billing"]);
     }
 
     #[test]
@@ -477,14 +417,13 @@ mod tests {
         // not double-escaped JSON. This catches regressions where a
         // serialization step escapes the already-serialized payload.
         let (_tmp, store) = empty_store();
-        let state = Arc::new(RwLock::new(store.load_state().unwrap()));
         let mut initialized = true;
         let req = make_request(
             Some(json!(12)),
             "tools/call",
             Some(json!({"name": "get_architecture", "arguments": {}})),
         );
-        let json = handle_to_json(&store, &state, req, &mut initialized).unwrap();
+        let json = handle_to_json(&store, req, &mut initialized).unwrap();
         let text = json["result"]["content"][0]["text"].as_str().unwrap();
         // text must be parseable JSON (the tool payload)
         let inner: Value = serde_json::from_str(text).unwrap();
@@ -493,14 +432,13 @@ mod tests {
 
     #[test]
     fn responses_are_single_line_json() {
-        let state = empty_state();
         let store = Store::at("/dev/null/.trurlic".into());
         let mut initialized = true;
 
         // Success response
         let mut buf = Vec::new();
         let req = make_request(Some(json!(1)), "ping", None);
-        handle(&store, &state, req, &mut initialized, &mut buf).unwrap();
+        handle(&store, req, &mut initialized, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert_eq!(
             output.lines().count(),
@@ -512,7 +450,7 @@ mod tests {
         // Error response
         let mut buf = Vec::new();
         let req = make_request(Some(json!(2)), "bogus", None);
-        handle(&store, &state, req, &mut initialized, &mut buf).unwrap();
+        handle(&store, req, &mut initialized, &mut buf).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert_eq!(
             output.lines().count(),
@@ -525,8 +463,7 @@ mod tests {
     #[test]
     fn serve_one_answers_each_line_in_turn_until_the_input_ends() {
         let (_tmp, store) = empty_store();
-        let state = store.load_state().unwrap();
-        let mut server = Server::new(store, state);
+        let mut server = Server::new(store);
         let input = concat!(
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
             "\nnot json\n",

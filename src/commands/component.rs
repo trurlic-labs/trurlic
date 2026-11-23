@@ -3,28 +3,33 @@ use std::path::Path;
 use crate::console::{diag, out};
 use crate::{Error, Result};
 
-use super::open_store_mut;
+use crate::store::Store;
+
+use super::begin_write;
 
 /// `trurlic add component` — register a new component node.
 pub fn add_component(cwd: &Path, name: &str, description: Option<&str>) -> Result<()> {
-    let (store, lock, mut state) = open_store_mut(cwd)?;
-    store.add_component(&lock, &mut state, name, description.unwrap_or_default())?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
+    writer.add_component(name, description.unwrap_or_default())?;
     out!("Added component `{name}`")?;
     Ok(())
 }
 
 /// `trurlic connect` — add a directed `ConnectsTo` edge between components.
 pub fn add_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
-    let (store, lock, mut state) = open_store_mut(cwd)?;
-    store.add_connection(&lock, &mut state, from, to)?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
+    writer.add_connection(from, to)?;
     out!("Connected `{from}` \u{2192} `{to}`")?;
     Ok(())
 }
 
 /// `trurlic rename component` — rename a component, rewriting every incident edge.
 pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
-    let (store, lock, mut state) = open_store_mut(cwd)?;
-    store.rename_component(&lock, &mut state, old, new)?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
+    writer.rename_component(old, new)?;
     out!("Renamed component `{old}` \u{2192} `{new}`")?;
     Ok(())
 }
@@ -33,9 +38,10 @@ pub fn rename_component(cwd: &Path, old: &str, new: &str) -> Result<()> {
 /// Refused with `CascadeBlocked` if decisions still reference it; non-blocking
 /// warnings are printed but do not stop the removal.
 pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
-    let (store, lock, mut state) = open_store_mut(cwd)?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
 
-    let cascade = state.graph().check_component_cascade(name);
+    let cascade = writer.state().graph().check_component_cascade(name);
     if cascade.is_blocked() {
         return Err(Error::CascadeBlocked(cascade.blocker_summary()));
     }
@@ -43,15 +49,16 @@ pub fn remove_component(cwd: &Path, name: &str) -> Result<()> {
         diag!("warning: {}", w.message);
     }
 
-    store.remove_component(&lock, &mut state, name)?;
+    writer.remove_component(name)?;
     out!("Removed component `{name}`")?;
     Ok(())
 }
 
 /// `trurlic disconnect` — remove a `ConnectsTo` edge between components.
 pub fn remove_connection(cwd: &Path, from: &str, to: &str) -> Result<()> {
-    let (store, lock, mut state) = open_store_mut(cwd)?;
-    store.remove_connection(&lock, &mut state, from, to)?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
+    writer.remove_connection(from, to)?;
     out!("Disconnected `{from}` \u{2192} `{to}`")?;
     Ok(())
 }

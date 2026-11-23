@@ -2,16 +2,16 @@ use std::path::Path;
 
 use crate::console::{diag, out};
 use crate::store::graph::{InMemoryGraph, Severity};
-use crate::store::{self, format_code_refs};
+use crate::store::{self, Store, format_code_refs};
 use crate::{Error, Result};
 
-use super::{discover_store, open_store};
+use super::open_store;
 
 /// `trurlic status` — print a one-screen summary of the graph: component,
 /// decision (with project-wide count), pattern, and edge totals, plus a
 /// consistency-issue count when the graph does not validate cleanly.
 pub fn status(cwd: &Path) -> Result<()> {
-    let (_store, state) = open_store(cwd)?;
+    let state = open_store(cwd)?;
 
     let project_wide = state
         .decisions
@@ -45,7 +45,7 @@ pub fn status(cwd: &Path) -> Result<()> {
 /// at the trust boundary before lookup.
 pub fn query_file(cwd: &Path, path: &str) -> Result<()> {
     let normalized = store::normalize_file_query(path)?;
-    let (_store, state) = open_store(cwd)?;
+    let state = open_store(cwd)?;
 
     let graph = state.graph();
     let matches = graph.decisions_for_file(&normalized);
@@ -81,17 +81,7 @@ pub fn query_file(cwd: &Path, path: &str) -> Result<()> {
 /// `trurlic check` — verify content hashes against `graph.toml`, then validate
 /// full graph integrity, exiting non-zero on any error.
 pub(crate) fn check(cwd: &Path) -> Result<()> {
-    let store = discover_store(cwd)?;
-
-    // Phase 1: verify hashes against the raw graph.toml before load_state
-    // reconciles them. This surfaces files edited outside Trurlic.
-    let hash_issues = store.verify_hashes()?;
-
-    // Phase 2: load (which reconciles) and run structural validation.
-    let state = store.load_state()?;
-    let structural_issues = state.validate();
-
-    let all_issues: Vec<_> = hash_issues.iter().chain(structural_issues.iter()).collect();
+    let all_issues = Store::discover(cwd)?.verify()?;
 
     if all_issues.is_empty() {
         out!(".trurlic/ is consistent")?;

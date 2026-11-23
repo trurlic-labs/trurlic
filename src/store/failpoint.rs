@@ -21,7 +21,7 @@ use crate::console::diag;
 /// pause or fail the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Site {
-    /// Files staged and flushed, generation raised; no journal yet.
+    /// Files staged and flushed; no journal yet.
     Staged,
     /// Journal in place, so the commit lands; nothing applied yet.
     Journaled,
@@ -30,21 +30,13 @@ pub(crate) enum Site {
     /// After each journal entry applied: the `n`-th hit follows the `n`-th
     /// rename, then the removals count on.
     Applied,
-    /// A watcher holds the shared lock and has read nothing yet.
-    WatcherReload,
 }
 
 // Naming and parsing exist only where a spec can be read: the feature
 // build and the unit tests.
 #[cfg(any(test, feature = "failpoints"))]
 impl Site {
-    const ALL: [Self; 5] = [
-        Self::Staged,
-        Self::Journaled,
-        Self::Rename,
-        Self::Applied,
-        Self::WatcherReload,
-    ];
+    const ALL: [Self; 4] = [Self::Staged, Self::Journaled, Self::Rename, Self::Applied];
 
     /// The name used in `TRURLIC_FAILPOINT`.
     const fn as_str(self) -> &'static str {
@@ -53,7 +45,6 @@ impl Site {
             Self::Journaled => "commit.journaled",
             Self::Rename => "commit.rename",
             Self::Applied => "commit.applied",
-            Self::WatcherReload => "watcher.reload",
         }
     }
 

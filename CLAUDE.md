@@ -10,8 +10,7 @@ Single crate, seven modules (`src/lib.rs`). Visibility enforces boundaries — `
 
 ```
 store       → (no internal deps)         Decision graph: TOML files, graph index,
-                                          validation, atomic writes, file locking,
-                                          file watcher
+                                          validation, atomic writes, file locking
 mcp         → store, budget               MCP server: JSON-RPC stdio, tool dispatch,
                                           context assembly, decision verification,
                                           the 24 KiB cap on every tool result
@@ -32,11 +31,11 @@ console     → (no internal deps)          Terminal I/O: `out!` to stdout, `dia
 
 Every module uses `error` and `console`; the arrows leave them out.
 
-**store** is the foundation. It imports no other module except `error` and `console`. Every write goes through `Store` methods with `StoreLock` proof parameters. A decision's choice and reason are checked there (`store::text`), so every surface refuses the same text with the same message.
+**store** is the foundation. It imports no other module except `error` and `console`. Every graph write is a method of the `Writer` that `Store::begin_write` returns, which owns the exclusive lock and the graph loaded under it; the commit path takes `&StoreLock` as proof of the lock. A decision's choice and reason are checked there (`store::text`), so every surface refuses the same text with the same message.
 
 **error** carries the path of the file behind every I/O and TOML failure (`Error::Io`, `Error::Toml`); nothing converts a bare `io::Error` into it, so a `?` cannot drop the path. `commands::install` alone returns its own `InstallError`, which wraps `Error`; `cli` prints either as `error: <message>` with exit status 1.
 
-**mcp** never writes to the graph directly. It calls `Store` write methods.
+**mcp** never writes to the graph directly. It calls `Writer` methods, and holds no graph between calls.
 
 **commands** reaches `mcp` only to start the MCP server (`serve`); every other handler reads and writes the graph through `Store`.
 
@@ -44,23 +43,25 @@ Trurlic makes no LLM calls. Design work happens in the agent that calls the MCP 
 
 ### Store Internals
 
-Graph on disk: `.trurlic/` with `components/`, `decisions/`, `patterns/` subdirectories. Each node is a TOML file. `graph.toml` is a compiled edge index rebuilt deterministically from node files. `.trurlic/.state/` holds the lock file, temp files, the commit counter (`generation`) and the commit journal (`txn.toml`); it is never committed.
+Graph on disk: `.trurlic/` with `components/`, `decisions/`, `patterns/` subdirectories. Each node is a TOML file. `graph.toml` is a compiled edge index rebuilt deterministically from node files. `.trurlic/.state/` holds the lock file, temp files and the commit journal (`txn.toml`); it is never committed.
 
-Commits: serialize and parse back in memory → stage each file in `.state/tmp/` under a per-process name and flush it → raise `generation` → write and flush the journal, which names every staged file and its target: the commit point → rename the staged files into place, `graph.toml` last, remove deleted files, flush the directories → delete the journal. After the journal a failure returns `CommitPending`; the commit is not rolled back.
+Commits: serialize and parse back in memory → stage each file in `.state/tmp/` under a per-process name and flush it → write and flush the journal, which names every staged file and its target: the commit point → rename the staged files into place, `graph.toml` last, remove deleted files, flush the directories → delete the journal. After the journal a failure returns `CommitPending`; the commit is not rolled back.
 
-Recovery: a leftover journal is applied, then leftover temp files removed, only under the exclusive lock: by every write before it loads, by a command that finds the lock free, and by a watcher that finds a journal.
+Recovery: a leftover journal is applied, then leftover temp files removed, only under the exclusive lock: by every write before it loads, and by every read that finds either one under the shared lock.
 
 Timestamps: `store::Timestamp`, a UTC instant to the nanosecond, written as an RFC 3339 string in the form 0.3 releases wrote (`2025-06-01T10:30:00Z`, a fraction of 0, 3, 6 or 9 digits), so a load and a write give back the same bytes. `Timestamp::now` is the crate's one clock read.
 
 Content integrity: BLAKE3 hash per node file, stored in `graph.toml`. `trurlic check` verifies hashes. Tamper detection, not encryption.
 
-File locking: std `File::try_lock` (writers, exclusive) and `File::try_lock_shared` (the watcher) on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type — write methods require `&StoreLock` as a parameter.
+File locking: std `File::try_lock` (writers, exclusive) and `File::try_lock_shared` (readers) on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type: every function that changes a file under `.trurlic/` takes `&StoreLock`, and a `Writer` owns one.
 
-Writer protocol: every write starts at `Store::begin_write`, which takes the caller's state write lock, then the exclusive file lock (dropping the state lock while the file lock is busy), then recovers and reloads the graph from disk. All validation runs against that reloaded state. Every commit raises `.state/generation`; a commit refuses a state whose generation is behind the store's.
+Writer protocol: every write starts at `Store::begin_write`, which takes the exclusive file lock, checks the format, recovers, loads the graph from disk and returns a `Writer` that owns the lock and that graph. Every graph write is a `Writer` method, so all validation runs against the graph loaded under the lock, and each commit leaves the writer's graph equal to disk. Dropping the writer releases the lock.
 
-In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex` and an eagerly built `InMemoryGraph` for graph queries.
+Readers: every read (`Store::load_state`) takes the shared lock, checks the format and loads the graph. A journal or a temp file seen under the shared lock was left by a writer that stopped, so the read takes the exclusive lock, finishes that commit and loads under it: no read sees half of a commit.
 
-Thread model: MCP server holds `Arc<RwLock<ProjectState>>`. The file watcher thread (`store::watcher`) detects external changes, loads under the shared file lock, releases it, then swaps state under the write lock (microseconds) unless a write of its own server overtook the load (`ProjectState::is_overtaken`). Events that arrive during a reload start the next one. MCP read tools acquire read lock only. Write tools acquire write lock, then file lock, then reload, validate, and commit. A thread holding a file lock never waits on the state lock.
+In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex` and an eagerly built `InMemoryGraph` for graph queries. It lives for one call.
+
+No state between calls: the MCP server holds the `Store` and nothing loaded from it. A read tool runs on `Store::load_state`, a write tool on a `Writer`, so a hand edit, a `git checkout` or another process's commit is seen by the very next call. `load_state` reads the node files in parallel and parses `graph.toml` meanwhile; `make bench` times it.
 
 ### Key Invariants
 
@@ -69,9 +70,10 @@ Thread model: MCP server holds `Arc<RwLock<ProjectState>>`. The file watcher thr
 3. Every graph mutation validates the full graph before touching disk. A write that adds an error is refused, never silently committed; an error the graph already had, matched on kind and subject, does not block it.
 4. Atomic commits: round-trip in memory → flushed temp files → flushed journal (the commit point) → renames, `graph.toml` last → directory flushes. Recovery rolls a journal forward under the exclusive lock.
 5. File locking prevents concurrent mutations from CLI and MCP processes.
-6. Boundary types (`DecisionFile`, `PatternFile`, `ComponentFile`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`) do not.
-7. Every dependency justified. No proc macros at runtime (serde derive, thiserror are compile-time).
-8. Every MCP tool result fits `budget::MAX_TOOL_RESULT_BYTES` (24 KiB) and stays valid JSON; a cut is named in its `truncated` array.
+6. What a call returns is a function of the files on disk: no process holds graph state between calls (`tests/integration/stdio.rs` sees a hand edit in the next call; `tests/integration/writers.rs` interleaves three servers' writes).
+7. Boundary types (`DecisionFile`, `PatternFile`, `ComponentFile`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`) do not.
+8. Every dependency justified. No proc macros at runtime (serde derive, thiserror are compile-time).
+9. Every MCP tool result fits `budget::MAX_TOOL_RESULT_BYTES` (24 KiB) and stays valid JSON; a cut is named in its `truncated` array.
 
 ### Trurlic
 
@@ -107,7 +109,7 @@ Property: determinism (every read tool answers with the same bytes in two proces
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 
-Benchmarks (`benches/corpus.rs`, criterion, run locally with `make bench`; no CI job): over the seeded corpus `store::corpus` at 50, 600 and 2000 decisions, `load_state`, graph build and validation, and, through `trurlic::bench::Server` in process, `record_decision` end to end and every read tool. The `bench` feature builds the corpus and that server; release builds carry neither.
+Benchmarks (`benches/corpus.rs`, criterion, run locally with `make bench`; no CI job): over the seeded corpus `store::corpus` at 50, 600 and 2000 decisions, `load_state`, graph build and validation, and, through `trurlic::bench::Server` in process, `record_decision` end to end and every read tool, each with the load every call makes. The `bench` feature builds the corpus and that server; release builds carry neither.
 
 ### Skills
 

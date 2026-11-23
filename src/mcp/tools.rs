@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::context;
 use super::{pattern, truncate, update, verify, write};
 use crate::budget::MAX_TOOL_RESULT_BYTES;
-use crate::store::{ProjectState, Store, StoreLock};
+use crate::store::{ProjectState, Writer};
 
 // ── Tool definitions ────────────────────────────────────────────────────────
 
@@ -458,9 +458,9 @@ pub(crate) fn tool_list() -> &'static Value {
 
 // ── Tool classification ─────────────────────────────────────────────────────
 
-/// Returns `true` for tools that mutate `ProjectState` and the on-disk store.
-/// Used by the MCP dispatch to choose between a read lock (cheap, concurrent)
-/// and a write lock (exclusive).
+/// Returns `true` for tools that mutate the on-disk store. Used by the MCP
+/// dispatch to choose between a load under the shared lock and a
+/// [`Writer`] under the exclusive one.
 pub(crate) fn is_write_tool(name: &str) -> bool {
     matches!(
         name,
@@ -492,23 +492,17 @@ pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> 
 
 // ── Write tool dispatch ─────────────────────────────────────────────────────
 
-/// Dispatch a mutating tool call against `state`, which the caller loaded
-/// under `lock`. Only called for tools where [`is_write_tool`] returns `true`.
-pub(crate) fn call_write_tool(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut ProjectState,
-    name: &str,
-    args: &Value,
-) -> ToolEnvelope {
+/// Dispatch a mutating tool call to `writer`. Only called for tools where
+/// [`is_write_tool`] returns `true`.
+pub(crate) fn call_write_tool(writer: &mut Writer<'_>, name: &str, args: &Value) -> ToolEnvelope {
     let result = match name {
-        "record_decision" => write::record_decision(store, lock, state, args),
-        "record_pattern" => write::record_pattern(store, lock, state, args),
-        "remove_decision" => update::remove_decision(store, lock, state, args),
-        "remove_pattern" => pattern::remove_pattern(store, lock, state, args),
-        "update_decision" => update::update_decision(store, lock, state, args),
-        "add_component" => write::add_component(store, lock, state, args),
-        "add_connection" => write::add_connection(store, lock, state, args),
+        "record_decision" => write::record_decision(writer, args),
+        "record_pattern" => write::record_pattern(writer, args),
+        "remove_decision" => update::remove_decision(writer, args),
+        "remove_pattern" => pattern::remove_pattern(writer, args),
+        "update_decision" => update::update_decision(writer, args),
+        "add_component" => write::add_component(writer, args),
+        "add_connection" => write::add_connection(writer, args),
         _ => return tool_error(&format!("unhandled write tool: {name}")),
     };
     match result {

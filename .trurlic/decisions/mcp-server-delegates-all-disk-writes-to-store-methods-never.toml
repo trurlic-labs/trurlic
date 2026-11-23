@@ -1,7 +1,7 @@
 [decision]
 component = "mcp"
-choice = "MCP server delegates all disk writes to Store methods, never writes directly"
-reason = "Write tools (record_decision, record_pattern, add_component, add_connection, remove_decision, update_decision) call Store methods that acquire a file lock (StoreLock), validate the graph, perform atomic writes (serialize to temp, verify round-trip, rename), and update in-memory state. The MCP module handles argument parsing, validation of edge targets and quality floors, and JSON response construction, but never touches the filesystem directly. This maintains Store as the single authority for disk mutations and ensures atomic write guarantees are never bypassed."
+choice = "MCP server delegates all disk writes to the store's Writer, never writes directly"
+reason = "Write tools (record_decision, record_pattern, add_component, add_connection, remove_decision, remove_pattern, update_decision) call methods of the Writer that handle_tools_call begins for the call: it holds the exclusive lock and the graph loaded under it, validates the graph, performs atomic writes (serialize, verify the round trip, stage, journal, rename), and keeps its graph equal to disk. The MCP module handles argument parsing, validation of edge targets and quality floors, and JSON response construction, but never touches the filesystem directly. This maintains the store as the single authority for disk mutations and ensures atomic write guarantees are never bypassed."
 alternatives = [
     "MCP module writes TOML files directly — rejected: would bypass atomic write guarantees, file locking, and graph validation in Store",
     "Separate write layer between MCP and Store — rejected: unnecessary indirection when Store already provides the correct abstraction",
@@ -12,3 +12,16 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:44:59.411657570Z"
+
+[[decision.code_refs]]
+file = "src/mcp/mod.rs"
+symbol = "handle_tools_call"
+
+[[decision.code_refs]]
+file = "src/mcp/tools.rs"
+symbol = "call_write_tool"
+
+[[decision.history]]
+choice = "MCP server delegates all disk writes to Store methods, never writes directly"
+reason = "Write tools (record_decision, record_pattern, add_component, add_connection, remove_decision, update_decision) call Store methods that acquire a file lock (StoreLock), validate the graph, perform atomic writes (serialize to temp, verify round-trip, rename), and update in-memory state. The MCP module handles argument parsing, validation of edge targets and quality floors, and JSON response construction, but never touches the filesystem directly. This maintains Store as the single authority for disk mutations and ensures atomic write guarantees are never bypassed."
+changed_at = "2026-11-23T22:27:15.441648263Z"

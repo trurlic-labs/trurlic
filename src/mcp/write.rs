@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::store::limits::{MAX_ARRAY_ITEMS, MAX_TEXT_FIELD_BYTES};
 use crate::store::schema::{Attribution, CodeRef};
-use crate::store::{self, Store, StoreLock};
+use crate::store::{self, Writer};
 
 // ── Argument helpers ────────────────────────────────────────────────────────
 
@@ -154,12 +154,7 @@ pub(super) fn parse_code_refs(args: &Value) -> Result<Vec<CodeRef>, String> {
 
 // ── record_decision ─────────────────────────────────────────────────────────
 
-pub(crate) fn record_decision(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut store::ProjectState,
-    args: &Value,
-) -> Result<Value, String> {
+pub(crate) fn record_decision(writer: &mut Writer<'_>, args: &Value) -> Result<Value, String> {
     let component = require_str(args, "component")?;
     let choice = require_text(args, "choice")?;
     let reason = require_text(args, "reason")?;
@@ -182,38 +177,34 @@ pub(crate) fn record_decision(
     if component != "project" && !store::is_valid_kebab_case(component) {
         return Err(format!("invalid component name `{component}`"));
     }
-    if component != "project" && !state.components.contains_key(component) {
+    if component != "project" && !writer.state().components.contains_key(component) {
         return Err(format!("component `{component}` does not exist"));
     }
 
     // Validate edge targets exist.
     for dep in &depends_on {
-        if !state.decisions.contains_key(dep.as_str()) {
+        if !writer.state().decisions.contains_key(dep.as_str()) {
             return Err(format!("depends_on target `{dep}` does not exist"));
         }
     }
     for con in &constrains {
-        if !state.decisions.contains_key(con.as_str()) {
+        if !writer.state().decisions.contains_key(con.as_str()) {
             return Err(format!("constrains target `{con}` does not exist"));
         }
     }
 
-    let stem = store
-        .record_decision(
-            lock,
-            state,
-            store::RecordDecisionParams {
-                component,
-                choice,
-                reason,
-                alternatives: &alternatives,
-                depends_on: &depends_on,
-                constrains: &constrains,
-                tags: &tags,
-                attribution,
-                code_refs: &code_refs,
-            },
-        )
+    let stem = writer
+        .record_decision(store::RecordDecisionParams {
+            component,
+            choice,
+            reason,
+            alternatives: &alternatives,
+            depends_on: &depends_on,
+            constrains: &constrains,
+            tags: &tags,
+            attribution,
+            code_refs: &code_refs,
+        })
         .map_err(|e| e.to_string())?;
 
     // Collect warnings for the caller.
@@ -229,7 +220,7 @@ pub(crate) fn record_decision(
     // component whose choice shares most of its significant words with the
     // new one. Advisory, not a block — reworded variants are sometimes
     // legitimately distinct, so the agent decides whether to consolidate.
-    for (existing_name, existing_dec) in &state.decisions {
+    for (existing_name, existing_dec) in &writer.state().decisions {
         if existing_name.as_str() == stem {
             continue;
         }
@@ -248,7 +239,7 @@ pub(crate) fn record_decision(
 
     Ok(serde_json::json!({
         "name": stem,
-        "path": store.decision_path(&stem).display().to_string(),
+        "path": writer.store().decision_path(&stem).display().to_string(),
         "code_refs": store::code_refs_to_json(&code_refs),
         "warnings": warnings,
     }))
@@ -288,51 +279,37 @@ fn word_overlap(a: &str, b: &str) -> f64 {
 
 // ── record_pattern ──────────────────────────────────────────────────────────
 
-pub(crate) fn record_pattern(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut store::ProjectState,
-    args: &Value,
-) -> Result<Value, String> {
+pub(crate) fn record_pattern(writer: &mut Writer<'_>, args: &Value) -> Result<Value, String> {
     let name = require_str(args, "name")?;
     let description = require_str(args, "description")?;
     let decisions = require_str_array(args, "decisions")?;
     let components = opt_str_array(args, "components")?;
     let tags = opt_str_array(args, "tags")?;
 
-    let slug = store
-        .record_pattern(
-            lock,
-            state,
-            store::RecordPatternParams {
-                name,
-                description,
-                decisions: &decisions,
-                components: &components,
-                tags: &tags,
-            },
-        )
+    let slug = writer
+        .record_pattern(store::RecordPatternParams {
+            name,
+            description,
+            decisions: &decisions,
+            components: &components,
+            tags: &tags,
+        })
         .map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
         "name": slug,
-        "path": store.pattern_path(&slug).display().to_string(),
+        "path": writer.store().pattern_path(&slug).display().to_string(),
     }))
 }
 
 // ── add_component ──────────────────────────────────────────────────────────
 
-pub(crate) fn add_component(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut store::ProjectState,
-    args: &Value,
-) -> Result<Value, String> {
+pub(crate) fn add_component(writer: &mut Writer<'_>, args: &Value) -> Result<Value, String> {
     let name = require_str(args, "name")?;
     let description = opt_str(args, "description")?.unwrap_or_default();
 
-    store
-        .add_component(lock, state, name, description)
+    writer
+        .add_component(name, description)
         .map_err(|e| e.to_string())?;
 
     let mut warnings: Vec<String> = Vec::new();
@@ -346,25 +323,18 @@ pub(crate) fn add_component(
 
     Ok(serde_json::json!({
         "name": name,
-        "path": store.component_path(name).display().to_string(),
+        "path": writer.store().component_path(name).display().to_string(),
         "warnings": warnings,
     }))
 }
 
 // ── add_connection ─────────────────────────────────────────────────────────
 
-pub(crate) fn add_connection(
-    store: &Store,
-    lock: &StoreLock,
-    state: &mut store::ProjectState,
-    args: &Value,
-) -> Result<Value, String> {
+pub(crate) fn add_connection(writer: &mut Writer<'_>, args: &Value) -> Result<Value, String> {
     let from = require_str(args, "from")?;
     let to = require_str(args, "to")?;
 
-    store
-        .add_connection(lock, state, from, to)
-        .map_err(|e| e.to_string())?;
+    writer.add_connection(from, to).map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
         "from": from,
@@ -382,27 +352,28 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
 
-    fn setup() -> (TempDir, Store, store::ProjectState) {
+    fn setup() -> (TempDir, Store) {
         let tmp = TempDir::new().unwrap();
-        let (store, state) = store::testing::setup_store_with_components(
+        let (store, _) = store::testing::setup_store_with_components(
             tmp.path(),
             &[("auth", "Authentication"), ("database", "Database layer")],
         );
-        (tmp, store, state)
+        (tmp, store)
     }
 
     // ── record_decision ─────────────────────────────────────────────────
 
     #[test]
     fn record_decision_basic() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "auth",
             "choice": "JWT with DPoP",
             "reason": "Stateless, no session store needed",
             "attribution": "user",
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = record_decision(&mut writer, &args).unwrap();
         assert_eq!(result["name"], "jwt-with-dpop");
         let keys: Vec<&str> = result
             .as_object()
@@ -411,12 +382,13 @@ mod tests {
             .map(String::as_str)
             .collect();
         assert_eq!(keys, ["code_refs", "name", "path", "warnings"]);
-        assert!(state.decisions.contains_key("jwt-with-dpop"));
+        assert!(writer.state().decisions.contains_key("jwt-with-dpop"));
     }
 
     #[test]
     fn record_decision_with_all_fields() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
 
         // First, record a base decision to reference.
         let base = json!({
@@ -425,7 +397,7 @@ mod tests {
             "reason": "Stateless, no server session",
             "attribution": "user",
         });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &base).unwrap();
+        record_decision(&mut writer, &base).unwrap();
 
         let args = json!({
             "component": "auth",
@@ -436,11 +408,11 @@ mod tests {
             "tags": ["security", "auth"],
             "attribution": "user",
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = record_decision(&mut writer, &args).unwrap();
         assert!(!result["name"].as_str().unwrap().is_empty());
 
         // Verify edges exist.
-        let idx = &state.graph_index;
+        let idx = &writer.state().graph_index;
         let name = result["name"].as_str().unwrap();
         assert!(
             idx.edges
@@ -460,15 +432,17 @@ mod tests {
 
     #[test]
     fn record_decision_project_wide() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "project",
             "choice": "Fail-closed on writes",
             "reason": "Never silently succeed with wrong data",
             "attribution": "user",
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
-        let dec = state
+        let result = record_decision(&mut writer, &args).unwrap();
+        let dec = writer
+            .state()
             .decisions
             .get(result["name"].as_str().unwrap())
             .unwrap();
@@ -477,20 +451,22 @@ mod tests {
 
     #[test]
     fn record_decision_rejects_missing_component() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "ghost",
             "choice": "x",
             "reason": "test validation target",
             "attribution": "user",
         });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = record_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("ghost"));
     }
 
     #[test]
     fn record_decision_rejects_nonexistent_depends_on() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "auth",
             "choice": "x",
@@ -498,7 +474,7 @@ mod tests {
             "depends_on": ["ghost"],
             "attribution": "user",
         });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = record_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("ghost"));
     }
 
@@ -506,26 +482,27 @@ mod tests {
 
     #[test]
     fn record_pattern_basic() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
 
         // Record two decisions first.
         let d1 = json!({ "component": "auth", "choice": "Use Redis", "reason": "Fast in-memory reads", "attribution": "user" });
         let d2 = json!({ "component": "database", "choice": "Redis pool", "reason": "Shared pool reduces overhead", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
+        record_decision(&mut writer, &d1).unwrap();
+        record_decision(&mut writer, &d2).unwrap();
 
         let args = json!({
             "name": "All state in Redis",
             "description": "Shared Redis pool for all persistent state",
             "decisions": ["use-redis", "redis-pool"],
         });
-        let result = record_pattern(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = record_pattern(&mut writer, &args).unwrap();
         let slug = result["name"].as_str().unwrap();
         assert!(!slug.is_empty());
-        assert!(state.patterns.contains_key(slug));
+        assert!(writer.state().patterns.contains_key(slug));
 
         // Verify edges.
-        let idx = &state.graph_index;
+        let idx = &writer.state().graph_index;
         assert!(
             idx.edges
                 .iter()
@@ -547,45 +524,48 @@ mod tests {
 
     #[test]
     fn record_pattern_rejects_single_decision() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({ "component": "auth", "choice": "X", "reason": "test reason placeholder", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap();
+        record_decision(&mut writer, &d).unwrap();
 
         let args = json!({
             "name": "Lone pattern",
             "description": "Only one decision",
             "decisions": ["x"],
         });
-        let err = record_pattern(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = record_pattern(&mut writer, &args).unwrap_err();
         assert!(err.contains("at least 2"));
     }
 
     #[test]
     fn record_pattern_rejects_nonexistent_decision() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "name": "Ghost pattern",
             "description": "References nothing",
             "decisions": ["ghost-a", "ghost-b"],
         });
-        let err = record_pattern(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = record_pattern(&mut writer, &args).unwrap_err();
         assert!(err.contains("does not exist"));
     }
 
     #[test]
     fn record_pattern_returns_name_not_slug() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d1 = json!({ "component": "auth", "choice": "Use JWT", "reason": "Fast in-memory reads", "attribution": "user" });
         let d2 = json!({ "component": "database", "choice": "JWT verify", "reason": "Authentication verification", "attribution": "user" });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
+        record_decision(&mut writer, &d1).unwrap();
+        record_decision(&mut writer, &d2).unwrap();
 
         let args = json!({
             "name": "Token pattern",
             "description": "Token handling",
             "decisions": ["use-jwt", "jwt-verify"],
         });
-        let result = record_pattern(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = record_pattern(&mut writer, &args).unwrap();
         assert!(
             result.get("name").is_some(),
             "must return 'name', not 'slug'"
@@ -596,59 +576,46 @@ mod tests {
 
     #[test]
     fn add_component_basic() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({ "name": "rate-limiter", "description": "Per-key rate limiting" });
-        let result = add_component(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = add_component(&mut writer, &args).unwrap();
         assert_eq!(result["name"], "rate-limiter");
-        assert!(state.components.contains_key("rate-limiter"));
+        assert!(writer.state().components.contains_key("rate-limiter"));
     }
 
     #[test]
     fn add_component_without_description() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({ "name": "cache" });
-        let result = add_component(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = add_component(&mut writer, &args).unwrap();
         assert_eq!(result["name"], "cache");
-        let comp = state.components.get("cache").unwrap();
+        let comp = writer.state().components.get("cache").unwrap();
         assert!(comp.component.description.is_empty());
     }
 
     #[test]
     fn add_component_rejects_duplicate() {
-        let (_tmp, store, mut state) = setup();
-        let err = add_component(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "name": "auth" }),
-        )
-        .unwrap_err();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
+        let err = add_component(&mut writer, &json!({ "name": "auth" })).unwrap_err();
         assert!(err.contains("already exists"));
     }
 
     #[test]
     fn add_component_rejects_invalid_name() {
-        let (_tmp, store, mut state) = setup();
-        let err = add_component(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "name": "Not-Valid" }),
-        )
-        .unwrap_err();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
+        let err = add_component(&mut writer, &json!({ "name": "Not-Valid" })).unwrap_err();
         assert!(err.contains("kebab-case"));
     }
 
     #[test]
     fn add_component_rejects_reserved_name() {
-        let (_tmp, store, mut state) = setup();
-        let err = add_component(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "name": "project" }),
-        )
-        .unwrap_err();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
+        let err = add_component(&mut writer, &json!({ "name": "project" })).unwrap_err();
         assert!(err.contains("reserved"));
     }
 
@@ -656,13 +623,15 @@ mod tests {
 
     #[test]
     fn add_connection_basic() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({ "from": "auth", "to": "database" });
-        let result = add_connection(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = add_connection(&mut writer, &args).unwrap();
         assert_eq!(result["from"], "auth");
         assert_eq!(result["to"], "database");
         assert!(
-            state
+            writer
+                .state()
                 .graph_index
                 .edges
                 .iter()
@@ -672,47 +641,29 @@ mod tests {
 
     #[test]
     fn add_connection_rejects_nonexistent_source() {
-        let (_tmp, store, mut state) = setup();
-        let err = add_connection(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "from": "ghost", "to": "auth" }),
-        )
-        .unwrap_err();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
+        let err =
+            add_connection(&mut writer, &json!({ "from": "ghost", "to": "auth" })).unwrap_err();
         assert!(err.contains("ghost"));
     }
 
     #[test]
     fn add_connection_rejects_self_connection() {
-        let (_tmp, store, mut state) = setup();
-        let err = add_connection(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "from": "auth", "to": "auth" }),
-        )
-        .unwrap_err();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
+        let err =
+            add_connection(&mut writer, &json!({ "from": "auth", "to": "auth" })).unwrap_err();
         assert!(err.contains("cannot connect to itself"));
     }
 
     #[test]
     fn add_connection_rejects_duplicate() {
-        let (_tmp, store, mut state) = setup();
-        add_connection(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "from": "auth", "to": "database" }),
-        )
-        .unwrap();
-        let err = add_connection(
-            &store,
-            &store.lock().unwrap(),
-            &mut state,
-            &json!({ "from": "auth", "to": "database" }),
-        )
-        .unwrap_err();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
+        add_connection(&mut writer, &json!({ "from": "auth", "to": "database" })).unwrap();
+        let err =
+            add_connection(&mut writer, &json!({ "from": "auth", "to": "database" })).unwrap_err();
         assert!(err.contains("already exists"));
     }
 
@@ -720,14 +671,15 @@ mod tests {
 
     #[test]
     fn record_decision_warns_no_alternatives() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "auth",
             "choice": "Use JWT tokens",
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = record_decision(&mut writer, &args).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             warnings
@@ -739,7 +691,8 @@ mod tests {
 
     #[test]
     fn record_decision_no_warning_with_alternatives() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "auth",
             "choice": "Use JWT tokens",
@@ -747,7 +700,7 @@ mod tests {
             "alternatives": ["Session cookies — server-side state"],
             "attribution": "user",
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = record_decision(&mut writer, &args).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             !warnings
@@ -774,14 +727,15 @@ mod tests {
 
     #[test]
     fn record_decision_warns_on_high_overlap() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d1 = json!({
             "component": "auth",
             "choice": "Use JWT tokens for authentication",
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
+        record_decision(&mut writer, &d1).unwrap();
 
         // Same significant words plus one — high Jaccard overlap, not identical.
         let d2 = json!({
@@ -790,7 +744,7 @@ mod tests {
             "reason": "Slightly different framing of the same idea",
             "attribution": "user",
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
+        let result = record_decision(&mut writer, &d2).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             warnings
@@ -802,14 +756,15 @@ mod tests {
 
     #[test]
     fn record_decision_no_warning_on_low_overlap() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d1 = json!({
             "component": "auth",
             "choice": "Use JWT tokens",
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        record_decision(&store, &store.lock().unwrap(), &mut state, &d1).unwrap();
+        record_decision(&mut writer, &d1).unwrap();
 
         // Unrelated wording in the same component — no near-duplicate warning.
         let d2 = json!({
@@ -818,7 +773,7 @@ mod tests {
             "reason": "Limit blast radius of a key compromise",
             "attribution": "user",
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &d2).unwrap();
+        let result = record_decision(&mut writer, &d2).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             !warnings
@@ -843,13 +798,14 @@ mod tests {
 
     #[test]
     fn record_decision_requires_attribution() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({
             "component": "auth",
             "choice": "Use JWT",
             "reason": "Stateless, no server session",
         });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap_err();
+        let err = record_decision(&mut writer, &d).unwrap_err();
         assert!(
             err.contains("attribution"),
             "should require attribution parameter: {err}"
@@ -858,14 +814,15 @@ mod tests {
 
     #[test]
     fn record_decision_rejects_invalid_attribution() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let d = json!({
             "component": "auth",
             "choice": "Use JWT",
             "reason": "Stateless, no server session",
             "attribution": "maybe",
         });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &d).unwrap_err();
+        let err = record_decision(&mut writer, &d).unwrap_err();
         assert!(
             err.contains("invalid attribution"),
             "should reject invalid attribution value: {err}"
@@ -874,9 +831,10 @@ mod tests {
 
     #[test]
     fn add_component_warns_on_empty_description() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({ "name": "cache" });
-        let result = add_component(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = add_component(&mut writer, &args).unwrap();
         let warnings = result["warnings"].as_array().unwrap();
         assert!(
             warnings
@@ -890,7 +848,8 @@ mod tests {
 
     #[test]
     fn record_decision_with_code_refs() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "auth",
             "choice": "JWT with DPoP",
@@ -901,10 +860,10 @@ mod tests {
                 { "file": "src/auth/middleware.rs" }
             ],
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = record_decision(&mut writer, &args).unwrap();
         let name = result["name"].as_str().unwrap();
 
-        let dec = state.decisions.get(name).unwrap();
+        let dec = writer.state().decisions.get(name).unwrap();
         assert_eq!(dec.decision.code_refs.len(), 2);
         assert_eq!(dec.decision.code_refs[0].file, "src/auth/token.rs");
         assert_eq!(
@@ -922,21 +881,23 @@ mod tests {
 
     #[test]
     fn record_decision_without_code_refs() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "auth",
             "choice": "Use JWT tokens",
             "reason": "Stateless authentication model",
             "attribution": "user",
         });
-        let result = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap();
+        let result = record_decision(&mut writer, &args).unwrap();
         let refs = result["code_refs"].as_array().unwrap();
         assert!(refs.is_empty());
     }
 
     #[test]
     fn record_decision_rejects_invalid_code_ref() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let args = json!({
             "component": "auth",
             "choice": "Use JWT tokens",
@@ -944,13 +905,14 @@ mod tests {
             "attribution": "user",
             "code_refs": [{ "file": "/absolute/path.rs" }],
         });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = record_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("relative"), "{err}");
     }
 
     #[test]
     fn record_decision_rejects_too_many_code_refs() {
-        let (_tmp, store, mut state) = setup();
+        let (_tmp, store) = setup();
+        let mut writer = store.begin_write().unwrap();
         let refs: Vec<_> = (0..21)
             .map(|i| json!({ "file": format!("src/f{i}.rs") }))
             .collect();
@@ -961,7 +923,7 @@ mod tests {
             "attribution": "user",
             "code_refs": refs,
         });
-        let err = record_decision(&store, &store.lock().unwrap(), &mut state, &args).unwrap_err();
+        let err = record_decision(&mut writer, &args).unwrap_err();
         assert!(err.contains("too many"), "{err}");
     }
 

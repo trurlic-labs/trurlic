@@ -1,7 +1,8 @@
-//! The MCP server over real stdio: handshake, tool catalogue, and one call
-//! of every tool it lists.
+//! The MCP server over real stdio: handshake, tool catalogue, one call of
+//! every tool it lists, and a hand edit seen by the next call.
 
 use std::collections::BTreeSet;
+use std::fs;
 
 use serde_json::{Value, json};
 
@@ -44,6 +45,53 @@ fn tools_are_refused_before_initialize() {
     let response = client.exchange("tools/list", json!({}));
     assert!(response.get("result").is_none(), "{response}");
     assert_eq!(response["error"]["code"], -32600, "{response}");
+}
+
+/// The server keeps no graph between calls: node files edited and added by
+/// hand between two calls are what the second call answers from.
+#[test]
+fn the_next_call_sees_a_hand_edit() {
+    let project = Project::init();
+    project.run_ok(&["add", "component", "auth"]);
+    project.run_ok(&[
+        "decide",
+        "auth",
+        "--choice",
+        "Sign tokens",
+        "--reason",
+        "Tokens are verified without a session store",
+    ]);
+    let (mut client, _) = McpClient::connect(&project);
+    let before = client.call_tool("get_decision_history", json!({ "name": "sign-tokens" }));
+    assert_eq!(before["current"]["choice"], "Sign tokens", "{before}");
+
+    let store = project.path().join(".trurlic");
+    let decision = store.join("decisions/sign-tokens.toml");
+    let edited = fs::read_to_string(&decision).unwrap().replace(
+        "choice = \"Sign tokens\"",
+        "choice = \"Sign tokens with Ed25519\"",
+    );
+    fs::write(&decision, edited).unwrap();
+    fs::write(
+        store.join("components/billing.toml"),
+        "[component]\nname = \"billing\"\ndescription = \"Invoices\"\n",
+    )
+    .unwrap();
+
+    let after = client.call_tool("get_decision_history", json!({ "name": "sign-tokens" }));
+    assert_eq!(
+        after["current"]["choice"], "Sign tokens with Ed25519",
+        "{after}"
+    );
+    let architecture = client.call_tool("get_architecture", json!({}));
+    assert_eq!(
+        architecture["components"][0]["name"], "auth",
+        "{architecture}"
+    );
+    assert_eq!(
+        architecture["components"][1]["name"], "billing",
+        "{architecture}"
+    );
 }
 
 /// Every tool in `tools/list` is called once and succeeds. A tool added to

@@ -2,10 +2,10 @@ use std::path::Path;
 
 use crate::console::{diag, out};
 use crate::store::schema::{Attribution, CodeRef};
-use crate::store::{self, RecordDecisionParams};
+use crate::store::{self, RecordDecisionParams, Store};
 use crate::{Error, Result};
 
-use super::open_store_mut;
+use super::begin_write;
 
 /// Parse a `--ref` CLI argument into a [`CodeRef`].
 ///
@@ -41,27 +41,25 @@ pub fn decide(
         return Err(Error::InvalidName(component.into()));
     }
 
-    let (store, lock, mut state) = open_store_mut(cwd)?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
+    let state = writer.state();
 
     if component != "project" && !state.components.contains_key(component) {
         return Err(Error::ComponentNotFound(component.into()));
     }
 
-    let stem = store.record_decision(
-        &lock,
-        &mut state,
-        RecordDecisionParams {
-            component,
-            choice,
-            reason,
-            alternatives,
-            depends_on: &[],
-            constrains: &[],
-            tags: &[],
-            attribution: Attribution::User,
-            code_refs,
-        },
-    )?;
+    let stem = writer.record_decision(RecordDecisionParams {
+        component,
+        choice,
+        reason,
+        alternatives,
+        depends_on: &[],
+        constrains: &[],
+        tags: &[],
+        attribution: Attribution::User,
+        code_refs,
+    })?;
 
     out!("Recorded decision `{stem}`")?;
     Ok(())
@@ -79,7 +77,9 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
         return Err(Error::InvalidName(component.into()));
     }
 
-    let (store, lock, mut state) = open_store_mut(cwd)?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
+    let state = writer.state();
 
     if component != "project" && !state.components.contains_key(component) {
         return Err(Error::ComponentNotFound(component.into()));
@@ -118,8 +118,8 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
         )));
     }
 
-    store.remove_decisions(&lock, &mut state, &names)?;
-    drop(lock);
+    writer.remove_decisions(&names)?;
+    drop(writer);
 
     let count = names.len();
     let plural = if count == 1 { "" } else { "s" };
@@ -130,7 +130,9 @@ pub fn remove_agent_decisions(cwd: &Path, component: &str) -> Result<()> {
 /// `trurlic remove decision` — delete a single decision after a cascade
 /// pre-flight. Refused with `CascadeBlocked` if another decision depends on it.
 pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
-    let (store, lock, mut state) = open_store_mut(cwd)?;
+    let store = Store::discover(cwd)?;
+    let mut writer = begin_write(&store)?;
+    let state = writer.state();
 
     let cascade = state.graph().check_decision_cascade(name);
     if cascade.is_blocked() {
@@ -140,7 +142,7 @@ pub fn remove_decision(cwd: &Path, name: &str) -> Result<()> {
         diag!("warning: {}", w.message);
     }
 
-    store.remove_decision(&lock, &mut state, name)?;
+    writer.remove_decision(name)?;
     out!("Removed decision `{name}`")?;
     Ok(())
 }
@@ -362,7 +364,6 @@ mod tests {
 
         // Manually add DependsOn edge: token-expiry depends on use-jwt.
         let store = Store::discover(tmp.path()).unwrap();
-        let lock = store.lock().unwrap();
         let mut state = store.load_state().unwrap();
         state.graph_index.edges.push(EdgeEntry {
             from: "token-expiry".into(),
@@ -370,9 +371,13 @@ mod tests {
             kind: EdgeKind::DependsOn,
         });
         store
-            .commit_batch(&lock, vec![], &[], Some(&mut state.graph_index))
+            .commit_batch(
+                &store.lock().unwrap(),
+                vec![],
+                &[],
+                Some(&mut state.graph_index),
+            )
             .unwrap();
-        drop(lock);
 
         let err = remove_decision(tmp.path(), "use-jwt").unwrap_err();
         match err {
@@ -398,7 +403,6 @@ mod tests {
 
         // Create a pattern with exactly 2 member decisions.
         let store = Store::discover(tmp.path()).unwrap();
-        let lock = store.lock().unwrap();
 
         let pat = PatternFile {
             pattern: Pattern {
@@ -429,9 +433,13 @@ mod tests {
             kind: EdgeKind::MemberOf,
         });
         store
-            .commit_batch(&lock, vec![write], &[], Some(&mut state.graph_index))
+            .commit_batch(
+                &store.lock().unwrap(),
+                vec![write],
+                &[],
+                Some(&mut state.graph_index),
+            )
             .unwrap();
-        drop(lock);
 
         let err = remove_decision(tmp.path(), "use-jwt").unwrap_err();
         match err {
@@ -454,29 +462,23 @@ mod tests {
     /// Record a decision through the store write path so it carries a real
     /// `BelongsTo` edge and an explicit attribution.
     fn record(
-        store: &Store,
-        state: &mut store::ProjectState,
-        lock: &store::StoreLock,
+        writer: &mut store::Writer<'_>,
         component: &str,
         choice: &str,
         attribution: Attribution,
     ) -> String {
-        store
-            .record_decision(
-                lock,
-                state,
-                RecordDecisionParams {
-                    component,
-                    choice,
-                    reason: "Recorded for a bulk-removal test",
-                    alternatives: &[],
-                    depends_on: &[],
-                    constrains: &[],
-                    tags: &[],
-                    attribution,
-                    code_refs: &[],
-                },
-            )
+        writer
+            .record_decision(RecordDecisionParams {
+                component,
+                choice,
+                reason: "Recorded for a bulk-removal test",
+                alternatives: &[],
+                depends_on: &[],
+                constrains: &[],
+                tags: &[],
+                attribution,
+                code_refs: &[],
+            })
             .unwrap()
     }
 
@@ -487,33 +489,11 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
-        let lock = store.lock().unwrap();
-        let mut state = store.load_state().unwrap();
-        record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Human choice",
-            Attribution::User,
-        );
-        record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Agent one",
-            Attribution::Agent,
-        );
-        record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Agent two",
-            Attribution::Agent,
-        );
-        drop(lock);
+        let mut writer = store.begin_write().unwrap();
+        record(&mut writer, "auth", "Human choice", Attribution::User);
+        record(&mut writer, "auth", "Agent one", Attribution::Agent);
+        record(&mut writer, "auth", "Agent two", Attribution::Agent);
+        drop(writer);
 
         remove_agent_decisions(tmp.path(), "auth").unwrap();
 
@@ -532,44 +512,28 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
-        let lock = store.lock().unwrap();
-        let mut state = store.load_state().unwrap();
-        let base = record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Agent base",
-            Attribution::Agent,
-        );
-        record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Agent spare",
-            Attribution::Agent,
-        );
-        let dependent = record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Human gate",
-            Attribution::User,
-        );
+        let mut writer = store.begin_write().unwrap();
+        let base = record(&mut writer, "auth", "Agent base", Attribution::Agent);
+        record(&mut writer, "auth", "Agent spare", Attribution::Agent);
+        let dependent = record(&mut writer, "auth", "Human gate", Attribution::User);
 
         // The human decision depends on one agent decision, so removing that
         // agent decision is cascade-blocked — which must abort the batch.
+        drop(writer);
+        let mut state = store.load_state().unwrap();
         state.graph_index.edges.push(EdgeEntry {
             from: dependent,
             to: base,
             kind: EdgeKind::DependsOn,
         });
         store
-            .commit_batch(&lock, vec![], &[], Some(&mut state.graph_index))
+            .commit_batch(
+                &store.lock().unwrap(),
+                vec![],
+                &[],
+                Some(&mut state.graph_index),
+            )
             .unwrap();
-        drop(lock);
 
         let err = remove_agent_decisions(tmp.path(), "auth").unwrap_err();
         assert!(matches!(err, Error::CascadeBlocked(_)));
@@ -589,50 +553,24 @@ mod tests {
         add_component(tmp.path(), "auth", None).unwrap();
 
         let store = Store::discover(tmp.path()).unwrap();
-        let lock = store.lock().unwrap();
-        let mut state = store.load_state().unwrap();
-        let one = record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Agent one",
-            Attribution::Agent,
-        );
-        let two = record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Agent two",
-            Attribution::Agent,
-        );
-        let three = record(
-            &store,
-            &mut state,
-            &lock,
-            "auth",
-            "Human three",
-            Attribution::User,
-        );
+        let mut writer = store.begin_write().unwrap();
+        let one = record(&mut writer, "auth", "Agent one", Attribution::Agent);
+        let two = record(&mut writer, "auth", "Agent two", Attribution::Agent);
+        let three = record(&mut writer, "auth", "Human three", Attribution::User);
 
         // A three-member pattern. Removing the two agent members would leave one
         // — below the minimum. Each member passes an isolated cascade check
         // (three members each), so only a batch-aware pre-flight catches it.
-        store
-            .record_pattern(
-                &lock,
-                &mut state,
-                RecordPatternParams {
-                    name: "auth-shape",
-                    description: "Three related auth decisions",
-                    decisions: &[one, two, three],
-                    components: &[],
-                    tags: &[],
-                },
-            )
+        writer
+            .record_pattern(RecordPatternParams {
+                name: "auth-shape",
+                description: "Three related auth decisions",
+                decisions: &[one, two, three],
+                components: &[],
+                tags: &[],
+            })
             .unwrap();
-        drop(lock);
+        drop(writer);
 
         let err = remove_agent_decisions(tmp.path(), "auth").unwrap_err();
         assert!(matches!(err, Error::CascadeBlocked(_)));
@@ -703,7 +641,6 @@ mod tests {
 
         // Manually add Constrains edge: short-lived-tokens constrains use-jwt.
         let store = Store::discover(tmp.path()).unwrap();
-        let lock = store.lock().unwrap();
         let mut state = store.load_state().unwrap();
         state.graph_index.edges.push(EdgeEntry {
             from: "short-lived-tokens".into(),
@@ -711,9 +648,13 @@ mod tests {
             kind: EdgeKind::Constrains,
         });
         store
-            .commit_batch(&lock, vec![], &[], Some(&mut state.graph_index))
+            .commit_batch(
+                &store.lock().unwrap(),
+                vec![],
+                &[],
+                Some(&mut state.graph_index),
+            )
             .unwrap();
-        drop(lock);
 
         // Removing the constrained decision should succeed (warn, allow).
         remove_decision(tmp.path(), "use-jwt").unwrap();

@@ -22,7 +22,7 @@ use super::schema::{
     Attribution, CodeRef, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
     HistoryEntry, NodeEntry, NodeKind, Pattern, PatternFile,
 };
-use super::{ProjectState, Store, Timestamp, slugify};
+use super::{ProjectState, Store, Timestamp, Writer, slugify};
 
 /// The project-wide pseudo-component decisions may belong to.
 const PROJECT: &str = "project";
@@ -228,10 +228,11 @@ impl Corpus {
         let plan = Plan::new(*self);
         let store = Store::create(project_dir, "corpus", epoch())?;
         plan.write_sources(project_dir)?;
-        let lock = store.lock()?;
-        let mut state = store.load_state()?;
-        let writes = plan.into_state(&store, &mut state)?;
-        store.commit_with_graph(&lock, writes, &[], &mut state)?;
+        {
+            let Writer { lock, state, .. } = &mut store.begin_write()?;
+            let writes = plan.into_state(&store, state)?;
+            store.commit_with_graph(lock, writes, &[], state)?;
+        }
         Ok(store)
     }
 }

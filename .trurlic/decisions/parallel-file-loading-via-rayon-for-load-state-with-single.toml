@@ -1,7 +1,7 @@
 [decision]
 component = "store"
-choice = "Parallel file loading via rayon for load_state with single-pass read+hash"
-reason = "load_state() lists all node files up front, then uses rayon par_iter to read and hash them concurrently. Each file is read once via read_toml_with_hash() which parses TOML and computes BLAKE3 in a single pass over the raw bytes, eliminating the double-read that would occur if parsing and hashing were separate. On a cold cache with 260 files this reduces wall time from ~300ms (sequential) to ~50ms (parallel). The graph index is then reconciled: BelongsTo edges are always re-derived from decision files (source of truth), dangling edges are filtered, and nodes/edges are sorted for deterministic output."
+choice = "Parallel loading via rayon: each node file read and hashed in one pass, the three node kinds and graph.toml read concurrently"
+reason = "Store::read_graph parses graph.toml on one rayon thread while the others read the node files: graph.toml is one large file whose parse is serial and takes about as long as reading and parsing every node file in parallel. The three node kinds are listed and read concurrently too, since each kind's directory listing and its slowest file are serial steps. Together these cut load_state at 2000 seeded decisions from 27 ms to 16 ms in make bench. Each node file is read once by read_toml_with_hash, which parses the TOML and computes BLAKE3 over the same bytes; skipping the hash on a read measured within noise, so every load hashes and no state carries empty hashes. On a cold cache with 260 files the parallel read cut wall time from ~300ms (sequential) to ~50ms. The index is then reconciled with the node files: belongs_to edges are re-derived from decision files (source of truth), dangling edges are dropped, and nodes and edges are sorted for deterministic output."
 alternatives = [
     "Sequential file loading — rejected: measured at 300ms for 260 files on cold cache; unacceptable for MCP tool response latency",
     "Memory-mapped files — rejected: adds complexity for marginal benefit on small files (typical node is 200-500 bytes); rayon parallelism gives better wall-time improvement",
@@ -13,3 +13,20 @@ tags = [
 ]
 attribution = "user"
 created = "2026-06-15T09:45:56.889052260Z"
+
+[[decision.code_refs]]
+file = "src/store/load.rs"
+symbol = "Store::read_graph"
+
+[[decision.code_refs]]
+file = "src/store/load.rs"
+symbol = "Store::read_node_files"
+
+[[decision.code_refs]]
+file = "src/store/load.rs"
+symbol = "Store::read_toml_with_hash"
+
+[[decision.history]]
+choice = "Parallel file loading via rayon for load_state with single-pass read+hash"
+reason = "load_state() lists all node files up front, then uses rayon par_iter to read and hash them concurrently. Each file is read once via read_toml_with_hash() which parses TOML and computes BLAKE3 in a single pass over the raw bytes, eliminating the double-read that would occur if parsing and hashing were separate. On a cold cache with 260 files this reduces wall time from ~300ms (sequential) to ~50ms (parallel). The graph index is then reconciled: BelongsTo edges are always re-derived from decision files (source of truth), dangling edges are filtered, and nodes/edges are sorted for deterministic output."
+changed_at = "2026-11-23T22:27:15.249050689Z"

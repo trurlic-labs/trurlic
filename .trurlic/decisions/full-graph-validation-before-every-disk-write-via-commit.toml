@@ -24,7 +24,7 @@ symbol = "InMemoryGraph::introduced_errors"
 
 [[decision.code_refs]]
 file = "src/store/write.rs"
-symbol = "Store::remove_decisions"
+symbol = "Writer::remove_decisions"
 
 [[decision.history]]
 choice = "Full graph validation before every disk write via commit_with_graph"

@@ -119,7 +119,7 @@ fn apply_migration(root: &Path, lock: &StoreLock, store: &Store) -> Result<usize
     // (project.toml included). A plain round-trip of the old graph.toml would
     // leave stale hashes for any file whose content changed (new default fields,
     // the version bump).
-    let state = store.load_state()?;
+    let state = store.load_under(lock)?;
     store.write_atomic(lock, &store.graph_path(), &state.graph_index)?;
 
     Ok(stripped)

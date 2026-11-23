@@ -1,6 +1,7 @@
 //! Benches over the seeded corpus at each of `Corpus::SIZES`: loading the
 //! store from disk, building and validating its graph, and, through the MCP
-//! server in process, one write end to end and every read tool.
+//! server in process, one write end to end and every read tool. The server
+//! loads the graph on every call, so each tool bench includes a load.
 //!
 //! Read tools come from `tools/list`, so a new one is benched without editing
 //! this file, and setup panics when no request here fits it.
@@ -107,9 +108,7 @@ fn decisions_of<'a>(
 
 /// A server over the store at `root`, past `initialize`.
 fn server_at(root: PathBuf) -> Server {
-    let store = Store::at(root);
-    let state = store.load_state().unwrap();
-    let mut server = Server::new(store, state);
+    let mut server = Server::new(Store::at(root));
     call(
         &mut server,
         &request(
@@ -226,7 +225,7 @@ fn bench_graph(c: &mut Criterion) {
     group.finish();
 }
 
-/// `record_decision` from request to response: the reload under the lock,
+/// `record_decision` from request to response: the load under the lock,
 /// validation, and the journaled commit. Each iteration writes into its own
 /// copy of the corpus, so every write lands on a graph of the same size.
 /// A write takes tens of milliseconds, so the group samples flat: linear
@@ -247,7 +246,7 @@ fn bench_record_decision(c: &mut Criterion) {
                 "choice": "Bench writes land through the journal like every other write",
                 "reason": "A write bench that skipped the journal or the reload would time a path no user takes, so it goes through tools/call.",
                 "attribution": "agent",
-                "alternatives": ["Time Store::record_decision alone: misses argument parsing and the response"],
+                "alternatives": ["Time Writer::record_decision alone: misses argument parsing and the response"],
                 "depends_on": [decision],
                 "tags": ["performance"],
                 "code_refs": [{ "file": files[0] }],

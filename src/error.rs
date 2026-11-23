@@ -89,13 +89,7 @@ pub enum Error {
     ConnectionNotFound { from: String, to: String },
 
     #[error(
-        "the graph was loaded at generation {loaded}, but another commit has \
-         raised the store to {on_disk}; reload it under the lock before writing"
-    )]
-    StaleState { loaded: u64, on_disk: u64 },
-
-    #[error(
-        "the commit is recorded in {} but not applied ({source}); the next write applies it",
+        "the commit is recorded in {} but not applied ({source}); the next read or write applies it",
         journal.display()
     )]
     CommitPending {

@@ -6,25 +6,20 @@
 
 use crate::{Error, Result};
 
-use super::state::ProjectState;
-use super::{Store, StoreLock};
+use super::Writer;
 
-impl Store {
+impl Writer<'_> {
     /// Delete a pattern's node file and every edge it owns in one commit.
     /// Fails with [`Error::PatternNotFound`] when no such pattern exists.
-    pub fn remove_pattern(
-        &self,
-        lock: &StoreLock,
-        state: &mut ProjectState,
-        name: &str,
-    ) -> Result<()> {
+    pub fn remove_pattern(&mut self, name: &str) -> Result<()> {
+        let Self { store, lock, state } = self;
         let Some(snapshot) = state.patterns.remove(name) else {
             return Err(Error::PatternNotFound(name.into()));
         };
         let removed = state.remove_graph_node(name);
-        let removes = vec![self.pattern_path(name)];
+        let removes = vec![store.pattern_path(name)];
 
-        if let Err(e) = self.commit_with_graph(lock, vec![], &removes, state) {
+        if let Err(e) = store.commit_with_graph(lock, vec![], &removes, state) {
             state.patterns.insert(name.into(), snapshot);
             state.restore_graph_node(removed);
             return Err(e);
@@ -38,10 +33,10 @@ mod tests {
     use super::*;
     use crate::store::schema::{Attribution, EdgeEntry, EdgeKind};
     use crate::store::testing::setup_store_with_components;
-    use crate::store::{RecordDecisionParams, RecordPatternParams};
+    use crate::store::{RecordDecisionParams, RecordPatternParams, Store};
     use tempfile::TempDir;
 
-    fn record(store: &Store, lock: &StoreLock, state: &mut ProjectState, choice: &str) -> String {
+    fn record(writer: &mut Writer<'_>, choice: &str) -> String {
         let params = RecordDecisionParams {
             component: "auth",
             choice,
@@ -53,16 +48,16 @@ mod tests {
             attribution: Attribution::User,
             code_refs: &[],
         };
-        store.record_decision(lock, state, params).unwrap()
+        writer.record_decision(params).unwrap()
     }
 
     /// A store with two `auth` decisions grouped by the pattern `token-hygiene`.
-    fn store_with_pattern(dir: &std::path::Path) -> (Store, ProjectState, [String; 2]) {
-        let (store, mut state) = setup_store_with_components(dir, &[("auth", "Auth")]);
-        let lock = store.lock().unwrap();
+    fn store_with_pattern(dir: &std::path::Path) -> (Store, [String; 2]) {
+        let (store, _) = setup_store_with_components(dir, &[("auth", "Auth")]);
+        let mut writer = store.begin_write().unwrap();
         let members = [
-            record(&store, &lock, &mut state, "Use JWT"),
-            record(&store, &lock, &mut state, "Rotate tokens"),
+            record(&mut writer, "Use JWT"),
+            record(&mut writer, "Rotate tokens"),
         ];
         let params = RecordPatternParams {
             name: "token-hygiene",
@@ -71,21 +66,21 @@ mod tests {
             components: &[],
             tags: &[],
         };
-        store.record_pattern(&lock, &mut state, params).unwrap();
-        drop(lock);
-        (store, state, members)
+        writer.record_pattern(params).unwrap();
+        drop(writer);
+        (store, members)
     }
 
     #[test]
     fn remove_pattern_deletes_node_and_edges_but_keeps_members() {
         let tmp = TempDir::new().unwrap();
-        let (store, mut state, members) = store_with_pattern(tmp.path());
-        let lock = store.lock().unwrap();
+        let (store, members) = store_with_pattern(tmp.path());
 
         store
-            .remove_pattern(&lock, &mut state, "token-hygiene")
+            .begin_write()
+            .unwrap()
+            .remove_pattern("token-hygiene")
             .unwrap();
-        drop(lock);
 
         let reloaded = store.load_state().unwrap();
         assert!(!reloaded.patterns.contains_key("token-hygiene"));
@@ -103,44 +98,41 @@ mod tests {
     #[test]
     fn remove_pattern_rejects_unknown_name_and_leaves_state() {
         let tmp = TempDir::new().unwrap();
-        let (store, mut state, _) = store_with_pattern(tmp.path());
-        let lock = store.lock().unwrap();
+        let (store, _) = store_with_pattern(tmp.path());
+        let mut writer = store.begin_write().unwrap();
 
-        let err = store
-            .remove_pattern(&lock, &mut state, "no-such-pattern")
-            .unwrap_err();
+        let err = writer.remove_pattern("no-such-pattern").unwrap_err();
 
         assert!(matches!(err, Error::PatternNotFound(ref n) if n == "no-such-pattern"));
-        assert!(state.patterns.contains_key("token-hygiene"));
+        assert!(writer.state().patterns.contains_key("token-hygiene"));
     }
 
     #[test]
     fn remove_pattern_restores_state_when_the_commit_is_refused() {
         let tmp = TempDir::new().unwrap();
-        let (store, mut state, members) = store_with_pattern(tmp.path());
+        let (store, members) = store_with_pattern(tmp.path());
+        let mut writer = store.begin_write().unwrap();
         // A dangling edge makes the whole graph invalid, so the commit is refused.
-        state.graph_index.edges.push(EdgeEntry {
+        writer.state.graph_index.edges.push(EdgeEntry {
             from: members[0].clone(),
             to: "ghost".into(),
             kind: EdgeKind::DependsOn,
         });
-        let edges_before = state.graph_index.edges.len();
-        let lock = store.lock().unwrap();
+        let edges_before = writer.state().graph_index.edges.len();
 
-        let err = store
-            .remove_pattern(&lock, &mut state, "token-hygiene")
-            .unwrap_err();
+        let err = writer.remove_pattern("token-hygiene").unwrap_err();
 
         assert!(matches!(err, Error::GraphIntegrity(_)), "{err}");
-        assert!(state.patterns.contains_key("token-hygiene"));
+        assert!(writer.state().patterns.contains_key("token-hygiene"));
         assert!(
-            state
+            writer
+                .state()
                 .graph_index
                 .nodes
                 .iter()
                 .any(|n| n.name == "token-hygiene")
         );
-        assert_eq!(state.graph_index.edges.len(), edges_before);
+        assert_eq!(writer.state().graph_index.edges.len(), edges_before);
         assert!(store.pattern_path("token-hygiene").exists());
     }
 }

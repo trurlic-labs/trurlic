@@ -84,7 +84,7 @@ The MCP server assembles specs from stored decisions.
 
 - The `brief` field uses authoritative language (MUST / DO NOT) — constraints, not suggestions.
 - Write tools validate input sizes, check reserved names, and run full graph validation before committing.
-- The server uses `Arc<RwLock<ProjectState>>` shared with a file watcher thread. Tool calls hold the write lock. Keep tool execution fast (<50ms for writes).
+- The server keeps no graph between calls: a read tool runs on `Store::load_state`, a write tool on the `Writer` of `Store::begin_write`, so every call pays one load. Keep tool execution fast, and bench a change to the load path with `make bench`.
 - Test with a real MCP client to verify response format.
 
 ## Commit conventions

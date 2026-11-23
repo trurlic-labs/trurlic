@@ -79,25 +79,23 @@ impl Store {
         })
     }
 
-    /// Commit a batch of writes and removes through the journal, and
-    /// return the store's generation after it.
+    /// Commit a batch of writes and removes through the journal.
     ///
-    /// The writes are staged and flushed, the generation raised, and the
-    /// journal put in place, which commits them; then each staged file is
-    /// renamed onto its target and the removed files go. If `graph_update`
-    /// is `Some`, it is sorted in place and `graph.toml` is the last rename,
-    /// so a reader without the lock sees the old index until every node
-    /// file is in place. After the journal, a failure is
-    /// [`Error::CommitPending`]: the commit lands at the next write.
+    /// The writes are staged and flushed, and the journal put in place,
+    /// which commits them; then each staged file is renamed onto its target
+    /// and the removed files go. If `graph_update` is `Some`, it is sorted
+    /// in place and `graph.toml` is the last rename. After the journal, a
+    /// failure is [`Error::CommitPending`]: the commit lands at the next
+    /// read or write.
     pub(crate) fn commit_batch(
         &self,
         lock: &StoreLock,
         writes: Vec<PendingWrite>,
         removes: &[PathBuf],
         graph_update: Option<&mut GraphIndex>,
-    ) -> Result<u64> {
+    ) -> Result<()> {
         if writes.is_empty() && removes.is_empty() && graph_update.is_none() {
-            return self.read_generation();
+            return Ok(());
         }
 
         let mut all_writes = writes;
@@ -110,34 +108,24 @@ impl Store {
         }
 
         let journal = self.stage_commit(&all_writes, removes)?;
-        // Raised before the journal, so a failure to record it leaves the
-        // graph untouched. A crash after it leaves the counter ahead of the
-        // graph, which still orders every later load correctly.
-        let generation = self
-            .raise_generation(lock)
-            .inspect_err(|_| self.discard(&journal))?;
         failpoint::hit(Site::Staged);
         self.write_journal(lock, &journal)?;
         failpoint::hit(Site::Journaled);
-        self.apply_journal(lock, &journal)?;
-        Ok(generation)
+        self.apply_journal(lock, &journal)
     }
 
     /// Validate the full graph derived from `state`, then commit node files
     /// and a normalized `graph.toml` in one journaled commit.
     ///
-    /// This is the write path for every graph mutation. It builds an
-    /// [`InMemoryGraph`](super::graph::InMemoryGraph) from `state` and
-    /// refuses it when it has an error that `state`'s cached graph, the one
-    /// last loaded or committed, does not have. A store that is already
-    /// invalid stays writable, and no write adds to what is wrong with it.
-    /// The new graph's index is exported sorted and committed with the node
-    /// file writes.
+    /// This is the write path for every graph mutation, and `state` is the
+    /// graph of the [`Writer`](super::Writer) that holds `lock`, mutated by
+    /// one of its methods. The new graph is refused when it has an error
+    /// that `state`'s cached graph, the one last loaded or committed, does
+    /// not have. A store that is already invalid stays writable, and no
+    /// write adds to what is wrong with it.
     ///
-    /// On success, `state` matches disk: its index is the sorted one just
-    /// written, its graph the validated one, its generation the new one.
-    /// A `state` loaded before another commit is refused with
-    /// [`Error::StaleState`].
+    /// On success `state` matches disk: its index is the sorted one just
+    /// written, its graph the validated one.
     pub(super) fn commit_with_graph(
         &self,
         lock: &StoreLock,
@@ -145,8 +133,6 @@ impl Store {
         removes: &[PathBuf],
         state: &mut ProjectState,
     ) -> Result<()> {
-        self.ensure_current(lock, state)?;
-
         // Pre-check: duplicate node names in the index would cause silent
         // data loss during InMemoryGraph construction: the later entry replaces
         // the earlier one.
@@ -170,7 +156,7 @@ impl Store {
             return Err(Error::GraphIntegrity(introduced));
         }
         let mut index = graph.to_index(state.graph_index.rebuilt);
-        state.generation = self.commit_batch(lock, writes, removes, Some(&mut index))?;
+        self.commit_batch(lock, writes, removes, Some(&mut index))?;
         state.graph_index = index;
         state.graph = graph;
 
@@ -183,8 +169,8 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::store::STATE_DIR;
     use crate::store::testing::*;
+    use crate::store::{STATE_DIR, Writer};
     use tempfile::TempDir;
 
     // atomic write guarantees
@@ -411,7 +397,7 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
+        let mut writer = store.begin_write().unwrap();
 
         let comp = sample_component("auth");
         let write = store
@@ -419,7 +405,7 @@ mod tests {
             .unwrap();
         let hash = write.content_hash();
 
-        let mut state = store.load_state().unwrap();
+        let Writer { lock, state, .. } = &mut writer;
         state.graph_index.nodes.push(NodeEntry {
             name: "auth".into(),
             kind: NodeKind::Component,
@@ -429,7 +415,7 @@ mod tests {
         state.components.insert("auth".into(), Arc::new(comp));
 
         store
-            .commit_with_graph(&lock, vec![write], &[], &mut state)
+            .commit_with_graph(lock, vec![write], &[], state)
             .unwrap();
 
         assert!(store.component_path("auth").exists());
@@ -445,9 +431,9 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
+        let mut writer = store.begin_write().unwrap();
 
-        let mut state = store.load_state().unwrap();
+        let Writer { lock, state, .. } = &mut writer;
         state.graph_index.nodes.push(NodeEntry {
             name: "orphan".into(),
             kind: NodeKind::Decision,
@@ -465,7 +451,7 @@ mod tests {
         );
 
         let err = store
-            .commit_with_graph(&lock, vec![], &[], &mut state)
+            .commit_with_graph(lock, vec![], &[], state)
             .unwrap_err();
         let Error::GraphIntegrity(issues) = err else {
             panic!("expected GraphIntegrity, got {err}");
@@ -493,37 +479,34 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
         fs::remove_file(store.graph_path()).unwrap();
-        let lock = store.lock().unwrap();
-        let mut state = store.load_state().unwrap();
-        let stamp = state.graph_index.rebuilt;
+        let mut writer = store.begin_write().unwrap();
+        let stamp = writer.state().graph_index.rebuilt;
         assert!(stamp.is_some(), "a repaired index is stamped once");
 
-        store.add_component(&lock, &mut state, "auth", "").unwrap();
-        store
-            .add_component(&lock, &mut state, "billing", "")
-            .unwrap();
+        writer.add_component("auth", "").unwrap();
+        writer.add_component("billing", "").unwrap();
 
         let on_disk: GraphIndex =
             toml::from_str(&fs::read_to_string(store.graph_path()).unwrap()).unwrap();
         assert_eq!(on_disk.rebuilt, stamp);
     }
 
-    /// A served state must equal a fresh load of the store, so after a commit
-    /// `state.graph_index` is the sorted index on disk, not the append order.
+    /// A writer's state must equal a fresh load of the store, so a later
+    /// write of the same writer validates against the store as it is: after
+    /// a commit its index is the sorted one on disk, not the append order.
     #[test]
     fn a_commit_leaves_the_in_memory_index_equal_to_disk() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-        let mut state = store.load_state().unwrap();
+        let mut writer = store.begin_write().unwrap();
 
-        store.add_component(&lock, &mut state, "zeta", "").unwrap();
-        store.add_component(&lock, &mut state, "alpha", "").unwrap();
-        store
-            .add_connection(&lock, &mut state, "zeta", "alpha")
-            .unwrap();
+        writer.add_component("zeta", "").unwrap();
+        writer.add_component("alpha", "").unwrap();
+        writer.add_connection("zeta", "alpha").unwrap();
 
-        assert_eq!(state.graph_index, store.load_state().unwrap().graph_index);
+        let in_memory = writer.state().graph_index.clone();
+        drop(writer);
+        assert_eq!(in_memory, store.load_state().unwrap().graph_index);
     }
 
     #[test]
@@ -532,7 +515,7 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
+        let mut writer = store.begin_write().unwrap();
 
         let c1 = sample_component("z-comp");
         let w1 = store
@@ -543,7 +526,7 @@ mod tests {
             .prepare_write(&store.component_path("a-comp"), &c2)
             .unwrap();
 
-        let mut state = store.load_state().unwrap();
+        let Writer { lock, state, .. } = &mut writer;
         // Push in reverse-alphabetical order.
         state.graph_index.nodes.push(NodeEntry {
             name: "z-comp".into(),
@@ -566,7 +549,7 @@ mod tests {
         state.components.insert("a-comp".into(), Arc::new(c2));
 
         store
-            .commit_with_graph(&lock, vec![w1, w2], &[], &mut state)
+            .commit_with_graph(lock, vec![w1, w2], &[], state)
             .unwrap();
 
         let index: GraphIndex =

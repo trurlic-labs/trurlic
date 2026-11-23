@@ -1,8 +1,9 @@
 //! Three `trurlic serve` processes take turns on one store, 1000 writes in
-//! all. Writes follow each other faster than a watcher reloads, so most land
-//! on a server that has not seen the other servers' last writes: the lost
-//! update. Every write must validate against the store on disk and keep what
-//! the others committed.
+//! all, so every write lands on a server whose previous call predates the
+//! other servers' last writes. A server that kept the graph between calls
+//! would validate against that older graph and commit over the others: the
+//! lost update. Every write must validate against the store on disk and
+//! keep what the others committed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

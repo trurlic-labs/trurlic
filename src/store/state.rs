@@ -34,12 +34,10 @@ pub struct ProjectState {
     /// with no `code_refs`, never reports an orphaned ref).
     pub(crate) project_root: PathBuf,
     /// Cached in-memory graph. Kept in sync by
-    /// [`Store::commit_with_graph`], which assigns the validated graph
-    /// on successful commit. Writable only from within `store/`.
+    /// [`Store::commit_with_graph`](super::Store), which
+    /// assigns the validated graph on successful commit. Writable only from
+    /// within `store/`.
     pub(super) graph: InMemoryGraph,
-    /// The commit counter this state reflects: read with the node files by
-    /// [`Store::load_state`], raised by every commit made through it.
-    pub(super) generation: u64,
 }
 
 impl ProjectState {
@@ -65,27 +63,7 @@ impl ProjectState {
             graph_index,
             project_root: PathBuf::new(),
             graph,
-            generation: 0,
         }
-    }
-
-    /// The commit counter this state reflects.
-    #[must_use]
-    pub(super) const fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Whether a watcher must drop this state, loaded while the server served
-    /// generation `served_at_load`, instead of swapping it in for `current`.
-    ///
-    /// It must when `current` changed during the load and is newer: the change
-    /// was a write by this server, which reloaded under the exclusive lock
-    /// after the load, so the swap would undo that write in memory. A load
-    /// that is older although `current` did not change is the store as it is
-    /// now: the counter went back because `.state/` was deleted.
-    #[must_use]
-    pub(super) fn is_overtaken(&self, current: &Self, served_at_load: u64) -> bool {
-        current.generation != served_at_load && self.generation < current.generation
     }
 
     /// Read-only access to the cached in-memory graph.
@@ -114,8 +92,8 @@ impl ProjectState {
 
     /// Refresh the cached graph to match the current field values.
     ///
-    /// Production write paths use [`Store::commit_with_graph`] which
-    /// assigns the validated graph directly. This method remains for
+    /// Production write paths commit through the writer, which assigns the
+    /// validated graph directly. This method remains for
     /// test helpers that mutate `graph_index` without going through
     /// the commit pipeline.
     #[cfg(test)]
@@ -386,32 +364,6 @@ mod tests {
 
     use tempfile::TempDir;
 
-    // ── is_overtaken ─────────────────────────────────────────────────────
-
-    fn at_generation(generation: u64) -> ProjectState {
-        let mut state = empty_project_state();
-        state.generation = generation;
-        state
-    }
-
-    /// The server served 4, loaded 4, then committed 5 before the swap.
-    #[test]
-    fn a_load_overtaken_by_the_servers_own_write_is_dropped() {
-        assert!(at_generation(4).is_overtaken(&at_generation(5), 4));
-    }
-
-    /// The server served 4 and wrote 5 before the load began, which read it.
-    #[test]
-    fn a_load_that_read_the_servers_write_is_kept() {
-        assert!(!at_generation(5).is_overtaken(&at_generation(5), 4));
-    }
-
-    /// `.state/` was deleted: the counter reads 0, nothing was written here.
-    #[test]
-    fn a_load_after_the_counter_was_reset_is_kept() {
-        assert!(!at_generation(0).is_overtaken(&at_generation(7), 7));
-    }
-
     // ── is_valid_kebab_case ──────────────────────────────────────────────
 
     #[test]
@@ -644,6 +596,7 @@ mod tests {
             .write_atomic(&lock, &store.decision_path("token-format"), &dec)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         assert!(state.validate().is_empty());
     }
@@ -659,6 +612,7 @@ mod tests {
             .write_atomic(&lock, &store.decision_path("stale-decision"), &dec)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         let issues = state.validate();
         assert!(issues.iter().any(
@@ -677,6 +631,7 @@ mod tests {
             .write_atomic(&lock, &store.decision_path("error-strategy"), &dec)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         assert!(state.validate().is_empty());
     }
@@ -692,6 +647,7 @@ mod tests {
             .write_atomic(&lock, &store.component_path("actual-file"), &comp)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         let issues = state.validate();
         assert!(
@@ -713,6 +669,7 @@ mod tests {
             .write_atomic(&lock, &store.component_path("Bad_Name"), &comp)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         let issues = state.validate();
         assert!(issues.iter().any(|i| i.message.contains("kebab-case")));
@@ -730,6 +687,7 @@ mod tests {
             .write_atomic(&lock, &store.decision_path("bad-decision"), &dec)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         let issues = state.validate();
         assert!(issues.iter().any(|i| i.message.contains("empty choice")));
@@ -747,6 +705,7 @@ mod tests {
             .write_atomic(&lock, &store.decision_path("bad-decision"), &dec)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         let issues = state.validate();
         assert!(issues.iter().any(|i| i.message.contains("empty reason")));
@@ -764,6 +723,7 @@ mod tests {
             .write_atomic(&lock, &store.decision_path("bad-ref"), &dec)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         let issues = state.validate();
         assert!(
@@ -789,6 +749,7 @@ mod tests {
             .write_atomic(&lock, &store.pattern_path("empty-pat"), &pat)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         let issues = state.validate();
         assert!(
@@ -821,6 +782,7 @@ mod tests {
             .write_atomic(&lock, &store.decision_path("bad-dec"), &dec)
             .unwrap();
 
+        drop(lock);
         let state = store.load_state().unwrap();
         let issues = state.validate();
         assert!(

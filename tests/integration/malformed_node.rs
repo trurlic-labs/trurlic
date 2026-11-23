@@ -5,6 +5,8 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use serde_json::json;
+
 use crate::harness::{McpClient, Project};
 
 /// A project with one decision, and the path of its file.
@@ -48,26 +50,16 @@ fn check_names_the_malformed_file() {
     assert_names(&String::from_utf8_lossy(&output.stderr), &path);
 }
 
+/// The file breaks while the server runs: the next call loads it and
+/// names it.
 #[test]
-fn serve_names_the_malformed_file() {
+fn a_tool_call_names_the_malformed_file() {
     let (project, path) = project_with_decision();
-    break_toml(&path);
-
-    let output = project.command().arg("serve").output().unwrap();
-
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty(), "stdout carries only JSON-RPC");
-    assert_names(&String::from_utf8_lossy(&output.stderr), &path);
-}
-
-#[test]
-fn the_watcher_log_names_the_malformed_file() {
-    let (project, path) = project_with_decision();
-    let (client, _) = McpClient::connect(&project);
-    client.wait_for_diagnostic("file watcher active");
+    let (mut client, _) = McpClient::connect(&project);
+    client.call_tool("get_architecture", json!({}));
 
     break_toml(&path);
 
-    let line = client.wait_for_diagnostic("watcher reload");
-    assert_names(&line, &path);
+    let message = client.call_tool_error("get_architecture", json!({}));
+    assert_names(&message, &path);
 }
