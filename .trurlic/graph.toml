@@ -54,7 +54,7 @@ tags = [
     "testing",
     "api",
 ]
-hash = "ca6c380a4f4425a7cc861cd4bf18543b20d6e5e65adf26fd71490393d10a4a54"
+hash = "655f52d58fde71947e5ba81f1371207a1676c19d9ad2fb576556e196f636d525"
 
 [[nodes]]
 name = "blake3-content-hashing-for-tamper-detection-and-change"
@@ -357,7 +357,7 @@ tags = [
     "performance",
     "persistence",
 ]
-hash = "cd82cf6fb2b3c83d6725d135749de52fcb6962d125692f6812134ba74464b183"
+hash = "a750abe92630087f3e8bf9928b72462a2adac080787e3003d5069fbc5c99188e"
 
 [[nodes]]
 name = "no-map-the-map-server-its-web-ui-and-its-dependencies-are"

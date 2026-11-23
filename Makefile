@@ -34,7 +34,10 @@ test:
 # ── Bench ─────────────────────────────────────────────────────────────────────
 
 # `bench` builds the seeded corpus and the in-process server the benches
-# drive; without it, `cargo bench` has no bench target to run.
+# drive; without it, `cargo bench` has no bench target to run. Benches run
+# locally only. Criterion compares each run with the previous one under
+# target/criterion. Smoke run, each bench once:
+# `cargo bench --features bench -- --test`.
 bench:
 	cargo bench --locked --features bench
 

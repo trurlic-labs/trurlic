@@ -105,7 +105,7 @@ Property: determinism (every read tool answers with the same bytes in two proces
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 
-Benchmarks (`benches/corpus.rs`, criterion + CodSpeed, `make bench`): over the seeded corpus `store::corpus` at 50, 600 and 2000 decisions, `load_state`, graph build and validation, and, through `trurlic::bench::Server` in process, `record_decision` end to end and every read tool. The `bench` feature builds the corpus and that server; release builds carry neither.
+Benchmarks (`benches/corpus.rs`, criterion, run locally with `make bench`; no CI job): over the seeded corpus `store::corpus` at 50, 600 and 2000 decisions, `load_state`, graph build and validation, and, through `trurlic::bench::Server` in process, `record_decision` end to end and every read tool. The `bench` feature builds the corpus and that server; release builds carry neither.
 
 ### Skills
 

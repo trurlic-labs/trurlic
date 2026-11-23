@@ -12,13 +12,18 @@ description = "Structured architectural decisions that constrain AI code generat
 keywords = ["architecture", "decisions", "mcp", "ai", "code-generation"]
 categories = ["command-line-utilities", "development-tools"]
 
+# The lib and bin carry no benches: `bench = false` keeps `cargo bench` from
+# running their libtest harnesses, which refuse criterion's arguments
+# (`--save-baseline`, `--baseline`) passed after `--`.
 [[bin]]
 name = "trurlic"
 path = "src/main.rs"
+bench = false
 
 [lib]
 name = "trurlic"
 path = "src/lib.rs"
+bench = false
 
 [[bench]]
 name = "corpus"
@@ -60,7 +65,7 @@ rayon = "1"
 notify = "6"
 
 [dev-dependencies]
-criterion = { version = "5", package = "codspeed-criterion-compat", default-features = false }
+criterion = { version = "0.8", default-features = false }
 tempfile = "3"
 
 # Invariants a tool can check. Tests opt out of the panicking lints through

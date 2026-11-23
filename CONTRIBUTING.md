@@ -49,8 +49,10 @@ make test       # unit + integration tests
 make check      # cargo fmt --check + clippy -D warnings
 make audit      # cargo deny check (advisories, licenses, bans, sources)
 make ci         # all of the above — run before pushing
-make bench      # criterion benches over the seeded corpus (not part of ci)
+make bench      # criterion benches over the seeded corpus (local only, not part of ci)
 ```
+
+**Benches:** criterion compares each run with the previous one on the same machine, so run `make bench` before and after a change. `cargo bench --features bench -- --test` runs every bench once as a smoke check; `cargo bench --features bench -- load_state` runs one group.
 
 **Single test:**
 

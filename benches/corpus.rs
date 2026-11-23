@@ -23,7 +23,8 @@ use std::time::Duration;
 
 use criterion::measurement::WallTime;
 use criterion::{
-    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main,
+    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, SamplingMode, criterion_group,
+    criterion_main,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -201,6 +202,7 @@ fn bench_load_state(c: &mut Criterion) {
             b.iter(|| fixture.store.load_state().unwrap());
         });
     }
+    group.finish();
 }
 
 fn bench_graph(c: &mut Criterion) {
@@ -221,14 +223,17 @@ fn bench_graph(c: &mut Criterion) {
             b.iter(|| black_box(state.graph()).validate());
         });
     }
+    group.finish();
 }
 
 /// `record_decision` from request to response: the reload under the lock,
 /// validation, and the journaled commit. Each iteration writes into its own
 /// copy of the corpus, so every write lands on a graph of the same size.
+/// A write takes tens of milliseconds, so the group samples flat: linear
+/// sampling needs 55 iterations for 10 samples, more than 3 s holds.
 fn bench_record_decision(c: &mut Criterion) {
     let mut group = c.benchmark_group("record_decision");
-    group.sample_size(10);
+    group.sample_size(10).sampling_mode(SamplingMode::Flat);
     for fixture in CORPORA.iter() {
         let Targets {
             component,
@@ -267,6 +272,7 @@ fn bench_record_decision(c: &mut Criterion) {
             );
         });
     }
+    group.finish();
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -292,6 +298,7 @@ fn bench_read_tools(c: &mut Criterion) {
             bench_request(&mut group, id, &mut server, &line);
         }
     }
+    group.finish();
 }
 
 criterion_group! {
