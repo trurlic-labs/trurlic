@@ -342,8 +342,8 @@ pub(crate) fn add_component(
     let mut warnings: Vec<String> = Vec::new();
     if description.is_empty() {
         warnings.push(
-            "component has no description — add one so get_context and \
-             the map can show what this component is responsible for"
+            "component has no description; add one so get_context can show \
+             what this component is responsible for"
                 .into(),
         );
     }

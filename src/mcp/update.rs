@@ -9,9 +9,9 @@ use super::write::{opt_str_array, opt_text, parse_code_refs, require_str};
 
 /// Cascade analysis → JSON arrays for MCP tool responses.
 ///
-/// Private to this module: the map API serializes cascade results in a
-/// different shape (message-only strings), so a shared helper in
-/// `store::cascade` would go unused outside MCP.
+/// Private to this module: the CLI reports cascade results as messages
+/// only (`blocker_summary`), so a shared helper in `store::cascade` would
+/// go unused outside MCP.
 fn cascade_to_json(cascade: &CascadeResult) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
     let blocked_by = cascade
         .blockers

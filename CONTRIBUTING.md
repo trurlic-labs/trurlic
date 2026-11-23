@@ -23,7 +23,7 @@ cargo install cargo-deny
 ```bash
 git clone https://github.com/trurlic-labs/trurlic.git
 cd trurlic
-make setup    # installs frontend deps + git hooks
+make setup    # installs the git hooks
 cargo build
 cargo test
 ```
@@ -104,7 +104,7 @@ The MCP server assembles specs from stored decisions.
 
 Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `security`.
 
-Scopes: `store`, `workflow`, `mcp`, `map`, `commands`, `cli`.
+Scopes: `store`, `workflow`, `mcp`, `commands`, `cli`.
 
 ```
 feat(mcp): add related decisions from connected components to get_context

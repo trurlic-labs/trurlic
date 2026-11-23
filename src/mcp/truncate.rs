@@ -421,10 +421,8 @@ impl io::Write for Bounded {
 
 #[cfg(test)]
 mod tests {
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
-
     use super::*;
+    use crate::store::corpus::SplitMix64;
 
     fn fit(payload: &Value, max_bytes: usize) -> Value {
         let text = fit_payload(payload, max_bytes);
@@ -559,21 +557,21 @@ mod tests {
         assert_eq!(fit_message("short", 61), "short");
     }
 
-    fn random_text(rng: &mut StdRng) -> String {
+    fn random_text(rng: &mut SplitMix64) -> String {
         const ALPHABET: [char; 8] = ['a', 'z', ' ', '"', '\\', '\n', '\u{1}', '\u{1F600}'];
-        let len = rng.gen_range(0..300);
+        let len = rng.below(300);
         (0..len)
-            .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())])
+            .map(|_| ALPHABET[rng.below(ALPHABET.len())])
             .collect()
     }
 
-    fn random_value(rng: &mut StdRng, depth: u32) -> Value {
-        match rng.gen_range(0..if depth == 0 { 3 } else { 5 }) {
-            0 => json!(rng.gen_range(0..100_000)),
+    fn random_value(rng: &mut SplitMix64, depth: u32) -> Value {
+        match rng.below(if depth == 0 { 3 } else { 5 }) {
+            0 => json!(rng.below(100_000)),
             1 => json!(random_text(rng)),
             2 => Value::Null,
             3 => Value::Array(
-                (0..rng.gen_range(0..12))
+                (0..rng.below(12))
                     .map(|_| random_value(rng, depth - 1))
                     .collect(),
             ),
@@ -581,9 +579,9 @@ mod tests {
         }
     }
 
-    fn random_object(rng: &mut StdRng, depth: u32) -> Value {
+    fn random_object(rng: &mut SplitMix64, depth: u32) -> Value {
         Value::Object(
-            (0..rng.gen_range(0..6))
+            (0..rng.below(6))
                 .map(|i| (format!("k{i}/~"), random_value(rng, depth)))
                 .collect(),
         )
@@ -591,12 +589,12 @@ mod tests {
 
     #[test]
     fn random_payloads_fit_every_budget_and_keep_prefixes() {
-        let mut rng = StdRng::seed_from_u64(0x7472_75726c);
+        let mut rng = SplitMix64::new(0x7472_75726c);
         let mut cuts = 0;
         for _ in 0..1_000 {
             let payload = random_object(&mut rng, 3);
             let size = payload.to_string().len();
-            let max_bytes = rng.gen_range(64..size.max(65) + 64);
+            let max_bytes = rng.within(&(64..=size.max(65) + 63));
             let kept = fit(&payload, max_bytes);
             if kept == json!({ NOTICE_KEY: [{ "at": "", "omitted_bytes": size }] }) {
                 continue;

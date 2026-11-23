@@ -2,15 +2,6 @@ version = 1
 rebuilt = "2026-10-03T14:48:51.624975071Z"
 
 [[nodes]]
-name = "256-bit-csprng-token-with-constant-time-comparison-for"
-kind = "decision"
-tags = [
-    "security",
-    "api-design",
-]
-hash = "9941137bd3001d337e9499278c8300856323bdf3bdc37c30d2b58b024b3e9329"
-
-[[nodes]]
 name = "a-commit-counter-in-state-generation-orders-loads-a-commit"
 kind = "decision"
 tags = [
@@ -26,7 +17,7 @@ tags = [
     "validation",
     "security",
 ]
-hash = "aead775d1488ae171516cd35b47826cd386ad5df16a2e5563946207240e03bf1"
+hash = "5c1c4397b44a9761f42d1cd2ac1df3beb619e61d3f72042189ff6195b66a5346"
 
 [[nodes]]
 name = "advance-is-a-pure-function-read-only-stateless-idempotent"
@@ -61,22 +52,13 @@ tags = [
 hash = "8e1a03d0af704fb044e4c58b82b6b1de2b60a85078b648e66b334bc9c428b3fc"
 
 [[nodes]]
-name = "axum-as-the-http-websocket-server-framework"
-kind = "decision"
-tags = [
-    "framework",
-    "dependencies",
-]
-hash = "2b4d698b72e5bbc8c09d206e74e5df0c0e60733e38da0db2752cf186cd266d50"
-
-[[nodes]]
 name = "benches-and-property-tests-draw-from-a-seeded-corpus"
 kind = "decision"
 tags = [
     "testing",
     "performance",
 ]
-hash = "2cdcae6490773fc22d6c61581805e2ca609d87195e36d17b3c544f5f41abd38e"
+hash = "0e01201e1666d329a828017e9e5bacc04f99e24437161b8f6331a8fc9196a3f3"
 
 [[nodes]]
 name = "benches-drive-the-mcp-server-in-process-through-server"
@@ -113,16 +95,12 @@ tags = [
     "consistency",
     "data-integrity",
 ]
-hash = "2e2f3005e26538ba4d5575e61ed3945fe123f1bd5996a4f597aae5b642cb99d3"
+hash = "203e9d3b60b19f437ddbc724df7b484b69b886640e0c0fc64df74dd69683cab1"
 
 [[nodes]]
 name = "centralized-limits-at-trust-boundaries"
 kind = "pattern"
-tags = [
-    "integrity",
-    "security",
-]
-hash = "d48bd8ad32ad082965f4d0530e8668d34af07aa59dcebda644d09d88f2f77d2c"
+hash = "a3dc14346d7efa3b3b822cdb9030f2bb4c47d10b255f16dec7ed3b17aeaab94a"
 
 [[nodes]]
 name = "centralized-size-limits-in-limits-rs-shared-across-all"
@@ -131,7 +109,7 @@ tags = [
     "security",
     "consistency",
 ]
-hash = "6665da3f8db01639645e967ad05078803e4ce0e67f8821912a9482f44ddea9e9"
+hash = "7f43ae306ffbf15c9c3e42bcf99ad4e0b52aa676d47de18bde3a8717e59b556b"
 
 [[nodes]]
 name = "checkpoint-based-rollback-for-graph-mutations-with-o-1"
@@ -172,7 +150,7 @@ tags = [
     "architecture",
     "module-boundary",
 ]
-hash = "c6498ec4664fda46275fbed7210a85e179885d52821bf63e9a7b0f77ba1f8ca7"
+hash = "24489671af7ec55e76bb3c3af060c484f7328611f7b8cf61793e077248f2d641"
 
 [[nodes]]
 name = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
@@ -225,7 +203,7 @@ tags = [
     "serialization",
     "api",
 ]
-hash = "0691353b2e1d035d1bffafd7c6887bf6c5eb0c0b3e14ce9a1ff8c82ba2ebb0d3"
+hash = "aa0cc71a37e25796225a25dcfa7f2bf2c2dbb9f38b61cae3e0faff6b992bfa9c"
 
 [[nodes]]
 name = "every-store-access-cleans-stale-temp-files-and-warns-on"
@@ -253,7 +231,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "4f2ec98382e778117fc3a26b3c97182894c8beb589cea3199c55f10df81db004"
+hash = "7e2f87c023763e7a650b5bbf050da9fb9ea89a2df89eb1ef71672f551aeeb791"
 
 [[nodes]]
 name = "exclusive-advisory-file-locking-via-fs2-with-5-second"
@@ -262,25 +240,17 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "e35251f66bc1229f1cc07e8c05085336fba3f2db94ea29aeef7fe8bcecf6655f"
+hash = "524678ef2fee0caa520525ec2429012f14c64210022212dd86da3670c024c11f"
 
 [[nodes]]
 name = "fail-closed-validation"
 kind = "pattern"
-tags = [
-    "integrity",
-    "security",
-]
-hash = "c1ba73078f5c932eb81e977dd3ee98a3d1cbf3cb3df07718e1621613ee600850"
+hash = "f5ebc31481c9cf4efbc89586e0dfd80321d3b96ac8052dabaf736a56928bfd7c"
 
 [[nodes]]
 name = "file-watcher-debounced-live-reload"
 kind = "pattern"
-tags = [
-    "concurrency",
-    "performance",
-]
-hash = "7f445a953d858ff36f74e342dc12a58a329e2f9b9d69050411f6d503616b757e"
+hash = "270b906821fa091c5e58f486e5e364abbb10c9168e5afbfd3bb0481134f9e67a"
 
 [[nodes]]
 name = "file-watcher-with-100ms-debounce-for-non-fatal-live-reload"
@@ -289,16 +259,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "a75fb6c80b4d015abcf517453da621b1c3fdba37db2e0dd44f21750639cbd9a2"
-
-[[nodes]]
-name = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
-kind = "decision"
-tags = [
-    "concurrency",
-    "performance",
-]
-hash = "47b68cb4f983a84e1d384d2b2713a2baa475e451d088daf3e4b7619cc2833159"
+hash = "a8ad820fc2b10162f2f4219e8c83bca46b9f7b7d27745c79e0f1247d45db3d61"
 
 [[nodes]]
 name = "file-watcher-with-debounce-state-dir-filtering-and-post"
@@ -307,7 +268,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "697b81addf2b352f6ce1cb32a991e5ef627eab6ad009d706d02feef8c4034bfd"
+hash = "1db022f1966899002524eb2c9fd47914cfe5d961dfbe30cc4ba570ff4d166b56"
 
 [[nodes]]
 name = "full-graph-validation-before-every-disk-write-via-commit"
@@ -371,7 +332,7 @@ tags = [
     "security",
     "data-integrity",
 ]
-hash = "cc4761c1bd08c8b7a8f312a88890e9df2a56da4404becd233303fdcf89b379f3"
+hash = "66526a1911f54188a31628bda8473163460467fb204bf015e779d55a141f6aae"
 
 [[nodes]]
 name = "install-uses-atomic-writes-with-round-trip-verification-and"
@@ -392,42 +353,13 @@ tags = [
 hash = "b4c8e834ca6cb79a6b979e450c8e3cadb9acb9485cb222ba1a48da2c5133107e"
 
 [[nodes]]
-name = "layout-state-stored-in-trurlic-state-layout-json-with"
-kind = "decision"
-tags = [
-    "data-model",
-    "api-design",
-]
-hash = "30a2780066539e250117111902065930b842aac41f4bef5edd33a3dae228489b"
-
-[[nodes]]
 name = "leftover-journals-and-temp-files-are-cleared-only-under-the"
 kind = "decision"
 tags = [
     "reliability",
     "concurrency",
 ]
-hash = "26eced42966c9532b549f9f6268a5158bec7cbc48689063f273d53ac9474c0c9"
-
-[[nodes]]
-name = "localhost-only-binding-with-restrictive-security-headers"
-kind = "decision"
-tags = ["security"]
-hash = "42c76119657e2e9c62ff0c3468161c2c0a334bc2e2fb701c910e6bef05ae28a7"
-
-[[nodes]]
-name = "map"
-kind = "component"
-hash = "caf42b748e79854398bfec915b3bb96fa156ecd5974e9ed81fa8f58978fbb0e0"
-
-[[nodes]]
-name = "map-detach-pre-binds-port-then-re-execs-to-avoid-toctou"
-kind = "decision"
-tags = [
-    "concurrency",
-    "extensibility",
-]
-hash = "a2f20a526fe283998ad14037d6fe61f25d3d369964c7f2a9ed9f3f074c30cca0"
+hash = "bfcf4bf9b3d35e79cf3fd356e54a7b2a05ae7e4916544e84430d54512009d3a3"
 
 [[nodes]]
 name = "mcp"
@@ -447,7 +379,7 @@ hash = "c705ad9dcd453e7a2b50c6b5fdf1e5a634c85672fef31773292000dbcd4ad056"
 name = "module-visibility-pub-crate-default-only-cli-and-store-are"
 kind = "decision"
 tags = ["coding-standards"]
-hash = "87a387bce29b282b2fbacd39d33fb76b721e2e617666994acfbd82b9ae80018c"
+hash = "86088bfc0458bcb4eabf10e07f6418f2d6da520b7d82f4796b6b9f58d7183aae"
 
 [[nodes]]
 name = "no-load-cache-load-state-parses-every-node-file-on-each"
@@ -457,6 +389,11 @@ tags = [
     "persistence",
 ]
 hash = "cd82cf6fb2b3c83d6725d135749de52fcb6962d125692f6812134ba74464b183"
+
+[[nodes]]
+name = "no-map-the-map-server-its-web-ui-and-its-dependencies-are"
+kind = "decision"
+hash = "f3130bcd081d860ea8197a1b9262b1e1ae051fe572d7e1e94217ccd2980bb953"
 
 [[nodes]]
 name = "no-panic-production-code"
@@ -533,24 +470,6 @@ tags = [
 hash = "8a8a411f1f429a76cd8faaee745f2efa1095b779bf7be4bbdecee4657dbbc2b6"
 
 [[nodes]]
-name = "rest-api-validates-inputs-against-store-limits-and-uses"
-kind = "decision"
-tags = [
-    "data-model",
-    "security",
-]
-hash = "c8ff4eb9b1f6b80b5774759f04d5163e224fa6667dd342f2b3281fee3b5fa1d1"
-
-[[nodes]]
-name = "rust-embed-for-zero-build-step-frontend-embedding"
-kind = "decision"
-tags = [
-    "dependencies",
-    "build",
-]
-hash = "35f2610dcb150e38c4ac72a337b7f48732e0bdaa7ebe60a972f46fc45a8aca84"
-
-[[nodes]]
 name = "seven-task-types-with-distinct-step-sequences-newcomponent"
 kind = "decision"
 tags = ["scope"]
@@ -560,31 +479,13 @@ hash = "542b8c80752461d29fc3a46dfcdcf1a6e3e892dab0dba2ab61ae5fbad0df60f7"
 name = "single-error-enum-with-thiserror-project-wide-result-alias"
 kind = "decision"
 tags = ["error-handling"]
-hash = "1771d2eb92180a0d092eaf2d834ba4d30033a0b4d8b8c44412f9f769eae3da2a"
-
-[[nodes]]
-name = "spawn-blocking-for-synchronous-store-writes-in-async"
-kind = "decision"
-tags = [
-    "concurrency",
-    "performance",
-]
-hash = "6b1f4a4c888a66c467ebc99542a4ab8908e21a9b08dbef2cc5f1f05614792b1e"
+hash = "92fdc52e545fb8ba22ce8d7c43cf3dc41ed674e0b797640d5af3386dafaf8933"
 
 [[nodes]]
 name = "staleness-detection-at-90-day-threshold-triggers-review"
 kind = "decision"
 tags = ["integrity"]
 hash = "832307239e7f8b761670a5cc9ad34ab013335b33839d44c2ba3b587e7ced6ff0"
-
-[[nodes]]
-name = "state-diffing-with-hash-based-change-detection-and"
-kind = "decision"
-tags = [
-    "performance",
-    "api-design",
-]
-hash = "ecffd1756be7a7f7ad2c9d488cba6b2fa23ae1ca3bce41a992c44c827b09a7df"
 
 [[nodes]]
 name = "static-tool-catalogue-via-lazylock-returned-by-reference"
@@ -661,15 +562,6 @@ tags = [
 hash = "b547b2f7a5cd13f0a62203546ff21ffb5673e0934eb1ecae725074f2cf0311af"
 
 [[nodes]]
-name = "unidirectional-server-to-client-websocket-push-with"
-kind = "decision"
-tags = [
-    "api-design",
-    "concurrency",
-]
-hash = "40d512b3d7a8bc54270e917d64eaa3261a45ceca951f06276b35cc9bb8a53c44"
-
-[[nodes]]
 name = "validation-issues-carry-an-issuekind-and-a-subject-and"
 kind = "decision"
 tags = [
@@ -727,11 +619,6 @@ tags = [
 hash = "c381c0e86458d3f8989bd81c331d15f737acb3784daed4597bcf81cacb8f2d7b"
 
 [[edges]]
-from = "256-bit-csprng-token-with-constant-time-comparison-for"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
 from = "a-commit-counter-in-state-generation-orders-loads-a-commit"
 to = "every-write-reloads-the-graph-under-the-exclusive-lock"
 kind = "depends_on"
@@ -782,11 +669,6 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "axum-as-the-http-websocket-server-framework"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
 from = "benches-and-property-tests-draw-from-a-seeded-corpus"
 to = "store"
 kind = "belongs_to"
@@ -823,18 +705,8 @@ kind = "member_of"
 
 [[edges]]
 from = "centralized-limits-at-trust-boundaries"
-to = "map"
-kind = "applies_to"
-
-[[edges]]
-from = "centralized-limits-at-trust-boundaries"
 to = "mcp"
 kind = "applies_to"
-
-[[edges]]
-from = "centralized-limits-at-trust-boundaries"
-to = "rest-api-validates-inputs-against-store-limits-and-uses"
-kind = "member_of"
 
 [[edges]]
 from = "centralized-limits-at-trust-boundaries"
@@ -963,18 +835,8 @@ kind = "member_of"
 
 [[edges]]
 from = "fail-closed-validation"
-to = "map"
-kind = "applies_to"
-
-[[edges]]
-from = "fail-closed-validation"
 to = "mcp"
 kind = "applies_to"
-
-[[edges]]
-from = "fail-closed-validation"
-to = "rest-api-validates-inputs-against-store-limits-and-uses"
-kind = "member_of"
 
 [[edges]]
 from = "fail-closed-validation"
@@ -988,18 +850,8 @@ kind = "member_of"
 
 [[edges]]
 from = "file-watcher-debounced-live-reload"
-to = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
-kind = "member_of"
-
-[[edges]]
-from = "file-watcher-debounced-live-reload"
 to = "file-watcher-with-debounce-state-dir-filtering-and-post"
 kind = "member_of"
-
-[[edges]]
-from = "file-watcher-debounced-live-reload"
-to = "map"
-kind = "applies_to"
 
 [[edges]]
 from = "file-watcher-debounced-live-reload"
@@ -1014,11 +866,6 @@ kind = "applies_to"
 [[edges]]
 from = "file-watcher-with-100ms-debounce-for-non-fatal-live-reload"
 to = "mcp"
-kind = "belongs_to"
-
-[[edges]]
-from = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
-to = "map"
 kind = "belongs_to"
 
 [[edges]]
@@ -1072,11 +919,6 @@ to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
-from = "layout-state-stored-in-trurlic-state-layout-json-with"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
 from = "leftover-journals-and-temp-files-are-cleared-only-under-the"
 to = "every-commit-goes-through-a-flushed-journal-in-state-txn"
 kind = "depends_on"
@@ -1084,21 +926,6 @@ kind = "depends_on"
 [[edges]]
 from = "leftover-journals-and-temp-files-are-cleared-only-under-the"
 to = "store"
-kind = "belongs_to"
-
-[[edges]]
-from = "localhost-only-binding-with-restrictive-security-headers"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
-from = "map"
-to = "store"
-kind = "connects_to"
-
-[[edges]]
-from = "map-detach-pre-binds-port-then-re-execs-to-avoid-toctou"
-to = "commands"
 kind = "belongs_to"
 
 [[edges]]
@@ -1124,6 +951,11 @@ kind = "belongs_to"
 [[edges]]
 from = "no-load-cache-load-state-parses-every-node-file-on-each"
 to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "no-map-the-map-server-its-web-ui-and-its-dependencies-are"
+to = "project"
 kind = "belongs_to"
 
 [[edges]]
@@ -1197,16 +1029,6 @@ to = "project"
 kind = "belongs_to"
 
 [[edges]]
-from = "rest-api-validates-inputs-against-store-limits-and-uses"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
-from = "rust-embed-for-zero-build-step-frontend-embedding"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
 from = "seven-task-types-with-distinct-step-sequences-newcomponent"
 to = "workflow"
 kind = "belongs_to"
@@ -1217,18 +1039,8 @@ to = "project"
 kind = "belongs_to"
 
 [[edges]]
-from = "spawn-blocking-for-synchronous-store-writes-in-async"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
 from = "staleness-detection-at-90-day-threshold-triggers-review"
 to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
-from = "state-diffing-with-hash-based-change-detection-and"
-to = "map"
 kind = "belongs_to"
 
 [[edges]]
@@ -1274,11 +1086,6 @@ kind = "belongs_to"
 [[edges]]
 from = "typed-toolenvelope-serialized-directly-into-json-rpc"
 to = "mcp"
-kind = "belongs_to"
-
-[[edges]]
-from = "unidirectional-server-to-client-websocket-push-with"
-to = "map"
 kind = "belongs_to"
 
 [[edges]]

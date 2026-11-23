@@ -14,7 +14,6 @@
 
 - [ ] `make ci` passes locally (fmt + clippy + test + audit)
 - [ ] New behavior has tests
-- [ ] Frontend changes: `make test-frontend`
 
 ## Checklist
 

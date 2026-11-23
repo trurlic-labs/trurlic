@@ -45,7 +45,6 @@ body:
         - Design conversations (trurlic design)
         - Bootstrap (trurlic bootstrap)
         - MCP server (trurlic serve)
-        - Map / visualization (trurlic map)
         - Decision store (.trurlic/ format)
         - Workflow engine
         - Configuration / API keys

@@ -33,8 +33,8 @@ pub enum Error {
         source: toml::ser::Error,
     },
 
-    /// An I/O call with no file behind it: a standard stream, a socket, the
-    /// async runtime, a child process. `what` names the call.
+    /// An I/O call with no file behind it: a standard stream, the working
+    /// directory, the path of the running binary. `what` names the call.
     #[error("cannot {what}: {source}")]
     System { what: String, source: io::Error },
 

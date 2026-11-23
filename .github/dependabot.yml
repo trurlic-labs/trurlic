@@ -18,14 +18,3 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
-
-  - package-ecosystem: npm
-    directory: /src/map/frontend
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "deps(frontend)"
-    groups:
-      frontend-minor-patch:
-        update-types: [minor, patch]

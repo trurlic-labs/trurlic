@@ -91,21 +91,6 @@ pub enum Command {
     /// Start the MCP server for AI coding agent integration.
     Serve,
 
-    /// Open the interactive map in the browser.
-    Map {
-        /// Bind to a specific port (default: OS-assigned).
-        #[arg(long)]
-        port: Option<u16>,
-
-        /// Start the server without opening the browser.
-        #[arg(long)]
-        no_open: bool,
-
-        /// Background the server; print the URL and exit.
-        #[arg(long)]
-        detach: bool,
-    },
-
     /// Query the decision graph.
     #[command(subcommand)]
     Query(QueryCommand),
@@ -362,11 +347,6 @@ pub fn run(cli: Cli) -> Result<()> {
             QueryCommand::File { path } => commands::query_file(&cwd, &path),
         },
         Command::Serve => commands::serve(&cwd),
-        Command::Map {
-            port,
-            no_open,
-            detach,
-        } => commands::map(&cwd, port, no_open, detach),
         Command::Status => commands::status(&cwd),
         Command::Check => commands::check(&cwd),
         Command::Migrate { dry_run } => {

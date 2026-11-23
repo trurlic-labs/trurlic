@@ -1,6 +1,6 @@
 //! Shared input-validation constants for all trust boundaries.
 //!
-//! Every entry point (MCP server, map REST API, CLI) enforces the same
+//! Every entry point (MCP server, CLI) enforces the same
 //! limits on untrusted input. Defining them in one place prevents
 //! silent drift between adapters — a constant here changes everywhere,
 //! and the compiler catches any adapter that still uses a local copy.

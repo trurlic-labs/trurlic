@@ -171,9 +171,9 @@ impl Store {
 
     /// Create a new component with full validation and atomic commit.
     ///
-    /// Single write path for CLI `add component`, MCP `add_component`,
-    /// and map `POST /api/component`. Validates name format, uniqueness,
-    /// and cross-type collisions, then commits atomically.
+    /// Single write path for CLI `add component` and MCP `add_component`.
+    /// Validates name format, uniqueness, and cross-type collisions, then
+    /// commits atomically.
     ///
     /// On success, `state` is updated in-place (including graph cache).
     /// On failure, `state` is rolled back.
@@ -423,10 +423,10 @@ impl Store {
     /// Revise an existing decision in place, versioning the prior choice and
     /// reason into history.
     ///
-    /// Single write path for MCP `update_decision(mode=revise)` and map
-    /// `PUT /api/decision/:name`. When `params.writes_history` is set, the
-    /// pre-edit choice and reason are appended to the decision's history as a
-    /// [`HistoryEntry`] before the new values overwrite them. History is a
+    /// Single write path for MCP `update_decision(mode=revise)`. When
+    /// `params.writes_history` is set, the pre-edit choice and reason are
+    /// appended to the decision's history as a [`HistoryEntry`] before the
+    /// new values overwrite them. History is a
     /// ring buffer capped at [`MAX_HISTORY_ENTRIES`]: once full, pushing a new
     /// entry drops the oldest. Tag and code-ref edits apply without leaving
     /// history.
@@ -445,9 +445,9 @@ impl Store {
         name: &str,
         params: ReviseDecisionParams<'_>,
     ) -> Result<()> {
-        // Existence first: a revision of a missing decision is Not Found (→ 404
-        // at the map boundary) regardless of the body, so this must precede the
-        // field-shape checks that would otherwise mask it as a 400.
+        // Existence first: a revision of a missing decision is
+        // `DecisionNotFound` regardless of the body, so this must precede the
+        // field-shape checks that would otherwise mask it as `Validation`.
         let old_dec = state
             .decisions
             .get(name)
@@ -1200,7 +1200,7 @@ mod tests {
         let lock = store.lock().unwrap();
 
         // An empty body is a Validation error on its own, but a missing target
-        // must take precedence so the map boundary answers 404, not 400.
+        // must take precedence, so the error names the missing target.
         let err = store
             .revise_decision(
                 &lock,

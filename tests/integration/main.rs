@@ -5,7 +5,6 @@
 
 #![expect(
     clippy::unwrap_used,
-    clippy::expect_used,
     clippy::panic,
     reason = "a harness step that fails is a failed test; clippy exempts only #[test] bodies"
 )]

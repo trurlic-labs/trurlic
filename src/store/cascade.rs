@@ -5,8 +5,8 @@
 //! effects the user should know about), and cleanups (outgoing edges
 //! that will be silently removed).
 //!
-//! Shared by CLI, MCP server, and map API to enforce identical
-//! deletion rules regardless of the mutation entry point.
+//! Shared by CLI and MCP server to enforce identical deletion rules
+//! regardless of the mutation entry point.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,8 +48,8 @@ pub struct CascadeCleanup {
 
 /// Result of a cascade pre-flight check before removing a node.
 ///
-/// Shared by CLI, MCP, and map API to enforce identical deletion rules
-/// regardless of the mutation entry point.
+/// Shared by CLI and MCP to enforce identical deletion rules regardless of
+/// the mutation entry point.
 #[derive(Debug, Clone)]
 pub struct CascadeResult {
     /// Non-empty means removal is blocked.
@@ -66,7 +66,7 @@ impl CascadeResult {
         !self.blockers.is_empty()
     }
 
-    /// Concatenate blocker messages for flat error reporting (CLI, map 409).
+    /// Concatenate blocker messages for flat error reporting (CLI).
     #[must_use]
     pub fn blocker_summary(&self) -> String {
         self.blockers

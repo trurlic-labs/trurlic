@@ -71,7 +71,7 @@ impl ProjectState {
 
     /// The commit counter this state reflects.
     #[must_use]
-    pub(crate) const fn generation(&self) -> u64 {
+    pub(super) const fn generation(&self) -> u64 {
         self.generation
     }
 
@@ -84,7 +84,7 @@ impl ProjectState {
     /// that is older although `current` did not change is the store as it is
     /// now: the counter went back because `.state/` was deleted.
     #[must_use]
-    pub(crate) fn is_overtaken(&self, current: &Self, served_at_load: u64) -> bool {
+    pub(super) fn is_overtaken(&self, current: &Self, served_at_load: u64) -> bool {
         current.generation != served_at_load && self.generation < current.generation
     }
 
@@ -267,7 +267,7 @@ pub fn is_reserved_node_name(name: &str) -> bool {
 /// produce surprising on-disk content. Allows common whitespace
 /// (newline, carriage return, tab).
 ///
-/// Shared across all mutation entry points (MCP, map REST API, CLI) so
+/// Shared across all mutation entry points (MCP, CLI) so
 /// every path enforces the same input hygiene.
 #[must_use]
 pub fn has_control_chars(s: &str) -> bool {

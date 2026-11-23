@@ -26,7 +26,7 @@ Trurlic makes you the architect again. Architectural decisions live in a typed g
 
 Trurlic is an **MCP server**. Your coding agent — Claude Code, Cursor, Copilot, Codex, and others — talks to it directly: it pulls architectural context before implementing, runs design conversations when new territory appears, and records decisions as it goes. The graph is the agent's source of truth.
 
-The `trurlic` CLI exists for the human: initialize the graph, sketch components, inspect and maintain it, open the visual map. **The CLI never calls an LLM.** All reasoning runs on your coding agent's own model, through MCP.
+The `trurlic` CLI exists for the human: initialize the graph, sketch components, inspect and maintain it. **The CLI never calls an LLM.** All reasoning runs on your coding agent's own model, through MCP.
 
 ```
         ┌──────────────┐                      ┌──────────────────┐
@@ -169,7 +169,7 @@ The agent runs the Socratic flow in interactive mode — asking, reasoning, and 
 Before writing a line, the agent pulls the component's brief, generates code that respects every decision, and verifies compliance before it commits.
 
 ```bash
-trurlic map      # review the graph anytime — interactive, in your browser
+trurlic status   # the graph at a glance: components, decisions, patterns, issues
 ```
 
 ## Documentation
@@ -178,7 +178,7 @@ Full documentation lives at **[trurlic-docs.pages.dev](https://trurlic-docs.page
 
 - **[Start here](https://trurlic-docs.pages.dev/)** — overview, setup, and the core concepts
 - **[Architecture](https://trurlic-docs.pages.dev/)** — system design and the integrity model
-- **[Guides](https://trurlic-docs.pages.dev/)** — the MCP server, configuration, design workflows, and the visual map
+- **[Guides](https://trurlic-docs.pages.dev/)** — the MCP server, configuration, and design workflows
 - **[Reference](https://trurlic-docs.pages.dev/)** — full CLI reference, MCP tools, and troubleshooting
 - **[Integrations](https://trurlic-docs.pages.dev/)** — connecting Claude Code, Cursor, Windsurf, and other agents
 
@@ -224,7 +224,7 @@ All tools carry [annotations](https://modelcontextprotocol.io/specification/2025
 ## Development
 
 ```bash
-make setup        # install frontend deps + git hooks
+make setup        # install the git hooks
 make ci           # fmt + clippy + test + audit (run before pushing)
 ```
 

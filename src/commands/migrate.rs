@@ -54,7 +54,7 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
         return Ok(());
     }
 
-    // Snapshot under the lock so no concurrent CLI/MCP/map write can tear the
+    // Snapshot under the lock so no concurrent CLI or MCP write can tear the
     // backup — a copy taken without the lock could pair a freshly written node
     // file with a pre-write graph.toml, defeating its purpose as a recovery point.
     let backup_name = format!(

@@ -1,14 +1,14 @@
 //! A decision's choice and reason are checked by the store, so every surface
-//! refuses the same text with the same message: MCP `record_decision` and
-//! `update_decision`, the map's revise endpoint and `trurlic decide`. A
-//! refused write leaves the graph on disk as it was.
+//! refuses the same text with the same message: MCP `record_decision`, MCP
+//! `update_decision` and `trurlic decide`. A refused write leaves the graph
+//! on disk as it was.
 
 use std::fs;
 use std::path::Path;
 
 use serde_json::json;
 
-use crate::harness::{MapServer, McpClient, Project};
+use crate::harness::{McpClient, Project};
 
 const CHOICE: &str = "Expire sessions after an hour";
 const REASON: &str = "An hour bounds how long a stolen token is useful";
@@ -93,12 +93,7 @@ fn decisions_on_disk(project: &Path) -> Vec<(String, Vec<u8>)> {
 }
 
 /// The message each surface answers `case` with, by surface.
-fn refusals(
-    project: &Project,
-    mcp: &mut McpClient,
-    map: &MapServer,
-    case: &Case,
-) -> [(&'static str, String); 4] {
+fn refusals(project: &Project, mcp: &mut McpClient, case: &Case) -> [(&'static str, String); 3] {
     let (choice, reason) = match case.field {
         "choice" => (case.text.as_str(), REASON),
         _ => (CHOICE, case.text.as_str()),
@@ -118,14 +113,6 @@ fn refusals(
         json!({ "name": REVISED, "mode": "revise", case.field: case.text }),
     );
 
-    let (status, body) = map.request(
-        "PUT",
-        &format!("/api/decision/{REVISED}"),
-        Some(&json!({ case.field: case.text })),
-    );
-    assert_eq!(status, 400, "{}: map answered {body}", case.class);
-    let mapped = body["error"].as_str().unwrap().to_owned();
-
     let output = project
         .command()
         .args(["decide", "auth", "--choice", choice, "--reason", reason])
@@ -142,7 +129,6 @@ fn refusals(
     [
         ("record_decision", recorded),
         ("update_decision", revised),
-        ("map", mapped),
         ("decide", decided),
     ]
 }
@@ -151,11 +137,10 @@ fn refusals(
 fn every_surface_refuses_each_class_with_the_stores_message() {
     let project = project();
     let mut mcp = McpClient::connect(&project).0;
-    let map = MapServer::start(&project);
     let before = decisions_on_disk(project.path());
 
     for case in cases() {
-        let refusals = refusals(&project, &mut mcp, &map, &case);
+        let refusals = refusals(&project, &mut mcp, &case);
 
         let (_, expected) = &refusals[0];
         assert!(

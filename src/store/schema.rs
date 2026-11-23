@@ -175,7 +175,7 @@ pub enum EdgeKind {
 impl EdgeKind {
     /// Canonical snake_case string, matching serde serialization.
     ///
-    /// Use this for JSON payloads, WebSocket events, and any
+    /// Use this for JSON payloads and any
     /// user-facing output — never `Debug` formatting, which
     /// produces CamelCase (`ConnectsTo`) instead of snake_case
     /// (`connects_to`).
