@@ -1,0 +1,113 @@
+version = 1
+rebuilt = "2026-11-23T21:55:57.852181081Z"
+
+[[nodes]]
+name = "api"
+kind = "component"
+hash = "3e8848206dd5e210c7ea807f8052a12d0e1ee056d32d29876dafb7b738ec88da"
+
+[[nodes]]
+name = "durable-storage"
+kind = "pattern"
+tags = ["storage"]
+hash = "57f42a8d5cab85248931e69095cb07f2d15946c32fe6b5b24942c73c128aec74"
+
+[[nodes]]
+name = "json-rpc-over-stdio"
+kind = "decision"
+hash = "baba724bad1d62908157b06d4949000710c7c2bac99ccb9fa31b82d75105b6e2"
+
+[[nodes]]
+name = "newline-delimited-json-rpc-over-stdio"
+kind = "decision"
+hash = "d18efd098753b807a8a07ce5c22381ab880c9663ff12d1b1eb3804e6dc21caa8"
+
+[[nodes]]
+name = "no-unsafe-code"
+kind = "decision"
+hash = "76fbd42cc3b07619c8969077383223f7ee94605ec9f9c726047c0a64e46ff365"
+
+[[nodes]]
+name = "one-toml-file-per-node"
+kind = "decision"
+tags = ["storage"]
+hash = "1234a3914f461c2497b466b530ea6e5186af58fc7441a90b864b842023e44ab6"
+
+[[nodes]]
+name = "project"
+kind = "component"
+hash = "92c2e09fd6104569a5b0fd9fc3e72c465ccb994d2bcb015ad22ca136b7c79257"
+
+[[nodes]]
+name = "store"
+kind = "component"
+hash = "90fbfb33aade18fb204ef2d93f58ebd55a5e5dfe1858cbf2bafdba09d0d3a724"
+
+[[nodes]]
+name = "write-through-a-temp-file-and-rename"
+kind = "decision"
+tags = [
+    "storage",
+    "reliability",
+]
+hash = "7138572034be75352180edb16de6d606d26f38647bfd4e1c0cd3e3834920fd22"
+
+[[edges]]
+from = "api"
+to = "store"
+kind = "connects_to"
+
+[[edges]]
+from = "durable-storage"
+to = "one-toml-file-per-node"
+kind = "member_of"
+
+[[edges]]
+from = "durable-storage"
+to = "store"
+kind = "applies_to"
+
+[[edges]]
+from = "durable-storage"
+to = "write-through-a-temp-file-and-rename"
+kind = "member_of"
+
+[[edges]]
+from = "json-rpc-over-stdio"
+to = "api"
+kind = "belongs_to"
+
+[[edges]]
+from = "json-rpc-over-stdio"
+to = "write-through-a-temp-file-and-rename"
+kind = "constrains"
+
+[[edges]]
+from = "newline-delimited-json-rpc-over-stdio"
+to = "api"
+kind = "belongs_to"
+
+[[edges]]
+from = "newline-delimited-json-rpc-over-stdio"
+to = "json-rpc-over-stdio"
+kind = "supersedes"
+
+[[edges]]
+from = "no-unsafe-code"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "one-toml-file-per-node"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "write-through-a-temp-file-and-rename"
+to = "one-toml-file-per-node"
+kind = "depends_on"
+
+[[edges]]
+from = "write-through-a-temp-file-and-rename"
+to = "store"
+kind = "belongs_to"

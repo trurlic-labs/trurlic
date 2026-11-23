@@ -1,0 +1,6 @@
+[decision]
+component = "project"
+choice = "No unsafe code"
+reason = "The crate has no need for it and forbids it"
+attribution = "user"
+created = "2026-11-23T21:56:13.658684834Z"

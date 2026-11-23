@@ -32,7 +32,7 @@ impl Store {
         let lock = store.lock()?;
         let project_path = store.root().join("project.toml");
         let project = ProjectFile {
-            trurlic_version: FORMAT_VERSION.into(),
+            format_version: FORMAT_VERSION,
             project: Project {
                 name: name.into(),
                 description: String::new(),
@@ -73,7 +73,7 @@ mod tests {
         assert!(store.root().join(STATE_DIR).join("tmp").is_dir());
         let state = store.load_state().unwrap();
         assert_eq!(state.project.project.name, "demo");
-        assert_eq!(state.project.trurlic_version, FORMAT_VERSION);
+        assert_eq!(state.project.format_version, FORMAT_VERSION);
         assert_eq!(state.graph_index.rebuilt, Some(ts()));
         let names: Vec<&str> = state
             .graph_index

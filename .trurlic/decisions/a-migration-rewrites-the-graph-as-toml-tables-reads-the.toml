@@ -1,0 +1,40 @@
+[decision]
+component = "store"
+choice = "A migration rewrites the graph as TOML tables, reads the result as the current format reporting what it cannot hold, and lands in one journaled commit with project.toml first"
+reason = "A step must see shapes the current types cannot parse (a supersedes edge, a 0.1.0 connects_to list), so the Tree holds every graph file as a toml::Table. After the walk each table is parsed as the current type and compared key by key with what that type keeps, so an unknown field is reported, not lost; an empty list or table holds nothing and is not. The index is rebuilt with the load's own reconcile, and an edge whose endpoint is no node is reported because the rebuild drops it. Only files whose bytes change are written, through commit_batch: a crash after the journal is finished, never left between formats. project.toml is the first rename, so a store is old-format with a journal until the first rename, refused by every command but migrate, which recovers it under its lock; after it the store is current and any command finishes the commit."
+alternatives = [
+    "Typed structs for every historical format - rejected: a copy of each schema kept for one step",
+    "Write each file with write_atomic, graph.toml last - rejected: a crash leaves files of two formats",
+    "Drop edges to missing nodes silently, as a load does - rejected: an unreported loss",
+]
+tags = [
+    "storage",
+    "migration",
+    "reliability",
+]
+attribution = "agent"
+created = "2026-11-23T22:52:37.831647832Z"
+
+[[decision.code_refs]]
+file = "src/store/migration/mod.rs"
+symbol = "Tree"
+
+[[decision.code_refs]]
+file = "src/store/migration/mod.rs"
+symbol = "Store::plan_migration"
+
+[[decision.code_refs]]
+file = "src/store/migration/mod.rs"
+symbol = "Store::preview_migration"
+
+[[decision.code_refs]]
+file = "src/store/migration/mod.rs"
+symbol = "Store::commit_migration"
+
+[[decision.code_refs]]
+file = "src/store/migration/mod.rs"
+symbol = "Current"
+
+[[decision.code_refs]]
+file = "src/store/load.rs"
+symbol = "reconcile"

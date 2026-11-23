@@ -1,0 +1,34 @@
+[decision]
+component = "store"
+choice = "migrate walks an ordered registry of steps, one per format change from 0.1.0 on, and prints every value each step drops"
+reason = "The old migrate round-tripped every file through the current types, so a field the current format lacked vanished without a word, and a 0.1.0 component's connects_to list was lost. Each Step names its from and to versions and the change, and records what it drops as a Loss with the file, the dotted field and the TOML text of the value. The walk starts at the store's version and stamps each step's to version after it, and the report lists the steps in order, so the output is deterministic. A new format appends one step and raises FORMAT_VERSION; a test holds the chain unbroken from 0.1.0 to the current format."
+alternatives = [
+    "Round-trip through the current types, as before - rejected: it drops unknown fields and old edges silently",
+    "One hand-written function per pair of formats - rejected: n squared paths where a chain of steps covers every start",
+]
+tags = [
+    "storage",
+    "migration",
+]
+attribution = "user"
+created = "2026-11-23T22:52:37.775489213Z"
+
+[[decision.code_refs]]
+file = "src/store/migration/steps.rs"
+symbol = "Step"
+
+[[decision.code_refs]]
+file = "src/store/migration/steps.rs"
+symbol = "STEPS"
+
+[[decision.code_refs]]
+file = "src/store/migration/mod.rs"
+symbol = "Loss"
+
+[[decision.code_refs]]
+file = "src/store/migration/mod.rs"
+symbol = "MigrationReport"
+
+[[decision.code_refs]]
+file = "src/commands/migrate.rs"
+symbol = "migrate"

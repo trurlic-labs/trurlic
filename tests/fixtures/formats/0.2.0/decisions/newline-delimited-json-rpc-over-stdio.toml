@@ -1,0 +1,5 @@
+[decision]
+component = "api"
+choice = "Newline-delimited JSON-RPC over stdio"
+reason = "One message per line keeps the reader a line reader"
+created = "2026-11-23T21:55:57.850402900Z"

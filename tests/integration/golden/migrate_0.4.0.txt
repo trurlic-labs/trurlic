@@ -1,0 +1,169 @@
+Migrated .trurlic/ from format 0.4.0 to 0.4.1.
+  0.4.0 -> 0.4.1 (the version key becomes format_version): nothing dropped
+Rewrote 2 file(s):
+  project.toml
+  graph.toml
+
+--- components/api.toml
+[component]
+name = "api"
+description = "The MCP server"
+--- components/store.toml
+[component]
+name = "store"
+description = "Node files and the graph index"
+--- decisions/json-rpc-over-stdio.toml
+[decision]
+component = "api"
+choice = "Newline-delimited JSON-RPC over stdio"
+reason = "One message per line keeps the reader a line reader"
+attribution = "agent"
+created = "2026-11-23T21:56:31.190409487Z"
+
+[[decision.history]]
+choice = "JSON-RPC over stdio"
+reason = "Every client speaks it and it needs no port"
+changed_at = "2026-11-23T21:56:31.283954543Z"
+--- decisions/no-unsafe-code.toml
+[decision]
+component = "project"
+choice = "No unsafe code"
+reason = "The crate has no need for it and forbids it"
+attribution = "user"
+created = "2026-11-23T21:56:31.325597718Z"
+--- decisions/one-toml-file-per-node.toml
+[decision]
+component = "store"
+choice = "One TOML file per node"
+reason = "Files diff and merge line by line in version control"
+alternatives = ["SQLite - rejected: a binary file in version control"]
+tags = ["storage"]
+attribution = "user"
+created = "2026-11-23T21:56:31.057091908Z"
+
+[[decision.code_refs]]
+file = "src/store/schema.rs"
+symbol = "DecisionFile"
+--- decisions/write-through-a-temp-file-and-rename.toml
+[decision]
+component = "store"
+choice = "Write through a temp file and rename"
+reason = "A crash never leaves a half-written node file"
+tags = [
+    "storage",
+    "reliability",
+]
+attribution = "user"
+created = "2026-11-23T21:56:31.147921846Z"
+
+[[decision.code_refs]]
+file = "src/store/commit.rs"
+--- graph.toml
+version = 1
+rebuilt = "2026-11-23T21:56:30.899777132Z"
+
+[[nodes]]
+name = "api"
+kind = "component"
+hash = "3e8848206dd5e210c7ea807f8052a12d0e1ee056d32d29876dafb7b738ec88da"
+
+[[nodes]]
+name = "durable-storage"
+kind = "pattern"
+tags = ["storage"]
+hash = "57f42a8d5cab85248931e69095cb07f2d15946c32fe6b5b24942c73c128aec74"
+
+[[nodes]]
+name = "json-rpc-over-stdio"
+kind = "decision"
+hash = "e19354eb1e17a33baf367934e597d7c85d166645fe7a60d765dd2759dc2727b1"
+
+[[nodes]]
+name = "no-unsafe-code"
+kind = "decision"
+hash = "e825ff8578f7e0ad4db75b7470097538114b516ee3fa2ebc4d58067d317d3944"
+
+[[nodes]]
+name = "one-toml-file-per-node"
+kind = "decision"
+tags = ["storage"]
+hash = "c4607ae3de7953801e08397ef596561fb63c84ec0b0acfe68de409167592a9d5"
+
+[[nodes]]
+name = "project"
+kind = "component"
+hash = "8cd5a28d497fe4630db0c7f6b3cc47ab70d14ad3c5ef83529966d859365bf576"
+
+[[nodes]]
+name = "store"
+kind = "component"
+hash = "90fbfb33aade18fb204ef2d93f58ebd55a5e5dfe1858cbf2bafdba09d0d3a724"
+
+[[nodes]]
+name = "write-through-a-temp-file-and-rename"
+kind = "decision"
+tags = [
+    "storage",
+    "reliability",
+]
+hash = "fa8ed1cbae92c7475c79c1e6808d91680ec1f45b0df3dd9bfeb8c7f8ea07857f"
+
+[[edges]]
+from = "api"
+to = "store"
+kind = "connects_to"
+
+[[edges]]
+from = "durable-storage"
+to = "one-toml-file-per-node"
+kind = "member_of"
+
+[[edges]]
+from = "durable-storage"
+to = "store"
+kind = "applies_to"
+
+[[edges]]
+from = "durable-storage"
+to = "write-through-a-temp-file-and-rename"
+kind = "member_of"
+
+[[edges]]
+from = "json-rpc-over-stdio"
+to = "api"
+kind = "belongs_to"
+
+[[edges]]
+from = "json-rpc-over-stdio"
+to = "write-through-a-temp-file-and-rename"
+kind = "constrains"
+
+[[edges]]
+from = "no-unsafe-code"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "one-toml-file-per-node"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "write-through-a-temp-file-and-rename"
+to = "one-toml-file-per-node"
+kind = "depends_on"
+
+[[edges]]
+from = "write-through-a-temp-file-and-rename"
+to = "store"
+kind = "belongs_to"
+--- patterns/durable-storage.toml
+[pattern]
+name = "Durable storage"
+description = "Node files are written whole or not at all"
+--- project.toml
+format_version = "0.4.1"
+
+[project]
+name = "demo"
+description = ""

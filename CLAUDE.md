@@ -55,6 +55,8 @@ Recovery: a leftover journal is applied, then leftover temp files removed, only 
 
 Timestamps: `store::Timestamp`, a UTC instant to the nanosecond, written as an RFC 3339 string in the form 0.3 releases wrote (`2025-06-01T10:30:00Z`, a fraction of 0, 3, 6 or 9 digits), so a load and a write give back the same bytes. `Timestamp::now` is the crate's one clock read.
 
+Format version: `project.toml` states `format_version`, `MAJOR.MINOR.PATCH` and independent of the crate's version (`store::FormatVersion`, `FORMAT_VERSION` in `store/schema.rs`). The check has one home, `store/version.rs`: every read and every write refuses another format before it recovers anything or parses a node file. A newer one says to upgrade trurlic, an older one to run `trurlic migrate`, and a version that does not parse is named with its file and its text. `store::migration` holds the registry, one step per format change from 0.1.0 on; `trurlic migrate` walks it from the store's version, reports every value a step or the current format drops, and lands the result in one journaled commit whose first rename is `project.toml`. A migration stopped before that rename leaves an old-format store with a journal, which only the next `migrate` finishes; once it has happened, the store is current and the next command of any kind finishes it.
+
 Content integrity: BLAKE3 hash per node file, stored in `graph.toml`. `trurlic check` verifies hashes. Tamper detection, not encryption.
 
 File locking: std `File::try_lock` (writers, exclusive) and `File::try_lock_shared` (readers) on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type: every function that changes a file under `.trurlic/` takes `&StoreLock`, and a `Writer` owns one.
@@ -65,7 +67,7 @@ Readers: every read (`Store::load_state`) takes the shared lock, checks the form
 
 In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex` and an eagerly built `InMemoryGraph` for graph queries. It lives for one call.
 
-No state between calls: the MCP server holds the directory it was started in, and every tool call finds the store from there and loads it. A read tool runs on `Store::load_state`, a write tool on a `Writer`, so a hand edit, a `git checkout` or another process's commit is seen by the very next call. `serve` starts without a store or with one in another format, and each call is refused naming `trurlic init` or `trurlic migrate` until it is fixed. `load_state` reads the node files in parallel and parses `graph.toml` meanwhile; `make bench` times it.
+No state between calls: the MCP server holds the directory it was started in, and every tool call finds the store from there and loads it. A read tool runs on `Store::load_state`, a write tool on a `Writer`, so a hand edit, a `git checkout` or another process's commit is seen by the very next call. `serve` starts without a store or with one in another format, and each call is refused until it is fixed, naming `trurlic init`, `trurlic migrate`, or the file and text of a version that does not parse. `load_state` reads the node files in parallel and parses `graph.toml` meanwhile; `make bench` times it.
 
 ### Key Invariants
 
@@ -113,6 +115,8 @@ Argument specs: `mcp::spec` holds one table-driven test over a spec with every f
 Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` act at the n-th hit of a named site in `src/store/failpoint.rs`: abort (or pause, with `TRURLIC_FAILPOINT_PAUSE`) at a `hit`, return an injected I/O error at a `fail`, panic at a `panic` (`write.locked`), and let the caller act at a `triggers` site (`mcp.server_request`, where a tool call sends the client an elicitation form instead of running). `make test` enables it.
 
 Property: determinism (every read tool answers with the same bytes in two processes), graph validation catches all known violation classes.
+
+Format fixtures (`tests/fixtures/formats/<version>/`): a graph written by the trurlic of each historical format. Each one migrates to the current format, loads and passes `check` in a named test, its report and result pinned by a golden file.
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 

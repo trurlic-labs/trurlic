@@ -136,16 +136,16 @@ fn a_server_without_a_store_lists_its_tools_and_names_init() {
     assert!(architecture["components"].is_array(), "{architecture}");
 }
 
-/// A store in an older format: the server starts and lists its tools, and
-/// every call is refused naming `trurlic migrate`.
-#[test]
-fn a_server_over_an_old_store_lists_its_tools_and_names_migrate() {
+/// A server over a store whose `project.toml` begins with `version_line`
+/// in place of the current version: `tools/list` answers, and every tool is
+/// refused as `unsupported_format` with a message naming `named`.
+fn assert_format_refused(version_line: &str, named: &str) {
     let project = Project::init();
     let manifest = project.path().join(".trurlic/project.toml");
-    let current = format!("\"{}\"", trurlic::store::FORMAT_VERSION);
+    let current = format!("format_version = \"{}\"\n", trurlic::store::FORMAT_VERSION);
     let text = fs::read_to_string(&manifest).unwrap();
-    assert!(text.contains(&current), "{text}");
-    fs::write(&manifest, text.replace(&current, "\"0.1.0\"")).unwrap();
+    assert!(text.starts_with(&current), "{text}");
+    fs::write(&manifest, text.replacen(&current, version_line, 1)).unwrap();
 
     let (mut client, _) = McpClient::connect(&project);
     let listed = client.request("tools/list", json!({}));
@@ -154,8 +154,22 @@ fn a_server_over_an_old_store_lists_its_tools_and_names_migrate() {
         let refusal = client.call_tool_refusal(tool, json!({ "name": "auth" }));
         assert_eq!(refusal["kind"], "unsupported_format", "{tool}: {refusal}");
         let message = refusal["message"].as_str().unwrap();
-        assert!(message.contains("trurlic migrate"), "{tool}: {message}");
+        assert!(message.contains(named), "{tool}: {message}");
     }
+}
+
+#[test]
+fn a_server_over_an_old_store_lists_its_tools_and_names_migrate() {
+    // The manifest as format 0.4.0 wrote it.
+    assert_format_refused("trurlic_version = \"0.4.0\"\n", "trurlic migrate");
+}
+
+#[test]
+fn a_server_over_an_unparseable_version_lists_its_tools_and_names_it() {
+    assert_format_refused(
+        "format_version = \"0.4.one\"\n",
+        "format version `0.4.one` is not MAJOR.MINOR.PATCH",
+    );
 }
 
 #[test]

@@ -17,18 +17,17 @@ use crate::{Error, Result};
 
 use super::schema::{EdgeEntry, EdgeKind, GraphIndex, NodeEntry, NodeKind};
 use super::{
-    ComponentFile, DecisionFile, FORMAT_VERSION, PatternFile, ProjectFile, ProjectState, Store,
-    StoreLock, Timestamp,
+    ComponentFile, DecisionFile, PatternFile, ProjectFile, ProjectState, Store, Timestamp,
 };
 
 /// A node file as read: its name, its contents, and the BLAKE3 of its bytes.
-type NodeFile<T> = (String, T, String);
+pub(super) type NodeFile<T> = (String, T, String);
 
 /// Every node file of the store, each kind sorted by name.
-struct NodeFiles {
-    components: Vec<NodeFile<ComponentFile>>,
-    decisions: Vec<NodeFile<DecisionFile>>,
-    patterns: Vec<NodeFile<PatternFile>>,
+pub(super) struct NodeFiles {
+    pub(super) components: Vec<NodeFile<ComponentFile>>,
+    pub(super) decisions: Vec<NodeFile<DecisionFile>>,
+    pub(super) patterns: Vec<NodeFile<PatternFile>>,
 }
 
 impl Store {
@@ -42,35 +41,6 @@ impl Store {
         let hash = blake3::hash(&bytes).to_hex().to_string();
         let parsed = toml::from_slice(&bytes).map_err(Error::toml(path))?;
         Ok((parsed, hash))
-    }
-
-    fn read_project_with_hash(&self) -> Result<(ProjectFile, String)> {
-        self.read_toml_with_hash::<ProjectFile>(&self.root.join("project.toml"))
-    }
-
-    /// `project.toml` and its hash, refused unless it is in the current
-    /// format.
-    pub(super) fn read_current_project(&self) -> Result<(ProjectFile, String)> {
-        let (project, hash) = self.read_project_with_hash()?;
-        if project.trurlic_version != FORMAT_VERSION {
-            return Err(Error::VersionMismatch {
-                found: project.trurlic_version,
-                expected: FORMAT_VERSION,
-            });
-        }
-        Ok((project, hash))
-    }
-
-    pub fn check_version(&self) -> Result<()> {
-        self.read_current_project().map(drop)
-    }
-
-    /// The graph under the exclusive lock `lock`, with no recovery and no
-    /// format check: for `migrate`, which holds the lock while it rewrites
-    /// the store into the current format.
-    pub(crate) fn load_under(&self, _lock: &StoreLock) -> Result<ProjectState> {
-        let (project, project_hash) = self.read_project_with_hash()?;
-        self.read_graph(project, project_hash)
     }
 
     /// Every node file and `graph.toml`, reconciled into one state.
@@ -141,7 +111,7 @@ impl Store {
     }
 }
 
-type Reconciled = (
+pub(super) type Reconciled = (
     GraphIndex,
     BTreeMap<String, Arc<ComponentFile>>,
     BTreeMap<String, Arc<DecisionFile>>,
@@ -155,7 +125,11 @@ type Reconciled = (
 /// survive a missing or stale `graph.toml`; a component's or a pattern's
 /// tags, and every other edge between existing nodes, come from
 /// `graph.toml`.
-fn reconcile(existing: GraphIndex, project_hash: String, files: NodeFiles) -> Reconciled {
+pub(super) fn reconcile(
+    existing: GraphIndex,
+    project_hash: String,
+    files: NodeFiles,
+) -> Reconciled {
     let (nodes, components, decisions, patterns) = index_files(existing.nodes, project_hash, files);
     let exists = |name: &str| {
         name == "project"
@@ -577,48 +551,5 @@ mod tests {
             .map(|e| e.from.as_str())
             .collect();
         assert_eq!(edge_froms, vec!["auth", "database"]);
-    }
-
-    #[test]
-    fn check_version_passes_on_match() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        store.check_version().unwrap();
-    }
-
-    #[test]
-    fn check_version_rejects_newer_format() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "99.0.0");
-
-        let err = store.check_version().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            matches!(&err, Error::VersionMismatch { found, expected: FORMAT_VERSION } if found == "99.0.0"),
-            "{err:?}"
-        );
-        assert!(msg.contains("newer"), "should mention 'newer': {msg}");
-        assert!(
-            msg.contains("upgrade trurlic"),
-            "should suggest upgrade: {msg}"
-        );
-    }
-
-    #[test]
-    fn check_version_rejects_older_format() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "0.0.1");
-
-        let err = store.check_version().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            matches!(&err, Error::VersionMismatch { found, expected: FORMAT_VERSION } if found == "0.0.1"),
-            "{err:?}"
-        );
-        assert!(msg.contains("older"), "should mention 'older': {msg}");
-        assert!(
-            msg.contains("trurlic migrate"),
-            "should mention trurlic migrate: {msg}"
-        );
     }
 }

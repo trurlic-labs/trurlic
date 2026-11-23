@@ -12,6 +12,7 @@ mod journal;
 pub(crate) mod limits;
 mod load;
 mod lock;
+mod migration;
 mod pattern_removal;
 mod query;
 mod recovery;
@@ -21,9 +22,9 @@ mod validate;
 mod state;
 pub(crate) mod text;
 mod time;
+mod version;
 mod write;
 
-use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -37,12 +38,14 @@ use schema::{GraphIndex, NodeKind};
 // Graph types (NodeKind, EdgeKind, etc.) are accessible via `store::schema::*`.
 pub use access::Writer;
 pub use lock::StoreLock;
+pub(crate) use migration::{Loss, MigrationReport};
 pub use schema::{
     COMPONENTS_DIR, CodeRef, ComponentFile, DECISIONS_DIR, DecisionFile, FORMAT_VERSION,
     GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile, STATE_DIR, STORE_DIR,
 };
 pub use state::{ProjectState, has_control_chars, is_valid_kebab_case, slugify};
 pub use time::{Timestamp, TimestampError};
+pub use version::FormatVersion;
 pub use write::{RecordDecisionParams, RecordPatternParams, ReviseDecisionParams};
 
 /// Syntactic validation for a code reference.
@@ -351,10 +354,6 @@ impl Store {
         toml::from_slice(&bytes).map_err(Error::toml(path))
     }
 
-    pub fn read_project(&self) -> Result<ProjectFile> {
-        self.read_toml(&self.root.join("project.toml"))
-    }
-
     #[cfg(test)]
     pub fn read_component(&self, name: &str) -> Result<ComponentFile> {
         let path = self.component_path(name);
@@ -467,19 +466,6 @@ impl Store {
     }
 }
 
-// ── Version comparison ──────────────────────────────────────────────────────
-
-pub(crate) fn compare_versions(a: &str, b: &str) -> Ordering {
-    let parse = |v: &str| -> (u32, u32, u32) {
-        let mut parts = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
-        let major = parts.next().unwrap_or(0);
-        let minor = parts.next().unwrap_or(0);
-        let patch = parts.next().unwrap_or(0);
-        (major, minor, patch)
-    };
-    parse(a).cmp(&parse(b))
-}
-
 // ── Test helpers ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -494,9 +480,11 @@ pub(crate) mod testing {
     };
 
     pub fn setup_store(dir: &Path) -> Store {
-        setup_store_with_version(dir, FORMAT_VERSION)
+        setup_store_with_version(dir, &FORMAT_VERSION.to_string())
     }
 
+    /// An empty store whose `project.toml` states `version` as its
+    /// `format_version`, whatever the text.
     pub fn setup_store_with_version(dir: &Path, version: &str) -> Store {
         let root = dir.join(STORE_DIR);
         fs::create_dir_all(root.join(COMPONENTS_DIR)).unwrap();
@@ -504,13 +492,12 @@ pub(crate) mod testing {
         fs::create_dir_all(root.join(PATTERNS_DIR)).unwrap();
         fs::create_dir_all(root.join(STATE_DIR)).unwrap();
 
-        let project = ProjectFile {
-            trurlic_version: version.into(),
-            project: Project {
-                name: "test-project".into(),
-                description: "A test project".into(),
-            },
-        };
+        let mut project = toml::Table::new();
+        project.insert("format_version".into(), version.into());
+        let mut fields = toml::Table::new();
+        fields.insert("name".into(), "test-project".into());
+        fields.insert("description".into(), "A test project".into());
+        project.insert("project".into(), fields.into());
         let project_content = toml::to_string_pretty(&project).unwrap();
         fs::write(root.join("project.toml"), &project_content).unwrap();
 
@@ -566,7 +553,7 @@ pub(crate) mod testing {
         use crate::store::schema::FORMAT_VERSION;
         super::state::ProjectState::new(
             ProjectFile {
-                trurlic_version: FORMAT_VERSION.into(),
+                format_version: FORMAT_VERSION,
                 project: Project {
                     name: "test".into(),
                     description: String::new(),
@@ -739,7 +726,7 @@ pub(crate) mod testing {
 
         super::state::ProjectState::new(
             ProjectFile {
-                trurlic_version: FORMAT_VERSION.into(),
+                format_version: FORMAT_VERSION,
                 project: Project {
                     name: "test-project".into(),
                     description: "A test project".into(),
@@ -997,7 +984,6 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::*;
     use super::*;
-    use std::cmp::Ordering;
     use tempfile::TempDir;
 
     // ── discover ─────────────────────────────────────────────────────────
@@ -1140,39 +1126,6 @@ mod tests {
             }
             other => panic!("expected Validation, got: {other}"),
         }
-    }
-
-    // ── compare_versions ─────────────────────────────────────────────────
-
-    #[test]
-    fn compare_versions_equal() {
-        assert_eq!(compare_versions("0.2.0", "0.2.0"), Ordering::Equal);
-        assert_eq!(compare_versions("1.2.3", "1.2.3"), Ordering::Equal);
-    }
-
-    #[test]
-    fn compare_versions_major_dominates() {
-        assert_eq!(compare_versions("2.0.0", "1.9.9"), Ordering::Greater);
-        assert_eq!(compare_versions("0.9.9", "1.0.0"), Ordering::Less);
-    }
-
-    #[test]
-    fn compare_versions_minor() {
-        assert_eq!(compare_versions("0.2.0", "0.1.9"), Ordering::Greater);
-        assert_eq!(compare_versions("0.0.9", "0.1.0"), Ordering::Less);
-    }
-
-    #[test]
-    fn compare_versions_patch() {
-        assert_eq!(compare_versions("0.1.1", "0.1.0"), Ordering::Greater);
-        assert_eq!(compare_versions("0.1.0", "0.1.1"), Ordering::Less);
-    }
-
-    #[test]
-    fn compare_versions_malformed_defaults_to_zero() {
-        assert_eq!(compare_versions("abc", "0.0.0"), Ordering::Equal);
-        assert_eq!(compare_versions("1", "1.0.0"), Ordering::Equal);
-        assert_eq!(compare_versions("1.2", "1.2.0"), Ordering::Equal);
     }
 
     // ── hash ─────────────────────────────────────────────────────────────

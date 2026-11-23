@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 use super::time::Timestamp;
+use super::version::FormatVersion;
 
 // ── project.toml ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectFile {
-    pub trurlic_version: String,
+    pub format_version: FormatVersion,
 
     pub project: Project,
 }
@@ -225,7 +226,10 @@ impl GraphIndex {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-pub const FORMAT_VERSION: &str = "0.4.0";
+/// The format this binary reads and writes. A change to the on-disk shape
+/// raises it and appends the step that reaches it to the migration registry
+/// (`store/migration/steps.rs`).
+pub const FORMAT_VERSION: FormatVersion = FormatVersion::new(0, 4, 1);
 
 pub const STORE_DIR: &str = ".trurlic";
 
@@ -246,13 +250,17 @@ mod tests {
     #[test]
     fn project_round_trip() {
         let file = ProjectFile {
-            trurlic_version: "0.2.0".into(),
+            format_version: FORMAT_VERSION,
             project: Project {
                 name: "my-project".into(),
                 description: "Test project".into(),
             },
         };
         let serialized = toml::to_string_pretty(&file).expect("serialize");
+        assert!(
+            serialized.starts_with(&format!("format_version = \"{FORMAT_VERSION}\"\n")),
+            "{serialized}"
+        );
         let deserialized: ProjectFile = toml::from_str(&serialized).expect("deserialize");
         assert_eq!(file, deserialized);
     }

@@ -82,7 +82,11 @@ impl From<Error> for ToolError {
     fn from(error: Error) -> Self {
         let kind = match error {
             Error::StoreNotFound(_) => ErrorKind::NoProject,
-            Error::VersionMismatch { .. } => ErrorKind::UnsupportedFormat,
+            // Every way `project.toml` states a format this binary cannot read.
+            Error::VersionMismatch { .. }
+            | Error::BadFormatVersion { .. }
+            | Error::MissingFormatVersion { .. }
+            | Error::UnknownFormatVersion { .. } => ErrorKind::UnsupportedFormat,
             // Every other failure to find, read or write the store.
             _ => ErrorKind::StoreError,
         };
@@ -138,6 +142,7 @@ mod tests {
 
     use super::*;
     use crate::mcp::spec::Fault;
+    use crate::store::{FORMAT_VERSION, FormatVersion};
 
     fn wire(envelope: &ToolEnvelope) -> Value {
         serde_json::to_value(envelope).unwrap()
@@ -191,11 +196,35 @@ mod tests {
             ),
             (
                 Error::VersionMismatch {
-                    found: "0.1.0".into(),
-                    expected: "0.4.0",
+                    path: PathBuf::from("/work/.trurlic/project.toml"),
+                    found: FormatVersion::new(0, 4, 0),
+                    expected: FORMAT_VERSION,
                 },
                 "unsupported_format",
                 "trurlic migrate",
+            ),
+            (
+                Error::BadFormatVersion {
+                    path: PathBuf::from("/work/.trurlic/project.toml"),
+                    text: "0.4.one".into(),
+                },
+                "unsupported_format",
+                "`0.4.one`",
+            ),
+            (
+                Error::MissingFormatVersion {
+                    path: PathBuf::from("/work/.trurlic/project.toml"),
+                },
+                "unsupported_format",
+                "format_version",
+            ),
+            (
+                Error::UnknownFormatVersion {
+                    path: PathBuf::from("/work/.trurlic/project.toml"),
+                    found: FormatVersion::new(0, 3, 7),
+                },
+                "unsupported_format",
+                "no migration",
             ),
             (
                 Error::LockTimeout {

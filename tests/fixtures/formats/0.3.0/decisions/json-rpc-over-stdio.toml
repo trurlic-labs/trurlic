@@ -1,0 +1,6 @@
+[decision]
+component = "api"
+choice = "JSON-RPC over stdio"
+reason = "Every client speaks it and it needs no port"
+attribution = "agent"
+created = "2026-11-23T21:56:13.656664319Z"

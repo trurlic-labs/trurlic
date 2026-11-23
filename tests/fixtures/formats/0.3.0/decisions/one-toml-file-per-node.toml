@@ -1,0 +1,8 @@
+[decision]
+component = "store"
+choice = "One TOML file per node"
+reason = "Files diff and merge line by line in version control"
+alternatives = ["SQLite - rejected: a binary file in version control"]
+tags = ["storage"]
+attribution = "user"
+created = "2026-11-23T21:56:13.654896942Z"

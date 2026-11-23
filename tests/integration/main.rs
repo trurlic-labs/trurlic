@@ -14,6 +14,7 @@ mod harness;
 mod install;
 mod invalid_graph;
 mod malformed_node;
+mod migrate;
 mod output;
 #[cfg(feature = "failpoints")]
 mod server_failpoints;

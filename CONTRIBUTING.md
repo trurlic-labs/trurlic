@@ -75,7 +75,7 @@ The `.trurlic/` format is the foundation. Changes to schemas or file operations 
 
 - All writes use `commit_with_graph` — validates the full graph before touching disk.
 - Atomic protocol: serialize → tmp file → verify round-trip → rename. `graph.toml` renamed last.
-- Schema changes must bump `FORMAT_VERSION` in `schema.rs`.
+- A change to the on-disk shape raises `FORMAT_VERSION` (`src/store/schema.rs`) and appends the step that reaches it to the migration registry (`src/store/migration/steps.rs`), with a fixture test.
 - The graph module (`graph.rs`) is pure — no I/O, fully testable with in-memory fixtures.
 
 ## Working on the MCP server
@@ -113,7 +113,7 @@ Breaking changes: `BREAKING CHANGE:` in the commit footer.
 - [ ] `make ci` passes locally
 - [ ] New behavior has tests
 - [ ] PR description explains *why*, not just *what*
-- [ ] Schema changes bump `FORMAT_VERSION`
+- [ ] On-disk changes raise `FORMAT_VERSION` and append a migration step
 
 ## Code style
 

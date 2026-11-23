@@ -1,0 +1,21 @@
+[decision]
+component = "store"
+choice = "Each historical format has a fixture graph written by the trurlic of its time; a named test migrates it, runs check and pins the report and result in a golden file"
+reason = "A migration step is only as true as the store it is tested on. The fixtures under tests/fixtures/formats were written by the binaries built from git for each format (the pre-release trurl for 0.1.0, v0.1.0, v0.2.0 and v0.3.2) through their CLI and MCP tools, so they hold connections, supersedes links, dependencies, constraints, patterns, tags, attribution, code refs and history as those versions wrote them. Each step has a unit test on the fixture of its from format, and format_<v>_migrates_and_passes_check migrates each fixture with the binary, runs check, checks the backup, and compares the report and every migrated byte with tests/integration/golden/migrate_<v>.txt."
+alternatives = ["Build old stores in the test by downgrading the version of a current one - rejected: the old tests did this, and such a store holds none of the shapes the steps exist for"]
+tags = [
+    "testing",
+    "migration",
+]
+attribution = "agent"
+created = "2026-11-23T22:52:37.882647533Z"
+
+[[decision.code_refs]]
+file = "tests/fixtures/formats"
+
+[[decision.code_refs]]
+file = "tests/integration/migrate.rs"
+symbol = "migrates_and_passes_check"
+
+[[decision.code_refs]]
+file = "src/store/migration/steps.rs"

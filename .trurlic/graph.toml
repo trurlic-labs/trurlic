@@ -11,6 +11,16 @@ tags = [
 hash = "f4db2000c112fbda7a458ab68d7ce418f95425e261107f30dc7cbd8f47bfeb4b"
 
 [[nodes]]
+name = "a-migration-rewrites-the-graph-as-toml-tables-reads-the"
+kind = "decision"
+tags = [
+    "storage",
+    "migration",
+    "reliability",
+]
+hash = "5818bf91095c9e93d1b2f3f725e1b707371b34f6e1c63731ebda58b1daad9c23"
+
+[[nodes]]
 name = "a-panic-while-a-request-is-handled-is-caught-in-server"
 kind = "decision"
 tags = [
@@ -55,7 +65,7 @@ tags = [
     "reliability",
     "storage",
 ]
-hash = "8e1a03d0af704fb044e4c58b82b6b1de2b60a85078b648e66b334bc9c428b3fc"
+hash = "f20faa3a41e4fbf3e5b54ca0a0b499db9d4875925e5c7ef8358cc020d13a49aa"
 
 [[nodes]]
 name = "benches-and-property-tests-draw-from-a-seeded-corpus"
@@ -184,6 +194,15 @@ tags = [
 hash = "e9fcf43af572aa99636d16162bd75ee6f616df2bcda3eea6ea22d5ba7823e9d2"
 
 [[nodes]]
+name = "each-historical-format-has-a-fixture-graph-written-by-the"
+kind = "decision"
+tags = [
+    "testing",
+    "migration",
+]
+hash = "94ec984d4125ecd331dab8b5da43e92020f7e1df74ea4214695bc53ca923e61a"
+
+[[nodes]]
 name = "each-tool-declares-its-arguments-once-in-args-declare"
 kind = "decision"
 tags = [
@@ -220,7 +239,7 @@ tags = [
     "data-integrity",
     "error-handling",
 ]
-hash = "87ceb80c75f8c44bcf5621416854a87c16d47a99c9edc83c2ebc0931be3176eb"
+hash = "6f77c5ec66d7113f4f73c333c75242c5355f63df1922cf423448c66a7dfcfbed"
 
 [[nodes]]
 name = "every-tool-result-fits-max-tool-result-bytes-24-kib-a"
@@ -281,7 +300,7 @@ tags = [
     "determinism",
     "compatibility",
 ]
-hash = "c1e5a6ffe77ca818c5f533972cedbae1ff754828fa7ccf772b8535257656a7c7"
+hash = "d5cd7b551b8e493981329f6cd862bbc06f3947aae1b105bbad84fc63dfe74b5d"
 
 [[nodes]]
 name = "initialization-gate-tools-list-and-tools-call-require-prior"
@@ -341,7 +360,7 @@ tags = [
     "reliability",
     "concurrency",
 ]
-hash = "9adf9ebb06b1c0e0be4938e918ed1c1b6dafe94c9d742d72ddf3d800b19d2d3b"
+hash = "43b297ab6defd5df529a91d260aa25ea14f3013cbcfa2005fccc5fce127d24c1"
 
 [[nodes]]
 name = "mcp"
@@ -356,6 +375,15 @@ tags = [
     "module-boundary",
 ]
 hash = "c2835eed157d96d1218feace2dfaf78aa6e11c2393ea70a07f4d126726c173c0"
+
+[[nodes]]
+name = "migrate-walks-an-ordered-registry-of-steps-one-per-format"
+kind = "decision"
+tags = [
+    "storage",
+    "migration",
+]
+hash = "89c517d0e827e6888f40dd4c6351fa24c4216fc172798e34a5bdeb2442c48117"
 
 [[nodes]]
 name = "module-visibility-pub-crate-default-only-cli-and-store-are"
@@ -430,7 +458,16 @@ hash = "8803d9410254d521a8eb6ded13c4e9b7494016f5f4cdab066155a34436a6b865"
 [[nodes]]
 name = "project"
 kind = "component"
-hash = "9b658bcc3bdf39842a63d8741149671acb1b723deb1da81d21fae39c78319ac5"
+hash = "aaeaa62dcdbaa997cf4f8a60e288300958c3cbe25aeea071817f89f700a5931a"
+
+[[nodes]]
+name = "project-toml-names-its-format-in-format-version-major-minor"
+kind = "decision"
+tags = [
+    "storage",
+    "migration",
+]
+hash = "c322d0395a69dcf19862a0daa6d0715c7b54e6b50de29ed8da2cfb71061d14ea"
 
 [[nodes]]
 name = "release-profile-fat-lto-one-codegen-unit-stripped-symbols"
@@ -455,7 +492,7 @@ hash = "06ebe1250fd141485fe8a5309476801722c5376bfe4f8bcde7b7b6bafe55c436"
 name = "single-error-enum-with-thiserror-project-wide-result-alias"
 kind = "decision"
 tags = ["error-handling"]
-hash = "8e7891d9a29843f26bf309e042f6fc8a591ecd8d033c7072a02403c144327580"
+hash = "e728340e31a3bb4b4a71550944fed8115bee21e2dc554bb0842171b014277571"
 
 [[nodes]]
 name = "static-tool-catalogue-via-lazylock-returned-by-reference"
@@ -487,6 +524,15 @@ tags = [
 hash = "fc280fd345d84f2dc0c1f690b20bcf60cf1a6c35855c6597bc2105720dd117f2"
 
 [[nodes]]
+name = "the-format-after-0-4-0-is-0-4-1-the-version-key-rename-so"
+kind = "decision"
+tags = [
+    "storage",
+    "migration",
+]
+hash = "96c5dd8256a17a54ffa2a0de8eee0b3e7c8d8c955885b3b3975780a819b20215"
+
+[[nodes]]
 name = "tiered-store-access-helpers-separate-read-only-from-mutable"
 kind = "decision"
 tags = [
@@ -511,7 +557,7 @@ tags = [
     "storage",
     "developer-experience",
 ]
-hash = "29c712d17d836b8f59530b58127c2da5a1fdbd13b6df10caca54543213d4af15"
+hash = "e4c34d392d1b8ec8352ee72be1ecff72c25425d62131f399cce8808343f743ab"
 
 [[nodes]]
 name = "trurlic-install-has-one-target-claude-code-until-the"
@@ -570,6 +616,11 @@ hash = "841f223107eda7259b947690d2785e053727018568fc025845d025b6ee6555e9"
 
 [[edges]]
 from = "a-decision-s-choice-and-reason-are-checked-by-the-store-in"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "a-migration-rewrites-the-graph-as-toml-tables-reads-the"
 to = "store"
 kind = "belongs_to"
 
@@ -685,6 +736,11 @@ kind = "belongs_to"
 
 [[edges]]
 from = "depends-on-cycles-are-found-as-strongly-connected"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "each-historical-format-has-a-fixture-graph-written-by-the"
 to = "store"
 kind = "belongs_to"
 
@@ -834,6 +890,11 @@ to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
+from = "migrate-walks-an-ordered-registry-of-steps-one-per-format"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
 from = "module-visibility-pub-crate-default-only-cli-and-store-are"
 to = "project"
 kind = "belongs_to"
@@ -899,6 +960,11 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
+from = "project-toml-names-its-format-in-format-version-major-minor"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
 from = "release-profile-fat-lto-one-codegen-unit-stripped-symbols"
 to = "project"
 kind = "belongs_to"
@@ -926,6 +992,11 @@ kind = "belongs_to"
 [[edges]]
 from = "the-cli-keeps-a-required-ide-whose-one-value-is-claude-code"
 to = "commands"
+kind = "belongs_to"
+
+[[edges]]
+from = "the-format-after-0-4-0-is-0-4-1-the-version-key-rename-so"
+to = "store"
 kind = "belongs_to"
 
 [[edges]]
