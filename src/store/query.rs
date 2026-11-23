@@ -2,8 +2,8 @@
 //!
 //! Read-only traversals: decision lookup, component adjacency, pattern
 //! membership, and transitive dependency BFS. Separated from the core
-//! graph module for navigability — the query surface is ~180 lines
-//! across 15 methods and does not affect the build or validation paths.
+//! graph module for navigability: no query affects the build or
+//! validation paths.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -24,27 +24,6 @@ impl InMemoryGraph {
     /// All project-wide decisions (`BelongsTo "project"`).
     pub fn project_decisions(&self) -> Vec<(&Arc<str>, &DecisionFile)> {
         self.decisions_for("project")
-    }
-
-    /// Decisions that count toward a component's concern coverage: its own
-    /// decisions plus the project-wide rules that constrain every component.
-    ///
-    /// This is the single baseline for coverage math — `get_context` and every
-    /// removal's lost-coverage report share it, so a concern a project rule
-    /// still covers is never falsely reported as lost. For `"project"` itself
-    /// the project rules are the component's own decisions, so they are not
-    /// added twice.
-    #[must_use]
-    pub fn coverage_baseline(&self, component: &str) -> Vec<&DecisionFile> {
-        let mut baseline: Vec<&DecisionFile> = self
-            .decisions_for(component)
-            .into_iter()
-            .map(|(_, dec)| dec)
-            .collect();
-        if component != "project" {
-            baseline.extend(self.project_decisions().into_iter().map(|(_, dec)| dec));
-        }
-        baseline
     }
 
     /// Components this component connects to (forward `ConnectsTo`).
@@ -118,24 +97,6 @@ impl InMemoryGraph {
         })
     }
 
-    /// Decisions that are members of a pattern (forward `MemberOf` edges).
-    pub fn decisions_for_pattern(&self, pattern: &str) -> Vec<(&Arc<str>, &DecisionFile)> {
-        self.forward
-            .get(pattern)
-            .map(|edges| {
-                edges
-                    .iter()
-                    .filter(|e| e.kind == EdgeKind::MemberOf)
-                    .filter_map(|e| {
-                        self.decisions
-                            .get(&e.target)
-                            .map(|d| (&e.target, d.as_ref()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
     /// BFS on `DependsOn` forward edges from a set of seed decisions.
     ///
     /// Returns all reachable decisions within `max_depth` hops, excluding
@@ -190,11 +151,6 @@ impl InMemoryGraph {
         }
 
         result
-    }
-
-    /// Components that a pattern applies to (forward `AppliesTo` edges).
-    pub fn components_for_pattern(&self, pattern: &str) -> Vec<&str> {
-        self.forward_targets(pattern, EdgeKind::AppliesTo)
     }
 
     /// Count forward edges of a specific kind from a node.
@@ -343,44 +299,6 @@ mod tests {
         let decs = g.project_decisions();
         assert_eq!(decs.len(), 1);
         assert_eq!(decs[0].0.as_ref(), "error-strategy");
-    }
-
-    // ── coverage_baseline ────────────────────────────────────────────────
-
-    #[test]
-    fn coverage_baseline_component_includes_project_rules() {
-        let g = test_graph();
-        // auth owns `use-jwt`; the project owns `error-strategy`. A component's
-        // coverage baseline is its own decisions plus the project-wide rules.
-        let baseline = g.coverage_baseline("auth");
-        assert_eq!(baseline.len(), 2);
-        let owners: BTreeSet<&str> = baseline
-            .iter()
-            .map(|d| d.decision.component.as_str())
-            .collect();
-        assert!(owners.contains("auth"));
-        assert!(owners.contains("project"));
-    }
-
-    #[test]
-    fn coverage_baseline_undesigned_component_is_project_rules_only() {
-        let g = test_graph();
-        // rate-limiter has no decisions of its own — the baseline is exactly
-        // the inherited project rules.
-        let baseline = g.coverage_baseline("rate-limiter");
-        assert_eq!(baseline.len(), 1);
-        assert_eq!(baseline[0].decision.component.as_str(), "project");
-    }
-
-    #[test]
-    fn coverage_baseline_project_does_not_duplicate_rules() {
-        let g = test_graph();
-        // For "project" itself the project rules ARE its own decisions, so they
-        // must be counted once, never added a second time.
-        let baseline = g.coverage_baseline("project");
-        assert_eq!(baseline.len(), g.project_decisions().len());
-        assert_eq!(baseline.len(), 1);
-        assert_eq!(baseline[0].decision.component.as_str(), "project");
     }
 
     // ── connects_to / connects_from ──────────────────────────────────────
@@ -912,7 +830,7 @@ mod tests {
                     hash: "jr".into(),
                 },
                 NodeEntry {
-                    name: "no-io-in-workflow".into(),
+                    name: "no-io-in-budget".into(),
                     kind: NodeKind::Decision,
                     tags: vec![],
                     hash: "ni".into(),
@@ -930,7 +848,7 @@ mod tests {
                     kind: EdgeKind::BelongsTo,
                 },
                 EdgeEntry {
-                    from: "no-io-in-workflow".into(),
+                    from: "no-io-in-budget".into(),
                     to: "project".into(),
                     kind: EdgeKind::BelongsTo,
                 },
@@ -996,11 +914,11 @@ mod tests {
             },
         );
         decisions.insert(
-            "no-io-in-workflow".into(),
+            "no-io-in-budget".into(),
             DecisionFile {
                 decision: Decision {
                     component: "project".into(),
-                    choice: "Workflow module has no I/O".into(),
+                    choice: "Budget module has no I/O".into(),
                     reason: "Purity guarantees determinism".into(),
                     alternatives: vec![],
                     tags: vec![],
@@ -1039,7 +957,7 @@ mod tests {
     #[test]
     fn decisions_for_file_no_match_returns_empty() {
         let g = graph_with_code_refs();
-        let results = g.decisions_for_file("src/workflow/advance.rs");
+        let results = g.decisions_for_file("src/budget.rs");
         assert!(results.is_empty());
     }
 
@@ -1059,10 +977,10 @@ mod tests {
     #[test]
     fn decisions_for_file_decision_without_refs_not_matched() {
         let g = graph_with_code_refs();
-        // no-io-in-workflow has no code_refs — should never appear.
+        // no-io-in-budget has no code_refs, so it never appears.
         let all_src = g.decisions_for_file("src");
         let names: Vec<&str> = all_src.iter().map(|(n, _)| n.as_ref()).collect();
-        assert!(!names.contains(&"no-io-in-workflow"));
+        assert!(!names.contains(&"no-io-in-budget"));
     }
 
     #[test]

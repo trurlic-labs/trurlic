@@ -7,7 +7,7 @@ use crate::store::schema::{
     COMPONENTS_DIR, ComponentFile, DECISIONS_DIR, DecisionFile, EdgeEntry, FORMAT_VERSION,
     GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile,
 };
-use crate::store::{Store, StoreLock};
+use crate::store::{Store, StoreLock, Timestamp};
 use crate::{Error, Result};
 
 use super::DryRun;
@@ -54,13 +54,10 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
         return Ok(());
     }
 
-    // Snapshot under the lock so no concurrent CLI/MCP/map write can tear the
+    // Snapshot under the lock so no concurrent CLI or MCP write can tear the
     // backup — a copy taken without the lock could pair a freshly written node
     // file with a pre-write graph.toml, defeating its purpose as a recovery point.
-    let backup_name = format!(
-        ".trurlic-backup-{}",
-        chrono::Utc::now().format("%Y%m%dT%H%M%S")
-    );
+    let backup_name = backup_name()?;
     let backup_path = root
         .parent()
         .ok_or_else(|| Error::Validation("store root has no parent directory".into()))?
@@ -78,6 +75,16 @@ pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
     }
     out!("Migrated from {old_version} \u{2192} {FORMAT_VERSION}, backup at {backup_name}/")?;
     Ok(())
+}
+
+/// `.trurlic-backup-` and the UTC time to the second in ISO 8601 basic
+/// format (`20250601T103000`), which has no `:` for Windows to refuse.
+fn backup_name() -> Result<String> {
+    let now = Timestamp::now()?.civil();
+    Ok(format!(
+        ".trurlic-backup-{:04}{:02}{:02}T{:02}{:02}{:02}",
+        now.year, now.month, now.day, now.hour, now.minute, now.second
+    ))
 }
 
 /// Rewrite every node file into the current schema, strip graph edges the

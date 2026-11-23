@@ -1,4 +1,5 @@
-//! The crate's one error type.
+//! The error every module returns. `trurlic install` alone has its own,
+//! `InstallError`, which wraps this one; nothing here names it.
 //!
 //! A failure that comes from a file names the file: [`Error::Io`] and
 //! [`Error::Toml`] carry the path, and nothing converts a bare
@@ -8,7 +9,7 @@ use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::commands::InstallError;
+use crate::store::TimestampError;
 use crate::store::graph::Issue;
 use crate::store::text::{TextFault, TextField};
 
@@ -33,8 +34,8 @@ pub enum Error {
         source: toml::ser::Error,
     },
 
-    /// An I/O call with no file behind it: a standard stream, a socket, the
-    /// async runtime, a child process. `what` names the call.
+    /// An I/O call with no file behind it: a standard stream, the working
+    /// directory, the path of the running binary. `what` names the call.
     #[error("cannot {what}: {source}")]
     System { what: String, source: io::Error },
 
@@ -109,6 +110,10 @@ pub enum Error {
     )]
     BadJournal { journal: PathBuf, detail: String },
 
+    /// The system clock reads an instant a `Timestamp` cannot hold.
+    #[error("system clock: {source}")]
+    Clock { source: TimestampError },
+
     #[error("{0} consistency error(s) found")]
     CheckFailed(usize),
 
@@ -134,9 +139,6 @@ pub enum Error {
 
     #[error("operation blocked by cascade rule: {0}")]
     CascadeBlocked(String),
-
-    #[error(transparent)]
-    Install(#[from] InstallError),
 }
 
 impl Error {

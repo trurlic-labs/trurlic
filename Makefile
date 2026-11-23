@@ -1,58 +1,18 @@
-.PHONY: install build build-debug build-release build-frontend install-frontend \
-       test test-frontend bench check check-frontend \
-       fmt fmt-frontend audit audit-js ci setup clean
+.PHONY: install test bench check fmt audit ci setup clean
 
-FRONTEND_DIR = src/map/frontend
-NODE_STAMP   = $(FRONTEND_DIR)/node_modules/.install-stamp
-
-# ── Install (single command: rebuild everything → install binary) ──────────
+# ── Install ───────────────────────────────────────────────────────────────────
 # Installs to ~/.local/bin/ — same location as install.sh for end users.
 
-install: build-frontend
-	@touch src/map/embed.rs
+install:
 	cargo install --path . --locked --root ~/.local
 	@echo ""
 	@echo "  ✓ trurlic installed to ~/.local/bin/trurlic"
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
-setup: install-frontend
+setup:
 	git config core.hooksPath .githooks
 	@echo "  ✓ Git hooks installed"
-
-# ── Frontend ──────────────────────────────────────────────────────────────────
-
-# Stamp-file pattern: npm ci only re-runs when package-lock.json changes.
-$(NODE_STAMP): $(FRONTEND_DIR)/package-lock.json
-	cd $(FRONTEND_DIR) && npm ci
-	@touch $@
-
-install-frontend: $(NODE_STAMP)
-
-build-frontend: $(NODE_STAMP)
-	cd $(FRONTEND_DIR) && npm run build
-
-fmt-frontend: $(NODE_STAMP)
-	cd $(FRONTEND_DIR) && npm run fmt
-
-check-frontend: $(NODE_STAMP)
-	cd $(FRONTEND_DIR) && npm run fmt:check
-	cd $(FRONTEND_DIR) && npm run typecheck
-
-test-frontend: check-frontend
-	cd $(FRONTEND_DIR) && npm test
-
-# ── Build ─────────────────────────────────────────────────────────────────────
-# `make build` is the default dev workflow: build frontend + install binary
-# so `trurlic` always points to the latest version.
-
-build: install
-
-build-debug: build-frontend
-	cargo build --locked
-
-build-release: build-frontend
-	cargo build --locked --release
 
 # ── Format & Lint ─────────────────────────────────────────────────────────────
 
@@ -74,41 +34,25 @@ test:
 # ── Bench ─────────────────────────────────────────────────────────────────────
 
 # `bench` builds the seeded corpus and the in-process server the benches
-# drive; without it, `cargo bench` has no bench target to run.
+# drive; without it, `cargo bench` has no bench target to run. Benches run
+# locally only. Criterion compares each run with the previous one under
+# target/criterion. Smoke run, each bench once:
+# `cargo bench --features bench -- --test`.
 bench:
 	cargo bench --locked --features bench
 
 # ── Audit ─────────────────────────────────────────────────────────────────────
-# Rust:       requires `cargo install cargo-deny`
-# TypeScript: cve-lite-cli + npm audit + lockfile-lint
+# Requires `cargo install cargo-deny`.
 
-audit: audit-js
+audit:
 	cargo deny check
-
-audit-js: $(NODE_STAMP)
-	@echo "── npm dependency CVE scan ──────────────────────────────────────────"
-	cd $(FRONTEND_DIR) && npx cve-lite-cli . --verbose --fail-on high
-	@echo ""
-	@echo "── npm audit (advisory check) ──────────────────────────────────────"
-	cd $(FRONTEND_DIR) && npm audit --omit=dev || true
-	@echo ""
-	@echo "── lockfile integrity ──────────────────────────────────────────────"
-	cd $(FRONTEND_DIR) && npx lockfile-lint \
-		--path package-lock.json \
-		--type npm \
-		--allowed-hosts npm \
-		--validate-https \
-		--validate-package-names
-	@echo ""
-	@echo "  ✓ Supply chain checks passed"
 
 # ── CI gate (run before pushing) ──────────────────────────────────────────────
 
-ci: check check-frontend test audit
+ci: check test audit
 	@echo "  ✓ All checks passed"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
 clean:
 	cargo clean
-	rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/dist

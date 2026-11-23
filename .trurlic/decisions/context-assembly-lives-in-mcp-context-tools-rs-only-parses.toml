@@ -1,0 +1,19 @@
+[decision]
+component = "mcp"
+choice = "Context assembly lives in mcp::context; tools.rs only parses arguments and dispatches"
+reason = "get_context assembles a tailored spec: component decisions, project-wide rules, related decisions from connected components, transitive dependencies, applicable patterns, decision health and an authoritative brief, and check_pattern, get_architecture, get_decision_history and get_decisions_for_file are built beside it. Keeping that assembly in mcp::context leaves tools.rs a thin layer of tool definitions, argument parsing and dispatch, so a tool's schema and its result builder change independently and the builders are tested against a ProjectState without JSON-RPC. This narrows a former decision that also routed step prompts through the deleted workflow module."
+alternatives = [
+    "Inline context assembly in the tool dispatch functions: rejected, graph traversal, brief generation and health reporting are complex enough to warrant their own module",
+    "Move context assembly into store: rejected, the brief is agent-facing prose and JSON, and store stays free of MCP concerns",
+]
+tags = ["module-boundary"]
+attribution = "user"
+created = "2026-11-23T20:06:33.224278718Z"
+
+[[decision.code_refs]]
+file = "src/mcp/context.rs"
+symbol = "get_context"
+
+[[decision.code_refs]]
+file = "src/mcp/tools.rs"
+symbol = "call_read_tool"

@@ -1,3 +1,0 @@
-[component]
-name = "map"
-description = "Interactive graph visualization, WebSocket live sync, REST API, embedded frontend"

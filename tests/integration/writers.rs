@@ -1,15 +1,15 @@
-//! Two `trurlic serve` processes and one `trurlic map` server take turns on
-//! one store, 1000 writes in all. Writes follow each other faster than a
-//! watcher reloads, so most land on a server that has not seen the other
-//! servers' last writes: the lost update. Every write must validate against
-//! the store on disk and keep what the others committed.
+//! Three `trurlic serve` processes take turns on one store, 1000 writes in
+//! all. Writes follow each other faster than a watcher reloads, so most land
+//! on a server that has not seen the other servers' last writes: the lost
+//! update. Every write must validate against the store on disk and keep what
+//! the others committed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 use serde_json::json;
 
-use crate::harness::{MapServer, McpClient, Project};
+use crate::harness::{McpClient, Project};
 
 const WRITES: usize = 1000;
 
@@ -28,7 +28,7 @@ struct Model {
     decisions: BTreeMap<String, Expected>,
     /// `(from, to, kind)` for the edges a write asked for explicitly.
     edges: BTreeSet<(String, String, String)>,
-    /// The last decision each MCP client recorded.
+    /// The last decision each recording client recorded.
     last_recorded: [Option<String>; 2],
     revisions: usize,
 }
@@ -73,9 +73,9 @@ fn edge(from: &str, to: &str, kind: &str) -> (String, String, String) {
     (from.to_owned(), to.to_owned(), kind.to_owned())
 }
 
-/// One write through MCP client `client` (0 or 1): a decision that depends
-/// on the other client's latest one, a revision of that one, or a new
-/// connection.
+/// One write through recording client `client` (0 or 1): a decision that
+/// depends on the other client's latest one, a revision of that one, or a
+/// new connection.
 fn mcp_write(mcp: &mut McpClient, client: usize, round: usize, model: &mut Model) {
     let other = model.last_recorded[1 - client].clone();
     match (round % 3, other) {
@@ -134,35 +134,29 @@ fn record(
     );
 }
 
-/// One write through the map: a component, a revision of a decision an
-/// MCP client recorded, or a connection.
-fn map_write(map: &MapServer, round: usize, model: &mut Model) {
+/// One write through the third client: a component, a revision of a
+/// decision a recording client recorded, or a connection.
+fn component_write(mcp: &mut McpClient, round: usize, model: &mut Model) {
     let target = model.last_recorded[round % 2].clone();
-    let (status, body) = match (round % 3, target) {
+    match (round % 3, target) {
         (1, Some(target)) => {
             let (choice, reason) = model.revise(&target);
-            map.request(
-                "PUT",
-                &format!("/api/decision/{target}"),
-                Some(&json!({ "choice": choice, "reason": reason })),
-            )
+            mcp.call_tool(
+                "update_decision",
+                json!({ "name": target, "mode": "revise", "choice": choice, "reason": reason }),
+            );
         }
         (2, _) if model.unconnected_pair().is_some() => {
             let (from, to) = model.unconnected_pair().unwrap();
+            mcp.call_tool("add_connection", json!({ "from": from, "to": to }));
             model.edges.insert(edge(&from, &to, "connects_to"));
-            map.request(
-                "POST",
-                "/api/connection",
-                Some(&json!({ "from": from, "to": to })),
-            )
         }
         _ => {
-            let name = format!("map-{round}");
-            model.components.insert(name.clone());
-            map.request("POST", "/api/component", Some(&json!({ "name": name })))
+            let name = format!("component-{round}");
+            mcp.call_tool("add_component", json!({ "name": name }));
+            model.components.insert(name);
         }
-    };
-    assert_eq!(status, 200, "map write in round {round}: {body}");
+    }
 }
 
 fn read_toml(path: &std::path::Path) -> toml::Table {
@@ -230,7 +224,7 @@ fn assert_disk_matches(project: &Project, model: &Model) {
 }
 
 #[test]
-fn two_servers_and_a_map_lose_no_write() {
+fn three_servers_lose_no_write() {
     let project = Project::init();
     for name in ["auth", "billing"] {
         project.run_ok(&["add", "component", name]);
@@ -242,13 +236,13 @@ fn two_servers_and_a_map_lose_no_write() {
     let mut clients = [
         McpClient::connect(&project).0,
         McpClient::connect(&project).0,
+        McpClient::connect(&project).0,
     ];
-    let map = MapServer::start(&project);
 
     for step in 0..WRITES {
         let round = step / 3;
         match step % 3 {
-            2 => map_write(&map, round, &mut model),
+            2 => component_write(&mut clients[2], round, &mut model),
             client => mcp_write(&mut clients[client], client, round, &mut model),
         }
     }

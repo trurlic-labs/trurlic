@@ -6,19 +6,23 @@ rust-version = "1.90"
 license = "Apache-2.0"
 authors = ["m2papierz@gmail.com"]
 repository = "https://github.com/trurlic-labs/trurlic"
-homepage = "https://github.com/trurlic-labs/trurlic"
 readme = "README.md"
 description = "Structured architectural decisions that constrain AI code generation"
 keywords = ["architecture", "decisions", "mcp", "ai", "code-generation"]
 categories = ["command-line-utilities", "development-tools"]
 
+# The lib and bin carry no benches: `bench = false` keeps `cargo bench` from
+# running their libtest harnesses, which refuse criterion's arguments
+# (`--save-baseline`, `--baseline`) passed after `--`.
 [[bin]]
 name = "trurlic"
 path = "src/main.rs"
+bench = false
 
 [lib]
 name = "trurlic"
 path = "src/lib.rs"
+bench = false
 
 [[bench]]
 name = "corpus"
@@ -42,14 +46,10 @@ clap = { version = "4", features = ["derive"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml_ng = "0.10"
 toml  = "1"
 
 # Error handling
 thiserror = "2"
-
-# Utilities
-chrono = { version = "0.4", features = ["serde"] }
 
 # Content hashing (pure Rust, no C/OpenSSL dependency)
 blake3 = "1"
@@ -60,29 +60,8 @@ rayon = "1"
 # File system watcher for live reload
 notify = "6"
 
-# Async runtime
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "net", "signal", "sync"] }
-
-# HTTP server for map (WebSocket via `ws` feature)
-axum = { version = "0.7", features = ["ws"] }
-
-# HTTP middleware: security headers
-tower-http = { version = "0.6", features = ["cors", "set-header"] }
-
-# Embed frontend assets in binary (map)
-rust-embed = "8"
-
-# Cross-platform browser launch (map)
-opener = "0.9"
-
-# Cryptographic random token generation (map)
-rand = "0.8"
-
-# Atomic file writes (install command)
-tempfile = "3"
-
 [dev-dependencies]
-criterion = { version = "5", package = "codspeed-criterion-compat", default-features = false }
+criterion = { version = "0.8", default-features = false }
 tempfile = "3"
 
 # Invariants a tool can check. Tests opt out of the panicking lints through

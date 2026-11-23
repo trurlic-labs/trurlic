@@ -508,8 +508,8 @@ mod tests {
         assert_eq!(on_disk.rebuilt, stamp);
     }
 
-    /// Readers serialize `state.graph_index` (the map's edge list), so after a
-    /// commit it must be the sorted index on disk, not the append order.
+    /// A served state must equal a fresh load of the store, so after a commit
+    /// `state.graph_index` is the sorted index on disk, not the append order.
     #[test]
     fn a_commit_leaves_the_in_memory_index_equal_to_disk() {
         let tmp = TempDir::new().unwrap();

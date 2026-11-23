@@ -6,61 +6,6 @@
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
-        "title": "Advance workflow"
-      },
-      "description": "Compute the workflow step for a component and return the next action. Call before acting on a component and after completing each action. The returned `ready` field is the only signal that implementation can proceed.",
-      "inputSchema": {
-        "properties": {
-          "component": {
-            "description": "Component name (kebab-case) or 'project'.",
-            "type": "string"
-          },
-          "mode": {
-            "description": "Operating mode. agent: AI makes decisions autonomously from source code analysis. interactive: user participates in design through guided discussion. If omitted, advance returns requires_mode=true — present the choice to the user.",
-            "enum": [
-              "agent",
-              "interactive"
-            ],
-            "type": "string"
-          },
-          "step_evidence": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "description": "Evidence of user involvement for completed steps. Keys are step names, values are evidence strings. Gated (interactive) steps require evidence of at least 20 bytes. Ungated steps accept any value including empty string. The state machine skips steps present in this map to progress through steps whose postconditions are not verifiable from the graph alone.",
-            "type": "object"
-          },
-          "task": {
-            "description": "Optional task context passed through to design prompts.",
-            "type": "string"
-          },
-          "task_type": {
-            "description": "What the developer wants to accomplish. Inferred from graph state if omitted. new_component: build from scratch. feature: add to existing component. fix: apply a bugfix. learn: study existing decisions. review: challenge decisions for drift. harden: strengthen coverage gaps. bootstrap: autonomous project scan — agent reads source code and records components, decisions, and patterns without interactive dialogue.",
-            "enum": [
-              "new_component",
-              "feature",
-              "fix",
-              "learn",
-              "review",
-              "harden",
-              "bootstrap"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "component"
-        ],
-        "type": "object"
-      },
-      "name": "advance"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true,
         "title": "Get context"
       },
       "description": "Get the architectural context for a component. Returns decisions, project-wide rules, related decisions from connected components, and an authoritative brief for coding agents. Use depth=\"constraints\" for token-efficient mid-implementation checks (~60-70% fewer tokens).",
@@ -213,7 +158,7 @@
         "readOnlyHint": false,
         "title": "Record decision"
       },
-      "description": "Record a single architectural decision. Validates all edges before writing. Atomic commit. Returns the decision name, path, warnings, and any detected pattern opportunities.",
+      "description": "Record a single architectural decision. Validates all edges before writing. Atomic commit. Returns the decision name, path, its code refs, and warnings.",
       "inputSchema": {
         "properties": {
           "alternatives": {
@@ -236,7 +181,7 @@
             "type": "string"
           },
           "code_refs": {
-            "description": "Source code locations where this decision manifests. Agent mode should always include these.",
+            "description": "Source code locations where this decision manifests. An agent-attributed decision should always include these.",
             "items": {
               "properties": {
                 "file": {
@@ -427,7 +372,7 @@
             "type": "array"
           },
           "mode": {
-            "description": "revise: update content, previous version saved to history. promote: mark an agent decision as human-reviewed. Call ONLY when the user has explicitly reviewed the decision and confirmed it in this conversation. Never promote autonomously; never promote in agent mode.",
+            "description": "revise: update content, previous version saved to history. promote: mark an agent decision as human-reviewed. Call ONLY when the user has explicitly reviewed the decision and confirmed it in this conversation. Never promote autonomously.",
             "enum": [
               "revise",
               "promote"
@@ -457,78 +402,6 @@
         "type": "object"
       },
       "name": "update_decision"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true,
-        "title": "Get step prompt"
-      },
-      "description": "Get the prompt for a specific workflow step. Called as directed by advance. Returns the step's system instructions; call get_context for the component's brief.",
-      "inputSchema": {
-        "properties": {
-          "component": {
-            "description": "Component name or 'project'.",
-            "type": "string"
-          },
-          "mode": {
-            "description": "Operating mode — determines prompt variant.",
-            "enum": [
-              "agent",
-              "interactive"
-            ],
-            "type": "string"
-          },
-          "step": {
-            "description": "Workflow step to get the prompt for.",
-            "enum": [
-              "register",
-              "define_scope",
-              "analyze_code",
-              "cover_concerns",
-              "walk_decisions",
-              "verify_constraints",
-              "impact_check",
-              "pattern_detection",
-              "design_check",
-              "drift_check",
-              "coverage_audit",
-              "scan_project",
-              "extract_decisions",
-              "project_rules",
-              "warm_up",
-              "ready"
-            ],
-            "type": "string"
-          },
-          "task": {
-            "description": "Optional task context.",
-            "type": "string"
-          },
-          "task_type": {
-            "description": "Optional task type for variant prompts.",
-            "enum": [
-              "new_component",
-              "feature",
-              "fix",
-              "learn",
-              "review",
-              "harden",
-              "bootstrap"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "component",
-          "step",
-          "mode"
-        ],
-        "type": "object"
-      },
-      "name": "get_step_prompt"
     },
     {
       "annotations": {
@@ -565,7 +438,7 @@
         "readOnlyHint": false,
         "title": "Add connection"
       },
-      "description": "Add a directional connection between two components. Represents data or control flow. Connections provide context to get_context and get_step_prompt.",
+      "description": "Add a directional connection between two components. Represents data or control flow. A connected component's decisions appear as related decisions in get_context.",
       "inputSchema": {
         "properties": {
           "from": {

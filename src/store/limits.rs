@@ -1,6 +1,6 @@
 //! Shared input-validation constants for all trust boundaries.
 //!
-//! Every entry point (MCP server, map REST API, CLI) enforces the same
+//! Every entry point (MCP server, CLI) enforces the same
 //! limits on untrusted input. Defining them in one place prevents
 //! silent drift between adapters — a constant here changes everywhere,
 //! and the compiler catches any adapter that still uses a local copy.
@@ -21,11 +21,6 @@ pub const MIN_REASON_BYTES: usize = 10;
 /// Maximum byte length for a decision's `choice` field.
 /// A choice is a concise title, not a paragraph.
 pub const MAX_CHOICE_BYTES: usize = 200;
-
-/// Minimum byte length for step evidence on gated (interactive) steps.
-/// Catches empty strings and trivial rubber stamps without requiring
-/// semantic analysis of user input.
-pub const MIN_STEP_EVIDENCE_BYTES: usize = 20;
 
 /// Maximum number of code references per decision.
 pub const MAX_CODE_REFS: usize = 20;

@@ -12,8 +12,7 @@ use std::fs;
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::sync::Arc;
-
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use std::time::Duration;
 
 use crate::{Error, Result};
 
@@ -23,7 +22,7 @@ use super::schema::{
     Attribution, CodeRef, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
     HistoryEntry, NodeEntry, NodeKind, Pattern, PatternFile,
 };
-use super::{ProjectState, Store, slugify};
+use super::{ProjectState, Store, Timestamp, slugify};
 
 /// The project-wide pseudo-component decisions may belong to.
 const PROJECT: &str = "project";
@@ -64,16 +63,26 @@ const MAX_TAGS: usize = 6;
 const MAX_HISTORY: usize = 14;
 
 /// Every timestamp is this instant plus an offset, so writing a corpus never
-/// reads the clock. The newest is under 100 days later: every decision has
-/// read as stale since late 2025, so a read answers the same on any day.
-fn epoch() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
-        .single()
-        .unwrap_or(DateTime::UNIX_EPOCH)
+/// reads the clock.
+fn epoch() -> Timestamp {
+    // A literal in range, so the parse holds.
+    "2025-01-01T00:00:00Z"
+        .parse()
+        .unwrap_or(Timestamp::UNIX_EPOCH)
 }
 
-/// Prose vocabulary. It carries keywords of every concern area, so concern
-/// coverage is computed over text that matches.
+/// `at` plus `offset`. A corpus spans months from [`epoch`], so the sum is
+/// in range and holds.
+fn later(at: Timestamp, offset: Duration) -> Timestamp {
+    at.checked_add(offset).unwrap_or(at)
+}
+
+const HOUR: Duration = Duration::from_secs(60 * 60);
+
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Prose vocabulary of architecture terms, so keyword queries such as
+/// `check_pattern` match decisions as they would in a production graph.
 const WORDS: &[&str] = &[
     "the",
     "store",
@@ -228,10 +237,15 @@ impl Corpus {
 }
 
 /// SplitMix64 (Steele, Lea and Flood, 2014): a 64-bit state, full period,
-/// and an output fixed by its definition.
-struct SplitMix64(u64);
+/// and an output fixed by its definition. The one seeded source for the
+/// corpus and for the crate's property tests.
+pub(crate) struct SplitMix64(u64);
 
 impl SplitMix64 {
+    pub(crate) const fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
     fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = self.0;
@@ -241,14 +255,14 @@ impl SplitMix64 {
     }
 
     /// Uniform in `0..n` by multiply-shift, which has no modulo bias.
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         let bound = u128::try_from(n).unwrap_or(u128::MAX);
         let draw = (u128::from(self.next()) * bound) >> 64;
         // `draw < n`, so the conversion holds.
         usize::try_from(draw).unwrap_or(0)
     }
 
-    fn within(&mut self, range: &RangeInclusive<usize>) -> usize {
+    pub(crate) fn within(&mut self, range: &RangeInclusive<usize>) -> usize {
         range.start() + self.below(range.end() - range.start() + 1)
     }
 
@@ -324,7 +338,7 @@ struct Plan {
 
 impl Plan {
     fn new(corpus: Corpus) -> Self {
-        let mut rng = SplitMix64(corpus.seed);
+        let mut rng = SplitMix64::new(corpus.seed);
         let components = component_names(corpus.decisions);
         let percent = usize::from(corpus.anchored_files_percent.min(100));
         let anchored_per_component = FILES_PER_COMPONENT * percent / 100;
@@ -339,7 +353,7 @@ impl Plan {
             decisions.push(plan_decision(
                 &mut rng, index, component, created, code_refs,
             ));
-            created += Duration::hours(1);
+            created = later(created, HOUR);
         }
         let mut plan = Self {
             components,
@@ -558,7 +572,7 @@ fn plan_decision(
     rng: &mut SplitMix64,
     index: usize,
     component: &str,
-    created: DateTime<Utc>,
+    created: Timestamp,
     code_refs: Vec<CodeRef>,
 ) -> PlannedDecision {
     let history = history(rng, index, component, created);
@@ -597,7 +611,7 @@ fn history(
     rng: &mut SplitMix64,
     index: usize,
     component: &str,
-    created: DateTime<Utc>,
+    created: Timestamp,
 ) -> Vec<HistoryEntry> {
     let revisions = if rng.one_in(20) {
         1 + rng.below(MAX_HISTORY)
@@ -607,7 +621,7 @@ fn history(
     let mut changed_at = created;
     (0..revisions)
         .map(|_| {
-            changed_at += Duration::days(1);
+            changed_at = later(changed_at, DAY);
             HistoryEntry {
                 choice: choice(rng, index, component),
                 reason: rng.prose_within(&REASON_BYTES),

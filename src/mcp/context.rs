@@ -7,7 +7,6 @@ use serde_json::Value;
 use crate::store::graph::InMemoryGraph;
 use crate::store::schema::{Attribution, EdgeKind};
 use crate::store::{self, DecisionFile, PatternFile, ProjectState};
-use crate::workflow::concerns;
 
 // ── Context depth ──────────────────────────────────────────────────────────
 
@@ -55,12 +54,6 @@ pub(crate) fn get_context(
     let project_decisions = graph.project_decisions();
     let patterns = graph.patterns_for(component);
 
-    // Concern coverage: component decisions plus the project rules that
-    // constrain every component. Shares the single baseline used by every
-    // lost-coverage report so the two never diverge.
-    let (covered_concerns, uncovered_concerns) =
-        concerns::compute_concern_coverage(&graph.coverage_baseline(component));
-
     let status = if !component_decisions.is_empty() {
         "covered"
     } else if !project_decisions.is_empty() {
@@ -91,7 +84,6 @@ pub(crate) fn get_context(
                 related_decisions: &related_decisions,
                 transitive_deps: &transitive_deps,
                 patterns: &patterns,
-                uncovered_concerns: &uncovered_concerns,
                 orphaned_ref_names: &orphaned_ref_names,
             });
 
@@ -124,10 +116,6 @@ pub(crate) fn get_context(
                     .collect::<Vec<_>>(),
                 "patterns": format_patterns(&patterns),
                 "related_decisions": combined_related,
-                "concern_coverage": {
-                    "covered": covered_concerns,
-                    "uncovered": uncovered_concerns,
-                },
                 "health": build_health(&component_decisions, orphaned_ref_names.len()),
                 "brief": brief,
                 "status": status,
@@ -140,7 +128,6 @@ pub(crate) fn get_context(
                 &component_decisions,
                 &project_decisions,
                 &patterns,
-                &uncovered_concerns,
             );
 
             Ok(serde_json::json!({
@@ -212,32 +199,14 @@ struct BriefParams<'a> {
     related_decisions: &'a [(&'a Arc<str>, &'a DecisionFile)],
     transitive_deps: &'a [(&'a Arc<str>, &'a DecisionFile)],
     patterns: &'a [(&'a Arc<str>, &'a PatternFile)],
-    uncovered_concerns: &'a [&'a str],
     /// Names of component decisions whose code_refs all point at deleted
     /// files. Flagged inline so the agent knows the reference is untrustworthy.
     orphaned_ref_names: &'a BTreeSet<&'a str>,
 }
 
 /// Format the authoritative brief that coding agents consume directly.
-///
-/// When `uncovered_concerns` outnumber the covered ones, the brief opens
-/// with a degradation warning — belt-and-suspenders for agents that
-/// bypass `advance`.
 fn build_brief(p: &BriefParams<'_>) -> String {
     let mut brief = String::with_capacity(512);
-
-    // Degradation warning: when more concerns are uncovered than covered,
-    // the design is incomplete and the agent should proceed with caution.
-    let covered_count = concerns::CONCERNS.len() - p.uncovered_concerns.len();
-    if p.uncovered_concerns.len() > covered_count {
-        brief.push_str(&format!(
-            "\u{26a0} DESIGN INCOMPLETE \u{2014} {} concern areas have no decisions:\n  {}\n\n\
-             Proceed with caution. Existing decisions below are constraints, \
-             but expect gaps.\n\n",
-            p.uncovered_concerns.len(),
-            p.uncovered_concerns.join(", "),
-        ));
-    }
 
     if let Some(task) = p.task {
         brief.push_str(&format!("TASK: {task}\n\n"));
@@ -314,7 +283,7 @@ fn build_brief(p: &BriefParams<'_>) -> String {
     brief.push_str(
         "OVERRIDE POLICY:\n\
          RULES are inviolable. Component decisions are strong defaults —\n\
-         follow them unless the user explicitly revises them in a design session.\n\
+         follow them unless the user explicitly revises them.\n\
          Never silently deviate from either.\n\n",
     );
 
@@ -412,7 +381,7 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
     }
 
     if matches.is_empty() {
-        // Suggest the most relevant component for a design session by
+        // Suggest the most relevant component for the new decision by
         // matching query words against component names and descriptions.
         let suggested_component = suggest_component_for(state, &query_words);
 
@@ -445,36 +414,17 @@ pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
 pub(crate) fn get_architecture(state: &ProjectState) -> Value {
     let graph = state.graph();
 
-    // Pre-compute project rules (shared across all components for coverage).
     let project_rules = graph.project_decisions();
-    let project_rule_refs: Vec<&DecisionFile> = project_rules.iter().map(|(_, d)| *d).collect();
 
     let components: Vec<Value> = state
         .components
         .iter()
         .map(|(name, comp)| {
-            let comp_decisions = graph.decisions_for(name);
-            let decision_count = comp_decisions.len();
-            let connects_to = graph.connects_to(name);
-
-            // Concern coverage: project rules + this component's decisions.
-            let all_decs: Vec<&DecisionFile> = project_rule_refs
-                .iter()
-                .copied()
-                .chain(comp_decisions.iter().map(|(_, d)| *d))
-                .collect();
-            let (covered, uncovered) = concerns::compute_concern_coverage(&all_decs);
-
             serde_json::json!({
                 "name": name,
                 "description": comp.component.description,
-                "connects_to": connects_to,
-                "decision_count": decision_count,
-                "concern_coverage": {
-                    "covered": covered.len(),
-                    "uncovered": uncovered.len(),
-                    "uncovered_concerns": uncovered,
-                },
+                "connects_to": graph.connects_to(name),
+                "decision_count": graph.decisions_for(name).len(),
             })
         })
         .collect();
@@ -728,18 +678,8 @@ fn build_brief_compact(
     component_decisions: &[(&Arc<str>, &DecisionFile)],
     project_decisions: &[(&Arc<str>, &DecisionFile)],
     patterns: &[(&Arc<str>, &PatternFile)],
-    uncovered_concerns: &[&str],
 ) -> String {
     let mut brief = String::with_capacity(256);
-
-    let covered_count = concerns::CONCERNS.len() - uncovered_concerns.len();
-    if uncovered_concerns.len() > covered_count {
-        brief.push_str(&format!(
-            "\u{26a0} DESIGN INCOMPLETE \u{2014} {} concern areas have no decisions:\n  {}\n\n",
-            uncovered_concerns.len(),
-            uncovered_concerns.join(", "),
-        ));
-    }
 
     if let Some(task) = task_description {
         brief.push_str(&format!("TASK: {task}\n\n"));
@@ -1092,8 +1032,8 @@ mod tests {
 
     #[test]
     fn brief_includes_transitive_dependencies() {
+        use crate::store::Timestamp;
         use crate::store::schema::*;
-        use chrono::{TimeZone, Utc};
 
         let mut state = test_state();
 
@@ -1108,7 +1048,7 @@ mod tests {
                     alternatives: vec![],
                     tags: vec![],
                     attribution: Attribution::User,
-                    created: Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap(),
+                    created: "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap(),
                     code_refs: vec![],
                     history: vec![],
                 },
@@ -1270,6 +1210,10 @@ mod tests {
         assert_eq!(auth["decision_count"], 1);
         let auth_connects = auth["connects_to"].as_array().unwrap();
         assert!(auth_connects.iter().any(|v| v == "database"));
+        assert_eq!(
+            result["undesigned_components"],
+            serde_json::json!(["rate-limiter"])
+        );
     }
 
     #[test]
@@ -1340,134 +1284,6 @@ mod tests {
         assert!(words.contains(&"binding".to_string()));
     }
 
-    // ── no workflow hints ─────────────────────────────────────────────
-
-    #[test]
-    fn get_context_no_workflow() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        assert!(result.get("workflow").is_none());
-        assert_eq!(result["status"], "covered");
-    }
-
-    #[test]
-    fn get_context_constraints_no_workflow() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Constraints).unwrap();
-        assert!(result.get("workflow").is_none());
-    }
-
-    #[test]
-    fn check_pattern_no_workflow() {
-        let state = test_state();
-        let covered = check_pattern(&state, "JWT token authentication");
-        assert_eq!(covered["status"], "covered");
-        assert!(covered.get("workflow").is_none());
-
-        let uncovered = check_pattern(&state, "WebSocket notifications");
-        assert_eq!(uncovered["status"], "not_covered");
-        assert!(uncovered.get("workflow").is_none());
-    }
-
-    #[test]
-    fn get_architecture_no_workflow() {
-        let state = test_state();
-        let result = get_architecture(&state);
-        assert!(result.get("workflow").is_none());
-        // undesigned_components is now plain data, not nested in workflow.
-        let undesigned = result["undesigned_components"].as_array().unwrap();
-        assert_eq!(undesigned.len(), 1);
-        assert_eq!(undesigned[0], "rate-limiter");
-    }
-
-    #[test]
-    fn project_context_no_workflow() {
-        use crate::store::schema::*;
-        let state = ProjectState::new(
-            ProjectFile {
-                trurlic_version: FORMAT_VERSION.into(),
-                project: Project {
-                    name: "empty".into(),
-                    description: String::new(),
-                },
-            },
-            std::collections::BTreeMap::new(),
-            std::collections::BTreeMap::new(),
-            std::collections::BTreeMap::new(),
-            GraphIndex {
-                version: 1,
-                rebuilt: None,
-                nodes: vec![],
-                edges: vec![],
-            },
-        );
-        let result = get_context(&state, "project", None, ContextDepth::Full).unwrap();
-        assert!(result.get("workflow").is_none());
-    }
-
-    // ── degradation warning ───────────────────────────────────────────
-
-    #[test]
-    fn brief_has_degradation_warning_when_incomplete() {
-        let state = test_state();
-        // rate-limiter has no component decisions → only project rules cover
-        // Error handling. 9 of 10 concerns uncovered → degradation warning.
-        let result = get_context(&state, "rate-limiter", None, ContextDepth::Full).unwrap();
-        let brief = result["brief"].as_str().unwrap();
-        assert!(
-            brief.contains("DESIGN INCOMPLETE"),
-            "brief should warn about incomplete design: {brief}"
-        );
-    }
-
-    #[test]
-    fn brief_no_degradation_warning_when_covered() {
-        let state = test_state();
-        // auth has 1 decision + project rule. Whether that's enough depends
-        // on keyword coverage, but with just 2 decisions most concerns are
-        // uncovered. We need a well-covered component to test no-warning.
-        // Use the project context instead — no concern coverage applies.
-        let result = get_context(&state, "project", None, ContextDepth::Full).unwrap();
-        let brief = result["brief"].as_str().unwrap();
-        assert!(
-            !brief.contains("DESIGN INCOMPLETE"),
-            "project brief should not have degradation warning"
-        );
-    }
-
-    // ── concern coverage ──────────────────────────────────────────────
-
-    #[test]
-    fn get_context_includes_concern_coverage() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let coverage = &result["concern_coverage"];
-        assert!(coverage["covered"].is_array());
-        assert!(coverage["uncovered"].is_array());
-        // Project-wide "Result<T, AppError>" covers Error handling.
-        let covered = coverage["covered"].as_array().unwrap();
-        assert!(
-            covered
-                .iter()
-                .any(|c| c.as_str().unwrap().contains("Error handling")),
-            "project rule should cover Error handling: {covered:?}"
-        );
-        // Most concerns remain uncovered.
-        let uncovered = coverage["uncovered"].as_array().unwrap();
-        assert!(uncovered.len() > covered.len());
-    }
-
-    #[test]
-    fn get_architecture_includes_per_component_coverage() {
-        let state = test_state();
-        let result = get_architecture(&state);
-        let components = result["components"].as_array().unwrap();
-        let auth = components.iter().find(|c| c["name"] == "auth").unwrap();
-        assert!(auth["concern_coverage"]["covered"].is_number());
-        assert!(auth["concern_coverage"]["uncovered"].is_number());
-        assert!(auth["concern_coverage"]["uncovered_concerns"].is_array());
-    }
-
     // ── context depth ─────────────────────────────────────────────────
 
     #[test]
@@ -1532,9 +1348,9 @@ mod tests {
 
     #[test]
     fn context_brief_flags_agent_attribution() {
-        use chrono::{TimeZone, Utc};
+        use crate::store::Timestamp;
 
-        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap();
+        let ts = "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap();
 
         let mut state = test_state();
         state.decisions.insert(
@@ -1618,7 +1434,7 @@ mod tests {
 
     #[test]
     fn health_counts_agent_unreviewed() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
 
         let user = DecisionFile {
             decision: Decision {
@@ -1628,7 +1444,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -1641,7 +1457,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::Agent,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -1690,7 +1506,7 @@ mod tests {
     // ── orphaned refs ─────────────────────────────────────────────────
 
     fn decision_with_refs(refs: Vec<CodeRef>) -> DecisionFile {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         DecisionFile {
             decision: Decision {
                 component: "auth".into(),
@@ -1699,7 +1515,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: refs,
                 history: vec![],
             },
@@ -1750,7 +1566,7 @@ mod tests {
 
     #[test]
     fn health_reports_and_flags_orphaned_ref_decisions() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
 
         let tmp = tempfile::TempDir::new().unwrap();
         let mut state = test_state();
@@ -1767,7 +1583,7 @@ mod tests {
                     alternatives: vec![],
                     tags: vec![],
                     attribution: Attribution::User,
-                    created: Utc::now(),
+                    created: Timestamp::now().unwrap(),
                     code_refs: vec![CodeRef {
                         file: "src/parsers/xml.rs".into(),
                         symbol: None,
@@ -1812,9 +1628,9 @@ mod tests {
 
     #[test]
     fn brief_agent_decision_has_review_call_to_action() {
-        use chrono::{TimeZone, Utc};
+        use crate::store::Timestamp;
 
-        let ts = Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap();
+        let ts = "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap();
         let mut state = test_state();
         state.decisions.insert(
             "agent-dec".into(),
@@ -1868,7 +1684,7 @@ mod tests {
 
     #[test]
     fn brief_includes_code_refs_line() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         let dec = DecisionFile {
             decision: Decision {
                 component: "store".into(),
@@ -1877,7 +1693,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![
                     CodeRef {
                         file: "src/store/write.rs".into(),
@@ -1903,7 +1719,6 @@ mod tests {
             transitive_deps: &[],
             related_decisions: &[],
             patterns: &[],
-            uncovered_concerns: &[],
             orphaned_ref_names: &orphaned_ref_names,
         });
 
@@ -1915,7 +1730,7 @@ mod tests {
 
     #[test]
     fn brief_omits_code_line_when_empty() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         let dec = DecisionFile {
             decision: Decision {
                 component: "store".into(),
@@ -1924,7 +1739,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -1941,7 +1756,6 @@ mod tests {
             transitive_deps: &[],
             related_decisions: &[],
             patterns: &[],
-            uncovered_concerns: &[],
             orphaned_ref_names: &orphaned_ref_names,
         });
 
@@ -1953,7 +1767,7 @@ mod tests {
 
     #[test]
     fn format_decisions_includes_code_refs() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         let dec = DecisionFile {
             decision: Decision {
                 component: "store".into(),
@@ -1962,7 +1776,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![CodeRef {
                     file: "src/store/write.rs".into(),
                     symbol: Some("commit_with_graph".into()),
@@ -2001,7 +1815,7 @@ mod tests {
 
     #[test]
     fn get_decision_history_returns_chronological_entries() {
-        use chrono::{TimeZone, Utc};
+        use crate::store::Timestamp;
 
         let mut state = test_state();
         state.decisions.insert(
@@ -2014,18 +1828,18 @@ mod tests {
                     alternatives: vec![],
                     tags: vec![],
                     attribution: Attribution::User,
-                    created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                    created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                     code_refs: vec![],
                     history: vec![
                         HistoryEntry {
                             choice: "JWT tokens".into(),
                             reason: "Stateless authentication".into(),
-                            changed_at: Utc.with_ymd_and_hms(2025, 7, 15, 14, 0, 0).unwrap(),
+                            changed_at: "2025-07-15T14:00:00Z".parse::<Timestamp>().unwrap(),
                         },
                         HistoryEntry {
                             choice: "JWT with refresh tokens".into(),
                             reason: "Stateless auth with rotation".into(),
-                            changed_at: Utc.with_ymd_and_hms(2025, 8, 1, 9, 30, 0).unwrap(),
+                            changed_at: "2025-08-01T09:30:00Z".parse::<Timestamp>().unwrap(),
                         },
                     ],
                 },
@@ -2055,7 +1869,7 @@ mod tests {
 
     #[test]
     fn format_decisions_omits_code_refs_when_empty() {
-        use chrono::Utc;
+        use crate::store::Timestamp;
         let dec = DecisionFile {
             decision: Decision {
                 component: "store".into(),
@@ -2064,7 +1878,7 @@ mod tests {
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc::now(),
+                created: Timestamp::now().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },

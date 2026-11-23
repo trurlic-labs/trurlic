@@ -30,13 +30,9 @@ body:
       label: Component
       options:
         - CLI
-        - Design conversations
-        - Bootstrap
         - MCP server / tools
-        - Map / visualization
         - Decision store / graph format
-        - Workflow engine
-        - Configuration
+        - Claude Code registration (trurlic install)
         - Install script
         - Documentation
         - Other

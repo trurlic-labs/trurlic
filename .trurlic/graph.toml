@@ -2,15 +2,6 @@ version = 1
 rebuilt = "2026-10-03T14:48:51.624975071Z"
 
 [[nodes]]
-name = "256-bit-csprng-token-with-constant-time-comparison-for"
-kind = "decision"
-tags = [
-    "security",
-    "api-design",
-]
-hash = "9941137bd3001d337e9499278c8300856323bdf3bdc37c30d2b58b024b3e9329"
-
-[[nodes]]
 name = "a-commit-counter-in-state-generation-orders-loads-a-commit"
 kind = "decision"
 tags = [
@@ -26,16 +17,7 @@ tags = [
     "validation",
     "security",
 ]
-hash = "aead775d1488ae171516cd35b47826cd386ad5df16a2e5563946207240e03bf1"
-
-[[nodes]]
-name = "advance-is-a-pure-function-read-only-stateless-idempotent"
-kind = "decision"
-tags = [
-    "concurrency",
-    "scope",
-]
-hash = "a25a8b690f0f0e0f833dc1a5a09de3d1a00d5db149250089685b419681f7eb38"
+hash = "5c1c4397b44a9761f42d1cd2ac1df3beb619e61d3f72042189ff6195b66a5346"
 
 [[nodes]]
 name = "arc-wrapped-content-values-in-btreemap-with-oncelock-free"
@@ -47,11 +29,6 @@ tags = [
 hash = "372bf5329b370eb49b0259d83e8e8d23890624bcbdad2edefc0c41065d2baf3a"
 
 [[nodes]]
-name = "atomic-write-with-round-trip-verification"
-kind = "pattern"
-hash = "6fd82ec05775e38fb57953b7e5b506fc83f711131d7fcc90e39b4b0382186530"
-
-[[nodes]]
 name = "atomic-writes-via-serialize-to-temp-verify-round-trip"
 kind = "decision"
 tags = [
@@ -61,22 +38,13 @@ tags = [
 hash = "8e1a03d0af704fb044e4c58b82b6b1de2b60a85078b648e66b334bc9c428b3fc"
 
 [[nodes]]
-name = "axum-as-the-http-websocket-server-framework"
-kind = "decision"
-tags = [
-    "framework",
-    "dependencies",
-]
-hash = "2b4d698b72e5bbc8c09d206e74e5df0c0e60733e38da0db2752cf186cd266d50"
-
-[[nodes]]
 name = "benches-and-property-tests-draw-from-a-seeded-corpus"
 kind = "decision"
 tags = [
     "testing",
     "performance",
 ]
-hash = "2cdcae6490773fc22d6c61581805e2ca609d87195e36d17b3c544f5f41abd38e"
+hash = "0e01201e1666d329a828017e9e5bacc04f99e24437161b8f6331a8fc9196a3f3"
 
 [[nodes]]
 name = "benches-drive-the-mcp-server-in-process-through-server"
@@ -86,7 +54,7 @@ tags = [
     "testing",
     "api",
 ]
-hash = "ca6c380a4f4425a7cc861cd4bf18543b20d6e5e65adf26fd71490393d10a4a54"
+hash = "655f52d58fde71947e5ba81f1371207a1676c19d9ad2fb576556e196f636d525"
 
 [[nodes]]
 name = "blake3-content-hashing-for-tamper-detection-and-change"
@@ -113,16 +81,12 @@ tags = [
     "consistency",
     "data-integrity",
 ]
-hash = "2e2f3005e26538ba4d5575e61ed3945fe123f1bd5996a4f597aae5b642cb99d3"
+hash = "203e9d3b60b19f437ddbc724df7b484b69b886640e0c0fc64df74dd69683cab1"
 
 [[nodes]]
 name = "centralized-limits-at-trust-boundaries"
 kind = "pattern"
-tags = [
-    "integrity",
-    "security",
-]
-hash = "d48bd8ad32ad082965f4d0530e8668d34af07aa59dcebda644d09d88f2f77d2c"
+hash = "a3dc14346d7efa3b3b822cdb9030f2bb4c47d10b255f16dec7ed3b17aeaab94a"
 
 [[nodes]]
 name = "centralized-size-limits-in-limits-rs-shared-across-all"
@@ -131,7 +95,7 @@ tags = [
     "security",
     "consistency",
 ]
-hash = "6665da3f8db01639645e967ad05078803e4ce0e67f8821912a9482f44ddea9e9"
+hash = "bcfa2025b55c84a583c748e749340312caa5ea96e8b260a4646d47475415f158"
 
 [[nodes]]
 name = "checkpoint-based-rollback-for-graph-mutations-with-o-1"
@@ -143,13 +107,14 @@ tags = [
 hash = "c24bad6aac8cf27a6a1f3ffa61f61765a37316daa2d5261ec74127a04cbf0803"
 
 [[nodes]]
-name = "claude-code-install-delegates-to-claude-cli-subprocess"
+name = "claude-code-install-delegates-to-the-claude-cli-subprocess"
 kind = "decision"
 tags = [
     "extensibility",
     "error-handling",
+    "security",
 ]
-hash = "6833cadb2eb1744ce11a169fd2cfd119b8c036c110dc4396af52fd7ccc3984e2"
+hash = "fd7d8d3bbed763fd853efede3deb6802d57978c42f80662430e2c425bd3d5706"
 
 [[nodes]]
 name = "claude-md-and-trurlic-are-tracked-claude-and-tasks-md-are"
@@ -166,19 +131,10 @@ kind = "component"
 hash = "06248165860f44f1c8e7617dc57ec36fa22b071731028a512e4ceabec2482828"
 
 [[nodes]]
-name = "commands-reads-workflow-concerns-to-report-concern-coverage"
+name = "context-assembly-lives-in-mcp-context-tools-rs-only-parses"
 kind = "decision"
-tags = [
-    "architecture",
-    "module-boundary",
-]
-hash = "c6498ec4664fda46275fbed7210a85e179885d52821bf63e9a7b0f77ba1f8ca7"
-
-[[nodes]]
-name = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
-kind = "decision"
-tags = ["scope"]
-hash = "331ede53afd47571829cdc98fd7fb1efbc35791ca291de6777d350c6a6c9ec5c"
+tags = ["module-boundary"]
+hash = "3a9ec4d2237a837db0911083838d9784a3d266f9a84811c3baab655d3e93974e"
 
 [[nodes]]
 name = "deny-unsafe-code-project-wide-via-cargo-lint"
@@ -196,7 +152,7 @@ tags = [
     "error-handling",
     "safety",
 ]
-hash = "86f7eb827308699e4c2c2361bf90df28d445497b865eb4cecd2189313a24c10a"
+hash = "6364a3db675bc2c1c842c66b5db9f93acdfcef8d7e7f8daedd1a59ea6f2e327c"
 
 [[nodes]]
 name = "depends-on-cycles-are-found-as-strongly-connected"
@@ -225,7 +181,7 @@ tags = [
     "serialization",
     "api",
 ]
-hash = "0691353b2e1d035d1bffafd7c6887bf6c5eb0c0b3e14ce9a1ff8c82ba2ebb0d3"
+hash = "aa0cc71a37e25796225a25dcfa7f2bf2c2dbb9f38b61cae3e0faff6b992bfa9c"
 
 [[nodes]]
 name = "every-store-access-cleans-stale-temp-files-and-warns-on"
@@ -244,7 +200,7 @@ tags = [
     "api",
     "reliability",
 ]
-hash = "e841e8cae9208fdd4acd31bd522d7a3f134592766173ca5586a90fd28d3f9744"
+hash = "b94b98fa0c1be7d9019cfd642fe9b58e57d93e2bd374fa4ed232ed9dc07f651e"
 
 [[nodes]]
 name = "every-write-reloads-the-graph-under-the-exclusive-lock"
@@ -253,7 +209,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "4f2ec98382e778117fc3a26b3c97182894c8beb589cea3199c55f10df81db004"
+hash = "7e2f87c023763e7a650b5bbf050da9fb9ea89a2df89eb1ef71672f551aeeb791"
 
 [[nodes]]
 name = "exclusive-advisory-file-locking-via-fs2-with-5-second"
@@ -262,25 +218,17 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "e35251f66bc1229f1cc07e8c05085336fba3f2db94ea29aeef7fe8bcecf6655f"
+hash = "524678ef2fee0caa520525ec2429012f14c64210022212dd86da3670c024c11f"
 
 [[nodes]]
 name = "fail-closed-validation"
 kind = "pattern"
-tags = [
-    "integrity",
-    "security",
-]
-hash = "c1ba73078f5c932eb81e977dd3ee98a3d1cbf3cb3df07718e1621613ee600850"
+hash = "f5ebc31481c9cf4efbc89586e0dfd80321d3b96ac8052dabaf736a56928bfd7c"
 
 [[nodes]]
 name = "file-watcher-debounced-live-reload"
 kind = "pattern"
-tags = [
-    "concurrency",
-    "performance",
-]
-hash = "7f445a953d858ff36f74e342dc12a58a329e2f9b9d69050411f6d503616b757e"
+hash = "270b906821fa091c5e58f486e5e364abbb10c9168e5afbfd3bb0481134f9e67a"
 
 [[nodes]]
 name = "file-watcher-with-100ms-debounce-for-non-fatal-live-reload"
@@ -289,16 +237,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "a75fb6c80b4d015abcf517453da621b1c3fdba37db2e0dd44f21750639cbd9a2"
-
-[[nodes]]
-name = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
-kind = "decision"
-tags = [
-    "concurrency",
-    "performance",
-]
-hash = "47b68cb4f983a84e1d384d2b2713a2baa475e451d088daf3e4b7619cc2833159"
+hash = "a8ad820fc2b10162f2f4219e8c83bca46b9f7b7d27745c79e0f1247d45db3d61"
 
 [[nodes]]
 name = "file-watcher-with-debounce-state-dir-filtering-and-post"
@@ -307,7 +246,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "697b81addf2b352f6ce1cb32a991e5ef627eab6ad009d706d02feef8c4034bfd"
+hash = "1db022f1966899002524eb2c9fd47914cfe5d961dfbe30cc4ba570ff4d166b56"
 
 [[nodes]]
 name = "full-graph-validation-before-every-disk-write-via-commit"
@@ -317,15 +256,6 @@ tags = [
     "consistency",
 ]
 hash = "6214668013afba9f19c0073e590c1c604678496a45c36261570733ed4543b785"
-
-[[nodes]]
-name = "gated-steps-require-user-input-ungated-steps-are-autonomous"
-kind = "decision"
-tags = [
-    "integrity",
-    "security",
-]
-hash = "b3c036821aab02b2cea46a6a888928ad128d368db85c0fe9febe097f454485f1"
 
 [[nodes]]
 name = "graph-toml-is-written-only-by-a-validated-commit-a-missing"
@@ -371,16 +301,16 @@ tags = [
     "security",
     "data-integrity",
 ]
-hash = "cc4761c1bd08c8b7a8f312a88890e9df2a56da4404becd233303fdcf89b379f3"
+hash = "66526a1911f54188a31628bda8473163460467fb204bf015e779d55a141f6aae"
 
 [[nodes]]
-name = "install-uses-atomic-writes-with-round-trip-verification-and"
+name = "install-owns-installerror-which-wraps-error-the-error"
 kind = "decision"
 tags = [
-    "security",
-    "data-integrity",
+    "error-handling",
+    "maintainability",
 ]
-hash = "17d4a12571ec6f69e44c67ca967b98d555eb48f48f1aee92b08284bc27b66712"
+hash = "954cc63372d9a49b9feb5d980950ef2bb2a30985289137d6537ff488dbc596a9"
 
 [[nodes]]
 name = "json-rpc-2-0-over-newline-delimited-stdio-transport"
@@ -392,42 +322,13 @@ tags = [
 hash = "b4c8e834ca6cb79a6b979e450c8e3cadb9acb9485cb222ba1a48da2c5133107e"
 
 [[nodes]]
-name = "layout-state-stored-in-trurlic-state-layout-json-with"
-kind = "decision"
-tags = [
-    "data-model",
-    "api-design",
-]
-hash = "30a2780066539e250117111902065930b842aac41f4bef5edd33a3dae228489b"
-
-[[nodes]]
 name = "leftover-journals-and-temp-files-are-cleared-only-under-the"
 kind = "decision"
 tags = [
     "reliability",
     "concurrency",
 ]
-hash = "26eced42966c9532b549f9f6268a5158bec7cbc48689063f273d53ac9474c0c9"
-
-[[nodes]]
-name = "localhost-only-binding-with-restrictive-security-headers"
-kind = "decision"
-tags = ["security"]
-hash = "42c76119657e2e9c62ff0c3468161c2c0a334bc2e2fb701c910e6bef05ae28a7"
-
-[[nodes]]
-name = "map"
-kind = "component"
-hash = "caf42b748e79854398bfec915b3bb96fa156ecd5974e9ed81fa8f58978fbb0e0"
-
-[[nodes]]
-name = "map-detach-pre-binds-port-then-re-execs-to-avoid-toctou"
-kind = "decision"
-tags = [
-    "concurrency",
-    "extensibility",
-]
-hash = "a2f20a526fe283998ad14037d6fe61f25d3d369964c7f2a9ed9f3f074c30cca0"
+hash = "bfcf4bf9b3d35e79cf3fd356e54a7b2a05ae7e4916544e84430d54512009d3a3"
 
 [[nodes]]
 name = "mcp"
@@ -447,7 +348,7 @@ hash = "c705ad9dcd453e7a2b50c6b5fdf1e5a634c85672fef31773292000dbcd4ad056"
 name = "module-visibility-pub-crate-default-only-cli-and-store-are"
 kind = "decision"
 tags = ["coding-standards"]
-hash = "87a387bce29b282b2fbacd39d33fb76b721e2e617666994acfbd82b9ae80018c"
+hash = "63142699bf5699b30619b5c4e48fd4d228ce30a0ed518b7c388c80d0eeb575d4"
 
 [[nodes]]
 name = "no-load-cache-load-state-parses-every-node-file-on-each"
@@ -456,7 +357,12 @@ tags = [
     "performance",
     "persistence",
 ]
-hash = "cd82cf6fb2b3c83d6725d135749de52fcb6962d125692f6812134ba74464b183"
+hash = "a750abe92630087f3e8bf9928b72462a2adac080787e3003d5069fbc5c99188e"
+
+[[nodes]]
+name = "no-map-the-map-server-its-web-ui-and-its-dependencies-are"
+kind = "decision"
+hash = "f3130bcd081d860ea8197a1b9262b1e1ae051fe572d7e1e94217ccd2980bb953"
 
 [[nodes]]
 name = "no-panic-production-code"
@@ -466,6 +372,15 @@ tags = [
     "error-handling",
 ]
 hash = "ae33363799c9b8f8ce6b9eee57b54351d5aa1e677f47313130f41386e90ac9e3"
+
+[[nodes]]
+name = "no-workflow-engine-advance-get-step-prompt-steps-modes-and"
+kind = "decision"
+tags = [
+    "api",
+    "scope",
+]
+hash = "ee93a031b55245d28d9e6bf06d03bdc4561ea654ba5b26006d3ad7e8fdb53858"
 
 [[nodes]]
 name = "parallel-file-loading-via-rayon-for-load-state-with-single"
@@ -509,19 +424,13 @@ kind = "component"
 hash = "9b658bcc3bdf39842a63d8741149671acb1b723deb1da81d21fae39c78319ac5"
 
 [[nodes]]
-name = "prompt-value-sanitization-control-character-stripping-512"
-kind = "decision"
-tags = ["security"]
-hash = "bfb6eb848b6e26c21db016aaa2f89f2ab45758b8cc4cea6a48ec2d27ce64e1fe"
-
-[[nodes]]
 name = "read-write-lock-split-read-tools-acquire-rwlock-read-lock"
 kind = "decision"
 tags = [
     "concurrency",
     "performance",
 ]
-hash = "098b3b53b362b64a6d3936d8afb4e74138da1f104765da6581927d8c10f76430"
+hash = "fc1764274454b91041a7baf8898db3ade7a7b08f731a300281957a7f0ac487ef"
 
 [[nodes]]
 name = "release-profile-fat-lto-single-codegen-unit-strip-symbols"
@@ -533,58 +442,10 @@ tags = [
 hash = "8a8a411f1f429a76cd8faaee745f2efa1095b779bf7be4bbdecee4657dbbc2b6"
 
 [[nodes]]
-name = "rest-api-validates-inputs-against-store-limits-and-uses"
-kind = "decision"
-tags = [
-    "data-model",
-    "security",
-]
-hash = "c8ff4eb9b1f6b80b5774759f04d5163e224fa6667dd342f2b3281fee3b5fa1d1"
-
-[[nodes]]
-name = "rust-embed-for-zero-build-step-frontend-embedding"
-kind = "decision"
-tags = [
-    "dependencies",
-    "build",
-]
-hash = "35f2610dcb150e38c4ac72a337b7f48732e0bdaa7ebe60a972f46fc45a8aca84"
-
-[[nodes]]
-name = "seven-task-types-with-distinct-step-sequences-newcomponent"
-kind = "decision"
-tags = ["scope"]
-hash = "542b8c80752461d29fc3a46dfcdcf1a6e3e892dab0dba2ab61ae5fbad0df60f7"
-
-[[nodes]]
 name = "single-error-enum-with-thiserror-project-wide-result-alias"
 kind = "decision"
 tags = ["error-handling"]
-hash = "1771d2eb92180a0d092eaf2d834ba4d30033a0b4d8b8c44412f9f769eae3da2a"
-
-[[nodes]]
-name = "spawn-blocking-for-synchronous-store-writes-in-async"
-kind = "decision"
-tags = [
-    "concurrency",
-    "performance",
-]
-hash = "6b1f4a4c888a66c467ebc99542a4ab8908e21a9b08dbef2cc5f1f05614792b1e"
-
-[[nodes]]
-name = "staleness-detection-at-90-day-threshold-triggers-review"
-kind = "decision"
-tags = ["integrity"]
-hash = "832307239e7f8b761670a5cc9ad34ab013335b33839d44c2ba3b587e7ced6ff0"
-
-[[nodes]]
-name = "state-diffing-with-hash-based-change-detection-and"
-kind = "decision"
-tags = [
-    "performance",
-    "api-design",
-]
-hash = "ecffd1756be7a7f7ad2c9d488cba6b2fa23ae1ca3bce41a992c44c827b09a7df"
+hash = "8e7891d9a29843f26bf309e042f6fc8a591ecd8d033c7072a02403c144327580"
 
 [[nodes]]
 name = "static-tool-catalogue-via-lazylock-returned-by-reference"
@@ -602,30 +463,18 @@ tags = [
 hash = "69992a29ef458a9555b771448f6fbfbb106abc51b6e37de02c1497f89849019c"
 
 [[nodes]]
-name = "step-deduction-via-graph-postcondition-checking-with"
-kind = "decision"
-tags = ["integrity"]
-hash = "076d1c3e5ca119298bcb6dd904b1fe45611b45ac143338b2566911fcb4c72b98"
-
-[[nodes]]
 name = "store"
 kind = "component"
 hash = "d7f44c4f48f46a014d607dacba2742010740b036409ae5fbe32e36645846bd0e"
 
 [[nodes]]
-name = "task-type-inference-from-graph-state-when-not-explicitly"
-kind = "decision"
-tags = ["error"]
-hash = "2b39296d49fbb0001fe1c396bf4cbd9785f36401c3a9d244fa5f32df0ece891b"
-
-[[nodes]]
-name = "ten-concern-areas-with-keyword-matching-for-coverage"
+name = "the-cli-keeps-a-required-ide-whose-one-value-is-claude-code"
 kind = "decision"
 tags = [
-    "integrity",
-    "scope",
+    "developer-experience",
+    "error-handling",
 ]
-hash = "6bd5941c25b852426138f4b5db44cd844c2d9aadd2531b9e84f88c60757e1745"
+hash = "fc280fd345d84f2dc0c1f690b20bcf60cf1a6c35855c6597bc2105720dd117f2"
 
 [[nodes]]
 name = "tiered-store-access-helpers-separate-read-only-from-mutable"
@@ -637,6 +486,15 @@ tags = [
 hash = "83bd21cef07a44addbce79f409ae5819830d6b23c5e74c489274bc94a63bf68e"
 
 [[nodes]]
+name = "timestamps-are-a-std-only-timestamp-type-in-the-store"
+kind = "decision"
+tags = [
+    "dependencies",
+    "serialization",
+]
+hash = "51dddd755a2ad9f53bead9dcca9bf30122713c0a5729ac5b1fb7b84b7489e416"
+
+[[nodes]]
 name = "toml-as-the-sole-serialization-format-with-one-file-per"
 kind = "decision"
 tags = [
@@ -646,10 +504,13 @@ tags = [
 hash = "29c712d17d836b8f59530b58127c2da5a1fdbd13b6df10caca54543213d4af15"
 
 [[nodes]]
-name = "transport-agnostic-prompt-generation-shared-preamble-step"
+name = "trurlic-install-has-one-target-claude-code-until-the"
 kind = "decision"
-tags = ["scope"]
-hash = "b5e90f53b1b0bfc45987244fa63dad708761e7047215c0c617a27f27f42faab4"
+tags = [
+    "developer-experience",
+    "maintainability",
+]
+hash = "e90e69ef0f3b980df397a2213ead9121abbbcb8dd33997fce3cd33d0738f99bf"
 
 [[nodes]]
 name = "typed-toolenvelope-serialized-directly-into-json-rpc"
@@ -659,15 +520,6 @@ tags = [
     "protocol",
 ]
 hash = "b547b2f7a5cd13f0a62203546ff21ffb5673e0934eb1ecae725074f2cf0311af"
-
-[[nodes]]
-name = "unidirectional-server-to-client-websocket-push-with"
-kind = "decision"
-tags = [
-    "api-design",
-    "concurrency",
-]
-hash = "40d512b3d7a8bc54270e917d64eaa3261a45ceca951f06276b35cc9bb8a53c44"
 
 [[nodes]]
 name = "validation-issues-carry-an-issuekind-and-a-subject-and"
@@ -707,17 +559,6 @@ tags = [
 hash = "841f223107eda7259b947690d2785e053727018568fc025845d025b6ee6555e9"
 
 [[nodes]]
-name = "workflow"
-kind = "component"
-hash = "cc2701e3970a2d719fdbb7636175467fff4318e5580c7844fc90f4ac46462595"
-
-[[nodes]]
-name = "workflow-prompts-delegated-to-workflow-steps-context"
-kind = "decision"
-tags = ["module-boundary"]
-hash = "e5ed856cd44a94553329f3a264c53fb1913a9567fcef0480d263e7546888b5ef"
-
-[[nodes]]
 name = "writers-take-the-server-s-state-lock-before-the-file-lock"
 kind = "decision"
 tags = [
@@ -725,11 +566,6 @@ tags = [
     "reliability",
 ]
 hash = "c381c0e86458d3f8989bd81c331d15f737acb3784daed4597bcf81cacb8f2d7b"
-
-[[edges]]
-from = "256-bit-csprng-token-with-constant-time-comparison-for"
-to = "map"
-kind = "belongs_to"
 
 [[edges]]
 from = "a-commit-counter-in-state-generation-orders-loads-a-commit"
@@ -747,43 +583,13 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "advance-is-a-pure-function-read-only-stateless-idempotent"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
 from = "arc-wrapped-content-values-in-btreemap-with-oncelock-free"
 to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "atomic-write-with-round-trip-verification"
-to = "atomic-writes-via-serialize-to-temp-verify-round-trip"
-kind = "member_of"
-
-[[edges]]
-from = "atomic-write-with-round-trip-verification"
-to = "commands"
-kind = "applies_to"
-
-[[edges]]
-from = "atomic-write-with-round-trip-verification"
-to = "install-uses-atomic-writes-with-round-trip-verification-and"
-kind = "member_of"
-
-[[edges]]
-from = "atomic-write-with-round-trip-verification"
-to = "store"
-kind = "applies_to"
-
-[[edges]]
 from = "atomic-writes-via-serialize-to-temp-verify-round-trip"
 to = "store"
-kind = "belongs_to"
-
-[[edges]]
-from = "axum-as-the-http-websocket-server-framework"
-to = "map"
 kind = "belongs_to"
 
 [[edges]]
@@ -823,18 +629,8 @@ kind = "member_of"
 
 [[edges]]
 from = "centralized-limits-at-trust-boundaries"
-to = "map"
-kind = "applies_to"
-
-[[edges]]
-from = "centralized-limits-at-trust-boundaries"
 to = "mcp"
 kind = "applies_to"
-
-[[edges]]
-from = "centralized-limits-at-trust-boundaries"
-to = "rest-api-validates-inputs-against-store-limits-and-uses"
-kind = "member_of"
 
 [[edges]]
 from = "centralized-limits-at-trust-boundaries"
@@ -852,7 +648,7 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "claude-code-install-delegates-to-claude-cli-subprocess"
+from = "claude-code-install-delegates-to-the-claude-cli-subprocess"
 to = "commands"
 kind = "belongs_to"
 
@@ -867,18 +663,8 @@ to = "store"
 kind = "connects_to"
 
 [[edges]]
-from = "commands-reads-workflow-concerns-to-report-concern-coverage"
-to = "advance-is-a-pure-function-read-only-stateless-idempotent"
-kind = "depends_on"
-
-[[edges]]
-from = "commands-reads-workflow-concerns-to-report-concern-coverage"
-to = "commands"
-kind = "belongs_to"
-
-[[edges]]
-from = "concern-focus-list-capped-at-3-items-per-coverconcerns-step"
-to = "workflow"
+from = "context-assembly-lives-in-mcp-context-tools-rs-only-parses"
+to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
@@ -963,18 +749,8 @@ kind = "member_of"
 
 [[edges]]
 from = "fail-closed-validation"
-to = "map"
-kind = "applies_to"
-
-[[edges]]
-from = "fail-closed-validation"
 to = "mcp"
 kind = "applies_to"
-
-[[edges]]
-from = "fail-closed-validation"
-to = "rest-api-validates-inputs-against-store-limits-and-uses"
-kind = "member_of"
 
 [[edges]]
 from = "fail-closed-validation"
@@ -988,18 +764,8 @@ kind = "member_of"
 
 [[edges]]
 from = "file-watcher-debounced-live-reload"
-to = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
-kind = "member_of"
-
-[[edges]]
-from = "file-watcher-debounced-live-reload"
 to = "file-watcher-with-debounce-state-dir-filtering-and-post"
 kind = "member_of"
-
-[[edges]]
-from = "file-watcher-debounced-live-reload"
-to = "map"
-kind = "applies_to"
 
 [[edges]]
 from = "file-watcher-debounced-live-reload"
@@ -1017,11 +783,6 @@ to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
-from = "file-watcher-with-50ms-debounce-pushes-diffs-over-websocket"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
 from = "file-watcher-with-debounce-state-dir-filtering-and-post"
 to = "store"
 kind = "belongs_to"
@@ -1029,11 +790,6 @@ kind = "belongs_to"
 [[edges]]
 from = "full-graph-validation-before-every-disk-write-via-commit"
 to = "store"
-kind = "belongs_to"
-
-[[edges]]
-from = "gated-steps-require-user-input-ungated-steps-are-autonomous"
-to = "workflow"
 kind = "belongs_to"
 
 [[edges]]
@@ -1062,18 +818,13 @@ to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
-from = "install-uses-atomic-writes-with-round-trip-verification-and"
+from = "install-owns-installerror-which-wraps-error-the-error"
 to = "commands"
 kind = "belongs_to"
 
 [[edges]]
 from = "json-rpc-2-0-over-newline-delimited-stdio-transport"
 to = "mcp"
-kind = "belongs_to"
-
-[[edges]]
-from = "layout-state-stored-in-trurlic-state-layout-json-with"
-to = "map"
 kind = "belongs_to"
 
 [[edges]]
@@ -1087,28 +838,8 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "localhost-only-binding-with-restrictive-security-headers"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
-from = "map"
-to = "store"
-kind = "connects_to"
-
-[[edges]]
-from = "map-detach-pre-binds-port-then-re-execs-to-avoid-toctou"
-to = "commands"
-kind = "belongs_to"
-
-[[edges]]
 from = "mcp"
 to = "store"
-kind = "connects_to"
-
-[[edges]]
-from = "mcp"
-to = "workflow"
 kind = "connects_to"
 
 [[edges]]
@@ -1124,6 +855,11 @@ kind = "belongs_to"
 [[edges]]
 from = "no-load-cache-load-state-parses-every-node-file-on-each"
 to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "no-map-the-map-server-its-web-ui-and-its-dependencies-are"
+to = "project"
 kind = "belongs_to"
 
 [[edges]]
@@ -1150,6 +886,11 @@ kind = "member_of"
 from = "no-panic-production-code"
 to = "single-error-enum-with-thiserror-project-wide-result-alias"
 kind = "member_of"
+
+[[edges]]
+from = "no-workflow-engine-advance-get-step-prompt-steps-modes-and"
+to = "project"
+kind = "belongs_to"
 
 [[edges]]
 from = "parallel-file-loading-via-rayon-for-load-state-with-single"
@@ -1182,11 +923,6 @@ to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
-from = "prompt-value-sanitization-control-character-stripping-512"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
 from = "read-write-lock-split-read-tools-acquire-rwlock-read-lock"
 to = "mcp"
 kind = "belongs_to"
@@ -1197,38 +933,8 @@ to = "project"
 kind = "belongs_to"
 
 [[edges]]
-from = "rest-api-validates-inputs-against-store-limits-and-uses"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
-from = "rust-embed-for-zero-build-step-frontend-embedding"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
-from = "seven-task-types-with-distinct-step-sequences-newcomponent"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
 from = "single-error-enum-with-thiserror-project-wide-result-alias"
 to = "project"
-kind = "belongs_to"
-
-[[edges]]
-from = "spawn-blocking-for-synchronous-store-writes-in-async"
-to = "map"
-kind = "belongs_to"
-
-[[edges]]
-from = "staleness-detection-at-90-day-threshold-triggers-review"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
-from = "state-diffing-with-hash-based-change-detection-and"
-to = "map"
 kind = "belongs_to"
 
 [[edges]]
@@ -1242,18 +948,8 @@ to = "project"
 kind = "belongs_to"
 
 [[edges]]
-from = "step-deduction-via-graph-postcondition-checking-with"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
-from = "task-type-inference-from-graph-state-when-not-explicitly"
-to = "workflow"
-kind = "belongs_to"
-
-[[edges]]
-from = "ten-concern-areas-with-keyword-matching-for-coverage"
-to = "workflow"
+from = "the-cli-keeps-a-required-ide-whose-one-value-is-claude-code"
+to = "commands"
 kind = "belongs_to"
 
 [[edges]]
@@ -1262,23 +958,33 @@ to = "commands"
 kind = "belongs_to"
 
 [[edges]]
+from = "timestamps-are-a-std-only-timestamp-type-in-the-store"
+to = "blake3-content-hashing-for-tamper-detection-and-change"
+kind = "depends_on"
+
+[[edges]]
+from = "timestamps-are-a-std-only-timestamp-type-in-the-store"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "timestamps-are-a-std-only-timestamp-type-in-the-store"
+to = "toml-as-the-sole-serialization-format-with-one-file-per"
+kind = "depends_on"
+
+[[edges]]
 from = "toml-as-the-sole-serialization-format-with-one-file-per"
 to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "transport-agnostic-prompt-generation-shared-preamble-step"
-to = "workflow"
+from = "trurlic-install-has-one-target-claude-code-until-the"
+to = "commands"
 kind = "belongs_to"
 
 [[edges]]
 from = "typed-toolenvelope-serialized-directly-into-json-rpc"
 to = "mcp"
-kind = "belongs_to"
-
-[[edges]]
-from = "unidirectional-server-to-client-websocket-push-with"
-to = "map"
 kind = "belongs_to"
 
 [[edges]]
@@ -1298,16 +1004,6 @@ kind = "belongs_to"
 
 [[edges]]
 from = "verify-against-decisions-rejects-invalid-changed-file-paths"
-to = "mcp"
-kind = "belongs_to"
-
-[[edges]]
-from = "workflow"
-to = "store"
-kind = "connects_to"
-
-[[edges]]
-from = "workflow-prompts-delegated-to-workflow-steps-context"
 to = "mcp"
 kind = "belongs_to"
 

@@ -3,13 +3,6 @@
 //! One test crate, so the binary and the harness link once. Modules that
 //! need the `failpoints` feature compile only when it is enabled.
 
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    reason = "a harness step that fails is a failed test; clippy exempts only #[test] bodies"
-)]
-
 mod budget;
 mod decision_text;
 mod determinism;
@@ -17,6 +10,8 @@ mod determinism;
 mod failpoints;
 mod golden;
 mod harness;
+#[cfg(unix)]
+mod install;
 mod invalid_graph;
 mod malformed_node;
 mod output;

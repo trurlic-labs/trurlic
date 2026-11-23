@@ -1,0 +1,19 @@
+[decision]
+component = "project"
+choice = "No map: the map server, its web UI and its dependencies are deleted; the owner reads the graph through the agent, the files and status"
+reason = "Users work with Trurlic through their coding agent over MCP, and the owner reads the graph the same way: by asking the agent (get_architecture, get_context, get_decision_history), by reading the TOML node files under .trurlic/, and with trurlic status. The map was a third write surface beside MCP and the CLI: its REST API, WebSocket push and second watcher had to keep every store contract (lock order, reload before write, text rules) in step, and it carried an async runtime, an HTTP stack, an embedded TypeScript web UI and a Node.js toolchain through build, CI and release for a view the owner does not use. Deleting it drops tokio, axum, tower-http, rust-embed, opener and rand and every Node.js step, leaves the store watcher with one consumer and the whole binary synchronous, and makes a Rust toolchain the only build requirement."
+alternatives = [
+    "Keep the map and maintain it: rejected, it keeps a third write surface whose store contracts must stay in step with MCP and the CLI, and an async runtime, an HTTP stack and a Node.js toolchain in every build, for a view the owner does not use",
+    "Keep a read-only map without REST writes: rejected, it still needs the HTTP server, WebSocket push, the web UI and its Node.js build, while the agent and the node files already answer every read",
+]
+attribution = "user"
+created = "2026-11-23T19:27:14.921666493Z"
+
+[[decision.code_refs]]
+file = "Cargo.toml"
+
+[[decision.code_refs]]
+file = "src/lib.rs"
+
+[[decision.code_refs]]
+file = "src/cli.rs"

@@ -1,5 +1,6 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use super::time::Timestamp;
 
 // ── project.toml ─────────────────────────────────────────────────────────────
 
@@ -77,7 +78,7 @@ pub struct HistoryEntry {
     pub reason: String,
 
     /// When this version was replaced by a revision (UTC, RFC 3339).
-    pub changed_at: DateTime<Utc>,
+    pub changed_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -101,7 +102,7 @@ pub struct Decision {
     pub attribution: Attribution,
 
     /// When this decision was recorded (UTC, ISO 8601 / RFC 3339).
-    pub created: DateTime<Utc>,
+    pub created: Timestamp,
 
     /// Source code locations where this decision manifests.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -112,17 +113,6 @@ pub struct Decision {
     /// decision's evolution up to its current form.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<HistoryEntry>,
-}
-
-impl Decision {
-    /// The most recent timestamp reflecting when this decision was last examined.
-    ///
-    /// Returns the latest `HistoryEntry.changed_at` if the decision has been
-    /// revised, otherwise returns `created`. Revising a decision after a drift
-    /// check signals that it was re-examined; this clears staleness.
-    pub fn last_touched(&self) -> DateTime<Utc> {
-        self.history.last().map_or(self.created, |h| h.changed_at)
-    }
 }
 
 // ── patterns/<name>.toml ─────────────────────────────────────────────────────
@@ -175,7 +165,7 @@ pub enum EdgeKind {
 impl EdgeKind {
     /// Canonical snake_case string, matching serde serialization.
     ///
-    /// Use this for JSON payloads, WebSocket events, and any
+    /// Use this for JSON payloads and any
     /// user-facing output — never `Debug` formatting, which
     /// produces CamelCase (`ConnectsTo`) instead of snake_case
     /// (`connects_to`).
@@ -216,7 +206,7 @@ pub struct GraphIndex {
     /// 0.3.1 refuses an index without it, so stores written by `init` and
     /// repaired by `load_state` still carry one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rebuilt: Option<DateTime<Utc>>,
+    pub rebuilt: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<NodeEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -252,7 +242,6 @@ pub const GRAPH_FILE: &str = "graph.toml";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     #[test]
     fn project_round_trip() {
@@ -291,7 +280,7 @@ mod tests {
                 alternatives: vec!["Session cookies — rejected: requires server-side state".into()],
                 tags: vec!["security".into(), "auth".into()],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -325,7 +314,7 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec!["security".into(), "auth".into()],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -346,7 +335,7 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -375,7 +364,7 @@ created = "2025-06-01T10:30:00Z"
     fn graph_index_round_trip() {
         let index = GraphIndex {
             version: 1,
-            rebuilt: Some(Utc.with_ymd_and_hms(2025, 6, 1, 12, 0, 0).unwrap()),
+            rebuilt: Some("2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap()),
             nodes: vec![
                 NodeEntry {
                     name: "auth".into(),
@@ -477,7 +466,7 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -509,7 +498,7 @@ created = "2025-06-01T10:30:00Z"
         assert_eq!(file.decision.tags, vec!["security", "auth"]);
         assert_eq!(
             file.decision.created,
-            Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap()
+            "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap()
         );
     }
 
@@ -599,7 +588,7 @@ attribution = "user"
                     alternatives: vec![],
                     tags: vec![],
                     attribution: attr,
-                    created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                    created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                     code_refs: vec![],
                     history: vec![],
                 },
@@ -637,7 +626,7 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -671,7 +660,7 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![
                     CodeRef {
                         file: "src/store/write.rs".into(),
@@ -703,7 +692,7 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![CodeRef {
                     file: "src/store/write.rs".into(),
                     symbol: None,
@@ -744,7 +733,7 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -768,18 +757,18 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![
                     HistoryEntry {
                         choice: "JWT tokens".into(),
                         reason: "Stateless authentication".into(),
-                        changed_at: Utc.with_ymd_and_hms(2025, 7, 15, 14, 0, 0).unwrap(),
+                        changed_at: "2025-07-15T14:00:00Z".parse::<Timestamp>().unwrap(),
                     },
                     HistoryEntry {
                         choice: "JWT with refresh tokens".into(),
                         reason: "Stateless auth with rotation".into(),
-                        changed_at: Utc.with_ymd_and_hms(2025, 8, 1, 9, 30, 0).unwrap(),
+                        changed_at: "2025-08-01T09:30:00Z".parse::<Timestamp>().unwrap(),
                     },
                 ],
             },
@@ -800,7 +789,7 @@ created = "2025-06-01T10:30:00Z"
                 alternatives: vec![],
                 tags: vec![],
                 attribution: Attribution::User,
-                created: Utc.with_ymd_and_hms(2025, 6, 1, 10, 30, 0).unwrap(),
+                created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
                 code_refs: vec![],
                 history: vec![],
             },
@@ -824,54 +813,5 @@ created = "2025-06-01T10:30:00Z"
 "#;
         let file: DecisionFile = toml::from_str(toml_str).expect("deserialize");
         assert!(file.decision.history.is_empty());
-    }
-
-    // ── last_touched ───────────────────────────────────────────────────
-
-    #[test]
-    fn last_touched_returns_created_when_no_history() {
-        let created = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
-        let dec = Decision {
-            component: "store".into(),
-            choice: "TOML".into(),
-            reason: "Readable".into(),
-            alternatives: vec![],
-            tags: vec![],
-            attribution: Attribution::User,
-            created,
-            code_refs: vec![],
-            history: vec![],
-        };
-        assert_eq!(dec.last_touched(), created);
-    }
-
-    #[test]
-    fn last_touched_returns_latest_changed_at() {
-        let created = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
-        let rev1 = Utc.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap();
-        let rev2 = Utc.with_ymd_and_hms(2025, 6, 25, 0, 0, 0).unwrap();
-        let dec = Decision {
-            component: "store".into(),
-            choice: "Current choice".into(),
-            reason: "Current reason".into(),
-            alternatives: vec![],
-            tags: vec![],
-            attribution: Attribution::User,
-            created,
-            code_refs: vec![],
-            history: vec![
-                HistoryEntry {
-                    choice: "First".into(),
-                    reason: "First reason".into(),
-                    changed_at: rev1,
-                },
-                HistoryEntry {
-                    choice: "Second".into(),
-                    reason: "Second reason".into(),
-                    changed_at: rev2,
-                },
-            ],
-        };
-        assert_eq!(dec.last_touched(), rev2);
     }
 }

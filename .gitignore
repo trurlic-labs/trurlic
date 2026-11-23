@@ -12,9 +12,6 @@
 .DS_Store
 Thumbs.db
 
-# Frontend
-src/map/frontend/node_modules/
-
 # Coding tools
 .claude
 .trurlic/.state/

@@ -48,8 +48,6 @@ We consider security research conducted in good faith to be authorized and will 
 
 - **Decision store:** `.trurlic/` file operations, atomic writes, validation, file locking
 - **MCP server:** `trurlic serve` — decision retrieval, response assembly, protocol handling
-- **Conversational AI:** `trurlic design` — API key handling, session state management
-- **Map server:** `trurlic map` — local web server, API endpoints, file system access
 - **CLI:** all subcommands — file system operations, input validation
 
 ### Out of scope

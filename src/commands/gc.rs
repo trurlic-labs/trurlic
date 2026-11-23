@@ -10,14 +10,12 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-
-use chrono::{Duration, Utc};
+use std::time::Duration;
 
 use crate::Result;
 use crate::console::out;
-use crate::store::schema::{Attribution, DecisionFile};
-use crate::store::{ProjectState, Store, StoreLock};
-use crate::workflow::concerns;
+use crate::store::schema::Attribution;
+use crate::store::{ProjectState, Store, StoreLock, Timestamp};
 
 use super::open_store_mut;
 
@@ -70,13 +68,12 @@ pub(crate) fn resolve_aggressive_confirm(
 }
 
 /// Agent decisions older than this without promotion are treated as review
-/// debt worth surfacing.
-const AGENT_REVIEW_STALE_DAYS: i64 = 90;
+/// debt worth surfacing: 90 days.
+const AGENT_REVIEW_STALE: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 
-/// A decision `gc` has flagged, carrying the reason and its owning component.
+/// A decision `gc` has flagged and the reason it was flagged.
 struct Candidate {
     name: String,
-    component: String,
     /// Human-readable explanation for the report line.
     detail: String,
 }
@@ -88,7 +85,7 @@ struct Candidate {
 pub fn gc(cwd: &Path, scope: GcScope, execution: GcExecution) -> Result<()> {
     let (store, lock, mut state) = open_store_mut(cwd)?;
 
-    let (orphaned, orphaned_ref, old_agent) = classify(&state);
+    let (orphaned, orphaned_ref, old_agent) = classify(&state)?;
     let surfaced = orphaned.len() + orphaned_ref.len() + old_agent.len();
     if surfaced == 0 {
         out!("gc: nothing to collect.")?;
@@ -200,8 +197,7 @@ fn plan_removals<'a>(
     Ok((removable, blocked))
 }
 
-/// Snapshot the decisions about to leave, remove them in one atomic batch, and
-/// report the concern coverage the removal erased. Returns the number removed.
+/// Remove the cleared decisions in one atomic batch. Returns the number removed.
 fn apply_removals(
     store: &Store,
     lock: &StoreLock,
@@ -212,22 +208,8 @@ fn apply_removals(
         return Ok(0);
     }
 
-    // Snapshot before removal so the coverage each decision carried can be
-    // reported once it is gone from the graph.
-    let snapshots: Vec<(String, std::sync::Arc<DecisionFile>)> = removable
-        .iter()
-        .filter_map(|c| {
-            state
-                .decisions
-                .get(&c.name)
-                .map(|d| (c.component.clone(), std::sync::Arc::clone(d)))
-        })
-        .collect();
-
     let names: Vec<&str> = removable.iter().map(|c| c.name.as_str()).collect();
     store.remove_decisions(lock, state, &names)?;
-
-    report_lost_coverage(state, &snapshots)?;
     Ok(names.len())
 }
 
@@ -235,8 +217,9 @@ fn apply_removals(
 /// structural first: an orphaned decision is reported as orphaned even if its
 /// code refs are also dead, and an orphaned-ref decision is not double-counted
 /// as review debt.
-fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candidate>) {
-    let cutoff = Utc::now() - Duration::days(AGENT_REVIEW_STALE_DAYS);
+fn classify(state: &ProjectState) -> Result<(Vec<Candidate>, Vec<Candidate>, Vec<Candidate>)> {
+    // `None` only within 90 days of year 0, where no decision can be older.
+    let cutoff = Timestamp::now()?.checked_sub(AGENT_REVIEW_STALE);
     let mut orphaned = Vec::new();
     let mut orphaned_ref = Vec::new();
     let mut old_agent = Vec::new();
@@ -246,26 +229,27 @@ fn classify(state: &ProjectState) -> (Vec<Candidate>, Vec<Candidate>, Vec<Candid
         if d.component != "project" && !state.components.contains_key(&d.component) {
             orphaned.push(Candidate {
                 name: name.clone(),
-                component: d.component.clone(),
                 detail: format!("component [{}] no longer exists", d.component),
             });
         } else if crate::store::decision_refs_all_missing(&state.project_root, dec) {
             let files: Vec<&str> = d.code_refs.iter().map(|r| r.file.as_str()).collect();
             orphaned_ref.push(Candidate {
                 name: name.clone(),
-                component: d.component.clone(),
                 detail: format!("{} deleted", files.join(", ")),
             });
-        } else if d.attribution == Attribution::Agent && d.created < cutoff {
+        } else if d.attribution == Attribution::Agent && cutoff.is_some_and(|c| d.created < c) {
+            let created = d.created.civil();
             old_agent.push(Candidate {
                 name: name.clone(),
-                component: d.component.clone(),
-                detail: format!("agent, created {}", d.created.format("%Y-%m-%d")),
+                detail: format!(
+                    "agent, created {:04}-{:02}-{:02}",
+                    created.year, created.month, created.day
+                ),
             });
         }
     }
 
-    (orphaned, orphaned_ref, old_agent)
+    Ok((orphaned, orphaned_ref, old_agent))
 }
 
 /// Bucket a category's candidates into those the batch pre-flight cleared and
@@ -284,39 +268,6 @@ fn split_blocked<'a>(
         }
     }
     (removable, blocked)
-}
-
-/// Print the concern coverage the removals erased, grouped by component.
-/// Components that no longer exist (the orphan case) are skipped — reporting
-/// lost coverage for a deleted component is noise.
-fn report_lost_coverage(
-    state: &ProjectState,
-    removed: &[(String, std::sync::Arc<DecisionFile>)],
-) -> Result<()> {
-    let mut by_component: BTreeMap<&str, Vec<&DecisionFile>> = BTreeMap::new();
-    for (component, dec) in removed {
-        by_component.entry(component).or_default().push(dec);
-    }
-
-    for (component, removed_decisions) in by_component {
-        if !state.components.contains_key(component) {
-            continue;
-        }
-        let remaining = state.graph().coverage_baseline(component);
-
-        let mut lost: Vec<&'static str> = Vec::new();
-        for dec in removed_decisions {
-            for area in concerns::coverage_lost(dec, &remaining) {
-                if !lost.contains(&area) {
-                    lost.push(area);
-                }
-            }
-        }
-        if !lost.is_empty() {
-            out!("\u{26a0} [{component}] lost coverage: {}", lost.join(", "))?;
-        }
-    }
-    Ok(())
 }
 
 fn print_removal_section(
@@ -364,7 +315,6 @@ mod tests {
     use crate::store::RecordDecisionParams;
     use crate::store::Store;
     use crate::store::schema::{Attribution, CodeRef, Decision, DecisionFile};
-    use chrono::Utc;
     use tempfile::TempDir;
 
     // ── resolve_aggressive_confirm ──────────────────────────────────────
@@ -402,16 +352,16 @@ mod tests {
 
     #[test]
     fn cli_bare_gc_defaults_to_dry_run() {
-        use crate::cli::{Cli, Command};
+        use crate::cli::{Cli, Command, ProjectCommand};
         use clap::Parser;
         let cli = Cli::parse_from(["trurlic", "gc"]);
         match cli.command {
-            Command::Gc {
+            Command::Project(ProjectCommand::Gc {
                 apply,
                 aggressive,
                 yes,
                 ..
-            } => {
+            }) => {
                 assert!(!apply, "bare gc must not apply");
                 assert!(!aggressive);
                 assert!(!yes);
@@ -422,27 +372,27 @@ mod tests {
 
     #[test]
     fn cli_gc_apply_flag() {
-        use crate::cli::{Cli, Command};
+        use crate::cli::{Cli, Command, ProjectCommand};
         use clap::Parser;
         let cli = Cli::parse_from(["trurlic", "gc", "--apply"]);
         match cli.command {
-            Command::Gc { apply, .. } => assert!(apply),
+            Command::Project(ProjectCommand::Gc { apply, .. }) => assert!(apply),
             other => panic!("expected Gc, got {other:?}"),
         }
     }
 
     #[test]
     fn cli_gc_aggressive_apply_yes() {
-        use crate::cli::{Cli, Command};
+        use crate::cli::{Cli, Command, ProjectCommand};
         use clap::Parser;
         let cli = Cli::parse_from(["trurlic", "gc", "--aggressive", "--apply", "--yes"]);
         match cli.command {
-            Command::Gc {
+            Command::Project(ProjectCommand::Gc {
                 apply,
                 aggressive,
                 yes,
                 ..
-            } => {
+            }) => {
                 assert!(apply);
                 assert!(aggressive);
                 assert!(yes);
@@ -453,11 +403,11 @@ mod tests {
 
     #[test]
     fn cli_gc_deprecated_dry_run_still_parses() {
-        use crate::cli::{Cli, Command};
+        use crate::cli::{Cli, Command, ProjectCommand};
         use clap::Parser;
         let cli = Cli::parse_from(["trurlic", "gc", "--dry-run"]);
         match cli.command {
-            Command::Gc { apply, dry_run, .. } => {
+            Command::Project(ProjectCommand::Gc { apply, dry_run, .. }) => {
                 assert!(!apply, "deprecated --dry-run must not set apply");
                 assert!(dry_run, "deprecated flag should still parse");
             }
@@ -478,6 +428,11 @@ mod tests {
             .unwrap();
     }
 
+    fn days_ago(days: u64) -> Timestamp {
+        let age = Duration::from_secs(days * 24 * 60 * 60);
+        Timestamp::now().unwrap().checked_sub(age).unwrap()
+    }
+
     fn base_decision(component: &str, choice: &str) -> Decision {
         Decision {
             component: component.into(),
@@ -486,7 +441,7 @@ mod tests {
             alternatives: vec![],
             tags: vec![],
             attribution: Attribution::User,
-            created: Utc::now(),
+            created: Timestamp::now().unwrap(),
             code_refs: vec![],
             history: vec![],
         }
@@ -524,7 +479,7 @@ mod tests {
 
         let mut old = base_decision("auth", "Auto-detected cache layer");
         old.attribution = Attribution::Agent;
-        old.created = Utc::now() - Duration::days(120);
+        old.created = days_ago(120);
         plant_decision(&store, "auto-cache", old);
 
         gc(tmp.path(), GcScope::Safe, GcExecution::Apply).unwrap();
@@ -551,7 +506,7 @@ mod tests {
 
         let mut old = base_decision("auth", "Auto-detected cache layer");
         old.attribution = Attribution::Agent;
-        old.created = Utc::now() - Duration::days(120);
+        old.created = days_ago(120);
         plant_decision(&store, "auto-cache", old);
 
         gc(tmp.path(), GcScope::Aggressive, GcExecution::Apply).unwrap();
@@ -571,7 +526,7 @@ mod tests {
         // Recent agent decision — under the review-debt threshold.
         let mut recent = base_decision("auth", "Recent agent choice");
         recent.attribution = Attribution::Agent;
-        recent.created = Utc::now() - Duration::days(3);
+        recent.created = days_ago(3);
         plant_decision(&store, "recent-agent", recent);
 
         gc(tmp.path(), GcScope::Aggressive, GcExecution::Apply).unwrap();

@@ -5,7 +5,6 @@ mod tools;
 mod truncate;
 mod update;
 mod verify;
-mod watcher;
 mod write;
 
 use std::io::{self, BufRead, Write};
@@ -34,7 +33,7 @@ pub(crate) fn run_server(store: Store, initial_state: ProjectState) -> Result<()
     let mut server = Server::new(store, initial_state);
 
     // Spawn file watcher. Non-fatal if unavailable (e.g. inotify limit).
-    let _watcher = match watcher::spawn(server.store.root(), server.state.clone()) {
+    let _watcher = match crate::store::watcher::spawn(server.store.root(), server.state.clone()) {
         Ok(guard) => {
             diag!("trurlic: file watcher active");
             Some(guard)

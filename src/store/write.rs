@@ -2,8 +2,6 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::Utc;
-
 use crate::{Error, Result};
 
 use super::limits::MAX_HISTORY_ENTRIES;
@@ -15,6 +13,7 @@ use super::state::{
     ProjectState, is_reserved_node_name, is_valid_kebab_case, slugify, unique_decision_stem,
 };
 use super::text::{TextField, ensure_new_choice, validate_text};
+use super::time::Timestamp;
 use super::{Store, StoreLock};
 
 // ── Store write methods ─────────────────────────────────────────────────
@@ -115,7 +114,7 @@ impl Store {
                 alternatives: params.alternatives.to_vec(),
                 tags: params.tags.to_vec(),
                 attribution: params.attribution,
-                created: Utc::now(),
+                created: Timestamp::now()?,
                 code_refs: params.code_refs.to_vec(),
                 history: Vec::new(),
             },
@@ -171,9 +170,9 @@ impl Store {
 
     /// Create a new component with full validation and atomic commit.
     ///
-    /// Single write path for CLI `add component`, MCP `add_component`,
-    /// and map `POST /api/component`. Validates name format, uniqueness,
-    /// and cross-type collisions, then commits atomically.
+    /// Single write path for CLI `add component` and MCP `add_component`.
+    /// Validates name format, uniqueness, and cross-type collisions, then
+    /// commits atomically.
     ///
     /// On success, `state` is updated in-place (including graph cache).
     /// On failure, `state` is rolled back.
@@ -423,10 +422,10 @@ impl Store {
     /// Revise an existing decision in place, versioning the prior choice and
     /// reason into history.
     ///
-    /// Single write path for MCP `update_decision(mode=revise)` and map
-    /// `PUT /api/decision/:name`. When `params.writes_history` is set, the
-    /// pre-edit choice and reason are appended to the decision's history as a
-    /// [`HistoryEntry`] before the new values overwrite them. History is a
+    /// Single write path for MCP `update_decision(mode=revise)`. When
+    /// `params.writes_history` is set, the pre-edit choice and reason are
+    /// appended to the decision's history as a [`HistoryEntry`] before the
+    /// new values overwrite them. History is a
     /// ring buffer capped at [`MAX_HISTORY_ENTRIES`]: once full, pushing a new
     /// entry drops the oldest. Tag and code-ref edits apply without leaving
     /// history.
@@ -445,9 +444,9 @@ impl Store {
         name: &str,
         params: ReviseDecisionParams<'_>,
     ) -> Result<()> {
-        // Existence first: a revision of a missing decision is Not Found (→ 404
-        // at the map boundary) regardless of the body, so this must precede the
-        // field-shape checks that would otherwise mask it as a 400.
+        // Existence first: a revision of a missing decision is
+        // `DecisionNotFound` regardless of the body, so this must precede the
+        // field-shape checks that would otherwise mask it as `Validation`.
         let old_dec = state
             .decisions
             .get(name)
@@ -485,7 +484,7 @@ impl Store {
             revised.decision.history.push(HistoryEntry {
                 choice: revised.decision.choice.clone(),
                 reason: revised.decision.reason.clone(),
-                changed_at: Utc::now(),
+                changed_at: Timestamp::now()?,
             });
             // Ring buffer: the oldest entry falls off once the cap is exceeded.
             if revised.decision.history.len() > MAX_HISTORY_ENTRIES {
@@ -1200,7 +1199,7 @@ mod tests {
         let lock = store.lock().unwrap();
 
         // An empty body is a Validation error on its own, but a missing target
-        // must take precedence so the map boundary answers 404, not 400.
+        // must take precedence, so the error names the missing target.
         let err = store
             .revise_decision(
                 &lock,

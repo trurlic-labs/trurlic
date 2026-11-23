@@ -7,8 +7,8 @@ use crate::harness::{McpClient, Project};
 
 const MAX_TOOL_RESULT_BYTES: usize = 24 * 1024;
 
-/// Decisions with reasons long enough that `auth`'s context, step prompts
-/// and file queries each exceed the budget several times over.
+/// Decisions with reasons long enough that `auth`'s context and file queries
+/// each exceed the budget several times over.
 const DECISIONS: usize = 60;
 
 fn build_graph(client: &mut McpClient) -> Vec<String> {
@@ -54,15 +54,6 @@ fn every_tool_result_fits_the_budget() {
         context["truncated"].is_array(),
         "the graph must exceed the budget"
     );
-    let walk = fitted(
-        &mut client,
-        "get_step_prompt",
-        json!({ "component": "auth", "step": "walk_decisions", "mode": "interactive" }),
-    );
-    let instructions = walk["system_instructions"].as_str().unwrap();
-    assert!(instructions.contains("decisions omitted to fit"), "{walk}");
-    assert!(instructions.contains("INTERACTION PROTOCOL"), "{walk}");
-
     let reads = [
         (
             "get_context",
@@ -79,25 +70,9 @@ fn every_tool_result_fits_the_budget() {
             "verify_against_decisions",
             json!({ "component": "auth", "changed_files": ["src"] }),
         ),
-        (
-            "advance",
-            json!({ "component": "auth", "task_type": "review", "mode": "agent" }),
-        ),
     ];
     for (tool, arguments) in reads {
         fitted(&mut client, tool, arguments);
-    }
-    for step in [
-        "verify_constraints",
-        "drift_check",
-        "cover_concerns",
-        "pattern_detection",
-    ] {
-        for mode in ["agent", "interactive"] {
-            let arguments = json!({ "component": "auth", "step": step, "mode": mode });
-            let prompt = fitted(&mut client, "get_step_prompt", arguments);
-            assert!(prompt.get("truncated").is_none(), "{step} {mode}: {prompt}");
-        }
     }
 
     let writes = [

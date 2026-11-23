@@ -1,3 +1,3 @@
 [pattern]
 name = "file-watcher-debounced-live-reload"
-description = "Two servers watch .trurlic/ through one store watcher: debounced events, .state/ filtered out, each reload under the shared file lock, and events that arrive during a reload start the next one. MCP debounces 100ms (no interactive UI); the map 50ms and pushes diffs over WebSocket. Each consumer swaps the loaded state in under its write lock, skipping a load that a write of its own server overtook. Watcher failure is non-fatal."
+description = "The MCP server watches .trurlic/ through store::watcher: events debounced 100ms, .state/ filtered out, each reload under the shared file lock, and events that arrive during a reload start the next one. The loaded state is swapped in under the server's state write lock, skipped when a write of the server itself overtook the load. Watcher failure is non-fatal."
