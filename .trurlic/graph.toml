@@ -38,11 +38,6 @@ tags = [
 hash = "372bf5329b370eb49b0259d83e8e8d23890624bcbdad2edefc0c41065d2baf3a"
 
 [[nodes]]
-name = "atomic-write-with-round-trip-verification"
-kind = "pattern"
-hash = "6fd82ec05775e38fb57953b7e5b506fc83f711131d7fcc90e39b4b0382186530"
-
-[[nodes]]
 name = "atomic-writes-via-serialize-to-temp-verify-round-trip"
 kind = "decision"
 tags = [
@@ -121,13 +116,14 @@ tags = [
 hash = "c24bad6aac8cf27a6a1f3ffa61f61765a37316daa2d5261ec74127a04cbf0803"
 
 [[nodes]]
-name = "claude-code-install-delegates-to-claude-cli-subprocess"
+name = "claude-code-install-delegates-to-the-claude-cli-subprocess"
 kind = "decision"
 tags = [
     "extensibility",
     "error-handling",
+    "security",
 ]
-hash = "6833cadb2eb1744ce11a169fd2cfd119b8c036c110dc4396af52fd7ccc3984e2"
+hash = "fd7d8d3bbed763fd853efede3deb6802d57978c42f80662430e2c425bd3d5706"
 
 [[nodes]]
 name = "claude-md-and-trurlic-are-tracked-claude-and-tasks-md-are"
@@ -335,13 +331,13 @@ tags = [
 hash = "66526a1911f54188a31628bda8473163460467fb204bf015e779d55a141f6aae"
 
 [[nodes]]
-name = "install-uses-atomic-writes-with-round-trip-verification-and"
+name = "install-owns-installerror-which-wraps-error-the-error"
 kind = "decision"
 tags = [
-    "security",
-    "data-integrity",
+    "error-handling",
+    "maintainability",
 ]
-hash = "17d4a12571ec6f69e44c67ca967b98d555eb48f48f1aee92b08284bc27b66712"
+hash = "954cc63372d9a49b9feb5d980950ef2bb2a30985289137d6537ff488dbc596a9"
 
 [[nodes]]
 name = "json-rpc-2-0-over-newline-delimited-stdio-transport"
@@ -479,7 +475,7 @@ hash = "542b8c80752461d29fc3a46dfcdcf1a6e3e892dab0dba2ab61ae5fbad0df60f7"
 name = "single-error-enum-with-thiserror-project-wide-result-alias"
 kind = "decision"
 tags = ["error-handling"]
-hash = "92fdc52e545fb8ba22ce8d7c43cf3dc41ed674e0b797640d5af3386dafaf8933"
+hash = "8e7891d9a29843f26bf309e042f6fc8a591ecd8d033c7072a02403c144327580"
 
 [[nodes]]
 name = "staleness-detection-at-90-day-threshold-triggers-review"
@@ -529,6 +525,15 @@ tags = [
 hash = "6bd5941c25b852426138f4b5db44cd844c2d9aadd2531b9e84f88c60757e1745"
 
 [[nodes]]
+name = "the-cli-keeps-a-required-ide-whose-one-value-is-claude-code"
+kind = "decision"
+tags = [
+    "developer-experience",
+    "error-handling",
+]
+hash = "fc280fd345d84f2dc0c1f690b20bcf60cf1a6c35855c6597bc2105720dd117f2"
+
+[[nodes]]
 name = "tiered-store-access-helpers-separate-read-only-from-mutable"
 kind = "decision"
 tags = [
@@ -551,6 +556,15 @@ name = "transport-agnostic-prompt-generation-shared-preamble-step"
 kind = "decision"
 tags = ["scope"]
 hash = "b5e90f53b1b0bfc45987244fa63dad708761e7047215c0c617a27f27f42faab4"
+
+[[nodes]]
+name = "trurlic-install-has-one-target-claude-code-until-the"
+kind = "decision"
+tags = [
+    "developer-experience",
+    "maintainability",
+]
+hash = "e90e69ef0f3b980df397a2213ead9121abbbcb8dd33997fce3cd33d0738f99bf"
 
 [[nodes]]
 name = "typed-toolenvelope-serialized-directly-into-json-rpc"
@@ -644,26 +658,6 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "atomic-write-with-round-trip-verification"
-to = "atomic-writes-via-serialize-to-temp-verify-round-trip"
-kind = "member_of"
-
-[[edges]]
-from = "atomic-write-with-round-trip-verification"
-to = "commands"
-kind = "applies_to"
-
-[[edges]]
-from = "atomic-write-with-round-trip-verification"
-to = "install-uses-atomic-writes-with-round-trip-verification-and"
-kind = "member_of"
-
-[[edges]]
-from = "atomic-write-with-round-trip-verification"
-to = "store"
-kind = "applies_to"
-
-[[edges]]
 from = "atomic-writes-via-serialize-to-temp-verify-round-trip"
 to = "store"
 kind = "belongs_to"
@@ -724,7 +718,7 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "claude-code-install-delegates-to-claude-cli-subprocess"
+from = "claude-code-install-delegates-to-the-claude-cli-subprocess"
 to = "commands"
 kind = "belongs_to"
 
@@ -909,7 +903,7 @@ to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
-from = "install-uses-atomic-writes-with-round-trip-verification-and"
+from = "install-owns-installerror-which-wraps-error-the-error"
 to = "commands"
 kind = "belongs_to"
 
@@ -1069,6 +1063,11 @@ to = "workflow"
 kind = "belongs_to"
 
 [[edges]]
+from = "the-cli-keeps-a-required-ide-whose-one-value-is-claude-code"
+to = "commands"
+kind = "belongs_to"
+
+[[edges]]
 from = "tiered-store-access-helpers-separate-read-only-from-mutable"
 to = "commands"
 kind = "belongs_to"
@@ -1081,6 +1080,11 @@ kind = "belongs_to"
 [[edges]]
 from = "transport-agnostic-prompt-generation-shared-preamble-step"
 to = "workflow"
+kind = "belongs_to"
+
+[[edges]]
+from = "trurlic-install-has-one-target-claude-code-until-the"
+to = "commands"
 kind = "belongs_to"
 
 [[edges]]

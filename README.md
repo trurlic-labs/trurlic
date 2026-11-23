@@ -24,7 +24,7 @@ Trurlic makes you the architect again. Architectural decisions live in a typed g
 
 ## MCP-first
 
-Trurlic is an **MCP server**. Your coding agent — Claude Code, Cursor, Copilot, Codex, and others — talks to it directly: it pulls architectural context before implementing, runs design conversations when new territory appears, and records decisions as it goes. The graph is the agent's source of truth.
+Trurlic is an **MCP server**. Your coding agent — Claude Code or any other MCP client — talks to it directly: it pulls architectural context before implementing, runs design conversations when new territory appears, and records decisions as it goes. The graph is the agent's source of truth.
 
 The `trurlic` CLI exists for the human: initialize the graph, sketch components, inspect and maintain it. **The CLI never calls an LLM.** All reasoning runs on your coding agent's own model, through MCP.
 
@@ -93,25 +93,15 @@ Or with Rust: `cargo install trurlic` (requires Rust 1.90+).
 
 Pre-built binaries for Linux, macOS, and Windows are on the [Releases](https://github.com/trurlic-labs/trurlic/releases) page.
 
-## Connect your IDE
+## Connect your agent
 
-`trurlic install` writes the MCP server configuration for your coding agent:
+`trurlic install` registers the MCP server with Claude Code for your user, through `claude mcp add` (`--dry-run` prints that command instead of running it):
 
 ```bash
-trurlic install --ide claude-code    # Claude Code
-trurlic install --ide cursor         # Cursor
-trurlic install --ide windsurf       # Windsurf
-trurlic install --ide cline          # Cline
-trurlic install --ide copilot        # GitHub Copilot
-trurlic install --ide codex          # Codex CLI (OpenAI)
-trurlic install --ide claude         # Claude Desktop
-trurlic install --ide open-code      # OpenCode
-trurlic install --ide open-claw      # OpenClaw
-trurlic install --ide hermes-agent   # Hermes Agent
-trurlic install --ide antigravity    # Antigravity CLI (Google)
+trurlic install --ide claude-code
 ```
 
-Prefer manual configuration? Add this to your MCP config:
+Any other MCP client: add this to its MCP config:
 
 ```json
 {
@@ -124,7 +114,7 @@ Prefer manual configuration? Add this to your MCP config:
 }
 ```
 
-Then tell your agent how to use it — add to `CLAUDE.md`, `.cursorrules`, or equivalent:
+Then tell your agent how to use it — add to `CLAUDE.md` or your agent's equivalent:
 
 ```markdown
 ## Trurlic
@@ -180,7 +170,7 @@ Full documentation lives at **[trurlic-docs.pages.dev](https://trurlic-docs.page
 - **[Architecture](https://trurlic-docs.pages.dev/)** — system design and the integrity model
 - **[Guides](https://trurlic-docs.pages.dev/)** — the MCP server, configuration, and design workflows
 - **[Reference](https://trurlic-docs.pages.dev/)** — full CLI reference, MCP tools, and troubleshooting
-- **[Integrations](https://trurlic-docs.pages.dev/)** — connecting Claude Code, Cursor, Windsurf, and other agents
+- **[Integrations](https://trurlic-docs.pages.dev/)** — connecting Claude Code and other MCP clients
 
 ## How the agent works with the graph
 

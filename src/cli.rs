@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -24,6 +25,37 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    #[command(flatten)]
+    Project(ProjectCommand),
+
+    /// Register the trurlic MCP server with Claude Code, for the current user.
+    Install {
+        /// The agent to register with.
+        #[arg(long, value_enum)]
+        ide: InstallIde,
+
+        /// Path to the trurlic binary to embed in the config.
+        /// Defaults to the currently running executable.
+        #[arg(long)]
+        binary_path: Option<PathBuf>,
+
+        /// Print the `claude mcp add` command without running it.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+/// The agents `install` registers with.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum InstallIde {
+    /// Claude Code, through `claude mcp add`
+    ClaudeCode,
+}
+
+/// The commands that act on the project's `.trurlic/`, found from the
+/// working directory.
+#[derive(Subcommand, Debug)]
+pub enum ProjectCommand {
     /// Initialize a new `.trurlic/` directory in the current project.
     Init,
 
@@ -101,54 +133,12 @@ pub enum Command {
     /// Validate `.trurlic/` internal consistency.
     Check,
 
-    /// Write MCP server configuration for an IDE.
-    Install {
-        /// Target IDE.
-        #[arg(long, value_enum)]
-        ide: InstallIde,
-
-        /// Path to the trurlic binary to embed in the config.
-        /// Defaults to the currently running executable.
-        #[arg(long)]
-        binary_path: Option<PathBuf>,
-
-        /// Print the config snippet to stdout without writing to disk.
-        #[arg(long)]
-        dry_run: bool,
-    },
-
     /// Migrate `.trurlic/` to the current format version.
     Migrate {
         /// Show what would change without writing.
         #[arg(long)]
         dry_run: bool,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum InstallIde {
-    /// Claude Desktop (Anthropic)
-    Claude,
-    /// Claude Code (Anthropic) — uses `claude mcp add`
-    ClaudeCode,
-    /// Cursor IDE
-    Cursor,
-    /// Cline (VS Code extension)
-    Cline,
-    /// Windsurf (Codeium)
-    Windsurf,
-    /// GitHub Copilot (VS Code agent mode)
-    Copilot,
-    /// Codex CLI (OpenAI)
-    Codex,
-    /// OpenCode
-    OpenCode,
-    /// OpenClaw (via MCPorter)
-    OpenClaw,
-    /// Hermes Agent (NousResearch)
-    HermesAgent,
-    /// Antigravity CLI (Google)
-    Antigravity,
 }
 
 #[derive(Subcommand, Debug)]
@@ -240,7 +230,28 @@ pub enum QueryCommand {
 /// Parse the arguments and run the command, reporting a failure on stderr.
 #[must_use]
 pub fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    match Cli::parse().command {
+        Command::Project(command) => report(run(command)),
+        Command::Install {
+            ide: InstallIde::ClaudeCode,
+            binary_path,
+            dry_run,
+        } => {
+            let mode = if dry_run {
+                commands::DryRun::Yes
+            } else {
+                commands::DryRun::No
+            };
+            report(commands::install(binary_path.as_deref(), mode))
+        }
+    }
+}
+
+/// The exit status of a finished command, its error printed on stderr. Every
+/// command's error type goes through here, so all fail with status 1 and
+/// `error: <message>`.
+fn report(outcome: std::result::Result<(), impl Display>) -> ExitCode {
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             diag!("error: {e}");
@@ -249,20 +260,20 @@ pub fn main() -> ExitCode {
     }
 }
 
-pub fn run(cli: Cli) -> Result<()> {
+fn run(command: ProjectCommand) -> Result<()> {
     let cwd = std::env::current_dir().map_err(Error::system("read the working directory"))?;
-    match cli.command {
-        Command::Init => commands::init(&cwd),
-        Command::Add(sub) => match sub {
+    match command {
+        ProjectCommand::Init => commands::init(&cwd),
+        ProjectCommand::Add(sub) => match sub {
             AddCommand::Component { name, description } => {
                 commands::add_component(&cwd, &name, description.as_deref())
             }
             AddCommand::Connection { from, to } => commands::add_connection(&cwd, &from, &to),
         },
-        Command::Rename(sub) => match sub {
+        ProjectCommand::Rename(sub) => match sub {
             RenameCommand::Component { old, new } => commands::rename_component(&cwd, &old, &new),
         },
-        Command::Remove(sub) => match sub {
+        ProjectCommand::Remove(sub) => match sub {
             RemoveCommand::Component { name } => commands::remove_component(&cwd, &name),
             RemoveCommand::Decision {
                 name,
@@ -280,7 +291,7 @@ pub fn run(cli: Cli) -> Result<()> {
             RemoveCommand::Connection { from, to } => commands::remove_connection(&cwd, &from, &to),
             RemoveCommand::Pattern { name } => commands::remove_pattern(&cwd, &name),
         },
-        Command::Decide {
+        ProjectCommand::Decide {
             component,
             choice,
             reason,
@@ -300,19 +311,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 &code_refs,
             )
         }
-        Command::Install {
-            ide,
-            binary_path,
-            dry_run,
-        } => {
-            let mode = if dry_run {
-                commands::DryRun::Yes
-            } else {
-                commands::DryRun::No
-            };
-            commands::install(ide, binary_path.as_deref(), mode)
-        }
-        Command::Gc {
+        ProjectCommand::Gc {
             apply,
             aggressive,
             yes,
@@ -343,13 +342,13 @@ pub fn run(cli: Cli) -> Result<()> {
             }
             commands::gc(&cwd, scope, execution)
         }
-        Command::Query(sub) => match sub {
+        ProjectCommand::Query(sub) => match sub {
             QueryCommand::File { path } => commands::query_file(&cwd, &path),
         },
-        Command::Serve => commands::serve(&cwd),
-        Command::Status => commands::status(&cwd),
-        Command::Check => commands::check(&cwd),
-        Command::Migrate { dry_run } => {
+        ProjectCommand::Serve => commands::serve(&cwd),
+        ProjectCommand::Status => commands::status(&cwd),
+        ProjectCommand::Check => commands::check(&cwd),
+        ProjectCommand::Migrate { dry_run } => {
             let mode = if dry_run {
                 commands::DryRun::Yes
             } else {

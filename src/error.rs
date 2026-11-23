@@ -1,4 +1,5 @@
-//! The crate's one error type.
+//! The error every module returns. `trurlic install` alone has its own,
+//! `InstallError`, which wraps this one; nothing here names it.
 //!
 //! A failure that comes from a file names the file: [`Error::Io`] and
 //! [`Error::Toml`] carry the path, and nothing converts a bare
@@ -8,7 +9,6 @@ use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::commands::InstallError;
 use crate::store::graph::Issue;
 use crate::store::text::{TextFault, TextField};
 
@@ -134,9 +134,6 @@ pub enum Error {
 
     #[error("operation blocked by cascade rule: {0}")]
     CascadeBlocked(String),
-
-    #[error(transparent)]
-    Install(#[from] InstallError),
 }
 
 impl Error {

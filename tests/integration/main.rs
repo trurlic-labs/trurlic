@@ -16,6 +16,8 @@ mod determinism;
 mod failpoints;
 mod golden;
 mod harness;
+#[cfg(unix)]
+mod install;
 mod invalid_graph;
 mod malformed_node;
 mod output;

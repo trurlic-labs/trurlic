@@ -402,16 +402,16 @@ mod tests {
 
     #[test]
     fn cli_bare_gc_defaults_to_dry_run() {
-        use crate::cli::{Cli, Command};
+        use crate::cli::{Cli, Command, ProjectCommand};
         use clap::Parser;
         let cli = Cli::parse_from(["trurlic", "gc"]);
         match cli.command {
-            Command::Gc {
+            Command::Project(ProjectCommand::Gc {
                 apply,
                 aggressive,
                 yes,
                 ..
-            } => {
+            }) => {
                 assert!(!apply, "bare gc must not apply");
                 assert!(!aggressive);
                 assert!(!yes);
@@ -422,27 +422,27 @@ mod tests {
 
     #[test]
     fn cli_gc_apply_flag() {
-        use crate::cli::{Cli, Command};
+        use crate::cli::{Cli, Command, ProjectCommand};
         use clap::Parser;
         let cli = Cli::parse_from(["trurlic", "gc", "--apply"]);
         match cli.command {
-            Command::Gc { apply, .. } => assert!(apply),
+            Command::Project(ProjectCommand::Gc { apply, .. }) => assert!(apply),
             other => panic!("expected Gc, got {other:?}"),
         }
     }
 
     #[test]
     fn cli_gc_aggressive_apply_yes() {
-        use crate::cli::{Cli, Command};
+        use crate::cli::{Cli, Command, ProjectCommand};
         use clap::Parser;
         let cli = Cli::parse_from(["trurlic", "gc", "--aggressive", "--apply", "--yes"]);
         match cli.command {
-            Command::Gc {
+            Command::Project(ProjectCommand::Gc {
                 apply,
                 aggressive,
                 yes,
                 ..
-            } => {
+            }) => {
                 assert!(apply);
                 assert!(aggressive);
                 assert!(yes);
@@ -453,11 +453,11 @@ mod tests {
 
     #[test]
     fn cli_gc_deprecated_dry_run_still_parses() {
-        use crate::cli::{Cli, Command};
+        use crate::cli::{Cli, Command, ProjectCommand};
         use clap::Parser;
         let cli = Cli::parse_from(["trurlic", "gc", "--dry-run"]);
         match cli.command {
-            Command::Gc { apply, dry_run, .. } => {
+            Command::Project(ProjectCommand::Gc { apply, dry_run, .. }) => {
                 assert!(!apply, "deprecated --dry-run must not set apply");
                 assert!(dry_run, "deprecated flag should still parse");
             }

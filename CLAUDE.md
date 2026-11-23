@@ -19,16 +19,16 @@ mcp         → store, workflow, budget     MCP server: JSON-RPC stdio, tool dis
                                           the 24 KiB cap on every tool result
 commands    → store, mcp,                 CLI command handlers: init, add, rename,
               workflow (read-only)        remove, decide, query, status, check, gc,
-                                          migrate, install (IDE MCP config), and
-                                          the `serve` entry point
+                                          migrate, install (registers the MCP
+                                          server with Claude Code), and the
+                                          `serve` entry point
 cli         → commands                    clap definitions and dispatch
 budget      → (no internal deps)          Fitting output into a byte budget: the
                                           level search behind the result cap and
                                           the step prompt listings
-error       → store, commands (types)     The crate's single `Error` enum and
-                                          `Result` alias; it names the store's
-                                          `Issue` and text-fault types and
-                                          install's `InstallError`
+error       → store (types)               The crate's `Error` enum and `Result`
+                                          alias; it names the store's `Issue`
+                                          and text-fault types
 console     → (no internal deps)          Terminal I/O: `out!` to stdout, `diag!`
                                           to stderr, the confirmation prompt
 ```
@@ -37,7 +37,7 @@ Every module uses `error` and `console`; the arrows leave them out.
 
 **store** is the foundation. It imports no other module except `error` and `console`. Every write goes through `Store` methods with `StoreLock` proof parameters. A decision's choice and reason are checked there (`store::text`), so every surface refuses the same text with the same message.
 
-**error** carries the path of the file behind every I/O and TOML failure (`Error::Io`, `Error::Toml`); nothing converts a bare `io::Error` into it, so a `?` cannot drop the path.
+**error** carries the path of the file behind every I/O and TOML failure (`Error::Io`, `Error::Toml`); nothing converts a bare `io::Error` into it, so a `?` cannot drop the path. `commands::install` alone returns its own `InstallError`, which wraps `Error`; `cli` prints either as `error: <message>` with exit status 1.
 
 **workflow** is pure computation. It never touches the filesystem, never allocates beyond the response JSON. `advance()` is a deterministic function of graph state + inputs. Same inputs = same output, always.
 

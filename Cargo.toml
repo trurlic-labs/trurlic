@@ -42,7 +42,6 @@ clap = { version = "4", features = ["derive"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml_ng = "0.10"
 toml  = "1"
 
 # Error handling
@@ -59,9 +58,6 @@ rayon = "1"
 
 # File system watcher for live reload
 notify = "6"
-
-# Atomic file writes (install command)
-tempfile = "3"
 
 [dev-dependencies]
 criterion = { version = "5", package = "codspeed-criterion-compat", default-features = false }
