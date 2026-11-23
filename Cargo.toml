@@ -104,7 +104,8 @@ strip           = true
 lto             = "fat"
 codegen-units   = 1
 overflow-checks = true
-panic           = "abort"
+# `serve` catches a panic per request, answers it -32603 and keeps serving.
+panic           = "unwind"
 
 [profile.bench]
 inherits = "release"

@@ -106,9 +106,9 @@ fn decisions_of<'a>(
         .filter(move |(_, file)| file.decision.component == component)
 }
 
-/// A server over the store at `root`, past `initialize`.
-fn server_at(root: PathBuf) -> Server {
-    let mut server = Server::new(Store::at(root));
+/// A server over the project at `dir`, past `initialize`.
+fn server_at(dir: PathBuf) -> Server {
+    let mut server = Server::new(dir);
     call(
         &mut server,
         &request(
@@ -255,7 +255,7 @@ fn bench_record_decision(c: &mut Criterion) {
         let copy = || {
             let dir = TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
             copy_dir(fixture.store.root(), &dir.path().join(STORE_DIR));
-            let server = server_at(dir.path().join(STORE_DIR));
+            let server = server_at(dir.path().to_path_buf());
             (dir, server)
         };
         call(&mut copy().1, &line);
@@ -290,7 +290,8 @@ fn copy_dir(from: &Path, to: &Path) {
 fn bench_read_tools(c: &mut Criterion) {
     let mut group = c.benchmark_group("read_tool");
     for fixture in CORPORA.iter() {
-        let mut server = server_at(fixture.store.root().to_path_buf());
+        let project = fixture.store.root().parent().unwrap().to_path_buf();
+        let mut server = server_at(project);
         for tool in read_tools(&mut server) {
             let line = tool_call(&tool, read_tool_arguments(&tool, &fixture.targets));
             let id = BenchmarkId::new(tool, fixture.size);

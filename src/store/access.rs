@@ -9,6 +9,7 @@
 
 use crate::Result;
 
+use super::failpoint::{self, Site};
 use super::{ProjectFile, ProjectState, Store, StoreLock};
 
 impl Store {
@@ -24,6 +25,7 @@ impl Store {
         let lock = self.lock()?;
         let (project, project_hash) = self.recover_current(&lock)?;
         let state = self.read_graph(project, project_hash)?;
+        failpoint::panic(Site::Locked);
         Ok(Writer {
             store: self,
             lock,

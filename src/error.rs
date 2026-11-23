@@ -49,7 +49,10 @@ pub enum Error {
         expected: &'static str,
     },
 
-    #[error("not a trurlic project (no .trurlic/ found in {0} or any parent directory)")]
+    #[error(
+        "not a trurlic project (no .trurlic/ found in {0} or any parent directory); \
+         run `trurlic init` in the project root"
+    )]
     StoreNotFound(PathBuf),
 
     #[error(".trurlic/ already exists at {0}")]

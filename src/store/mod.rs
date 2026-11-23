@@ -6,7 +6,7 @@ pub mod corpus;
 mod create;
 mod cycles;
 mod durable;
-mod failpoint;
+pub(crate) mod failpoint;
 pub mod graph;
 mod journal;
 pub(crate) mod limits;

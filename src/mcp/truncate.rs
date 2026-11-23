@@ -77,18 +77,6 @@ fn serialize_within(payload: &Value, max_bytes: usize) -> Option<String> {
     String::from_utf8(sink.bytes).ok()
 }
 
-/// Cut `message` at a character boundary so that it and the note of the
-/// bytes it lost fit in `max_bytes`.
-pub(crate) fn fit_message(message: &str, max_bytes: usize) -> String {
-    if message.len() <= max_bytes {
-        return message.to_owned();
-    }
-    let note = |omitted: usize| format!("\n[truncated: {omitted} bytes omitted]");
-    let keep = floor_char_boundary(message, max_bytes.saturating_sub(note(message.len()).len()));
-    let head = message.split_at_checked(keep).map_or("", |(head, _)| head);
-    format!("{head}{}", note(message.len() - keep))
-}
-
 /// Bytes `text` takes inside a serialized JSON string, quotes excluded.
 fn json_str_len(text: &str) -> usize {
     text.bytes().map(escaped_len).sum()
@@ -541,20 +529,6 @@ mod tests {
         assert_cut_from(&payload, &kept["value"]);
         assert_eq!(kept[NOTICE_KEY][0]["at"], "/value");
         assert_notice_matches(&json!({ "value": payload }), &kept);
-    }
-
-    #[test]
-    fn a_long_message_is_cut_at_a_character_boundary_with_its_loss() {
-        let message = "\u{e9}".repeat(100);
-        let fitted = fit_message(&message, 61);
-        assert!(fitted.len() <= 61, "{}", fitted.len());
-        let (head, note) = fitted.split_once('\n').unwrap();
-        assert!(message.starts_with(head));
-        assert_eq!(
-            note,
-            format!("[truncated: {} bytes omitted]", message.len() - head.len())
-        );
-        assert_eq!(fit_message("short", 61), "short");
     }
 
     fn random_text(rng: &mut SplitMix64) -> String {

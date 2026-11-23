@@ -1,5 +1,7 @@
-//! The MCP server over real stdio: handshake, tool catalogue, one call of
-//! every tool it lists, and a hand edit seen by the next call.
+//! The MCP server over real stdio: handshake and version negotiation, the
+//! answer to each malformed line, the tool catalogue, one call of every
+//! tool it lists, a hand edit seen by the next call, and a server started
+//! with no store or an old one.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -24,6 +26,136 @@ fn initialize_reports_protocol_and_server() {
         handshake["capabilities"]["tools"].is_object(),
         "{handshake}"
     );
+}
+
+#[test]
+fn initialize_negotiates_the_protocol_version() {
+    let project = Project::init();
+    let cases = [
+        ("2025-11-25", "2025-11-25"),
+        ("2025-06-18", "2025-06-18"),
+        ("2024-11-05", "2025-11-25"),
+        ("2999-01-01", "2025-11-25"),
+    ];
+    for (requested, answered) in cases {
+        let mut client = McpClient::spawn(&project);
+        let handshake = client.request(
+            "initialize",
+            json!({ "protocolVersion": requested, "capabilities": {} }),
+        );
+        assert_eq!(handshake["protocolVersion"], answered, "{requested}");
+    }
+}
+
+/// Each line that is no request is answered once, with the `id` it holds
+/// when that is a string or an integer, and the session goes on.
+#[test]
+fn a_malformed_line_is_answered_once_and_the_session_goes_on() {
+    let project = Project::init();
+    let (mut client, _) = McpClient::connect(&project);
+    let cases = [
+        (r#"{"jsonrpc":"2.0","id":41}"#, json!(41), -32600),
+        (
+            r#"{"jsonrpc":"1.0","id":"x","method":"ping"}"#,
+            json!("x"),
+            -32600,
+        ),
+        (
+            r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#,
+            Value::Null,
+            -32600,
+        ),
+        (
+            r#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#,
+            Value::Null,
+            -32600,
+        ),
+        ("{not json", Value::Null, -32700),
+    ];
+    for (line, id, code) in cases {
+        client.send_line(line);
+        let answer = client.receive();
+        assert_eq!(answer["id"], id, "{line}: {answer}");
+        assert_eq!(answer["error"]["code"], code, "{line}: {answer}");
+    }
+    assert_eq!(client.request("ping", json!({})), json!({}));
+}
+
+/// A line over the 10 MiB limit is read to its end and dropped: one error
+/// answers it, and the next line is read as a message of its own.
+#[test]
+fn an_oversize_line_is_discarded_whole_and_answered_once() {
+    let project = Project::init();
+    let (mut client, _) = McpClient::connect(&project);
+    let padding = "x".repeat(10 * 1024 * 1024 + 1);
+    client.send_line(&format!(
+        r#"{{"jsonrpc":"2.0","id":5,"method":"{padding}"}}"#
+    ));
+
+    let answer = client.receive();
+    assert_eq!(answer["id"], Value::Null, "{answer}");
+    assert_eq!(answer["error"]["code"], -32600, "{answer}");
+    assert_eq!(client.request("ping", json!({})), json!({}));
+}
+
+#[test]
+fn an_unknown_tool_is_a_protocol_error() {
+    let project = Project::init();
+    let (mut client, _) = McpClient::connect(&project);
+    let response = client.exchange("tools/call", json!({ "name": "advance", "arguments": {} }));
+    assert!(response.get("result").is_none(), "{response}");
+    assert_eq!(response["error"]["code"], -32602, "{response}");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("advance"),
+        "{response}"
+    );
+}
+
+/// With no `.trurlic/`, the server starts and lists its tools, and every
+/// call is refused naming `trurlic init`; once the store exists, the next
+/// call is served without a restart.
+#[test]
+fn a_server_without_a_store_lists_its_tools_and_names_init() {
+    let project = Project::without_store();
+    let (mut client, _) = McpClient::connect(&project);
+
+    let listed = client.request("tools/list", json!({}));
+    assert_eq!(listed["tools"].as_array().unwrap().len(), 13, "{listed}");
+    for tool in ["get_architecture", "add_component"] {
+        let refusal = client.call_tool_refusal(tool, json!({ "name": "auth" }));
+        assert_eq!(refusal["kind"], "no_project", "{tool}: {refusal}");
+        let message = refusal["message"].as_str().unwrap();
+        assert!(message.contains("trurlic init"), "{tool}: {message}");
+    }
+
+    project.run_ok(&["init"]);
+    let architecture = client.call_tool("get_architecture", json!({}));
+    assert!(architecture["components"].is_array(), "{architecture}");
+}
+
+/// A store in an older format: the server starts and lists its tools, and
+/// every call is refused naming `trurlic migrate`.
+#[test]
+fn a_server_over_an_old_store_lists_its_tools_and_names_migrate() {
+    let project = Project::init();
+    let manifest = project.path().join(".trurlic/project.toml");
+    let current = format!("\"{}\"", trurlic::store::FORMAT_VERSION);
+    let text = fs::read_to_string(&manifest).unwrap();
+    assert!(text.contains(&current), "{text}");
+    fs::write(&manifest, text.replace(&current, "\"0.1.0\"")).unwrap();
+
+    let (mut client, _) = McpClient::connect(&project);
+    let listed = client.request("tools/list", json!({}));
+    assert_eq!(listed["tools"].as_array().unwrap().len(), 13, "{listed}");
+    for tool in ["get_architecture", "add_component"] {
+        let refusal = client.call_tool_refusal(tool, json!({ "name": "auth" }));
+        assert_eq!(refusal["kind"], "unsupported_format", "{tool}: {refusal}");
+        let message = refusal["message"].as_str().unwrap();
+        assert!(message.contains("trurlic migrate"), "{tool}: {message}");
+    }
 }
 
 #[test]

@@ -1,11 +1,13 @@
-//! Named sites in the store's lock-holding paths for crash-consistency
-//! tests.
+//! Named sites in the store's lock-holding paths and the MCP server's tool
+//! calls, for crash-consistency and failure-mode tests.
 //!
 //! With the `failpoints` feature, `TRURLIC_FAILPOINT=<site>:<n>` acts the
 //! `n`-th time execution reaches `<site>`: at a [`hit`] the process aborts,
-//! at a [`fail`] the call returns an injected I/O error. Without the
-//! feature both are empty inline functions and release builds carry no
-//! trace of them. The feature is enabled only in the test job.
+//! at a [`fail`] the call returns an injected I/O error, at a [`panic()`] the
+//! thread panics, and at a [`triggers`] site the caller acts in its place.
+//! Without the feature the first three are empty inline functions, the
+//! last does not exist, and release builds carry no trace of them. The
+//! feature is enabled only in the test job.
 //!
 //! `abort` rather than `panic` or `exit`: a crash skips destructors and
 //! buffered writes, which is the state the tests need to reproduce.
@@ -17,8 +19,7 @@
 #[cfg(feature = "failpoints")]
 use crate::console::diag;
 
-/// A point in the store's lock-holding paths where a test may abort,
-/// pause or fail the process.
+/// A point where a test may abort, pause, fail or panic the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Site {
     /// Files staged and flushed; no journal yet.
@@ -30,13 +31,28 @@ pub(crate) enum Site {
     /// After each journal entry applied: the `n`-th hit follows the `n`-th
     /// rename, then the removals count on.
     Applied,
+    /// A writer's graph loaded under the exclusive lock, before any write;
+    /// a [`panic()`] site.
+    Locked,
+    /// A tool call about to run; a [`triggers`] site, where the MCP server
+    /// sends the client a request of its own instead.
+    #[cfg(feature = "failpoints")]
+    ServerRequest,
 }
 
 // Naming and parsing exist only where a spec can be read: the feature
 // build and the unit tests.
 #[cfg(any(test, feature = "failpoints"))]
 impl Site {
-    const ALL: [Self; 4] = [Self::Staged, Self::Journaled, Self::Rename, Self::Applied];
+    const ALL: &[Self] = &[
+        Self::Staged,
+        Self::Journaled,
+        Self::Rename,
+        Self::Applied,
+        Self::Locked,
+        #[cfg(feature = "failpoints")]
+        Self::ServerRequest,
+    ];
 
     /// The name used in `TRURLIC_FAILPOINT`.
     const fn as_str(self) -> &'static str {
@@ -45,11 +61,14 @@ impl Site {
             Self::Journaled => "commit.journaled",
             Self::Rename => "commit.rename",
             Self::Applied => "commit.applied",
+            Self::Locked => "write.locked",
+            #[cfg(feature = "failpoints")]
+            Self::ServerRequest => "mcp.server_request",
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|site| site.as_str() == name)
+        Self::ALL.iter().copied().find(|site| site.as_str() == name)
     }
 }
 
@@ -127,10 +146,40 @@ pub(crate) fn fail(site: Site) -> std::io::Result<()> {
     }
 }
 
+/// Panic here if this is the armed hit.
+#[cfg(feature = "failpoints")]
+pub(crate) fn panic(site: Site) {
+    if let Some(n) = reached(site) {
+        #[expect(
+            clippy::panic,
+            reason = "a panic site exists to prove the unwind boundary catches one"
+        )]
+        {
+            panic!("failpoint {}:{n} hit, panicking", site.as_str());
+        }
+    }
+}
+
+/// `true` if this is the armed hit, where the caller does what the site
+/// stands for instead of its usual work.
+#[cfg(feature = "failpoints")]
+pub(crate) fn triggers(site: Site) -> bool {
+    let reached = reached(site);
+    if let Some(n) = reached {
+        diag!("trurlic: failpoint {}:{n} hit, triggering", site.as_str());
+    }
+    reached.is_some()
+}
+
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
 #[inline]
 pub(crate) fn hit(_site: Site) {}
+
+/// No-op without the `failpoints` feature.
+#[cfg(not(feature = "failpoints"))]
+#[inline]
+pub(crate) fn panic(_site: Site) {}
 
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
@@ -145,7 +194,7 @@ mod tests {
 
     #[test]
     fn every_site_name_round_trips() {
-        for site in Site::ALL {
+        for &site in Site::ALL {
             assert_eq!(Site::from_name(site.as_str()), Some(site));
         }
     }

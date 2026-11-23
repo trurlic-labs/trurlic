@@ -15,5 +15,7 @@ mod install;
 mod invalid_graph;
 mod malformed_node;
 mod output;
+#[cfg(feature = "failpoints")]
+mod server_failpoints;
 mod stdio;
 mod writers;

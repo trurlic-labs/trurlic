@@ -1,0 +1,31 @@
+[decision]
+component = "mcp"
+choice = "Each tool declares its arguments once, in Args::declare, walked for its inputSchema and for every call's parse; a key it does not read is refused"
+reason = "A tool's schema and its parser came from two places, a hand-written JSON literal and hand parsing, and drifted: get_context's schema lists depth as an enum while its parser reads any other value as full, and no tool refused an unknown key. In mcp::spec, Args::declare reads each field through Fields::required or Fields::optional with a Kind; walked in schema mode it records each field (the value it builds from Default is dropped), walked over a call's arguments it parses them, so a field cannot be parsed without being in the schema. Every bounded kind holds its limit as a field (Text.max_bytes, List.max_items, Integer.min and max), so no declaration leaves one out; Choice is an enum, Object a nested Args, Union a tagged object with one variant per tag value, as apply's ops need. A refusal is invalid_argument naming the field by path (ops[2].name): the first fault in declaration order, then the first undeclared key. Plain Rust, no new dependency. A table-driven test over a spec with every field kind refuses each malformed shape."
+alternatives = [
+    "Hand-written schema literal plus hand parsing, as the 0.3 tools have: rejected, the two drift and nothing refuses an unknown key",
+    "schemars derive with serde: rejected, a new dependency, and serde's deny_unknown_fields error names no path",
+    "Static schema data with getters by field name: rejected, a getter for a field the data does not declare compiles and fails only when called",
+]
+tags = [
+    "api",
+    "validation",
+    "protocol",
+]
+attribution = "user"
+created = "2026-11-23T23:15:10.849084332Z"
+
+[[decision.code_refs]]
+file = "src/mcp/spec/mod.rs"
+symbol = "Args"
+
+[[decision.code_refs]]
+file = "src/mcp/spec/mod.rs"
+symbol = "Fields::field"
+
+[[decision.code_refs]]
+file = "src/mcp/spec/kinds.rs"
+
+[[decision.code_refs]]
+file = "src/mcp/spec/tool.rs"
+symbol = "ToolSpec"

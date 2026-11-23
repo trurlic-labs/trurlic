@@ -1,21 +1,26 @@
 use std::sync::LazyLock;
 
-use serde::Serialize;
 use serde_json::Value;
 
 use super::context;
-use super::{pattern, truncate, update, verify, write};
-use crate::budget::MAX_TOOL_RESULT_BYTES;
+use super::result::{ToolEnvelope, refusal, tool_result};
+use super::{pattern, spec, update, verify, write};
 use crate::store::{ProjectState, Writer};
 
 // ── Tool definitions ────────────────────────────────────────────────────────
 
-/// Static tool catalogue. Built once on first access, returned by reference
-/// thereafter. Each `tools/list` response clones from this cache instead of
-/// rebuilding the schema tree from scratch.
+/// The `tools/list` result: every spec-built tool, then the tools that
+/// predate specs. Built once on first access, returned by reference.
 static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::json!({
-        "tools": [
+    let mut tools: Vec<Value> = spec::TOOLS.iter().map(|tool| tool.definition()).collect();
+    tools.extend(unspecified_tools());
+    serde_json::json!({ "tools": tools })
+});
+
+/// The tools whose schemas are written out by hand, each parsing its own
+/// arguments below.
+fn unspecified_tools() -> Vec<Value> {
+    let Value::Array(tools) = serde_json::json!([
             {
                 "name": "get_context",
                 "description": "Get the architectural context for a component. Returns \
@@ -448,12 +453,23 @@ static TOOL_DEFINITIONS: LazyLock<Value> = LazyLock::new(|| {
                     "required": ["from", "to"]
                 }
             }
-        ]
-    })
-});
+    ]) else {
+        // A `json!` array literal is always a `Value::Array`.
+        return Vec::new();
+    };
+    tools
+}
 
 pub(crate) fn tool_list() -> &'static Value {
     &TOOL_DEFINITIONS
+}
+
+/// Whether `tools/list` lists `name`; a call to any other name is refused
+/// as a protocol error.
+pub(crate) fn is_listed(name: &str) -> bool {
+    TOOL_DEFINITIONS["tools"]
+        .as_array()
+        .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == name))
 }
 
 // ── Tool classification ─────────────────────────────────────────────────────
@@ -486,7 +502,7 @@ pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> 
         "get_decisions_for_file" => dispatch_get_decisions_for_file(state, args),
         "verify_against_decisions" => dispatch_verify_against_decisions(state, args),
         "get_architecture" => tool_result(&context::get_architecture(state)),
-        _ => tool_error(&format!("unknown tool: {name}")),
+        _ => refusal(&format!("unknown tool: {name}")),
     }
 }
 
@@ -503,11 +519,11 @@ pub(crate) fn call_write_tool(writer: &mut Writer<'_>, name: &str, args: &Value)
         "update_decision" => update::update_decision(writer, args),
         "add_component" => write::add_component(writer, args),
         "add_connection" => write::add_connection(writer, args),
-        _ => return tool_error(&format!("unhandled write tool: {name}")),
+        _ => return refusal(&format!("unhandled write tool: {name}")),
     };
     match result {
         Ok(v) => tool_result(&v),
-        Err(msg) => tool_error(&msg),
+        Err(msg) => refusal(&msg),
     }
 }
 
@@ -516,7 +532,7 @@ pub(crate) fn call_write_tool(writer: &mut Writer<'_>, name: &str, args: &Value)
 fn dispatch_get_context(state: &ProjectState, args: &Value) -> ToolEnvelope {
     let component = match args.get("component").and_then(|v| v.as_str()) {
         Some(c) => c,
-        None => return tool_error("missing required parameter: component"),
+        None => return refusal("missing required parameter: component"),
     };
     let task = args.get("task").and_then(|v| v.as_str());
     let depth = match args.get("depth").and_then(|v| v.as_str()) {
@@ -525,14 +541,14 @@ fn dispatch_get_context(state: &ProjectState, args: &Value) -> ToolEnvelope {
     };
     match context::get_context(state, component, task, depth) {
         Ok(result) => tool_result(&result),
-        Err(msg) => tool_error(&msg),
+        Err(msg) => refusal(&msg),
     }
 }
 
 fn dispatch_check_pattern(state: &ProjectState, args: &Value) -> ToolEnvelope {
     let description = match args.get("description").and_then(|v| v.as_str()) {
         Some(d) => d,
-        None => return tool_error("missing required parameter: description"),
+        None => return refusal("missing required parameter: description"),
     };
     tool_result(&context::check_pattern(state, description))
 }
@@ -540,36 +556,36 @@ fn dispatch_check_pattern(state: &ProjectState, args: &Value) -> ToolEnvelope {
 fn dispatch_get_decision_history(state: &ProjectState, args: &Value) -> ToolEnvelope {
     let name = match args.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
-        None => return tool_error("missing required parameter: name"),
+        None => return refusal("missing required parameter: name"),
     };
     match context::get_decision_history(state, name) {
         Ok(result) => tool_result(&result),
-        Err(msg) => tool_error(&msg),
+        Err(msg) => refusal(&msg),
     }
 }
 
 fn dispatch_get_decisions_for_file(state: &ProjectState, args: &Value) -> ToolEnvelope {
     let file = match args.get("file").and_then(|v| v.as_str()) {
         Some(f) => f,
-        None => return tool_error("missing required parameter: file"),
+        None => return refusal("missing required parameter: file"),
     };
     match context::get_decisions_for_file(state, file) {
         Ok(result) => tool_result(&result),
-        Err(msg) => tool_error(&msg),
+        Err(msg) => refusal(&msg),
     }
 }
 
 fn dispatch_verify_against_decisions(state: &ProjectState, args: &Value) -> ToolEnvelope {
     let component = match args.get("component").and_then(|v| v.as_str()) {
         Some(c) => c,
-        None => return tool_error("missing required parameter: component"),
+        None => return refusal("missing required parameter: component"),
     };
 
     let entries = match args.get("changed_files").and_then(|v| v.as_array()) {
         Some(arr) if !arr.is_empty() => arr,
-        Some(_) => return tool_error("changed_files must be a non-empty array"),
+        Some(_) => return refusal("changed_files must be a non-empty array"),
         None => {
-            return tool_error("missing required parameter: changed_files (array of strings)");
+            return refusal("missing required parameter: changed_files (array of strings)");
         }
     };
 
@@ -579,17 +595,17 @@ fn dispatch_verify_against_decisions(state: &ProjectState, args: &Value) -> Tool
     for entry in entries {
         let path = match entry.as_str() {
             Some(p) => p,
-            None => return tool_error("changed_files entries must be strings"),
+            None => return refusal("changed_files entries must be strings"),
         };
         match crate::store::normalize_file_query(path) {
             Ok(normalized) => changed_files.push(normalized),
-            Err(e) => return tool_error(&format!("invalid file path: {e}")),
+            Err(e) => return refusal(&format!("invalid file path: {e}")),
         }
     }
 
     // Component must exist (or be the project scope), matching get_context.
     if component != "project" && !state.components.contains_key(component) {
-        return tool_error(&format!("component `{component}` does not exist"));
+        return refusal(&format!("component `{component}` does not exist"));
     }
 
     tool_result(&verify::build_response(
@@ -597,51 +613,6 @@ fn dispatch_verify_against_decisions(state: &ProjectState, args: &Value) -> Tool
         component,
         &changed_files,
     ))
-}
-
-// ── MCP content envelope ────────────────────────────────────────────────────
-
-/// Typed MCP tool-response envelope. Serialized directly into the JSON-RPC
-/// response by `protocol::write_success` — no intermediate `Value` tree.
-///
-/// The MCP spec requires `text` to be a JSON string containing the tool
-/// output. `tool_result` serializes the payload `Value` once into `text`;
-/// `write_success` then serializes this struct inline when writing the
-/// full JSON-RPC response. One serialization pass instead of two.
-#[derive(Debug, Serialize)]
-pub(crate) struct ToolEnvelope {
-    content: [TextBlock; 1],
-    /// Present and `true` for errors, omitted for success.
-    #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
-    is_error: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-struct TextBlock {
-    r#type: &'static str,
-    text: String,
-}
-
-/// `payload` serialized within [`MAX_TOOL_RESULT_BYTES`]; see [`truncate`].
-pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
-    ToolEnvelope {
-        content: [TextBlock {
-            r#type: "text",
-            text: truncate::fit_payload(payload, MAX_TOOL_RESULT_BYTES),
-        }],
-        is_error: None,
-    }
-}
-
-/// `message`, cut to [`MAX_TOOL_RESULT_BYTES`] with a note of what it lost.
-pub(crate) fn tool_error(message: &str) -> ToolEnvelope {
-    ToolEnvelope {
-        content: [TextBlock {
-            r#type: "text",
-            text: truncate::fit_message(message, MAX_TOOL_RESULT_BYTES),
-        }],
-        is_error: Some(true),
-    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -699,54 +670,36 @@ mod tests {
         }
     }
 
+    /// Claude Code cuts a tool description at 4,096 characters; half of
+    /// that keeps a session's fixed cost small.
+    #[test]
+    fn every_listed_description_fits_its_surface_budget() {
+        const MAX_DESCRIPTION_CHARS: usize = 2048;
+        for tool in tool_list()["tools"].as_array().unwrap() {
+            let description = tool["description"].as_str().unwrap();
+            assert!(
+                description.chars().count() <= MAX_DESCRIPTION_CHARS,
+                "{}: {} chars",
+                tool["name"],
+                description.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn is_listed_holds_exactly_the_listed_names() {
+        for tool in tool_list()["tools"].as_array().unwrap() {
+            assert!(is_listed(tool["name"].as_str().unwrap()));
+        }
+        assert!(!is_listed("advance"));
+        assert!(!is_listed(""));
+    }
+
     #[test]
     fn tool_list_is_stable_across_calls() {
         let a = tool_list();
         let b = tool_list();
         assert_eq!(a, b);
-    }
-
-    #[test]
-    fn tool_result_wraps_payload_as_json_string() {
-        let payload = serde_json::json!({"status": "covered", "count": 3});
-        let envelope = tool_result(&payload);
-
-        assert_eq!(envelope.content.len(), 1);
-        assert_eq!(envelope.content[0].r#type, "text");
-        assert!(envelope.is_error.is_none());
-
-        // text field contains valid JSON matching the original payload
-        let parsed: Value = serde_json::from_str(&envelope.content[0].text).unwrap();
-        assert_eq!(parsed["status"], "covered");
-        assert_eq!(parsed["count"], 3);
-    }
-
-    #[test]
-    fn tool_result_serializes_to_valid_mcp_envelope() {
-        let payload = serde_json::json!({"key": "value"});
-        let envelope = tool_result(&payload);
-        let wire = serde_json::to_value(&envelope).unwrap();
-
-        assert_eq!(wire["content"][0]["type"], "text");
-        assert!(wire.get("isError").is_none());
-        // text is a JSON string, not a nested object
-        assert!(wire["content"][0]["text"].is_string());
-    }
-
-    #[test]
-    fn tool_error_sets_is_error_flag() {
-        let envelope = tool_error("something broke");
-        assert_eq!(envelope.is_error, Some(true));
-        assert_eq!(envelope.content[0].text, "something broke");
-        assert_eq!(envelope.content[0].r#type, "text");
-    }
-
-    #[test]
-    fn tool_error_serializes_to_valid_mcp_envelope() {
-        let envelope = tool_error("bad input");
-        let wire = serde_json::to_value(&envelope).unwrap();
-        assert_eq!(wire["isError"], true);
-        assert_eq!(wire["content"][0]["text"], "bad input");
     }
 
     #[test]
@@ -775,22 +728,22 @@ mod tests {
     fn dispatch_unknown_read_tool_returns_error() {
         let state = empty_state();
         let envelope = call_read_tool(&state, "nonexistent", &serde_json::json!({}));
-        assert_eq!(envelope.is_error, Some(true));
-        assert!(envelope.content[0].text.contains("unknown tool"));
+        assert!(envelope.is_error());
+        assert!(envelope.text().contains("unknown tool"));
     }
 
     #[test]
     fn dispatch_get_context_missing_component() {
         let state = empty_state();
         let envelope = call_read_tool(&state, "get_context", &serde_json::json!({}));
-        assert_eq!(envelope.is_error, Some(true));
+        assert!(envelope.is_error());
     }
 
     #[test]
     fn dispatch_check_pattern_missing_description() {
         let state = empty_state();
         let envelope = call_read_tool(&state, "check_pattern", &serde_json::json!({}));
-        assert_eq!(envelope.is_error, Some(true));
+        assert!(envelope.is_error());
     }
 
     #[test]
@@ -877,8 +830,8 @@ mod tests {
     fn dispatch_get_decisions_for_file_missing_param() {
         let state = empty_state();
         let envelope = call_read_tool(&state, "get_decisions_for_file", &serde_json::json!({}));
-        assert_eq!(envelope.is_error, Some(true));
-        assert!(envelope.content[0].text.contains("file"));
+        assert!(envelope.is_error());
+        assert!(envelope.text().contains("file"));
     }
 
     #[test]
@@ -886,15 +839,11 @@ mod tests {
         let state = empty_state();
         let args = serde_json::json!({ "file": "/etc/passwd" });
         let envelope = call_read_tool(&state, "get_decisions_for_file", &args);
-        assert_eq!(
-            envelope.is_error,
-            Some(true),
-            "absolute path should be rejected"
-        );
+        assert!(envelope.is_error(), "absolute path should be rejected");
         assert!(
-            envelope.content[0].text.contains("invalid file path"),
+            envelope.text().contains("invalid file path"),
             "error should describe the issue: {}",
-            envelope.content[0].text
+            envelope.text()
         );
     }
 
@@ -903,8 +852,8 @@ mod tests {
         let state = empty_state();
         let args = serde_json::json!({ "file": "src/store/write.rs" });
         let envelope = call_read_tool(&state, "get_decisions_for_file", &args);
-        assert!(envelope.is_error.is_none());
-        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        assert!(!envelope.is_error());
+        let result: serde_json::Value = serde_json::from_str(envelope.text()).unwrap();
         assert_eq!(result["count"], 0);
         assert!(result["decisions"].as_array().unwrap().is_empty());
     }
@@ -965,8 +914,8 @@ mod tests {
 
         let args = serde_json::json!({ "file": "src/store/write.rs" });
         let envelope = call_read_tool(&state, "get_decisions_for_file", &args);
-        assert!(envelope.is_error.is_none(), "should succeed");
-        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        assert!(!envelope.is_error(), "should succeed");
+        let result: serde_json::Value = serde_json::from_str(envelope.text()).unwrap();
         assert_eq!(result["count"], 1);
         let decisions = result["decisions"].as_array().unwrap();
         assert_eq!(decisions[0]["name"], "atomic-writes");
@@ -1039,8 +988,8 @@ mod tests {
 
         let args = serde_json::json!({ "file": "./src/store" });
         let envelope = call_read_tool(&state, "get_decisions_for_file", &args);
-        assert!(envelope.is_error.is_none());
-        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        assert!(!envelope.is_error());
+        let result: serde_json::Value = serde_json::from_str(envelope.text()).unwrap();
         assert_eq!(result["file"], "src/store", "leading ./ must be normalized");
         assert_eq!(result["count"], 1);
     }
@@ -1074,15 +1023,14 @@ mod tests {
     fn dispatch_validate_consistency_returns_unknown_tool() {
         let state = empty_state();
         let envelope = call_read_tool(&state, "validate_consistency", &serde_json::json!({}));
-        assert_eq!(
-            envelope.is_error,
-            Some(true),
+        assert!(
+            envelope.is_error(),
             "validate_consistency should be rejected as unknown"
         );
         assert!(
-            envelope.content[0].text.contains("unknown tool"),
+            envelope.text().contains("unknown tool"),
             "error should say 'unknown tool': {}",
-            envelope.content[0].text,
+            envelope.text(),
         );
     }
 
@@ -1183,8 +1131,8 @@ mod tests {
         let state = verify_state();
         let args = serde_json::json!({ "changed_files": ["src/mcp/verify.rs"] });
         let envelope = call_read_tool(&state, "verify_against_decisions", &args);
-        assert_eq!(envelope.is_error, Some(true));
-        assert!(envelope.content[0].text.contains("component"));
+        assert!(envelope.is_error());
+        assert!(envelope.text().contains("component"));
     }
 
     #[test]
@@ -1192,8 +1140,8 @@ mod tests {
         let state = verify_state();
         let args = serde_json::json!({ "component": "mcp" });
         let envelope = call_read_tool(&state, "verify_against_decisions", &args);
-        assert_eq!(envelope.is_error, Some(true));
-        assert!(envelope.content[0].text.contains("changed_files"));
+        assert!(envelope.is_error());
+        assert!(envelope.text().contains("changed_files"));
     }
 
     #[test]
@@ -1201,11 +1149,7 @@ mod tests {
         let state = verify_state();
         let args = serde_json::json!({ "component": "mcp", "changed_files": [] });
         let envelope = call_read_tool(&state, "verify_against_decisions", &args);
-        assert_eq!(
-            envelope.is_error,
-            Some(true),
-            "empty changed_files must be rejected"
-        );
+        assert!(envelope.is_error(), "empty changed_files must be rejected");
     }
 
     #[test]
@@ -1216,11 +1160,11 @@ mod tests {
             "changed_files": ["src/mcp/verify.rs"],
         });
         let envelope = call_read_tool(&state, "verify_against_decisions", &args);
-        assert_eq!(envelope.is_error, Some(true));
+        assert!(envelope.is_error());
         assert!(
-            envelope.content[0].text.contains("does not exist"),
+            envelope.text().contains("does not exist"),
             "error should say the component does not exist: {}",
-            envelope.content[0].text
+            envelope.text()
         );
     }
 
@@ -1232,15 +1176,11 @@ mod tests {
             "changed_files": ["/etc/passwd"],
         });
         let envelope = call_read_tool(&state, "verify_against_decisions", &args);
-        assert_eq!(
-            envelope.is_error,
-            Some(true),
-            "absolute path must be rejected"
-        );
+        assert!(envelope.is_error(), "absolute path must be rejected");
         assert!(
-            envelope.content[0].text.contains("invalid file path"),
+            envelope.text().contains("invalid file path"),
             "error should describe the issue: {}",
-            envelope.content[0].text
+            envelope.text()
         );
     }
 
@@ -1252,9 +1192,9 @@ mod tests {
             "changed_files": ["src/mcp/verify.rs"],
         });
         let envelope = call_read_tool(&state, "verify_against_decisions", &args);
-        assert!(envelope.is_error.is_none(), "should succeed");
+        assert!(!envelope.is_error(), "should succeed");
 
-        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        let result: serde_json::Value = serde_json::from_str(envelope.text()).unwrap();
         assert_eq!(result["component"], "mcp");
 
         // Only verify-tool references the changed file; watcher-debounce does not.
@@ -1291,9 +1231,9 @@ mod tests {
             "changed_files": ["src/store/write.rs"],
         });
         let envelope = call_read_tool(&state, "verify_against_decisions", &args);
-        assert!(envelope.is_error.is_none());
+        assert!(!envelope.is_error());
 
-        let result: serde_json::Value = serde_json::from_str(&envelope.content[0].text).unwrap();
+        let result: serde_json::Value = serde_json::from_str(envelope.text()).unwrap();
         assert!(result["decisions_to_verify"].as_array().unwrap().is_empty());
         assert_eq!(result["message"], "No decisions affected by these changes");
         // Both mcp decisions filtered out.

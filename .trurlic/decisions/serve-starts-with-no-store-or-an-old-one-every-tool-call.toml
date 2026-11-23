@@ -1,0 +1,25 @@
+[decision]
+component = "mcp"
+choice = "serve starts with no store or an old one; every tool call finds the store from the server's directory and is refused naming trurlic init or trurlic migrate"
+reason = "serve refused to start without a .trurlic/ or with one in another format, so a client showed a failed server with no reason, and an install that registers serve for every project could not serve a directory with no graph. The server now keeps the directory it was started in, and each tool call runs Store::discover from it: no store is the no_project refusal, whose message names trurlic init, and a store in another format the unsupported_format refusal naming trurlic migrate (or an upgrade). initialize and tools/list answer either way. Finding the store per call costs a few stat calls and keeps the server free of state: the call after an init or a migrate is served without a restart."
+alternatives = [
+    "Refuse to start: rejected, the client shows a failed server with no reason, and the fix is not named",
+    "Find the store once at start: rejected, an init or a migrate while the server runs would need a restart",
+]
+tags = [
+    "reliability",
+    "developer-experience",
+]
+attribution = "agent"
+created = "2026-11-23T23:15:11.209076078Z"
+
+[[decision.code_refs]]
+file = "src/mcp/mod.rs"
+symbol = "call_tool"
+
+[[decision.code_refs]]
+file = "src/commands/serve.rs"
+symbol = "serve"
+
+[[decision.code_refs]]
+file = "tests/integration/stdio.rs"

@@ -11,9 +11,11 @@ Single crate, seven modules (`src/lib.rs`). Visibility enforces boundaries — `
 ```
 store       → (no internal deps)         Decision graph: TOML files, graph index,
                                           validation, atomic writes, file locking
-mcp         → store, budget               MCP server: JSON-RPC stdio, tool dispatch,
-                                          context assembly, decision verification,
-                                          the 24 KiB cap on every tool result
+mcp         → store, budget               MCP server: JSON-RPC stdio, version
+                                          negotiation, the server's own requests,
+                                          argument specs, tool dispatch, context
+                                          assembly, decision verification, the
+                                          24 KiB cap on every tool result
 commands    → store, mcp                  CLI command handlers: init, add, rename,
                                           remove, decide, query, status, check, gc,
                                           migrate, install (registers the MCP
@@ -35,7 +37,9 @@ Every module uses `error` and `console`; the arrows leave them out.
 
 **error** carries the path of the file behind every I/O and TOML failure (`Error::Io`, `Error::Toml`); nothing converts a bare `io::Error` into it, so a `?` cannot drop the path. `commands::install` alone returns its own `InstallError`, which wraps `Error`; `cli` prints either as `error: <message>` with exit status 1.
 
-**mcp** never writes to the graph directly. It calls `Writer` methods, and holds no graph between calls.
+**mcp** never writes to the graph directly. It calls `Writer` methods, and holds no graph between calls. A tool is built on an argument spec (`mcp::spec`): its `Args::declare` is walked once for the `inputSchema` and once per call for the parse, so the schema and the parser cannot drift, and an unknown key, a wrong type or a broken limit is refused naming the field. Its `Access` (read, write, interactive) decides the lock the call takes. Every refusal, a missing store included, is a tool result with `isError: true` whose text is `{"error": {"kind", "field"?, "message"}}` (`mcp::result`); a JSON-RPC error answers only a malformed message, an unknown method or tool, or a panic. The tools that predate specs keep their hand-written schemas in `mcp::tools` until the rows that replace them.
+
+**mcp transport**: `initialize` answers the client's protocol revision when it is in `PROTOCOL_VERSIONS`, else the latest, and keeps the client's capabilities. During a tool call a handler can send the client a request through its `Peer` (`mcp::peer`) and wait for the answer on the same stdin, without a timeout: meanwhile a `ping` is answered, other requests are queued (16 at most) and served after the call, and `notifications/cancelled` for the call ends the wait with no response. Every line gets at most one answer; a line over 10 MiB is discarded whole.
 
 **commands** reaches `mcp` only to start the MCP server (`serve`); every other handler reads and writes the graph through `Store`.
 
@@ -61,7 +65,7 @@ Readers: every read (`Store::load_state`) takes the shared lock, checks the form
 
 In-memory state: `ProjectState` holds `BTreeMap`s of `Arc<ComponentFile>`, `Arc<DecisionFile>`, `Arc<PatternFile>`, plus the `GraphIndex` and an eagerly built `InMemoryGraph` for graph queries. It lives for one call.
 
-No state between calls: the MCP server holds the `Store` and nothing loaded from it. A read tool runs on `Store::load_state`, a write tool on a `Writer`, so a hand edit, a `git checkout` or another process's commit is seen by the very next call. `load_state` reads the node files in parallel and parses `graph.toml` meanwhile; `make bench` times it.
+No state between calls: the MCP server holds the directory it was started in, and every tool call finds the store from there and loads it. A read tool runs on `Store::load_state`, a write tool on a `Writer`, so a hand edit, a `git checkout` or another process's commit is seen by the very next call. `serve` starts without a store or with one in another format, and each call is refused naming `trurlic init` or `trurlic migrate` until it is fixed. `load_state` reads the node files in parallel and parses `graph.toml` meanwhile; `make bench` times it.
 
 ### Key Invariants
 
@@ -73,7 +77,8 @@ No state between calls: the MCP server holds the `Store` and nothing loaded from
 6. What a call returns is a function of the files on disk: no process holds graph state between calls (`tests/integration/stdio.rs` sees a hand edit in the next call; `tests/integration/writers.rs` interleaves three servers' writes).
 7. Boundary types (`DecisionFile`, `PatternFile`, `ComponentFile`, `GraphIndex`) derive `Serialize + Deserialize`. Internal types (`InMemoryGraph`) do not.
 8. Every dependency justified. No proc macros at runtime (serde derive, thiserror are compile-time).
-9. Every MCP tool result fits `budget::MAX_TOOL_RESULT_BYTES` (24 KiB) and stays valid JSON; a cut is named in its `truncated` array.
+9. Every MCP tool result fits `budget::MAX_TOOL_RESULT_BYTES` (24 KiB) and stays valid JSON; a cut is named in its `truncated` array. Every tool description fits 2,048 characters (`mcp::tools` tests).
+10. A panic while a request is handled is answered `-32603` and the server serves the next request: release builds unwind (`panic = "unwind"`), `mcp::Server::answer` is the one `catch_unwind`, and nothing outlives a request half-done (no graph is held; unwinding drops a writer's lock; every line is built before it is written). `tests/integration/server_failpoints.rs` panics under the exclusive lock and writes again.
 
 ### Trurlic
 
@@ -101,9 +106,11 @@ the choices they leave open; verify before committing.
 
 Unit tests: pure functions, same file. Every module has exhaustive tests for its public contract. Schema round-trips for every serializable type.
 
-Integration tests (`tests/integration/`): drive the built binary. `harness` spawns `trurlic serve` and speaks JSON-RPC over stdio; `golden` compares output with `tests/integration/golden/` (`TRURLIC_UPDATE_GOLDEN=1` rewrites the files). Every tool in `tools/list` is called once.
+Integration tests (`tests/integration/`): drive the built binary. `harness` spawns `trurlic serve` and speaks JSON-RPC over stdio, playing the client for the server's own requests too; `golden` compares output with `tests/integration/golden/` (`TRURLIC_UPDATE_GOLDEN=1` rewrites the files). Every tool in `tools/list` is called once. `stdio.rs` covers each protocol case: version negotiation, each malformed line, an oversize line, an unknown tool, a server with no store or an old one.
 
-Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` act at the n-th hit of a named site in `src/store/failpoint.rs`: abort (or pause, with `TRURLIC_FAILPOINT_PAUSE`) at a `hit`, return an injected I/O error at a `fail`. `make test` enables it.
+Argument specs: `mcp::spec` holds one table-driven test over a spec with every field kind the 0.4.0 tools need, refusing each malformed shape with its field named.
+
+Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPOINT=<site>:<n>` act at the n-th hit of a named site in `src/store/failpoint.rs`: abort (or pause, with `TRURLIC_FAILPOINT_PAUSE`) at a `hit`, return an injected I/O error at a `fail`, panic at a `panic` (`write.locked`), and let the caller act at a `triggers` site (`mcp.server_request`, where a tool call sends the client an elicitation form instead of running). `make test` enables it.
 
 Property: determinism (every read tool answers with the same bytes in two processes), graph validation catches all known violation classes.
 

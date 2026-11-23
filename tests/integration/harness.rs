@@ -28,6 +28,13 @@ impl Project {
         project
     }
 
+    /// A temporary directory with no `.trurlic/`.
+    pub fn without_store() -> Self {
+        Self {
+            dir: TempDir::new().unwrap(),
+        }
+    }
+
     pub fn path(&self) -> &Path {
         self.dir.path()
     }
@@ -159,12 +166,22 @@ impl McpClient {
 
     /// [`connect`](Self::connect) with extra environment variables.
     pub fn connect_with_env(project: &Project, vars: &[(&str, &str)]) -> (Self, Value) {
+        Self::connect_declaring(project, vars, json!({}))
+    }
+
+    /// [`connect`](Self::connect) with extra environment variables and the
+    /// client `capabilities` the handshake declares.
+    pub fn connect_declaring(
+        project: &Project,
+        vars: &[(&str, &str)],
+        capabilities: Value,
+    ) -> (Self, Value) {
         let mut client = Self::spawn_with_env(project, vars);
         let handshake = client.request(
             "initialize",
             json!({
                 "protocolVersion": "2025-11-25",
-                "capabilities": {},
+                "capabilities": capabilities,
                 "clientInfo": { "name": "trurlic-tests", "version": "0" }
             }),
         );
@@ -172,10 +189,33 @@ impl McpClient {
         (client, handshake)
     }
 
-    fn send(&mut self, message: &Value) {
+    /// Write `message` as one line.
+    pub fn send(&mut self, message: &Value) {
+        self.send_line(&message.to_string());
+    }
+
+    /// Write `line` and a newline, whatever it holds.
+    pub fn send_line(&mut self, line: &str) {
         let stdin = self.stdin.as_mut().unwrap();
-        writeln!(stdin, "{message}").unwrap();
+        stdin.write_all(line.as_bytes()).unwrap();
+        stdin.write_all(b"\n").unwrap();
         stdin.flush().unwrap();
+    }
+
+    /// The next message the server writes.
+    pub fn receive(&mut self) -> Value {
+        let line = self
+            .lines
+            .recv_timeout(RESPONSE_TIMEOUT)
+            .unwrap_or_else(|e| panic!("no message from the server: {e}"));
+        serde_json::from_str(&line).unwrap_or_else(|e| panic!("not JSON ({e}): {line}"))
+    }
+
+    /// A fresh request id, for a request sent with [`send`](Self::send).
+    pub fn next_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
     }
 
     pub fn notify(&mut self, method: &str) {
@@ -191,8 +231,7 @@ impl McpClient {
     /// Send a request and return the full JSON-RPC response, or `None` if
     /// the server exited without answering.
     pub fn try_exchange(&mut self, method: &str, params: Value) -> Option<Value> {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.next_id();
         self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
 
         let line = match self.lines.recv_timeout(RESPONSE_TIMEOUT) {
@@ -232,11 +271,23 @@ impl McpClient {
         text
     }
 
-    /// Call a tool that must fail and return its error message.
+    /// Call a tool that must be refused and return its refusal's message.
     pub fn call_tool_error(&mut self, name: &str, arguments: Value) -> String {
+        let mut refusal = self.call_tool_refusal(name, arguments);
+        let Value::String(message) = refusal["message"].take() else {
+            panic!("{name}: a refusal without a message: {refusal}");
+        };
+        message
+    }
+
+    /// Call a tool that must be refused and return its `error` object:
+    /// `kind`, `message` and, for an argument, `field`.
+    pub fn call_tool_refusal(&mut self, name: &str, arguments: Value) -> Value {
         let (text, is_error) = self.call_tool_raw(name, arguments);
         assert!(is_error, "{name} succeeded: {text}");
-        text
+        let mut payload: Value = serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("{name}: refusal not JSON ({e}): {text}"));
+        payload["error"].take()
     }
 
     fn call_tool_raw(&mut self, name: &str, arguments: Value) -> (String, bool) {

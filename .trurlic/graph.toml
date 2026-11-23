@@ -11,6 +11,35 @@ tags = [
 hash = "f4db2000c112fbda7a458ab68d7ce418f95425e261107f30dc7cbd8f47bfeb4b"
 
 [[nodes]]
+name = "a-panic-while-a-request-is-handled-is-caught-in-server"
+kind = "decision"
+tags = [
+    "reliability",
+    "error-handling",
+    "protocol",
+]
+hash = "e700768f8e8624292191f694236f6b4c98e6f019217c7b70ab52680bd08a2adb"
+
+[[nodes]]
+name = "a-refused-tool-call-is-an-iserror-result-whose-text-is"
+kind = "decision"
+tags = [
+    "api",
+    "error-handling",
+    "protocol",
+]
+hash = "752f4b31a8fe6b75723ea7c655e7db67492ee835e58174192fb6e5b03ba67834"
+
+[[nodes]]
+name = "a-tool-call-reaches-the-client-through-peer-request-the"
+kind = "decision"
+tags = [
+    "protocol",
+    "api",
+]
+hash = "9b9c784fa0140ac7e345c7db68fe3fa1fafd05330387370741fee8d00803e015"
+
+[[nodes]]
 name = "arc-wrapped-content-values-in-btreemap-with-oncelock-free"
 kind = "decision"
 tags = [
@@ -45,7 +74,7 @@ tags = [
     "testing",
     "api",
 ]
-hash = "8c2ebbcf55c862f0d9b9f44c8479afda4ab0749b35c69918ce065f24c9ffef5a"
+hash = "3213aa244cb4123563b68d403e434536521e052ef056f2d0b491300446b1de9b"
 
 [[nodes]]
 name = "blake3-content-hashing-for-tamper-detection-and-change"
@@ -143,7 +172,7 @@ tags = [
     "error-handling",
     "safety",
 ]
-hash = "6364a3db675bc2c1c842c66b5db9f93acdfcef8d7e7f8daedd1a59ea6f2e327c"
+hash = "f1f89c212db1313c838d42f2778be39a8be273b863367a84f8d16932660321be"
 
 [[nodes]]
 name = "depends-on-cycles-are-found-as-strongly-connected"
@@ -153,6 +182,16 @@ tags = [
     "determinism",
 ]
 hash = "e9fcf43af572aa99636d16162bd75ee6f616df2bcda3eea6ea22d5ba7823e9d2"
+
+[[nodes]]
+name = "each-tool-declares-its-arguments-once-in-args-declare"
+kind = "decision"
+tags = [
+    "api",
+    "validation",
+    "protocol",
+]
+hash = "1c6a4919bb64b516fa28925fb5c08a49b60069b73a27d8d803976b574f14feb4"
 
 [[nodes]]
 name = "every-commit-goes-through-a-flushed-journal-in-state-txn"
@@ -191,7 +230,7 @@ tags = [
     "api",
     "reliability",
 ]
-hash = "b94b98fa0c1be7d9019cfd642fe9b58e57d93e2bd374fa4ed232ed9dc07f651e"
+hash = "f7184dc07e7c20b11b273276b1e258a8572ac18db8764354a96e8578ba8a36fc"
 
 [[nodes]]
 name = "every-write-reloads-the-graph-under-the-exclusive-lock"
@@ -200,7 +239,7 @@ tags = [
     "concurrency",
     "reliability",
 ]
-hash = "32f4926286a57e5c7ab1d979f628a70f2a6f0e25fb6cf9f87ec121369f429015"
+hash = "852814a1e7a982a86eba0d752bddd7253e0a5a4cddd230cd38dcba41cab86056"
 
 [[nodes]]
 name = "exclusive-advisory-file-locking-via-fs2-with-5-second"
@@ -251,7 +290,13 @@ tags = [
     "protocol",
     "security",
 ]
-hash = "798ac60752039ecefa23ac21931004a7a3b22b0203ad3b6e1701adf420473c01"
+hash = "e7d5347d6a48c1b34be058fb21c966cef10b3e788a4bb3c8089ee4a1169e6826"
+
+[[nodes]]
+name = "initialize-answers-the-client-s-protocol-revision-when"
+kind = "decision"
+tags = ["protocol"]
+hash = "f15343b97c7c068d3b7523cb3ec0eed83803adbc350c7001eb77fe34007f500b"
 
 [[nodes]]
 name = "inmemorygraph-with-forward-and-reverse-adjacency-maps-using"
@@ -287,7 +332,7 @@ tags = [
     "protocol",
     "security",
 ]
-hash = "b4c8e834ca6cb79a6b979e450c8e3cadb9acb9485cb222ba1a48da2c5133107e"
+hash = "db19e079f4e8d826f21c413083041ac956d6a14078e93a67605e5ee969e0d125"
 
 [[nodes]]
 name = "leftover-journals-and-temp-files-are-cleared-only-under-the"
@@ -310,7 +355,7 @@ tags = [
     "data-integrity",
     "module-boundary",
 ]
-hash = "8662d39e207f1da75d8d78c3107810711020f5fbe64fb5638a43881ebbf949a3"
+hash = "c2835eed157d96d1218feace2dfaf78aa6e11c2393ea70a07f4d126726c173c0"
 
 [[nodes]]
 name = "module-visibility-pub-crate-default-only-cli-and-store-are"
@@ -344,7 +389,7 @@ hash = "4e68914291104b651ee8f535d6513ffcddc5d08ad79130d9e1cd885103d91878"
 [[nodes]]
 name = "no-process-holds-graph-state-between-calls-every-read-loads"
 kind = "decision"
-hash = "0187ed25d880904a48c165af096f1237213c1e933ef3cebcc3a12f7c731d2ce6"
+hash = "f22485277de6769f06eca378f995374f7a41f566691f21fbd8462c4e57180e0f"
 
 [[nodes]]
 name = "no-workflow-engine-advance-get-step-prompt-steps-modes-and"
@@ -388,13 +433,23 @@ kind = "component"
 hash = "9b658bcc3bdf39842a63d8741149671acb1b723deb1da81d21fae39c78319ac5"
 
 [[nodes]]
-name = "release-profile-fat-lto-single-codegen-unit-strip-symbols"
+name = "release-profile-fat-lto-one-codegen-unit-stripped-symbols"
 kind = "decision"
 tags = [
     "build",
     "performance",
+    "reliability",
 ]
-hash = "8a8a411f1f429a76cd8faaee745f2efa1095b779bf7be4bbdecee4657dbbc2b6"
+hash = "4716e35b7e724d247d20c48f76e8162eb9d47b467ce629a5501d233391a21c40"
+
+[[nodes]]
+name = "serve-starts-with-no-store-or-an-old-one-every-tool-call"
+kind = "decision"
+tags = [
+    "reliability",
+    "developer-experience",
+]
+hash = "06ebe1250fd141485fe8a5309476801722c5376bfe4f8bcde7b7b6bafe55c436"
 
 [[nodes]]
 name = "single-error-enum-with-thiserror-project-wide-result-alias"
@@ -406,7 +461,7 @@ hash = "8e7891d9a29843f26bf309e042f6fc8a591ecd8d033c7072a02403c144327580"
 name = "static-tool-catalogue-via-lazylock-returned-by-reference"
 kind = "decision"
 tags = ["performance"]
-hash = "f9f37001b9c8fce70bdb201da556bbcf12f10cef1adff65ab49e640a1d5ff4d4"
+hash = "a799bd407dc423e646be7156f9232b8b501769a13565e22d59837498d20b22eb"
 
 [[nodes]]
 name = "stdout-and-stderr-are-written-only-through-console-out-diag"
@@ -415,7 +470,7 @@ tags = [
     "error-handling",
     "api",
 ]
-hash = "69992a29ef458a9555b771448f6fbfbb106abc51b6e37de02c1497f89849019c"
+hash = "f688a0a600d21dbe29e091110b3bc1d41bff118ef3dab282b845bd7e2fdd877e"
 
 [[nodes]]
 name = "store"
@@ -474,7 +529,7 @@ tags = [
     "performance",
     "protocol",
 ]
-hash = "b547b2f7a5cd13f0a62203546ff21ffb5673e0934eb1ecae725074f2cf0311af"
+hash = "ec9a1ac7bdc235de0598113c39ddad62b0000096827149465903b917692a63c2"
 
 [[nodes]]
 name = "validation-issues-carry-an-issuekind-and-a-subject-and"
@@ -516,6 +571,21 @@ hash = "841f223107eda7259b947690d2785e053727018568fc025845d025b6ee6555e9"
 [[edges]]
 from = "a-decision-s-choice-and-reason-are-checked-by-the-store-in"
 to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "a-panic-while-a-request-is-handled-is-caught-in-server"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "a-refused-tool-call-is-an-iserror-result-whose-text-is"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "a-tool-call-reaches-the-client-through-peer-request-the"
+to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
@@ -619,6 +689,11 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
+from = "each-tool-declares-its-arguments-once-in-args-declare"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
 from = "every-commit-goes-through-a-flushed-journal-in-state-txn"
 to = "atomic-writes-via-serialize-to-temp-verify-round-trip"
 kind = "depends_on"
@@ -710,6 +785,11 @@ kind = "belongs_to"
 
 [[edges]]
 from = "initialization-gate-tools-list-and-tools-call-require-prior"
+to = "mcp"
+kind = "belongs_to"
+
+[[edges]]
+from = "initialize-answers-the-client-s-protocol-revision-when"
 to = "mcp"
 kind = "belongs_to"
 
@@ -819,8 +899,13 @@ to = "store"
 kind = "belongs_to"
 
 [[edges]]
-from = "release-profile-fat-lto-single-codegen-unit-strip-symbols"
+from = "release-profile-fat-lto-one-codegen-unit-stripped-symbols"
 to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "serve-starts-with-no-store-or-an-old-one-every-tool-call"
+to = "mcp"
 kind = "belongs_to"
 
 [[edges]]
