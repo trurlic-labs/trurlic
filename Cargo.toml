@@ -6,7 +6,6 @@ rust-version = "1.90"
 license = "Apache-2.0"
 authors = ["m2papierz@gmail.com"]
 repository = "https://github.com/trurlic-labs/trurlic"
-homepage = "https://github.com/trurlic-labs/trurlic"
 readme = "README.md"
 description = "Structured architectural decisions that constrain AI code generation"
 keywords = ["architecture", "decisions", "mcp", "ai", "code-generation"]

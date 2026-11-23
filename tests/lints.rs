@@ -6,11 +6,6 @@
 //! rejects it with the expected code. Clean code and code the test-only
 //! exemptions cover must pass, so a case cannot fail for a broken fixture.
 
-#![expect(
-    clippy::unwrap_used,
-    reason = "a fixture step that fails is a failed test; clippy exempts only #[test] bodies"
-)]
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -228,7 +228,6 @@ pub enum QueryCommand {
 }
 
 /// Parse the arguments and run the command, reporting a failure on stderr.
-#[must_use]
 pub fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Project(command) => report(run(command)),
