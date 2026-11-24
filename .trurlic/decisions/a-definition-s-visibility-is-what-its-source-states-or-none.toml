@@ -1,0 +1,21 @@
+component = "code"
+choice = "A Rust definition's visibility is its modifier, its enum's or trait's for a variant, variant field or trait member, and none for a trait impl, its members and a macro-defined type"
+reason = "A count of definitions with and without private ones needs each definition's visibility as the source states it: private (no modifier, or pub(self)), pub(crate) and the old crate, pub(super), pub(in path), and pub. A variant, a struct variant's field and a trait's member take no modifier and are exactly as visible as their enum or trait, which the file states. A trait impl and its members are as visible as the trait, which is usually defined elsewhere, so they have none rather than a guess. A macro_rules! macro is private to its module and those below unless it is #[macro_export]. An item an invocation spells has the modifier among its tokens. A type a macro invocation defines has its visibility in the macro's body, often a $vis the invocation fills in, so it has none. A lexical definition (a key, a target, a heading) has no visibility, and none is invented. pub(in path) keeps no path, so the value stays a byte on the definition."
+alternatives = [
+    "Public for a trait impl and its members: rejected because a private trait's impl is no public API",
+    "Guess a macro-defined type's visibility from the macro body: rejected because $vis makes it the invocation's, which the expansion does not read",
+    "Keep the path of pub(in path): rejected because no reader asks which path, and it would add an owned string per definition",
+]
+tags = [
+    "anchors",
+    "rust",
+]
+status = "proposed"
+origin = "definition kinds"
+created = "2026-11-24T10:33:26.877207089Z"
+anchors = [
+    { file = "src/code/kinds.rs", symbol = "Visibility" },
+    { file = "src/code/kinds.rs", symbol = "Visibility::of_modifier" },
+    { file = "src/code/rust/items.rs", symbol = "Within" },
+    { file = "src/code/rust/marks.rs", symbol = "visibility_of" },
+]

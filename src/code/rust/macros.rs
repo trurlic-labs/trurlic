@@ -11,8 +11,11 @@
 
 use tree_sitter::Node;
 
-use crate::code::index::TypeMacro;
+use crate::code::index::{TypeArm, TypeMacro};
+use crate::code::kinds::{Container, DefinitionKind, Role, Visibility};
 use crate::code::syntax::text_of;
+
+use super::marks;
 
 /// A token an item spelled in an invocation may open with before its
 /// keyword: a visibility, a qualifier, an ABI's `extern`.
@@ -29,10 +32,17 @@ pub(crate) const MAX_INVOCATION_TOKENS: usize = 16;
 /// A keyword whose next token in a macro body is a type's name.
 const TYPE_KEYWORDS: [&str; 5] = ["struct", "enum", "union", "trait", "type"];
 
-/// A keyword whose next token in a macro body is an item's name.
-const ITEM_KEYWORDS: [&str; 9] = [
-    "fn", "struct", "enum", "union", "trait", "type", "const", "static", "mod",
-];
+/// An item an invocation spells in its tokens: its name and the keyword
+/// before it, its bytes from its attributes to its body, and what its
+/// attributes and visibility state.
+pub(super) struct SpelledItem<'t> {
+    pub(super) name: &'t str,
+    pub(super) keyword: &'t str,
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) visibility: Visibility,
+    pub(super) role: Role,
+}
 
 /// The type-defining facts of `definition`, a `macro_definition`; `None`
 /// when no arm of it can define a type.
@@ -45,37 +55,52 @@ pub(super) fn type_macro(definition: Node<'_>, text: &str, exported: bool) -> Op
         .collect();
     let bodies: Vec<Vec<Node<'_>>> = rules
         .iter()
-        .filter_map(|rule| rule.child_by_field_name("right"))
-        .map(|body| tokens_of(body, usize::MAX))
+        .map(|rule| {
+            rule.child_by_field_name("right")
+                .map(|body| tokens_of(body, usize::MAX))
+                .unwrap_or_default()
+        })
         .collect();
-    let arms: Vec<Vec<String>> = rules
+    // An arm defines the type its own body does, or one its body has
+    // another arm define (`m!(@inner $name)`).
+    let arms: Vec<TypeArm> = rules
         .iter()
-        .filter_map(|rule| rule.child_by_field_name("left"))
-        .filter_map(|pattern| arm_opening(pattern, text))
-        .filter(|(_, variable)| defines_type_of(&bodies, variable, text))
-        .map(|(words, _)| words)
+        .zip(&bodies)
+        .filter_map(|(rule, own)| {
+            let (words, variable) = arm_opening(rule.child_by_field_name("left")?, text)?;
+            let kind = type_kind_of(std::slice::from_ref(own), &variable, text)
+                .or_else(|| type_kind_of(&bodies, &variable, text))?;
+            Some(TypeArm { words, kind })
+        })
         .collect();
     if arms.is_empty() {
         return None;
     }
-    let mut members: Vec<String> = bodies
+    Some(TypeMacro {
+        name,
+        exported,
+        arms,
+        members: members_of(&bodies, text),
+    })
+}
+
+/// The names the macro's bodies give items, each a member of the type it
+/// defines, with the kind its keyword opens as one; sorted.
+fn members_of(bodies: &[Vec<Node<'_>>], text: &str) -> Vec<(String, DefinitionKind)> {
+    let mut members: Vec<(String, DefinitionKind)> = bodies
         .iter()
         .flat_map(|tokens| tokens.windows(2))
         .filter_map(|pair| match pair {
-            [keyword, name] if name.kind() == "identifier" => ITEM_KEYWORDS
-                .contains(&text_of(*keyword, text))
-                .then(|| text_of(*name, text).to_owned()),
+            [keyword, name] if name.kind() == "identifier" => {
+                DefinitionKind::of_keyword(text_of(*keyword, text), Container::Type)
+                    .map(|kind| (text_of(*name, text).to_owned(), kind))
+            }
             _ => None,
         })
         .collect();
     members.sort_unstable();
     members.dedup();
-    Some(TypeMacro {
-        name,
-        exported,
-        arms,
-        members,
-    })
+    members
 }
 
 /// The macro's name and the first tokens of `invocation`, a
@@ -107,7 +132,7 @@ pub(super) fn invocation_tokens(invocation: Node<'_>, text: &str) -> Option<(Str
 /// item keyword followed by a name, each with its span: from its
 /// attributes, visibility and qualifiers to the first braced tree or `;`
 /// after its name, or to its name when neither follows.
-pub(super) fn spelled_items(invocation: Node<'_>, text: &str) -> Vec<(String, usize, usize)> {
+pub(super) fn spelled_items<'t>(invocation: Node<'_>, text: &'t str) -> Vec<SpelledItem<'t>> {
     let mut found = Vec::new();
     let mut cursor = invocation.walk();
     let mut trees: Vec<Node<'_>> = invocation
@@ -121,16 +146,26 @@ pub(super) fn spelled_items(invocation: Node<'_>, text: &str) -> Vec<(String, us
             let [keyword, name] = pair else {
                 continue;
             };
-            if name.kind() != "identifier" || !ITEM_KEYWORDS.contains(&text_of(*keyword, text)) {
+            let keyword = text_of(*keyword, text);
+            let is_item = DefinitionKind::of_keyword(keyword, Container::Items).is_some();
+            if name.kind() != "identifier" || !is_item {
                 continue;
             }
-            let start = spelled_item_start(&tokens, at, text);
+            let first = spelled_item_start(&tokens, at, text);
+            let prefix = tokens.get(first..at).unwrap_or_default();
             let end = ends
                 .get(at + 2)
                 .copied()
                 .flatten()
                 .unwrap_or(name.end_byte());
-            found.push((text_of(*name, text).to_owned(), start, end));
+            found.push(SpelledItem {
+                name: text_of(*name, text),
+                keyword,
+                start: tokens.get(first).map_or(0, Node::start_byte),
+                end,
+                visibility: prefix_visibility(prefix, text),
+                role: prefix_role(prefix, text),
+            });
         }
         trees.extend(tokens.iter().filter(|token| token.kind() == "token_tree"));
     }
@@ -152,8 +187,42 @@ fn item_ends(tokens: &[Node<'_>], text: &str) -> Vec<Option<usize>> {
     ends
 }
 
-/// Where the item whose keyword is `tokens[at]` starts: before the
-/// attributes, the visibility and the qualifiers that precede it.
+/// The visibility the tokens before an item's keyword state: a `pub` and
+/// the group after it.
+fn prefix_visibility(prefix: &[Node<'_>], text: &str) -> Visibility {
+    let spelled: Vec<&str> = prefix.iter().map(|token| text_of(*token, text)).collect();
+    let Some(at) = spelled.iter().position(|token| *token == "pub") else {
+        return Visibility::Private;
+    };
+    let group = spelled
+        .get(at + 1)
+        .filter(|group| group.starts_with('('))
+        .unwrap_or(&"");
+    Visibility::of_modifier(&format!("pub{group}")).unwrap_or(Visibility::Public)
+}
+
+/// Test code when an attribute before an item's keyword makes it.
+fn prefix_role(prefix: &[Node<'_>], text: &str) -> Role {
+    prefix
+        .windows(2)
+        .filter(|pair| matches!(pair, [hash, _] if text_of(*hash, text) == "#"))
+        .filter_map(|pair| pair.get(1))
+        .map(|group| {
+            let tokens: Vec<&str> = tokens_of(*group, usize::MAX)
+                .into_iter()
+                .map(|token| text_of(token, text))
+                .collect();
+            // The group's tokens between its brackets.
+            let inside = tokens
+                .get(1..tokens.len().saturating_sub(1))
+                .unwrap_or_default();
+            marks::attribute_role(inside)
+        })
+        .fold(Role::Code, Role::or)
+}
+
+/// The index of the first token of the item whose keyword is
+/// `tokens[at]`: its attributes, visibility and qualifiers.
 fn spelled_item_start(tokens: &[Node<'_>], at: usize, text: &str) -> usize {
     let mut start = at;
     loop {
@@ -167,7 +236,7 @@ fn spelled_item_start(tokens: &[Node<'_>], at: usize, text: &str) -> usize {
             _ => break,
         };
     }
-    tokens.get(start).map_or(0, Node::start_byte)
+    start
 }
 
 /// The words an arm's pattern opens with and the `$name` of the `ident`
@@ -210,17 +279,21 @@ fn is_attribute_repetition(node: Node<'_>, text: &str) -> bool {
         && spelled.ends_with(":meta])*")
 }
 
-/// Whether a body of the macro defines a type of `variable`: a type
-/// keyword followed by it.
-fn defines_type_of(bodies: &[Vec<Node<'_>>], variable: &str, text: &str) -> bool {
+/// The kind of the type a body of the macro defines of `variable`, by the
+/// first type keyword followed by it; `None` when none is.
+fn type_kind_of(bodies: &[Vec<Node<'_>>], variable: &str, text: &str) -> Option<DefinitionKind> {
     bodies
         .iter()
         .flat_map(|tokens| tokens.windows(2))
-        .any(|pair| {
-            matches!(pair, [keyword, name]
-            if TYPE_KEYWORDS.contains(&text_of(*keyword, text))
-                && name.kind() == "metavariable"
-                && text_of(*name, text) == variable)
+        .find_map(|pair| match pair {
+            [keyword, name]
+                if TYPE_KEYWORDS.contains(&text_of(*keyword, text))
+                    && name.kind() == "metavariable"
+                    && text_of(*name, text) == variable =>
+            {
+                DefinitionKind::of_keyword(text_of(*keyword, text), Container::Items)
+            }
+            _ => None,
         })
 }
 
@@ -263,7 +336,7 @@ fn skip_attributes<'a, 'n>(children: &'a [Node<'n>], text: &str) -> &'a [Node<'n
 
 /// The tokens of `node`, in order, at most `limit`: its leaves, a literal
 /// as one token, comments left out.
-fn tokens_of(node: Node<'_>, limit: usize) -> Vec<Node<'_>> {
+pub(super) fn tokens_of(node: Node<'_>, limit: usize) -> Vec<Node<'_>> {
     let mut tokens = Vec::new();
     let mut cursor = node.walk();
     'walk: while tokens.len() < limit {

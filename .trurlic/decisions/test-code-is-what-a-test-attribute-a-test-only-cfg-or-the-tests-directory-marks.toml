@@ -1,0 +1,22 @@
+component = "code"
+choice = "A definition is test code under an attribute whose path ends in test, or bench, a cfg that holds only under test, a module file test code declares, or its crate's tests/"
+reason = "A diff review leaves tests out of the share of code no decision covers, and a decision's proof must be a test, so each definition says whether it is test code. #[test], #[tokio::test] and every attribute path ending in test mark a test function, and #[bench] a benchmark, which ships no more than a test does. A cfg predicate marks test code only when it holds under test alone: test, an all() that holds test, an any() whose every member does; cfg(any(test, feature)) is code a feature builds and cfg(not(test)) code no test builds. Outer and inner attributes mark the item and everything under it, so a proptest! case with #[test] is a test. Two rules read the tree, not the bytes, and live in the second step, so a cached index stays a function of its file: a Rust file under its crate's tests/ directory, and a module file that a test module or a test file declares as mod name; at the top of mod.rs, lib.rs, main.rs or the sibling name.rs. A #[path] attribute and a mod inside an inline module are not followed."
+alternatives = [
+    "Mark test code by file name or a tests segment anywhere in the path: rejected because a module named tests under src is not always test code, and the declaration says which",
+    "Treat any cfg that mentions test as test code: rejected because cfg(any(test, feature)) builds into a release with the feature",
+    "Put the tests/ rule into each file's index: rejected because the cache keys an index by content, and two trees can hold one file at two places",
+]
+tags = [
+    "anchors",
+    "testing",
+]
+status = "proposed"
+origin = "definition kinds"
+created = "2026-11-24T10:33:26.877207089Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::definitions" },
+    { file = "src/code/roles.rs", symbol = "test_files" },
+    { file = "src/code/rust/marks.rs", symbol = "attribute_role" },
+    { file = "src/code/rust/marks.rs", symbol = "holds_only_under_test" },
+    { file = "src/sources/tests.rs", symbol = "each_definition_of_the_fixture_corpus_states_its_kind_role_and_visibility" },
+]

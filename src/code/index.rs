@@ -4,9 +4,11 @@
 //! keyed by the two holds it whatever path or tree the bytes are under.
 
 use std::fmt;
+use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
+use super::kinds::{DefinitionKind, Role, Visibility};
 use super::span::{Lines, Span, SpanHash};
 use super::symbol::{Segment, Syntax};
 use super::{json, make, markdown, rust, toml};
@@ -14,7 +16,7 @@ use super::{json, make, markdown, rust, toml};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 1;
+pub(crate) const INDEX_FORMAT: u32 = 2;
 
 /// The containers a definition may be nested in. A file that nests one
 /// deeper has no index: every definition's path is a copy of its
@@ -67,45 +69,64 @@ impl FileKind {
     }
 }
 
-/// One definition: its path from the outermost container, where it is,
-/// and the hash of what it holds.
+/// One definition: its path from the outermost container, what it is,
+/// where it is, and the hash of what it holds.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct Definition {
     pub(crate) path: Vec<Segment>,
+    pub(crate) kind: DefinitionKind,
     pub(crate) span: Span,
     pub(crate) hash: SpanHash,
+    /// Test code by what its file says of it; the tree may make a whole
+    /// file test code besides (`CodeFacts::definitions`).
+    pub(crate) role: Role,
+    /// `None` where the source states none: a trait impl and its members,
+    /// whose visibility is the trait's, a type a macro invocation
+    /// defines, and every lexical definition.
+    pub(crate) visibility: Option<Visibility>,
 }
 
 impl Definition {
-    /// The definition at `path` of bytes `start..end` of `text`, a file a
-    /// lexical resolver reads: its hash is of the whitespace-normalized
-    /// text.
+    /// The definition of `kind` at `path` of bytes `range` of `text`, a
+    /// file a lexical resolver reads: its hash is of the
+    /// whitespace-normalized text, and it is code with no visibility.
     pub(super) fn lexical(
         path: Vec<Segment>,
+        kind: DefinitionKind,
         text: &str,
         lines: &Lines,
-        start: usize,
-        end: usize,
+        range: Range<usize>,
     ) -> Self {
         Self {
             path,
-            span: lines.span(start, end),
-            hash: SpanHash::of_text(text.get(start..end).unwrap_or_default()),
+            kind,
+            span: lines.span(range.start, range.end),
+            hash: SpanHash::of_text(text.get(range).unwrap_or_default()),
+            role: Role::Code,
+            visibility: None,
         }
     }
 }
 
-/// A `macro_rules!` macro whose invocations can define a type: the
-/// literal words each such arm opens with before the `$name:ident` its
-/// body defines a type of, and the names its body gives items.
+/// A `macro_rules!` macro whose invocations can define a type: the arms
+/// that do, and the names its body gives items, each with the kind its
+/// keyword opens as a member of the type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TypeMacro {
     pub(crate) name: String,
     /// Marked `#[macro_export]`: its workspace invokes it, not its crate
     /// alone.
     pub(crate) exported: bool,
-    pub(crate) arms: Vec<Vec<String>>,
-    pub(crate) members: Vec<String>,
+    pub(crate) arms: Vec<TypeArm>,
+    pub(crate) members: Vec<(String, DefinitionKind)>,
+}
+
+/// An arm of a [`TypeMacro`]: the literal words it opens with before the
+/// `$name:ident` its body defines a type of, and that type's kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TypeArm {
+    pub(crate) words: Vec<String>,
+    pub(crate) kind: DefinitionKind,
 }
 
 /// A macro invocation in item position: what a type-defining macro of
@@ -121,6 +142,8 @@ pub(crate) struct Invocation {
     pub(crate) hash: SpanHash,
     /// Its first tokens, its attributes and comments left out.
     pub(crate) tokens: Vec<String>,
+    /// Test code when it stands in test code, or its attributes make it.
+    pub(crate) role: Role,
 }
 
 /// What a file of a kind with a resolver defines.
@@ -215,10 +238,16 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 1] = [(
-        1,
-        "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
-    )];
+    const FINGERPRINTS: [(u32, &str); 2] = [
+        (
+            1,
+            "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
+        ),
+        (
+            2,
+            "01389c905b0ad5576b8b5dd4d082fc317d4995ca273fd3e29e1caa33e8374e72",
+        ),
+    ];
 
     #[test]
     fn the_index_format_names_its_rules() {

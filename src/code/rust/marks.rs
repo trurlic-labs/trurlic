@@ -1,0 +1,177 @@
+//! What an item's attributes and modifier state of it: whether it is
+//! test code, and its visibility.
+//!
+//! An attribute makes its item test code when its path ends in `test`
+//! (`#[test]`, `#[tokio::test]`, `#[async_std::test]`) or is `bench`, or
+//! when it is a `cfg` whose predicate holds only under `test`:
+//! `cfg(test)`, an `all(..)` that holds `test`, an `any(..)` whose every
+//! member does. `cfg(any(test, feature = "x"))` is code a feature
+//! builds, and `cfg(not(test))` code no test builds: neither is test
+//! code. The attribute is read from its tokens, in the tree's attribute
+//! or in an invocation's token tree alike.
+
+use tree_sitter::Node;
+
+use crate::code::kinds::{Role, Visibility};
+use crate::code::syntax::text_of;
+
+use super::macros::tokens_of;
+
+/// What `attribute`, an `attribute_item` or `inner_attribute_item`, makes
+/// of the item it is on.
+pub(super) fn attribute_item_role(attribute: Node<'_>, text: &str) -> Role {
+    let mut cursor = attribute.walk();
+    let Some(inner) = attribute
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "attribute")
+    else {
+        return Role::Code;
+    };
+    let tokens: Vec<&str> = tokens_of(inner, usize::MAX)
+        .into_iter()
+        .map(|token| text_of(token, text))
+        .collect();
+    attribute_role(&tokens)
+}
+
+/// What an attribute spelled by `tokens`, those between its brackets,
+/// makes of its item.
+pub(super) fn attribute_role(tokens: &[&str]) -> Role {
+    let arguments = tokens
+        .iter()
+        .position(|token| matches!(*token, "(" | "="))
+        .unwrap_or(tokens.len());
+    let (path, predicate) = tokens.split_at(arguments);
+    let test = match path {
+        ["cfg"] => holds_only_under_test(predicate),
+        [.., "test"] | ["bench"] => true,
+        _ => false,
+    };
+    match test {
+        true => Role::Test,
+        false => Role::Code,
+    }
+}
+
+/// How a `cfg` operator combines the truths of its members.
+enum Operator {
+    All,
+    Any,
+    /// `not`, or a name `cfg` does not know: never only under `test`.
+    Other,
+}
+
+impl Operator {
+    fn named(word: &str) -> Self {
+        match word {
+            "all" => Self::All,
+            "any" => Self::Any,
+            _ => Self::Other,
+        }
+    }
+
+    /// Whether the operator over members of `values` holds only under
+    /// `test`.
+    fn holds_only_under_test(&self, values: &[bool]) -> bool {
+        match self {
+            Self::All => values.contains(&true),
+            Self::Any => !values.is_empty() && !values.contains(&false),
+            Self::Other => false,
+        }
+    }
+}
+
+/// Whether the `cfg` predicate spelled by `tokens`, from its opening
+/// parenthesis, holds only when `test` does. One pass with an explicit
+/// stack; a malformed predicate holds under no `test` alone.
+fn holds_only_under_test(tokens: &[&str]) -> bool {
+    let mut frames: Vec<(Operator, Vec<bool>)> = Vec::new();
+    let mut at = 0;
+    while let Some(&token) = tokens.get(at) {
+        let next = tokens.get(at + 1).copied();
+        at += 1;
+        let value = match (token, next) {
+            ("(", _) => {
+                frames.push((Operator::All, Vec::new()));
+                continue;
+            }
+            (",", _) => continue,
+            (")", _) => match frames.pop() {
+                Some((operator, values)) => operator.holds_only_under_test(&values),
+                None => return false,
+            },
+            (word, Some("(")) => {
+                at += 1;
+                frames.push((Operator::named(word), Vec::new()));
+                continue;
+            }
+            // `feature = "x"`: its literal is passed over too.
+            (_, Some("=")) => {
+                at += 2;
+                false
+            }
+            (word, _) => word == "test",
+        };
+        match frames.last_mut() {
+            Some((_, values)) => values.push(value),
+            None => return value && at == tokens.len(),
+        }
+    }
+    false
+}
+
+/// `role`, or test code when an inner attribute among the children of
+/// `node` (`#![cfg(test)]`) makes it.
+pub(super) fn inner_role(node: Node<'_>, role: Role, text: &str) -> Role {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .filter(|child| child.kind() == "inner_attribute_item")
+        .map(|attribute| attribute_item_role(attribute, text))
+        .fold(role, Role::or)
+}
+
+/// The visibility `item`'s modifier states, `Private` when it has none.
+pub(super) fn visibility_of(item: Node<'_>, text: &str) -> Visibility {
+    let mut cursor = item.walk();
+    item.named_children(&mut cursor)
+        .find(|child| child.kind() == "visibility_modifier")
+        .and_then(|modifier| Visibility::of_modifier(text_of(modifier, text)))
+        .unwrap_or(Visibility::Private)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn role(attribute: &str) -> Role {
+        let tokens: Vec<&str> = attribute.split(' ').collect();
+        attribute_role(&tokens)
+    }
+
+    #[test]
+    fn an_attribute_makes_test_code_only_when_it_holds_only_under_test() {
+        for (attribute, expected) in [
+            ("test", Role::Test),
+            ("tokio :: test", Role::Test),
+            ("tokio :: test ( flavor = \"current_thread\" )", Role::Test),
+            ("bench", Role::Test),
+            ("cfg ( test )", Role::Test),
+            ("cfg ( all ( test , feature = \"x\" ) )", Role::Test),
+            (
+                "cfg ( all ( unix , any ( test , all ( test , windows ) ) ) )",
+                Role::Test,
+            ),
+            ("cfg ( any ( test , feature = \"bench\" ) )", Role::Code),
+            ("cfg ( not ( test ) )", Role::Code),
+            ("cfg ( any ( ) )", Role::Code),
+            ("cfg ( unix )", Role::Code),
+            ("cfg ( test", Role::Code),
+            ("cfg ( test ) )", Role::Code),
+            ("test_case ( 1 )", Role::Code),
+            ("derive ( Debug )", Role::Code),
+            ("cfg_attr ( test , derive ( Debug ) )", Role::Code),
+        ] {
+            assert_eq!(role(attribute), expected, "{attribute}");
+        }
+    }
+}

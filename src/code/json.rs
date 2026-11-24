@@ -8,6 +8,7 @@
 //! the byte it fails at.
 
 use super::index::{Definition, IndexFault, MAX_NESTING};
+use super::kinds::DefinitionKind;
 use super::span::Lines;
 use super::symbol::{Segment, name_segments};
 
@@ -139,10 +140,10 @@ impl Scanner<'_> {
                     if let Some((path, start)) = member.take() {
                         self.definitions.push(Definition::lexical(
                             path,
+                            DefinitionKind::Key,
                             self.text,
                             &self.lines,
-                            start,
-                            end,
+                            start..end,
                         ));
                     }
                     b'}'

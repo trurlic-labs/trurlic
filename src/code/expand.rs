@@ -15,24 +15,30 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::index::{Definition, FileIndex, FileKind, Invocation, TypeMacro};
+use super::kinds::DefinitionKind;
 use super::rust::is_word;
 use super::symbol::Segment;
 
 /// Macros of other crates that define the type their argument at this
-/// position names. The facts of their crates are not in the tree, so
-/// they are listed by hand: pyo3's `create_exception!(module, Name, Base)`
-/// and `import_exception!(module, Name)`.
-const FOREIGN_TYPE_MACROS: [(&str, usize); 2] = [("create_exception", 1), ("import_exception", 1)];
+/// position names, and its kind. The facts of their crates are not in the
+/// tree, so they are listed by hand: pyo3's
+/// `create_exception!(module, Name, Base)` and `import_exception!(module,
+/// Name)`, each a struct.
+const FOREIGN_TYPE_MACROS: [(&str, usize, DefinitionKind); 2] = [
+    ("create_exception", 1, DefinitionKind::Struct),
+    ("import_exception", 1, DefinitionKind::Struct),
+];
 
 /// The manifest that makes a directory a crate.
 pub(crate) const MANIFEST: &str = "Cargo.toml";
 
 /// The definitions the invocations of each Rust file of `files` add, by
-/// path; `files` maps a path to its kind and index.
+/// path; `files` maps a path to its kind and index, and `crates` is of
+/// the same files.
 pub(super) fn expand<'i>(
     files: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>,
+    crates: &Crates<'i>,
 ) -> BTreeMap<&'i str, Vec<Definition>> {
-    let crates = Crates::of(files);
     let mut added = BTreeMap::new();
     for (&path, (kind, index)) in files {
         if *kind != FileKind::Rust || index.invocations.is_empty() {
@@ -61,7 +67,7 @@ pub(super) fn expand<'i>(
 
 /// The type-defining macros of the tree, by the crate that holds them,
 /// and which directories are workspaces.
-struct Crates<'i> {
+pub(super) struct Crates<'i> {
     /// Each crate's directory (`""` for the code root) to its macros, and
     /// each lone file outside a crate to its own.
     macros: BTreeMap<&'i str, Vec<&'i TypeMacro>>,
@@ -70,7 +76,7 @@ struct Crates<'i> {
 }
 
 impl<'i> Crates<'i> {
-    fn of(files: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>) -> Self {
+    pub(super) fn of(files: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>) -> Self {
         let manifests: Vec<_> = files
             .iter()
             .filter(|(path, _)| file_name(path) == MANIFEST)
@@ -107,7 +113,7 @@ impl<'i> Crates<'i> {
     }
 
     /// The crate directory of `path`, or `path` itself outside every crate.
-    fn crate_of<'p>(&self, path: &'p str) -> &'p str {
+    pub(super) fn crate_of<'p>(&self, path: &'p str) -> &'p str {
         ancestors(path)
             .find(|dir| self.crate_roots.binary_search(dir).is_ok())
             .unwrap_or(path)
@@ -142,50 +148,70 @@ impl<'i> Crates<'i> {
     }
 }
 
-/// The definitions `invocation` adds: none, or a type and its members.
-fn defined_by(
-    invocation: &Invocation,
-    visible: &BTreeMap<&str, Vec<&TypeMacro>>,
-) -> Vec<Definition> {
+/// What `invocation` defines: the type's name and kind, and its members.
+type Defined<'a> = (&'a String, DefinitionKind, &'a [(String, DefinitionKind)]);
+
+/// The type `invocation` defines with a macro of `visible` or a foreign
+/// one, and its members.
+fn defined_type<'a>(
+    invocation: &'a Invocation,
+    visible: &BTreeMap<&str, Vec<&'a TypeMacro>>,
+) -> Option<Defined<'a>> {
     let tokens = &invocation.tokens;
     let named = visible
         .get(invocation.macro_name.as_str())
         .into_iter()
         .flatten()
         .find_map(|found| {
-            found.arms.iter().find_map(|words| {
+            found.arms.iter().find_map(|arm| {
+                let words = arm.words.as_slice();
                 let name = tokens.get(words.len()).filter(|name| is_word(name))?;
-                (tokens.get(..words.len()) == Some(words.as_slice()))
-                    .then_some((name, found.members.as_slice()))
+                (tokens.get(..words.len()) == Some(words)).then_some((
+                    name,
+                    arm.kind,
+                    found.members.as_slice(),
+                ))
             })
         });
     let foreign = || {
-        let (_, position) = FOREIGN_TYPE_MACROS
+        let (_, position, kind) = FOREIGN_TYPE_MACROS
             .iter()
-            .find(|(name, _)| *name == invocation.macro_name)?;
-        argument(tokens, *position).map(|name| (name, &[][..]))
+            .find(|(name, ..)| *name == invocation.macro_name)?;
+        argument(tokens, *position).map(|name| (name, *kind, &[][..]))
     };
-    let Some((name, members)) = named.or_else(foreign) else {
+    named.or_else(foreign)
+}
+
+/// The definitions `invocation` adds: none, or a type and its members.
+fn defined_by(
+    invocation: &Invocation,
+    visible: &BTreeMap<&str, Vec<&TypeMacro>>,
+) -> Vec<Definition> {
+    let Some((name, kind, members)) = defined_type(invocation, visible) else {
         return Vec::new();
     };
     // clone: each definition owns its path.
     let mut path = invocation.container.clone();
     path.push(Segment::name(name));
-    let define = |path: Vec<Segment>| Definition {
+    // The invocation states no visibility: the macro's body does.
+    let define = |path: Vec<Segment>, kind| Definition {
         path,
+        kind,
         span: invocation.span,
         hash: invocation.hash,
+        role: invocation.role,
+        visibility: None,
     };
     let mut definitions: Vec<_> = members
         .iter()
-        .map(|member| {
+        .map(|(member, kind)| {
             // clone: each definition owns its path.
             let mut member_path = path.clone();
             member_path.push(Segment::name(member));
-            define(member_path)
+            define(member_path, *kind)
         })
         .collect();
-    definitions.push(define(path));
+    definitions.push(define(path, kind));
     definitions
 }
 
@@ -214,18 +240,18 @@ fn argument(tokens: &[String], position: usize) -> Option<&String> {
     }
 }
 
-fn file_name(path: &str) -> &str {
+pub(super) fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
 /// The directory of `path`; `""` for the code root.
-fn parent(path: &str) -> &str {
+pub(super) fn parent(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
 /// The directories above `path`, nearest first, the code root (`""`)
 /// last.
-fn ancestors(path: &str) -> impl Iterator<Item = &str> {
+pub(super) fn ancestors(path: &str) -> impl Iterator<Item = &str> {
     let mut rest = Some(path);
     std::iter::from_fn(move || {
         let current = rest?;
@@ -235,7 +261,7 @@ fn ancestors(path: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Whether `dir` is `root` or under it.
-fn is_within(dir: &str, root: &str) -> bool {
+pub(super) fn is_within(dir: &str, root: &str) -> bool {
     root.is_empty()
         || dir
             .strip_prefix(root)
@@ -260,7 +286,8 @@ mod tests {
             .iter()
             .map(|(path, kind, index)| (*path, (*kind, index)))
             .collect();
-        expand(&tree)
+        let crates = Crates::of(&tree);
+        expand(&tree, &crates)
             .into_iter()
             .flat_map(|(path, definitions)| {
                 definitions.into_iter().map(move |definition| {

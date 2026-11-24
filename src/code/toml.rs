@@ -20,6 +20,7 @@ use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
 use super::index::{Definition, IndexFault, MAX_NESTING};
+use super::kinds::DefinitionKind;
 use super::span::Lines;
 use super::symbol::{Segment, name_segments};
 
@@ -66,10 +67,10 @@ impl Keys<'_> {
             if let Some(span) = &span {
                 self.definitions.push(Definition::lexical(
                     path,
+                    DefinitionKind::Key,
                     self.text,
                     &self.lines,
-                    span.start,
-                    span.end,
+                    span.start..span.end,
                 ));
             }
             covered = join(covered, span);

@@ -96,6 +96,9 @@ impl Book {
 }
 
 pub mod books;
+mod marks;
+#[cfg(test)]
+mod checks;
 
 mod archive {
     pub fn seal() {}

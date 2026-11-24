@@ -1,5 +1,6 @@
 use super::*;
-use crate::code::index::{FileKind, TypeMacro, index as index_file};
+use crate::code::index::{FileKind, TypeArm, TypeMacro, index as index_file};
+use crate::code::kinds::DefinitionKind;
 
 fn index(text: &str) -> FileIndex {
     index_file(FileKind::Rust, text.as_bytes()).unwrap()
@@ -89,8 +90,17 @@ fn a_type_macro_keeps_the_words_of_each_arm_that_defines_a_type() {
         [TypeMacro {
             name: "id".into(),
             exported: true,
-            arms: vec![vec!["ordered".into()], vec![]],
-            members: vec!["rank".into()],
+            arms: vec![
+                TypeArm {
+                    words: vec!["ordered".into()],
+                    kind: DefinitionKind::Enum,
+                },
+                TypeArm {
+                    words: vec![],
+                    kind: DefinitionKind::TypeAlias,
+                },
+            ],
+            members: vec![("rank".into(), DefinitionKind::Method)],
         }]
     );
 }

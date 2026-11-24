@@ -7,6 +7,7 @@
 //! a symbol.
 
 use super::index::Definition;
+use super::kinds::DefinitionKind;
 use super::span::Lines;
 use super::symbol::{Segment, name_segments};
 
@@ -66,8 +67,13 @@ impl Sections<'_> {
         while let Some((_, path, start)) = self.open.pop_if(|(open, _, _)| *open >= level) {
             let section = self.text.get(start..end).unwrap_or_default();
             let end = start + section.trim_end().len();
-            self.definitions
-                .push(Definition::lexical(path, self.text, self.lines, start, end));
+            self.definitions.push(Definition::lexical(
+                path,
+                DefinitionKind::Heading,
+                self.text,
+                self.lines,
+                start..end,
+            ));
         }
     }
 }

@@ -397,3 +397,167 @@ fn a_file_gone_before_its_read_is_absent_not_a_fault() {
         Err(Faulty(ReadFault::NotAFile))
     ));
 }
+
+/// Each definition of `facts`: its file and path, kind, role and
+/// visibility, `-` for none.
+fn statements(facts: &CodeFacts) -> Vec<String> {
+    facts
+        .definitions()
+        .map(|(file, definition, role)| {
+            let path: Vec<String> = definition.path.iter().map(ToString::to_string).collect();
+            let visibility = definition
+                .visibility
+                .map_or("-".to_owned(), |v| format!("{v:?}"));
+            format!(
+                "{file} {} {:?} {role:?} {visibility}",
+                path.join("::"),
+                definition.kind
+            )
+        })
+        .collect()
+}
+
+/// Each definition of the fixture corpus as [`statements`] writes it: one
+/// per kind of definition, the tests of each mark (`#[test]`,
+/// `#[tokio::test]`, `#[bench]`, a `cfg` that holds only under `test`, an
+/// inner `#![cfg(test)]`, a `proptest!` case, a file a `#[cfg(test)] mod`
+/// declares, a file under `tests/`) and each visibility.
+const STATEMENTS: &[&str] = &[
+    "Cargo.toml workspace Key Code -",
+    "Cargo.toml workspace::members Key Code -",
+    "Cargo.toml workspace::lints::clippy Key Code -",
+    "Cargo.toml workspace::lints Key Code -",
+    "Cargo.toml workspace::lints::clippy::unwrap_used Key Code -",
+    "Cargo.toml workspace::lints::rust Key Code -",
+    "Cargo.toml workspace::lints::rust::unsafe_code Key Code -",
+    "Cargo.toml profile Key Code -",
+    "Cargo.toml profile::release Key Code -",
+    "Cargo.toml profile::release::panic Key Code -",
+    "Cargo.toml profile::release::lto Key Code -",
+    "Cargo.toml bench Key Code -",
+    "Cargo.toml bench::name Key Code -",
+    "Cargo.toml bench::name Key Code -",
+    "Makefile .PHONY Target Code -",
+    "Makefile ci Target Code -",
+    "Makefile test Target Code -",
+    "Makefile check-format Target Code -",
+    "crates/ids/Cargo.toml package Key Code -",
+    "crates/ids/Cargo.toml package::name Key Code -",
+    "crates/ids/src/lib.rs numbered_id Macro Code Public",
+    "crates/ids/src/lib.rs crate_only_id Macro Code Private",
+    "crates/ledger/Cargo.toml package Key Code -",
+    "crates/ledger/Cargo.toml package::name Key Code -",
+    "crates/ledger/src/books/mod.rs book_id Macro Code Private",
+    "crates/ledger/src/books/mod.rs Catalog Struct Code Public",
+    "crates/ledger/src/books/mod.rs Shelf Struct Code Public",
+    "crates/ledger/src/books/mod.rs Imported Struct Code Public",
+    "crates/ledger/src/books/mod.rs call_only Function Code Public",
+    "crates/ledger/src/checks.rs balanced Function Test Public",
+    "crates/ledger/src/lib.rs PAGE_SIZE Constant Code Public",
+    "crates/ledger/src/lib.rs OPENED Static Code Private",
+    "crates/ledger/src/lib.rs page_count Function Code Crate",
+    "crates/ledger/src/lib.rs tally Macro Code Private",
+    "crates/ledger/src/lib.rs Book Struct Code Public",
+    "crates/ledger/src/lib.rs Book::title Field Code Public",
+    "crates/ledger/src/lib.rs Book::pages Field Code Private",
+    "crates/ledger/src/lib.rs Weight Struct Code Public",
+    "crates/ledger/src/lib.rs Raw Union Code Public",
+    "crates/ledger/src/lib.rs Raw::bits Field Code Private",
+    "crates/ledger/src/lib.rs Raw::float Field Code Private",
+    "crates/ledger/src/lib.rs Entry Enum Code Public",
+    "crates/ledger/src/lib.rs Entry::Blank Variant Code Public",
+    "crates/ledger/src/lib.rs Entry::Amount Variant Code Public",
+    "crates/ledger/src/lib.rs Entry::Transfer Variant Code Public",
+    "crates/ledger/src/lib.rs Entry::Transfer::from Field Code Public",
+    "crates/ledger/src/lib.rs Entry::Transfer::to Field Code Public",
+    "crates/ledger/src/lib.rs Audit Trait Code Public",
+    "crates/ledger/src/lib.rs Audit::Report AssociatedType Code Public",
+    "crates/ledger/src/lib.rs Audit::DEPTH Constant Code Public",
+    "crates/ledger/src/lib.rs Audit::audit Method Code Public",
+    "crates/ledger/src/lib.rs Audit::summary Method Code Public",
+    "crates/ledger/src/lib.rs Book::new Method Code Public",
+    "crates/ledger/src/lib.rs Book::pages Method Code Public",
+    "crates/ledger/src/lib.rs Book::<Display> Impl Code -",
+    "crates/ledger/src/lib.rs Book::<Display>::fmt Method Code -",
+    "crates/ledger/src/lib.rs Weight::<Debug> Impl Code -",
+    "crates/ledger/src/lib.rs Weight::<Debug>::fmt Method Code -",
+    "crates/ledger/src/lib.rs Book::<From<Entry>> Impl Code -",
+    "crates/ledger/src/lib.rs Book::<From<Entry>>::from Method Code -",
+    "crates/ledger/src/lib.rs Book::<From<Weight>> Impl Code -",
+    "crates/ledger/src/lib.rs Book::<From<Weight>>::from Method Code -",
+    "crates/ledger/src/lib.rs Book::<Audit> Impl Code -",
+    "crates/ledger/src/lib.rs Book::<Audit>::Report AssociatedType Code -",
+    "crates/ledger/src/lib.rs Book::<Audit>::DEPTH Constant Code -",
+    "crates/ledger/src/lib.rs Book::<Audit>::audit Method Code -",
+    "crates/ledger/src/lib.rs Book::close Method Code Public",
+    "crates/ledger/src/lib.rs books Module Code Public",
+    "crates/ledger/src/lib.rs marks Module Code Private",
+    "crates/ledger/src/lib.rs checks Module Test Private",
+    "crates/ledger/src/lib.rs archive Module Code Private",
+    "crates/ledger/src/lib.rs archive::seal Function Code Public",
+    "crates/ledger/src/lib.rs archive::Book Struct Code Public",
+    "crates/ledger/src/lib.rs reconcile Function Code Private",
+    "crates/ledger/src/lib.rs reconcile::weigh Function Code Private",
+    "crates/ledger/src/lib.rs Catalog Reexport Code Public",
+    "crates/ledger/src/lib.rs Rack Reexport Code Public",
+    "crates/ledger/src/lib.rs external_total Function Code Private",
+    "crates/ledger/src/lib.rs LedgerView Struct Code Crate",
+    "crates/ledger/src/lib.rs CURRENT Static Code Private",
+    "crates/ledger/src/lib.rs tests Module Test Private",
+    "crates/ledger/src/lib.rs tests::reconcile Function Test Private",
+    "crates/ledger/src/marks.rs for_the_parent Function Code Super",
+    "crates/ledger/src/marks.rs for_a_path Function Code InPath",
+    "crates/ledger/src/marks.rs for_itself Function Code Private",
+    "crates/ledger/src/marks.rs the_old_spelling Function Code Crate",
+    "crates/ledger/src/marks.rs runs_on_a_runtime Function Test Private",
+    "crates/ledger/src/marks.rs measures Function Test Private",
+    "crates/ledger/src/marks.rs only_under_test_on_unix Function Test Private",
+    "crates/ledger/src/marks.rs also_built_for_benches Function Code Public",
+    "crates/ledger/src/marks.rs never_under_test Function Code Private",
+    "crates/ledger/src/marks.rs holds_for_any Function Test Private",
+    "crates/ledger/src/marks.rs nested Module Test Crate",
+    "crates/ledger/src/marks.rs nested::inside_a_test_module Function Test Public",
+    "crates/ledger/tests/flow.rs opened_book Function Test Private",
+    "crates/ledger/tests/flow.rs a_book_opens Function Test Private",
+    "crates/shelf/Cargo.toml package Key Code -",
+    "crates/shelf/Cargo.toml package::name Key Code -",
+    "docs/guide.md Guide Heading Code -",
+    "docs/guide.md Guide::Install Heading Code -",
+    "docs/guide.md Guide::Install::From source Heading Code -",
+    "docs/guide.md Guide::Install::From a package Heading Code -",
+    "docs/guide.md Guide::Use Heading Code -",
+    "loose/single.rs solo Macro Code Private",
+    "settings.json stages Key Code -",
+    "settings.json stages::order Key Code -",
+    "settings.json stages::parallel Key Code -",
+    "settings.json rules Key Code -",
+    "settings.json rules::name Key Code -",
+    "settings.json rules::name Key Code -",
+    "settings.json esc\"aped Key Code -",
+    "crates/ids/src/lib.rs Local Struct Code -",
+    "crates/ledger/src/books/mod.rs CatalogId::new Method Code -",
+    "crates/ledger/src/books/mod.rs CatalogId::raw Method Code -",
+    "crates/ledger/src/books/mod.rs CatalogId Struct Code -",
+    "crates/ledger/src/books/mod.rs Isbn::new Method Code -",
+    "crates/ledger/src/books/mod.rs Isbn::raw Method Code -",
+    "crates/ledger/src/books/mod.rs Isbn Struct Code -",
+    "crates/ledger/src/books/mod.rs ShelfNumber::get Method Code -",
+    "crates/ledger/src/books/mod.rs ShelfNumber Struct Code -",
+    "crates/shelf/src/lib.rs ShelfId::get Method Code -",
+    "crates/shelf/src/lib.rs ShelfId Struct Code -",
+    "crates/shelf/src/lib.rs ShelfFull Struct Code -",
+    "loose/single.rs Alone Enum Code -",
+    "loose/single.rs Visible::get Method Code -",
+    "loose/single.rs Visible Struct Code -",
+];
+
+#[test]
+fn each_definition_of_the_fixture_corpus_states_its_kind_role_and_visibility() {
+    let (_tmp, store) = fixture_tree();
+    let facts = gather(
+        &store,
+        ["Makefile", "docs/guide.md", "settings.json"].into_iter(),
+    );
+
+    assert_eq!(statements(&facts), STATEMENTS);
+}

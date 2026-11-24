@@ -1,14 +1,16 @@
 //! The code facts of one tree, which the shell gathers and hands in as
 //! data, and the resolution of an anchor against them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io;
 
 use crate::store::Anchor;
 
-use super::expand::expand;
+use super::expand::{Crates, expand};
 use super::index::{Definition, FileIndex, FileKind, IndexFault};
+use super::kinds::Role;
+use super::roles::test_files;
 use super::span::{Span, SpanHash};
 use super::symbol::{Symbol, SymbolFault};
 
@@ -122,12 +124,14 @@ impl fmt::Display for Resolution {
     }
 }
 
-/// The entries of one tree by path, `/`-separated from its root, and the
-/// definitions the macro invocations of its Rust files add.
+/// The entries of one tree by path, `/`-separated from its root, the
+/// definitions the macro invocations of its Rust files add, and the Rust
+/// files that are test code whole.
 #[derive(Debug)]
 pub(crate) struct CodeFacts {
     entries: BTreeMap<String, Entry>,
     expanded: BTreeMap<String, Vec<Definition>>,
+    test_files: BTreeSet<String>,
 }
 
 impl CodeFacts {
@@ -145,11 +149,50 @@ impl CodeFacts {
                 Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
             })
             .collect();
-        let expanded = expand(&indexed)
+        let crates = Crates::of(&indexed);
+        let expanded = expand(&indexed, &crates)
             .into_iter()
             .map(|(path, definitions)| (path.to_owned(), definitions))
             .collect();
-        Self { entries, expanded }
+        let test_files = test_files(&indexed, &crates)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        Self {
+            entries,
+            expanded,
+            test_files,
+        }
+    }
+
+    /// Every definition of the tree's indexed files, those its macro
+    /// invocations add included, with its file and its role in the tree:
+    /// test code when its file is.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the counts of definitions in and out of anchored spans are the first callers"
+        )
+    )]
+    pub(crate) fn definitions(&self) -> impl Iterator<Item = (&str, &Definition, Role)> {
+        let indexed = self.entries.iter().filter_map(|(path, entry)| match entry {
+            Entry::File {
+                index: Ok(index), ..
+            } => Some((path, &index.definitions)),
+            Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
+        });
+        indexed
+            .chain(&self.expanded)
+            .flat_map(move |(path, definitions)| {
+                let file_role = match self.test_files.contains(path) {
+                    true => Role::Test,
+                    false => Role::Code,
+                };
+                definitions.iter().map(move |definition| {
+                    (path.as_str(), definition, definition.role.or(file_role))
+                })
+            })
     }
 
     /// What `anchor` names in this tree.

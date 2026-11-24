@@ -5,6 +5,7 @@
 //! blank and comment lines inside a recipe neither end it nor join it.
 
 use super::index::Definition;
+use super::kinds::DefinitionKind;
 use super::span::Lines;
 use super::symbol::name_segments;
 
@@ -46,7 +47,13 @@ fn define(
 ) {
     for target in targets {
         let path = name_segments(target).collect();
-        definitions.push(Definition::lexical(path, text, lines, start, end));
+        definitions.push(Definition::lexical(
+            path,
+            DefinitionKind::Target,
+            text,
+            lines,
+            start..end,
+        ));
     }
 }
 
