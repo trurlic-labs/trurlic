@@ -11,7 +11,9 @@ use serde_json::Value;
 
 use crate::budget::{self, MAX_TOOL_RESULT_BYTES, Shrinkable};
 use crate::store::limits::MAX_TRAILER_BYTES;
-use crate::store::{HistoryFinding, Issue, PROJECT_COMPONENT, ProjectState, Status, Store};
+use crate::store::{
+    HistoryFinding, Issue, Level, PROJECT_COMPONENT, ProjectState, Quality, Status, Store,
+};
 
 use super::spec::kinds::{Choice, Text};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
@@ -19,7 +21,9 @@ use super::spec::{Args, Fields, Output, to_value};
 
 mod report;
 
-pub(crate) use report::{ComponentItem, Counts, HistoryItem, IssueItem, Part, Report};
+pub(crate) use report::{
+    ComponentItem, Counts, HistoryItem, IssueItem, Part, QualityCounts, Report,
+};
 
 pub(crate) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
     name: "status",
@@ -29,9 +33,9 @@ pub(crate) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
     access: Access::Read(status),
 };
 
-const DESCRIPTION: &str = "The decision graph at a glance: its counts, the validation \
-issues it holds, what a shared graph's history lacks, and the decisions of each \
-component. Each section fits the result budget; one that leaves items out gives \
+const DESCRIPTION: &str = "The decision graph at a glance: its counts, the write rules \
+`[quality]` in project.toml adds to the built-in ones (counted), the validation issues \
+it holds, what a shared graph's history lacks, and the decisions of each component. Each section fits the result budget; one that leaves items out gives \
 `omitted` and `more`, which says where the rest is. `section` returns one section \
 with the whole budget. `origin` narrows the counts to the decisions recorded under it. \
 Where the graph sits in the project's git is reported by `trurlic check`.";
@@ -119,6 +123,7 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
         graph: (!local).then(|| store.root().display().to_string()),
         code_root: (!local).then(|| store.code_root().display().to_string()),
         counts: counts(state, origin, issues.len()),
+        quality: quality_counts(&state.project.quality),
         issues: issue_items.as_deref().map(Part::frame),
         history: history_items.as_deref().map(Part::frame),
         components: component_items.as_deref().map(Part::frame),
@@ -188,6 +193,32 @@ fn counts(state: &ProjectState, origin: Option<&str>, issues: usize) -> Counts {
         edges,
         issues,
         non_canonical: state.non_canonical.len(),
+    }
+}
+
+fn quality_counts(quality: &Quality) -> QualityCounts {
+    let limits = [
+        quality.reason_words.min,
+        quality.reason_words.max,
+        quality.alternatives_max,
+        quality.alternative_words_max,
+        quality.anchors_max,
+    ]
+    .iter()
+    .filter(|limit| limit.is_some())
+    .count()
+        + usize::from(quality.require_origin);
+    let at = |level| {
+        quality
+            .patterns
+            .iter()
+            .filter(|pattern| pattern.level == level)
+            .count()
+    };
+    QualityCounts {
+        limits,
+        refusing: at(Level::Refuse),
+        warning: at(Level::Warn),
     }
 }
 
@@ -339,6 +370,33 @@ mod tests {
         assert_eq!(part.more.as_deref(), Some(Section::Components.more()));
         let fits = Sizes::part(&sizes, Section::Components, vec![item("c00")], whole);
         assert_eq!((fits.omitted, fits.more), (0, None));
+    }
+
+    /// The limits set, `require_origin` among them, and the patterns by
+    /// level.
+    #[test]
+    fn the_quality_counts_follow_the_table() {
+        use crate::store::{DecisionField, Pattern};
+
+        let pattern = |level| Pattern {
+            pattern: "x".into(),
+            fields: [DecisionField::Choice].into(),
+            level,
+            message: "M".into(),
+        };
+        let mut quality = Quality::default();
+        let none = quality_counts(&quality);
+        assert_eq!((none.limits, none.refusing, none.warning), (0, 0, 0));
+        quality.reason_words.max = Some(9);
+        quality.anchors_max = Some(8);
+        quality.require_origin = true;
+        quality.patterns = vec![
+            pattern(Level::Warn),
+            pattern(Level::Refuse),
+            pattern(Level::Warn),
+        ];
+        let some = quality_counts(&quality);
+        assert_eq!((some.limits, some.refusing, some.warning), (3, 1, 2));
     }
 
     /// Without an origin every component has a row, the project's when it

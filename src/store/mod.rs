@@ -20,6 +20,7 @@ mod load;
 mod lock;
 mod migration;
 mod placement;
+mod quality;
 mod query;
 mod recovery;
 pub mod schema;
@@ -37,6 +38,7 @@ pub use access::Writer;
 pub use apply::{
     AddComponent, AnchorInput, Applied, Batch, Done, Field, ListEdit, Merge, NodeKind, Op, OpAt,
     OpKind, Record, Refusal, Remove, RemoveComponent, Rename, Revise, ReviseComponent, Rule,
+    Warning, WarningKind,
 };
 pub(crate) use durable::sync_dir;
 pub use history::{CommitMessage, HistoryFinding, Tool};
@@ -46,6 +48,10 @@ pub(crate) use migration::{
     Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, PlacementSource,
 };
 pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
+pub use quality::{
+    ConfigFault, DecisionField, Level, Limit, Pattern, PatternMatch, Quality, QualityFault,
+    WordRange,
+};
 pub use query::{Named, anchors_in, normalize_path};
 pub use schema::{
     AcceptedText, AcceptedVia, Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR,
@@ -279,6 +285,7 @@ pub(crate) mod testing {
                 name: "test".into(),
                 description: String::new(),
                 placement: Placement::Tracked,
+                quality: Quality::default(),
             },
             components: BTreeMap::new(),
             decisions: BTreeMap::new(),

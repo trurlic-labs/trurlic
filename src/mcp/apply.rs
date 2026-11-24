@@ -8,8 +8,9 @@ use crate::store::limits::{
     MAX_TRAILER_BYTES,
 };
 use crate::store::{
-    AddComponent, AnchorInput, Applied, Batch, Done, Field, ListEdit, Merge, Op, OpKind, Record,
-    Remove, RemoveComponent, Rename, Revise, ReviseComponent, StatusName, Writer,
+    AddComponent, AnchorInput, Applied, Batch, Done, Field, ListEdit, Merge, Op, OpAt, OpKind,
+    Record, Remove, RemoveComponent, Rename, Revise, ReviseComponent, StatusName, Warning,
+    WarningKind, Writer,
 };
 
 use super::spec::kinds::{List, Object, Text, Union, Variant};
@@ -42,8 +43,14 @@ A revise that changes nothing, an edge to a missing node or to itself, and an \
 edge that closes a depends_on cycle are refused. Revising the choice, reason or \
 alternatives of an accepted decision proposes the new text and keeps the \
 accepted one; revising back to it accepts it again. Anchors, tags, edges and \
-renames leave the status alone. The result names each op's node and what it \
-changed, never the texts.";
+renames leave the status alone.\n\
+Quality: each field a record, revise or merge changes meets the bar. Built in: a \
+one-line choice of at most 200 bytes, a reason of real text, at least one \
+alternative and one anchor; then the limits and patterns of `[quality]` in \
+project.toml. A refusal names the field, the rule, the measured value and the \
+limit; a field the op leaves as it is is not judged. A `warn` pattern writes the \
+batch and lists its match in `warnings`.\n\
+The result names each op's node and what it changed, never the texts.";
 
 /// The arguments of `apply`: what a batch file holds too.
 #[derive(Debug, Default)]
@@ -307,6 +314,14 @@ impl Output for Applied {
         fields.required("ops", "What each op did, in order.", &ops, |applied| {
             &applied.ops
         });
+        let warnings = Items {
+            item: Nested::<Warning>::new(),
+        };
+        let about = "What the batch wrote but a rule warns of: each `warn` pattern's first \
+                     match per op, in the order of the ops.";
+        fields.optional("warnings", about, &warnings, |applied| {
+            (!applied.warnings.is_empty()).then_some(&applied.warnings)
+        });
         fields.required(
             "written",
             "Files written, a rename's new file included.",
@@ -326,6 +341,38 @@ const OP_KIND: Tag<OpKind> = Tag {
     all: &OpKind::ALL,
     name: OpKind::as_str,
 };
+const WARNING_KIND: Tag<WarningKind> = Tag {
+    all: &WarningKind::ALL,
+    name: WarningKind::as_str,
+};
+
+/// A warning in the shape of a refusal: the op, the argument, the rule
+/// and the message.
+impl Output for Warning {
+    fn declare(fields: &mut Shown<'_, Self>) {
+        let op = "The op it is about; absent for the batch's `origin`.";
+        fields.optional("op", op, &Nested::<OpAt>::new(), |warning| {
+            warning.op.as_ref()
+        });
+        let field = "The argument, as `ops[2].reason` or `origin`.";
+        fields.optional("field", field, &Str, |warning| warning.field.as_ref());
+        fields.required("rule", "The rule's name.", &WARNING_KIND, |warning| {
+            &warning.kind
+        });
+        let message = "What the rule says, with the match and its place.";
+        fields.required("message", message, &Str, |warning| &warning.message);
+    }
+}
+
+impl Output for OpAt {
+    fn declare(fields: &mut Shown<'_, Self>) {
+        fields.required("index", "The op's index in the batch.", &Count, |op| {
+            &op.index
+        });
+        fields.required("op", "The op's kind.", &OP_KIND, |op| &op.kind);
+        fields.required("name", "The node it names first.", &Str, |op| &op.target);
+    }
+}
 const CHANGED: Items<Tag<Field>> = Items {
     item: Tag {
         all: &Field::CHANGEABLE,
@@ -519,6 +566,7 @@ mod tests {
             .unwrap();
         let applied = Applied {
             ops: vec![longest; MAX_BATCH_OPS],
+            warnings: Vec::new(),
             written: usize::MAX,
             removed: usize::MAX,
         };

@@ -97,6 +97,27 @@ depends_on = [
 
 The file stem is the decision's name. A component file holds `description` and `connects_to`. Write them through `apply`, a batch of ops (`record`, `revise`, `rename`, `merge`, `remove`, and the component ops) that lands whole in one commit or not at all, with every edge a rename or a merge touches rewritten; a decision it records is `proposed`. A hand edit is legal too: every load validates it, `trurlic check` reports what is wrong with the graph, and `trurlic fmt` puts each file in its canonical form (sorted sets, one element per line) so branches merge cleanly.
 
+## Quality rules
+
+`apply` refuses a decision below the bar, naming the field, the rule, the measured value and the limit (`ops[0].reason`: `190 words, over the maximum of 180`). Built in: a choice is one line of at most 200 bytes, a reason is real text of at least 10 bytes, neither holds an invisible, reordering or control character, and a decision has at least one alternative and one anchor. A project adds its own in `.trurlic/project.toml`; every key is optional:
+
+```toml
+[quality]
+reason_words = { min = 30, max = 180 }   # words of a reason
+alternatives_max = 4                      # alternatives of a decision
+alternative_words_max = 30                # words of each alternative
+anchors_max = 8                           # anchors of a decision
+require_origin = true                     # a batch that records a decision names its origin
+
+[[quality.patterns]]
+pattern = '(?i)\b(?:we|our)\b'            # a regular expression (Rust regex syntax)
+fields = ["choice", "reason", "alternatives"]  # also tags, anchors, origin
+level = "refuse"                          # or "warn": written, with a warning in the result
+message = "The subject is a code entity, never \"we\"."
+```
+
+A word is a run of text between whitespace. An op is held to the bar only in the fields it changes, so a decision migrated or edited below the bar stays revisable, and a field it writes must meet the bar whole. A `warn` pattern adds an entry to the result's `warnings` (printed on stderr by `trurlic apply`), once per op at its first match. The bar is checked on writes alone: `trurlic check` reports the text rules of every file, not the bar, and fails when a pattern does not compile, which would refuse every write; `trurlic status` counts the rules the table sets. [`examples/quality.toml`](examples/quality.toml) is a complete bar for decisions that coding agents follow.
+
 ## Where the graph lives
 
 `trurlic init --placement tracked` puts `.trurlic/` under the project's git: it is committed with the code, and every worktree and clone carries its own. `--placement shared` keeps it out of git (through `.git/info/exclude`): one graph at the top of the main worktree serves every linked worktree, and a clone or a copy outside the repository reaches it through a symlink named `.trurlic`:
@@ -219,8 +240,8 @@ trurlic check                         →  no issue
 
 | Tool | Purpose |
 |------|---------|
-| `apply` | The one write: a batch of ops applied in order, all or none, in one commit; a refusal names the op, the argument and the rule |
-| `status` | The graph at a glance: counts, validation issues, what a shared graph's history lacks, each component's decisions |
+| `apply` | The one write: a batch of ops applied in order, all or none, in one commit; a refusal names the op, the argument and the rule; held to the [quality rules](#quality-rules) |
+| `status` | The graph at a glance: counts, the quality rules `[quality]` sets, validation issues, what a shared graph's history lacks, each component's decisions |
 | `get_context` | Architectural brief for a component: decisions, rules, related constraints, health |
 | `get_decisions_for_file` | Every decision anchored on a file, on a file under a directory, or on a directory that holds the file |
 

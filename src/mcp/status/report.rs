@@ -16,6 +16,7 @@ pub(crate) struct Report {
     pub(crate) graph: Option<String>,
     pub(crate) code_root: Option<String>,
     pub(crate) counts: Counts,
+    pub(crate) quality: QualityCounts,
     pub(crate) issues: Option<Part<IssueItem>>,
     pub(crate) history: Option<Part<HistoryItem>>,
     pub(crate) components: Option<Part<ComponentItem>>,
@@ -29,6 +30,14 @@ pub(crate) struct Counts {
     pub(crate) edges: usize,
     pub(crate) issues: usize,
     pub(crate) non_canonical: usize,
+}
+
+/// What `[quality]` adds to the built-in rules, counted.
+pub(crate) struct QualityCounts {
+    /// The limits set, `require_origin` among them.
+    pub(crate) limits: usize,
+    pub(crate) refusing: usize,
+    pub(crate) warning: usize,
 }
 
 /// A section: the items that fit, out of `total`.
@@ -93,6 +102,9 @@ impl Output for Report {
         fields.required("counts", "The graph's counts.", &counts, |report| {
             &report.counts
         });
+        let quality = "What `[quality]` in project.toml adds to the built-in write rules.";
+        let kind = Nested::<QualityCounts>::new();
+        fields.required("quality", quality, &kind, |report| &report.quality);
         let issues = Nested::<Part<IssueItem>>::new();
         fields.optional(
             "issues",
@@ -146,6 +158,17 @@ impl Output for Counts {
             &Count,
             |counts| &counts.non_canonical,
         );
+    }
+}
+
+impl Output for QualityCounts {
+    fn declare(fields: &mut Shown<'_, Self>) {
+        let limits = "Limits set: `reason_words` bounds, the maxima, `require_origin`.";
+        fields.required("limits", limits, &Count, |counts| &counts.limits);
+        let refusing = "Patterns that refuse a write.";
+        fields.required("refusing", refusing, &Count, |counts| &counts.refusing);
+        let warning = "Patterns that warn in the result.";
+        fields.required("warning", warning, &Count, |counts| &counts.warning);
     }
 }
 

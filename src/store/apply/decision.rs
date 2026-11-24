@@ -3,26 +3,34 @@
 
 use std::collections::BTreeSet;
 
-use super::Done;
 use super::check::{self, Fault, anchor_edit, edit_list, new_name};
 use super::edit::Edit;
 use super::ops::{Field, ListEdit, Merge, OpKind, Record, Remove, Rename, Revise};
 use super::refusal::{NodeKind, Rule};
+use super::{Done, Warning};
+use crate::store::quality::{Bar, DecisionField, Hit};
 use crate::store::schema::{AcceptedText, Decision, PROJECT_COMPONENT, Status};
-use crate::store::text::TextField;
 use crate::store::time::Timestamp;
 
-/// What every record of one batch carries.
-pub(super) struct Recorded<'b> {
+/// What the ops of one batch share: what every record carries, the bar
+/// each written decision meets, and the warnings.
+pub(super) struct Context<'b> {
     pub(super) origin: Option<&'b str>,
     pub(super) created: Timestamp,
+    pub(super) bar: &'b Bar,
+    /// The `warn` matches of the op running now.
+    pub(super) hits: Vec<Hit>,
+    /// The batch's warnings so far.
+    pub(super) warnings: Vec<Warning>,
 }
 
-pub(super) fn record(edit: &mut Edit<'_>, op: Record, batch: &Recorded<'_>) -> Result<Done, Fault> {
+pub(super) fn record(
+    edit: &mut Edit<'_>,
+    op: Record,
+    batch: &mut Context<'_>,
+) -> Result<Done, Fault> {
     new_name(edit, &op.name, Field::Name)?;
     component(edit, &op.component)?;
-    check::text(Field::Choice, TextField::Choice, &op.choice)?;
-    check::text(Field::Reason, TextField::Reason, &op.reason)?;
     let anchors = check::anchors(Field::Anchors, op.anchors)?;
     let mut depends_on = BTreeSet::new();
     let whole = ListEdit {
@@ -48,6 +56,7 @@ pub(super) fn record(edit: &mut Edit<'_>, op: Record, batch: &Recorded<'_>) -> R
         anchors: anchors.into_iter().collect(),
         depends_on,
     };
+    check::bar(batch, &decision, &DecisionField::IN_FILE_ORDER)?;
     // clone: the graph keys the node by its name, and the result names it.
     edit.put_decision(op.name.clone(), decision);
     // A dangling edge a hand edit left can point at the new name.
@@ -57,7 +66,13 @@ pub(super) fn record(edit: &mut Edit<'_>, op: Record, batch: &Recorded<'_>) -> R
     Ok(Done::of(OpKind::Record, op.name))
 }
 
-pub(super) fn revise(edit: &mut Edit<'_>, op: Revise) -> Result<Done, Fault> {
+/// A revise is held to the bar in the fields whose values it changes: a
+/// field it leaves as it is keeps what it held, below the bar or not.
+pub(super) fn revise(
+    edit: &mut Edit<'_>,
+    op: Revise,
+    batch: &mut Context<'_>,
+) -> Result<Done, Fault> {
     // clone: the op is consumed by its revision, and the result names it.
     let name = op.name.clone();
     let mut after = revised(edit, op)?;
@@ -65,8 +80,9 @@ pub(super) fn revise(edit: &mut Edit<'_>, op: Revise) -> Result<Done, Fault> {
     if after == *before {
         return Err(Fault::op(Rule::NoChange));
     }
-    restatus(before, &mut after);
     let changed = changed(before, &after);
+    check::bar(batch, &after, &check::judged(&changed))?;
+    restatus(before, &mut after);
     let gains_edges = !after.depends_on.is_subset(&before.depends_on);
     let status = (after.status.kind() != before.status.kind()).then(|| after.status.kind());
     // clone: the graph keys the node by its name, and the result names it.
@@ -81,8 +97,8 @@ pub(super) fn revise(edit: &mut Edit<'_>, op: Revise) -> Result<Done, Fault> {
     })
 }
 
-/// The decision `op` names with each field `op` gives, checked; its
-/// status is the old one.
+/// The decision `op` names with each field `op` gives, its names and
+/// lists checked; its status is the old one.
 fn revised(edit: &Edit<'_>, op: Revise) -> Result<Decision, Fault> {
     // clone: the revision is built beside the value it is judged against.
     let mut after = existing(edit, &op.name, Field::Name)?.clone();
@@ -92,16 +108,10 @@ fn revised(edit: &Edit<'_>, op: Revise) -> Result<Decision, Fault> {
         self::component(edit, &component)?;
         after.component = component;
     }
-    if let Some(choice) = op.choice
-        && choice != after.choice
-    {
-        check::text(Field::Choice, TextField::Choice, &choice)?;
+    if let Some(choice) = op.choice {
         after.choice = choice;
     }
-    if let Some(reason) = op.reason
-        && reason != after.reason
-    {
-        check::text(Field::Reason, TextField::Reason, &reason)?;
+    if let Some(reason) = op.reason {
         after.reason = reason;
     }
     let free = |_: &_| None;
@@ -142,7 +152,13 @@ pub(super) fn rename(edit: &mut Edit<'_>, op: Rename) -> Result<Done, Fault> {
     })
 }
 
-pub(super) fn merge(edit: &mut Edit<'_>, op: Merge) -> Result<Done, Fault> {
+/// A merge is held to the bar in the survivor's anchors and tags, when
+/// the absorbed decision brings it ones it lacks.
+pub(super) fn merge(
+    edit: &mut Edit<'_>,
+    op: Merge,
+    batch: &mut Context<'_>,
+) -> Result<Done, Fault> {
     existing(edit, &op.survivor, Field::Survivor)?;
     if op.absorbed == op.survivor {
         return Err(Fault::at(Field::Absorbed, Rule::SameNode));
@@ -150,11 +166,26 @@ pub(super) fn merge(edit: &mut Edit<'_>, op: Merge) -> Result<Done, Fault> {
     existing(edit, &op.absorbed, Field::Absorbed)?;
     let absorbed = edit.take_decision(&op.absorbed);
     if let (Some(absorbed), Some(survivor)) = (absorbed, edit.decision_mut(&op.survivor)) {
+        let grown = [
+            (
+                DecisionField::Anchors,
+                !absorbed.anchors.is_subset(&survivor.anchors),
+            ),
+            (
+                DecisionField::Tags,
+                !absorbed.tags.is_subset(&survivor.tags),
+            ),
+        ];
         survivor.anchors.extend(absorbed.anchors);
         survivor.tags.extend(absorbed.tags);
         survivor.depends_on.extend(absorbed.depends_on);
         survivor.depends_on.remove(&op.survivor);
         survivor.depends_on.remove(&op.absorbed);
+        let held: Vec<DecisionField> = grown
+            .into_iter()
+            .filter_map(|(field, grew)| grew.then_some(field))
+            .collect();
+        check::bar(batch, survivor, &held)?;
     }
     let rewrote = repoint_dependents(edit, &op.absorbed, Some(&op.survivor));
     closes_no_cycle(edit, &op.survivor, Field::Absorbed)?;

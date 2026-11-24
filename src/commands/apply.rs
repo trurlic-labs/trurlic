@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
-use crate::console::out;
+use crate::console::{diag, out};
 use crate::discovery::discover;
 use crate::mcp::twin::{self, MAX_DOCUMENT_BYTES, ToolError};
 use crate::store::{Applied, Done, Field, OpKind};
@@ -62,10 +62,13 @@ fn read(file: &Path) -> std::result::Result<Vec<u8>, ToolError> {
     Ok(document)
 }
 
-/// One line per op, then the files.
+/// One line per op, then the files; each warning on stderr.
 fn print(applied: &Applied) -> Result<()> {
     for done in &applied.ops {
         out!("{}", line(done))?;
+    }
+    for warning in &applied.warnings {
+        diag!("warning: {}", warning.message);
     }
     out!(
         "{} file(s) written, {} removed",

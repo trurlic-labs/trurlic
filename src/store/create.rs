@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::{Error, Result};
 
+use super::quality::Quality;
 use super::schema::{Placement, Project};
 use super::{COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, STORE_DIR, Store};
 
@@ -51,6 +52,7 @@ impl Store {
             name: name.into(),
             description: String::new(),
             placement,
+            quality: Quality::default(),
         };
         self.write_atomic(&lock, &self.project_path(), &project)?;
         if placement == Placement::Shared {

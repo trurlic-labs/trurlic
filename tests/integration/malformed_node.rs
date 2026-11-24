@@ -166,6 +166,37 @@ refused!(
     "unknown variant `cloud`"
 );
 
+/// `project.toml` with `quality` as its `[quality]` table.
+fn quality(table: &str) -> String {
+    format!(
+        "format_version = \"{}\"\nname = \"x\"\ndescription = \"\"\nplacement = \"tracked\"\n\
+         [quality]\n{table}\n",
+        trurlic::store::FORMAT_VERSION
+    )
+}
+
+refused!(
+    an_unknown_quality_key,
+    "project.toml",
+    quality("reason_bytes = { max = 9 }"),
+    "unknown field `reason_bytes`"
+);
+refused!(
+    a_word_range_whose_min_passes_its_max,
+    "project.toml",
+    quality("reason_words = { min = 10, max = 9 }"),
+    "`[quality] reason_words` has a `min` of 10, over its `max` of 9"
+);
+refused!(
+    a_pattern_field_no_rule_reads,
+    "project.toml",
+    quality(
+        "[[quality.patterns]]\npattern = 'x'\nfields = [\"status\"]\nlevel = \"warn\"\n\
+         message = \"M\""
+    ),
+    "unknown variant `status`"
+);
+
 /// One byte over the cap, and no TOML at all: only the size can refuse it.
 #[test]
 fn a_node_file_over_one_mib() {

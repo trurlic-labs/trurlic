@@ -5,7 +5,10 @@
 //! load. `fmt` is timed under `tracked`, under `shared` with nothing but
 //! its own commit to make, and under `shared` after a hand edit, which is
 //! a commit of its own: the differences are what the history costs.
-//! `apply` is timed with one op and with fifty, under each placement.
+//! `apply` is timed with one op and with fifty, under each placement and,
+//! under `tracked`, with the shipped example `[quality]` (eleven patterns),
+//! whose patterns each batch compiles; `load_state` is timed with that
+//! table too, which a read parses and never compiles.
 //!
 //! Read tools come from `tools/list`, so a new one is benched without editing
 //! this file, and setup panics when no request here fits it.
@@ -37,6 +40,16 @@ use serde_json::{Value, json};
 use trurlic::bench::Server;
 use trurlic::store::corpus::Corpus;
 use trurlic::store::{Placement, ProjectState, Store};
+
+/// The example `[quality]` table the repository ships.
+const QUALITY: &str = include_str!("../examples/quality.toml");
+
+/// `store`'s `project.toml` with [`QUALITY`] appended.
+fn add_quality(store: &Store) {
+    let path = store.root().join("project.toml");
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, format!("{text}\n{QUALITY}")).unwrap();
+}
 
 /// One corpus per size, written under `target/tmp` once per run.
 static CORPORA: LazyLock<Vec<Fixture>> = LazyLock::new(|| {
@@ -179,6 +192,16 @@ fn bench_load_state(c: &mut Criterion) {
         group.bench_function(BenchmarkId::from_parameter(fixture.size), |b| {
             b.iter(|| fixture.store.load_state().unwrap());
         });
+        let dir =
+            Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("corpus-quality-{}", fixture.size));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        let store = Corpus::new(fixture.size).write(&dir).unwrap();
+        add_quality(&store);
+        group.bench_function(BenchmarkId::new("quality", fixture.size), |b| {
+            b.iter(|| store.load_state().unwrap());
+        });
     }
     group.finish();
 }
@@ -306,19 +329,28 @@ fn bench_write(c: &mut Criterion) {
 }
 
 /// `apply` end to end through the server, a batch of one op and one of
-/// fifty, under each placement: each op revises the reason of one
-/// decision, anew on every run, so every batch writes and commits.
+/// fifty, under each placement and under `tracked` with the example
+/// `[quality]`: each op revises the reason of one decision, anew on every
+/// run, so every batch writes and commits.
 fn bench_apply(c: &mut Criterion) {
     let mut group = c.benchmark_group("apply");
     group.sample_size(20);
+    let setups = [
+        ("tracked", Placement::Tracked, false),
+        ("shared", Placement::Shared, false),
+        ("tracked+quality", Placement::Tracked, true),
+    ];
     for &size in &Corpus::SIZES[1..] {
-        for placement in [Placement::Tracked, Placement::Shared] {
+        for (setup, placement, quality) in setups {
             let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
-                .join(format!("corpus-apply-{size}-{}", placement.as_str()));
+                .join(format!("corpus-apply-{size}-{}", setup.replace('+', "-")));
             if dir.exists() {
                 fs::remove_dir_all(&dir).unwrap();
             }
             let store = Corpus::new(size).write_as(&dir, placement).unwrap();
+            if quality {
+                add_quality(&store);
+            }
             let names: Vec<String> = store.load_state().unwrap().decisions.into_keys().collect();
             let mut server = server_at(dir);
             let runs = Cell::new(0_u64);
@@ -339,7 +371,7 @@ fn bench_apply(c: &mut Criterion) {
                     line
                 };
                 call(&mut server, &batch());
-                let id = BenchmarkId::new(format!("{}/{ops}_ops", placement.as_str()), size);
+                let id = BenchmarkId::new(format!("{setup}/{ops}_ops"), size);
                 let mut output = Vec::new();
                 group.bench_function(id, |b| {
                     b.iter_batched(

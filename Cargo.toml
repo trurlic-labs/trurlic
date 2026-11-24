@@ -58,6 +58,14 @@ blake3 = "1"
 # Parallel file I/O for load_state
 rayon = "1"
 
+# The `[quality]` patterns of project.toml: a project states its decision
+# rules as regular expressions, which a hand-rolled matcher would hold to
+# a subset with its own edge cases. Unicode classes and case folding,
+# since a decision's text is in any script; the lazy DFA for speed; no
+# literal optimizations, whose crates a few short texts per write do not
+# repay.
+regex = { version = "1.13", default-features = false, features = ["std", "unicode", "perf-dfa"] }
+
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
 tempfile = "3"

@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::harness::{McpClient, decision, git, graph_log, trurlic, trurlic_ok, trurlic_refused};
+use crate::harness::{
+    McpClient, decision, git, graph_log, record, trurlic, trurlic_ok, trurlic_refused,
+};
 
 /// A main worktree at `main` with a graph holding the component `auth`
 /// and the decision `sign-tokens`, anchored at `src/branch.rs`, a file only
@@ -545,26 +547,29 @@ fn concurrent_batches_from_every_tree_each_land_as_one_commit() {
     const BATCHES: usize = 6;
     let trees = Trees::shared();
     let before = graph_log(&trees.graph());
-    let writers: Vec<_> = [("main", &trees.main), ("linked", &trees.linked), ("clone", &trees.clone)]
-        .into_iter()
-        .map(|(tree, dir)| {
-            let dir = dir.clone();
-            std::thread::spawn(move || {
-                let (mut client, _) = McpClient::connect_in(&dir, &[], json!({}));
-                for batch in 0..BATCHES {
-                    let name = format!("{tree}-{batch}");
-                    client.call_tool(
-                        "apply",
-                        json!({ "origin": name, "ops": [{
-                            "op": "record", "name": name, "component": "auth",
-                            "choice": format!("Rule {name}"), "reason": "Written by one of three servers",
-                        }]}),
-                    );
-                }
-                client
-            })
+    let writers: Vec<_> = [
+        ("main", &trees.main),
+        ("linked", &trees.linked),
+        ("clone", &trees.clone),
+    ]
+    .into_iter()
+    .map(|(tree, dir)| {
+        let dir = dir.clone();
+        std::thread::spawn(move || {
+            let (mut client, _) = McpClient::connect_in(&dir, &[], json!({}));
+            for batch in 0..BATCHES {
+                let name = format!("{tree}-{batch}");
+                client.call_tool(
+                    "apply",
+                    json!({ "origin": name, "ops": [
+                        record(&name, "auth", &format!("Rule {name}")),
+                    ]}),
+                );
+            }
+            client
         })
-        .collect();
+    })
+    .collect();
     let mut clients: Vec<McpClient> = writers
         .into_iter()
         .map(|writer| writer.join().unwrap())

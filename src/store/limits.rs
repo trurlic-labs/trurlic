@@ -38,3 +38,22 @@ pub(crate) const MAX_BATCH_OPS: usize = 50;
 
 /// Maximum items of one list an op sets, adds or removes.
 pub(crate) const MAX_LIST_ITEMS: usize = 100;
+
+/// Maximum `[quality] patterns` of one project: each is compiled for every
+/// write, so the cap bounds what a hostile `project.toml` costs one.
+pub(crate) const MAX_QUALITY_PATTERNS: usize = 32;
+
+/// Maximum byte length of one `[quality]` pattern's text.
+pub(crate) const MAX_PATTERN_BYTES: usize = 500;
+
+/// Maximum bytes one compiled pattern and its lazy DFA's cache may take;
+/// a pattern that compiles past it is refused. A short text can still ask
+/// for a large automaton: `\w{50}` over Unicode needs about 2.5 MB.
+pub(crate) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
+
+/// Maximum byte length of a `[quality]` pattern's message, one line.
+pub(crate) const MAX_PATTERN_MESSAGE_BYTES: usize = 200;
+
+/// Bytes of a pattern's match a refusal or a warning quotes; a longer
+/// match is cut at a character boundary.
+pub(crate) const MAX_QUOTED_MATCH_BYTES: usize = 40;

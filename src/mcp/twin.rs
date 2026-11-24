@@ -14,7 +14,7 @@ use crate::store::{Applied, Store};
 
 pub(crate) use super::protocol::MAX_MESSAGE_BYTES as MAX_DOCUMENT_BYTES;
 pub(crate) use super::result::ToolError;
-pub(crate) use super::status::{Part, Report};
+pub(crate) use super::status::{Part, QualityCounts, Report};
 
 /// The arguments `document` holds: a JSON object, as a batch file holds
 /// the arguments of `apply`.

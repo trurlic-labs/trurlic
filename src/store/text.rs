@@ -1,26 +1,32 @@
 //! The rules for a decision's choice and reason, which validation holds
-//! every decision to, whichever surface or hand edit wrote it, and for the
-//! `Origin:` and `Session:` a write's history commit carries.
+//! every decision to, whichever surface or hand edit wrote it, for the
+//! `Origin:` and `Session:` a write's history commit carries, and for the
+//! message of a `[quality]` pattern.
 //!
 //! A choice is one line of at most [`MAX_CHOICE_BYTES`]; a reason holds at
 //! least [`MIN_REASON_BYTES`] of reasoning and may span lines; an origin or
-//! a session is one line of at most [`MAX_TRAILER_BYTES`]. None may carry a
+//! a session is one line of at most [`MAX_TRAILER_BYTES`], a message one
+//! of at most [`MAX_PATTERN_MESSAGE_BYTES`]. None may carry a
 //! character that renders as nothing or reorders the text around it, so what
 //! a reader sees is what an agent is held to, nor the markup of a tool call,
 //! which only lands in an argument when the call was malformed.
 
 use std::fmt;
 
-use super::limits::{MAX_CHOICE_BYTES, MAX_TEXT_FIELD_BYTES, MAX_TRAILER_BYTES, MIN_REASON_BYTES};
+use super::limits::{
+    MAX_CHOICE_BYTES, MAX_PATTERN_MESSAGE_BYTES, MAX_TEXT_FIELD_BYTES, MAX_TRAILER_BYTES,
+    MIN_REASON_BYTES,
+};
 
-/// The field a [`TextFault`] was found in: a decision's, or a trailer of a
-/// history commit.
+/// The field a [`TextFault`] was found in: a decision's, a trailer of a
+/// history commit, or a `[quality]` pattern's message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextField {
     Choice,
     Reason,
     Origin,
     Session,
+    Message,
 }
 
 impl fmt::Display for TextField {
@@ -30,6 +36,7 @@ impl fmt::Display for TextField {
             Self::Reason => "reason",
             Self::Origin => "origin",
             Self::Session => "session",
+            Self::Message => "message",
         })
     }
 }
@@ -83,6 +90,7 @@ pub(crate) fn fault(field: TextField, text: &str) -> Option<TextFault> {
         TextField::Choice => MAX_CHOICE_BYTES,
         TextField::Reason => MAX_TEXT_FIELD_BYTES,
         TextField::Origin | TextField::Session => MAX_TRAILER_BYTES,
+        TextField::Message => MAX_PATTERN_MESSAGE_BYTES,
     };
     if reasoning == 0 {
         return Some(TextFault::Blank);
@@ -103,13 +111,19 @@ fn find_character(field: TextField, text: &str) -> Option<TextFault> {
     text.char_indices()
         .find_map(|(at, found)| match (field, found) {
             // A line break in a trailer would end it and start another.
-            (TextField::Choice | TextField::Origin | TextField::Session, '\n') => {
-                Some(TextFault::LineBreak { at })
-            }
+            (
+                TextField::Choice | TextField::Origin | TextField::Session | TextField::Message,
+                '\n',
+            ) => Some(TextFault::LineBreak { at }),
             (TextField::Reason, '\n' | '\t') => None,
-            (TextField::Choice | TextField::Reason | TextField::Origin | TextField::Session, _) => {
-                character_class(found).map(|_| TextFault::Character { found, at })
-            }
+            (
+                TextField::Choice
+                | TextField::Reason
+                | TextField::Origin
+                | TextField::Session
+                | TextField::Message,
+                _,
+            ) => character_class(found).map(|_| TextFault::Character { found, at }),
         })
 }
 

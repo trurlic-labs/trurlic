@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use crate::Result;
 use crate::console::out;
 use crate::discovery::discover;
-use crate::mcp::twin::{self, Part, Report, ToolError};
+use crate::mcp::twin::{self, Part, QualityCounts, Report, ToolError};
 
 use super::Format;
 
@@ -51,6 +51,7 @@ fn print(report: &Report, origin: Option<&str>) -> Result<()> {
     let (all, wide, proposed) = (counts.decisions, counts.project_wide, counts.proposed);
     out!("decisions{under}: {all} ({wide} project-wide, {proposed} proposed)")?;
     out!("edges: {}", counts.edges)?;
+    out!("quality: {}", quality(&report.quality))?;
     if counts.non_canonical > 0 {
         out!("not in canonical form: {}", counts.non_canonical)?;
     }
@@ -73,6 +74,15 @@ fn print(report: &Report, origin: Option<&str>) -> Result<()> {
         out!("history: {}", finding.message)?;
     }
     Ok(())
+}
+
+/// The rules `[quality]` adds, counted, or that it adds none.
+fn quality(counts: &QualityCounts) -> String {
+    let (limits, refusing, warning) = (counts.limits, counts.refusing, counts.warning);
+    if limits + refusing + warning == 0 {
+        return "the built-in rules".to_owned();
+    }
+    format!("{limits} limit(s), {refusing} refusing and {warning} warning pattern(s) in [quality]")
 }
 
 fn omitted<T>(part: &Part<T>) -> Result<()> {

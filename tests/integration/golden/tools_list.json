@@ -8,7 +8,7 @@
         "readOnlyHint": false,
         "title": "Apply"
       },
-      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of a decision's fields, a list whole or by `add_*`/`remove_*` (never both for one list; a removed element must be held); rename (rewrites every edge to it); merge `absorbed` into `survivor` (edges repointed, anchors, tags and edges unioned, the absorbed text dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component (carries its decisions and connections), remove_component (refused while in use).\nA revise that changes nothing, an edge to a missing node or to itself, and an edge that closes a depends_on cycle are refused. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back to it accepts it again. Anchors, tags, edges and renames leave the status alone. The result names each op's node and what it changed, never the texts.",
+      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of a decision's fields, a list whole or by `add_*`/`remove_*` (never both for one list; a removed element must be held); rename (rewrites every edge to it); merge `absorbed` into `survivor` (edges repointed, anchors, tags and edges unioned, the absorbed text dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component (carries its decisions and connections), remove_component (refused while in use).\nA revise that changes nothing, an edge to a missing node or to itself, and an edge that closes a depends_on cycle are refused. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back to it accepts it again. Anchors, tags, edges and renames leave the status alone.\nQuality: each field a record, revise or merge changes meets the bar. Built in: a one-line choice of at most 200 bytes, a reason of real text, at least one alternative and one anchor; then the limits and patterns of `[quality]` in project.toml. A refusal names the field, the rule, the measured value and the limit; a field the op leaves as it is is not judged. A `warn` pattern writes the batch and lists its match in `warnings`.\nThe result names each op's node and what it changed, never the texts.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -603,6 +603,71 @@
             },
             "type": "array"
           },
+          "warnings": {
+            "description": "What the batch wrote but a rule warns of: each `warn` pattern's first match per op, in the order of the ops.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "field": {
+                  "description": "The argument, as `ops[2].reason` or `origin`.",
+                  "type": "string"
+                },
+                "message": {
+                  "description": "What the rule says, with the match and its place.",
+                  "type": "string"
+                },
+                "op": {
+                  "additionalProperties": false,
+                  "description": "The op it is about; absent for the batch's `origin`.",
+                  "properties": {
+                    "index": {
+                      "description": "The op's index in the batch.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "description": "The node it names first.",
+                      "type": "string"
+                    },
+                    "op": {
+                      "description": "The op's kind.",
+                      "enum": [
+                        "record",
+                        "revise",
+                        "rename",
+                        "merge",
+                        "remove",
+                        "add_component",
+                        "revise_component",
+                        "rename_component",
+                        "remove_component"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "index",
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "rule": {
+                  "description": "The rule's name.",
+                  "enum": [
+                    "pattern"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "rule",
+                "message"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "written": {
             "description": "Files written, a rename's new file included.",
             "minimum": 0,
@@ -626,7 +691,7 @@
         "readOnlyHint": true,
         "title": "Status"
       },
-      "description": "The decision graph at a glance: its counts, the validation issues it holds, what a shared graph's history lacks, and the decisions of each component. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
+      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, and the decisions of each component. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -887,6 +952,33 @@
             "description": "The project's name.",
             "type": "string"
           },
+          "quality": {
+            "additionalProperties": false,
+            "description": "What `[quality]` in project.toml adds to the built-in write rules.",
+            "properties": {
+              "limits": {
+                "description": "Limits set: `reason_words` bounds, the maxima, `require_origin`.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "refusing": {
+                "description": "Patterns that refuse a write.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "warning": {
+                "description": "Patterns that warn in the result.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "limits",
+              "refusing",
+              "warning"
+            ],
+            "type": "object"
+          },
           "truncated": {
             "description": "Present only when the result was cut to fit the result budget: each cut, by JSON pointer, with what it omitted.",
             "items": {
@@ -898,7 +990,8 @@
         "required": [
           "project",
           "placement",
-          "counts"
+          "counts",
+          "quality"
         ],
         "type": "object"
       },

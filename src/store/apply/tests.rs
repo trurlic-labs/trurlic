@@ -940,3 +940,5 @@ fn a_batch_is_one_history_commit_of_its_files() {
     );
     assert_eq!(changed_in(&store, "HEAD~1").len(), 3);
 }
+
+mod quality;

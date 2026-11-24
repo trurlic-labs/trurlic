@@ -4,7 +4,7 @@
 
 use serde_json::json;
 
-use crate::harness::{McpClient, Project, decision};
+use crate::harness::{McpClient, Project, decision, record};
 
 /// `sign-tokens` and `rotate-keys` depend on each other, `expire-sessions`
 /// depends into that cycle and on a decision that is gone, `keep-old-api`
@@ -118,10 +118,7 @@ fn a_batch_that_adds_no_issue_lands_beside_the_issues() {
         "apply",
         json!({ "ops": [
             { "op": "revise", "name": "sign-tokens", "add_tags": ["keys"] },
-            {
-                "op": "record", "name": "audit-log", "component": "auth",
-                "choice": "Log every token", "reason": "An audit needs the issued tokens",
-            },
+            record("audit-log", "auth", "Log every token"),
         ]}),
     );
     let refused = client.call_tool_refusal(

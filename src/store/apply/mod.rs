@@ -5,7 +5,9 @@
 //! Each op is checked against the graph the earlier ops left, so a batch
 //! adds a component before the decisions in it, and a refusal names the
 //! first op at fault: the ops after it may build on it, so their faults
-//! would describe a graph the batch never reaches. Once every op holds,
+//! would describe a graph the batch never reaches. A decision an op
+//! records, revises or merges into is held to the quality bar
+//! (`store::quality`) in each field the op changes. Once every op holds,
 //! the resulting graph is validated once under "no new errors", which
 //! refuses what no op rule did. Only the files whose canonical text
 //! changes are written.
@@ -16,12 +18,14 @@ mod decision;
 mod edit;
 mod ops;
 mod refusal;
+mod warning;
 
 use std::path::PathBuf;
 
 use crate::store::Writer;
 use crate::store::commit::PendingWrite;
 use crate::store::history::{CommitMessage, Tool};
+use crate::store::quality::Bar;
 use crate::store::schema::StatusName;
 use crate::store::state::NodeFile;
 use crate::store::text::{TextField, fault};
@@ -29,7 +33,7 @@ use crate::store::time::Timestamp;
 use crate::{Error, Result};
 
 use check::Fault;
-use decision::Recorded;
+use decision::Context;
 use edit::{Before, Edit};
 
 pub use ops::{
@@ -37,11 +41,16 @@ pub use ops::{
     RemoveComponent, Rename, Revise, ReviseComponent,
 };
 pub use refusal::{NodeKind, OpAt, Refusal, Rule};
+pub use warning::{Warning, WarningKind};
 
-/// What a batch wrote: each op's outcome, in order, and the files.
+/// What a batch wrote: each op's outcome, in order, its warnings, and the
+/// files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Applied {
     pub ops: Vec<Done>,
+    /// The batch's warnings: each `warn` pattern's first match per op,
+    /// the origin's first, in the order of the ops.
+    pub warnings: Vec<Warning>,
     /// Files written, a rename's new file included.
     pub written: usize,
     /// Files removed, a rename's old file included.
@@ -91,18 +100,21 @@ impl Writer<'_> {
     /// whole with [`Error::Refused`], writing nothing. Every decision it
     /// records is `proposed`, with the batch's origin and one instant.
     /// The writer's graph follows the commit; a refused batch, or a commit
-    /// that fails before its commit point, leaves it as it was.
+    /// that fails before its commit point, leaves it as it was. A
+    /// `[quality]` pattern that does not compile refuses every batch with
+    /// [`Error::QualityPattern`].
     pub fn apply(&mut self, batch: Batch) -> Result<Applied> {
         let message = commit_message(&batch)?;
-        if batch.ops.is_empty() {
-            return Err(refused(None, Some("ops".to_owned()), Rule::EmptyBatch));
-        }
-        let recorded = Recorded {
+        let bar = self.store.bar(&self.state.project.quality)?;
+        let mut context = Context {
             origin: batch.origin.as_deref(),
             created: Timestamp::now()?,
+            bar: &bar,
+            hits: Vec::new(),
+            warnings: origin_warnings(&batch, &bar)?,
         };
         let mut edit = Edit::new(&mut self.state);
-        let done = match run(&mut edit, batch.ops, &recorded) {
+        let done = match run(&mut edit, batch.ops, &mut context) {
             Ok(done) => done,
             Err(refusal) => {
                 edit.undo();
@@ -110,19 +122,27 @@ impl Writer<'_> {
             }
         };
         let before = edit.finish();
-        let files = self.files(&before);
-        let committed = files.and_then(|(writes, removes)| {
-            self.commit(&writes, &removes, &message)?;
+        let (written, removed) = self.land(before, &message)?;
+        Ok(Applied {
+            ops: done,
+            warnings: context.warnings,
+            written,
+            removed,
+        })
+    }
+
+    /// Commit the files the batch changed from `before`, and count them
+    /// written and removed. The writer's graph follows the files: past the
+    /// commit point it is the batch's, before it the one `before` holds.
+    fn land(&mut self, before: Before, message: &CommitMessage) -> Result<(usize, usize)> {
+        let committed = self.files(&before).and_then(|(writes, removes)| {
+            self.commit(&writes, &removes, message)?;
             Ok((writes.len(), removes.len()))
         });
         match committed {
-            Ok((written, removed)) => {
+            Ok(counts) => {
                 self.settle(&before);
-                Ok(Applied {
-                    ops: done,
-                    written,
-                    removed,
-                })
+                Ok(counts)
             }
             Err(e @ Error::WritePending { .. }) => {
                 self.settle(&before);
@@ -178,9 +198,26 @@ impl Writer<'_> {
     }
 }
 
+/// The batch's own faults, before any op runs: no op, and an origin the
+/// bar refuses; else the origin's warnings.
+fn origin_warnings(batch: &Batch, bar: &Bar) -> Result<Vec<Warning>> {
+    if batch.ops.is_empty() {
+        return Err(refused(None, Some("ops".to_owned()), Rule::EmptyBatch));
+    }
+    let records = batch.ops.iter().any(|op| matches!(op, Op::Record(_)));
+    match bar.judge_origin(batch.origin.as_deref(), records) {
+        Ok(hits) => Ok(hits.iter().map(|hit| Warning::of(None, hit)).collect()),
+        Err(breach) => Err(refused(
+            None,
+            Some(breach.place.to_string()),
+            breach.broken.into(),
+        )),
+    }
+}
+
 /// Run each op in order, refusing at the first fault, then the check of
-/// the resulting graph.
-fn run(edit: &mut Edit<'_>, ops: Vec<Op>, recorded: &Recorded<'_>) -> Result<Vec<Done>> {
+/// the resulting graph. Each op's warnings join the batch's.
+fn run(edit: &mut Edit<'_>, ops: Vec<Op>, context: &mut Context<'_>) -> Result<Vec<Done>> {
     let mut done = Vec::with_capacity(ops.len());
     let mut named = Vec::with_capacity(ops.len());
     for (index, op) in ops.into_iter().enumerate() {
@@ -191,10 +228,10 @@ fn run(edit: &mut Edit<'_>, ops: Vec<Op>, recorded: &Recorded<'_>) -> Result<Vec
             target: op.target().to_owned(),
         };
         let outcome = match op {
-            Op::Record(op) => decision::record(edit, op, recorded),
-            Op::Revise(op) => decision::revise(edit, op),
+            Op::Record(op) => decision::record(edit, op, context),
+            Op::Revise(op) => decision::revise(edit, op, context),
             Op::Rename(op) => decision::rename(edit, op),
-            Op::Merge(op) => decision::merge(edit, op),
+            Op::Merge(op) => decision::merge(edit, op, context),
             Op::Remove(op) => decision::remove(edit, op),
             Op::AddComponent(op) => component::add(edit, op),
             Op::ReviseComponent(op) => component::revise(edit, op),
@@ -205,6 +242,10 @@ fn run(edit: &mut Edit<'_>, ops: Vec<Op>, recorded: &Recorded<'_>) -> Result<Vec
             Ok(outcome) => done.push(outcome),
             Err(Fault { field, rule }) => return Err(refused(Some(at), field, rule)),
         }
+        let hits = context.hits.drain(..);
+        // clone: each warning names the op it is about.
+        let warnings = hits.map(|hit| Warning::of(Some(at.clone()), &hit));
+        context.warnings.extend(warnings);
         named.push(at);
     }
     if let Some((index, issue)) = edit.first_introduced() {

@@ -247,6 +247,18 @@ pub enum Error {
     #[error("{0}")]
     Refused(Box<Refusal>),
 
+    /// A `[quality]` pattern of the `project.toml` at `path` that does not
+    /// compile, or compiles past its size limit; `message` is regex's.
+    #[error(
+        "{}: `[quality] patterns[{index}].pattern` does not compile: {message}",
+        path.display()
+    )]
+    QualityPattern {
+        path: PathBuf,
+        index: usize,
+        message: String,
+    },
+
     #[error("{0} consistency error(s) found")]
     CheckFailed(usize),
 

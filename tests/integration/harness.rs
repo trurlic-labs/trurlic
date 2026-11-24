@@ -279,6 +279,16 @@ pub fn decision(component: &str, choice: &str, extra: &str) -> String {
     )
 }
 
+/// An `apply` op that records `name` in `component` with `choice`, a
+/// reason, an alternative and an anchor: a decision at the built-in bar.
+pub fn record(name: &str, component: &str, choice: &str) -> Value {
+    json!({
+        "op": "record", "name": name, "component": component, "choice": choice,
+        "reason": "Recorded by a test batch", "alternatives": ["No rule: rejected"],
+        "anchors": [{ "file": "src/lib.rs" }],
+    })
+}
+
 /// The lines `stream` yields, read on a thread of their own so that every
 /// receive can carry a timeout: a server that hangs or dies fails the test
 /// instead of blocking it.

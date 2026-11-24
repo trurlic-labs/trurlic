@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
-use crate::harness::{Project, decision, git, graph_git, graph_log};
+use crate::harness::{Project, decision, git, graph_git, graph_log, record};
 
 /// The decision file a hand edit writes out of canonical form, its tags
 /// out of order: `trurlic fmt` rewrites it.
@@ -503,12 +503,7 @@ fn a_history_commit_that_fails_is_made_by_the_next_writer() {
 
 /// A batch that records two decisions of a new component.
 fn batch(origin: &str, component: &str) -> serde_json::Value {
-    let record = |name: String| {
-        serde_json::json!({
-            "op": "record", "name": name, "component": component,
-            "choice": format!("A rule of {component}"), "reason": "Recorded by a test batch",
-        })
-    };
+    let record = |name: String| record(&name, component, &format!("A rule of {component}"));
     serde_json::json!({ "origin": origin, "ops": [
         { "op": "add_component", "name": component, "description": "" },
         record(format!("{component}-one")),
@@ -651,12 +646,7 @@ fn fsyncs(project: &Project, args: &[&str]) -> (u64, u64) {
 fn a_commit_flushes_its_objects_in_one_batch_however_many_files_it_holds() {
     let project = shared();
     let ops: Vec<serde_json::Value> = (0..30)
-        .map(|i| {
-            serde_json::json!({
-                "op": "record", "name": format!("rule-{i}"), "component": "project",
-                "choice": format!("Rule {i}"), "reason": "Recorded by a test batch",
-            })
-        })
+        .map(|i| record(&format!("rule-{i}"), "project", &format!("Rule {i}")))
         .collect();
     let file = project.path().join("batch.json");
     fs::write(&file, serde_json::json!({ "ops": ops }).to_string()).unwrap();

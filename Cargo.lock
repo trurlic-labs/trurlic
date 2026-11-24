@@ -706,6 +706,7 @@ dependencies = [
  "clap",
  "criterion",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

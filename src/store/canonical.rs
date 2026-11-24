@@ -14,6 +14,7 @@
 
 use std::fmt::{self, Write};
 
+use super::quality::{Pattern, Quality, WordRange};
 use super::schema::{AcceptedVia, Anchor, Component, Decision, Project, Status};
 
 /// A file type with a canonical form.
@@ -111,6 +112,48 @@ impl<W: Write> Emitter<W> {
         writeln!(self.0, "\n[{name}]")
     }
 
+    fn array_table(&mut self, name: &str) -> fmt::Result {
+        writeln!(self.0, "\n[[{name}]]")
+    }
+
+    fn count(&mut self, key: &str, value: Option<usize>) -> fmt::Result {
+        value.map_or(Ok(()), |value| writeln!(self.0, "{key} = {value}"))
+    }
+
+    /// `true` as a key; `false`, the default, is left out.
+    fn flag(&mut self, key: &str, value: bool) -> fmt::Result {
+        if value {
+            writeln!(self.0, "{key} = true")?;
+        }
+        Ok(())
+    }
+
+    /// A range as an inline table of the bounds it has; nothing for none.
+    fn range(&mut self, key: &str, range: WordRange) -> fmt::Result {
+        let bounds: Vec<String> = [("min", range.min), ("max", range.max)]
+            .into_iter()
+            .filter_map(|(name, bound)| bound.map(|bound| format!("{name} = {bound}")))
+            .collect();
+        if bounds.is_empty() {
+            return Ok(());
+        }
+        writeln!(self.0, "{key} = {{ {} }}", bounds.join(", "))
+    }
+
+    /// A regular expression as a `'...'` literal string, which holds its
+    /// backslashes as written, unless it holds what a literal cannot: a
+    /// `'` or a control character other than tab.
+    fn pattern(&mut self, key: &str, pattern: &str) -> fmt::Result {
+        let literal = !pattern
+            .chars()
+            .any(|c| c == '\'' || (c.is_control() && c != '\t'));
+        if literal {
+            writeln!(self.0, "{key} = '{pattern}'")
+        } else {
+            self.string(key, pattern)
+        }
+    }
+
     /// `text` as a TOML string: `"""` when it holds a line break, so the
     /// file shows its lines, else `"..."`.
     fn text(&mut self, text: &str) -> fmt::Result {
@@ -159,7 +202,40 @@ impl Canonical for Project {
         out.string("format_version", &self.format_version.to_string())?;
         out.string("name", &self.name)?;
         out.string("description", &self.description)?;
-        out.string("placement", self.placement.as_str())
+        out.string("placement", self.placement.as_str())?;
+        self.quality.emit(out)
+    }
+}
+
+/// `[quality]`, left out when it holds nothing: each limit it has, then
+/// each pattern as a `[[quality.patterns]]` table, in its order.
+impl Canonical for Quality {
+    fn emit<W: Write>(&self, out: &mut Emitter<W>) -> fmt::Result {
+        if self.is_default() {
+            return Ok(());
+        }
+        out.table("quality")?;
+        out.range("reason_words", self.reason_words)?;
+        out.count("alternatives_max", self.alternatives_max)?;
+        out.count("alternative_words_max", self.alternative_words_max)?;
+        out.count("anchors_max", self.anchors_max)?;
+        out.flag("require_origin", self.require_origin)?;
+        for pattern in &self.patterns {
+            out.array_table("quality.patterns")?;
+            pattern.emit(out)?;
+        }
+        Ok(())
+    }
+}
+
+impl Canonical for Pattern {
+    fn emit<W: Write>(&self, out: &mut Emitter<W>) -> fmt::Result {
+        out.pattern("pattern", &self.pattern)?;
+        out.array("fields", &self.fields, |out, field| {
+            out.text(field.as_str())
+        })?;
+        out.string("level", self.level.as_str())?;
+        out.string("message", &self.message)
     }
 }
 
@@ -324,6 +400,7 @@ accepted_via = "cli"
             name: "demo".into(),
             description: "A \"demo\"\nproject".into(),
             placement: Placement::Shared,
+            quality: Quality::default(),
         };
         assert_eq!(
             toml::from_str::<Project>(&canonical(&project)).unwrap(),
@@ -337,6 +414,58 @@ accepted_via = "cli"
             toml::from_str::<Component>(&canonical(&component)).unwrap(),
             component
         );
+    }
+
+    /// `[quality]` follows the project's keys: its limits, then each
+    /// pattern as a table, a regular expression as a literal string unless
+    /// it holds a `'`; the default table is left out.
+    #[test]
+    fn a_quality_table_is_written_in_its_fixed_layout_and_reads_back() {
+        use crate::store::quality::{DecisionField, Level, Pattern, WordRange};
+
+        let pattern = |text: &str, level| Pattern {
+            pattern: text.into(),
+            fields: [DecisionField::Reason, DecisionField::Choice].into(),
+            level,
+            message: "Say \"use\"".into(),
+        };
+        let mut project = Project {
+            format_version: FORMAT_VERSION,
+            name: "demo".into(),
+            description: String::new(),
+            placement: Placement::Tracked,
+            quality: Quality::default(),
+        };
+        let header = "format_version = \"0.5.0\"\nname = \"demo\"\ndescription = \"\"\n\
+                      placement = \"tracked\"\n";
+        assert_eq!(canonical(&project), header);
+        project.quality = Quality {
+            reason_words: WordRange {
+                min: None,
+                max: Some(180),
+            },
+            anchors_max: Some(8),
+            require_origin: true,
+            patterns: vec![
+                pattern(r"\butilize\b", Level::Refuse),
+                pattern(r"it's\s", Level::Warn),
+            ],
+            ..Quality::default()
+        };
+        let written = canonical(&project);
+        assert_eq!(
+            written,
+            format!(
+                "{header}\n[quality]\nreason_words = {{ max = 180 }}\nanchors_max = 8\n\
+                 require_origin = true\n\n[[quality.patterns]]\npattern = '\\butilize\\b'\n\
+                 fields = [\n    \"choice\",\n    \"reason\",\n]\nlevel = \"refuse\"\n\
+                 message = \"Say \\\"use\\\"\"\n\n[[quality.patterns]]\n\
+                 pattern = \"it's\\\\s\"\nfields = [\n    \"choice\",\n    \"reason\",\n]\n\
+                 level = \"warn\"\nmessage = \"Say \\\"use\\\"\"\n"
+            )
+        );
+        assert_eq!(toml::from_str::<Project>(&written).unwrap(), project);
+        assert!(is_canonical(&project, written.as_bytes()));
     }
 
     #[test]

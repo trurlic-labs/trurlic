@@ -1,0 +1,23 @@
+component = "store"
+choice = "A warn pattern lets the batch write and adds a warning shaped as a refusal (op, field, rule, message), once per op and pattern, at its first match"
+reason = "A rule that needs judgment, such as no measurement in a reason, must not block a write that is right, yet the writer has to see it. The warning names the op, the argument path and the rule as a refusal does, so a caller reads both with one parser, and a later kind of warning is one more WarningKind with the same fields. One warning per op and pattern bounds the list: a pattern that matches every sentence of a long reason says so once. Over MCP the warnings are the result's warnings array, absent when empty; trurlic apply prints each on stderr after its op lines, and with --json prints the call's text."
+alternatives = [
+    "A warning per match: rejected because one pattern over a long reason would fill the result",
+    "Free-text notes: rejected because a caller could not tell one kind of warning from another",
+]
+tags = [
+    "api",
+    "quality",
+]
+status = "proposed"
+origin = "quality rules"
+created = "2026-11-24T04:09:05.642017587Z"
+anchors = [
+    { file = "src/commands/apply.rs", symbol = "print" },
+    { file = "src/mcp/apply.rs" },
+    { file = "src/store/apply/tests/quality.rs", symbol = "a_warn_pattern_warns_once_per_op_at_its_first_match" },
+    { file = "src/store/apply/warning.rs", symbol = "Warning" },
+]
+depends_on = [
+    "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",
+]

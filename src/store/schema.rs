@@ -13,6 +13,7 @@ use std::fmt;
 use serde::Deserialize;
 
 use super::limits::{MAX_ANCHOR_PATH_BYTES, MAX_ANCHOR_SYMBOL_BYTES};
+use super::quality::Quality;
 use super::time::Timestamp;
 use super::version::FormatVersion;
 
@@ -25,6 +26,9 @@ pub struct Project {
     pub name: String,
     pub description: String,
     pub placement: Placement,
+    /// The write rules beyond the built-in ones; absent means none.
+    #[serde(default)]
+    pub quality: Quality,
 }
 
 /// Where the graph is versioned: in the project's git, or out of it.
@@ -493,6 +497,7 @@ created = "2025-06-01T10:30:00Z"
                        placement = \"tracked\"\n";
         assert!(toml::from_str::<Project>(project).is_ok());
         assert!(toml::from_str::<Project>(&format!("{project}[budget]\n")).is_err());
+        assert!(toml::from_str::<Project>(&format!("{project}[quality]\nlimit = 1\n")).is_err());
     }
 
     #[test]

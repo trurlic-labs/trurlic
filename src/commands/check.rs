@@ -8,9 +8,10 @@ use crate::{Error, Result};
 use super::{graph_name, placement};
 
 /// `trurlic check`: every issue of the graph and of its placement as an
-/// error, every file not in canonical form as a warning. Fails when there
-/// is an issue; a file that only needs `trurlic fmt` does not fail it,
-/// since a hand edit is a legal write.
+/// error, and a `[quality]` pattern that does not compile, which would
+/// refuse every write; every file not in canonical form as a warning.
+/// Fails when there is an error; a file that only needs `trurlic fmt`
+/// does not fail it, since a hand edit is a legal write.
 ///
 /// The placement is held to what git says of the directory that holds the
 /// graph: a tracked graph is in a work tree whose git tracks it and
@@ -29,8 +30,12 @@ pub(crate) fn check(cwd: &Path) -> Result<()> {
         .history_findings(state.project.placement)?
         .into_iter()
         .partition(HistoryFinding::is_error);
+    let bar = store.bar(&state.project.quality).err();
     for issue in &issues {
         diag!("  error: {}", issue.message);
+    }
+    if let Some(error) = &bar {
+        diag!("  error: {error}");
     }
     for finding in &failing {
         diag!("  error: {finding}");
@@ -41,7 +46,7 @@ pub(crate) fn check(cwd: &Path) -> Result<()> {
     for finding in &mended {
         diag!("  warning: {finding}");
     }
-    let errors = issues.len() + failing.len();
+    let errors = issues.len() + failing.len() + usize::from(bar.is_some());
     if errors > 0 {
         return Err(Error::CheckFailed(errors));
     }

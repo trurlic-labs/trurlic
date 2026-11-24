@@ -5,6 +5,7 @@
 use std::fmt;
 
 use super::ops::{Field, OpKind};
+use crate::store::quality::{Broken, QualityFault};
 use crate::store::schema::AnchorFault;
 use crate::store::state::NameFault;
 use crate::store::text::{TextFault, TextField};
@@ -20,7 +21,9 @@ pub struct Refusal {
     /// empty batch, its origin or session.
     pub op: Option<OpAt>,
     /// The argument at fault, within the op (`add_tags[0]`) or the batch
-    /// (`origin`); `None` when the op as a whole breaks the rule.
+    /// (`origin`); for a rule of the quality bar, the decision's field the
+    /// op leaves at fault (`alternatives[2]`); `None` when the op as a
+    /// whole breaks the rule.
     pub field: Option<String>,
     pub rule: Rule,
 }
@@ -30,13 +33,18 @@ impl Refusal {
     /// `ops[3]`, `origin`.
     #[must_use]
     pub fn path(&self) -> String {
-        match (&self.op, &self.field) {
-            (Some(op), Some(field)) => format!("ops[{}].{field}", op.index),
-            (Some(op), None) => format!("ops[{}]", op.index),
-            // clone: the path is the caller's own string.
-            (None, Some(field)) => field.clone(),
-            (None, None) => "ops".to_owned(),
-        }
+        path(self.op.as_ref(), self.field.as_deref()).unwrap_or_else(|| "ops".to_owned())
+    }
+}
+
+/// `field` within the op `op` or the batch, as an argument path; `None`
+/// when neither names one.
+pub(super) fn path(op: Option<&OpAt>, field: Option<&str>) -> Option<String> {
+    match (op, field) {
+        (Some(op), Some(field)) => Some(format!("ops[{}].{field}", op.index)),
+        (Some(op), None) => Some(format!("ops[{}]", op.index)),
+        (None, Some(field)) => Some(field.to_owned()),
+        (None, None) => None,
     }
 }
 
@@ -121,9 +129,20 @@ pub enum Rule {
     NotHeld {
         element: String,
     },
+    /// A rule of the quality bar, built in or of `[quality]`.
+    Quality(QualityFault),
     /// An issue the resulting graph has and the loaded one lacks, which
     /// no rule above refused.
     Issue(Issue),
+}
+
+impl From<Broken> for Rule {
+    fn from(broken: Broken) -> Self {
+        match broken {
+            Broken::Text { field, fault } => Self::Text { field, fault },
+            Broken::Quality(fault) => Self::Quality(fault),
+        }
+    }
 }
 
 impl Rule {
@@ -149,6 +168,7 @@ impl Rule {
             Self::InUse { .. } => "component_in_use",
             Self::BothForms { .. } => "both_forms",
             Self::NotHeld { .. } => "not_held",
+            Self::Quality(fault) => fault.as_str(),
             Self::Issue(issue) => issue.kind.as_str(),
         }
     }
@@ -209,6 +229,7 @@ impl fmt::Display for Rule {
             Self::NotHeld { element } => {
                 write!(f, "names `{element}`, which the list does not hold")
             }
+            Self::Quality(fault) => write!(f, "{fault}"),
             Self::Issue(issue) => write!(f, "the graph would gain an issue: {}", issue.message),
         }
     }
@@ -216,25 +237,36 @@ impl fmt::Display for Rule {
 
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(op) = &self.op {
-            write!(
-                f,
-                "ops[{}] ({} `{}`)",
-                op.index,
-                op.kind.as_str(),
-                op.target
-            )?;
-            if self.field.is_some() {
-                f.write_str(", ")?;
-            } else {
-                f.write_str(": ")?;
-            }
-        }
-        if let Some(field) = &self.field {
-            write!(f, "`{field}`: ")?;
-        }
+        located(f, self.op.as_ref(), self.field.as_deref())?;
         write!(f, "{}", self.rule)
     }
+}
+
+/// The start of a refusal's or a warning's message: the op and the
+/// argument it is about, when it is about one.
+pub(super) fn located(
+    f: &mut fmt::Formatter<'_>,
+    op: Option<&OpAt>,
+    field: Option<&str>,
+) -> fmt::Result {
+    if let Some(op) = op {
+        write!(
+            f,
+            "ops[{}] ({} `{}`)",
+            op.index,
+            op.kind.as_str(),
+            op.target
+        )?;
+        if field.is_some() {
+            f.write_str(", ")?;
+        } else {
+            f.write_str(": ")?;
+        }
+    }
+    if let Some(field) = field {
+        write!(f, "`{field}`: ")?;
+    }
+    Ok(())
 }
 
 /// `names` in backticks, comma-separated, past [`LISTED_NAMES`] counted.

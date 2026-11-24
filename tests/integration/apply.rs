@@ -8,7 +8,7 @@ use std::process::Stdio;
 
 use serde_json::{Value, json};
 
-use crate::harness::{GraphFiles, McpClient, Project};
+use crate::harness::{GraphFiles, McpClient, Project, record};
 
 /// Every op kind, each building on the ones before it.
 fn every_op() -> Value {
@@ -27,11 +27,13 @@ fn every_op() -> Value {
         {
             "op": "record", "name": "rotate-keys", "component": "auth",
             "choice": "Rotate keys weekly", "reason": "A leaked key expires within a week",
-            "depends_on": ["sign-tokens"],
+            "alternatives": ["Never rotate: rejected, a leak lasts"],
+            "depends_on": ["sign-tokens"], "anchors": [{ "file": "src/rotate.rs" }],
         },
         {
             "op": "record", "name": "old-rotation", "component": "auth",
             "choice": "Rotate keys monthly", "reason": "The first plan of the rotation",
+            "alternatives": ["Weekly: rejected, too often"],
             "depends_on": ["sign-tokens"], "anchors": [{ "file": "src/keys.rs" }],
         },
         { "op": "revise", "name": "rotate-keys", "add_tags": ["keys"] },
@@ -42,6 +44,7 @@ fn every_op() -> Value {
         {
             "op": "record", "name": "temp", "component": "billing",
             "choice": "A placeholder", "reason": "The next op removes it again",
+            "alternatives": ["None"], "anchors": [{ "file": "src" }],
         },
         { "op": "remove", "name": "temp" },
         { "op": "remove_component", "name": "scratch" },
@@ -114,10 +117,11 @@ fn a_fifty_op_batch_with_one_invalid_op_writes_nothing_and_names_it() {
     let ops: Vec<Value> = (0..50)
         .map(|index| {
             let component = if index == 37 { "nowhere" } else { "project" };
-            json!({
-                "op": "record", "name": format!("rule-{index}"), "component": component,
-                "choice": format!("Rule {index}"), "reason": "Recorded by a test batch",
-            })
+            record(
+                &format!("rule-{index}"),
+                component,
+                &format!("Rule {index}"),
+            )
         })
         .collect();
     let batch = json!({ "ops": ops });
@@ -182,6 +186,7 @@ fn a_batch_from_stdin_prints_a_line_per_op() {
         {
             "op": "record", "name": "sign", "component": "auth",
             "choice": "Sign tokens", "reason": "Verification needs no store",
+            "alternatives": ["HMAC"], "anchors": [{ "file": "src/auth.rs" }],
         },
         { "op": "revise", "name": "sign", "choice": "Sign every token", "add_tags": ["keys"] },
         { "op": "rename", "name": "sign", "to": "sign-tokens" },
@@ -248,12 +253,7 @@ fn a_file_that_holds_no_batch_is_refused() {
 #[test]
 fn status_on_the_command_line_is_the_tool() {
     let project = Project::init();
-    let record = |name: &str| {
-        json!({
-            "op": "record", "name": name, "component": "project",
-            "choice": format!("Rule {name}"), "reason": "Recorded by a test batch",
-        })
-    };
+    let record = |name: &str| record(name, "project", &format!("Rule {name}"));
     project.apply(
         &json!({ "origin": "row 1", "ops": [record("a"), record("b")] }),
         &[],
@@ -286,4 +286,87 @@ fn status_on_the_command_line_is_the_tool() {
         text.contains("decisions: 3 (3 project-wide, 3 proposed)\n"),
         "{text}"
     );
+}
+
+/// `[quality]` of project.toml holds both surfaces alike: a refusal names
+/// the rule, the field and the measure; a `warn` pattern writes and warns,
+/// in `warnings` over MCP and on stderr for a terminal; `status` counts the
+/// rules; a pattern that does not compile fails `check` and every write,
+/// while `status`, a read, still answers.
+#[test]
+fn the_quality_table_holds_both_surfaces_alike() {
+    let project = Project::init();
+    let header = project.read("project.toml");
+    let table = "[quality]\nreason_words = { max = 5 }\nrequire_origin = true\n\n\
+                 [[quality.patterns]]\npattern = 'zz'\nfields = [\"choice\"]\nlevel = \"warn\"\n\
+                 message = \"No zz.\"\n";
+    project.write("project.toml", &format!("{header}\n{table}"));
+    let mut long = record("long", "project", "A rule");
+    long["reason"] = json!("one two three four five six");
+    let long = json!({ "origin": "row 1", "ops": [long] });
+    let (mut client, _) = McpClient::connect(&project);
+
+    let refusal = client.call_tool_refusal("apply", long.clone());
+    let output = project.apply(&long, &[]);
+
+    let message = "ops[0] (record `long`), `reason`: 6 words, over the maximum of 5 \
+                   (`[quality] reason_words.max`)";
+    assert_eq!(
+        (&refusal["rule"], &refusal["field"], &refusal["message"]),
+        (
+            &json!("reason_words_max"),
+            &json!("ops[0].reason"),
+            &json!(message)
+        )
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("error: {message}\n")
+    );
+    let unnamed = client.call_tool_refusal(
+        "apply",
+        json!({ "ops": [record("plain", "project", "A rule")] }),
+    );
+    assert_eq!(
+        (&unnamed["rule"], &unnamed["field"]),
+        (&json!("origin_required"), &json!("origin"))
+    );
+
+    let warned =
+        |name: &str| json!({ "origin": "row 1", "ops": [record(name, "project", "Rule zz")] });
+    let result = client.call_tool("apply", warned("zz-one"));
+    let said = |name: &str| {
+        format!(
+            "ops[0] (record `{name}`), `choice`: matches `[quality] patterns[0]` at byte 5 (`zz`): No zz."
+        )
+    };
+    assert_eq!(
+        result["warnings"],
+        json!([{
+            "op": { "index": 0, "op": "record", "name": "zz-one" },
+            "field": "ops[0].choice", "rule": "pattern", "message": said("zz-one"),
+        }])
+    );
+    let output = project.apply(&warned("zz-two"), &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("warning: {}\n", said("zz-two"))
+    );
+    let status = String::from_utf8(project.run_ok(&["status"]).stdout).unwrap();
+    assert!(
+        status.contains("quality: 2 limit(s), 0 refusing and 1 warning pattern(s) in [quality]\n"),
+        "{status}"
+    );
+
+    let broken = table.replace("'zz'", "'(zz'");
+    project.write("project.toml", &format!("{header}\n{broken}"));
+    let stderr = project.run_refused(&["check"]);
+    assert!(
+        stderr.contains("project.toml: `[quality] patterns[0].pattern` does not compile"),
+        "{stderr}"
+    );
+    project.run_ok(&["status"]);
+    let refusal = client.call_tool_refusal("apply", warned("zz-three"));
+    assert_eq!(refusal["kind"], "store_error", "{refusal}");
 }

@@ -1,0 +1,94 @@
+# The `[quality]` table of a project whose decisions are followed by coding
+# agents with no other context: append it to `.trurlic/project.toml`.
+#
+# `trurlic apply` holds every decision it records, revises or merges into to
+# these rules, in each field the op changes, beside the built-in ones (a
+# one-line choice of at most 200 bytes, a reason of real text, at least one
+# alternative and one anchor). A limit or a `refuse` pattern refuses the
+# write, naming the field, the rule, the measured value and the limit; a
+# `warn` pattern lets it through with a warning, for a rule a reader has to
+# judge. Words are runs of text between whitespace. Patterns are regular
+# expressions in the syntax of the Rust `regex` crate, matched anywhere in
+# the text of each field they name. `trurlic fmt` rewrites the table in its
+# canonical form, without these comments.
+
+[quality]
+# A reason says why the shape holds and what breaks without it: 30 to 80
+# words, at most 120, and up to 180 only for a decision that carries a
+# whole rule set.
+reason_words = { max = 180 }
+# One to three real options: a fifth means the decision answers more than
+# one question.
+alternatives_max = 4
+alternative_words_max = 30
+# The anchors a reader opens first: the type or function that enforces the
+# decision.
+anchors_max = 8
+# Every batch that records a decision names the task or plan row it serves.
+require_origin = true
+
+[[quality.patterns]]
+pattern = '(?i)\b(?:we|our)\b'
+fields = ["choice", "reason", "alternatives"]
+level = "refuse"
+message = "The subject is a code entity, the run or the reader, never \"we\"."
+
+[[quality.patterns]]
+pattern = '(?i)\butili[sz](?:e|es|ed|ing)\b'
+fields = ["choice", "reason", "alternatives"]
+level = "refuse"
+message = "Write \"use\", not \"utilize\"."
+
+[[quality.patterns]]
+pattern = '(?i)\b(?:simply|basically|essentially|actually|obviously|leverages?|leveraged)\b'
+fields = ["choice", "reason", "alternatives"]
+level = "warn"
+message = "Cut the filler: a decision states facts a reader can check."
+
+[[quality.patterns]]
+pattern = '\b\d+(?:[.,]\d+)?\s?(?:ns|us|ms|s|min|x|[KMGT]i?B)\b|\b\d+(?:[.,]\d+)?\s?%'
+fields = ["reason"]
+level = "warn"
+message = "A reason holds no measurement: state the conclusion, keep the numbers with the benchmarks; a structural bound may state the rule."
+
+[[quality.patterns]]
+pattern = '^(?:[^ ]+ +){25}[^ ]'
+fields = ["choice"]
+level = "warn"
+message = "Aim for 15 to 25 words in a choice: one constraint an agent follows without the reason."
+
+[[quality.patterns]]
+pattern = ';.*;'
+fields = ["choice"]
+level = "warn"
+message = "A choice holds at most one `;`."
+
+[[quality.patterns]]
+pattern = '^\s*(?:[^ \t\n]+[ \t\n]+){120}[^ \t\n]'
+fields = ["reason"]
+level = "warn"
+message = "Past 120 words, a reason carries a whole rule set or more than one decision."
+
+[[quality.patterns]]
+pattern = '(?:[^ \t\n.;:!?]+[ \t\n]+){25}[^ \t\n.;:!?]'
+fields = ["choice", "reason", "alternatives"]
+level = "warn"
+message = "One statement per sentence, at most 25 words."
+
+[[quality.patterns]]
+pattern = '^[^:]*$'
+fields = ["alternatives"]
+level = "warn"
+message = "Write an alternative as `<option> - rejected: <consequence>`."
+
+[[quality.patterns]]
+pattern = 'rejected:(?:[ \t\n]+[^ \t\n]+){16}'
+fields = ["alternatives"]
+level = "warn"
+message = "State the consequence after `rejected:` in at most 15 words."
+
+[[quality.patterns]]
+pattern = '(?:^|/)tests?/'
+fields = ["anchors"]
+level = "warn"
+message = "Anchor a test only when it is the decision's sole enforcement."
