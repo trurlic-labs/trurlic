@@ -17,6 +17,7 @@ use std::time::Duration;
 use crate::{Error, Result};
 
 use super::commit::PendingWrite;
+use super::history::{CommitMessage, History, Tool};
 use super::schema::{
     AcceptedText, AcceptedVia, Anchor, Component, Decision, PROJECT_COMPONENT, Placement, Status,
 };
@@ -216,11 +217,19 @@ impl Corpus {
     /// Create the store in `project_dir/.trurlic` and the source tree in
     /// `project_dir/src`. Fails like [`Store::create`] when a store is there.
     pub fn write(&self, project_dir: &Path) -> Result<Store> {
+        self.write_as(project_dir, Placement::Tracked)
+    }
+
+    /// [`write`](Self::write), the store stating `placement`: a `shared`
+    /// one's repository holds the corpus in its second commit.
+    pub fn write_as(&self, project_dir: &Path, placement: Placement) -> Result<Store> {
         let plan = Plan::new(*self);
-        let store = Store::create(project_dir, "corpus", Placement::Tracked)?;
+        let store = Store::create(project_dir, "corpus", placement)?;
         plan.write_sources(project_dir)?;
         let writes = plan.writes(&store)?;
-        store.commit_batch(&store.lock()?, &writes, &[])?;
+        let message = CommitMessage::of(Tool::Init);
+        let history = History::of(placement, &message);
+        store.commit_batch(&store.lock()?, &writes, &[], history)?;
         Ok(store)
     }
 }

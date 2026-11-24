@@ -162,6 +162,22 @@ pub fn isolated_git(dir: &Path) -> Command {
     command
 }
 
+/// `git <args>` in the graph directory `graph`, which holds a shared
+/// graph's repository: [`git`] there, with stdout as text.
+pub fn graph_git(graph: &Path, args: &[&str]) -> String {
+    String::from_utf8(git(graph, args).stdout).unwrap()
+}
+
+/// The commit messages of the repository of the graph directory `graph`,
+/// newest first, each without its final line break.
+pub fn graph_log(graph: &Path) -> Vec<String> {
+    graph_git(graph, &["log", "--format=%B%x00"])
+        .split('\0')
+        .map(|message| message.trim_matches('\n').to_owned())
+        .filter(|message| !message.is_empty())
+        .collect()
+}
+
 /// A failpoint armed to pause instead of abort: the process that reaches
 /// the site creates the marker file and waits there until the test deletes
 /// it, holding whatever lock the site runs under.

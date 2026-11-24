@@ -66,7 +66,7 @@ pub(crate) fn migrate(cwd: &Path, dry_run: DryRun, placement: Option<Placement>)
     match store.commit_migration(&lock, migration) {
         Ok(_) => {}
         // Recorded in the journal: the migration lands, and the copy stays.
-        Err(e @ Error::CommitPending { .. }) => return Err(e),
+        Err(e @ Error::WritePending { .. }) => return Err(e),
         Err(e) => {
             let _ = fs::remove_dir_all(&backup);
             return Err(e);
@@ -306,8 +306,8 @@ fn back_up(root: &Path, backup: &Path, lines: &[String]) -> Result<()> {
     sync_dir(parent).map_err(Error::io(parent))
 }
 
-/// Copy the directory `src` to `dst`, but for `.state/`, every file
-/// flushed. The files of a directory are copied in parallel: each flush
+/// Copy the directory `src` to `dst`, but for `.state/` and the graph's
+/// repository `.git/`, every file flushed. The files of a directory are copied in parallel: each flush
 /// waits on the disk, and a store holds hundreds of files.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).map_err(Error::io(dst))?;
@@ -325,8 +325,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
                 src_path.display()
             );
         } else if ft.is_dir() {
-            // Skip .state/: it holds the lock, temp files and the journal.
-            if entry.file_name() != ".state" {
+            // Skip .state/, which holds the lock, temp files and the journal,
+            // and .git/, whose history the migration's commit extends.
+            if entry.file_name() != ".state" && entry.file_name() != ".git" {
                 copy_dir_recursive(&src_path, &dst_path)?;
             }
         } else {

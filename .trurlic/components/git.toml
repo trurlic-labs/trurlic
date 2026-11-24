@@ -1,1 +1,1 @@
-description = "The git command line run as a child process: one typed function per question, -z output, the variables that redirect git cleared"
+description = "The git command line run as a child process: one typed function per question, -z output, the variables that redirect git cleared; and the graph's own repository (git::graph)"

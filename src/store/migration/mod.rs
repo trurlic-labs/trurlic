@@ -30,6 +30,7 @@ use crate::{Error, Result};
 
 use super::canonical::Canonical;
 use super::commit::PendingWrite;
+use super::history::{CommitMessage, History, Tool};
 use super::schema::{
     COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, FORMAT_VERSION, PROJECT_FILE, Placement,
     Project,
@@ -57,6 +58,9 @@ pub(crate) struct Migration {
     pub(crate) report: MigrationReport,
     writes: Vec<PendingWrite>,
     removes: Vec<PathBuf>,
+    /// The placement the migrated `project.toml` states: the commit's
+    /// history goes where it says.
+    placement: Placement,
 }
 
 /// A graph file of any format.
@@ -176,7 +180,9 @@ impl Store {
     }
 
     /// Carry out `migration` in one journaled commit, then remove the
-    /// `patterns/` directory it emptied.
+    /// `patterns/` directory it emptied. A migration to `shared` makes the
+    /// graph's repository first, when there is none, and its commit is then
+    /// the repository's first, holding every graph file.
     pub(crate) fn commit_migration(
         &self,
         lock: &StoreLock,
@@ -186,8 +192,13 @@ impl Store {
             report,
             writes,
             removes,
+            placement,
         } = migration;
-        self.commit_batch(lock, &writes, &removes)?;
+        if placement == Placement::Shared {
+            self.ensure_repository(lock)?;
+        }
+        let message = CommitMessage::of(Tool::Migrate);
+        self.commit_batch(lock, &writes, &removes, History::of(placement, &message))?;
         let patterns = self.root.join(PATTERNS_DIR);
         match fs::remove_dir(&patterns) {
             // A directory that holds other files keeps them.
@@ -235,6 +246,9 @@ impl Store {
             current.removed.push(file.to_string());
             current.removes.push(file.path(self.root()));
         }
+        let placement = current.placement.ok_or_else(|| Error::Unmigrated {
+            path: self.project_path(),
+        })?;
         Ok(Some(Migration {
             report: MigrationReport {
                 from,
@@ -244,6 +258,7 @@ impl Store {
             },
             writes: current.writes,
             removes: current.removes,
+            placement,
         }))
     }
 
@@ -309,6 +324,8 @@ struct Current<'a> {
     rewritten: Vec<String>,
     removes: Vec<PathBuf>,
     removed: Vec<String>,
+    /// The placement the migrated `project.toml` states, once it is read.
+    placement: Option<Placement>,
 }
 
 impl<'a> Current<'a> {
@@ -320,6 +337,7 @@ impl<'a> Current<'a> {
             rewritten: Vec::new(),
             removes: Vec::new(),
             removed: Vec::new(),
+            placement: None,
         }
     }
 
@@ -328,9 +346,13 @@ impl<'a> Current<'a> {
     /// refused: the step that leads to it must have removed it.
     fn add(&mut self, file: &File, table: toml::Table, before: Option<&[u8]>) -> Result<()> {
         match file {
-            File::Project => self.node::<Project>(file, table, before),
-            File::Component(_) => self.node::<Component>(file, table, before),
-            File::Decision(_) => self.node::<Decision>(file, table, before),
+            File::Project => {
+                let project = self.node::<Project>(file, table, before)?;
+                self.placement = Some(project.placement);
+                Ok(())
+            }
+            File::Component(_) => self.node::<Component>(file, table, before).map(drop),
+            File::Decision(_) => self.node::<Decision>(file, table, before).map(drop),
             File::Index | File::Pattern(_) => Err(Error::Unmigrated {
                 path: file.path(self.store.root()),
             }),
@@ -344,7 +366,7 @@ impl<'a> Current<'a> {
         file: &File,
         table: toml::Table,
         before: Option<&[u8]>,
-    ) -> Result<()> {
+    ) -> Result<T> {
         let path = file.path(self.store.root());
         let parsed: T = table.try_into().map_err(Error::toml(&path))?;
         let write = self.store.prepare_write(&path, &parsed)?;
@@ -354,7 +376,7 @@ impl<'a> Current<'a> {
         }
         // clone: the commit owns the files it keeps; the tree keeps its own.
         self.kept.insert(file.clone());
-        Ok(())
+        Ok(parsed)
     }
 }
 

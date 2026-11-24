@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::harness::{McpClient, decision, git, trurlic, trurlic_ok, trurlic_refused};
+use crate::harness::{McpClient, decision, git, graph_log, trurlic, trurlic_ok, trurlic_refused};
 
 /// A main worktree at `main` with a graph holding the component `auth`
 /// and the decision `sign-tokens`, anchored at `src/branch.rs`, a file only
@@ -240,10 +240,22 @@ fn check_refuses_a_tracked_graph_in_no_work_tree() {
 }
 
 /// The same graph, the same issue, from the main and the linked worktree.
+/// `git add` passes over a file of the graph's own repository, so the
+/// project's index takes it through `update-index`.
 #[test]
 fn check_refuses_a_shared_graph_git_tracks_from_every_tree() {
     let trees = Trees::shared();
-    git(&trees.main, &["add", "--force", ".trurlic/project.toml"]);
+    let object = git(&trees.main, &["hash-object", "-w", ".trurlic/project.toml"]);
+    let object = String::from_utf8(object.stdout).unwrap();
+    git(
+        &trees.main,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("100644,{},.trurlic/project.toml", object.trim()),
+        ],
+    );
 
     for tree in [&trees.main, &trees.linked] {
         let stderr = trurlic_refused(tree, &["check"]);
@@ -368,7 +380,8 @@ fn init_shared_belongs_at_the_top_of_the_main_worktree() {
     assert_eq!(
         stdout,
         format!(
-            "Initialized .trurlic/ (shared): kept out of git by {}\n",
+            "Initialized .trurlic/ (shared), its history in .trurlic/.git: kept out of the \
+             project's git by {}\n",
             exclude.display()
         )
     );
@@ -460,7 +473,8 @@ fn a_worktree_whose_main_worktree_is_gone_says_what_git_says() {
 
 /// With no `git` on `PATH`, a tree that holds its graph, and a directory
 /// inside the graph, are served: discovery spawned no git. The linked
-/// worktree needs git to reach the shared graph and says so.
+/// worktree needs git to reach the shared graph and says so, and so does
+/// `status`, which asks the graph's repository for what it lacks.
 #[test]
 fn discovery_runs_no_git_where_the_walk_finds_the_graph() {
     let trees = Trees::shared();
@@ -474,15 +488,51 @@ fn discovery_runs_no_git_where_the_walk_finds_the_graph() {
     };
 
     for dir in [trees.main.join("src"), trees.graph().join("decisions")] {
-        let output = no_git(&dir, &["status"]);
+        let output = no_git(&dir, &["query", "file", "src/branch.rs"]);
         assert!(output.status.success(), "{}: {output:?}", dir.display());
         let (mut client, _) = McpClient::connect_in(&dir, &[("PATH", "")], json!({}));
         client.call_tool("get_context", json!({ "component": "auth" }));
     }
+    let output = no_git(&trees.main, &["status"]);
+    assert_eq!(output.status.code(), Some(1));
     let output = no_git(&trees.linked, &["status"]);
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("cannot run `git`"), "{stderr}");
+}
+
+// -- one history for every tree of one graph --------------------------------
+
+/// A write from the main worktree, the linked worktree and the symlinked
+/// clone of one shared graph each commits to the graph's own repository,
+/// after the hand edit it found; the project's repository and the clone's
+/// get no commit.
+#[test]
+fn every_tree_of_a_shared_graph_commits_to_its_one_repository() {
+    let trees = Trees::shared();
+    let head = |tree: &Path| String::from_utf8(git(tree, &["rev-parse", "HEAD"]).stdout).unwrap();
+    let heads = [head(&trees.main), head(&trees.linked), head(&trees.clone)];
+    let before = graph_log(&trees.graph()).len();
+
+    for tree in [&trees.main, &trees.linked, &trees.clone] {
+        fs::write(
+            trees.graph().join("components/auth.toml"),
+            format!("description='{}'\n", tree.display()),
+        )
+        .unwrap();
+        trurlic_ok(tree, &["fmt"]);
+    }
+
+    let log = graph_log(&trees.graph());
+    assert_eq!(log.len(), before + 6, "{log:?}");
+    assert_eq!(
+        log[..6],
+        ["fmt", "hand edit", "fmt", "hand edit", "fmt", "hand edit"]
+    );
+    assert_eq!(
+        [head(&trees.main), head(&trees.linked), head(&trees.clone)],
+        heads
+    );
 }
 
 // -- one lock for every tree of one graph -----------------------------------

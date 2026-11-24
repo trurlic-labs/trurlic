@@ -1,5 +1,7 @@
 //! The decision graph on disk: `.trurlic/` read into a [`ProjectState`],
-//! validated, and written through the journaled commit of a [`Writer`].
+//! validated, and written through the journaled commit of a [`Writer`],
+//! which under `shared` placement ends with a commit to the graph's own
+//! git repository (`history.rs`).
 
 mod access;
 mod canonical;
@@ -10,6 +12,7 @@ mod create;
 mod cycles;
 mod durable;
 pub(crate) mod failpoint;
+mod history;
 mod journal;
 pub(crate) mod limits;
 mod load;
@@ -31,6 +34,7 @@ use crate::{Error, Result};
 
 pub use access::Writer;
 pub(crate) use durable::sync_dir;
+pub use history::{CommitMessage, HistoryFinding, Tool};
 pub use lock::StoreLock;
 pub use migration::PlacementDoubt;
 pub(crate) use migration::{
@@ -44,6 +48,7 @@ pub use schema::{
     STORE_DIR, Status,
 };
 pub use state::{NodeFile, ProjectState, has_control_chars, is_valid_kebab_case};
+pub use text::{TextFault, TextField};
 pub use time::{Timestamp, TimestampError};
 pub use validate::{Issue, IssueKind};
 pub use version::FormatVersion;
@@ -170,6 +175,53 @@ pub(crate) mod testing {
         );
         fs::write(root.join(PROJECT_FILE), project).unwrap();
         Store::at(root)
+    }
+
+    /// An empty `shared` store, whose repository holds the `init` commit.
+    pub fn shared_store(dir: &Path) -> Store {
+        Store::create(dir, "test-project", Placement::Shared).unwrap()
+    }
+
+    /// `git <args>` in the graph directory of `store`, as a person with no
+    /// user or system configuration; it must succeed.
+    pub fn graph_git(store: &Store, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(store.root())
+            .args([
+                "-c",
+                "user.name=someone",
+                "-c",
+                "user.email=someone@example.invalid",
+            ])
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// The messages of the graph's history, newest first, each without
+    /// its final line break.
+    pub fn graph_log(store: &Store) -> Vec<String> {
+        graph_git(store, &["log", "--format=%B%x00"])
+            .split('\0')
+            .map(|message| message.trim_matches('\n').to_owned())
+            .filter(|message| !message.is_empty())
+            .collect()
+    }
+
+    /// The files the commit `rev` changed, sorted.
+    pub fn changed_in(store: &Store, rev: &str) -> Vec<String> {
+        let names = graph_git(
+            store,
+            &["show", "--name-only", "--format=", "--no-renames", rev],
+        );
+        let mut names: Vec<String> = names.lines().map(str::to_owned).collect();
+        names.sort();
+        names
     }
 
     /// `value` written to `file` in its canonical form, outside any commit.

@@ -9,14 +9,18 @@
 //! `-z` output, or from `rev-parse`, which prints one path and a line
 //! break, so no name is quoted or cut at a newline.
 //!
-//! The questions: which files the index tracks, which an ignore rule
-//! matches, the top of a directory's work tree, the common dir, and the
-//! worktree list. "No work tree" is an answer, `None`, never a parsed
-//! message; a missing binary is [`Error::GitMissing`].
+//! The questions about the project's repository: which files the index
+//! tracks, which an ignore rule matches, the top of a directory's work
+//! tree, the common dir, and the worktree list. "No work tree" is an
+//! answer, `None`, never a parsed message; a missing binary is
+//! [`Error::GitMissing`]. None of them runs inside a graph directory: the
+//! graph's own repository is [`graph`]'s alone.
+
+pub(crate) mod graph;
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -251,18 +255,51 @@ fn run(dir: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
 
 /// `git -C <dir> <args>` run to its end, whatever its status.
 fn spawn(dir: &Path, args: &[&OsStr]) -> Result<Output> {
+    finish(command(dir), args, None)
+}
+
+/// `git -C <dir>` with [`CLEARED`] removed, for its caller to add to.
+fn command(dir: &Path) -> Command {
     let mut command = Command::new("git");
-    command.arg("-C").arg(dir).args(args).stdin(Stdio::null());
+    command.arg("-C").arg(dir);
     for variable in CLEARED {
         command.env_remove(variable);
     }
-    command.output().map_err(|source| match source.kind() {
+    command
+}
+
+/// `command` with `args` appended, run to its end, whatever its status,
+/// with `input` on its stdin, or with stdin closed when there is none.
+fn finish(mut command: Command, args: &[&OsStr], input: Option<&[u8]>) -> Result<Output> {
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command.stdin(match input {
+        Some(_) => Stdio::piped(),
+        None => Stdio::null(),
+    });
+    let not_started = |source: std::io::Error| match source.kind() {
         ErrorKind::NotFound => Error::GitMissing,
         // Every other reason the process did not start.
         _ => Error::GitSpawn {
             args: shown(args),
             source,
         },
+    };
+    let mut child = command.spawn().map_err(not_started)?;
+    let Some((bytes, stdin)) = input.zip(child.stdin.take()) else {
+        return child.wait_with_output().map_err(not_started);
+    };
+    // Written from a thread of its own while this one reads the output, so
+    // neither pipe can fill while the other waits. A write git cuts short
+    // by exiting is git's failure, which its status reports.
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            let mut stdin = stdin;
+            let _ = stdin.write_all(bytes);
+        });
+        child.wait_with_output().map_err(not_started)
     })
 }
 
@@ -314,6 +351,19 @@ fn path(bytes: &[u8]) -> PathBuf {
 #[cfg(not(unix))]
 fn path(bytes: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// The bytes git reads for `path` on its stdin.
+#[cfg(unix)]
+fn path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+/// The bytes git reads for `path` on its stdin: UTF-8 on Windows.
+#[cfg(not(unix))]
+fn path_bytes(path: &Path) -> Vec<u8> {
+    path.to_string_lossy().into_owned().into_bytes()
 }
 
 #[cfg(test)]

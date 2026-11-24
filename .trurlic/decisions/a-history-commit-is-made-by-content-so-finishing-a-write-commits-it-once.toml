@@ -1,0 +1,27 @@
+component = "store"
+choice = "A history commit is made by content: the write's files are staged as on disk, and an index that matches the last commit means the commit is in history already, so none is made again"
+reason = """
+A write stops in one of three windows after its commit point: files in place and no commit (commit.placed), commit made and journal left (history.committed), journal deleted (commit.finished). The next opener finishes a journal by staging its paths and committing; git refuses a commit that changes nothing, git diff --cached --quiet confirms it, and Repository::commit returns Committed::Nothing, so the second window commits nothing twice and the third has nothing left. The test is exact for what the history must hold, the files as the write left them, costs no process in the common path, and holds after git gc, an amended or reworded commit and a hand commit of those files, since each keeps the content. A hand edit of a file of the stopped write made before the opener runs is committed with it: the write's own bytes are gone from .state/tmp/ by then. tests/integration/history.rs stops a write in each window, and journal.rs amends and packs before the opener.
+"""
+alternatives = [
+    "A write id in the journal and a trailer, looked up at HEAD: rejected because a hand commit after the write hides it from HEAD and a reword drops it, so the write would be committed twice",
+    "Search the whole log for the write id: rejected because its cost grows with the history",
+    "Commit with --allow-empty and accept a duplicate: rejected because a duplicate commit claims the write's Origin twice",
+]
+tags = [
+    "history",
+    "reliability",
+]
+status = "proposed"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/git/graph.rs", symbol = "Committed" },
+    { file = "src/git/graph.rs", symbol = "Repository::commit" },
+    { file = "src/store/failpoint.rs", symbol = "Site" },
+    { file = "src/store/history.rs", symbol = "Store::commit_history" },
+    { file = "tests/integration/history.rs", symbol = "a_write_stopped_after_its_commit_point_is_committed_once_by_the_next_opener" },
+]
+depends_on = [
+    "a-history-commit-names-the-tool-and-carries-origin-and-session-trailers",
+    "every-commit-goes-through-a-flushed-journal-in-state-txn",
+]

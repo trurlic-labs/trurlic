@@ -1,1 +1,4 @@
-description = "Decision graph: TOML node files, their canonical form, validation, atomic writes, file locking, migrations"
+description = "Decision graph: TOML node files, their canonical form, validation, atomic writes, file locking, migrations, and a shared graph's history commits"
+connects_to = [
+    "git",
+]

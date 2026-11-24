@@ -1,7 +1,10 @@
 //! Benches over the seeded corpus at each of `Corpus::SIZES`: loading the
-//! store from disk, validating the loaded graph, and, through the MCP
-//! server in process, every read tool. The server loads the graph on every
-//! call, so each tool bench includes a load.
+//! store from disk, validating the loaded graph, through the MCP server in
+//! process every read tool, and one write, `trurlic fmt` of one file. The
+//! server loads the graph on every call, so each tool bench includes a
+//! load. The write is timed under `tracked`, under `shared` with nothing
+//! but its own commit to make, and under `shared` after a hand edit, which
+//! is a commit of its own: the differences are what the history costs.
 //!
 //! Read tools come from `tools/list`, so a new one is benched without editing
 //! this file, and setup panics when no request here fits it.
@@ -14,21 +17,25 @@
     reason = "a bench whose setup fails has nothing to measure"
 )]
 
+use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::LazyLock;
 use std::time::Duration;
 
 use criterion::measurement::WallTime;
-use criterion::{BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{
+    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main,
+};
 use serde_json::{Value, json};
 
 use trurlic::bench::Server;
 use trurlic::store::corpus::Corpus;
-use trurlic::store::{ProjectState, Store};
+use trurlic::store::{Placement, ProjectState, Store};
 
 /// One corpus per size, written under `target/tmp` once per run.
 static CORPORA: LazyLock<Vec<Fixture>> = LazyLock::new(|| {
@@ -199,11 +206,108 @@ fn bench_read_tools(c: &mut Criterion) {
     group.finish();
 }
 
+/// How the write bench leaves the graph before each `fmt`.
+#[derive(Clone, Copy)]
+enum Before {
+    /// `tracked`: the project's git holds the history.
+    Tracked,
+    /// `shared`, the hand edit `fmt` rewrites committed in setup.
+    Committed,
+    /// `shared`, the hand edit left for `fmt` to commit first.
+    HandEdit,
+}
+
+impl Before {
+    const ALL: [Self; 3] = [Self::Tracked, Self::Committed, Self::HandEdit];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Tracked => "fmt/tracked",
+            Self::Committed => "fmt/shared",
+            Self::HandEdit => "fmt/shared_after_hand_edit",
+        }
+    }
+
+    const fn placement(self) -> Placement {
+        match self {
+            Self::Tracked => Placement::Tracked,
+            Self::Committed | Self::HandEdit => Placement::Shared,
+        }
+    }
+}
+
+/// `git <args>` in the graph directory, reading no user configuration.
+fn graph_git(store: &Store, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(store.root())
+        .args([
+            "-c",
+            "user.name=bench",
+            "-c",
+            "user.email=bench@bench.invalid",
+        ])
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+fn bench_write(c: &mut Criterion) {
+    let mut group = c.benchmark_group("write");
+    group.sample_size(20);
+    for &size in &Corpus::SIZES[1..] {
+        for before in Before::ALL {
+            let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+                "corpus-write-{size}-{}",
+                before.name().replace('/', "-")
+            ));
+            if dir.exists() {
+                fs::remove_dir_all(&dir).unwrap();
+            }
+            let store = Corpus::new(size)
+                .write_as(&dir, before.placement())
+                .unwrap();
+            let state = store.load_state().unwrap();
+            let file = store.component_path(state.components.keys().next().unwrap());
+            let canonical = fs::read_to_string(&file).unwrap();
+            // A new description each time, so every commit writes new
+            // objects, as a real write does.
+            let edits = Cell::new(0_u64);
+            let edit = || {
+                edits.set(edits.get() + 1);
+                let edited = canonical.replacen(
+                    "description = \"",
+                    &format!("description=\"{} ", edits.get()),
+                    1,
+                );
+                fs::write(&file, edited).unwrap();
+                if matches!(before, Before::Committed) {
+                    graph_git(&store, &["commit", "--quiet", "--all", "-m", "edit"]);
+                }
+                // The setup's writes reach the disk before the write starts,
+                // so its flushes wait for its own data alone.
+                assert!(Command::new("sync").status().unwrap().success());
+            };
+            group.bench_function(BenchmarkId::new(before.name(), size), |b| {
+                b.iter_batched(
+                    edit,
+                    |()| store.begin_write().unwrap().format().unwrap(),
+                    BatchSize::PerIteration,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_validate, bench_read_tools
+    targets = bench_load_state, bench_validate, bench_read_tools, bench_write
 }
 criterion_main!(benches);

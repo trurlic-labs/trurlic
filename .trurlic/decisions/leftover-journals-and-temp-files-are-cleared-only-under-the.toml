@@ -1,6 +1,6 @@
 component = "store"
-choice = "Leftover journals and temp files are cleared only under the exclusive lock: by every write, and by a read that finds one under the shared lock"
-reason = "Every command used to delete everything in .state/tmp/ on start, without the lock, so a status, check or serve started mid-commit deleted that commit's staged files and the commit failed at its first rename. Store::recover(&StoreLock) applies a leftover journal, then removes every temp file: under the exclusive lock no commit is in flight, so each one is a leftover. begin_write calls it under its lock, so every write starts clean and applies a journal before it loads. A read asks Store::has_leftovers under the shared lock, where no commit is in flight either, and only on a leftover takes the exclusive lock to recover, so a read of a clean store never waits for the exclusive lock and every read sees a whole commit. Both check the format first, so nothing in a store of another format is touched; migrate takes its lock, refuses a store it cannot migrate, then recovers. Commands used to try the lock once at start and skip recovery while it was busy; every read now does it under its own lock, so that attempt is gone."
+choice = "Leftover journals and temp files are cleared only under the exclusive lock: by every write, and by a read that finds one under the shared lock, which goes on past a history commit that waits"
+reason = "Every command used to delete everything in .state/tmp/ on start, without the lock, so a status, check or serve started mid-commit deleted that commit's staged files and the commit failed at its first rename. Store::recover(&StoreLock) finishes a leftover journal, its history commit included, then removes every temp file: under the exclusive lock no commit is in flight, so each one is a leftover. begin_write calls it under its lock, so every write starts clean and applies a journal before it loads. A read asks Store::has_leftovers under the shared lock, where no commit is in flight either, and only on a leftover takes the exclusive lock to recover, so a read of a clean store never waits for the exclusive lock and every read sees a whole commit. When the history commit of the journal cannot be made (git refuses it, as with an index lock left in the graph's repository), a read (PendingHistory::Keep) warns and loads, since the files are whole, and keeps the journal; a writer (PendingHistory::Fail) is refused with WritePending, so no write journals over one not finished. Both check the format first, so nothing in a store of another format is touched; migrate takes its lock, refuses a store it cannot migrate, then recovers. Commands used to try the lock once at start and skip recovery while it was busy; every read now does it under its own lock, so that attempt is gone."
 alternatives = [
     "Clean .state/tmp/ on every command without the lock: rejected, deleted a concurrent commit's staged files (status during a commit made it fail)",
     "Read commands wait for the lock to recover: rejected, a status would stall up to the 5 s lock timeout behind a writer, for a recovery the writer makes unnecessary",
@@ -14,8 +14,10 @@ status = "proposed"
 created = "2026-10-02T12:18:45.121734062Z"
 anchors = [
     { file = "src/store/access.rs", symbol = "Store::read" },
+    { file = "src/store/journal.rs", symbol = "PendingHistory" },
     { file = "src/store/recovery.rs", symbol = "Store::has_leftovers" },
     { file = "src/store/recovery.rs", symbol = "Store::recover" },
+    { file = "src/store/recovery.rs", symbol = "Store::recover_with" },
 ]
 depends_on = [
     "every-commit-goes-through-a-flushed-journal-in-state-txn",

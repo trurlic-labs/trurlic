@@ -1,5 +1,6 @@
 //! The commit path: a file's canonical text, read back before anything
-//! touches disk, then put in place through the journal (see `journal.rs`).
+//! touches disk, then put in place through the journal (see `journal.rs`)
+//! and, under `shared`, committed to the graph's history (`history.rs`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,7 @@ use crate::{Error, Result};
 use super::canonical::{Canonical, canonical};
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
+use super::history::History;
 use super::{Store, StoreLock};
 
 /// A file write staged for batch commit.
@@ -68,17 +70,23 @@ impl Store {
         })
     }
 
-    /// Commit a batch of writes and removes through the journal.
+    /// Commit a batch of writes and removes through the journal, with its
+    /// history.
     ///
-    /// The writes are staged and flushed, and the journal put in place,
-    /// which commits them; then each staged file is renamed onto its target
-    /// and the removed files go. After the journal, a failure is
-    /// [`Error::CommitPending`]: the commit lands at the next read or write.
-    pub(crate) fn commit_batch(
+    /// Under [`History::Graph`] the history step runs first: graph files a
+    /// hand edit left uncommitted are committed as `hand edit`, and a write
+    /// the graph's repository cannot take is refused with nothing written.
+    /// Then the writes are staged and flushed, and the journal, carrying the
+    /// message, put in place, which commits them; each staged file is
+    /// renamed onto its target, the removed files go, and the history
+    /// commit is made. After the journal, a failure is
+    /// [`Error::WritePending`]: the write lands at the next read or write.
+    pub(super) fn commit_batch(
         &self,
         lock: &StoreLock,
         writes: &[PendingWrite],
         removes: &[PathBuf],
+        history: History<'_>,
     ) -> Result<()> {
         if writes.is_empty() && removes.is_empty() {
             return Ok(());
@@ -86,12 +94,16 @@ impl Store {
         for path in writes.iter().map(|write| &write.target).chain(removes) {
             self.verify_path(path)?;
         }
+        let (message, head) = match history {
+            History::Project => (None, None),
+            History::Graph(message) => (Some(message), Some(self.prepare_history(lock)?)),
+        };
 
-        let journal = self.stage_commit(writes, removes)?;
+        let journal = self.stage_commit(writes, removes, message)?;
         failpoint::hit(Site::Staged);
         self.write_journal(lock, &journal)?;
         failpoint::hit(Site::Journaled);
-        self.apply_journal(lock, &journal)
+        self.apply_journal(lock, &journal, head)
     }
 }
 
@@ -170,7 +182,9 @@ mod tests {
             store.component_path("old-name"),
             store.component_path("never-there"),
         ];
-        store.commit_batch(&lock, &writes, &removes).unwrap();
+        store
+            .commit_batch(&lock, &writes, &removes, History::Project)
+            .unwrap();
 
         assert_eq!(read_component(&store, "new-name"), renamed);
         assert!(!store.component_path("old-name").exists());

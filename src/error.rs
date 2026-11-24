@@ -9,7 +9,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
-use crate::store::{AnchorFault, FormatVersion, PlacementDoubt, TimestampError};
+use crate::store::{
+    AnchorFault, FormatVersion, PlacementDoubt, TextFault, TextField, TimestampError,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -204,14 +206,31 @@ pub enum Error {
     #[error("could not acquire lock within {timeout_secs}s — {detail}")]
     LockTimeout { timeout_secs: u64, detail: String },
 
+    /// A failure after the commit point: the journal holds the write, and
+    /// the next opener finishes it, its history commit included.
     #[error(
-        "the commit is recorded in {} but not applied ({source}); the next read or write applies it",
+        "the write is recorded in {} but not finished ({source}); the next read or write \
+         finishes it",
         journal.display()
     )]
-    CommitPending {
+    WritePending {
         journal: PathBuf,
-        source: std::io::Error,
+        source: Box<Error>,
     },
+
+    /// A shared graph's write found the lock git holds while it writes the
+    /// index of the graph's repository, and wrote nothing.
+    #[error(
+        "{}: git holds the index of the graph's repository, or a git process that stopped \
+         left this lock; the write is refused: remove the lock once no git process runs there",
+        lock.display()
+    )]
+    GraphIndexLocked { lock: PathBuf },
+
+    /// An `Origin:` or `Session:` for a history commit that breaks the
+    /// one-line rule of `store::text`.
+    #[error("`{field}` {fault}")]
+    TrailerText { field: TextField, fault: TextFault },
 
     #[error(
         "cannot apply the commit recorded in {}: {detail}; delete that file to drop \

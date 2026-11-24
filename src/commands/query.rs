@@ -7,11 +7,15 @@ use crate::{Error, Result};
 use super::open_store;
 
 /// `trurlic status`: a one-screen summary of the graph: its components,
-/// decisions (project-wide and proposed), edges, and how many issues and
-/// non-canonical files it has, with the graph directory and the code root
-/// when the tree reaches a graph it does not hold.
+/// decisions (project-wide and proposed), edges, how many issues and
+/// non-canonical files it has, and under `shared` what its history lacks,
+/// with the graph directory and the code root when the tree reaches a
+/// graph it does not hold. It writes nothing, to the graph's repository
+/// neither.
 pub(crate) fn status(cwd: &Path) -> Result<()> {
     let (store, state) = open_store(cwd)?;
+    // Asked before any line is printed, so a failure prints none.
+    let history = store.history_findings(state.project.placement)?;
     let project_wide = state.project_decisions().len();
     let proposed = state
         .decisions
@@ -46,6 +50,9 @@ pub(crate) fn status(cwd: &Path) -> Result<()> {
     }
     if !state.non_canonical.is_empty() {
         out!("not in canonical form: {}", state.non_canonical.len())?;
+    }
+    for finding in &history {
+        out!("history: {finding}")?;
     }
     Ok(())
 }

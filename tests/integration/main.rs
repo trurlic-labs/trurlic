@@ -12,6 +12,7 @@ mod failpoints;
 mod git_merge;
 mod golden;
 mod harness;
+mod history;
 #[cfg(unix)]
 mod install;
 mod invalid_graph;

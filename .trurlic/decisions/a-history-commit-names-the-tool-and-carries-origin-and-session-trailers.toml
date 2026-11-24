@@ -1,0 +1,28 @@
+component = "store"
+choice = "A history commit's subject names the tool, its trailers carry Origin: and Session:, and the journal carries both, so a write the next opener finishes keeps them"
+reason = """
+A review reads a shared graph's history by Origin, so the trailer must reach the commit on every path, an interrupted write's included. CommitMessage holds the Tool (init, fmt, migrate; the write tool adds its own) and the optional origin and session, each checked when the message is made as one line of at most MAX_TRAILER_BYTES (200) with no control, invisible or reordering character (store::text, TextField::Origin and TextField::Session): a line break would end the trailer and forge another. render writes the subject, then the trailers the write has as a paragraph of their own. The journal holds the message as its [history] table and checks it again when it reads it back, so the opener that finishes the write commits with the caller's trailers. A command with no origin passes CommitMessage::of(tool); the commit of hand edits is \"hand edit\" with no trailer.
+"""
+alternatives = [
+    "Rebuild the message at recovery from the placement: rejected because the origin and the session exist only in the call that made the write",
+    "Put the origin in the subject: rejected because git interpret-trailers and %(trailers) read the last paragraph, and the subject names the tool",
+    "Take any origin text: rejected because a line break in it would end the trailer and start a forged one",
+]
+tags = [
+    "git",
+    "history",
+]
+status = "accepted"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/store/history.rs", symbol = "CommitMessage" },
+    { file = "src/store/history.rs", symbol = "CommitMessage::new" },
+    { file = "src/store/history.rs", symbol = "CommitMessage::render" },
+    { file = "src/store/history.rs", symbol = "Tool" },
+    { file = "src/store/journal.rs", symbol = "Journal" },
+    { file = "src/store/limits.rs", symbol = "MAX_TRAILER_BYTES" },
+    { file = "src/store/text.rs", symbol = "TextField" },
+]
+depends_on = [
+    "a-shared-graph-is-a-git-repository-of-its-own-and-every-write-is-one-commit-there",
+]

@@ -8,9 +8,10 @@
 //! names from the common dir. Git runs only for that second step, and only
 //! when the first `.git` above the directory is a file, as it is at the
 //! top of every linked worktree: a call from a tree that holds its graph,
-//! the per-call path of `serve`, spawns no process. Git never runs inside a
-//! graph directory, where a graph kept in a repository of its own would
-//! answer: a directory inside one finds it in the walk.
+//! the per-call path of `serve`, spawns no process. Discovery never runs
+//! git inside a graph directory, where a shared graph's own repository
+//! would answer (`git::graph` alone runs git there): a directory inside one
+//! finds it in the walk.
 
 use std::fs;
 use std::io::ErrorKind;

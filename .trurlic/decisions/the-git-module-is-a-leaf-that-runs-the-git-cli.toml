@@ -1,7 +1,7 @@
 component = "git"
-choice = "git is a leaf module that runs the git CLI as a child process, with a typed function per question and -z output; it depends on error alone, and no libgit2"
+choice = "git is a leaf module that runs the git CLI as a child process, with a typed function per question and -z output, and the graph's own repository in git::graph; no libgit2"
 reason = """
-The plan calls the git CLI rather than libgit2, a C library with its own configuration and repository discovery. Discovery, init and check ask it for the top of a work tree, the common dir, the worktree list and the files the index tracks or an ignore rule matches, and later work, under shared placement, for commits made by the store's writer protocol, so the runner must be one every module can use: a top-level module like budget and console, importing nothing but error, so no arrow points from it to another module. Each question is a function with typed arguments and a typed answer (tracked returns the paths ls-files -z lists, toplevel None outside a work tree), running git -C <dir> with stdin closed; -z output is split on NUL and read as raw bytes into paths, so no name is quoted or cut at a newline. A missing binary is Error::GitMissing, a spawn failure Error::GitSpawn, and a nonzero exit Error::GitFailed with the directory, the arguments, the status and stderr. The module holds only the functions a caller needs.
+The plan calls the git CLI rather than libgit2, a C library with its own configuration and repository discovery. Discovery, init and check ask it for the top of a work tree, the common dir, the worktree list and the files the index tracks or an ignore rule matches, and under shared placement the store's writer protocol commits through it to the graph's own repository (git::graph), so the runner must be one every module can use: a top-level module like budget and console, importing nothing but error, so no arrow points from it to another module. Each question is a function with typed arguments and a typed answer (tracked returns the paths ls-files -z lists, toplevel None outside a work tree), running git -C <dir> with stdin closed; -z output is split on NUL and read as raw bytes into paths, so no name is quoted or cut at a newline. A missing binary is Error::GitMissing, a spawn failure Error::GitSpawn, and a nonzero exit Error::GitFailed with the directory, the arguments, the status and stderr. The module holds only the functions a caller needs.
 """
 alternatives = [
     "libgit2 through the git2 crate: rejected because the plan calls the CLI, and a C dependency brings its own discovery and configuration rules",
@@ -22,5 +22,6 @@ anchors = [
     { file = "src/git.rs", symbol = "toplevel" },
     { file = "src/git.rs", symbol = "tracked" },
     { file = "src/git.rs", symbol = "worktrees" },
+    { file = "src/git/graph.rs", symbol = "Repository" },
     { file = "src/lib.rs" },
 ]

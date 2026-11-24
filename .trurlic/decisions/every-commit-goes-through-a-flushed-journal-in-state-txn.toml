@@ -1,8 +1,8 @@
 component = "store"
-choice = "Every commit goes through a flushed journal in .state/txn.toml and lands once the journal is in place"
+choice = "Every write goes through a flushed journal in .state/txn.toml, which carries the message of its history commit, and lands once the journal is in place"
 reason = """
-Renaming staged files one by one left the earlier renames on disk when a later one failed, a graph that matched neither the old commit nor the new. commit_batch stages and flushes every file and flushes .state/tmp/, then stages the journal (each staged file, its target and the BLAKE3 of its bytes, plus the files to remove), renames it to .state/txn.toml and flushes .state/. That rename is the commit point. apply_journal renames in order, removes after every rename, flushes each touched directory, then deletes the journal without a flush, since a journal that reappears applies again as a no-op. After the commit point a failure is Error::CommitPending: the commit is recorded, not rolled back.
-Store::recover applies a leftover journal under the exclusive lock before anything loads: begin_write does it for every write, and a read that finds a journal or a temp file under its shared lock takes the exclusive lock to apply it before it loads. Replay skips a write whose staged file is gone (already renamed), and one whose target holds the journal's bytes while its temp name holds another write's leftover: temp names recur once process ids wrap, which is why the journal hashes each staged file. That hash is the crate's one use of blake3; node files carry no hash. A staged file with other bytes and no such target, an unparsable journal, or a path outside the store is refused with Error::BadJournal naming the file. A commit of two files does 8 flushes.
+Renaming staged files one by one left the earlier renames on disk when a later one failed, a graph that matched neither the old commit nor the new. commit_batch stages and flushes every file and flushes .state/tmp/, then stages the journal (each staged file, its target and the BLAKE3 of its bytes, plus the files to remove), renames it to .state/txn.toml and flushes .state/. That rename is the commit point. Under shared the journal also holds the CommitMessage of the write's history commit, as its [history] table. apply_journal renames in order, removes after every rename, flushes each touched directory, makes the history commit when the journal carries one, then deletes the journal without a flush, since a journal that reappears applies again as a no-op and its commit is made already. After the commit point a failure is Error::WritePending, carrying the error behind it: the write is recorded, not rolled back.
+Store::recover finishes a leftover journal, its history commit included, under the exclusive lock before anything loads: begin_write does it for every write, and a read that finds a journal or a temp file under its shared lock takes the exclusive lock to apply it before it loads. Replay skips a write whose staged file is gone (already renamed), and one whose target holds the journal's bytes while its temp name holds another write's leftover: temp names recur once process ids wrap, which is why the journal hashes each staged file. That hash is the crate's one use of blake3; node files carry no hash. A staged file with other bytes and no such target, an unparsable journal, or a path outside the store is refused with Error::BadJournal naming the file. A commit of two files does 8 flushes.
 """
 alternatives = [
     "Rename in order with the last file as the only commit point, no journal: rejected because a failed rename left a graph that matched neither commit",
@@ -20,8 +20,10 @@ created = "2026-10-02T12:18:34.628311449Z"
 anchors = [
     { file = "src/store/access.rs", symbol = "Store::read" },
     { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
+    { file = "src/store/journal.rs", symbol = "Journal" },
     { file = "src/store/journal.rs", symbol = "StagedWrite" },
     { file = "src/store/journal.rs", symbol = "Store::apply_journal" },
+    { file = "src/store/journal.rs", symbol = "Store::finish" },
     { file = "src/store/journal.rs", symbol = "Store::replay_journal" },
     { file = "src/store/journal.rs", symbol = "Store::unapplied" },
     { file = "src/store/journal.rs", symbol = "Store::write_journal" },

@@ -1,6 +1,8 @@
-//! Creating an empty store: the node directories and `project.toml`.
+//! Creating an empty store: the node directories and `project.toml`, and
+//! under `shared` the graph's own repository with its first commit.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::{Error, Result};
@@ -10,29 +12,51 @@ use super::{COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, STORE_DIR, Store};
 
 impl Store {
     /// Create `.trurlic/` in `project_dir` for a project named `name`. Fails
-    /// with [`Error::StoreExists`] when `.trurlic/` is there.
+    /// with [`Error::StoreExists`] when `.trurlic/` is there, and leaves no
+    /// `.trurlic/` behind when it fails otherwise, as it does when a
+    /// `shared` graph finds no `git` to make its repository with.
     pub fn create(project_dir: &Path, name: &str, placement: Placement) -> Result<Self> {
         let root = project_dir.join(STORE_DIR);
-        if root.exists() {
-            return Err(Error::StoreExists(root));
-        }
-        for dir in [COMPONENTS_DIR, DECISIONS_DIR] {
-            let dir = root.join(dir);
-            fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        fs::create_dir_all(project_dir).map_err(Error::io(project_dir))?;
+        match fs::create_dir(&root) {
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => return Err(Error::StoreExists(root)),
+            created => created.map_err(Error::io(&root))?,
         }
         let store = Self::at(root);
-        let tmp_dir = store.tmp_dir();
+        if let Err(e) = store.lay_out(name, placement) {
+            // The directory is this call's own: it did not exist above.
+            let _ = fs::remove_dir_all(store.root());
+            return Err(e);
+        }
+        Ok(store)
+    }
+
+    /// Fill the new, empty graph directory. The repository of a shared
+    /// graph comes first, so a missing `git` fails before any graph file is
+    /// written.
+    fn lay_out(&self, name: &str, placement: Placement) -> Result<()> {
+        for dir in [COMPONENTS_DIR, DECISIONS_DIR] {
+            let dir = self.root.join(dir);
+            fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        }
+        let tmp_dir = self.tmp_dir();
         fs::create_dir_all(&tmp_dir).map_err(Error::io(&tmp_dir))?;
 
-        let lock = store.lock()?;
+        let lock = self.lock()?;
+        if placement == Placement::Shared {
+            self.create_repository(&lock)?;
+        }
         let project = Project {
             format_version: FORMAT_VERSION,
             name: name.into(),
             description: String::new(),
             placement,
         };
-        store.write_atomic(&lock, &store.project_path(), &project)?;
-        Ok(store)
+        self.write_atomic(&lock, &self.project_path(), &project)?;
+        if placement == Placement::Shared {
+            self.commit_init(&lock)?;
+        }
+        Ok(())
     }
 }
 

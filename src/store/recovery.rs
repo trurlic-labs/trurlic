@@ -1,5 +1,6 @@
 //! Finishing what an interrupted write left in `.state/`: the journal of a
-//! commit that did not complete, then temp files.
+//! write that did not complete, its history commit included, then temp
+//! files.
 //!
 //! Only the holder of the exclusive lock touches either: a commit stages
 //! its files in `.state/tmp/` and applies its journal under the lock, so a
@@ -14,14 +15,21 @@ use std::io::ErrorKind;
 use crate::console::diag;
 use crate::{Error, Result};
 
+use super::journal::PendingHistory;
 use super::{Store, StoreLock};
 
 impl Store {
-    /// Apply the journal an interrupted commit left, then remove the temp
-    /// files left behind.
+    /// Finish the write an interrupted commit left, its history commit
+    /// included, then remove the temp files left behind.
     pub(crate) fn recover(&self, lock: &StoreLock) -> Result<()> {
-        if self.replay_journal(lock)? {
-            diag!("warning: applied a commit an interrupted write left unfinished");
+        self.recover_with(lock, PendingHistory::Fail)
+    }
+
+    /// [`recover`](Self::recover), with `pending` saying what a history
+    /// commit that fails does.
+    pub(super) fn recover_with(&self, lock: &StoreLock, pending: PendingHistory) -> Result<()> {
+        if self.replay_journal(lock, pending)? {
+            diag!("warning: finished a write an interrupted commit left");
         }
         let removed = self.remove_temps()?;
         if removed > 0 {

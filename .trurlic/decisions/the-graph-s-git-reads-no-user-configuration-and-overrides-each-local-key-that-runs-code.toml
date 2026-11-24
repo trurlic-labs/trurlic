@@ -1,0 +1,33 @@
+component = "git"
+choice = "git in the graph's repository names it outright, reads no system or user configuration, overrides with -c each local key that runs code or changes bytes, and stages bytes unfiltered"
+reason = """
+Nothing from the caller's or the user's configuration may break or redirect a history commit. --git-dir and --work-tree name the repository, so git discovers nothing, a missing .git is git's error and never the project's repository answering, core.worktree is beaten, and the ownership check of discovery does not apply. GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL (the empty file) shut out the system's and the user's files whole: their keys are open-ended (include, init.templateDir, user.useConfigOnly, core.compression and more), and no list of overrides could name them all. The repository's own configuration, which no variable shuts out, is overridden with -c where a key runs code or changes bytes: core.hooksPath to the empty file (no hook runs, .git/hooks/ included, since --no-verify skips only two), core.fsmonitor, core.excludesFile and core.attributesFile (read from $XDG_CONFIG_HOME when unset), core.autocrlf, core.fileMode (an exec bit is no change; every graph file is 100644), commit.gpgSign. The identity is set in the environment, which beats every key, and GIT_AUTHOR_DATE and GIT_COMMITTER_DATE are removed, so the dates are git's clock. git init runs with --template= and --initial-branch=main. A file is staged as its bytes (hash-object -w --no-filters, update-index --index-info), and the repository's info/attributes, written at creation, unsets every converting attribute, since git commit checks a staged file again through the attributes and git status compares through them. The commit is git commit --cleanup=verbatim, so a comment character cannot strip a trailer. core.fsync=committed puts objects and refs on disk before the journal that would make the commit again is deleted; the index, replaced by a rename, is rebuilt from the last commit if a power loss tears it. tests/integration/history.rs sets a user configuration, an environment and a repository configuration against every one of these, and finds each commit the fixed identity with git's dates on main, holding the bytes on disk, with nothing run.
+"""
+alternatives = [
+    "Override the user's configuration key by key: rejected because its keys are open-ended, and one missed key breaks or redirects a commit",
+    "Run git with an empty environment: rejected because git needs PATH and HOME, and the locale of its messages is the user's",
+    "Stage with git add: rejected because it applies the clean filters and line-end conversion of .gitattributes, so the bytes committed would not be the bytes on disk",
+    "Commit with commit-tree and update-ref: rejected because it is four processes where git commit is one, and the repository's attributes make git commit read bytes unconverted",
+    "Pass safe.directory: rejected because an outright --git-dir skips the ownership check that reads it",
+]
+tags = [
+    "git",
+    "history",
+    "reliability",
+    "security",
+]
+status = "proposed"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/git/graph.rs", symbol = "ATTRIBUTES" },
+    { file = "src/git/graph.rs", symbol = "DATES" },
+    { file = "src/git/graph.rs", symbol = "ENVIRONMENT" },
+    { file = "src/git/graph.rs", symbol = "OVERRIDES" },
+    { file = "src/git/graph.rs", symbol = "Repository::create" },
+    { file = "src/git/graph.rs", symbol = "Repository::stage" },
+    { file = "src/git/graph.rs", symbol = "isolated" },
+    { file = "tests/integration/history.rs", symbol = "no_configuration_or_environment_breaks_or_redirects_a_commit" },
+]
+depends_on = [
+    "history-commits-are-made-with-a-fixed-identity-no-verify-and-gpgsign-off",
+]

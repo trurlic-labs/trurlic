@@ -107,6 +107,14 @@ ln -s /path/to/project/.trurlic .trurlic   # in the clone's root
 
 Every command and the MCP server find the graph from the directory they run in, and resolve anchors against that tree, not against the graph's. `trurlic status` names both when they differ. `trurlic check` fails when git contradicts the placement (a tracked graph git does not track or ignores, a shared one git tracks) and when a worktree carries a second graph beside a shared one.
 
+History: a tracked graph's history is the project's git, and trurlic never commits to it. A shared graph is a git repository of its own, `.trurlic/.git`, which `init` makes: every write is one commit there, named after the command, with `Origin:` and `Session:` trailers when the write has them, and edits made by hand are committed first as `hand edit`. Read it with git:
+
+```bash
+git -C .trurlic log --stat
+```
+
+`trurlic fmt` commits what you edited by hand; `trurlic check` and `trurlic status` say when the history lacks a file or a stopped git left `.trurlic/.git/index.lock` behind. A shared graph needs `git` on `PATH`.
+
 ## Install
 
 ```bash

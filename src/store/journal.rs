@@ -2,17 +2,20 @@
 //!
 //! A commit stages its files, writes the journal, then applies it: each
 //! staged file renamed onto its target, the deleted files removed, the
-//! directories flushed, the journal removed. The
-//! journal's rename into place is the commit point. From then on the
-//! commit lands: if the writer stops or fails before the journal is gone,
-//! the next process to take the exclusive lock applies it before it loads.
+//! directories flushed, the history commit made when the journal carries
+//! its message (a `shared` graph's), the journal removed. The journal's
+//! rename into place is the commit point. From then on the write lands: if
+//! the writer stops or fails before the journal is gone, the next process
+//! to take the exclusive lock finishes it before it loads, its history
+//! commit included.
 //!
 //! Applying is idempotent. A write whose staged file is gone was renamed
-//! already, and removing a file that is gone is done.
+//! already, removing a file that is gone is done, and a history commit
+//! whose files the last commit holds as they are is made already.
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, ErrorKind};
+use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 use rayon::prelude::*;
@@ -24,9 +27,11 @@ use crate::{Error, Result};
 use super::commit::PendingWrite;
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
+use super::history::{CommitMessage, Head};
 use super::{Store, StoreLock};
 
-/// A commit's file operations. Paths are relative to the store root.
+/// A write's file operations and its history commit. Paths are relative to
+/// the store root.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Journal {
     /// Renamed in order.
@@ -35,6 +40,10 @@ pub(super) struct Journal {
     /// Removed after every write is in place.
     #[serde(default, rename = "remove", skip_serializing_if = "Vec::is_empty")]
     removes: Vec<PathBuf>,
+    /// The message of the commit to the graph's own repository, made once
+    /// the files are in place; `None` under `tracked`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    history: Option<CommitMessage>,
 }
 
 /// A staged file and where it goes.
@@ -45,6 +54,17 @@ struct StagedWrite {
     /// BLAKE3 of the staged bytes. A temp name recurs once process ids
     /// wrap, so a replay renames only the bytes this commit staged.
     blake3: String,
+}
+
+/// What a recovery does when the history commit of the write it finishes
+/// fails, with the write's files in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PendingHistory {
+    /// Fail: a writer must not journal over a write not finished.
+    Fail,
+    /// Warn and keep the journal for the next writer: a read sees the
+    /// files whole, and the commit waits.
+    Keep,
 }
 
 impl Journal {
@@ -60,6 +80,17 @@ impl Journal {
                 components.peek().is_none()
                     || !components.all(|component| matches!(component, Component::Normal(_)))
             })
+    }
+
+    /// Every path the write changes: its targets, then its removals.
+    fn paths(&self) -> Vec<PathBuf> {
+        self.writes
+            .iter()
+            .map(|write| &write.target)
+            .chain(&self.removes)
+            // clone: the history step stages paths the journal keeps.
+            .cloned()
+            .collect()
     }
 }
 
@@ -79,12 +110,14 @@ impl Store {
         path.try_exists().map_err(Error::io(&path))
     }
 
-    /// Stage `writes` and describe them, with `removes`, in a journal that
-    /// is not written yet. On failure nothing stays staged.
+    /// Stage `writes` and describe them, with `removes` and the message of
+    /// the history commit, in a journal that is not written yet. On failure
+    /// nothing stays staged.
     pub(super) fn stage_commit(
         &self,
         writes: &[PendingWrite],
         removes: &[PathBuf],
+        history: Option<&CommitMessage>,
     ) -> Result<Journal> {
         let tmp_dir = self.tmp_dir();
         fs::create_dir_all(&tmp_dir).map_err(Error::io(&tmp_dir))?;
@@ -94,6 +127,8 @@ impl Store {
                 .iter()
                 .map(|path| self.relative(path))
                 .collect::<Result<_>>()?,
+            // clone: the journal is written from its own copy of the message.
+            history: history.cloned(),
         };
         // In parallel: each staged file waits for its flush, and a commit
         // such as a migration's stages hundreds. The journal keeps the
@@ -144,8 +179,8 @@ impl Store {
     }
 
     /// Put `journal` in place, which commits it. Before the rename a failure
-    /// discards the staged files; after it the commit is decided, and a
-    /// failure is [`Error::CommitPending`].
+    /// discards the staged files; after it the write is decided, and a
+    /// failure is [`Error::WritePending`].
     pub(super) fn write_journal(&self, _lock: &StoreLock, journal: &Journal) -> Result<()> {
         let path = self.journal_path();
         let placed = toml::to_string(journal)
@@ -160,35 +195,64 @@ impl Store {
             self.discard(journal);
             return Err(e);
         }
-        sync_dir(&self.state_dir()).map_err(|e| self.pending(e))
+        let state_dir = self.state_dir();
+        sync_dir(&state_dir).map_err(|e| self.pending(Error::io(&state_dir)(e)))
     }
 
-    /// Apply `journal`, then remove it. A failure leaves the journal for the
-    /// next read or write.
-    pub(super) fn apply_journal(&self, _lock: &StoreLock, journal: &Journal) -> Result<()> {
+    /// Apply `journal`, make its history commit, then remove it. `head` is
+    /// what the history step found before the commit point. A failure
+    /// leaves the journal for the next read or write.
+    pub(super) fn apply_journal(
+        &self,
+        lock: &StoreLock,
+        journal: &Journal,
+        head: Option<Head>,
+    ) -> Result<()> {
         self.apply(journal).map_err(|e| self.pending(e))?;
+        self.finish(lock, journal.history.as_ref(), &journal.paths(), head)
+    }
+
+    /// The history commit of the write whose files are in place, when it
+    /// has one, then the journal removed.
+    fn finish(
+        &self,
+        lock: &StoreLock,
+        history: Option<&CommitMessage>,
+        paths: &[PathBuf],
+        head: Option<Head>,
+    ) -> Result<()> {
+        failpoint::hit(Site::Placed);
+        if let Some(message) = history {
+            self.commit_history(lock, message, paths, head)
+                .map_err(|e| self.pending(e))?;
+            failpoint::hit(Site::HistoryCommitted);
+        }
         // Not flushed: a journal that reappears after a power loss applies
-        // again as a no-op.
+        // again as a no-op, and its history commit is made already.
         if let Err(e) = fs::remove_file(self.journal_path()) {
             diag!(
-                "warning: the commit is applied, but {} remains: {e}",
+                "warning: the write is applied, but {} remains: {e}",
                 self.journal_path().display()
             );
         }
+        failpoint::hit(Site::Finished);
         Ok(())
     }
 
-    fn apply(&self, journal: &Journal) -> io::Result<()> {
+    fn apply(&self, journal: &Journal) -> Result<()> {
         for write in &journal.writes {
-            failpoint::fail(Site::Rename)?;
-            fs::rename(self.root.join(&write.temp), self.root.join(&write.target))?;
+            let target = self.root.join(&write.target);
+            failpoint::fail(Site::Rename)
+                .and_then(|()| fs::rename(self.root.join(&write.temp), &target))
+                .map_err(Error::io(&target))?;
             failpoint::hit(Site::Applied);
         }
         for path in &journal.removes {
-            match fs::remove_file(self.root.join(path)) {
+            let path = self.root.join(path);
+            match fs::remove_file(&path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == ErrorKind::NotFound => {}
-                Err(e) => return Err(e),
+                Err(source) => return Err(Error::Io { path, source }),
             }
             failpoint::hit(Site::Applied);
         }
@@ -200,19 +264,28 @@ impl Store {
             .filter_map(|path| path.parent())
             .collect();
         for dir in dirs {
-            sync_dir(&self.root.join(dir))?;
+            let dir = self.root.join(dir);
+            sync_dir(&dir).map_err(Error::io(&dir))?;
         }
         Ok(())
     }
 
-    /// Apply the journal an interrupted commit left, if there is one, and
-    /// report whether there was.
-    pub(super) fn replay_journal(&self, lock: &StoreLock) -> Result<bool> {
+    /// Finish the write an interrupted commit left, if there is one, and
+    /// report whether there was. `pending` says what a history commit that
+    /// fails then does.
+    pub(super) fn replay_journal(&self, lock: &StoreLock, pending: PendingHistory) -> Result<bool> {
         let Some(journal) = self.read_journal()? else {
             return Ok(false);
         };
+        // Every path of the write, the ones renamed before the stop too.
+        let paths = journal.paths();
         let unapplied = self.unapplied(journal)?;
-        self.apply_journal(lock, &unapplied)?;
+        self.apply(&unapplied).map_err(|e| self.pending(e))?;
+        match self.finish(lock, unapplied.history.as_ref(), &paths, None) {
+            Ok(()) => {}
+            Err(e) if pending == PendingHistory::Keep => diag!("warning: {e}"),
+            Err(e) => return Err(e),
+        }
         Ok(true)
     }
 
@@ -256,6 +329,7 @@ impl Store {
         Ok(Journal {
             writes,
             removes: journal.removes,
+            history: journal.history,
         })
     }
 
@@ -276,10 +350,10 @@ impl Store {
             .map_err(|e| Error::Validation(format!("{}: {e}", path.display())))
     }
 
-    fn pending(&self, source: io::Error) -> Error {
-        Error::CommitPending {
+    fn pending(&self, source: Error) -> Error {
+        Error::WritePending {
             journal: self.journal_path(),
-            source,
+            source: Box::new(source),
         }
     }
 
@@ -294,7 +368,10 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::testing::{sample_component, setup_store};
+    use crate::store::history::Tool;
+    use crate::store::testing::{
+        graph_git, graph_log, sample_component, setup_store, shared_store,
+    };
     use tempfile::TempDir;
 
     fn sample_journal() -> Journal {
@@ -305,6 +382,7 @@ mod tests {
                 blake3: hash_bytes(b"description = \"\"\n"),
             }],
             removes: vec![PathBuf::from("decisions/use-jwt.toml")],
+            history: None,
         }
     }
 
@@ -313,14 +391,23 @@ mod tests {
         let write = store
             .prepare_write(&store.component_path(name), &sample_component())
             .unwrap();
-        store.stage_commit(&[write], &[]).unwrap()
+        store.stage_commit(&[write], &[], None).unwrap()
     }
 
     #[test]
-    fn journal_round_trips_with_and_without_removes() {
+    fn journal_round_trips_with_and_without_removes_and_history() {
         let full = sample_journal();
         let text = toml::to_string(&full).unwrap();
         assert_eq!(toml::from_str::<Journal>(&text).unwrap(), full);
+
+        let message = CommitMessage::new(Tool::Fmt, Some("row".into()), None).unwrap();
+        let recorded = Journal {
+            history: Some(message),
+            ..sample_journal()
+        };
+        let text = toml::to_string(&recorded).unwrap();
+        assert!(text.contains("[history]"), "{text}");
+        assert_eq!(toml::from_str::<Journal>(&text).unwrap(), recorded);
 
         let writes_only = Journal {
             removes: vec![],
@@ -339,10 +426,13 @@ mod tests {
             let journal = Journal {
                 writes: vec![],
                 removes: vec![PathBuf::from(removed)],
+                history: None,
             };
             fs::write(store.journal_path(), toml::to_string(&journal).unwrap()).unwrap();
 
-            let err = store.replay_journal(&store.lock().unwrap()).unwrap_err();
+            let err = store
+                .replay_journal(&store.lock().unwrap(), PendingHistory::Fail)
+                .unwrap_err();
 
             assert!(matches!(err, Error::BadJournal { .. }), "{removed}: {err}");
             assert!(err.to_string().contains("txn.toml"), "{err}");
@@ -357,7 +447,7 @@ mod tests {
         let journal = stage_component(&store, "auth");
 
         store.write_journal(&lock, &journal).unwrap();
-        store.apply_journal(&lock, &journal).unwrap();
+        store.apply_journal(&lock, &journal, None).unwrap();
 
         assert!(store.component_path("auth").exists());
         assert!(!store.has_journal().unwrap());
@@ -378,12 +468,12 @@ mod tests {
         let first = &journal.writes[0];
         fs::rename(store.root.join(&first.temp), store.root.join(&first.target)).unwrap();
 
-        assert!(store.replay_journal(&lock).unwrap());
+        assert!(store.replay_journal(&lock, PendingHistory::Fail).unwrap());
 
         assert!(store.component_path("auth").exists());
         assert!(store.component_path("billing").exists());
         assert!(!store.has_journal().unwrap());
-        assert!(!store.replay_journal(&lock).unwrap());
+        assert!(!store.replay_journal(&lock, PendingHistory::Fail).unwrap());
     }
 
     /// The journal of an applied commit reappears, and its temp name now
@@ -402,7 +492,7 @@ mod tests {
         let committed = fs::read(&target).unwrap();
         fs::write(store.root.join(&write.temp), "another write").unwrap();
 
-        assert!(store.replay_journal(&lock).unwrap());
+        assert!(store.replay_journal(&lock, PendingHistory::Fail).unwrap());
 
         assert_eq!(fs::read(&target).unwrap(), committed);
         assert!(!store.has_journal().unwrap());
@@ -417,10 +507,91 @@ mod tests {
         store.write_journal(&lock, &journal).unwrap();
         fs::write(store.root.join(&journal.writes[0].temp), "another write").unwrap();
 
-        let err = store.replay_journal(&lock).unwrap_err();
+        let err = store
+            .replay_journal(&lock, PendingHistory::Fail)
+            .unwrap_err();
 
         assert!(matches!(err, Error::BadJournal { .. }), "{err}");
         assert!(!store.component_path("auth").exists());
         assert!(store.has_journal().unwrap());
+    }
+
+    fn traced() -> CommitMessage {
+        CommitMessage::new(Tool::Fmt, Some("plan row 7".into()), Some("s-1".into())).unwrap()
+    }
+
+    /// A write of the component `auth` to a shared store, stopped with its
+    /// files in place and its history commit not made.
+    fn stopped_after_its_renames(store: &Store) -> Journal {
+        let lock = store.lock().unwrap();
+        store.prepare_history(&lock).unwrap();
+        let write = store
+            .prepare_write(&store.component_path("auth"), &sample_component())
+            .unwrap();
+        let journal = store.stage_commit(&[write], &[], Some(&traced())).unwrap();
+        store.write_journal(&lock, &journal).unwrap();
+        store.apply(&journal).unwrap();
+        journal
+    }
+
+    #[test]
+    fn the_next_opener_makes_the_history_commit_with_the_original_trailers() {
+        let tmp = TempDir::new().unwrap();
+        let store = shared_store(tmp.path());
+        stopped_after_its_renames(&store);
+
+        store.load_state().unwrap();
+
+        assert!(!store.has_journal().unwrap());
+        assert_eq!(
+            graph_log(&store),
+            ["fmt\n\nOrigin: plan row 7\nSession: s-1", "init"]
+        );
+    }
+
+    /// The commit landed before the stop, and was reworded and packed by
+    /// hand since: the journal's files are in the last commit as they are,
+    /// so the next opener commits nothing again.
+    #[test]
+    fn a_history_commit_made_before_the_stop_is_not_made_again() {
+        let tmp = TempDir::new().unwrap();
+        let store = shared_store(tmp.path());
+        let journal = stopped_after_its_renames(&store);
+        let lock = store.lock().unwrap();
+        let paths = journal.paths();
+        store
+            .commit_history(&lock, &traced(), &paths, None)
+            .unwrap();
+        drop(lock);
+        graph_git(&store, &["commit", "--quiet", "--amend", "-m", "reworded"]);
+        graph_git(&store, &["gc", "--quiet"]);
+
+        drop(store.begin_write().unwrap());
+
+        assert!(!store.has_journal().unwrap());
+        assert_eq!(graph_log(&store), ["reworded", "init"]);
+    }
+
+    /// A read finds the history commit cannot be made: it sees the write's
+    /// files and leaves the journal, which refuses the next writer until
+    /// the commit can be made.
+    #[test]
+    fn a_read_goes_on_past_a_history_commit_that_waits_and_a_writer_does_not() {
+        let tmp = TempDir::new().unwrap();
+        let store = shared_store(tmp.path());
+        stopped_after_its_renames(&store);
+        let index_lock = store.root().join(".git/index.lock");
+        fs::write(&index_lock, "").unwrap();
+
+        let state = store.load_state().unwrap();
+
+        assert!(state.components.contains_key("auth"));
+        assert!(store.has_journal().unwrap());
+        let err = store.begin_write().map(drop).unwrap_err();
+        assert!(matches!(err, Error::WritePending { .. }), "{err}");
+        fs::remove_file(&index_lock).unwrap();
+        drop(store.begin_write().unwrap());
+        assert!(!store.has_journal().unwrap());
+        assert_eq!(graph_log(&store).len(), 2);
     }
 }

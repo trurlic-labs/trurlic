@@ -1,0 +1,28 @@
+component = "store"
+choice = "Under shared the graph directory is a git repository of its own, made by init and migrate, and each write ends with one commit there; under tracked trurlic never commits"
+reason = """
+A graph kept out of the project's git had no history: a revision of an accepted decision could be neither seen nor undone, and node files carry no history of their own. Under tracked the project's git holds every revision of every node file, so trurlic commits nothing there and never interleaves its commits with the owner's. Under shared nothing else versions the graph, so .trurlic/ is the repository: Store::create makes it and commits project.toml as init, commit_migration makes it when a migration lands on shared, and commit_batch, given History::Graph, ends each write with one commit after its files are in place. History::of(placement, message) is the one place the placement decides it, and a writer reaches it through Writer::commit.
+"""
+alternatives = [
+    "Commit to the project's repository under both placements: rejected because a shared graph stays out of the project's git by its definition, and under tracked trurlic's commits would land among the owner's",
+    "A history file in .state/ or beside each node: rejected because node files carry no history, and git already gives log, diff, blame and revert",
+    "A bare repository beside the graph that a write copies into: rejected because every write would copy the graph, and the owner could not run git in .trurlic/",
+]
+tags = [
+    "git",
+    "history",
+    "storage",
+]
+status = "accepted"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/store/access.rs", symbol = "Writer::commit" },
+    { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
+    { file = "src/store/create.rs", symbol = "Store::create" },
+    { file = "src/store/history.rs", symbol = "History" },
+    { file = "src/store/history.rs", symbol = "Store::commit_history" },
+    { file = "src/store/migration/mod.rs", symbol = "Store::commit_migration" },
+]
+depends_on = [
+    "node-files-carry-no-history",
+]

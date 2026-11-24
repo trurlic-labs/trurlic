@@ -5,15 +5,20 @@
 //! shared lock; a write loads it under the exclusive lock and validates
 //! against that load, which the writer owns with the lock, so no write can
 //! be built on a graph loaded before another commit. Either one first
-//! finishes what an interrupted commit left, so neither sees half of one.
+//! finishes what an interrupted commit left, so neither sees half of one;
+//! a read goes on when only that write's history commit cannot be made,
+//! and leaves it to the next writer.
 
 use std::mem;
+use std::path::PathBuf;
 
 use crate::Result;
 
 use super::commit::PendingWrite;
 use super::failpoint::{self, Site};
-use super::schema::Project;
+use super::history::{CommitMessage, History, Tool};
+use super::journal::PendingHistory;
+use super::schema::{Placement, Project};
 use super::state::NodeFile;
 use super::{ProjectState, Store, StoreLock};
 
@@ -32,7 +37,7 @@ impl Store {
     /// starts here and commits through the returned [`Writer`].
     pub fn begin_write(&self) -> Result<Writer<'_>> {
         let lock = self.lock()?;
-        let (project, bytes) = self.recover_current(&lock)?;
+        let (project, bytes) = self.recover_current(&lock, PendingHistory::Fail)?;
         let state = self.read_graph(project, &bytes)?;
         failpoint::panic(Site::Loaded);
         Ok(Writer {
@@ -60,15 +65,19 @@ impl Store {
             }
         }
         let lock = self.lock()?;
-        let (project, bytes) = self.recover_current(&lock)?;
+        let (project, bytes) = self.recover_current(&lock, PendingHistory::Keep)?;
         load(project, bytes)
     }
 
     /// Check the format, then finish what an interrupted write left, so
     /// nothing in a store of another format is touched.
-    fn recover_current(&self, lock: &StoreLock) -> Result<(Project, Vec<u8>)> {
+    fn recover_current(
+        &self,
+        lock: &StoreLock,
+        pending: PendingHistory,
+    ) -> Result<(Project, Vec<u8>)> {
         self.check_version()?;
-        self.recover(lock)?;
+        self.recover_with(lock, pending)?;
         self.read_current_project()
     }
 }
@@ -94,7 +103,9 @@ impl Writer<'_> {
     /// Rewrite each file whose bytes are not the canonical form of what it
     /// holds, in one commit, and return those files. The graph does not
     /// change: every write reads back as the value it was made from, so it
-    /// is validated by construction, and no other file is touched.
+    /// is validated by construction, and no other file is touched. Under
+    /// `shared` it leaves the history settled too: hand edits are committed
+    /// as `hand edit` when no file needs a rewrite, as before any write.
     pub fn format(&mut self) -> Result<Vec<NodeFile>> {
         let writes = self
             .state
@@ -102,8 +113,27 @@ impl Writer<'_> {
             .iter()
             .filter_map(|file| self.rewrite(file).transpose())
             .collect::<Result<Vec<_>>>()?;
-        self.store.commit_batch(&self.lock, &writes, &[])?;
+        if writes.is_empty() && self.state.project.placement == Placement::Shared {
+            self.store.prepare_history(&self.lock)?;
+        }
+        self.commit(&writes, &[], &CommitMessage::of(Tool::Fmt))?;
         Ok(mem::take(&mut self.state.non_canonical))
+    }
+
+    /// Commit `writes` and `removes` in one journaled commit, with the
+    /// history the graph's placement keeps: under `shared`, one commit to
+    /// the graph's repository with `message`, after one of any hand edit.
+    /// The caller has applied the write to the state, which the commit
+    /// leaves equal to the files on disk.
+    pub(super) fn commit(
+        &self,
+        writes: &[PendingWrite],
+        removes: &[PathBuf],
+        message: &CommitMessage,
+    ) -> Result<()> {
+        let history = History::of(self.state.project.placement, message);
+        self.store
+            .commit_batch(&self.lock, writes, removes, history)
     }
 
     /// The canonical text of `file`. Every listed file was read into the
@@ -216,7 +246,7 @@ mod tests {
         let write = store
             .prepare_write(&store.component_path("auth"), &sample_component())
             .unwrap();
-        let journal = store.stage_commit(&[write], &[]).unwrap();
+        let journal = store.stage_commit(&[write], &[], None).unwrap();
         store.write_journal(&lock, &journal).unwrap();
         drop(lock);
 

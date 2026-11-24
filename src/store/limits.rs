@@ -22,3 +22,7 @@ pub(crate) const MAX_ANCHOR_PATH_BYTES: usize = 500;
 
 /// Maximum byte length of an anchor's symbol.
 pub(crate) const MAX_ANCHOR_SYMBOL_BYTES: usize = 200;
+
+/// Maximum byte length of the `Origin:` or the `Session:` a history commit
+/// carries, each one line.
+pub(crate) const MAX_TRAILER_BYTES: usize = 200;

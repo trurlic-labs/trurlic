@@ -1,11 +1,11 @@
 //! `trurlic init`: a new graph, placed as the owner states and as git
 //! allows. A tracked graph needs a work tree whose git does not ignore
 //! it, and gets `.trurlic/.state/` in the `.gitignore` beside it; a shared
-//! one in a work tree sits at the top of the main worktree, where linked
-//! worktrees find it, and is kept out of git through the common dir's
-//! `info/exclude`, which every worktree reads. Outside any work tree a
-//! shared graph needs no git at all. No graph is made in a linked worktree
-//! the main worktree's shared graph already serves.
+//! one is a git repository of its own, which holds its history, and in a
+//! work tree sits at the top of the main worktree, where linked worktrees
+//! find it, kept out of the project's git through the common dir's
+//! `info/exclude`, which every worktree reads. No graph is made in a linked
+//! worktree the main worktree's shared graph already serves.
 
 use std::fs;
 use std::io::Write;
@@ -47,13 +47,14 @@ pub(crate) fn init(cwd: &Path, placement: Placement) -> Result<()> {
         .unwrap_or("my-project");
     Store::create(&dir, name, placement)?;
     let Some((path, entry)) = ignore_file else {
-        return out!("Initialized .trurlic/ (shared)");
+        return out!("Initialized .trurlic/ (shared), its history in .trurlic/.git");
     };
     append_line(&path, entry)?;
     match placement {
         Placement::Tracked => out!("Initialized .trurlic/ (tracked): commit it with the project"),
         Placement::Shared => out!(
-            "Initialized .trurlic/ (shared): kept out of git by {}",
+            "Initialized .trurlic/ (shared), its history in .trurlic/.git: kept out of the \
+             project's git by {}",
             path.display()
         ),
     }

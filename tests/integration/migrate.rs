@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::golden::assert_golden;
-use crate::harness::{Project, git, isolated_git};
+use crate::harness::{Project, git, graph_git, graph_log, isolated_git};
 
 /// The report's file in the backup directory.
 const REPORT_FILE: &str = "migration-report.txt";
@@ -58,13 +58,16 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// Every file under `dir` but `.state/`.
+/// Every file under `dir` but `.state/` and a shared graph's `.git/`.
 fn files(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            if path.file_name().is_some_and(|name| name != ".state") {
+            if path
+                .file_name()
+                .is_some_and(|name| name != ".state" && name != ".git")
+            {
                 found.extend(files(&path));
             }
         } else {
@@ -405,6 +408,37 @@ fn the_callers_git_variables_do_not_redirect_the_placement() {
     assert_eq!(
         String::from_utf8(plain.stdout).unwrap(),
         ".trurlic/project.toml\n"
+    );
+}
+
+/// A migration to `shared` makes the graph's own repository, whose first
+/// commit is the migration's and holds every file of the migrated graph.
+/// The backup beside `.trurlic/` holds the old files, and no repository.
+#[test]
+fn a_migration_to_shared_makes_the_repository_whose_first_commit_is_the_graph() {
+    let project = untracked_fixture("0.4.1");
+
+    let output = stdout(&project, &["migrate", "--placement", "shared"]);
+
+    let (_, backup) = split_report(&project, &output);
+    assert_eq!(graph_log(&store(&project)), ["migrate"]);
+    let committed = graph_git(&store(&project), &["ls-tree", "-r", "--name-only", "HEAD"]);
+    let mut migrated: Vec<String> = files(&store(&project))
+        .iter()
+        .map(|path| {
+            path.strip_prefix(store(&project))
+                .unwrap()
+                .display()
+                .to_string()
+        })
+        .collect();
+    migrated.sort();
+    assert_eq!(committed.lines().collect::<Vec<_>>(), migrated);
+    assert!(backup.join("graph.toml").is_file());
+    assert!(!backup.join(".git").exists());
+    assert_eq!(
+        String::from_utf8(project.run_ok(&["check"]).stdout).unwrap(),
+        ".trurlic/ is consistent\n"
     );
 }
 

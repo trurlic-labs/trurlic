@@ -31,6 +31,13 @@ pub(crate) enum Site {
     /// After each journal entry applied: the `n`-th hit follows the `n`-th
     /// rename, then the removals count on.
     Applied,
+    /// The write's files in place and flushed; its history commit, under
+    /// `shared`, not made.
+    Placed,
+    /// The history commit made; the journal not deleted.
+    HistoryCommitted,
+    /// The journal deleted; the lock still held.
+    Finished,
     /// A graph loaded under the shared or the exclusive lock, before its
     /// caller uses it; a [`panic()`] site.
     Loaded,
@@ -49,6 +56,9 @@ impl Site {
         Self::Journaled,
         Self::Rename,
         Self::Applied,
+        Self::Placed,
+        Self::HistoryCommitted,
+        Self::Finished,
         Self::Loaded,
         #[cfg(feature = "failpoints")]
         Self::ServerRequest,
@@ -61,6 +71,9 @@ impl Site {
             Self::Journaled => "commit.journaled",
             Self::Rename => "commit.rename",
             Self::Applied => "commit.applied",
+            Self::Placed => "commit.placed",
+            Self::HistoryCommitted => "history.committed",
+            Self::Finished => "commit.finished",
             Self::Loaded => "graph.loaded",
             #[cfg(feature = "failpoints")]
             Self::ServerRequest => "mcp.server_request",

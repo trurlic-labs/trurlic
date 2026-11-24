@@ -196,7 +196,7 @@ fn a_failed_rename_is_applied_by_the_next_command() {
 
     assert_eq!(output.status.code(), Some(1), "{}", output.status);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not applied"), "{stderr}");
+    assert!(stderr.contains("not finished"), "{stderr}");
     assert!(journal_exists(&project));
     assert_eq!(
         project.read("components/store.toml"),
