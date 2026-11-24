@@ -1,182 +1,86 @@
-Migrated .trurlic/ from format 0.2.0 to 0.4.1.
+Migrated .trurlic/ from format 0.2.0 to 0.5.0.
   0.2.0 -> 0.3.0 (decisions record who made them): nothing dropped
-  0.3.0 -> 0.4.0 (the supersedes edge is retired): dropped 1
-    graph.toml: edges = { from = "newline-delimited-json-rpc-over-stdio", kind = "supersedes", to = "json-rpc-over-stdio" }
+  0.3.0 -> 0.4.0 (the supersedes edge is retired):
+    1 value(s) dropped:
+      graph.toml: edges = { from = "newline-delimited-json-rpc-over-stdio", kind = "supersedes", to = "json-rpc-over-stdio" }
   0.4.0 -> 0.4.1 (the version key becomes format_version): nothing dropped
-Rewrote 7 file(s):
+  0.4.1 -> 0.5.0 (node files only: edges in their sources, no patterns, status for attribution):
+    placement = "tracked": stated with --placement
+    1 `constrains` edge(s) written as `depends_on`:
+      write-through-a-temp-file-and-rename depends_on json-rpc-over-stdio, for json-rpc-over-stdio constrains write-through-a-temp-file-and-rename
+    1 pattern(s) taken out of the graph:
+      [durable-storage]
+      name = "Durable storage"
+      description = "Node files are written whole or not at all"
+      tags = ["storage"]
+      member_of = ["one-toml-file-per-node", "write-through-a-temp-file-and-rename"]
+      applies_to = ["store"]
+Rewrote 8 file(s):
   project.toml
+  components/api.toml
+  components/store.toml
   decisions/json-rpc-over-stdio.toml
   decisions/newline-delimited-json-rpc-over-stdio.toml
   decisions/no-unsafe-code.toml
   decisions/one-toml-file-per-node.toml
   decisions/write-through-a-temp-file-and-rename.toml
+Removed 2 file(s):
   graph.toml
+  patterns/durable-storage.toml
 
 --- components/api.toml
-[component]
-name = "api"
 description = "The MCP server"
+connects_to = [
+    "store",
+]
 --- components/store.toml
-[component]
-name = "store"
 description = "Node files and the graph index"
 --- decisions/json-rpc-over-stdio.toml
-[decision]
 component = "api"
 choice = "JSON-RPC over stdio"
 reason = "Every client speaks it and it needs no port"
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T21:55:57.849620660Z"
 --- decisions/newline-delimited-json-rpc-over-stdio.toml
-[decision]
 component = "api"
 choice = "Newline-delimited JSON-RPC over stdio"
 reason = "One message per line keeps the reader a line reader"
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T21:55:57.850402900Z"
 --- decisions/no-unsafe-code.toml
-[decision]
 component = "project"
 choice = "No unsafe code"
 reason = "The crate has no need for it and forbids it"
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T21:55:57.851090315Z"
 --- decisions/one-toml-file-per-node.toml
-[decision]
 component = "store"
 choice = "One TOML file per node"
 reason = "Files diff and merge line by line in version control"
-alternatives = ["SQLite - rejected: a binary file in version control"]
-tags = ["storage"]
-attribution = "user"
+alternatives = [
+    "SQLite - rejected: a binary file in version control",
+]
+tags = [
+    "storage",
+]
+status = "accepted"
 created = "2026-11-23T21:55:57.847992393Z"
 --- decisions/write-through-a-temp-file-and-rename.toml
-[decision]
 component = "store"
 choice = "Write through a temp file and rename"
 reason = "A crash never leaves a half-written node file"
 tags = [
-    "storage",
     "reliability",
+    "storage",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T21:55:57.848816741Z"
---- graph.toml
-version = 1
-rebuilt = "2026-11-23T21:55:57.852181081Z"
-
-[[nodes]]
-name = "api"
-kind = "component"
-hash = "3e8848206dd5e210c7ea807f8052a12d0e1ee056d32d29876dafb7b738ec88da"
-
-[[nodes]]
-name = "durable-storage"
-kind = "pattern"
-tags = ["storage"]
-hash = "57f42a8d5cab85248931e69095cb07f2d15946c32fe6b5b24942c73c128aec74"
-
-[[nodes]]
-name = "json-rpc-over-stdio"
-kind = "decision"
-hash = "30365576a5d65b7c0f0386628b27bc4af149f5054b3b21a4dae98dda3d9e4a8d"
-
-[[nodes]]
-name = "newline-delimited-json-rpc-over-stdio"
-kind = "decision"
-hash = "807d3ac10d93466e32ea0348c5fe94b9f65a2b85cb7ce55b5f34579a46b25ea8"
-
-[[nodes]]
-name = "no-unsafe-code"
-kind = "decision"
-hash = "b50f58e7813dfe1b7eba0491cb9378a8ba3984c98c70a48edff58fca447fd869"
-
-[[nodes]]
-name = "one-toml-file-per-node"
-kind = "decision"
-tags = ["storage"]
-hash = "d6ff8584c88bf462c63bfaee94b1e7a5440775982a75e5e2f3b26cec6bb5d639"
-
-[[nodes]]
-name = "project"
-kind = "component"
-hash = "8cd5a28d497fe4630db0c7f6b3cc47ab70d14ad3c5ef83529966d859365bf576"
-
-[[nodes]]
-name = "store"
-kind = "component"
-hash = "90fbfb33aade18fb204ef2d93f58ebd55a5e5dfe1858cbf2bafdba09d0d3a724"
-
-[[nodes]]
-name = "write-through-a-temp-file-and-rename"
-kind = "decision"
-tags = [
-    "storage",
-    "reliability",
+depends_on = [
+    "json-rpc-over-stdio",
+    "one-toml-file-per-node",
 ]
-hash = "1d362ab8459579eff41d533b4c49ecbbaf0a55d6f0de917ee65df680db666e98"
-
-[[edges]]
-from = "api"
-to = "store"
-kind = "connects_to"
-
-[[edges]]
-from = "durable-storage"
-to = "one-toml-file-per-node"
-kind = "member_of"
-
-[[edges]]
-from = "durable-storage"
-to = "store"
-kind = "applies_to"
-
-[[edges]]
-from = "durable-storage"
-to = "write-through-a-temp-file-and-rename"
-kind = "member_of"
-
-[[edges]]
-from = "json-rpc-over-stdio"
-to = "api"
-kind = "belongs_to"
-
-[[edges]]
-from = "json-rpc-over-stdio"
-to = "write-through-a-temp-file-and-rename"
-kind = "constrains"
-
-[[edges]]
-from = "newline-delimited-json-rpc-over-stdio"
-to = "api"
-kind = "belongs_to"
-
-[[edges]]
-from = "no-unsafe-code"
-to = "project"
-kind = "belongs_to"
-
-[[edges]]
-from = "one-toml-file-per-node"
-to = "store"
-kind = "belongs_to"
-
-[[edges]]
-from = "write-through-a-temp-file-and-rename"
-to = "one-toml-file-per-node"
-kind = "depends_on"
-
-[[edges]]
-from = "write-through-a-temp-file-and-rename"
-to = "store"
-kind = "belongs_to"
---- patterns/durable-storage.toml
-[pattern]
-name = "Durable storage"
-description = "Node files are written whole or not at all"
 --- project.toml
-format_version = "0.4.1"
-
-[project]
+format_version = "0.5.0"
 name = "demo"
 description = ""
+placement = "tracked"

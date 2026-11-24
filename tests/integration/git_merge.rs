@@ -6,39 +6,8 @@
 //! touch different lines.
 
 use std::path::Path;
-use std::process::{Command, Output};
 
-use crate::harness::{Project, decision};
-
-/// `git <args>` in `dir`, isolated from the user's and the system's git
-/// configuration, with a fixed identity.
-fn git(dir: &Path, args: &[&str]) -> Output {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_WORK_TREE")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .args([
-            "-c",
-            "user.name=trurlic-tests",
-            "-c",
-            "user.email=tests@trurlic.invalid",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?} failed\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
+use crate::harness::{Project, decision, git};
 
 fn commit_all(dir: &Path, message: &str) {
     git(dir, &["add", "--all"]);

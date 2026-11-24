@@ -1,0 +1,24 @@
+component = "git"
+choice = "git is a leaf module that runs the git CLI as a child process, with a typed function per question and -z output; it depends on error alone, and no libgit2"
+reason = """
+The plan calls the git CLI rather than libgit2, a C library with its own configuration and repository discovery. Later work asks git for the toplevel, the common dir, the worktree list and, under shared placement, for commits made by the store's writer protocol, so the runner must be one the store can use: a top-level module like budget and console, importing nothing but error, so no arrow points from it to store, commands or mcp. Each question is a function with typed arguments and a typed answer (tracked returns the paths ls-files -z lists), running git -C <dir> with stdin closed; -z output is split on NUL and read as raw bytes into paths, so no name is quoted or cut at a newline. A missing binary is Error::GitMissing, a spawn failure Error::GitSpawn, and a nonzero exit Error::GitFailed with the directory, the arguments, the status and stderr. The module holds only the functions a caller needs.
+"""
+alternatives = [
+    "libgit2 through the git2 crate: rejected because the plan calls the CLI, and a C dependency brings its own discovery and configuration rules",
+    "git inside store: rejected because a writer protocol and a command both need it, and process spawning would sit in the module that holds the graph",
+    "git inside commands: rejected because the store's history commits will need it, and store may not import commands",
+]
+tags = [
+    "dependencies",
+    "git",
+    "module-boundary",
+]
+status = "proposed"
+created = "2026-11-24T01:30:00Z"
+anchors = [
+    { file = "src/error.rs", symbol = "Error::GitFailed" },
+    { file = "src/git.rs", symbol = "paths" },
+    { file = "src/git.rs", symbol = "run" },
+    { file = "src/git.rs", symbol = "tracked" },
+    { file = "src/lib.rs" },
+]

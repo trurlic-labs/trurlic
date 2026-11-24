@@ -1,5 +1,4 @@
-format_version = "0.4.1"
-
-[project]
+format_version = "0.5.0"
 name = "trurlic"
 description = ""
+placement = "tracked"

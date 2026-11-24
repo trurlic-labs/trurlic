@@ -1,0 +1,26 @@
+component = "store"
+choice = "A load fails only when a file is not its type; names, edges and text rules are validation issues, so status, the reads and check still work on a hand-broken graph"
+reason = """
+With hand edits the only write, a broken graph is an ordinary state, and the tools must be able to say what is wrong with it. A load fails, naming the file, only when a file cannot be read as its type: it cannot be read, it is over the node cap, it is not TOML, or its type refuses it (an unknown key, a wrong type, a status its fields contradict, an anchor path outside its rules). Everything a set of well-typed files can hold but should not (a component or an edge that names no node, a name two kinds share, a cycle, a broken text rule) is an Issue that ProjectState::validate reports with its file: check lists them all and fails, status counts them, open_store warns, and get_context and get_decisions_for_file still answer. What the types refuse is what no code past the load could hold; what validation reports is a relation between files that a fix in one of them resolves.
+"""
+alternatives = [
+    "Fail the load on every issue: rejected because one dangling edge would stop status, check and every read, and check could not report what it cannot load",
+    "Skip a malformed file and load the rest: rejected because a decision would drop out of every brief without a word",
+    "Read every file untyped and report type faults as issues too: rejected because every consumer would then handle values the format does not allow",
+]
+tags = [
+    "reliability",
+    "validation",
+]
+status = "proposed"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/commands/query.rs", symbol = "check" },
+    { file = "src/store/load.rs", symbol = "Store::read_nodes" },
+    { file = "src/store/validate.rs", symbol = "ProjectState::validate" },
+    { file = "tests/integration/invalid_graph.rs", symbol = "the_reads_answer_over_an_invalid_graph" },
+    { file = "tests/integration/malformed_node.rs" },
+]
+depends_on = [
+    "validation-issues-carry-an-issuekind-and-a-subject-and",
+]

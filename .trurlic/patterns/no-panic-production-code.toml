@@ -1,3 +1,0 @@
-[pattern]
-name = "no-panic-production-code"
-description = "Production code must never panic. Enforced at three levels: unsafe code forbidden via Cargo lint, unwrap/expect/panic denied outside tests via clippy lints, and a single error enum with a Result alias so every fallible path propagates with ?."

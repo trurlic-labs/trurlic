@@ -29,8 +29,12 @@ use std::path::{Path, PathBuf};
 use crate::{Error, Result};
 
 pub use access::Writer;
+pub(crate) use durable::sync_dir;
 pub use lock::StoreLock;
-pub(crate) use migration::{Loss, MigrationReport};
+pub use migration::PlacementDoubt;
+pub(crate) use migration::{
+    Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, PlacementSource,
+};
 pub use query::{Named, anchors_in, normalize_path};
 pub use schema::{
     AcceptedText, AcceptedVia, Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR,

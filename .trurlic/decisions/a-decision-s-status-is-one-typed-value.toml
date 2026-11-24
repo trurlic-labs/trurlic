@@ -1,0 +1,23 @@
+component = "store"
+choice = "A decision's status is proposed or accepted; accepted_via only on an accepted one, accepted_text only on a proposed one, and a file that breaks this is refused at load"
+reason = """
+status replaces attribution: proposed marks a choice an agent made alone, accepted one the owner accepted. accepted_via says how (elicitation or cli), and a decision migrated as accepted has none; accepted_text holds the text the owner accepted while a revision of it is proposed. DecisionFields reads the three flat keys, and TryFrom builds Status::Proposed { accepted_text } or Status::Accepted { via }, refusing accepted_via on a proposed decision and accepted_text on an accepted one with a StatusFault, so code past the load matches on one value and never meets a combination the format forbids. The canonical form writes the same flat keys back.
+"""
+alternatives = [
+    "Keep attribution user or agent: rejected because it records who wrote a decision, not whether the owner accepted it, and a revision would lose the accepted text",
+    "Three independent optional fields with a validation issue for contradictions: rejected because every consumer would have to handle states the format forbids",
+    "A nested status table in the file: rejected because the format is flat keys, which read and diff more simply",
+]
+tags = [
+    "storage",
+    "validation",
+]
+status = "accepted"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/mcp/context.rs", symbol = "health" },
+    { file = "src/store/schema.rs", symbol = "AcceptedText" },
+    { file = "src/store/schema.rs", symbol = "DecisionFields" },
+    { file = "src/store/schema.rs", symbol = "Status" },
+    { file = "src/store/schema.rs", symbol = "StatusFault" },
+]

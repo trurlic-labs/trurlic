@@ -1,0 +1,28 @@
+component = "commands"
+choice = "migrate writes placement tracked when git tracks every file of .trurlic/, shared when none; a mix or no work tree is refused, and --placement states it"
+reason = """
+0.4.1 stores hold no placement and 0.5 requires one, and git already knows the answer: a graph the project's git tracks is tracked, one it keeps out is shared. migrate runs git ls-files in the directory that holds .trurlic/, never inside it, where a graph kept in a repository of its own would answer for that one. The store compares the listing with the files it read: all of them tracked is tracked, none is shared. A mix, such as a new decision not yet added, and a directory git cannot read as a work tree (no repository, git missing, a failed command with its stderr) are Error::PlacementUnknown, which names the files on the smaller side or git's error and says to run trurlic migrate --placement tracked or --placement shared; nothing is written. A stated placement is written as given and git is not run. The report says which placement was written and how it was told. The command gathers the git fact and the store takes it as data, PlacementSource, so the store spawns no process; a store with nothing to migrate never looks at it, so a missing git does not fail an up-to-date store.
+"""
+alternatives = [
+    "Default to tracked when git cannot tell: rejected because a guess would decide how the graph is versioned",
+    "Ask git which placement inside .trurlic/: rejected because a graph that is its own repository would answer for itself",
+    "Run git from the store: rejected because the store would spawn processes where the command can hand it the answer",
+]
+tags = [
+    "git",
+    "migration",
+]
+status = "accepted"
+created = "2026-11-24T01:30:00Z"
+anchors = [
+    { file = "src/cli.rs", symbol = "ProjectCommand::Migrate" },
+    { file = "src/commands/migrate.rs", symbol = "tracked" },
+    { file = "src/store/migration/placement.rs", symbol = "PlacementDoubt" },
+    { file = "src/store/migration/placement.rs", symbol = "PlacementSource" },
+    { file = "src/store/migration/placement.rs", symbol = "Store::placement" },
+    { file = "tests/integration/migrate.rs", symbol = "a_graph_git_tracks_in_part_is_refused_naming_how_to_state_it" },
+]
+depends_on = [
+    "the-git-module-is-a-leaf-that-runs-the-git-cli",
+    "trurlic-init-requires-placement",
+]

@@ -87,10 +87,17 @@ pub enum ProjectCommand {
         /// Show what would change without writing.
         #[arg(long)]
         dry_run: bool,
+
+        /// The placement to write: `tracked` when the project's git
+        /// versions `.trurlic/`, `shared` when it stays out of it. Without
+        /// it, git tells: `tracked` when it tracks every file of
+        /// `.trurlic/`, `shared` when it tracks none.
+        #[arg(long, value_enum)]
+        placement: Option<PlacementArg>,
     },
 }
 
-/// Where the graph is versioned, as `init` takes it.
+/// Where the graph is versioned, as `init` and `migrate` take it.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum PlacementArg {
     /// The project's git versions `.trurlic/`.
@@ -164,13 +171,13 @@ fn run(command: ProjectCommand) -> Result<()> {
         ProjectCommand::Status => commands::status(&cwd),
         ProjectCommand::Check => commands::check(&cwd),
         ProjectCommand::Fmt => commands::fmt(&cwd),
-        ProjectCommand::Migrate { dry_run } => {
+        ProjectCommand::Migrate { dry_run, placement } => {
             let mode = if dry_run {
                 commands::DryRun::Yes
             } else {
                 commands::DryRun::No
             };
-            commands::migrate(&cwd, mode)
+            commands::migrate(&cwd, mode, placement.map(Placement::from))
         }
     }
 }

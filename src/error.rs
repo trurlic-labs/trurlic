@@ -7,8 +7,9 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 
-use crate::store::{AnchorFault, FormatVersion, TimestampError};
+use crate::store::{AnchorFault, FormatVersion, PlacementDoubt, TimestampError};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -86,6 +87,45 @@ pub enum Error {
     )]
     Unmigrated { path: PathBuf },
 
+    /// The step to format 0.5 writes `placement`, and git does not tell it.
+    /// `store` is the store directory.
+    #[error(
+        "{}: cannot tell whether the project's git versions this directory: {doubt}; \
+         state it with `trurlic migrate --placement tracked` when it does, or \
+         `--placement shared` when the directory stays out of the project's git",
+        store.display()
+    )]
+    PlacementUnknown {
+        store: PathBuf,
+        doubt: PlacementDoubt,
+    },
+
+    /// Writing each `A constrains B` as `B depends_on A` would close a
+    /// `depends_on` cycle among `members`, sorted.
+    #[error(
+        "writing each `A constrains B` of graph.toml as `B depends_on A` closes a depends_on \
+         cycle among {}; remove one of the `constrains` or `depends_on` edges among them from \
+         graph.toml, then migrate again",
+        quoted(members)
+    )]
+    ConstrainsCycle { members: Vec<String> },
+
+    #[error("cannot run `git`: it is not installed or not on PATH")]
+    GitMissing,
+
+    /// `args` are the arguments after `git -C <dir>`.
+    #[error("cannot run `git {args}`: {source}")]
+    GitSpawn { args: String, source: io::Error },
+
+    /// `stderr` is git's, without its trailing line break.
+    #[error("`git {args}` in {} failed ({status}): {stderr}", dir.display())]
+    GitFailed {
+        dir: PathBuf,
+        args: String,
+        status: ExitStatus,
+        stderr: String,
+    },
+
     /// A path given to a query that could name a place outside the code root.
     #[error("invalid path `{path}`: {fault}")]
     InvalidPath { path: String, fault: AnchorFault },
@@ -154,6 +194,12 @@ impl Error {
             source,
         }
     }
+}
+
+/// `names`, each in backticks, comma-separated.
+fn quoted(names: &[String]) -> String {
+    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+    quoted.join(", ")
 }
 
 fn version_relation(found: FormatVersion, expected: FormatVersion) -> &'static str {

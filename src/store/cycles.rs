@@ -1,5 +1,5 @@
-//! Cycles in the `depends_on` subgraph, found as its strongly connected
-//! components (Tarjan).
+//! Cycles in a graph of names, such as the `depends_on` edges of the
+//! decisions, found as its strongly connected components (Tarjan).
 //!
 //! The search keeps its own stack on the heap, so a dependency chain of any
 //! length runs in constant call-stack depth. A cycle is reported once, as the
@@ -7,7 +7,7 @@
 //! member. A one-node loop is a self-edge, which validation reports on its
 //! own.
 
-use std::collections::{BTreeMap, btree_set};
+use std::collections::{BTreeMap, BTreeSet, btree_set};
 
 use super::state::ProjectState;
 
@@ -15,15 +15,39 @@ impl ProjectState {
     /// Every `depends_on` cycle as its sorted members, the cycles sorted.
     #[must_use]
     pub(super) fn depends_on_cycles(&self) -> Vec<Vec<&str>> {
-        let mut search = Search::default();
-        for (root, decision) in &self.decisions {
-            if !decision.depends_on.is_empty() && !search.visits.contains_key(root.as_str()) {
-                search.run(self, root);
-            }
-        }
-        search.cycles.sort_unstable();
-        search.cycles
+        let roots = self
+            .decisions
+            .iter()
+            .filter(|(_, decision)| !decision.depends_on.is_empty())
+            .map(|(name, _)| name.as_str());
+        cycles(roots, |name| {
+            self.decisions
+                .get(name)
+                .map(|decision| &decision.depends_on)
+        })
     }
+}
+
+/// Every cycle through the nodes `roots` lead to, as its sorted members,
+/// the cycles sorted. `successors` gives the names a node points at; a name
+/// it gives `None` for points nowhere.
+pub(super) fn cycles<'g>(
+    roots: impl IntoIterator<Item = &'g str>,
+    successors: impl Fn(&str) -> Option<&'g BTreeSet<String>>,
+) -> Vec<Vec<&'g str>> {
+    let mut search = Search {
+        successors,
+        visits: BTreeMap::new(),
+        open: Vec::new(),
+        cycles: Vec::new(),
+    };
+    for root in roots {
+        if !search.visits.contains_key(root) {
+            search.run(root);
+        }
+    }
+    search.cycles.sort_unstable();
+    search.cycles
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,8 +68,8 @@ struct Frame<'g> {
     successors: btree_set::Iter<'g, String>,
 }
 
-#[derive(Default)]
-struct Search<'g> {
+struct Search<'g, S> {
+    successors: S,
     /// Looked up, never iterated: the cycles are sorted on return.
     visits: BTreeMap<&'g str, Visit>,
     /// Open nodes in discovery order; a component is a suffix of it.
@@ -53,13 +77,13 @@ struct Search<'g> {
     cycles: Vec<Vec<&'g str>>,
 }
 
-impl<'g> Search<'g> {
-    fn run(&mut self, state: &'g ProjectState, root: &'g str) {
-        let mut frames = vec![self.enter(state, root)];
+impl<'g, S: Fn(&str) -> Option<&'g BTreeSet<String>>> Search<'g, S> {
+    fn run(&mut self, root: &'g str) {
+        let mut frames = vec![self.enter(root)];
         while let Some(frame) = frames.last_mut() {
             if let Some(target) = frame.successors.next() {
                 match self.visits.get(target.as_str()).copied() {
-                    None => frames.push(self.enter(state, target)),
+                    None => frames.push(self.enter(target)),
                     Some(Visit::Open(order)) => frame.low = frame.low.min(order),
                     Some(Visit::Closed) => {}
                 }
@@ -74,20 +98,17 @@ impl<'g> Search<'g> {
         }
     }
 
-    fn enter(&mut self, state: &'g ProjectState, node: &'g str) -> Frame<'g> {
+    fn enter(&mut self, node: &'g str) -> Frame<'g> {
         let order = self.visits.len();
         self.visits.insert(node, Visit::Open(order));
         self.open.push(node);
-        let successors = state
-            .decisions
-            .get(node)
-            .map(|decision| decision.depends_on.iter())
-            .unwrap_or_default();
         Frame {
             node,
             order,
             low: order,
-            successors,
+            successors: (self.successors)(node)
+                .map(BTreeSet::iter)
+                .unwrap_or_default(),
         }
     }
 

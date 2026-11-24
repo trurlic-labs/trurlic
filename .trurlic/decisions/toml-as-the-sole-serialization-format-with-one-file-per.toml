@@ -1,20 +1,22 @@
-[decision]
 component = "store"
-choice = "TOML as the sole serialization format with one file per graph node"
-reason = "Each graph node (component, decision, pattern) is a separate TOML file under .trurlic/{components,decisions,patterns}/<name>.toml. TOML was chosen for human readability and git-friendly diffs. The schema uses wrapper types (ComponentFile, DecisionFile, PatternFile) with a single top-level table key matching the node type. graph.toml is a compiled edge index rebuilt deterministically from node files. Empty arrays use skip_serializing_if to keep files minimal. project.toml's format_version (FORMAT_VERSION) names the format; a change to the shape appends a migration step."
+choice = "TOML is the one format of the graph, one file per node: project.toml, components/<name>.toml and decisions/<name>.toml"
+reason = """
+Each node is a TOML file whose top-level keys are its fields, with no wrapper table and no name key: the file stem names the node. TOML was chosen for human readability and git-friendly diffs, and one file per node lets two branches that add different nodes touch different files. project.toml's format_version (FORMAT_VERSION) names the format; a change of shape appends a migration step. Every file is written in the canonical form, which leaves out an empty set or list, so a file holds only what it says.
+"""
 alternatives = [
-    "Single monolithic JSON file — rejected: merge conflicts on every change, not human-readable, no partial reads",
-    "SQLite database — rejected: binary format is opaque in git diffs, overkill for a store with typically fewer than 500 nodes, adds a C library dependency",
-    "YAML — rejected: YAML has surprising parsing behaviors (Norway problem, implicit type coercion) that make it unsuitable for a store where data integrity is critical",
+    "One JSON file for the whole graph: rejected because every change conflicts with every other, and it is hard to read",
+    "SQLite: rejected because a binary file is opaque in git diffs and adds a C library dependency for a store of a few thousand nodes",
+    "YAML: rejected because its implicit typing (the Norway problem) makes values change meaning silently",
 ]
 tags = [
-    "storage",
     "developer-experience",
+    "storage",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-06-15T09:45:46.975613404Z"
-
-[[decision.history]]
-choice = "TOML as the sole serialization format with one file per graph node"
-reason = "Each graph node (component, decision, pattern) is a separate TOML file under .trurlic/{components,decisions,patterns}/<name>.toml. TOML was chosen for human readability and git-friendly diffs. The schema uses wrapper types (ComponentFile, DecisionFile, PatternFile) with a single top-level table key matching the node type. graph.toml is a compiled edge index rebuilt deterministically from node files. Empty arrays use skip_serializing_if to keep files minimal. Format versioning via FORMAT_VERSION in project.toml enables future migrations."
-changed_at = "2026-11-23T22:52:38.011647550Z"
+anchors = [
+    { file = "src/store/schema.rs", symbol = "Component" },
+    { file = "src/store/schema.rs", symbol = "DECISIONS_DIR" },
+    { file = "src/store/schema.rs", symbol = "Decision" },
+    { file = "src/store/schema.rs", symbol = "Project" },
+]

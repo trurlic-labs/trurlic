@@ -1,4 +1,3 @@
-[decision]
 component = "mcp"
 choice = "initialize answers the client's protocol revision when PROTOCOL_VERSIONS holds it (2025-11-25, 2025-06-18), else the latest"
 reason = "The MCP lifecycle requires a server that supports the requested revision to answer with it, and otherwise to answer with another it supports, preferably its latest; the server answered 2025-11-25 to every client. PROTOCOL_VERSIONS lists, latest first, the revisions whose features the server's answers and requests use: 2025-06-18 introduced elicitation, outputSchema and structuredContent, and 2025-11-25 adds elicitation modes, where an empty elicitation capability still means form mode, so the server's messages are valid in both. An initialize without a string protocolVersion is refused with -32602."
@@ -6,14 +5,12 @@ alternatives = [
     "Answer one fixed revision: rejected, the specification requires echoing a supported requested revision",
     "Also list 2025-03-26 and 2024-11-05: rejected, neither has elicitation or structured tool output, which accept and the 0.4.0 tools rely on",
 ]
-tags = ["protocol"]
-attribution = "user"
+tags = [
+    "protocol",
+]
+status = "accepted"
 created = "2026-11-23T23:15:11.132342073Z"
-
-[[decision.code_refs]]
-file = "src/mcp/mod.rs"
-symbol = "PROTOCOL_VERSIONS"
-
-[[decision.code_refs]]
-file = "src/mcp/mod.rs"
-symbol = "negotiate"
+anchors = [
+    { file = "src/mcp/mod.rs", symbol = "PROTOCOL_VERSIONS" },
+    { file = "src/mcp/mod.rs", symbol = "negotiate" },
+]

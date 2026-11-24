@@ -1,0 +1,23 @@
+component = "store"
+choice = "Every graph file has one canonical form: keys in a fixed order, sets sorted one per line with a trailing comma, empty ones left out, multi-line text as triple-quoted strings"
+reason = """
+Two writers that lay one value out differently make diffs churn and merges conflict, so every write emits one form. A set (tags, edges, anchors) is sorted, one element per line with a trailing comma, so two branches that add elements at different places of one list touch different lines and git merges them with its own driver; an empty set or list is left out, so a file holds only what it says; a text with a line break is a triple-quoted string, so a reason reads as its lines in a diff. Hand edits are legal and need not be canonical: a load notes each file whose bytes differ, check warns about it and trurlic fmt rewrites it. tests/integration/git_merge.rs merges two branches of a tracked graph in a real repository and requires check to pass.
+"""
+alternatives = [
+    "Accept any layout: rejected because each writer and each hand edit would leave its own, and a one-line list conflicts on every addition",
+    "A git merge driver for node files: rejected because sorted one-per-line sets already merge with git's own, and a driver must be installed in every clone",
+]
+tags = [
+    "determinism",
+    "storage",
+]
+status = "accepted"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/store/canonical.rs", symbol = "Emitter" },
+    { file = "tests/integration/canonical_form.rs" },
+    { file = "tests/integration/git_merge.rs" },
+]
+depends_on = [
+    "toml-as-the-sole-serialization-format-with-one-file-per",
+]

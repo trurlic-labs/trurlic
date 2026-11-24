@@ -1,120 +1,57 @@
-Migrated .trurlic/ from format 0.1.0 to 0.4.1.
+Migrated .trurlic/ from format 0.1.0 to 0.5.0.
   0.1.0 -> 0.2.0 (connections and supersedes links move into graph.toml): nothing dropped
   0.2.0 -> 0.3.0 (decisions record who made them): nothing dropped
-  0.3.0 -> 0.4.0 (the supersedes edge is retired): dropped 1
-    graph.toml: edges = { from = "newline-delimited-json-rpc-over-stdio", kind = "supersedes", to = "json-rpc-over-stdio" }
+  0.3.0 -> 0.4.0 (the supersedes edge is retired):
+    1 value(s) dropped:
+      graph.toml: edges = { from = "newline-delimited-json-rpc-over-stdio", kind = "supersedes", to = "json-rpc-over-stdio" }
   0.4.0 -> 0.4.1 (the version key becomes format_version): nothing dropped
+  0.4.1 -> 0.5.0 (node files only: edges in their sources, no patterns, status for attribution):
+    placement = "tracked": stated with --placement
 Rewrote 7 file(s):
   project.toml
   components/api.toml
+  components/store.toml
   decisions/json-rpc-over-stdio.toml
   decisions/newline-delimited-json-rpc-over-stdio.toml
   decisions/no-unsafe-code.toml
   decisions/one-toml-file-per-node.toml
-  graph.toml
 
 --- components/api.toml
-[component]
-name = "api"
 description = "The MCP server"
+connects_to = [
+    "store",
+]
 --- components/store.toml
-[component]
-name = "store"
 description = "Node files and the graph index"
 --- decisions/json-rpc-over-stdio.toml
-[decision]
 component = "api"
 choice = "JSON-RPC over stdio"
 reason = "Every client speaks it and it needs no port"
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T21:56:59.192828175Z"
 --- decisions/newline-delimited-json-rpc-over-stdio.toml
-[decision]
 component = "api"
 choice = "Newline-delimited JSON-RPC over stdio"
 reason = "One message per line keeps the reader a line reader"
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T21:56:59.196791936Z"
 --- decisions/no-unsafe-code.toml
-[decision]
 component = "project"
 choice = "No unsafe code"
 reason = "The crate has no need for it and forbids it"
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T21:56:59.200535687Z"
 --- decisions/one-toml-file-per-node.toml
-[decision]
 component = "store"
 choice = "One TOML file per node"
 reason = "Files diff and merge line by line in version control"
-alternatives = ["SQLite - rejected: a binary file in version control"]
-attribution = "user"
+alternatives = [
+    "SQLite - rejected: a binary file in version control",
+]
+status = "accepted"
 created = "2026-11-23T21:56:59.188724775Z"
---- graph.toml
-version = 1
-
-[[nodes]]
-name = "api"
-kind = "component"
-hash = "3e8848206dd5e210c7ea807f8052a12d0e1ee056d32d29876dafb7b738ec88da"
-
-[[nodes]]
-name = "json-rpc-over-stdio"
-kind = "decision"
-hash = "c4945ef633952cd8c329f7a40779711239a313185b65b624780a5bb58a4e0b64"
-
-[[nodes]]
-name = "newline-delimited-json-rpc-over-stdio"
-kind = "decision"
-hash = "cd03229186470f60a3a758377926f013e19f45b5a8d58df7e18e79b239999a16"
-
-[[nodes]]
-name = "no-unsafe-code"
-kind = "decision"
-hash = "ed88d5cc078402e0959c639a5008767d747290122ec0b3224cd8461b1d70b1b6"
-
-[[nodes]]
-name = "one-toml-file-per-node"
-kind = "decision"
-hash = "17caab2931dedc650dc197ce155853ab86bcf247f5b883ded13af7c4c98fb134"
-
-[[nodes]]
-name = "project"
-kind = "component"
-hash = "8cd5a28d497fe4630db0c7f6b3cc47ab70d14ad3c5ef83529966d859365bf576"
-
-[[nodes]]
-name = "store"
-kind = "component"
-hash = "90fbfb33aade18fb204ef2d93f58ebd55a5e5dfe1858cbf2bafdba09d0d3a724"
-
-[[edges]]
-from = "api"
-to = "store"
-kind = "connects_to"
-
-[[edges]]
-from = "json-rpc-over-stdio"
-to = "api"
-kind = "belongs_to"
-
-[[edges]]
-from = "newline-delimited-json-rpc-over-stdio"
-to = "api"
-kind = "belongs_to"
-
-[[edges]]
-from = "no-unsafe-code"
-to = "project"
-kind = "belongs_to"
-
-[[edges]]
-from = "one-toml-file-per-node"
-to = "store"
-kind = "belongs_to"
 --- project.toml
-format_version = "0.4.1"
-
-[project]
+format_version = "0.5.0"
 name = "demo"
 description = ""
+placement = "tracked"

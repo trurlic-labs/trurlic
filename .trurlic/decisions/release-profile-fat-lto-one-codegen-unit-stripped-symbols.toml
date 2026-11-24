@@ -1,9 +1,8 @@
-[decision]
 component = "project"
 choice = "Release profile: fat LTO, one codegen unit, stripped symbols, overflow checks, and panic=unwind so serve survives a panic"
-reason = 'Cargo.toml [profile.release] sets lto = "fat", codegen-units = 1, strip = true, overflow-checks = true and panic = "unwind": the binary is distributed, so size and speed are worth the compile time, and overflow checks stay on for safety. Unwind is what lets the MCP server answer a request that panics with -32603 and serve the next one; with abort, one bug in one tool call ended the session and every call after it, and the client saw a dead server instead of an error. The lints still deny every panicking path outside tests, so the unwinding machinery is only reached by a bug. The dev profile builds dependencies at opt-level 2 to keep debug builds fast.'
+reason = "Cargo.toml [profile.release] sets lto = \"fat\", codegen-units = 1, strip = true, overflow-checks = true and panic = \"unwind\": the binary is distributed, so size and speed are worth the compile time, and overflow checks stay on for safety. Unwind is what lets the MCP server answer a request that panics with -32603 and serve the next one; with abort, one bug in one tool call ended the session and every call after it, and the client saw a dead server instead of an error. The lints still deny every panicking path outside tests, so the unwinding machinery is only reached by a bug. The dev profile builds dependencies at opt-level 2 to keep debug builds fast."
 alternatives = [
-    'panic = "abort": rejected, a panic in one tool call kills the MCP session; the lints make panics rare, not impossible',
+    "panic = \"abort\": rejected, a panic in one tool call kills the MCP session; the lints make panics rare, not impossible",
     "Default release profile: rejected, the binary is distributed and its size and speed matter",
 ]
 tags = [
@@ -11,8 +10,8 @@ tags = [
     "performance",
     "reliability",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T23:15:10.778578750Z"
-
-[[decision.code_refs]]
-file = "Cargo.toml"
+anchors = [
+    { file = "Cargo.toml" },
+]

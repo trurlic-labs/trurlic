@@ -1,3 +1,1 @@
-[component]
-name = "store"
-description = "Decision graph persistence: TOML files, graph index, validation, atomic writes, file locking"
+description = "Decision graph: TOML node files, their canonical form, validation, atomic writes, file locking, migrations"

@@ -57,14 +57,14 @@ pub(super) fn place(staged: &Path, target: &Path) -> Result<()> {
 /// Flush `dir`'s entries, so the renames and removals in it survive a
 /// power loss.
 #[cfg(unix)]
-pub(super) fn sync_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
 
 /// std opens no directory handle on Windows, so there is nothing to flush;
 /// renames there are as durable as NTFS makes them.
 #[cfg(not(unix))]
-pub(super) fn sync_dir(_dir: &Path) -> io::Result<()> {
+pub(crate) fn sync_dir(_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 

@@ -13,7 +13,7 @@ use toml::Value;
 
 use crate::Result;
 
-use super::{File, Tree, loss};
+use super::{File, Tree, format_0_5, loss};
 use crate::store::FormatVersion;
 
 /// One format change.
@@ -25,7 +25,7 @@ pub(super) struct Step {
     pub(super) apply: fn(&mut Tree) -> Result<()>,
 }
 
-pub(super) const STEPS: [Step; 4] = [
+pub(super) const STEPS: [Step; 5] = [
     Step {
         from: FormatVersion::new(0, 1, 0),
         to: FormatVersion::new(0, 2, 0),
@@ -50,6 +50,12 @@ pub(super) const STEPS: [Step; 4] = [
         change: "the version key becomes format_version",
         apply: rename_version_key,
     },
+    Step {
+        from: FormatVersion::new(0, 4, 1),
+        to: FormatVersion::new(0, 5, 0),
+        change: "node files only: edges in their sources, no patterns, status for attribution",
+        apply: format_0_5::reshape,
+    },
 ];
 
 /// In 0.1.0 a component listed the components it connects to and a
@@ -59,7 +65,7 @@ pub(super) const STEPS: [Step; 4] = [
 /// The pre-release `trurl` builds named the version key `trurl_version`.
 fn move_edges_into_index(tree: &mut Tree) -> Result<()> {
     rename_key(tree, "trurl_version", "trurlic_version");
-    let Tree { files, losses } = tree;
+    let Tree { files, losses, .. } = tree;
     let mut edges = Vec::new();
     for (file, table) in files.iter_mut() {
         // Each field becomes edges of the kind named like it.
@@ -135,7 +141,7 @@ fn attribute_to_user(tree: &mut Tree) -> Result<()> {
 /// 0.4.0 has no `supersedes` edge kind: a superseded decision is revised
 /// in place instead. The edges are dropped.
 fn drop_supersedes_edges(tree: &mut Tree) -> Result<()> {
-    let Tree { files, losses } = tree;
+    let Tree { files, losses, .. } = tree;
     let edges = files
         .get_mut(&File::Index)
         .and_then(|index| index.get_mut("edges"))
@@ -209,7 +215,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs the 0.4.1 -> 0.5.0 step, which lands with the migration"]
     fn the_last_step_reaches_the_current_format() {
         assert_eq!(STEPS[STEPS.len() - 1].to, FORMAT_VERSION);
     }

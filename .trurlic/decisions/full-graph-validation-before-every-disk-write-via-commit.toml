@@ -1,32 +1,26 @@
-[decision]
 component = "store"
-choice = "Full graph validation before every disk write via commit_with_graph; a write is refused only for the errors it adds"
-reason = "Every graph-mutating operation (record_decision, add_component, add_connection, remove_decision, remove_decisions for gc, etc.) goes through commit_with_graph(), which builds a fresh InMemoryGraph from the mutated state and runs every validation check (edge endpoints, type constraints, self-edges, duplicates, pattern membership, depends_on cycles, BelongsTo integrity, content integrity, name integrity, node-content coherence). It refuses the write when the new graph has an Error-severity issue that the graph before the write (state's cached graph, the one last loaded or committed) does not have, matched on (IssueKind, subject). Errors the graph already had, from a hand edit or an older release, do not block a write that leaves them as they are, so one invalid node no longer freezes the store and gc can clear orphans. A message can change with a count while the error stays the same, so messages are not the key. The graph before the write is validated only when the new graph has an error, so a write to a valid store validates once. On refusal, in-memory state is rolled back via checkpoints."
+choice = "A write adds no issue: the graph it commits has no issue, matched on kind and subject, that the graph it loaded lacked"
+reason = """
+Every write is validated against the whole graph before it touches disk: ProjectState::introduced_errors validates the graph a write would commit and refuses it when it has an issue, matched on (IssueKind, subject), that the graph loaded under the writer's lock does not have. Issues the graph already had, from a hand edit or an older release, do not block a write that leaves them as they are, so one invalid file never freezes the store. A message can change with a count while the issue stays the same, so messages are not the key. The graph before the write is validated only when the new graph has an issue, so a write to a valid store validates once.
+Writer::format needs no check: it commits only canonical text that reads back as the value loaded, so the graph it commits is the one it loaded; tests/integration/invalid_graph.rs runs fmt over a graph with issues and finds them unchanged. The rule is the contract the next write tool commits under. This absorbs the rule of the deleted pattern on fail-closed validation.
+"""
 alternatives = [
-    "Validate only on read (lazy validation) — rejected: allows corrupt state to persist on disk and propagate to other consumers",
-    "Partial validation of only the changed subgraph — rejected: edge cases in cross-node constraints (cycles, pattern membership counts) require full-graph visibility; the graph is small enough that full validation is fast",
-    "Schema-only validation without semantic checks — rejected: misses logical errors like dangling references, cycles, and BelongsTo mismatches",
+    "Validate only on read: rejected because a write would put an error on disk that every later reader inherits",
+    "Validate only the changed part of the graph: rejected because cycles and names shared across kinds need the whole graph, and a whole validation is cheap at these sizes",
+    "Refuse every write while the graph has any issue: rejected because one hand-edit mistake would block every write, the fix included",
 ]
 tags = [
-    "reliability",
     "consistency",
+    "reliability",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-06-15T09:44:49.521491347Z"
-
-[[decision.code_refs]]
-file = "src/store/commit.rs"
-symbol = "Store::commit_with_graph"
-
-[[decision.code_refs]]
-file = "src/store/validate.rs"
-symbol = "InMemoryGraph::introduced_errors"
-
-[[decision.code_refs]]
-file = "src/store/write.rs"
-symbol = "Writer::remove_decisions"
-
-[[decision.history]]
-choice = "Full graph validation before every disk write via commit_with_graph"
-reason = "Every graph-mutating operation (record_decision, add_component, add_connection, remove_decision, etc.) goes through commit_with_graph(), which builds a fresh InMemoryGraph from the mutated state, runs all 11 validation checks (edge endpoints, type constraints, self-edges, duplicates, pattern membership, DependsOn cycles, BelongsTo integrity, content integrity, name integrity, node-content coherence), and refuses to write if any Error-severity issue exists. This ensures invalid graphs are never committed to disk. On validation failure, in-memory state is rolled back via checkpoints."
-changed_at = "2026-10-02T12:57:38.071053995Z"
+anchors = [
+    { file = "src/store/access.rs", symbol = "Writer::format" },
+    { file = "src/store/validate.rs", symbol = "ProjectState::introduced_errors" },
+    { file = "src/store/validate.rs", symbol = "ProjectState::validate" },
+    { file = "tests/integration/invalid_graph.rs", symbol = "fmt_lands_beside_the_issues_and_keeps_them" },
+]
+depends_on = [
+    "validation-issues-carry-an-issuekind-and-a-subject-and",
+]

@@ -6,7 +6,7 @@ Named after Trurl (Stanisław Lem, *The Cyberiad*) — the constructor who think
 
 ### Architecture
 
-Single crate, seven modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
+Single crate, eight modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
 
 ```
 store       → (no internal deps)         Decision graph: TOML node files, their
@@ -17,7 +17,7 @@ mcp         → store, budget               MCP server: JSON-RPC stdio, version
                                           argument specs, tool dispatch, context
                                           assembly, the 24 KiB cap on every tool
                                           result
-commands    → store, mcp                  CLI command handlers: init, query,
+commands    → store, mcp, git             CLI command handlers: init, query,
                                           status, check, fmt, migrate, install
                                           (registers the MCP server with Claude
                                           Code), and the `serve` entry point
@@ -25,10 +25,14 @@ cli         → commands                    clap definitions and dispatch
 budget      → (no internal deps)          Fitting output into a byte budget: the
                                           level search behind the result cap
 error       → store (types)               The crate's `Error` enum and `Result`
-                                          alias; it names the store's anchor-fault
-                                          and timestamp-fault types
+                                          alias; it names the store's anchor-fault,
+                                          timestamp-fault and placement-doubt types
 console     → (no internal deps)          Terminal I/O: `out!` to stdout, `diag!`
                                           to stderr
+git         → (no internal deps)          The `git` command line as a child
+                                          process: one typed function per
+                                          question, `-z` output, the variables
+                                          that redirect git cleared
 ```
 
 Every module uses `error` and `console`; the arrows leave them out.
@@ -41,7 +45,9 @@ Every module uses `error` and `console`; the arrows leave them out.
 
 **mcp transport**: `initialize` answers the client's protocol revision when it is in `PROTOCOL_VERSIONS`, else the latest, and keeps the client's capabilities. During a tool call a handler can send the client a request through its `Peer` (`mcp::peer`) and wait for the answer on the same stdin, without a timeout: meanwhile a `ping` is answered, other requests are queued (16 at most) and served after the call, and `notifications/cancelled` for the call ends the wait with no response. Every line gets at most one answer; a line over 10 MiB is discarded whole.
 
-**commands** reaches `mcp` only to start the MCP server (`serve`); every other handler reads and writes the graph through `Store`. Until `apply` lands, a write of a node is a hand edit of its file, which every load validates; `trurlic fmt` is the one command that writes graph files.
+**commands** reaches `mcp` only to start the MCP server (`serve`); every other handler reads and writes the graph through `Store`. `migrate` asks `git` which graph files the project's git tracks and hands the answer to the store as data, so the store spawns no process.
+
+**git** runs `git -C <dir>` with stdin closed and clears every variable through which a caller can point git at another repository, index, work tree or configuration (`git::CLEARED`): trurlic runs inside a project's git hooks, where git exports `GIT_DIR` and `GIT_INDEX_FILE`. A missing binary is `Error::GitMissing`, a failed command `Error::GitFailed` with git's stderr. It holds only the questions a caller asks; no libgit2. Until `apply` lands, a write of a node is a hand edit of its file, which every load validates; `trurlic fmt` is the one command that writes graph files.
 
 Trurlic makes no LLM calls. Design work happens in the agent that calls the MCP tools.
 
@@ -55,13 +61,15 @@ Load and validation: a load (`store/load.rs`) fails only when a file cannot be r
 
 Canonical form (`store/canonical.rs`): the one serializer of node files and `project.toml`. Keys in a fixed order per file type; sets (tags, edges, anchors) sorted, one element per line with a trailing comma, so two branches that add elements at different places merge; an empty set or list left out; a string with a line break as a `"""` string. The form is Trurlic's, not the TOML library's printer. Every load notes the files whose bytes are not canonical, comparing as it writes without allocating; `check` warns about each and `trurlic fmt` rewrites exactly those in one commit.
 
-Commits: write the canonical text and parse it back in memory, refused unless it reads as the value written → stage each file in `.state/tmp/` under a per-process name and flush it → write and flush the journal, which names every staged file, its target and the BLAKE3 of its bytes: the commit point → rename the staged files into place, remove deleted files, flush the directories → delete the journal. After the journal a failure returns `CommitPending`; the commit is not rolled back.
+Commits: write the canonical text and parse it back in memory, refused unless it reads as the value written → stage each file in `.state/tmp/` under a per-process name and flush it, the files of one commit in parallel → write and flush the journal, which names every staged file, its target and the BLAKE3 of its bytes: the commit point → rename the staged files into place, then remove deleted files, flush the directories → delete the journal. After the journal a failure returns `CommitPending`; the commit is not rolled back.
 
 Recovery: a leftover journal is applied, then leftover temp files removed, only under the exclusive lock: by every write before it loads, and by every read that finds either one under the shared lock.
 
 Timestamps: `store::Timestamp`, a UTC instant to the nanosecond, written as an RFC 3339 string in the form 0.3 releases wrote (`2025-06-01T10:30:00Z`, a fraction of 0, 3, 6 or 9 digits), so a load and a write give back the same bytes. `Timestamp::now` is the crate's one clock read.
 
-Format version: `project.toml` states `format_version`, `MAJOR.MINOR.PATCH` and independent of the crate's version (`store::FormatVersion`, `FORMAT_VERSION` in `store/schema.rs`). The check has one home, `store/version.rs`: every read and every write refuses another format before it recovers anything or parses a node file. A newer one says to upgrade trurlic, an older one the registry names to run `trurlic migrate`, a version the registry does not name, or one no chain of steps leads from, that no migration leads to this format (`Error::NoMigration`), and a version that does not parse is named with its file and its text. `store::migration` holds the registry, one step per format change from 0.1.0 on; `trurlic migrate` walks the chain from the store's version, reports every value a step drops, reads the result as the current types, which refuse any key they do not know, and lands it in one journaled commit that writes each file whose canonical bytes change, `project.toml` first, and removes each file the steps dropped. A migration stopped before that rename leaves an old-format store with a journal, which only the next `migrate` finishes; once it has happened, the store is current and the next command of any kind finishes it.
+Format version: `project.toml` states `format_version`, `MAJOR.MINOR.PATCH` and independent of the crate's version (`store::FormatVersion`, `FORMAT_VERSION` in `store/schema.rs`). The check has one home, `store/version.rs`: every read and every write refuses another format before it recovers anything or parses a node file. A newer one says to upgrade trurlic, an older one the registry names to run `trurlic migrate`, a version the registry does not name, or one no chain of steps leads from, that no migration leads to this format (`Error::NoMigration`), and a version that does not parse is named with its file and its text. `store::migration` holds the registry, one step per format change from 0.1.0 on; `trurlic migrate` walks the chain from the store's version, reports every value a step drops and every fact the owner must be able to read after the fact (the placement and how it was told, a turned `constrains` edge, an anchor respelled or kept, a history count, a pattern with its edges and tags, a component's tags), reads the result as the current types, which refuse any key they do not know, and lands it in one journaled commit that writes each file whose canonical bytes change, `project.toml` first, and then removes each file the steps dropped (`graph.toml`, the patterns). A migration stopped before that rename leaves an old-format store with a journal, which only the next `migrate` finishes; once it has happened, the store is current and the next command of any kind finishes it.
+
+The step from 0.4.1 to 0.5.0 (`store/migration/format_0_5.rs`): each edge of `graph.toml` moves into its source file, `A constrains B` becomes `B depends_on A`, and a turned edge that closes a `depends_on` cycle is refused (`Error::ConstrainsCycle`, naming the members); `code_refs` become `anchors` in the 0.5 symbol spelling where the old spelling's syntax settles one (`migration/anchors.rs`), else kept and reported; `attribution = "agent"` becomes `proposed`, `user` or none `accepted`; history is dropped and counted; patterns and component tags leave the graph for the report; a key the step does not map is a reported loss, never a refusal. `placement` is stated with `--placement` or read from git: `tracked` when git tracks every file of `.trurlic/`, `shared` when none, else `Error::PlacementUnknown`. Before the commit `migrate` copies the old store to a new `.trurlic-backup-<time>/` beside it with the report in `migration-report.txt`, all flushed, since what the graph loses lives on only there.
 
 File locking: std `File::try_lock` (writers, exclusive) and `File::try_lock_shared` (readers) on `.state/lock`, polled with a 5 s timeout. `StoreLock` is a proof-of-lock type: every function that changes a file under `.trurlic/` takes `&StoreLock`, and a `Writer` owns one.
 
@@ -118,7 +126,7 @@ Failpoints: the `failpoints` cargo feature (test job only) makes `TRURLIC_FAILPO
 
 Property: determinism (every read tool answers with the same bytes in two processes), graph validation catches all known violation classes, and every node of the corpus reads back from its canonical bytes, which are a fixpoint.
 
-Format fixtures (`tests/fixtures/formats/<version>/`): a graph written by the trurlic of each historical format. Each one migrates to the current format, loads and passes `check` in a named test, its report and result pinned by a golden file; those tests are ignored until the step from 0.4.1 to 0.5.0 is in the registry.
+Format fixtures (`tests/fixtures/formats/<version>/`): a graph written by the trurlic of each historical format; no release wrote 0.4.1, so its fixture is the 0.4.0 one through the 0.4.1 step, extended with what a 0.4.1 store can hold. Each one migrates to the current format, loads and passes `check` in a named test, its report and result pinned by a golden file. The step to 0.5 has a unit test per rule over the 0.4.1 fixture's tables, a check of the migrated fixture and of the seeded corpus written as 0.4.1 against what their old files say (`store/migration/mod.rs`), and `migrate.rs` reads the placement from real git repositories isolated from the user's configuration.
 
 No test for the sake of coverage. Every test asserts a property someone could break.
 

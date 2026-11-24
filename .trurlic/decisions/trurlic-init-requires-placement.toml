@@ -1,0 +1,22 @@
+component = "commands"
+choice = "trurlic init requires --placement tracked or shared and writes it to project.toml, where placement is a required key"
+reason = """
+Placement says whether the project's git versions .trurlic/ (tracked) or the graph stays out of it (shared), and how the graph is found and versioned follows from it, so the owner states it once at init instead of inheriting a default that is silently wrong for one of the two. Project.placement has no default, so a project.toml without it is refused at load, and status prints it. This repository is tracked.
+"""
+alternatives = [
+    "Default to tracked: rejected because it would choose how the graph is versioned without asking",
+    "Detect it from git at init: rejected because a new store has no files whose tracking could tell",
+    "Keep placement out of project.toml and ask git on every call: rejected because the answer would change with the state of the working tree",
+]
+tags = [
+    "developer-experience",
+    "storage",
+]
+status = "accepted"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/cli.rs", symbol = "PlacementArg" },
+    { file = "src/commands/init.rs", symbol = "init" },
+    { file = "src/store/create.rs", symbol = "Store::create" },
+    { file = "src/store/schema.rs", symbol = "Placement" },
+]

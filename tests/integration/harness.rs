@@ -89,6 +89,44 @@ impl Project {
     }
 }
 
+/// `git <args>` in `dir`, isolated from the user's and the system's git
+/// configuration, with a fixed identity; it must succeed.
+pub fn git(dir: &Path, args: &[&str]) -> Output {
+    let output = isolated_git(dir)
+        .args([
+            "-c",
+            "user.name=trurlic-tests",
+            "-c",
+            "user.email=tests@trurlic.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+/// A `git` command in `dir` that reads neither the user's nor the system's
+/// configuration and no repository the test process's environment names.
+pub fn isolated_git(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_WORK_TREE")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    command
+}
+
 /// A failpoint armed to pause instead of abort: the process that reaches
 /// the site creates the marker file and waits there until the test deletes
 /// it, holding whatever lock the site runs under.

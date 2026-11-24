@@ -1,3 +1,5 @@
-[component]
-name = "commands"
-description = "CLI command handlers including install for IDE MCP config"
+description = "CLI command handlers: init, query, status, check, fmt, migrate, install, and the serve entry point"
+connects_to = [
+    "git",
+    "store",
+]

@@ -15,6 +15,7 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::console::diag;
@@ -94,11 +95,25 @@ impl Store {
                 .map(|path| self.relative(path))
                 .collect::<Result<_>>()?,
         };
-        for write in writes {
-            let staged = self
-                .stage_write(write)
-                .inspect_err(|_| self.discard(&journal))?;
-            journal.writes.push(staged);
+        // In parallel: each staged file waits for its flush, and a commit
+        // such as a migration's stages hundreds. The journal keeps the
+        // order of `writes`.
+        let staged: Vec<Result<StagedWrite>> = writes
+            .par_iter()
+            .map(|write| self.stage_write(write))
+            .collect();
+        let mut failure = None;
+        for staged in staged {
+            match staged {
+                Ok(staged) => journal.writes.push(staged),
+                Err(e) => {
+                    failure.get_or_insert(e);
+                }
+            }
+        }
+        if let Some(e) = failure {
+            self.discard(&journal);
+            return Err(e);
         }
         // The journal must not name a staged file a power loss can take back.
         sync_dir(&tmp_dir)

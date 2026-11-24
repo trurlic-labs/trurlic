@@ -1,0 +1,24 @@
+component = "store"
+choice = "An anchor matches a path when one names the other or a directory holding it, so a directory anchor covers its files and a directory query finds the anchors under it"
+reason = """
+A decision anchored on src/auth constrains src/auth/token.rs, and a query for src/auth asks for every decision inside it: matching only the query as a prefix missed the first, exact matching missed both. Anchor::overlaps compares whole segments, so src/auth does not match src/authz. ProjectState::decisions_in and anchors_in use it for get_decisions_for_file and trurlic query file, which report the anchors that matched.
+"""
+alternatives = [
+    "Exact match only: rejected because a directory anchor would never match a file in it",
+    "The query as a prefix only: rejected because a directory anchor would miss every file under it",
+    "Prefix match on raw strings: rejected because src/auth would match src/authz",
+]
+tags = [
+    "matching",
+]
+status = "proposed"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/mcp/context.rs", symbol = "get_decisions_for_file" },
+    { file = "src/store/query.rs", symbol = "ProjectState::decisions_in" },
+    { file = "src/store/query.rs", symbol = "anchors_in" },
+    { file = "src/store/schema.rs", symbol = "Anchor::overlaps" },
+]
+depends_on = [
+    "an-anchor-path-has-one-spelling",
+]

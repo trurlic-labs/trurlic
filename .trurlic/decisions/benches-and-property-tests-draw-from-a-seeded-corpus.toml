@@ -1,35 +1,24 @@
-[decision]
 component = "store"
-choice = "Benches and property tests draw from a seeded corpus written through the store's own validated commit"
-reason = "store::corpus writes a production-shaped store (reasons around 900 bytes, 0 to 20 code refs, rare revisions up to 14 history entries, one depends_on per two decisions, patterns, a component per 40 decisions) plus a Rust source tree its code refs resolve in, with the share of anchored files a parameter. The graph lands in one commit_with_graph, so it passes the same validation as any write. Draws come from an inline SplitMix64 and timestamps are a fixed epoch plus offsets, so the same Corpus value writes the same bytes on any machine, rand release or day: benches compare commits only while the corpus is byte-identical. The same SplitMix64 (pub(crate) in store::corpus) is the one seeded source of the crate's unit property tests, such as the random payloads of mcp::truncate, so no test carries a second PRNG or a rand dependency. It compiles under cfg(test) and the bench feature only, so release builds carry neither the corpus nor the generator."
+choice = "Benches and property tests draw from a seeded corpus written as canonical files in one journaled commit"
+reason = """
+store::corpus writes a store shaped like a large real graph (reasons of 600 to 1200 bytes, up to 20 anchors, one decision in ten proposed and a quarter of those carrying accepted_text, one in sixteen project-wide, about one in two depending on an earlier one, a component per 40 decisions connecting to the next two) plus a Rust source tree its anchors resolve in, with the share of anchored files a parameter. Every node goes through prepare_write and one commit_batch, the path every write takes, and its tests hold the graph valid, every file canonical, and every node's bytes a fixpoint of read and write.
+Draws come from an inline SplitMix64 and timestamps are a fixed epoch plus offsets, so the same Corpus value writes the same bytes on any machine, rand release or day: benches compare commits only while the corpus is byte-identical. The same SplitMix64 (pub(crate) in store::corpus) is the one seeded source of the crate's unit property tests, such as the random payloads of mcp::truncate, so no test carries a second PRNG or a rand dependency. It compiles under cfg(test) and the bench feature only, so release builds carry neither the corpus nor the generator.
+"""
 alternatives = [
-    "rand's StdRng: its algorithm is not guaranteed stable across releases, which would move every bench baseline on a dependency bump",
-    "Record each decision through Store::record_decision: one commit per decision (minutes at 2000), wall-clock created stamps, and no way to write history entries",
-    "Commit a fixture corpus to the repo: megabytes of generated TOML in git, and no way to vary size or anchored share",
+    "rand's StdRng: rejected because its algorithm is not guaranteed stable across releases, which would move every bench baseline on a dependency bump",
+    "One commit per decision: rejected because thousands of journaled commits take minutes and stamp wall-clock times",
+    "Commit a fixture corpus to the repo: rejected because it puts megabytes of generated TOML in git and fixes size and anchored share",
 ]
 tags = [
-    "testing",
     "performance",
+    "testing",
 ]
-attribution = "agent"
+status = "proposed"
 created = "2026-10-03T13:55:20.745975078Z"
-
-[[decision.code_refs]]
-file = "src/store/corpus.rs"
-symbol = "Corpus"
-
-[[decision.code_refs]]
-file = "src/store/corpus.rs"
-symbol = "SplitMix64"
-
-[[decision.code_refs]]
-file = "src/store/create.rs"
-symbol = "Store::create"
-
-[[decision.code_refs]]
-file = "src/mcp/truncate.rs"
-
-[[decision.history]]
-choice = "Benches and property tests draw from a seeded corpus written through the store's own validated commit"
-reason = "store::corpus writes a production-shaped store (reasons around 900 bytes, 0 to 20 code refs, rare revisions up to 14 history entries, one depends_on per two decisions, patterns, a component per 40 decisions) plus a Rust source tree its code refs resolve in, with the share of anchored files a parameter. The graph lands in one commit_with_graph, so it passes the same validation as any write. Draws come from an inline SplitMix64 and timestamps are a fixed epoch plus offsets, so the same Corpus value writes the same bytes on any machine, rand release or day: benches compare commits only while the corpus is byte-identical. It compiles under cfg(test) and the bench feature only."
-changed_at = "2026-11-23T19:22:05.195020874Z"
+anchors = [
+    { file = "src/mcp/truncate.rs" },
+    { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
+    { file = "src/store/corpus.rs", symbol = "Corpus" },
+    { file = "src/store/corpus.rs", symbol = "Corpus::write" },
+    { file = "src/store/corpus.rs", symbol = "SplitMix64" },
+]

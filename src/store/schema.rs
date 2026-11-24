@@ -28,7 +28,7 @@ pub struct Project {
 }
 
 /// Where the graph is versioned: in the project's git, or out of it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Placement {
     /// The project's git versions `.trurlic/`; every worktree has its own.

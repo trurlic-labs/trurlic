@@ -1,30 +1,27 @@
-[decision]
 component = "mcp"
 choice = "A panic while a request is handled is caught in Server::answer, answered -32603, and the server serves the next request"
-reason = "Release builds unwind, so one catch_unwind per request turns a bug in a handler into an error the client can report instead of a dead session. The boundary is sound because nothing a request leaves half-done outlives it: the server holds no graph between calls; a Writer's file lock is released as unwinding drops it, and a commit it began is finished from the journal by the next opener, as after a crash; the client record changes only by whole steps (an id taken, a request queued or dequeued); and every line sent to the client is serialized into a buffer before it is written, so the stream never holds part of one. AssertUnwindSafe is justified at that site. The answer is written after the boundary. A failpoint that panics under the exclusive lock (write.locked) proves over stdio that the next write takes the lock and commits."
+reason = """
+Release builds unwind, so one catch_unwind per request turns a bug in a handler into an error the client can report instead of a dead session. The boundary is sound because nothing a request leaves half-done outlives it: the server holds no graph between calls; a Writer's file lock is released as unwinding drops it, and a commit it began is finished from the journal by the next opener, as after a crash; the client record changes only by whole steps (an id taken, a request queued or dequeued); and every line sent to the client is serialized into a buffer before it is written, so the stream never holds part of one. AssertUnwindSafe is justified at that site. The answer is written after the boundary.
+The graph.loaded failpoint panics right after a load, before its caller uses the graph, in both load paths: Store::load_state under the shared lock and Store::begin_write under the exclusive one, so one site places a panic under either lock. tests/integration/server_failpoints.rs panics a get_context under the shared lock, then runs trurlic fmt, which takes the exclusive lock and commits, and the next call is answered.
+"""
 alternatives = [
-    'panic = "abort": rejected, one bug ends the session and every call after it',
-    "catch_unwind around tools/call only: rejected, initialize and tools/list build values too; one boundary per request covers every handler",
-    "A thread per request: rejected, stdio is one ordered stream, and a thread adds a join and a channel for what catch_unwind does in place",
+    "panic = \"abort\": rejected because one bug ends the session and every call after it",
+    "catch_unwind around tools/call only: rejected because initialize and tools/list build values too; one boundary per request covers every handler",
+    "A thread per request: rejected because stdio is one ordered stream, and a thread adds a join and a channel for what catch_unwind does in place",
+    "A panic site under the exclusive lock only, as before: rejected because every listed tool is now a read, so a server test could not reach it",
 ]
 tags = [
-    "reliability",
     "error-handling",
     "protocol",
+    "reliability",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T23:15:10.990884289Z"
-
-[[decision.code_refs]]
-file = "src/mcp/mod.rs"
-symbol = "Server::answer"
-
-[[decision.code_refs]]
-file = "src/store/failpoint.rs"
-symbol = "Site::Locked"
-
-[[decision.code_refs]]
-file = "tests/integration/server_failpoints.rs"
-
-[[decision.code_refs]]
-file = "Cargo.toml"
+anchors = [
+    { file = "Cargo.toml" },
+    { file = "src/mcp/mod.rs", symbol = "Server::answer" },
+    { file = "src/store/access.rs", symbol = "Store::begin_write" },
+    { file = "src/store/access.rs", symbol = "Store::load_state" },
+    { file = "src/store/failpoint.rs", symbol = "Site::Loaded" },
+    { file = "tests/integration/server_failpoints.rs", symbol = "a_panic_in_a_tool_call_is_answered_internal_error_and_the_server_serves_on" },
+]

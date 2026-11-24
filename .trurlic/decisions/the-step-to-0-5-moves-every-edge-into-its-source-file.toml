@@ -1,0 +1,27 @@
+component = "store"
+choice = "The step to 0.5 moves each edge of graph.toml into its source file, writes A constrains B as B depends_on A, and refuses one that closes a depends_on cycle"
+reason = """
+graph.toml goes, so its edges must land where format 0.5 holds them: connects_to in the component that connects, depends_on in the decision that depends, and a constrains edge in the decision it constrains, as the dependency it states from the other end. A belongs_to edge restates the decision's component and goes without a word. A turned constrains edge can close a cycle no 0.4.1 write could make, a depends_on edge one way and a constrains edge the other way along one pair: the step finds the cycles of the depends_on edges with and without the turned edges, and a cycle the turned edges add is Error::ConstrainsCycle naming its sorted members, refused before anything is written, so the owner removes one edge from graph.toml and migrates again. A cycle of depends_on edges alone, which only a hand edit made, is migrated as it is, and check reports it. An edge whose ends are not nodes of its kinds, or of a kind 0.5 has no place for, is a reported loss. Each turned edge is listed in the report.
+"""
+alternatives = [
+    "Drop constrains edges: rejected because each states a dependency the graph would lose",
+    "Keep a constrains field in 0.5: rejected because it states depends_on from the other end, and every walk and the cycle check would handle two kinds for one relation",
+    "Migrate a cycle and leave it to check: rejected because the migration would write a graph with an error that its own step made",
+]
+tags = [
+    "migration",
+    "storage",
+]
+status = "accepted"
+created = "2026-11-24T01:30:00Z"
+anchors = [
+    { file = "src/error.rs", symbol = "Error::ConstrainsCycle" },
+    { file = "src/store/migration/format_0_5/graph.rs", symbol = "Graph::edge" },
+    { file = "src/store/migration/format_0_5/graph.rs", symbol = "Graph::refuse_new_cycles" },
+    { file = "src/store/migration/format_0_5/graph.rs", symbol = "Graph::write" },
+    { file = "tests/integration/migrate.rs", symbol = "a_constrains_edge_that_closes_a_cycle_is_refused_naming_its_members" },
+]
+depends_on = [
+    "depends-on-cycles-are-found-as-strongly-connected",
+    "edges-live-in-the-file-of-their-source",
+]

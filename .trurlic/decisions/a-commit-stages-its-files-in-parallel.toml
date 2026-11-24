@@ -1,0 +1,22 @@
+component = "store"
+choice = "A commit stages and flushes its files in parallel on rayon's pool, and the journal keeps the order of the writes"
+reason = """
+Each staged file is flushed before the journal may name it, and a flush waits on the disk, so a commit that stages many files, such as a migration, which stages one per node, spent its time in one flush after another. stage_commit stages the writes with rayon's par_iter and collects them in their order, so the journal, the renames and the report are the same as a serial commit's. When one write fails, every file the others staged is removed and the first error by order is returned, so nothing stays staged. Temp names come from a process-wide atomic counter, so the threads never share one. On WSL2, where one flush takes about 5 ms, migrating the seeded corpus of 2000 decisions written as 0.4.1 took 23 to 27 s with serial staging and 1.4 s in parallel.
+"""
+alternatives = [
+    "Stage one file after another: rejected because the flushes add up serially, to seconds for a store-wide commit",
+    "Flush once with syncfs at the end: rejected because std has no syncfs, and it flushes the whole file system",
+]
+tags = [
+    "performance",
+    "storage",
+]
+status = "proposed"
+created = "2026-11-24T01:30:00Z"
+anchors = [
+    { file = "src/store/durable.rs", symbol = "Store::temp_path" },
+    { file = "src/store/journal.rs", symbol = "Store::stage_commit" },
+]
+depends_on = [
+    "atomic-writes-via-serialize-to-temp-verify-round-trip",
+]

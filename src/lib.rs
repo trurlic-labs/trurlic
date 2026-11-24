@@ -4,6 +4,7 @@ pub mod cli;
 pub(crate) mod commands;
 pub(crate) mod console;
 pub(crate) mod error;
+pub(crate) mod git;
 pub(crate) mod mcp;
 pub mod store;
 
