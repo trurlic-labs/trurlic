@@ -43,6 +43,30 @@ pub(crate) enum DefinitionKind {
 }
 
 impl DefinitionKind {
+    /// Whether it is a function or a method, what a `()` suffix names.
+    pub(crate) const fn is_function(self) -> bool {
+        match self {
+            Self::Function | Self::Method => true,
+            Self::Module
+            | Self::Struct
+            | Self::Union
+            | Self::Enum
+            | Self::Trait
+            | Self::Impl
+            | Self::Field
+            | Self::Variant
+            | Self::Constant
+            | Self::Static
+            | Self::TypeAlias
+            | Self::AssociatedType
+            | Self::Macro
+            | Self::Reexport
+            | Self::Key
+            | Self::Target
+            | Self::Heading => false,
+        }
+    }
+
     /// Every kind, in the order of their codes in a cache entry.
     pub(super) const ALL: [Self; 19] = [
         Self::Module,

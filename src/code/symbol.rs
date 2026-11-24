@@ -11,10 +11,15 @@
 //! is `<Display>`. A definition's own last segment is never left out:
 //! `Table` names the type, not its `Table::<Display>` impl. Among several
 //! definitions a symbol names, the one whose whole path it is wins, so a
-//! module-level `open` is named as `open` beside a `Store::open`. Other
-//! kinds split on `::` alone, so a Markdown heading may hold `<` and `>`.
+//! module-level `open` is named as `open` beside a `Store::open`. A Rust
+//! symbol whose last segment ends in `()` names a function or method
+//! alone (`Store::code_root()` beside the field `Store::code_root`). Other
+//! kinds split on `::` alone, so a Markdown heading may hold `<`, `>` and
+//! parentheses.
 
 use std::fmt;
+
+use super::kinds::DefinitionKind;
 
 /// One name of a definition's path, or of a symbol.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -95,6 +100,12 @@ pub(crate) enum SymbolFault {
     EmptySegment,
     /// An angle bracket that is never closed or closes none.
     UnbalancedBrackets,
+    /// A call suffix that holds something, `name(x)`: it is `()` alone.
+    CallArguments,
+    /// A closing parenthesis that closes no `(`, `name)`.
+    UnbalancedParentheses,
+    /// A call suffix after a trait segment, which is no function.
+    CallOnTrait,
 }
 
 impl fmt::Display for SymbolFault {
@@ -102,25 +113,61 @@ impl fmt::Display for SymbolFault {
         f.write_str(match self {
             Self::EmptySegment => "has an empty segment",
             Self::UnbalancedBrackets => "has an angle bracket that does not pair",
+            Self::CallArguments => "holds something between the parentheses of its `()`",
+            Self::UnbalancedParentheses => "has a parenthesis that does not pair",
+            Self::CallOnTrait => "ends in `()` after a trait segment",
         })
     }
 }
 
-/// A parsed symbol: its segments from the outermost.
+/// Whether a symbol names a function or method alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Call {
+    /// No suffix: every kind of definition is named.
+    Any,
+    /// A last segment ending in `()`: a function or method alone.
+    Function,
+}
+
+/// A parsed symbol: its segments from the outermost, and whether a `()`
+/// ends it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Symbol(Vec<Segment>);
+pub(crate) struct Symbol {
+    segments: Vec<Segment>,
+    call: Call,
+}
 
 impl Symbol {
+    /// A symbol of a file of `syntax`. In Rust a last segment may end in
+    /// `()`, whitespace before it allowed as within a name (`open ()` is
+    /// `open()`); `(..)` holding anything is refused, as is `()` after a
+    /// trait segment. Other kinds take parentheses as text.
     pub(crate) fn parse(text: &str, syntax: Syntax) -> Result<Self, SymbolFault> {
+        let (text, call) = match syntax {
+            Syntax::Plain => (text, Call::Any),
+            Syntax::Rust => call_suffix(text)?,
+        };
         let parts = match syntax {
             Syntax::Plain => text.split("::").collect(),
             Syntax::Rust => split_outside_brackets(text)?,
         };
-        parts
+        let segments: Vec<Segment> = parts
             .into_iter()
             .map(|part| segment(part.trim(), syntax))
-            .collect::<Result<_, _>>()
-            .map(Self)
+            .collect::<Result<_, _>>()?;
+        if call == Call::Function && matches!(segments.last(), Some(Segment::Impl { .. })) {
+            return Err(SymbolFault::CallOnTrait);
+        }
+        Ok(Self { segments, call })
+    }
+
+    /// Whether this symbol may name a definition of `kind`: any kind, or
+    /// a function or method alone after `()`.
+    pub(crate) const fn admits(&self, kind: DefinitionKind) -> bool {
+        match self.call {
+            Call::Any => true,
+            Call::Function => kind.is_function(),
+        }
     }
 
     /// Whether this symbol names the definition whose path's segments,
@@ -128,7 +175,7 @@ impl Symbol {
     /// segments, a trait segment of the path the symbol leaves out
     /// skipped, its last segment never.
     pub(crate) fn names<'a>(&self, from_end: impl Iterator<Item = &'a Segment>) -> bool {
-        let mut wanted = self.0.iter().rev().peekable();
+        let mut wanted = self.segments.iter().rev().peekable();
         let mut defined = from_end.enumerate();
         while let Some(want) = wanted.peek() {
             let Some((from_end, segment)) = defined.next() else {
@@ -150,7 +197,7 @@ impl Symbol {
         from_end: impl Iterator<Item = &'a Segment> + Clone,
     ) -> bool {
         // clone: an iterator of references, walked once to count.
-        self.0.len() == from_end.clone().count() && self.names(from_end)
+        self.segments.len() == from_end.clone().count() && self.names(from_end)
     }
 }
 
@@ -174,6 +221,18 @@ fn segment(part: &str, syntax: Syntax) -> Result<Segment, SymbolFault> {
         Some(_) => return Err(SymbolFault::EmptySegment),
         None => Segment::name(part),
     })
+}
+
+/// `text` without its `()`, and whether it ended in one.
+fn call_suffix(text: &str) -> Result<(&str, Call), SymbolFault> {
+    let Some(open) = text.trim_end().strip_suffix(')') else {
+        return Ok((text, Call::Any));
+    };
+    match open.rsplit_once('(') {
+        Some((name, "")) => Ok((name, Call::Function)),
+        Some((_, inside)) if !inside.contains(')') => Err(SymbolFault::CallArguments),
+        Some(_) | None => Err(SymbolFault::UnbalancedParentheses),
+    }
 }
 
 /// `text` split at each `::` outside angle brackets; the `>` of an `->`
@@ -220,7 +279,7 @@ mod tests {
     }
 
     fn path(text: &str) -> Vec<Segment> {
-        rust(text).0
+        rust(text).segments
     }
 
     /// Whether `symbol` names `path`.
@@ -304,11 +363,42 @@ mod tests {
     }
 
     #[test]
+    fn a_call_suffix_is_empty_parentheses_after_a_name_in_a_kind_with_functions() {
+        let open = rust("Store::open()");
+        let spaced = rust("Store::open ()");
+
+        assert_eq!(open, spaced);
+        assert_eq!(open.segments, rust("Store::open").segments);
+        assert!(open.admits(DefinitionKind::Method));
+        assert!(open.admits(DefinitionKind::Function));
+        assert!(!open.admits(DefinitionKind::Field));
+        assert!(rust("Store::open").admits(DefinitionKind::Field));
+        for (text, syntax, fault) in [
+            ("open(x)", Syntax::Rust, SymbolFault::CallArguments),
+            ("open)", Syntax::Rust, SymbolFault::UnbalancedParentheses),
+            (
+                "A::<Fn(u8)>::f)",
+                Syntax::Rust,
+                SymbolFault::UnbalancedParentheses,
+            ),
+            ("Table::<Display>()", Syntax::Rust, SymbolFault::CallOnTrait),
+            ("::()", Syntax::Rust, SymbolFault::EmptySegment),
+        ] {
+            assert_eq!(Symbol::parse(text, syntax), Err(fault), "{text:?}");
+        }
+        for heading in ["Calling run()", "Install (Linux)", "g(x)"] {
+            let plain = Symbol::parse(heading, Syntax::Plain).unwrap();
+            assert_eq!(plain.segments, [Segment::name(heading)], "{heading:?}");
+            assert!(plain.admits(DefinitionKind::Heading));
+        }
+    }
+
+    #[test]
     fn a_plain_symbol_takes_angle_brackets_as_text() {
         let heading = Symbol::parse("Install::<details> and  more", Syntax::Plain).unwrap();
 
         assert_eq!(
-            heading.0,
+            heading.segments,
             vec![
                 Segment::name("Install"),
                 Segment::name("<details> and more")

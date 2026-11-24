@@ -312,6 +312,7 @@ impl CodeFacts {
             .definitions
             .iter()
             .chain(added)
+            .filter(|definition| symbol.admits(definition.kind))
             .filter(|definition| symbol.names(scopes.path_from_end(definition.scope)))
             .collect();
         let mut whole = named

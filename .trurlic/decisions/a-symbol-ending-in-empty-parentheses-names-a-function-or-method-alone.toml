@@ -1,0 +1,35 @@
+component = "code"
+choice = "A Rust symbol whose last segment ends in () names a function or method alone; without it every kind is named, so a path a field and a method share stays Ambiguous(2)"
+reason = "A struct field and its getter share a path (Store::code_root), and a decision usually means one of them, so the grammar needs a spelling that tells them apart without a second path syntax. A trailing () is how a reader writes a call: Store::code_root() names the function or method of that path and nothing else, while Store::code_root names every kind as before. A function is a fn item, in a module or a body, and a method a fn of an impl or a trait; a tuple struct's constructor, a const of a fn type, a macro and a pub use leaf are not functions here, so () names none of them. The parentheses hold nothing: a call's arguments are no part of a name, so (x) is refused, and so is a ) that closes no (. Whitespace before them is allowed as within a name, so open () is open(), and a function that is its symbol's only definition is named with the suffix and without it. A trait segment is no function, so <Display>() is refused. The suffix is a rule of the kinds of file with functions, Rust now: in a TOML or JSON key, a Makefile target or a Markdown heading parentheses are text, as angle brackets are, so ## Install (Linux) is named as written. The store's anchor rule needs no change: it holds a symbol as text, and the grammar is the index's. The format 0.5 migration drops the (..) of a 0.4.1 code ref, whose parentheses never narrowed what it named."
+alternatives = [
+    "A kind prefix such as fn:Store::code_root: rejected because it is a second syntax to teach, and () is how a call is written",
+    "Let () hold an argument list to pick an overload: rejected because Rust has no overloads, and a list is no part of a name",
+    "Read () in every kind of file: rejected because a heading or a key may end in parentheses, which would then name nothing",
+    "Keep the migration's parentheses as a call: rejected because 0.4.1 parentheses never narrowed what a ref named",
+]
+tags = [
+    "anchors",
+    "grammar",
+]
+status = "proposed"
+origin = "call suffix"
+created = "2026-11-24T11:40:14.100318927Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::find" },
+    { file = "src/code/kinds.rs", symbol = "DefinitionKind::is_function" },
+    { file = "src/code/symbol.rs", symbol = "Symbol::admits" },
+    { file = "src/code/symbol.rs", symbol = "Symbol::parse" },
+    { file = "src/code/symbol.rs", symbol = "a_call_suffix_is_empty_parentheses_after_a_name_in_a_kind_with_functions" },
+]
+depends_on = [
+    "a-symbol-is-a-path-of-names-from-the-outermost-container",
+]
+
+[accepted_text]
+choice = "A symbol whose last segment ends in () names a function or method alone; without it every kind is named, so a field and a method of one path stay Ambiguous(2)"
+reason = "A struct field and its getter share a path (Store::code_root), and a decision usually means one of them, so the grammar needs a spelling that tells them apart without a second path syntax. A trailing () is how a reader writes a call: Store::code_root() names the method or function of that path and nothing else, while Store::code_root names every kind as before. The parentheses hold nothing: a call's arguments are no part of a name, and (x) is refused as malformed, so one definition has one spelling. Whitespace before them is allowed as within a name. A trait segment is no function, so <Display>() is refused, and so is () in a kind of file with no functions (a TOML or JSON key, a Makefile target, a Markdown heading), where it would name nothing. The store's anchor rule needs no change, since it holds a symbol as text and the grammar is the index's. The format 0.5 migration still strips the (..) of a 0.4.1 code ref: 0.4.1 matched a name whatever its parentheses said, so its meaning is the bare name."
+alternatives = [
+    "A kind prefix such as fn:Store::code_root: rejected because it is a second syntax to teach, and () is how a call is written",
+    "Let () hold an argument list to pick an overload: rejected because Rust has no overloads, and a list would be a second spelling of one function",
+    "Keep the migration's parentheses as a call: rejected because 0.4.1 parentheses never narrowed what a ref named",
+]

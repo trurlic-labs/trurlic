@@ -21,3 +21,7 @@ Build it with cargo.
 Run it.
 
 ## Store::open
+
+## Calling run()
+
+## Install (Linux)
