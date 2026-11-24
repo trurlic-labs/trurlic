@@ -1,14 +1,13 @@
 //! A read tool answers with the same bytes in every process. Each process
-//! seeds its hash collections differently, so a hash-ordered list in a
-//! response shows up as two orders. One server builds the graph and reads
-//! from the state its writes left in memory; a second server reads the same
-//! graph loaded from disk.
+//! has its own thread pool, scheduling and allocator state, so an answer
+//! that depended on the order the parallel load met the files would show
+//! up as two answers.
 
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
-use crate::harness::{McpClient, Project};
+use crate::harness::{McpClient, Project, decision};
 
 /// The hub every other component connects to or from, so its context
 /// carries the decisions of six neighbours.
@@ -17,79 +16,62 @@ const DOWNSTREAM: [&str; 4] = ["billing", "mail", "search", "storage"];
 const UPSTREAM: [&str; 2] = ["audit", "gateway"];
 
 /// Two decisions per component, both anchored in the component's source
-/// file, so file queries, verdicts and patterns span several components.
-fn build_graph(writer: &mut McpClient) {
-    let neighbours = DOWNSTREAM.iter().chain(&UPSTREAM);
-    for component in std::iter::once(&HUB).chain(neighbours.clone()) {
-        writer.call_tool("add_component", json!({ "name": component }));
-    }
-    for to in DOWNSTREAM {
-        writer.call_tool("add_connection", json!({ "from": HUB, "to": to }));
-    }
-    for from in UPSTREAM {
-        writer.call_tool("add_connection", json!({ "from": from, "to": HUB }));
-    }
-
-    let mut keyed = Vec::new();
-    for component in std::iter::once(&HUB).chain(neighbours) {
-        keyed.push(decide(writer, component, "Sign every request key"));
-        decide(writer, component, "Retry failed calls with backoff");
-    }
-    writer.call_tool(
-        "record_pattern",
-        json!({
-            "name": "Signed requests",
-            "description": "Every component signs what it sends",
-            "decisions": keyed,
-        }),
+/// file, the second depending on the first, so file queries and
+/// dependencies span several components.
+fn build_graph(project: &Project) {
+    let downstream: Vec<String> = DOWNSTREAM.iter().map(|to| format!("\"{to}\"")).collect();
+    project.write(
+        &format!("components/{HUB}.toml"),
+        &format!(
+            "description = \"\"\nconnects_to = [{}]\n",
+            downstream.join(", ")
+        ),
     );
-    // The writer's last call is a write, so its reads see the state that
-    // write left in memory.
-    writer.call_tool(
-        "update_decision",
-        json!({ "name": keyed[0], "mode": "revise", "tags": ["security", "keys"] }),
+    for name in DOWNSTREAM {
+        project.write(&format!("components/{name}.toml"), "description = \"\"\n");
+    }
+    for name in UPSTREAM {
+        project.write(
+            &format!("components/{name}.toml"),
+            &format!("description = \"\"\nconnects_to = [\"{HUB}\"]\n"),
+        );
+    }
+    for component in std::iter::once(&HUB).chain(&DOWNSTREAM).chain(&UPSTREAM) {
+        let anchor = format!("anchors = [{{ file = \"src/{component}.rs\" }}]\n");
+        project.write(
+            &format!("decisions/{component}-sign.toml"),
+            &decision(
+                component,
+                &format!("{component}: sign every request"),
+                &anchor,
+            ),
+        );
+        let extra = format!("{anchor}depends_on = [\"{component}-sign\"]\nstatus = \"proposed\"\n");
+        let retry = decision(
+            component,
+            &format!("{component}: retry with backoff"),
+            &extra,
+        )
+        .replace("status = \"accepted\"\n", "");
+        project.write(&format!("decisions/{component}-retry.toml"), &retry);
+    }
+    project.write(
+        "decisions/rule.toml",
+        &decision("project", "Every call is bounded", ""),
     );
-}
-
-fn decide(writer: &mut McpClient, component: &str, choice: &str) -> String {
-    let recorded = writer.call_tool(
-        "record_decision",
-        json!({
-            "component": component,
-            "choice": format!("{component}: {choice}"),
-            "reason": "Keeps the component's traffic verifiable and bounded",
-            "attribution": "agent",
-            "tags": ["security"],
-            "code_refs": [{ "file": format!("src/{component}.rs") }],
-        }),
-    );
-    recorded["name"].as_str().unwrap().to_owned()
 }
 
 /// One call per read tool and argument shape that reaches a different
 /// assembly path.
 fn read_calls() -> Vec<(&'static str, Value)> {
     vec![
-        ("get_architecture", json!({})),
         ("get_context", json!({ "component": HUB })),
         (
             "get_context",
             json!({ "component": HUB, "depth": "constraints" }),
         ),
         ("get_context", json!({ "component": "project" })),
-        (
-            "check_pattern",
-            json!({ "description": "sign requests with a rotating key" }),
-        ),
         ("get_decisions_for_file", json!({ "file": "src" })),
-        (
-            "get_decision_history",
-            json!({ "name": "auth-sign-every-request-key" }),
-        ),
-        (
-            "verify_against_decisions",
-            json!({ "component": HUB, "changed_files": ["src"] }),
-        ),
     ]
 }
 
@@ -104,23 +86,23 @@ fn read_only_tools(client: &mut McpClient) -> BTreeSet<String> {
 }
 
 #[test]
-fn read_tools_answer_the_same_bytes_in_a_writer_and_a_fresh_server() {
+fn read_tools_answer_the_same_bytes_in_two_servers() {
     let project = Project::init();
-    let (mut writer, _) = McpClient::connect(&project);
-    build_graph(&mut writer);
-    let (mut reader, _) = McpClient::connect(&project);
+    build_graph(&project);
+    project.run_ok(&["check"]);
+    let (mut first, _) = McpClient::connect(&project);
+    let (mut second, _) = McpClient::connect(&project);
 
     let calls = read_calls();
     let called: BTreeSet<String> = calls.iter().map(|(tool, _)| (*tool).to_owned()).collect();
-    assert_eq!(called, read_only_tools(&mut reader), "read tools called");
+    assert_eq!(called, read_only_tools(&mut second), "read tools called");
 
     for (tool, arguments) in calls {
-        let written = writer.call_tool_text(tool, arguments.clone());
-        let loaded = reader.call_tool_text(tool, arguments.clone());
+        let one = first.call_tool_text(tool, arguments.clone());
+        let two = second.call_tool_text(tool, arguments.clone());
         assert!(
-            written == loaded,
-            "{tool} {arguments} differs between processes\n\
-             writer: {written}\nreader: {loaded}"
+            one == two,
+            "{tool} {arguments} differs between processes\nfirst: {one}\nsecond: {two}"
         );
     }
 }

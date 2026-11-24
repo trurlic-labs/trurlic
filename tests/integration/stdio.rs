@@ -9,7 +9,7 @@ use std::fs;
 use serde_json::{Value, json};
 
 use crate::golden::assert_golden;
-use crate::harness::{McpClient, Project};
+use crate::harness::{McpClient, Project, decision};
 
 #[test]
 fn initialize_reports_protocol_and_server() {
@@ -114,6 +114,14 @@ fn an_unknown_tool_is_a_protocol_error() {
     );
 }
 
+/// One call of each listed tool.
+fn every_tool() -> [(&'static str, Value); 2] {
+    [
+        ("get_context", json!({ "component": "project" })),
+        ("get_decisions_for_file", json!({ "file": "src" })),
+    ]
+}
+
 /// With no `.trurlic/`, the server starts and lists its tools, and every
 /// call is refused naming `trurlic init`; once the store exists, the next
 /// call is served without a restart.
@@ -123,17 +131,17 @@ fn a_server_without_a_store_lists_its_tools_and_names_init() {
     let (mut client, _) = McpClient::connect(&project);
 
     let listed = client.request("tools/list", json!({}));
-    assert_eq!(listed["tools"].as_array().unwrap().len(), 13, "{listed}");
-    for tool in ["get_architecture", "add_component"] {
-        let refusal = client.call_tool_refusal(tool, json!({ "name": "auth" }));
+    assert_eq!(listed["tools"].as_array().unwrap().len(), 2, "{listed}");
+    for (tool, arguments) in every_tool() {
+        let refusal = client.call_tool_refusal(tool, arguments);
         assert_eq!(refusal["kind"], "no_project", "{tool}: {refusal}");
         let message = refusal["message"].as_str().unwrap();
         assert!(message.contains("trurlic init"), "{tool}: {message}");
     }
 
-    project.run_ok(&["init"]);
-    let architecture = client.call_tool("get_architecture", json!({}));
-    assert!(architecture["components"].is_array(), "{architecture}");
+    project.run_ok(&["init", "--placement", "shared"]);
+    let context = client.call_tool("get_context", json!({ "component": "project" }));
+    assert_eq!(context["status"], "not_covered", "{context}");
 }
 
 /// A server over a store whose `project.toml` begins with `version_line`
@@ -149,9 +157,9 @@ fn assert_format_refused(version_line: &str, named: &str) {
 
     let (mut client, _) = McpClient::connect(&project);
     let listed = client.request("tools/list", json!({}));
-    assert_eq!(listed["tools"].as_array().unwrap().len(), 13, "{listed}");
-    for tool in ["get_architecture", "add_component"] {
-        let refusal = client.call_tool_refusal(tool, json!({ "name": "auth" }));
+    assert_eq!(listed["tools"].as_array().unwrap().len(), 2, "{listed}");
+    for (tool, arguments) in every_tool() {
+        let refusal = client.call_tool_refusal(tool, arguments);
         assert_eq!(refusal["kind"], "unsupported_format", "{tool}: {refusal}");
         let message = refusal["message"].as_str().unwrap();
         assert!(message.contains(named), "{tool}: {message}");
@@ -198,45 +206,34 @@ fn tools_are_refused_before_initialize() {
 #[test]
 fn the_next_call_sees_a_hand_edit() {
     let project = Project::init();
-    project.run_ok(&["add", "component", "auth"]);
-    project.run_ok(&[
-        "decide",
-        "auth",
-        "--choice",
-        "Sign tokens",
-        "--reason",
-        "Tokens are verified without a session store",
-    ]);
-    let (mut client, _) = McpClient::connect(&project);
-    let before = client.call_tool("get_decision_history", json!({ "name": "sign-tokens" }));
-    assert_eq!(before["current"]["choice"], "Sign tokens", "{before}");
-
-    let store = project.path().join(".trurlic");
-    let decision = store.join("decisions/sign-tokens.toml");
-    let edited = fs::read_to_string(&decision).unwrap().replace(
-        "choice = \"Sign tokens\"",
-        "choice = \"Sign tokens with Ed25519\"",
+    project.write("components/auth.toml", "description = \"Auth\"\n");
+    project.write(
+        "decisions/sign-tokens.toml",
+        &decision("auth", "Sign tokens", ""),
     );
-    fs::write(&decision, edited).unwrap();
-    fs::write(
-        store.join("components/billing.toml"),
-        "[component]\nname = \"billing\"\ndescription = \"Invoices\"\n",
-    )
-    .unwrap();
+    let (mut client, _) = McpClient::connect(&project);
+    let before = client.call_tool("get_context", json!({ "component": "auth" }));
+    assert_eq!(before["decisions"][0]["choice"], "Sign tokens", "{before}");
 
-    let after = client.call_tool("get_decision_history", json!({ "name": "sign-tokens" }));
+    let edited = project
+        .read("decisions/sign-tokens.toml")
+        .replace("Sign tokens", "Sign tokens with Ed25519");
+    project.write("decisions/sign-tokens.toml", &edited);
+    project.write("components/billing.toml", "description = \"Invoices\"\n");
+    project.write(
+        "components/auth.toml",
+        "description = \"Auth\"\nconnects_to = [\"billing\"]\n",
+    );
+
+    let after = client.call_tool("get_context", json!({ "component": "auth" }));
     assert_eq!(
-        after["current"]["choice"], "Sign tokens with Ed25519",
+        after["decisions"][0]["choice"], "Sign tokens with Ed25519",
         "{after}"
     );
-    let architecture = client.call_tool("get_architecture", json!({}));
     assert_eq!(
-        architecture["components"][0]["name"], "auth",
-        "{architecture}"
-    );
-    assert_eq!(
-        architecture["components"][1]["name"], "billing",
-        "{architecture}"
+        after["component"]["connects_to"],
+        json!(["billing"]),
+        "{after}"
     );
 }
 
@@ -245,6 +242,15 @@ fn the_next_call_sees_a_hand_edit() {
 #[test]
 fn every_listed_tool_round_trips() {
     let project = Project::init();
+    project.write(
+        "components/auth.toml",
+        "description = \"Sign-in and tokens\"\n",
+    );
+    let anchor = "anchors = [{ file = \"src/auth.rs\", symbol = \"issue_token\" }]\n";
+    project.write(
+        "decisions/use-jwt.toml",
+        &decision("auth", "Use JWT access tokens", anchor),
+    );
     let (mut client, _) = McpClient::connect(&project);
 
     let listed: BTreeSet<String> = client.request("tools/list", json!({}))["tools"]
@@ -254,131 +260,16 @@ fn every_listed_tool_round_trips() {
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect();
 
-    let mut session = Session {
-        client: &mut client,
-        called: BTreeSet::new(),
-    };
-    session.exercise_writes();
-    session.exercise_reads();
-    session.exercise_removal();
+    let context = client.call_tool("get_context", json!({ "component": "auth" }));
+    assert!(
+        context["brief"].as_str().unwrap().contains("Use JWT"),
+        "{context}"
+    );
+    let for_file = client.call_tool("get_decisions_for_file", json!({ "file": "src/auth.rs" }));
+    assert_eq!(for_file["decisions"][0]["name"], "use-jwt", "{for_file}");
 
-    assert_eq!(listed.len(), 13, "{listed:?}");
-    assert_eq!(session.called, listed, "tools called vs tools listed");
-}
-
-struct Session<'a> {
-    client: &'a mut McpClient,
-    called: BTreeSet<String>,
-}
-
-const JWT: &str = "use-jwt-access-tokens";
-const ROTATION: &str = "rotate-signing-keys-daily";
-const AUDIT: &str = "log-every-failed-login";
-const PATTERN: &str = "token-hygiene";
-
-impl Session<'_> {
-    fn call(&mut self, name: &str, arguments: Value) -> Value {
-        self.called.insert(name.to_owned());
-        self.client.call_tool(name, arguments)
-    }
-
-    fn decide(&mut self, choice: &str, reason: &str, code_refs: Value) -> String {
-        let recorded = self.call(
-            "record_decision",
-            json!({
-                "component": "auth",
-                "choice": choice,
-                "reason": reason,
-                "attribution": "user",
-                "alternatives": ["Do nothing: rejected: the test needs a decision"],
-                "code_refs": code_refs,
-            }),
-        );
-        recorded["name"].as_str().unwrap().to_owned()
-    }
-
-    fn exercise_writes(&mut self) {
-        let auth = self.call(
-            "add_component",
-            json!({ "name": "auth", "description": "Sign-in and tokens" }),
-        );
-        assert_eq!(auth["name"], "auth");
-        self.call("add_component", json!({ "name": "storage" }));
-        self.call("add_connection", json!({ "from": "auth", "to": "storage" }));
-
-        let jwt = self.decide(
-            "Use JWT access tokens",
-            "Stateless verification keeps auth off the storage hot path",
-            json!([{ "file": "src/auth.rs", "symbol": "issue_token" }]),
-        );
-        assert_eq!(jwt, JWT);
-        let rotation = self.decide(
-            "Rotate signing keys daily",
-            "Bounds the damage of a leaked signing key to one day",
-            json!([]),
-        );
-        assert_eq!(rotation, ROTATION);
-        let audit = self.decide(
-            "Log every failed login",
-            "Brute-force attempts must be visible to operators",
-            json!([]),
-        );
-        assert_eq!(audit, AUDIT);
-
-        let pattern = self.call(
-            "record_pattern",
-            json!({
-                "name": "Token hygiene",
-                "description": "Tokens are short-lived and their keys rotate",
-                "decisions": [JWT, ROTATION],
-            }),
-        );
-        assert_eq!(pattern["name"], PATTERN);
-        self.call(
-            "update_decision",
-            json!({
-                "name": JWT,
-                "mode": "revise",
-                "reason": "Stateless verification; revocation through short expiry",
-            }),
-        );
-    }
-
-    fn exercise_reads(&mut self) {
-        let history = self.call("get_decision_history", json!({ "name": JWT }));
-        assert_eq!(history["revision_count"], 1, "{history}");
-
-        let context = self.call("get_context", json!({ "component": "auth" }));
-        assert!(context["brief"].as_str().unwrap().contains("Use JWT"));
-
-        let architecture = self.call("get_architecture", json!({}));
-        assert!(architecture.to_string().contains("storage"));
-
-        self.call(
-            "check_pattern",
-            json!({ "description": "JWT token rotation" }),
-        );
-
-        let for_file = self.call("get_decisions_for_file", json!({ "file": "src/auth.rs" }));
-        assert!(for_file.to_string().contains(JWT), "{for_file}");
-
-        let verdicts = self.call(
-            "verify_against_decisions",
-            json!({ "component": "auth", "changed_files": ["src/auth.rs"] }),
-        );
-        assert!(verdicts.to_string().contains(JWT), "{verdicts}");
-    }
-
-    fn exercise_removal(&mut self) {
-        self.call("remove_decision", json!({ "name": AUDIT }));
-        let context = self.call("get_context", json!({ "component": "auth" }));
-        assert!(!context.to_string().contains(AUDIT), "{context}");
-
-        self.call("remove_pattern", json!({ "name": PATTERN }));
-        let architecture = self.call("get_architecture", json!({}));
-        assert!(
-            !architecture.to_string().contains(PATTERN),
-            "{architecture}"
-        );
-    }
+    let called: BTreeSet<String> = ["get_context", "get_decisions_for_file"]
+        .map(String::from)
+        .into();
+    assert_eq!(called, listed, "tools called vs tools listed");
 }

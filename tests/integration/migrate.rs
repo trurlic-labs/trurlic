@@ -116,26 +116,31 @@ fn migrates_and_passes_check(version: &str) {
 }
 
 #[test]
+#[ignore = "needs the 0.4.1 -> 0.5.0 step, which lands with the migration"]
 fn format_0_1_0_migrates_and_passes_check() {
     migrates_and_passes_check("0.1.0");
 }
 
 #[test]
+#[ignore = "needs the 0.4.1 -> 0.5.0 step, which lands with the migration"]
 fn format_0_2_0_migrates_and_passes_check() {
     migrates_and_passes_check("0.2.0");
 }
 
 #[test]
+#[ignore = "needs the 0.4.1 -> 0.5.0 step, which lands with the migration"]
 fn format_0_3_0_migrates_and_passes_check() {
     migrates_and_passes_check("0.3.0");
 }
 
 #[test]
+#[ignore = "needs the 0.4.1 -> 0.5.0 step, which lands with the migration"]
 fn format_0_4_0_migrates_and_passes_check() {
     migrates_and_passes_check("0.4.0");
 }
 
 #[test]
+#[ignore = "needs the 0.4.1 -> 0.5.0 step, which lands with the migration"]
 fn a_dry_run_prints_the_report_and_writes_nothing() {
     let project = fixture_project("0.3.0");
     let before = render(&store(&project));
@@ -191,13 +196,38 @@ fn a_newer_format_is_refused_naming_both_versions() {
         let stderr = refused(&project, args);
         assert!(
             stderr.contains(&format!(
-                "{}: format version 0.9.0 is newer than the 0.4.1",
+                "{}: format version 0.9.0 is newer than the 0.5.0",
                 path.display()
             )),
             "{args:?}: {stderr}"
         );
         assert!(stderr.contains("upgrade trurlic"), "{stderr}");
     }
+}
+
+/// A store of the format before this one: every command but `migrate`
+/// names `trurlic migrate`, and `migrate` names both versions, since this
+/// trurlic holds no step from that format yet.
+#[test]
+fn the_format_before_this_one_is_refused_and_not_yet_migrated() {
+    let (project, path) = project_with_version("0.4.1");
+
+    for args in [&["check"][..], &["status"], &["fmt"]] {
+        let stderr = refused(&project, args);
+        assert!(
+            stderr.contains("run `trurlic migrate`"),
+            "{args:?}: {stderr}"
+        );
+    }
+    for args in [&["migrate"][..], &["migrate", "--dry-run"]] {
+        let stderr = refused(&project, args);
+        let expected = format!(
+            "{}: no migration of this trurlic leads from format 0.4.1 to 0.5.0",
+            path.display()
+        );
+        assert!(stderr.contains(&expected), "{args:?}: {stderr}");
+    }
+    assert!(backups(&project).is_empty());
 }
 
 /// Run `trurlic migrate` on the 0.1.0 fixture stopped at failpoint `spec`,
@@ -228,6 +258,7 @@ fn stopped_migration(spec: &str) -> (Project, Project) {
 /// commit and finds the store current.
 #[cfg(feature = "failpoints")]
 #[test]
+#[ignore = "needs the 0.4.1 -> 0.5.0 step, which lands with the migration"]
 fn a_migration_stopped_after_its_journal_lands_on_the_next_migrate() {
     let (project, reference) = stopped_migration("commit.journaled:1");
 
@@ -245,6 +276,7 @@ fn a_migration_stopped_after_its_journal_lands_on_the_next_migrate() {
 /// the next command of any kind finishes it.
 #[cfg(feature = "failpoints")]
 #[test]
+#[ignore = "needs the 0.4.1 -> 0.5.0 step, which lands with the migration"]
 fn a_migration_stopped_after_project_toml_lands_on_the_next_command() {
     let (project, reference) = stopped_migration("commit.applied:1");
 

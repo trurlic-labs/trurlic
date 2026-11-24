@@ -2,7 +2,7 @@
 //! project and an MCP client speaking JSON-RPC over `trurlic serve` stdio.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Output, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
@@ -20,11 +20,11 @@ pub struct Project {
 }
 
 impl Project {
+    /// A project whose graph its git tracks, as `init --placement tracked`
+    /// makes it.
     pub fn init() -> Self {
-        let project = Self {
-            dir: TempDir::new().unwrap(),
-        };
-        project.run_ok(&["init"]);
+        let project = Self::without_store();
+        project.run_ok(&["init", "--placement", "tracked"]);
         project
     }
 
@@ -39,6 +39,20 @@ impl Project {
         self.dir.path()
     }
 
+    /// The path of `file` under `.trurlic/`.
+    pub fn node(&self, file: &str) -> PathBuf {
+        self.path().join(".trurlic").join(file)
+    }
+
+    /// Write `text` to `.trurlic/<file>`, as a hand edit does.
+    pub fn write(&self, file: &str, text: &str) {
+        std::fs::write(self.node(file), text).unwrap();
+    }
+
+    pub fn read(&self, file: &str) -> String {
+        std::fs::read_to_string(self.node(file)).unwrap()
+    }
+
     /// A `trurlic` command with the project as its working directory and no
     /// inherited failpoint.
     pub fn command(&self) -> Command {
@@ -47,6 +61,19 @@ impl Project {
             .current_dir(self.path())
             .env_remove("TRURLIC_FAILPOINT");
         command
+    }
+
+    /// Run `trurlic <args>`, assert it failed with status 1, and return its
+    /// stderr.
+    pub fn run_refused(&self, args: &[&str]) -> String {
+        let output = self.command().args(args).output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "trurlic {args:?} must fail\nstdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        String::from_utf8(output.stderr).unwrap()
     }
 
     /// Run `trurlic <args>` and assert it succeeded.
@@ -104,6 +131,16 @@ impl Pause {
     pub fn resume(&self) {
         std::fs::remove_file(&self.marker).unwrap();
     }
+}
+
+/// A decision file of `component` holding `choice` and a reason, accepted,
+/// with `extra` lines appended: a hand edit `trurlic fmt` puts in order.
+pub fn decision(component: &str, choice: &str, extra: &str) -> String {
+    format!(
+        "component = \"{component}\"\nchoice = \"{choice}\"\n\
+         reason = \"Recorded so the test has a decision to read\"\n\
+         status = \"accepted\"\ncreated = \"2025-06-01T10:00:00Z\"\n{extra}"
+    )
 }
 
 /// The lines `stream` yields, read on a thread of their own so that every

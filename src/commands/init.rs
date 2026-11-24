@@ -3,16 +3,17 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::console::out;
-use crate::store::{Store, Timestamp};
+use crate::store::{Placement, Store};
 use crate::{Error, Result};
 
-/// Create a new `.trurlic/` directory in `cwd`.
-pub fn init(cwd: &Path) -> Result<()> {
+/// Create a new `.trurlic/` directory in `cwd`, versioned as `placement`
+/// says.
+pub(crate) fn init(cwd: &Path, placement: Placement) -> Result<()> {
     let name = cwd
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("my-project");
-    Store::create(cwd, name, Timestamp::now()?)?;
+    Store::create(cwd, name, placement)?;
     append_gitignore(cwd)?;
     out!("Initialized .trurlic/")?;
     Ok(())
@@ -50,7 +51,7 @@ mod tests {
     #[test]
     fn init_creates_gitignore_when_absent() {
         let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
+        init(tmp.path(), Placement::Tracked).unwrap();
 
         let content = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
         assert!(content.contains(".trurlic/.state/"));
@@ -60,7 +61,7 @@ mod tests {
     fn init_appends_to_existing_gitignore() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join(".gitignore"), "/target/\n").unwrap();
-        init(tmp.path()).unwrap();
+        init(tmp.path(), Placement::Tracked).unwrap();
 
         let content = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
         assert!(content.starts_with("/target/\n"));
@@ -71,7 +72,7 @@ mod tests {
     fn init_appends_newline_before_entry_if_missing() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join(".gitignore"), "/target/").unwrap();
-        init(tmp.path()).unwrap();
+        init(tmp.path(), Placement::Tracked).unwrap();
 
         let content = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
         assert!(content.contains("/target/\n.trurlic/.state/\n"));
@@ -81,7 +82,7 @@ mod tests {
     fn init_does_not_duplicate_gitignore_entry() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join(".gitignore"), ".trurlic/.state/\n").unwrap();
-        init(tmp.path()).unwrap();
+        init(tmp.path(), Placement::Tracked).unwrap();
 
         let content = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
         assert_eq!(content.matches(".trurlic/.state/").count(), 1);

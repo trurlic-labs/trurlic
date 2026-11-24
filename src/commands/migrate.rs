@@ -54,12 +54,12 @@ fn up_to_date() -> Result<()> {
     Ok(())
 }
 
-/// Each step with what it dropped, then what the current format does not
-/// hold, then the files written, all in the order the migration met them.
+/// Each step with what it dropped, then the files written and removed, all
+/// in the order the migration met them.
 fn print_report(report: &MigrationReport, dry_run: DryRun) -> Result<()> {
-    let (migrate, rewrite) = match dry_run {
-        DryRun::Yes => ("Would migrate", "Would rewrite"),
-        DryRun::No => ("Migrated", "Rewrote"),
+    let (migrate, rewrite, remove) = match dry_run {
+        DryRun::Yes => ("Would migrate", "Would rewrite", "Would remove"),
+        DryRun::No => ("Migrated", "Rewrote", "Removed"),
     };
     out!(
         "{migrate} .trurlic/ from format {} to {FORMAT_VERSION}.",
@@ -69,12 +69,15 @@ fn print_report(report: &MigrationReport, dry_run: DryRun) -> Result<()> {
         let title = format!("{} -> {} ({})", step.from, step.to, step.change);
         print_losses(&title, &step.losses)?;
     }
-    if !report.unheld.is_empty() {
-        print_losses(&format!("not in format {FORMAT_VERSION}"), &report.unheld)?;
-    }
     out!("{rewrite} {} file(s):", report.rewritten.len())?;
     for file in &report.rewritten {
         out!("  {file}")?;
+    }
+    if !report.removed.is_empty() {
+        out!("{remove} {} file(s):", report.removed.len())?;
+        for file in &report.removed {
+            out!("  {file}")?;
+        }
     }
     Ok(())
 }

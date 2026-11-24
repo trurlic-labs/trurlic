@@ -31,9 +31,9 @@ pub(crate) enum Site {
     /// After each journal entry applied: the `n`-th hit follows the `n`-th
     /// rename, then the removals count on.
     Applied,
-    /// A writer's graph loaded under the exclusive lock, before any write;
-    /// a [`panic()`] site.
-    Locked,
+    /// A graph loaded under the shared or the exclusive lock, before its
+    /// caller uses it; a [`panic()`] site.
+    Loaded,
     /// A tool call about to run; a [`triggers`] site, where the MCP server
     /// sends the client a request of its own instead.
     #[cfg(feature = "failpoints")]
@@ -49,7 +49,7 @@ impl Site {
         Self::Journaled,
         Self::Rename,
         Self::Applied,
-        Self::Locked,
+        Self::Loaded,
         #[cfg(feature = "failpoints")]
         Self::ServerRequest,
     ];
@@ -61,7 +61,7 @@ impl Site {
             Self::Journaled => "commit.journaled",
             Self::Rename => "commit.rename",
             Self::Applied => "commit.applied",
-            Self::Locked => "write.locked",
+            Self::Loaded => "graph.loaded",
             #[cfg(feature = "failpoints")]
             Self::ServerRequest => "mcp.server_request",
         }

@@ -123,11 +123,11 @@ mod tests {
         Ok(json!({ "name": named.name, "components": state.components.len() }))
     }
 
-    fn add(writer: &mut Writer<'_>, named: Named) -> Outcome {
-        writer
-            .add_component(&named.name, "")
+    fn format(writer: &mut Writer<'_>, named: Named) -> Outcome {
+        let formatted = writer
+            .format()
             .map_err(|e| ToolError::refused(e.to_string()))?;
-        Ok(json!({ "added": named.name }))
+        Ok(json!({ "name": named.name, "formatted": formatted.len() }))
     }
 
     fn ask(_: &Store, peer: &mut Peer<'_>, _: Named) -> Outcome {
@@ -155,8 +155,7 @@ mod tests {
 
     fn store() -> (TempDir, Store) {
         let tmp = TempDir::new().unwrap();
-        crate::commands::init(tmp.path()).unwrap();
-        let store = Store::discover(tmp.path()).unwrap();
+        let store = Store::create(tmp.path(), "demo", crate::store::Placement::Tracked).unwrap();
         (tmp, store)
     }
 
@@ -164,8 +163,8 @@ mod tests {
     fn the_annotations_follow_the_access_and_the_destructive_mark() {
         let cases = [
             (spec(Destructive::No, Access::Read(count)), true, false),
-            (spec(Destructive::No, Access::Write(add)), false, false),
-            (spec(Destructive::Yes, Access::Write(add)), false, true),
+            (spec(Destructive::No, Access::Write(format)), false, false),
+            (spec(Destructive::Yes, Access::Write(format)), false, true),
             (
                 spec(Destructive::No, Access::Interactive(ask)),
                 false,
@@ -192,14 +191,18 @@ mod tests {
     fn each_access_runs_its_handler_on_what_it_names() {
         let (_tmp, store) = store();
         let arguments = json!({ "name": "auth" });
+        std::fs::write(store.component_path("auth"), "description='Auth'\n").unwrap();
 
-        let added = run(
-            &spec(Destructive::No, Access::Write(add)),
+        let formatted = run(
+            &spec(Destructive::No, Access::Write(format)),
             &store,
             &arguments,
         );
-        assert_eq!(added.unwrap(), json!({ "added": "auth" }));
-        assert!(store.load_state().unwrap().components.contains_key("auth"));
+        assert_eq!(
+            formatted.unwrap(),
+            json!({ "name": "auth", "formatted": 1 })
+        );
+        assert_eq!(store.load_state().unwrap().non_canonical, []);
 
         let counted = run(
             &spec(Destructive::No, Access::Read(count)),
@@ -221,7 +224,7 @@ mod tests {
     #[test]
     fn a_refused_argument_is_refused_before_the_store_is_opened() {
         let store = Store::at("/nonexistent/.trurlic".into());
-        let tool = spec(Destructive::No, Access::Write(add));
+        let tool = spec(Destructive::No, Access::Write(format));
         let refused = run(&tool, &store, &json!({ "name": 1 })).unwrap_err();
         let payload = serde_json::to_value(&refused).unwrap();
         assert_eq!(payload["kind"], "invalid_argument");

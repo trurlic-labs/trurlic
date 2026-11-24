@@ -1,28 +1,17 @@
-//! A decision's choice and reason are checked by the store, so every surface
-//! refuses the same text with the same message: MCP `record_decision`, MCP
-//! `update_decision` and `trurlic decide`. A refused write leaves the graph
-//! on disk as it was.
+//! A decision's choice and reason are held to the rules of `store::text`
+//! wherever they come from: a hand edit that breaks one still loads, and
+//! `check` reports it as an error naming the file, the field and the
+//! fault.
 
-use std::fs;
-use std::path::Path;
+use crate::harness::Project;
 
-use serde_json::json;
-
-use crate::harness::{McpClient, Project};
-
-const CHOICE: &str = "Expire sessions after an hour";
 const REASON: &str = "An hour bounds how long a stolen token is useful";
 
-/// The decision every revise targets.
-const REVISED: &str = "sign-tokens";
-
-/// Text one field must refuse, the class of fault it carries, and how the
-/// refusal begins.
+/// Text one field must refuse, and the class of fault it carries.
 struct Case {
     class: &'static str,
     field: &'static str,
     text: String,
-    refusal: String,
 }
 
 fn case(class: &'static str, field: &'static str, text: impl Into<String>) -> Case {
@@ -30,7 +19,6 @@ fn case(class: &'static str, field: &'static str, text: impl Into<String>) -> Ca
         class,
         field,
         text: text.into(),
-        refusal: format!("`{field}` "),
     }
 }
 
@@ -61,97 +49,41 @@ fn cases() -> Vec<Case> {
         reason_with("invoke tag", "<invoke name=\"get_context\">"),
         reason_with("function_calls tag", "</function_calls>"),
         reason_with("argument tag in a reason", "</alternatives>"),
-        Case {
-            refusal: "decision `rotate-keys` in [auth] already has this choice".into(),
-            ..case("duplicate choice", "choice", "rotate  KEYS")
-        },
     ]
 }
 
-/// A project whose `auth` component holds `sign-tokens` and `rotate-keys`.
-fn project() -> Project {
-    let project = Project::init();
-    project.run_ok(&["add", "component", "auth"]);
-    for choice in ["Sign tokens", "Rotate keys"] {
-        project.run_ok(&["decide", "auth", "--choice", choice, "--reason", REASON]);
-    }
-    project
-}
-
-/// Every decision file with its bytes.
-fn decisions_on_disk(project: &Path) -> Vec<(String, Vec<u8>)> {
-    let mut files: Vec<_> = fs::read_dir(project.join(".trurlic/decisions"))
-        .unwrap()
-        .map(|entry| {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            (name, fs::read(&path).unwrap())
-        })
-        .collect();
-    files.sort();
-    files
-}
-
-/// The message each surface answers `case` with, by surface.
-fn refusals(project: &Project, mcp: &mut McpClient, case: &Case) -> [(&'static str, String); 3] {
-    let (choice, reason) = match case.field {
-        "choice" => (case.text.as_str(), REASON),
-        _ => (CHOICE, case.text.as_str()),
-    };
-
-    let recorded = mcp.call_tool_error(
-        "record_decision",
-        json!({
-            "component": "auth",
-            "choice": choice,
-            "reason": reason,
-            "attribution": "agent",
-        }),
-    );
-    let revised = mcp.call_tool_error(
-        "update_decision",
-        json!({ "name": REVISED, "mode": "revise", case.field: case.text }),
-    );
-
-    let output = project
-        .command()
-        .args(["decide", "auth", "--choice", choice, "--reason", reason])
-        .output()
-        .unwrap();
-    assert!(!output.status.success(), "{}: decide succeeded", case.class);
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    let decided = stderr
-        .strip_prefix("error: ")
-        .and_then(|message| message.strip_suffix('\n'))
-        .unwrap_or_else(|| panic!("{}: unexpected stderr {stderr:?}", case.class))
-        .to_owned();
-
-    [
-        ("record_decision", recorded),
-        ("update_decision", revised),
-        ("decide", decided),
-    ]
+/// A decision file holding `choice` and `reason`, each escaped as TOML.
+fn decision_file(choice: &str, reason: &str) -> String {
+    let mut table = toml::Table::new();
+    table.insert("component".into(), "project".into());
+    table.insert("choice".into(), choice.into());
+    table.insert("reason".into(), reason.into());
+    table.insert("status".into(), "accepted".into());
+    table.insert("created".into(), "2025-06-01T10:00:00Z".into());
+    toml::to_string(&table).unwrap()
 }
 
 #[test]
-fn every_surface_refuses_each_class_with_the_stores_message() {
-    let project = project();
-    let mut mcp = McpClient::connect(&project).0;
-    let before = decisions_on_disk(project.path());
+fn check_reports_each_class_naming_the_file_the_field_and_the_fault() {
+    let project = Project::init();
+    project.write("decisions/fine.toml", &decision_file("Sign tokens", REASON));
+    project.run_ok(&["check"]);
 
     for case in cases() {
-        let refusals = refusals(&project, &mut mcp, &case);
+        let (choice, reason) = match case.field {
+            "choice" => (case.text.as_str(), REASON),
+            _ => ("Expire sessions after an hour", case.text.as_str()),
+        };
+        project.write("decisions/edited.toml", &decision_file(choice, reason));
 
-        let (_, expected) = &refusals[0];
-        assert!(
-            expected.starts_with(&case.refusal),
-            "{}: {expected}",
-            case.class
-        );
-        for (surface, message) in &refusals {
-            assert_eq!(message, expected, "{}: {surface}", case.class);
-        }
+        let stderr = project.run_refused(&["check"]);
+
+        let expected = format!("  error: decisions/edited.toml: `{}` ", case.field);
+        let errors: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.starts_with("  error"))
+            .collect();
+        assert_eq!(errors.len(), 1, "{}: {stderr}", case.class);
+        assert!(errors[0].starts_with(&expected), "{}: {stderr}", case.class);
     }
-
-    assert_eq!(decisions_on_disk(project.path()), before);
 }

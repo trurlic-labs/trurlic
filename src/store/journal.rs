@@ -1,8 +1,8 @@
 //! The commit journal, `.state/txn.toml`.
 //!
 //! A commit stages its files, writes the journal, then applies it: each
-//! staged file renamed onto its target (`graph.toml` last), the deleted
-//! files removed, the directories flushed, the journal removed. The
+//! staged file renamed onto its target, the deleted files removed, the
+//! directories flushed, the journal removed. The
 //! journal's rename into place is the commit point. From then on the
 //! commit lands: if the writer stops or fails before the journal is gone,
 //! the next process to take the exclusive lock applies it before it loads.
@@ -23,12 +23,12 @@ use crate::{Error, Result};
 use super::commit::PendingWrite;
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
-use super::{Store, StoreLock, hash_bytes};
+use super::{Store, StoreLock};
 
 /// A commit's file operations. Paths are relative to the store root.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Journal {
-    /// Renamed in order, `graph.toml` last.
+    /// Renamed in order.
     #[serde(default, rename = "write", skip_serializing_if = "Vec::is_empty")]
     writes: Vec<StagedWrite>,
     /// Removed after every write is in place.
@@ -60,6 +60,11 @@ impl Journal {
                     || !components.all(|component| matches!(component, Component::Normal(_)))
             })
     }
+}
+
+/// BLAKE3 of `bytes`, as lowercase hex.
+fn hash_bytes(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
 }
 
 impl Store {
@@ -111,7 +116,7 @@ impl Store {
         Ok(StagedWrite {
             temp: self.relative(&temp)?,
             target,
-            blake3: write.content_hash(),
+            blake3: hash_bytes(write.content.as_bytes()),
         })
     }
 
@@ -281,8 +286,8 @@ mod tests {
         Journal {
             writes: vec![StagedWrite {
                 temp: PathBuf::from(".state/tmp/4242-0"),
-                target: PathBuf::from("graph.toml"),
-                blake3: hash_bytes(b"graph"),
+                target: PathBuf::from("components/auth.toml"),
+                blake3: hash_bytes(b"description = \"\"\n"),
             }],
             removes: vec![PathBuf::from("decisions/use-jwt.toml")],
         }
@@ -291,7 +296,7 @@ mod tests {
     /// Stage a component write, as a commit would, and return its journal.
     fn stage_component(store: &Store, name: &str) -> Journal {
         let write = store
-            .prepare_write(&store.component_path(name), &sample_component(name))
+            .prepare_write(&store.component_path(name), &sample_component())
             .unwrap();
         store.stage_commit(&[write], &[]).unwrap()
     }

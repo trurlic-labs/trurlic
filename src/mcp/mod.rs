@@ -8,7 +8,6 @@
 //! command that fixes it.
 
 mod context;
-mod pattern;
 #[cfg_attr(
     not(any(test, feature = "failpoints")),
     expect(
@@ -30,9 +29,6 @@ mod result;
 mod spec;
 mod tools;
 mod truncate;
-mod update;
-mod verify;
-mod write;
 
 use std::any::Any;
 use std::io::{self, BufRead, Write};
@@ -304,22 +300,13 @@ fn call_tool(cwd: &Path, params: Option<&Map<String, Value>>, peer: &mut Peer<'_
     Reply::Success(Body::Tool(envelope))
 }
 
-/// A tool that predates specs: a write tool runs on a
-/// [`Writer`](crate::store::Writer), the graph loaded under the exclusive
-/// lock, so it validates against every commit another process made; a
-/// read tool on the graph loaded under the shared lock. Either load fails
-/// as a refusal.
+/// A tool that predates specs, every one a read: it runs on the graph
+/// loaded under the shared lock, and a failed load is a refusal.
 fn call_unspecified(store: &Store, name: &str, arguments: &Value) -> ToolEnvelope {
-    let envelope = if tools::is_write_tool(name) {
-        store
-            .begin_write()
-            .map(|mut writer| tools::call_write_tool(&mut writer, name, arguments))
-    } else {
-        store
-            .load_state()
-            .map(|state| tools::call_read_tool(&state, name, arguments))
-    };
-    envelope.unwrap_or_else(|e| tool_error(&e.into()))
+    store.load_state().map_or_else(
+        |e| tool_error(&e.into()),
+        |state| tools::call_read_tool(&state, name, arguments),
+    )
 }
 
 /// The armed tool call sends the client a form in its place, and answers
@@ -345,6 +332,7 @@ fn ask_the_client(peer: &mut Peer<'_>) -> ToolEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Placement;
 
     fn initialize(version: &str) -> Value {
         json!({
@@ -384,7 +372,7 @@ mod tests {
 
     fn project() -> (tempfile::TempDir, Server) {
         let tmp = tempfile::TempDir::new().unwrap();
-        crate::commands::init(tmp.path()).unwrap();
+        Store::create(tmp.path(), "demo", Placement::Tracked).unwrap();
         let server = Server::new(tmp.path().to_path_buf());
         (tmp, server)
     }
@@ -443,7 +431,7 @@ mod tests {
             &mut server,
             &[
                 request(1, "tools/list", json!({})),
-                tool_call(2, "get_architecture", json!({})),
+                tool_call(2, "get_context", json!({ "component": "project" })),
                 request(3, "ping", json!({})),
             ],
         );
@@ -479,7 +467,7 @@ mod tests {
                 request(
                     4,
                     "tools/call",
-                    json!({ "name": "get_architecture", "arguments": [] }),
+                    json!({ "name": "get_context", "arguments": [] }),
                 ),
                 tool_call(5, "nonexistent", json!({})),
             ],
@@ -503,67 +491,29 @@ mod tests {
         );
     }
 
-    fn component_names(response: &Value) -> Vec<String> {
+    /// The payload of a tool result, or of a refusal.
+    fn payload(response: &Value) -> Value {
         let text = response["result"]["content"][0]["text"].as_str().unwrap();
-        let payload: Value = serde_json::from_str(text).unwrap();
-        payload["components"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|component| component["name"].as_str().unwrap().to_owned())
-            .collect()
+        serde_json::from_str(text).unwrap()
     }
 
-    /// No state survives a call: the next read loads what another process
-    /// committed after the previous one.
-    #[test]
-    fn a_read_tool_serves_a_commit_made_since_the_last_call() {
-        let (tmp, mut server) = initialized();
-        let first = serve(&mut server, &[tool_call(1, "get_architecture", json!({}))]);
-        assert!(component_names(&first[0]).is_empty(), "{}", first[0]);
-
-        let store = Store::discover(tmp.path()).unwrap();
-        store
-            .begin_write()
-            .unwrap()
-            .add_component("auth", "")
-            .unwrap();
-
-        let second = serve(&mut server, &[tool_call(2, "get_architecture", json!({}))]);
-        assert_eq!(component_names(&second[0]), ["auth"]);
+    fn get_context(id: u64, component: &str) -> Value {
+        tool_call(id, "get_context", json!({ "component": component }))
     }
 
-    /// The lost update: another process commits after this server's last
-    /// call. The write must validate against that commit and keep it.
+    /// No state survives a call: the next read loads what changed on disk
+    /// after the previous one, a hand edit included.
     #[test]
-    fn write_tool_validates_against_commits_made_since_the_last_call() {
+    fn a_read_tool_serves_a_file_written_since_the_last_call() {
         let (tmp, mut server) = initialized();
-        serve(&mut server, &[tool_call(1, "get_architecture", json!({}))]);
+        let first = serve(&mut server, &[get_context(1, "auth")]);
+        assert_eq!(first[0]["result"]["isError"], true, "{}", first[0]);
+
         let store = Store::discover(tmp.path()).unwrap();
-        let mut other = store.begin_write().unwrap();
-        other.add_component("auth", "").unwrap();
-        other.add_component("billing", "").unwrap();
-        drop(other);
+        std::fs::write(store.component_path("auth"), "description = \"Auth\"\n").unwrap();
 
-        let responses = serve(
-            &mut server,
-            &[tool_call(
-                2,
-                "add_connection",
-                json!({ "from": "auth", "to": "billing" }),
-            )],
-        );
-
-        assert_ne!(
-            responses[0]["result"]["isError"],
-            json!(true),
-            "{}",
-            responses[0]
-        );
-        let on_disk = store.load_state().unwrap();
-        assert!(on_disk.components.contains_key("auth"));
-        assert!(on_disk.components.contains_key("billing"));
-        assert_eq!(on_disk.graph().connects_to("auth"), ["billing"]);
+        let second = serve(&mut server, &[get_context(2, "auth")]);
+        assert_eq!(payload(&second[0])["component"]["description"], "Auth");
     }
 
     /// A store is found on every call: a refusal naming `trurlic init`
@@ -576,11 +526,10 @@ mod tests {
             &mut server,
             &[
                 initialize(LATEST_PROTOCOL_VERSION),
-                tool_call(1, "get_architecture", json!({})),
+                get_context(1, "project"),
             ],
         );
-        let text = before[1]["result"]["content"][0]["text"].as_str().unwrap();
-        let refusal: Value = serde_json::from_str(text).unwrap();
+        let refusal = payload(&before[1]);
         assert_eq!(before[1]["result"]["isError"], true);
         assert_eq!(refusal["error"]["kind"], "no_project");
         assert!(
@@ -590,20 +539,9 @@ mod tests {
                 .contains("trurlic init")
         );
 
-        crate::commands::init(tmp.path()).unwrap();
-        let after = serve(&mut server, &[tool_call(2, "get_architecture", json!({}))]);
-        assert_eq!(component_names(&after[0]), Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_tool_result_carries_its_payload_as_json_text() {
-        let (_tmp, mut server) = initialized();
-        let responses = serve(&mut server, &[tool_call(1, "get_architecture", json!({}))]);
-        let text = responses[0]["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap();
-        let payload: Value = serde_json::from_str(text).unwrap();
-        assert!(payload.is_object(), "{payload}");
+        Store::create(tmp.path(), "demo", Placement::Tracked).unwrap();
+        let after = serve(&mut server, &[get_context(2, "project")]);
+        assert_eq!(payload(&after[0])["component"]["name"], "project");
     }
 
     #[test]

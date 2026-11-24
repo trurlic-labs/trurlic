@@ -1,23 +1,19 @@
-//! The rules for a decision's choice and reason, which the store applies to
-//! every write of them, whichever surface it comes from.
+//! The rules for a decision's choice and reason, which validation holds
+//! every decision to, whichever surface or hand edit wrote it.
 //!
-//! A choice is one line of at most [`MAX_CHOICE_BYTES`], and no other
-//! decision of its component has it; a reason holds at least
-//! [`MIN_REASON_BYTES`] of reasoning and may span lines. Neither may carry a
+//! A choice is one line of at most [`MAX_CHOICE_BYTES`]; a reason holds at
+//! least [`MIN_REASON_BYTES`] of reasoning and may span lines. Neither may carry a
 //! character that renders as nothing or reorders the text around it, so what
 //! a reader sees is what an agent is held to, nor the markup of a tool call,
 //! which only lands in an argument when the call was malformed.
 
 use std::fmt;
 
-use crate::{Error, Result};
-
 use super::limits::{MAX_CHOICE_BYTES, MAX_TEXT_FIELD_BYTES, MIN_REASON_BYTES};
-use super::state::ProjectState;
 
 /// The decision field a [`TextFault`] was found in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextField {
+pub(crate) enum TextField {
     Choice,
     Reason,
 }
@@ -33,7 +29,7 @@ impl fmt::Display for TextField {
 
 /// Why the store refused a field. `at` is a byte offset into the field.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TextFault {
+pub(crate) enum TextFault {
     Blank,
     TooShort { min: usize, len: usize },
     TooLong { max: usize, len: usize },
@@ -72,48 +68,8 @@ impl fmt::Display for TextFault {
     }
 }
 
-/// Refuse `text` as the value of `field` unless it meets that field's rules.
-pub(crate) fn validate_text(field: TextField, text: &str) -> Result<()> {
-    find_fault(field, text).map_or(Ok(()), |fault| Err(Error::InvalidText { field, fault }))
-}
-
-/// Refuse `choice` when another decision of `component` already has it, so
-/// the graph never holds two nodes for one decision with their history and
-/// edges split between them. `revised` names the decision being revised,
-/// which may keep its own choice.
-pub(crate) fn ensure_new_choice(
-    state: &ProjectState,
-    component: &str,
-    choice: &str,
-    revised: Option<&str>,
-) -> Result<()> {
-    let key = choice_key(choice);
-    let existing = state.decisions.iter().find(|(name, dec)| {
-        Some(name.as_str()) != revised
-            && dec.decision.component == component
-            && choice_key(&dec.decision.choice) == key
-    });
-    match existing {
-        Some((name, _)) => Err(Error::DuplicateChoice {
-            component: component.into(),
-            // clone: the error outlives the borrow of `state`.
-            existing: name.clone(),
-        }),
-        None => Ok(()),
-    }
-}
-
-/// Two choices that differ only in case or in runs of whitespace have the
-/// same key, so a trailing space or a doubled gap cannot pass as new.
-fn choice_key(choice: &str) -> String {
-    choice
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
-fn find_fault(field: TextField, text: &str) -> Option<TextFault> {
+/// The first rule of `field` that `text` breaks, if any.
+pub(crate) fn fault(field: TextField, text: &str) -> Option<TextFault> {
     let len = text.len();
     let reasoning = text.trim().len();
     let max = match field {
@@ -223,20 +179,6 @@ fn ends_word(rest: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fault(field: TextField, text: &str) -> Option<TextFault> {
-        match validate_text(field, text) {
-            Ok(()) => None,
-            Err(Error::InvalidText {
-                field: found,
-                fault,
-            }) => {
-                assert_eq!(found, field);
-                Some(fault)
-            }
-            Err(other) => panic!("expected InvalidText, got {other}"),
-        }
-    }
 
     const REASON: &str = "Tokens are verified without a session store";
 
@@ -378,17 +320,5 @@ mod tests {
         ] {
             assert_eq!(fault(TextField::Reason, text), None, "{text}");
         }
-    }
-
-    #[test]
-    fn the_message_names_the_field_and_the_fault() {
-        let err = validate_text(TextField::Reason, &format!("{REASON}\u{202E}")).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            format!(
-                "`reason` contains bidirectional control U+202E at byte {}",
-                REASON.len()
-            )
-        );
     }
 }

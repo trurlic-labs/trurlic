@@ -7,20 +7,17 @@
 //! member. A one-node loop is a self-edge, which validation reports on its
 //! own.
 
-use std::collections::BTreeMap;
-use std::slice;
+use std::collections::{BTreeMap, btree_set};
 
-use super::graph::{Edge, InMemoryGraph};
-use super::schema::EdgeKind;
+use super::state::ProjectState;
 
-impl InMemoryGraph {
+impl ProjectState {
     /// Every `depends_on` cycle as its sorted members, the cycles sorted.
     #[must_use]
     pub(super) fn depends_on_cycles(&self) -> Vec<Vec<&str>> {
         let mut search = Search::default();
-        for (root, edges) in &self.forward {
-            let depends = edges.iter().any(|edge| edge.kind == EdgeKind::DependsOn);
-            if depends && !search.visits.contains_key(root.as_ref()) {
+        for (root, decision) in &self.decisions {
+            if !decision.depends_on.is_empty() && !search.visits.contains_key(root.as_str()) {
                 search.run(self, root);
             }
         }
@@ -44,7 +41,7 @@ struct Frame<'g> {
     /// The lowest discovery order reachable from `node` through nodes still
     /// open; `node` roots a component when this equals `order`.
     low: usize,
-    successors: slice::Iter<'g, Edge>,
+    successors: btree_set::Iter<'g, String>,
 }
 
 #[derive(Default)]
@@ -57,16 +54,12 @@ struct Search<'g> {
 }
 
 impl<'g> Search<'g> {
-    fn run(&mut self, graph: &'g InMemoryGraph, root: &'g str) {
-        let mut frames = vec![self.enter(graph, root)];
+    fn run(&mut self, state: &'g ProjectState, root: &'g str) {
+        let mut frames = vec![self.enter(state, root)];
         while let Some(frame) = frames.last_mut() {
-            let next = frame
-                .successors
-                .by_ref()
-                .find(|edge| edge.kind == EdgeKind::DependsOn);
-            if let Some(edge) = next {
-                match self.visits.get(edge.target.as_ref()).copied() {
-                    None => frames.push(self.enter(graph, &edge.target)),
+            if let Some(target) = frame.successors.next() {
+                match self.visits.get(target.as_str()).copied() {
+                    None => frames.push(self.enter(state, target)),
                     Some(Visit::Open(order)) => frame.low = frame.low.min(order),
                     Some(Visit::Closed) => {}
                 }
@@ -81,16 +74,20 @@ impl<'g> Search<'g> {
         }
     }
 
-    fn enter(&mut self, graph: &'g InMemoryGraph, node: &'g str) -> Frame<'g> {
+    fn enter(&mut self, state: &'g ProjectState, node: &'g str) -> Frame<'g> {
         let order = self.visits.len();
         self.visits.insert(node, Visit::Open(order));
         self.open.push(node);
-        let successors = graph.forward.get(node).map_or(&[][..], Vec::as_slice);
+        let successors = state
+            .decisions
+            .get(node)
+            .map(|decision| decision.depends_on.iter())
+            .unwrap_or_default();
         Frame {
             node,
             order,
             low: order,
-            successors: successors.iter(),
+            successors,
         }
     }
 
@@ -113,42 +110,30 @@ impl<'g> Search<'g> {
 
 #[cfg(test)]
 mod tests {
-    use crate::store::graph::Edge;
-    use crate::store::schema::EdgeKind;
-    use crate::store::testing::depends_on_graph;
+    use crate::store::testing::depends_on_state;
 
     #[test]
     fn an_acyclic_graph_has_no_cycles() {
-        let g = depends_on_graph(&[("a", "b"), ("a", "c"), ("b", "d"), ("c", "d")]);
-        assert!(g.depends_on_cycles().is_empty());
+        let state = depends_on_state(&[("a", "b"), ("a", "c"), ("b", "d"), ("c", "d")]);
+        assert!(state.depends_on_cycles().is_empty());
     }
 
     #[test]
     fn disjoint_cycles_are_reported_apart_and_sorted() {
-        let g = depends_on_graph(&[("y", "x"), ("x", "y"), ("b", "a"), ("a", "b"), ("x", "a")]);
-        assert_eq!(g.depends_on_cycles(), [["a", "b"], ["x", "y"]]);
+        let state = depends_on_state(&[("y", "x"), ("x", "y"), ("b", "a"), ("a", "b"), ("x", "a")]);
+        assert_eq!(state.depends_on_cycles(), [["a", "b"], ["x", "y"]]);
     }
 
     #[test]
     fn cycles_sharing_a_node_form_one_component() {
-        let g = depends_on_graph(&[("a", "b"), ("b", "a"), ("b", "c"), ("c", "b")]);
-        assert_eq!(g.depends_on_cycles(), [["a", "b", "c"]]);
+        let state = depends_on_state(&[("a", "b"), ("b", "a"), ("b", "c"), ("c", "b")]);
+        assert_eq!(state.depends_on_cycles(), [["a", "b", "c"]]);
     }
 
     #[test]
     fn a_self_edge_is_left_to_the_self_edge_check() {
-        let g = depends_on_graph(&[("a", "a")]);
-        assert!(g.depends_on_cycles().is_empty());
-    }
-
-    #[test]
-    fn edges_of_other_kinds_close_no_cycle() {
-        let mut g = depends_on_graph(&[("a", "b")]);
-        g.forward.entry("b".into()).or_default().push(Edge {
-            target: "a".into(),
-            kind: EdgeKind::Constrains,
-        });
-        assert!(g.depends_on_cycles().is_empty());
+        let state = depends_on_state(&[("a", "a")]);
+        assert!(state.depends_on_cycles().is_empty());
     }
 
     /// A recursive search needs a call frame per link of the chain and
@@ -162,12 +147,12 @@ mod tests {
             .map(|pair| (pair[0].as_str(), pair[1].as_str()))
             .collect();
         edges.push((names[LINKS].as_str(), names[0].as_str()));
-        let g = depends_on_graph(&edges);
+        let state = depends_on_state(&edges);
 
         let members = std::thread::scope(|scope| {
             std::thread::Builder::new()
                 .stack_size(64 * 1024)
-                .spawn_scoped(scope, || g.depends_on_cycles().concat().len())
+                .spawn_scoped(scope, || state.depends_on_cycles().concat().len())
                 .unwrap()
                 .join()
                 .unwrap()

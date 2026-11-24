@@ -86,7 +86,7 @@ impl From<Error> for ToolError {
             Error::VersionMismatch { .. }
             | Error::BadFormatVersion { .. }
             | Error::MissingFormatVersion { .. }
-            | Error::UnknownFormatVersion { .. } => ErrorKind::UnsupportedFormat,
+            | Error::NoMigration { .. } => ErrorKind::UnsupportedFormat,
             // Every other failure to find, read or write the store.
             _ => ErrorKind::StoreError,
         };
@@ -219,9 +219,10 @@ mod tests {
                 "format_version",
             ),
             (
-                Error::UnknownFormatVersion {
+                Error::NoMigration {
                     path: PathBuf::from("/work/.trurlic/project.toml"),
                     found: FormatVersion::new(0, 3, 7),
+                    expected: FormatVersion::new(0, 5, 0),
                 },
                 "unsupported_format",
                 "no migration",

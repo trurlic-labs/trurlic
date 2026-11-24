@@ -51,7 +51,8 @@ toml  = "1"
 # Error handling
 thiserror = "2"
 
-# Content hashing (pure Rust, no C/OpenSSL dependency)
+# The journal's check that a replay renames the bytes its commit staged
+# (pure Rust, no C/OpenSSL dependency)
 blake3 = "1"
 
 # Parallel file I/O for load_state

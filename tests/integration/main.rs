@@ -4,10 +4,12 @@
 //! need the `failpoints` feature compile only when it is enabled.
 
 mod budget;
+mod canonical_form;
 mod decision_text;
 mod determinism;
 #[cfg(feature = "failpoints")]
 mod failpoints;
+mod git_merge;
 mod golden;
 mod harness;
 #[cfg(unix)]
@@ -19,4 +21,3 @@ mod output;
 #[cfg(feature = "failpoints")]
 mod server_failpoints;
 mod stdio;
-mod writers;

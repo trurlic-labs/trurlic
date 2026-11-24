@@ -41,7 +41,7 @@ body:
     attributes:
       label: Component
       options:
-        - CLI (init, add, rename, remove, decide, gc, query, status, check, migrate)
+        - CLI (init, query, status, check, fmt, migrate)
         - MCP server (trurlic serve)
         - Decision store (.trurlic/ format)
         - Claude Code registration (trurlic install)
@@ -79,8 +79,8 @@ body:
       label: Steps to reproduce
       description: Minimal steps to trigger the bug.
       placeholder: |
-        1. Run `trurlic init`
-        2. Run `trurlic add component auth`
+        1. Run `trurlic init --placement tracked`
+        2. Write `.trurlic/components/auth.toml`
         3. Run ...
         4. Observe ...
     validations:

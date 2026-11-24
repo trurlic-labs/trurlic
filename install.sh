@@ -321,7 +321,7 @@ main() {
     info "  Next steps:"
     echo ""
     echo "    cd your-project"
-    echo "    trurlic init"
+    echo "    trurlic init --placement tracked"
     echo "    trurlic serve        # start the MCP server"
     echo ""
 }

@@ -1,5 +1,4 @@
-//! Terminal I/O: command output on stdout, diagnostics on stderr, and the
-//! one confirmation prompt.
+//! Terminal I/O: command output on stdout and diagnostics on stderr.
 //!
 //! Apart from the MCP transport, which owns stdout under `serve`, these
 //! functions are the only code that touches the standard streams: lints
@@ -7,9 +6,12 @@
 //! because one stray line on stdout corrupts the JSON-RPC stream.
 
 use std::fmt;
-use std::io::{self, BufRead, IsTerminal, Write};
+#[cfg(not(test))]
+use std::io::{self, Write};
 
-use crate::{Error, Result};
+#[cfg(not(test))]
+use crate::Error;
+use crate::Result;
 
 /// Write `line` and a newline to stdout. Unlike `println!`, a closed stdout,
 /// such as a pipe whose reader exited, is an error, not a panic.
@@ -41,27 +43,13 @@ pub(crate) fn write_diag(line: fmt::Arguments<'_>) {
     eprintln!("{line}");
 }
 
-pub(crate) fn stdout_is_terminal() -> bool {
-    stdout().is_terminal()
-}
-
-/// Ask `question` on stderr and read the answer from stdin: `true` only
-/// for `y` or `Y`.
-pub(crate) fn confirm(question: &str) -> Result<bool> {
-    let mut prompt = stderr().lock();
-    let mut answer = String::new();
-    write!(prompt, "{question} [y/N] ")
-        .and_then(|()| prompt.flush())
-        .and_then(|()| io::stdin().lock().read_line(&mut answer))
-        .map_err(Error::system("ask for confirmation"))?;
-    Ok(answer.trim().eq_ignore_ascii_case("y"))
-}
-
+#[cfg(not(test))]
 #[expect(clippy::disallowed_methods, reason = "this module owns stdout")]
 fn stdout() -> io::Stdout {
     io::stdout()
 }
 
+#[cfg(not(test))]
 #[expect(clippy::disallowed_methods, reason = "this module owns stderr")]
 fn stderr() -> io::Stderr {
     io::stderr()

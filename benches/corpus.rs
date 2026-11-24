@@ -1,7 +1,7 @@
 //! Benches over the seeded corpus at each of `Corpus::SIZES`: loading the
-//! store from disk, building and validating its graph, and, through the MCP
-//! server in process, one write end to end and every read tool. The server
-//! loads the graph on every call, so each tool bench includes a load.
+//! store from disk, validating the loaded graph, and, through the MCP
+//! server in process, every read tool. The server loads the graph on every
+//! call, so each tool bench includes a load.
 //!
 //! Read tools come from `tools/list`, so a new one is benched without editing
 //! this file, and setup panics when no request here fits it.
@@ -19,21 +19,16 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use criterion::measurement::WallTime;
-use criterion::{
-    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, SamplingMode, criterion_group,
-    criterion_main,
-};
+use criterion::{BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main};
 use serde_json::{Value, json};
-use tempfile::TempDir;
 
 use trurlic::bench::Server;
 use trurlic::store::corpus::Corpus;
-use trurlic::store::graph::InMemoryGraph;
-use trurlic::store::{DecisionFile, ProjectState, STORE_DIR, Store};
+use trurlic::store::{ProjectState, Store};
 
 /// One corpus per size, written under `target/tmp` once per run.
 static CORPORA: LazyLock<Vec<Fixture>> = LazyLock::new(|| {
@@ -49,12 +44,11 @@ struct Fixture {
     targets: Targets,
 }
 
-/// What requests name: the component with the most decisions, its decision
-/// with the longest history, and the first files its code refs name.
+/// What requests name: the component with the most decisions, and the
+/// first file its anchors name.
 struct Targets {
     component: String,
-    decision: String,
-    files: Vec<String>,
+    file: String,
 }
 
 impl Fixture {
@@ -78,32 +72,19 @@ impl Targets {
         let component = state
             .components
             .keys()
-            .min_by_key(|name| Reverse(decisions_of(state, name).count()))
+            .min_by_key(|name| Reverse(state.decisions_of(name).len()))
             .unwrap();
-        let decision = decisions_of(state, component)
-            .min_by_key(|(_, file)| Reverse(file.decision.history.len()))
-            .unwrap()
-            .0;
-        let files: BTreeSet<&str> = decisions_of(state, component)
-            .flat_map(|(_, file)| &file.decision.code_refs)
-            .map(|code_ref| code_ref.file.as_str())
+        let files: BTreeSet<&str> = state
+            .decisions_of(component)
+            .into_iter()
+            .flat_map(|(_, decision)| &decision.anchors)
+            .map(|anchor| anchor.file())
             .collect();
         Self {
             component: component.clone(),
-            decision: decision.clone(),
-            files: files.into_iter().take(3).map(str::to_owned).collect(),
+            file: files.first().unwrap().to_string(),
         }
     }
-}
-
-fn decisions_of<'a>(
-    state: &'a ProjectState,
-    component: &'a str,
-) -> impl Iterator<Item = (&'a String, &'a Arc<DecisionFile>)> {
-    state
-        .decisions
-        .iter()
-        .filter(move |(_, file)| file.decision.component == component)
 }
 
 /// A server over the project at `dir`, past `initialize`.
@@ -176,20 +157,9 @@ fn read_tools(server: &mut Server) -> Vec<String> {
 }
 
 fn read_tool_arguments(tool: &str, targets: &Targets) -> Value {
-    let Targets {
-        component,
-        decision,
-        files,
-    } = targets;
     match tool {
-        "get_context" => json!({ "component": component }),
-        "check_pattern" => {
-            json!({ "description": "retry the request after a timeout under the lock" })
-        }
-        "get_architecture" => json!({}),
-        "get_decision_history" => json!({ "name": decision }),
-        "get_decisions_for_file" => json!({ "file": files[0] }),
-        "verify_against_decisions" => json!({ "component": component, "changed_files": files }),
+        "get_context" => json!({ "component": targets.component }),
+        "get_decisions_for_file" => json!({ "file": targets.file }),
         other => panic!("no bench request for the read tool `{other}`"),
     }
 }
@@ -204,87 +174,15 @@ fn bench_load_state(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_graph(c: &mut Criterion) {
-    let mut group = c.benchmark_group("graph");
+fn bench_validate(c: &mut Criterion) {
+    let mut group = c.benchmark_group("validate");
     for fixture in CORPORA.iter() {
         let state = fixture.store.load_state().unwrap();
-        group.bench_function(BenchmarkId::new("build", fixture.size), |b| {
-            b.iter(|| {
-                InMemoryGraph::build(
-                    black_box(&state.graph_index),
-                    &state.components,
-                    &state.decisions,
-                    &state.patterns,
-                )
-            });
-        });
-        group.bench_function(BenchmarkId::new("validate", fixture.size), |b| {
-            b.iter(|| black_box(state.graph()).validate());
-        });
-    }
-    group.finish();
-}
-
-/// `record_decision` from request to response: the load under the lock,
-/// validation, and the journaled commit. Each iteration writes into its own
-/// copy of the corpus, so every write lands on a graph of the same size.
-/// A write takes tens of milliseconds, so the group samples flat: linear
-/// sampling needs 55 iterations for 10 samples, more than 3 s holds.
-fn bench_record_decision(c: &mut Criterion) {
-    let mut group = c.benchmark_group("record_decision");
-    group.sample_size(10).sampling_mode(SamplingMode::Flat);
-    for fixture in CORPORA.iter() {
-        let Targets {
-            component,
-            decision,
-            files,
-        } = &fixture.targets;
-        let line = tool_call(
-            "record_decision",
-            json!({
-                "component": component,
-                "choice": "Bench writes land through the journal like every other write",
-                "reason": "A write bench that skipped the journal or the reload would time a path no user takes, so it goes through tools/call.",
-                "attribution": "agent",
-                "alternatives": ["Time Writer::record_decision alone: misses argument parsing and the response"],
-                "depends_on": [decision],
-                "tags": ["performance"],
-                "code_refs": [{ "file": files[0] }],
-            }),
-        );
-        let copy = || {
-            let dir = TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-            copy_dir(fixture.store.root(), &dir.path().join(STORE_DIR));
-            let server = server_at(dir.path().to_path_buf());
-            (dir, server)
-        };
-        call(&mut copy().1, &line);
-        let mut output = Vec::new();
         group.bench_function(BenchmarkId::from_parameter(fixture.size), |b| {
-            b.iter_batched_ref(
-                copy,
-                |(_, server)| {
-                    output.clear();
-                    server.serve_one(&mut line.as_bytes(), &mut output).unwrap()
-                },
-                BatchSize::PerIteration,
-            );
+            b.iter(|| black_box(&state).validate());
         });
     }
     group.finish();
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).unwrap();
-        }
-    }
 }
 
 fn bench_read_tools(c: &mut Criterion) {
@@ -306,6 +204,6 @@ criterion_group! {
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_graph, bench_record_decision, bench_read_tools
+    targets = bench_load_state, bench_validate, bench_read_tools
 }
 criterion_main!(benches);

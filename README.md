@@ -23,17 +23,17 @@ Trurlic makes you the architect again. Architectural decisions live in a typed g
 
 ## MCP-first
 
-Trurlic is an **MCP server**. Your coding agent — Claude Code or any other MCP client — talks to it directly: it pulls architectural context before implementing, records the decisions it makes or you agree on, and checks its changes against them before committing. The graph is the agent's source of truth.
+Trurlic is an **MCP server**. Your coding agent — Claude Code or any other MCP client — talks to it directly: it pulls the architectural context of a component or a file before implementing. The graph is the agent's source of truth: one TOML file per decision and per component, which the agent and you read and edit directly.
 
-The `trurlic` CLI exists for the human: initialize the graph, sketch components, inspect and maintain it. **The CLI never calls an LLM.** All reasoning runs on your coding agent's own model, through MCP.
+The `trurlic` CLI exists for the human: initialize the graph, inspect it, check it and keep its files in canonical form. **The CLI never calls an LLM.** All reasoning runs on your coding agent's own model.
 
 ```
         ┌──────────────┐                      ┌──────────────────┐
   You   │     CLI      │                      │  AI coding agent │
  ──────▶│ init·inspect │                      │  context·design  │
-        │   maintain   │                      │  record·verify   │
+        │  check·fmt   │                      │  implement       │
         └──────┬───────┘                      └────────┬─────────┘
-               │ write                           MCP   │ read + write
+               │ write                     MCP read,   │ file edits
                ▼                                        ▼
         ┌──────────────────────────────────────────────────────┐
         │   .trurlic/  —  decision graph, git-tracked TOML     │
@@ -45,40 +45,57 @@ The `trurlic` CLI exists for the human: initialize the graph, sketch components,
 When an AI coding agent calls `get_context("rate-limiter")`, Trurlic returns:
 
 ```
-RULES (inviolable — every generated line must respect these):
+RULES (inviolable: every generated line must respect these):
 - ALL error handling MUST use Result<T, AppError>
 - ALL persistent state MUST use Redis
 
 COMPONENT: rate-limiter
-- Per API key, consistent with auth boundary
-- Redis sliding window, 60s buckets
-- 429 + retry-after header, RFC 6585 compliant
+- Per API key, consistent with auth boundary (...)
+- Redis sliding window, 60s buckets (...)
+- 429 + retry-after header, RFC 6585 compliant (...) (proposed)
+  Code: src/limiter/window.rs::SlidingWindow
 
-PATTERNS:
-- state-in-redis: shared pool via app state, no per-component connections
-
-RELATED (from connected components):
+RELATED:
 - auth: JWT with DPoP, rate limiter runs AFTER auth
 
 OVERRIDE POLICY:
-RULES are inviolable. Component decisions are strong defaults —
+RULES are inviolable. Component decisions are strong defaults:
 follow them unless the user explicitly revises them.
-Never silently deviate. WHEN UNCERTAIN: STOP and ask.
+Never silently deviate from either.
 ```
 
-Every decision came from a human decision or a review-flagged agent proposal. The agent generates code; the graph constrains it.
+Every decision came from a human decision or an agent proposal marked for review. The agent generates code; the graph constrains it.
 
 ## Who decided
 
-Every decision records who made it.
+Every decision states whether you accepted it.
 
-|  | **`user`** | **`agent`** |
+|  | **`accepted`** | **`proposed`** |
 |--|------------|-------------|
-| **Recorded when** | You made or confirmed the choice in the conversation | The agent chose on its own while implementing |
-| **In the brief** | A plain constraint | Marked `agent — unconfirmed`, with how to confirm or revise it |
-| **Leaves the flag** | — | When you confirm it and the agent promotes it (`update_decision`, mode `promote`) |
+| **Recorded when** | You made or confirmed the choice | The agent chose on its own while implementing |
+| **In the brief** | A plain constraint | Marked `(proposed)` until you accept it |
 
-Agent decisions are never silently trusted: they stay flagged in every context brief until you confirm them, and `trurlic gc --aggressive` reclaims the ones left unreviewed for over 90 days.
+## The files
+
+```toml
+# .trurlic/decisions/sign-tokens.toml
+component = "auth"
+choice = "Sign tokens with Ed25519"
+reason = "Verification needs no session store."
+alternatives = [
+    "HMAC with a shared secret: every verifier could forge tokens",
+]
+status = "accepted"
+created = "2025-06-01T10:30:00Z"
+anchors = [
+    { file = "src/auth/token.rs", symbol = "sign" },
+]
+depends_on = [
+    "keys-in-the-vault",
+]
+```
+
+The file stem is the decision's name. A component file holds `description` and `connects_to`. Edit them by hand or through your agent: every load validates them, `trurlic check` reports what is wrong with the graph, and `trurlic fmt` puts each file in its canonical form (sorted sets, one element per line) so branches merge cleanly.
 
 ## Install
 
@@ -119,13 +136,13 @@ Then tell your agent how to use it — add to `CLAUDE.md` or your agent's equiva
 This project uses Trurlic for architectural decisions.
 
 Before implementing any task:
-1. Call `get_context` for the component and read every decision in the
-   brief: they constrain the code you write.
-2. Implement within the brief. For a choice no decision covers, call
-   `check_pattern`; if it is uncovered, record it with `record_decision`
-   (attribution `agent` when you chose alone, `user` when the user decided).
-3. Before committing, call `verify_against_decisions` with the files you
-   changed, and fix every decision it reports VIOLATED.
+1. Call `get_context` for the component, or `get_decisions_for_file` for
+   the files you will edit, and read every decision: they constrain the
+   code you write.
+2. Implement within them. For a choice no decision covers, search
+   `.trurlic/decisions/`; if none covers it, write a decision file there
+   (status `proposed` when you chose alone, `accepted` when the user decided).
+3. Before committing, run `trurlic fmt` and `trurlic check`.
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the full recommended instructions.
@@ -135,30 +152,26 @@ See [CLAUDE.md](CLAUDE.md) for the full recommended instructions.
 Two commands set it up; everything else is a conversation with your agent.
 
 ```bash
-trurlic init                       # create the graph in your project root
+trurlic init --placement tracked   # create the graph in your project root, versioned by its git
 trurlic install --ide claude-code  # wire up your coding agent over MCP
 ```
 
-**Have an existing codebase?** Ask your agent to map it:
-
-> Record this codebase's components and architectural decisions in Trurlic.
-
-It reads your source and records components and decisions through the MCP tools, each attributed `agent` and flagged for you to promote or revise later.
-
 **Designing something new?** Talk it through:
 
-> Let's design the rate limiter, and record each decision we agree on in Trurlic.
+> Let's design the rate limiter, and write each decision we agree on to Trurlic.
 
-The agent reasons it out with you, records each decision you agree on as `user`, then implements against the constraints it just captured.
+The agent reasons it out with you, writes each decision you agree on as `accepted`, then implements against the constraints it just captured.
 
 **Implementing within what already exists?** Just say what you want:
 
 > Add per-key rate limiting to the auth service.
 
-Before writing a line, the agent pulls the component's brief, generates code that respects every decision, and verifies compliance before it commits.
+Before writing a line, the agent pulls the component's brief and generates code that respects every decision.
 
 ```bash
-trurlic status   # the graph at a glance: components, decisions, patterns, issues
+trurlic status   # the graph at a glance: components, decisions, edges, issues
+trurlic check    # every issue, naming its file; fails when there is one
+trurlic fmt      # rewrite the files that are not in canonical form
 ```
 
 ## Documentation
@@ -173,16 +186,14 @@ Full documentation lives at **[trurlic-docs.pages.dev](https://trurlic-docs.page
 
 ## How the agent works with the graph
 
-Every task starts from the component's brief. The agent reads it, implements within it, records any choice the graph does not cover yet, and checks its changes against the decisions before committing.
+Every task starts from the component's brief. The agent reads it, implements within it, and writes down any choice the graph does not cover yet.
 
 ```
 get_context(component)                →  decisions + rules + related constraints
+get_decisions_for_file(path)          →  the decisions anchored on a file or directory
   … agent implements within the brief …
-check_pattern(description)            →  covered by a decision, or not
-record_decision(component, choice, reason, attribution)
-                                      →  a choice the graph did not cover yet
-verify_against_decisions(component, changed_files)
-                                      →  the decisions to check; fix violations before commit
+.trurlic/decisions/<name>.toml        →  a choice the graph did not cover yet
+trurlic fmt && trurlic check          →  canonical files, no issue
 ```
 
 ## MCP tools
@@ -190,18 +201,7 @@ verify_against_decisions(component, changed_files)
 | Tool | Purpose |
 |------|---------|
 | `get_context` | Architectural brief for a component: decisions, rules, related constraints, health |
-| `get_architecture` | Full system overview: components, connections, patterns |
-| `check_pattern` | Check whether an approach is already covered by existing decisions |
-| `get_decisions_for_file` | Find every decision whose code references touch a file or directory |
-| `get_decision_history` | A decision's current state plus its full chronological revision history |
-| `verify_against_decisions` | After writing code, return the decisions that apply to the changed files so the agent can check compliance before committing |
-| `add_component` | Add a component to the graph |
-| `add_connection` | Connect two components |
-| `record_decision` | Record a decision with edges, tags, rejected alternatives, and code references |
-| `record_pattern` | Synthesize a pattern from multiple related decisions |
-| `update_decision` | Revise a decision in place (with history) or promote an agent decision to reviewed |
-| `remove_decision` | Remove a decision with cascade analysis: refused while another decision depends on it |
-| `remove_pattern` | Remove a pattern and its edges; its member decisions are kept |
+| `get_decisions_for_file` | Every decision anchored on a file, on a file under a directory, or on a directory that holds the file |
 
 Every result fits 24 KiB, which Claude Code shows inline. A larger answer keeps its shape: its longest lists and strings lose their tails, and a `truncated` array names each cut with what it omitted.
 

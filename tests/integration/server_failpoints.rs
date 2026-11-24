@@ -9,27 +9,27 @@ use crate::harness::{McpClient, Project};
 const FAILPOINT: &str = "TRURLIC_FAILPOINT";
 const SERVER_REQUEST: (&str, &str) = (FAILPOINT, "mcp.server_request:1");
 
-/// The panic hits under the exclusive lock. Unwinding releases it, so the
-/// next write takes the lock and commits; nothing is poisoned.
+/// The panic hits under the shared lock. Unwinding releases it, so a
+/// writer takes the lock and commits, and the next call is served; nothing
+/// is poisoned.
 #[test]
 fn a_panic_in_a_tool_call_is_answered_internal_error_and_the_server_serves_on() {
     let project = Project::init();
-    let (mut client, _) = McpClient::connect_with_env(&project, &[(FAILPOINT, "write.locked:1")]);
+    project.write("components/auth.toml", "description='Auth'\n");
+    let (mut client, _) = McpClient::connect_with_env(&project, &[(FAILPOINT, "graph.loaded:1")]);
 
     let response = client.exchange(
         "tools/call",
-        json!({ "name": "add_component", "arguments": { "name": "auth" } }),
+        json!({ "name": "get_context", "arguments": { "component": "auth" } }),
     );
     assert!(response.get("result").is_none(), "{response}");
     assert_eq!(response["error"]["code"], -32603, "{response}");
     let message = response["error"]["message"].as_str().unwrap();
     assert!(message.contains("panicked"), "{message}");
 
-    client.call_tool("add_component", json!({ "name": "storage" }));
-    let architecture = client.call_tool("get_architecture", json!({}));
-    let components = architecture["components"].as_array().unwrap();
-    assert_eq!(components.len(), 1, "{architecture}");
-    assert_eq!(components[0]["name"], "storage", "{architecture}");
+    project.run_ok(&["fmt"]);
+    let context = client.call_tool("get_context", json!({ "component": "auth" }));
+    assert_eq!(context["component"]["description"], "Auth", "{context}");
 }
 
 /// A client that declares form elicitation.
@@ -45,7 +45,7 @@ fn call_and_receive_request(client: &mut McpClient) -> (u64, Value) {
         "jsonrpc": "2.0",
         "id": call,
         "method": "tools/call",
-        "params": { "name": "get_architecture", "arguments": {} },
+        "params": { "name": "get_context", "arguments": { "component": "project" } },
     }));
     let request = client.receive();
     assert_eq!(request["method"], "elicitation/create", "{request}");
@@ -98,7 +98,7 @@ fn a_client_without_elicitation_gets_a_refusal_and_no_request() {
     let project = Project::init();
     let (mut client, _) = McpClient::connect_declaring(&project, &[SERVER_REQUEST], json!({}));
 
-    let refusal = client.call_tool_refusal("get_architecture", json!({}));
+    let refusal = client.call_tool_refusal("get_context", json!({ "component": "project" }));
     let message = refusal["message"].as_str().unwrap();
     assert!(message.contains("elicitation"), "{message}");
 }

@@ -6,11 +6,12 @@
 //! the format: `trurl_version` in the pre-release `trurl` builds,
 //! `trurlic_version` from 0.2.0 to 0.4.0, `format_version` since 0.4.1. It
 //! is read under any of them, so an old store is told to migrate instead of
-//! failing on a missing key. An older version no migration step starts at
-//! was never written by trurlic and is refused like a newer one.
+//! failing on a missing key. An older version the migration registry names
+//! is told to migrate; one it does not name was never written by trurlic,
+//! and is refused like one no chain of steps leads from to the current
+//! format.
 
 use std::fmt;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::de::{self, Deserializer, Visitor};
@@ -18,7 +19,8 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{Error, Result};
 
-use super::schema::{FORMAT_VERSION, ProjectFile};
+use super::load::read_node_bytes;
+use super::schema::{FORMAT_VERSION, PROJECT_FILE, Project};
 use super::{Store, migration};
 
 /// The keys that have held the format version, newest first.
@@ -116,7 +118,7 @@ fn stated_version(path: &Path, project: &toml::Table) -> Result<FormatVersion> {
 
 /// Whether the store whose `project.toml` at `path` has the table
 /// `project` is read as it is or migrated first. A newer format, and an
-/// older one no step starts at, are refused.
+/// older one the migration registry does not name, are refused.
 pub(super) fn standing(path: &Path, project: &toml::Table) -> Result<Standing> {
     let found = stated_version(path, project)?;
     if found == FORMAT_VERSION {
@@ -127,12 +129,13 @@ pub(super) fn standing(path: &Path, project: &toml::Table) -> Result<Standing> {
             found,
             expected: FORMAT_VERSION,
         })
-    } else if migration::starts_at(found) {
+    } else if migration::names(found) {
         Ok(Standing::Older(found))
     } else {
-        Err(Error::UnknownFormatVersion {
+        Err(Error::NoMigration {
             path: path.to_path_buf(),
             found,
+            expected: FORMAT_VERSION,
         })
     }
 }
@@ -141,7 +144,7 @@ pub(super) fn standing(path: &Path, project: &toml::Table) -> Result<Standing> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Standing {
     Current,
-    /// A format a migration step starts at.
+    /// A format a migration step names.
     Older(FormatVersion),
 }
 
@@ -157,16 +160,17 @@ fn ensure_current(path: &Path, project: &toml::Table) -> Result<()> {
     }
 }
 
-/// The TOML file at `path` as a table, with its bytes.
+/// The TOML file at `path` as a table, with its bytes; `project.toml` and
+/// a node file are refused unread past their cap.
 pub(super) fn read_table(path: &Path) -> Result<(toml::Table, Vec<u8>)> {
-    let bytes = fs::read(path).map_err(Error::io(path))?;
+    let bytes = read_node_bytes(path)?;
     let table = toml::from_slice(&bytes).map_err(Error::toml(path))?;
     Ok((table, bytes))
 }
 
 impl Store {
     pub(super) fn project_path(&self) -> PathBuf {
-        self.root.join("project.toml")
+        self.root.join(PROJECT_FILE)
     }
 
     /// Refuse a store whose format is not [`FORMAT_VERSION`], before
@@ -176,16 +180,15 @@ impl Store {
         ensure_current(&path, &read_table(&path)?.0)
     }
 
-    /// `project.toml` in the current format and the hash of its bytes, read
-    /// once. A store in another format is refused before the file is parsed
-    /// as the current one, so the error names the version, not a missing
-    /// key.
-    pub(super) fn read_current_project(&self) -> Result<(ProjectFile, String)> {
+    /// `project.toml` in the current format and its bytes, read once. A
+    /// store in another format is refused before the file is parsed as the
+    /// current one, so the error names the version, not a missing key.
+    pub(super) fn read_current_project(&self) -> Result<(Project, Vec<u8>)> {
         let path = self.project_path();
         let (project, bytes) = read_table(&path)?;
         ensure_current(&path, &project)?;
         let project = project.try_into().map_err(Error::toml(&path))?;
-        Ok((project, super::hash_bytes(&bytes)))
+        Ok((project, bytes))
     }
 }
 
@@ -318,7 +321,7 @@ mod tests {
     #[test]
     fn an_older_format_is_refused_naming_migrate() {
         let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "0.3.0");
+        let store = setup_store_with_version(tmp.path(), "0.4.1");
 
         for err in [
             store.check_version().unwrap_err(),
@@ -326,7 +329,7 @@ mod tests {
         ] {
             assert!(
                 matches!(&err, Error::VersionMismatch { found, .. }
-                    if *found == FormatVersion::new(0, 3, 0)),
+                    if *found == FormatVersion::new(0, 4, 1)),
                 "{err:?}"
             );
             assert!(err.to_string().contains("run `trurlic migrate`"), "{err}");
@@ -334,15 +337,16 @@ mod tests {
     }
 
     #[test]
-    fn an_older_format_no_step_starts_at_is_refused() {
+    fn an_older_format_no_step_names_is_refused_naming_both_versions() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store_with_version(tmp.path(), "0.3.7");
 
         let err = store.check_version().unwrap_err();
         assert!(
-            matches!(&err, Error::UnknownFormatVersion { found, .. }
+            matches!(&err, Error::NoMigration { found, expected: FORMAT_VERSION, .. }
                 if *found == FormatVersion::new(0, 3, 7)),
             "{err:?}"
         );
+        assert!(err.to_string().contains("0.3.7"), "{err}");
     }
 }

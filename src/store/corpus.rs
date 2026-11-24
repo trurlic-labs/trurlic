@@ -1,31 +1,26 @@
 //! A seeded synthetic project for benches and property tests: a store of
 //! [`Corpus::decisions`] decisions shaped like a production graph, and a
-//! Rust source tree that their code refs resolve in.
+//! Rust source tree that their anchors resolve in.
 //!
-//! The store is written in one commit through [`Store::commit_with_graph`],
-//! so it passes the same validation as any write. Draws come from
+//! The store is written in one journaled commit of canonical files, the
+//! path every write takes, and its tests hold it valid. Draws come from
 //! SplitMix64 rather than `rand`, whose generators may change output between
 //! releases: benches compare commits only while the corpus stays
 //! byte-identical across them.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::ops::RangeInclusive;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{Error, Result};
 
 use super::commit::PendingWrite;
-use super::limits::MAX_CODE_REFS;
 use super::schema::{
-    Attribution, CodeRef, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
-    HistoryEntry, NodeEntry, NodeKind, Pattern, PatternFile,
+    AcceptedText, AcceptedVia, Anchor, Component, Decision, PROJECT_COMPONENT, Placement, Status,
 };
-use super::{ProjectState, Store, Timestamp, Writer, slugify};
-
-/// The project-wide pseudo-component decisions may belong to.
-const PROJECT: &str = "project";
+use super::{Store, Timestamp};
 
 const DECISIONS_PER_COMPONENT: usize = 40;
 
@@ -33,11 +28,6 @@ const MIN_COMPONENTS: usize = 3;
 
 /// One decision in this many is project-wide.
 const PROJECT_WIDE_EVERY: usize = 16;
-
-/// One pattern per this many decisions.
-const DECISIONS_PER_PATTERN: usize = 32;
-
-const PATTERN_MEMBERS: RangeInclusive<usize> = 2..=5;
 
 const FILES_PER_COMPONENT: usize = 64;
 
@@ -59,8 +49,11 @@ const MAX_ALTERNATIVES: usize = 7;
 
 const MAX_TAGS: usize = 6;
 
-/// History entries of a revised decision, at most.
-const MAX_HISTORY: usize = 14;
+/// Anchors of most decisions, at most; one in ten has up to
+/// [`MAX_ANCHORS`].
+const USUAL_ANCHORS: usize = 10;
+
+const MAX_ANCHORS: usize = 20;
 
 /// Every timestamp is this instant plus an offset, so writing a corpus never
 /// reads the clock.
@@ -79,10 +72,8 @@ fn later(at: Timestamp, offset: Duration) -> Timestamp {
 
 const HOUR: Duration = Duration::from_secs(60 * 60);
 
-const DAY: Duration = Duration::from_secs(24 * 60 * 60);
-
-/// Prose vocabulary of architecture terms, so keyword queries such as
-/// `check_pattern` match decisions as they would in a production graph.
+/// Prose vocabulary of architecture terms, so text reads like the text of
+/// a production graph.
 const WORDS: &[&str] = &[
     "the",
     "store",
@@ -226,13 +217,10 @@ impl Corpus {
     /// `project_dir/src`. Fails like [`Store::create`] when a store is there.
     pub fn write(&self, project_dir: &Path) -> Result<Store> {
         let plan = Plan::new(*self);
-        let store = Store::create(project_dir, "corpus", epoch())?;
+        let store = Store::create(project_dir, "corpus", Placement::Tracked)?;
         plan.write_sources(project_dir)?;
-        {
-            let Writer { lock, state, .. } = &mut store.begin_write()?;
-            let writes = plan.into_state(&store, state)?;
-            store.commit_with_graph(lock, writes, &[], state)?;
-        }
+        let writes = plan.writes(&store)?;
+        store.commit_batch(&store.lock()?, &writes, &[])?;
         Ok(store)
     }
 }
@@ -316,25 +304,10 @@ impl SplitMix64 {
     }
 }
 
-/// One generated decision before it is committed.
-struct PlannedDecision {
-    name: String,
-    file: DecisionFile,
-    depends_on: Option<usize>,
-}
-
-struct PlannedPattern {
-    name: String,
-    file: PatternFile,
-    component: usize,
-    members: Vec<usize>,
-}
-
 /// Every node and source file of a corpus, drawn in a fixed order.
 struct Plan {
     components: Vec<String>,
-    decisions: Vec<PlannedDecision>,
-    patterns: Vec<PlannedPattern>,
+    decisions: Vec<(String, Decision)>,
 }
 
 impl Plan {
@@ -344,138 +317,48 @@ impl Plan {
         let percent = usize::from(corpus.anchored_files_percent.min(100));
         let anchored_per_component = FILES_PER_COMPONENT * percent / 100;
         let mut anchors = Anchors::new(components.len(), anchored_per_component);
-        let mut decisions = Vec::with_capacity(corpus.decisions);
+        let mut decisions: Vec<(String, Decision)> = Vec::with_capacity(corpus.decisions);
         let mut created = epoch();
         for index in 0..corpus.decisions {
             let owner =
                 (!index.is_multiple_of(PROJECT_WIDE_EVERY)).then(|| rng.below(components.len()));
-            let component = owner.map_or(PROJECT, |c| components[c].as_str());
-            let code_refs = anchors.draw(&mut rng, owner, &components);
-            decisions.push(plan_decision(
-                &mut rng, index, component, created, code_refs,
-            ));
+            let component = owner.map_or(PROJECT_COMPONENT, |c| components[c].as_str());
+            let drawn = anchors.draw(&mut rng, owner, &components);
+            let mut decision = plan_decision(&mut rng, index, component, created, drawn);
+            // An earlier decision only, so `depends_on` has no cycle.
+            if index > 0 && rng.one_in(2) {
+                let (target, _) = &decisions[rng.below(index)];
+                // clone: the edge names a decision the plan keeps.
+                decision.depends_on.insert(target.clone());
+            }
+            decisions.push((format!("{component}-d{index}"), decision));
             created = later(created, HOUR);
         }
-        let mut plan = Self {
+        Self {
             components,
             decisions,
-            patterns: Vec::new(),
-        };
-        plan.patterns = plan.plan_patterns(&mut rng, corpus.decisions / DECISIONS_PER_PATTERN);
-        plan
+        }
     }
 
-    /// Patterns over consecutive decisions of one component each.
-    fn plan_patterns(&self, rng: &mut SplitMix64, count: usize) -> Vec<PlannedPattern> {
-        (0..count)
-            .filter_map(|index| {
-                let owner = index % self.components.len();
-                let component = &self.components[owner];
-                let owned: Vec<usize> = (0..self.decisions.len())
-                    .filter(|&d| self.decisions[d].file.decision.component == *component)
-                    .collect();
-                let wanted = rng.within(&PATTERN_MEMBERS);
-                (owned.len() >= wanted).then(|| {
-                    let start = rng.below(owned.len() - wanted + 1);
-                    PlannedPattern {
-                        name: format!("{component}-pattern-{index}"),
-                        file: PatternFile {
-                            pattern: Pattern {
-                                name: format!("{component} pattern {index}"),
-                                description: rng.prose_within(&ALTERNATIVE_BYTES),
-                            },
-                        },
-                        component: owner,
-                        members: owned[start..start + wanted].to_vec(),
-                    }
-                })
-            })
-            .collect()
-    }
-
-    /// Move every node and edge into `state` and return the node file writes.
-    fn into_state(self, store: &Store, state: &mut ProjectState) -> Result<Vec<PendingWrite>> {
-        let edges = self.edges();
-        let mut writes = Vec::new();
-        for name in self.components {
-            let file = ComponentFile {
-                component: Component {
-                    description: format!("The {name} service of the synthetic project"),
-                    // clone: the file and the node entry each own the name.
-                    name: name.clone(),
-                },
-            };
-            let write = store.prepare_write(&store.component_path(&name), &file)?;
-            state
-                .graph_index
-                .nodes
-                .push(node_entry(&name, NodeKind::Component, &[], &write));
-            state.components.insert(name, Arc::new(file));
-            writes.push(write);
-        }
-        for planned in self.decisions {
-            let write = store.prepare_write(&store.decision_path(&planned.name), &planned.file)?;
-            let tags = &planned.file.decision.tags;
-            state.graph_index.nodes.push(node_entry(
-                &planned.name,
-                NodeKind::Decision,
-                tags,
-                &write,
-            ));
-            state.decisions.insert(planned.name, Arc::new(planned.file));
-            writes.push(write);
-        }
-        for planned in self.patterns {
-            let write = store.prepare_write(&store.pattern_path(&planned.name), &planned.file)?;
-            state
-                .graph_index
-                .nodes
-                .push(node_entry(&planned.name, NodeKind::Pattern, &[], &write));
-            state.patterns.insert(planned.name, Arc::new(planned.file));
-            writes.push(write);
-        }
-        state.graph_index.edges.extend(edges);
-        Ok(writes)
-    }
-
-    /// Each component connects to the next two; each decision belongs to its
-    /// component and depends on at most one earlier decision, so `depends_on`
-    /// has no cycle.
-    fn edges(&self) -> Vec<EdgeEntry> {
-        let edge = |from: &str, to: &str, kind| EdgeEntry {
-            from: from.into(),
-            to: to.into(),
-            kind,
-        };
+    /// The canonical file of every node. Each component connects to the
+    /// next two.
+    fn writes(self, store: &Store) -> Result<Vec<PendingWrite>> {
         let count = self.components.len();
-        let mut edges = Vec::new();
-        for (index, from) in self.components.iter().enumerate() {
-            for step in 1..=2 {
-                let to = &self.components[(index + step) % count];
-                edges.push(edge(from, to, EdgeKind::ConnectsTo));
-            }
+        let mut writes = Vec::with_capacity(count + self.decisions.len());
+        for (index, name) in self.components.iter().enumerate() {
+            let component = Component {
+                description: format!("The {name} service of the synthetic project"),
+                connects_to: (1..=2)
+                    // clone: each edge names a component the plan keeps.
+                    .map(|step| self.components[(index + step) % count].clone())
+                    .collect(),
+            };
+            writes.push(store.prepare_write(&store.component_path(name), &component)?);
         }
-        for planned in &self.decisions {
-            let decision = &planned.file.decision;
-            edges.push(edge(
-                &planned.name,
-                &decision.component,
-                EdgeKind::BelongsTo,
-            ));
-            if let Some(target) = planned.depends_on {
-                let to = &self.decisions[target].name;
-                edges.push(edge(&planned.name, to, EdgeKind::DependsOn));
-            }
+        for (name, decision) in &self.decisions {
+            writes.push(store.prepare_write(&store.decision_path(name), decision)?);
         }
-        for planned in &self.patterns {
-            let component = &self.components[planned.component];
-            edges.push(edge(&planned.name, component, EdgeKind::AppliesTo));
-            for &member in &planned.members {
-                let to = &self.decisions[member].name;
-                edges.push(edge(&planned.name, to, EdgeKind::MemberOf));
-            }
-        }
-        edges
+        Ok(writes)
     }
 
     /// One `pub fn` per [`SYMBOL_WORDS`] entry in every file, anchored or not.
@@ -500,18 +383,9 @@ impl Plan {
     }
 }
 
-fn node_entry(name: &str, kind: NodeKind, tags: &[String], write: &PendingWrite) -> NodeEntry {
-    NodeEntry {
-        name: name.into(),
-        kind,
-        tags: tags.to_vec(),
-        hash: write.content_hash(),
-    }
-}
-
-/// Assigns code refs: a component's decisions name its anchored files in
+/// Assigns anchors: a component's decisions name its anchored files in
 /// turn and project-wide decisions name every component's, so each anchored
-/// file is named once the refs outnumber the files.
+/// file is named once the anchors outnumber the files.
 struct Anchors {
     next: Vec<usize>,
     next_project_wide: usize,
@@ -527,32 +401,37 @@ impl Anchors {
         }
     }
 
-    /// Mostly 0 to 10 refs, and one decision in ten up to [`MAX_CODE_REFS`].
-    /// One ref in twenty names a file without a symbol.
+    /// Mostly 0 to [`USUAL_ANCHORS`] anchors, and one decision in ten up to
+    /// [`MAX_ANCHORS`]. One anchor in twenty names a file without a symbol;
+    /// two draws of one place are one anchor.
     fn draw(
         &mut self,
         rng: &mut SplitMix64,
         owner: Option<usize>,
         components: &[String],
-    ) -> Vec<CodeRef> {
+    ) -> BTreeSet<Anchor> {
         if self.per_component == 0 {
-            return Vec::new();
+            return BTreeSet::new();
         }
-        let most = if rng.one_in(10) { MAX_CODE_REFS } else { 10 };
+        let most = if rng.one_in(10) {
+            MAX_ANCHORS
+        } else {
+            USUAL_ANCHORS
+        };
         (0..rng.below(most + 1))
-            .map(|_| {
+            .filter_map(|_| {
                 let (component, file) = self.next_file(owner, components.len());
                 let stem = module_stem(file);
-                CodeRef {
-                    file: format!("src/{}/{stem}.rs", components[component]),
-                    symbol: (!rng.one_in(20))
-                        .then(|| format!("{}_{stem}", rng.pick(&SYMBOL_WORDS))),
-                }
+                let path = format!("src/{}/{stem}.rs", components[component]);
+                let symbol =
+                    (!rng.one_in(20)).then(|| format!("{}_{stem}", rng.pick(&SYMBOL_WORDS)));
+                // A path of names this module draws is always an anchor.
+                Anchor::new(path, symbol).ok()
             })
             .collect()
     }
 
-    /// The `(component, file)` the next ref of `owner` names.
+    /// The `(component, file)` the next anchor of `owner` names.
     fn next_file(&mut self, owner: Option<usize>, components: usize) -> (usize, usize) {
         match owner {
             Some(component) => {
@@ -574,76 +453,56 @@ fn plan_decision(
     index: usize,
     component: &str,
     created: Timestamp,
-    code_refs: Vec<CodeRef>,
-) -> PlannedDecision {
-    let history = history(rng, index, component, created);
+    anchors: BTreeSet<Anchor>,
+) -> Decision {
     let alternatives = (0..rng.below(MAX_ALTERNATIVES + 1))
         .map(|_| rng.prose_within(&ALTERNATIVE_BYTES))
         .collect();
     let tags = tags(rng);
     let choice = choice(rng, index, component);
-    let attribution = if rng.one_in(10) {
-        Attribution::Agent
-    } else {
-        Attribution::User
-    };
-    PlannedDecision {
-        name: slugify(&choice),
-        file: DecisionFile {
-            decision: Decision {
-                component: component.into(),
-                choice,
-                reason: rng.prose_within(&REASON_BYTES),
-                alternatives,
-                tags,
-                attribution,
-                created,
-                code_refs,
-                history,
-            },
-        },
-        depends_on: (index > 0 && rng.one_in(2)).then(|| rng.below(index)),
+    let status = status(rng, index, component);
+    Decision {
+        component: component.into(),
+        choice,
+        reason: rng.prose_within(&REASON_BYTES),
+        alternatives,
+        tags,
+        status,
+        origin: rng.one_in(3).then(|| format!("task {}", index / 25)),
+        created,
+        anchors,
+        depends_on: BTreeSet::new(),
     }
 }
 
-/// Prior versions of a decision, a day apart: one decision in twenty has
-/// any, as most decisions are never revised.
-fn history(
-    rng: &mut SplitMix64,
-    index: usize,
-    component: &str,
-    created: Timestamp,
-) -> Vec<HistoryEntry> {
-    let revisions = if rng.one_in(20) {
-        1 + rng.below(MAX_HISTORY)
-    } else {
-        0
+/// One decision in ten is proposed, one in four of those a revision of an
+/// accepted text; an accepted one names how it was accepted, or nothing
+/// when it predates the record.
+fn status(rng: &mut SplitMix64, index: usize, component: &str) -> Status {
+    if rng.one_in(10) {
+        let accepted_text = rng.one_in(4).then(|| AcceptedText {
+            choice: choice(rng, index, component),
+            reason: rng.prose_within(&REASON_BYTES),
+            alternatives: vec![rng.prose_within(&ALTERNATIVE_BYTES)],
+        });
+        return Status::Proposed { accepted_text };
+    }
+    let via = match rng.below(3) {
+        0 => None,
+        1 => Some(AcceptedVia::Cli),
+        _ => Some(AcceptedVia::Elicitation),
     };
-    let mut changed_at = created;
-    (0..revisions)
-        .map(|_| {
-            changed_at = later(changed_at, DAY);
-            HistoryEntry {
-                choice: choice(rng, index, component),
-                reason: rng.prose_within(&REASON_BYTES),
-                changed_at,
-            }
-        })
+    Status::Accepted { via }
+}
+
+/// Up to [`MAX_TAGS`] draws from [`TAGS`]; a repeat is one tag.
+fn tags(rng: &mut SplitMix64) -> BTreeSet<String> {
+    (0..rng.below(MAX_TAGS + 1))
+        .map(|_| rng.pick(TAGS).to_owned())
         .collect()
 }
 
-/// Up to [`MAX_TAGS`] draws from [`TAGS`], sorted and without repeats.
-fn tags(rng: &mut SplitMix64) -> Vec<String> {
-    let mut tags: Vec<String> = (0..rng.below(MAX_TAGS + 1))
-        .map(|_| rng.pick(TAGS).to_owned())
-        .collect();
-    tags.sort_unstable();
-    tags.dedup();
-    tags
-}
-
-/// A one-line choice that starts with its component and index, so its slug
-/// is unique and differs from every component name.
+/// A one-line choice that starts with its component and index.
 fn choice(rng: &mut SplitMix64, index: usize, component: &str) -> String {
     let mut text = format!("{component} {index} ");
     let length = rng.within(&CHOICE_BYTES);
@@ -672,12 +531,12 @@ fn module_stem(file: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     use super::*;
+    use crate::store::canonical::canonical;
     use crate::store::limits::MAX_CHOICE_BYTES;
-    use crate::store::{GRAPH_FILE, STATE_DIR, STORE_DIR};
+    use crate::store::{ProjectState, STATE_DIR};
     use tempfile::TempDir;
 
     /// Every file under `dir` but `.state/`, by path relative to `dir`.
@@ -708,23 +567,14 @@ mod tests {
         (tmp, state)
     }
 
-    fn edges_of(state: &ProjectState, kind: EdgeKind) -> usize {
-        state
-            .graph_index
-            .edges
-            .iter()
-            .filter(|e| e.kind == kind)
-            .count()
-    }
-
-    /// Source files under `src/`, and those a code ref names.
+    /// Source files under `src/`, and those an anchor names.
     fn source_files(dir: &Path, state: &ProjectState) -> (usize, BTreeSet<String>) {
         let total = files(&dir.join("src")).len();
         let named = state
             .decisions
             .values()
-            .flat_map(|d| &d.decision.code_refs)
-            .map(|r| r.file.clone())
+            .flat_map(|d| &d.anchors)
+            .map(|anchor| anchor.file().to_owned())
             .collect();
         (total, named)
     }
@@ -740,45 +590,67 @@ mod tests {
         Corpus { seed: 7, ..corpus }.write(reseeded.path()).unwrap();
 
         assert_eq!(files(first.path()), files(second.path()));
-        let graph = |dir: &TempDir| fs::read(dir.path().join(STORE_DIR).join(GRAPH_FILE)).unwrap();
-        assert_ne!(graph(&first), graph(&reseeded));
+        assert_ne!(files(first.path()), files(reseeded.path()));
     }
 
     #[test]
-    fn every_size_is_a_valid_graph_of_the_requested_shape() {
+    fn every_size_is_a_valid_canonical_graph_of_the_requested_shape() {
         for size in Corpus::SIZES {
             let (tmp, state) = written(Corpus::new(size));
-            let store = Store::at(tmp.path().join(STORE_DIR));
 
             assert_eq!(state.decisions.len(), size);
             assert_eq!(state.validate(), [], "{size}");
-            assert_eq!(store.verify_hashes().unwrap(), [], "{size}");
-            let decisions: Vec<&Decision> = state.decisions.values().map(|d| &d.decision).collect();
+            assert_eq!(state.non_canonical, [], "{size}");
+            let decisions: Vec<&Decision> = state.decisions.values().collect();
             let reason_bytes: usize = decisions.iter().map(|d| d.reason.len()).sum();
             assert!((800..=1000).contains(&(reason_bytes / size)), "{size}");
             assert!(decisions.iter().all(|d| d.choice.len() <= MAX_CHOICE_BYTES));
-            assert!(decisions.iter().all(|d| d.code_refs.len() <= MAX_CODE_REFS));
-            assert!(decisions.iter().all(|d| d.history.len() <= MAX_HISTORY));
-            assert!(decisions.iter().any(|d| d.history.len() > 1), "{size}");
-            let depends_on = edges_of(&state, EdgeKind::DependsOn) * 100 / size;
-            assert!((40..=60).contains(&depends_on), "{size}: {depends_on}");
-            assert!(edges_of(&state, EdgeKind::MemberOf) >= 2, "{size}");
+            assert!(decisions.iter().all(|d| d.anchors.len() <= MAX_ANCHORS));
+            let depends_on = decisions
+                .iter()
+                .filter(|d| !d.depends_on.is_empty())
+                .count();
+            assert!((40..=60).contains(&(depends_on * 100 / size)), "{size}");
+            let proposed = decisions
+                .iter()
+                .filter(|d| matches!(d.status, Status::Proposed { .. }))
+                .count();
+            assert!(proposed > 0 && proposed * 5 < size, "{size}: {proposed}");
             let (total, named) = source_files(tmp.path(), &state);
             assert_eq!(named.len() * 100, total * 75, "{size}");
         }
     }
 
+    /// The property behind `check` and `fmt`: canonical bytes read back as
+    /// the value they were written from, and the bytes of what a file reads
+    /// as are a fixpoint.
     #[test]
-    fn every_code_ref_names_a_file_and_function_in_the_source_tree() {
+    fn every_node_reads_back_from_its_canonical_bytes_and_they_are_a_fixpoint() {
+        let tmp = TempDir::new().unwrap();
+        let store = Corpus::new(600).write(tmp.path()).unwrap();
+        let state = store.load_state().unwrap();
+
+        for (name, decision) in &state.decisions {
+            let bytes = fs::read_to_string(store.decision_path(name)).unwrap();
+            let read: Decision = toml::from_str(&bytes).unwrap();
+            assert_eq!(&read, decision, "{name}");
+            assert_eq!(canonical(&read), bytes, "{name}");
+        }
+        for (name, component) in &state.components {
+            let bytes = fs::read_to_string(store.component_path(name)).unwrap();
+            assert_eq!(&toml::from_str::<Component>(&bytes).unwrap(), component);
+            assert_eq!(canonical(component), bytes, "{name}");
+        }
+    }
+
+    #[test]
+    fn every_anchor_names_a_file_and_function_in_the_source_tree() {
         let (tmp, state) = written(Corpus::new(600));
 
-        for code_ref in state.decisions.values().flat_map(|d| &d.decision.code_refs) {
-            let source = fs::read_to_string(tmp.path().join(&code_ref.file)).unwrap();
-            if let Some(symbol) = &code_ref.symbol {
-                assert!(
-                    source.contains(&format!("pub fn {symbol}(")),
-                    "{code_ref:?}"
-                );
+        for anchor in state.decisions.values().flat_map(|d| &d.anchors) {
+            let source = fs::read_to_string(tmp.path().join(anchor.file())).unwrap();
+            if let Some(symbol) = anchor.symbol() {
+                assert!(source.contains(&format!("pub fn {symbol}(")), "{anchor}");
             }
         }
     }
@@ -798,11 +670,6 @@ mod tests {
             ..Corpus::new(50)
         };
         let (_tmp, state) = written(none);
-        assert!(
-            state
-                .decisions
-                .values()
-                .all(|d| d.decision.code_refs.is_empty())
-        );
+        assert!(state.decisions.values().all(|d| d.anchors.is_empty()));
     }
 }

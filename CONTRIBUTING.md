@@ -57,7 +57,7 @@ make bench      # criterion benches over the seeded corpus (local only, not part
 **Single test:**
 
 ```bash
-cargo test -- remove_decision_allows_with_constrains_edge
+cargo test -- a_hand_edited_non_canonical_file_loads_check_flags_it_and_fmt_fixes_it
 ```
 
 ## Making changes
@@ -73,17 +73,16 @@ cargo test -- remove_decision_allows_with_constrains_edge
 
 The `.trurlic/` format is the foundation. Changes to schemas or file operations require extra care:
 
-- All writes use `commit_with_graph` — validates the full graph before touching disk.
-- Atomic protocol: serialize → tmp file → verify round-trip → rename. `graph.toml` renamed last.
+- Every write is a method of the `Writer` that `Store::begin_write` returns and commits through the journal; a write may add no validation issue the graph did not have.
+- Atomic protocol: canonical text (`src/store/canonical.rs`, the one serializer of node files) → read back in memory → tmp file → journal → rename.
 - A change to the on-disk shape raises `FORMAT_VERSION` (`src/store/schema.rs`) and appends the step that reaches it to the migration registry (`src/store/migration/steps.rs`), with a fixture test.
-- The graph module (`graph.rs`) is pure — no I/O, fully testable with in-memory fixtures.
+- Validation (`src/store/validate.rs`) and the queries (`src/store/query.rs`) are pure: no I/O, testable with in-memory states.
 
 ## Working on the MCP server
 
 The MCP server assembles specs from stored decisions.
 
 - The `brief` field uses authoritative language (MUST / DO NOT) — constraints, not suggestions.
-- Write tools validate input sizes, check reserved names, and run full graph validation before committing.
 - The server keeps no graph between calls: a read tool runs on `Store::load_state`, a write tool on the `Writer` of `Store::begin_write`, so every call pays one load. Keep tool execution fast, and bench a change to the load path with `make bench`.
 - Test with a real MCP client to verify response format.
 

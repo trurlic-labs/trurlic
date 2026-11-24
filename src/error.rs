@@ -8,9 +8,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::store::graph::Issue;
-use crate::store::text::{TextFault, TextField};
-use crate::store::{FormatVersion, TimestampError};
+use crate::store::{AnchorFault, FormatVersion, TimestampError};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -59,12 +57,38 @@ pub enum Error {
     #[error("{}: no `format_version` key", path.display())]
     MissingFormatVersion { path: PathBuf },
 
-    /// An older format no migration step starts at, so no trurlic wrote it.
+    /// No chain of migration steps leads from `found` to `expected`: no
+    /// trurlic wrote `found`, or this one cannot migrate it.
     #[error(
-        "{}: format version {found} was never written by trurlic, and no migration starts at it",
+        "{}: no migration of this trurlic leads from format {found} to {expected}",
         path.display()
     )]
-    UnknownFormatVersion { path: PathBuf, found: FormatVersion },
+    NoMigration {
+        path: PathBuf,
+        found: FormatVersion,
+        expected: FormatVersion,
+    },
+
+    /// A node file or `project.toml` larger than a node may be, refused
+    /// before it is parsed.
+    #[error("{}: larger than the {max} bytes a node file may hold", path.display())]
+    NodeTooLarge { path: PathBuf, max: usize },
+
+    /// The canonical text of a value for `path` does not read back as it.
+    #[error("{}: the canonical form does not read back as the value written: {detail}", path.display())]
+    RoundTrip { path: PathBuf, detail: String },
+
+    /// A file of an older format that the migration steps left in place,
+    /// which the current format has no place for.
+    #[error(
+        "{}: the current format has no place for this file, and no migration step removed it",
+        path.display()
+    )]
+    Unmigrated { path: PathBuf },
+
+    /// A path given to a query that could name a place outside the code root.
+    #[error("invalid path `{path}`: {fault}")]
+    InvalidPath { path: String, fault: AnchorFault },
 
     #[error(
         "not a trurlic project (no .trurlic/ found in {0} or any parent directory); \
@@ -77,36 +101,6 @@ pub enum Error {
 
     #[error("could not acquire lock within {timeout_secs}s — {detail}")]
     LockTimeout { timeout_secs: u64, detail: String },
-
-    #[error(
-        "invalid name `{0}`: must be kebab-case (lowercase ASCII, digits, hyphens; \
-             no leading/trailing/consecutive hyphens)"
-    )]
-    InvalidName(String),
-
-    #[error("component `{0}` does not exist")]
-    ComponentNotFound(String),
-
-    #[error("component `{0}` already exists")]
-    ComponentExists(String),
-
-    #[error("decision `{0}` does not exist")]
-    DecisionNotFound(String),
-
-    #[error("pattern `{0}` does not exist")]
-    PatternNotFound(String),
-
-    #[error("`{0}` is reserved and cannot be used as a node name")]
-    ReservedName(String),
-
-    #[error("component `{0}` cannot connect to itself")]
-    SelfConnection(String),
-
-    #[error("connection `{from}` \u{2192} `{to}` already exists")]
-    DuplicateConnection { from: String, to: String },
-
-    #[error("connection `{from}` \u{2192} `{to}` does not exist")]
-    ConnectionNotFound { from: String, to: String },
 
     #[error(
         "the commit is recorded in {} but not applied ({source}); the next read or write applies it",
@@ -133,26 +127,6 @@ pub enum Error {
 
     #[error("{0}")]
     Validation(String),
-
-    /// A decision's choice or reason breaks a rule of `store::text`.
-    #[error("`{field}` {fault}")]
-    InvalidText { field: TextField, fault: TextFault },
-
-    /// Another decision of the component has the same choice, compared
-    /// without case and runs of whitespace.
-    #[error(
-        "decision `{existing}` in [{component}] already has this choice; revise \
-         `{existing}` instead of duplicating it"
-    )]
-    DuplicateChoice { component: String, existing: String },
-
-    /// The errors a refused write would have added to the graph, in
-    /// validation order.
-    #[error("graph integrity violation: {}", messages(.0))]
-    GraphIntegrity(Vec<Issue>),
-
-    #[error("operation blocked by cascade rule: {0}")]
-    CascadeBlocked(String),
 }
 
 impl Error {
@@ -196,12 +170,4 @@ fn version_fix(found: FormatVersion, expected: FormatVersion) -> &'static str {
     } else {
         "run `trurlic migrate` to upgrade the store"
     }
-}
-
-fn messages(issues: &[Issue]) -> String {
-    issues
-        .iter()
-        .map(|issue| issue.message.as_str())
-        .collect::<Vec<_>>()
-        .join("; ")
 }

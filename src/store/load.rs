@@ -1,296 +1,178 @@
-//! Loading the graph from its files: `project.toml`, every node file and
-//! `graph.toml`, then the index reconciled with the node files in memory.
+//! Loading the graph from its files: `project.toml` and every node file,
+//! each read as its type, and nothing else.
+//!
+//! A load fails only when a file cannot be read as its type: it cannot be
+//! read, it is larger than [`MAX_NODE_FILE_BYTES`], it is not TOML, or it
+//! holds a key, a value or a combination of values its type has no place
+//! for. Everything a loaded graph can hold but should not, such as an edge
+//! to no node or two nodes of one name, is an issue `validate.rs` reports,
+//! so a hand edit that breaks the graph leaves it readable to `check`.
 //!
 //! Nothing here takes a lock. Every load runs inside `access`, which holds
 //! the shared or the exclusive lock around it, so a load never reads a
 //! commit halfway through its renames.
 
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 
 use crate::{Error, Result};
 
-use super::schema::{EdgeEntry, EdgeKind, GraphIndex, NodeEntry, NodeKind};
-use super::{
-    ComponentFile, DecisionFile, PatternFile, ProjectFile, ProjectState, Store, Timestamp,
-};
+use super::Store;
+use super::canonical::{Canonical, is_canonical};
+use super::limits::MAX_NODE_FILE_BYTES;
+use super::schema::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, Project};
+use super::state::{NodeFile, ProjectState, list_toml_stems};
 
-/// A node file as read: its name, its contents, and the BLAKE3 of its bytes.
-pub(super) type NodeFile<T> = (String, T, String);
+/// One byte past the cap, so a read that fills it proves the file too large.
+const READ_LIMIT: u64 = MAX_NODE_FILE_BYTES as u64 + 1;
 
-/// Every node file of the store, each kind sorted by name.
-pub(super) struct NodeFiles {
-    pub(super) components: Vec<NodeFile<ComponentFile>>,
-    pub(super) decisions: Vec<NodeFile<DecisionFile>>,
-    pub(super) patterns: Vec<NodeFile<PatternFile>>,
+/// The bytes of the node file or `project.toml` at `path`, refused unread
+/// past [`MAX_NODE_FILE_BYTES`]: the read stops at the cap, so a file that
+/// grows while it is read, or a device that never ends, costs no more.
+pub(super) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
+    let file = File::open(path).map_err(Error::io(path))?;
+    let hint = file
+        .metadata()
+        .map_or(0, |metadata| metadata.len().min(READ_LIMIT));
+    let mut bytes = Vec::with_capacity(usize::try_from(hint).unwrap_or(0));
+    file.take(READ_LIMIT)
+        .read_to_end(&mut bytes)
+        .map_err(Error::io(path))?;
+    if bytes.len() > MAX_NODE_FILE_BYTES {
+        return Err(Error::NodeTooLarge {
+            path: path.to_path_buf(),
+            max: MAX_NODE_FILE_BYTES,
+        });
+    }
+    Ok(bytes)
+}
+
+/// A node file read as `T`, and whether its bytes are `T`'s canonical form.
+struct NodeRead<T> {
+    name: String,
+    node: T,
+    canonical: bool,
 }
 
 impl Store {
-    /// Read a TOML file and hash its bytes in one read. The hash covers the
-    /// bytes on disk, not a re-serialization, so a hand edit changes it.
-    pub(super) fn read_toml_with_hash<T: DeserializeOwned>(
-        &self,
-        path: &Path,
-    ) -> Result<(T, String)> {
-        let bytes = fs::read(path).map_err(Error::io(path))?;
-        let hash = blake3::hash(&bytes).to_hex().to_string();
-        let parsed = toml::from_slice(&bytes).map_err(Error::toml(path))?;
-        Ok((parsed, hash))
-    }
-
-    /// Every node file and `graph.toml`, reconciled into one state.
-    ///
-    /// `graph.toml` is one large file parsed on one thread, so it is parsed
-    /// while the other threads parse the node files.
+    /// The graph of `project`, read from `project_bytes`, and of every node
+    /// file. The two kinds are read concurrently: listing a directory and
+    /// waiting for its last file are serial steps of each.
     pub(super) fn read_graph(
         &self,
-        project: ProjectFile,
-        project_hash: String,
+        project: Project,
+        project_bytes: &[u8],
     ) -> Result<ProjectState> {
-        let (files, existing) = rayon::join(|| self.read_node_files(), || self.read_index());
-        let (index, components, decisions, patterns) = reconcile(existing?, project_hash, files?);
-        let mut state = ProjectState::new(project, components, decisions, patterns, index);
-        // code_refs are relative to the project directory, which is the parent
-        // of `.trurlic/`. Orphaned-ref detection resolves them against this root.
-        state.project_root = self.root.parent().unwrap_or(&self.root).to_path_buf();
-        Ok(state)
-    }
-
-    /// The three kinds are read concurrently: listing a directory and
-    /// waiting for its last file are serial steps of each.
-    fn read_node_files(&self) -> Result<NodeFiles> {
-        let (decisions, (components, patterns)) = rayon::join(
-            || self.read_nodes(self.list_decisions()?, Self::decision_path),
-            || {
-                rayon::join(
-                    || self.read_nodes(self.list_components()?, Self::component_path),
-                    || self.read_nodes(self.list_patterns()?, Self::pattern_path),
-                )
-            },
+        let (components, decisions) = rayon::join(
+            || self.read_nodes::<Component>(COMPONENTS_DIR),
+            || self.read_nodes::<Decision>(DECISIONS_DIR),
         );
-        Ok(NodeFiles {
-            components: components?,
-            decisions: decisions?,
-            patterns: patterns?,
+        let (components, decisions) = (components?, decisions?);
+        let mut non_canonical = Vec::new();
+        if !is_canonical(&project, project_bytes) {
+            non_canonical.push(NodeFile::Project);
+        }
+        let components = by_name(components, NodeFile::Component, &mut non_canonical);
+        let decisions = by_name(decisions, NodeFile::Decision, &mut non_canonical);
+        Ok(ProjectState {
+            project,
+            components,
+            decisions,
+            non_canonical,
+            project_root: self.root.parent().unwrap_or(&self.root).to_path_buf(),
         })
     }
 
-    /// Read and hash the named node files in parallel, each in one read.
-    fn read_nodes<T: DeserializeOwned + Send>(
+    /// Every file of `dir` read as `T`, in name order, in parallel. When
+    /// several fail, the error is the first file's by name, whichever thread
+    /// met it first.
+    fn read_nodes<T: DeserializeOwned + Canonical + Send>(
         &self,
-        names: Vec<String>,
-        path: fn(&Self, &str) -> PathBuf,
-    ) -> Result<Vec<NodeFile<T>>> {
-        names
+        dir: &str,
+    ) -> Result<Vec<NodeRead<T>>> {
+        let dir = self.root.join(dir);
+        let reads: Vec<Result<NodeRead<T>>> = list_toml_stems(&dir)?
             .into_par_iter()
             .map(|name| {
-                let (file, hash) = self.read_toml_with_hash::<T>(&path(self, &name))?;
-                Ok((name, file, hash))
+                let path = dir.join(format!("{name}.toml"));
+                let bytes = read_node_bytes(&path)?;
+                let node: T = toml::from_slice(&bytes).map_err(Error::toml(&path))?;
+                let canonical = is_canonical(&node, &bytes);
+                Ok(NodeRead {
+                    name,
+                    node,
+                    canonical,
+                })
             })
-            .collect()
-    }
-
-    /// `graph.toml`, or an empty index stamped now when there is none.
-    fn read_index(&self) -> Result<GraphIndex> {
-        let path = self.graph_path();
-        match fs::read(&path) {
-            Ok(bytes) => toml::from_slice(&bytes).map_err(Error::toml(&path)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(GraphIndex {
-                version: 1,
-                rebuilt: Some(Timestamp::now()?),
-                nodes: vec![],
-                edges: vec![],
-            }),
-            Err(source) => Err(Error::Io { path, source }),
-        }
+            .collect();
+        reads.into_iter().collect()
     }
 }
 
-pub(super) type Reconciled = (
-    GraphIndex,
-    BTreeMap<String, Arc<ComponentFile>>,
-    BTreeMap<String, Arc<DecisionFile>>,
-    BTreeMap<String, Arc<PatternFile>>,
-);
-
-/// The index the node files imply, with what only `graph.toml` holds kept.
-///
-/// The nodes are the node files, each with the hash of its bytes. A
-/// decision's tags and its `belongs_to` edge come from its file, so they
-/// survive a missing or stale `graph.toml`; a component's or a pattern's
-/// tags, and every other edge between existing nodes, come from
-/// `graph.toml`.
-pub(super) fn reconcile(
-    existing: GraphIndex,
-    project_hash: String,
-    files: NodeFiles,
-) -> Reconciled {
-    let (nodes, components, decisions, patterns) = index_files(existing.nodes, project_hash, files);
-    let exists = |name: &str| {
-        name == "project"
-            || components.contains_key(name)
-            || decisions.contains_key(name)
-            || patterns.contains_key(name)
-    };
-    let mut index = GraphIndex {
-        version: 1,
-        rebuilt: existing.rebuilt,
-        edges: index_edges(existing.edges, &decisions, exists),
-        nodes,
-    };
-    index.sort();
-    (index, components, decisions, patterns)
-}
-
-type IndexedFiles = (
-    Vec<NodeEntry>,
-    BTreeMap<String, Arc<ComponentFile>>,
-    BTreeMap<String, Arc<DecisionFile>>,
-    BTreeMap<String, Arc<PatternFile>>,
-);
-
-/// An index node for `project` and for each node file, with the tags of
-/// `existing` for every node but a decision, and the files by name.
-fn index_files(existing: Vec<NodeEntry>, project_hash: String, files: NodeFiles) -> IndexedFiles {
-    let mut existing_tags: BTreeMap<String, Vec<String>> = existing
+/// The nodes of `reads`, which are sorted by name, keyed by name; each one
+/// whose bytes are not canonical is pushed to `non_canonical` as `file`
+/// names it.
+fn by_name<T>(
+    reads: Vec<NodeRead<T>>,
+    file: fn(String) -> NodeFile,
+    non_canonical: &mut Vec<NodeFile>,
+) -> BTreeMap<String, T> {
+    reads
         .into_iter()
-        .map(|node| (node.name, node.tags))
-        .collect();
-    let mut tags_of = |name: &str| existing_tags.remove(name).unwrap_or_default();
-
-    let node_count = 1 + files.components.len() + files.decisions.len() + files.patterns.len();
-    let mut nodes = Vec::with_capacity(node_count);
-    nodes.push(NodeEntry {
-        name: "project".into(),
-        kind: NodeKind::Component,
-        tags: tags_of("project"),
-        hash: project_hash,
-    });
-    let components = index_nodes(
-        files.components,
-        NodeKind::Component,
-        &mut nodes,
-        |name, _| tags_of(name),
-    );
-    // clone: the tags live both in the file and in the index node.
-    let decision_tags = |_: &str, file: &DecisionFile| file.decision.tags.clone();
-    let decisions = index_nodes(
-        files.decisions,
-        NodeKind::Decision,
-        &mut nodes,
-        decision_tags,
-    );
-    let patterns = index_nodes(files.patterns, NodeKind::Pattern, &mut nodes, |name, _| {
-        tags_of(name)
-    });
-    (nodes, components, decisions, patterns)
-}
-
-/// The edges of `graph.toml` between nodes that `exists` names, except
-/// `belongs_to`, which each decision's file states. A decision whose
-/// component does not exist gets no edge; validation reports it.
-fn index_edges(
-    existing: Vec<EdgeEntry>,
-    decisions: &BTreeMap<String, Arc<DecisionFile>>,
-    exists: impl Fn(&str) -> bool,
-) -> Vec<EdgeEntry> {
-    let mut edges: Vec<EdgeEntry> = existing
-        .into_iter()
-        .filter(|e| e.kind != EdgeKind::BelongsTo && exists(&e.from) && exists(&e.to))
-        .collect();
-    edges.extend(
-        decisions
-            .iter()
-            .filter(|(_, dec)| exists(&dec.decision.component))
-            .map(|(name, dec)| EdgeEntry {
-                // clone: the edge names both ends; the decision keeps both.
-                from: name.clone(),
-                to: dec.decision.component.clone(),
-                kind: EdgeKind::BelongsTo,
-            }),
-    );
-    edges
-}
-
-/// Push an index node for each file and return the files by name. `files`
-/// is sorted by name, so the map is built in one pass.
-fn index_nodes<T>(
-    files: Vec<NodeFile<T>>,
-    kind: NodeKind,
-    nodes: &mut Vec<NodeEntry>,
-    mut tags: impl FnMut(&str, &T) -> Vec<String>,
-) -> BTreeMap<String, Arc<T>> {
-    files
-        .into_iter()
-        .map(|(name, file, hash)| {
-            nodes.push(NodeEntry {
-                // clone: the name keys the state and names the index node.
-                name: name.clone(),
-                kind,
-                tags: tags(&name, &file),
-                hash,
-            });
-            (name, Arc::new(file))
+        .map(|read| {
+            if !read.canonical {
+                // clone: the list and the map each own the name.
+                non_canonical.push(file(read.name.clone()));
+            }
+            (read.name, read.node)
         })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
-    use crate::store::hash_file;
-    use crate::store::testing::*;
+    use crate::store::canonical::canonical;
+    use crate::store::testing::{sample_component, sample_decision, setup_store, write_node};
     use tempfile::TempDir;
 
     #[test]
-    fn load_state_reads_everything() {
+    fn load_state_reads_every_node_file_and_nothing_else() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-
-        let dec = sample_decision("token-format", "auth");
-        store
-            .write_atomic(&lock, &store.decision_path("token-format"), &dec)
-            .unwrap();
-
-        drop(lock);
-        let state = store.load_state().unwrap();
-        assert_eq!(state.components.len(), 1);
-        assert_eq!(state.decisions.len(), 1);
-        assert!(state.components.contains_key("auth"));
-        assert!(state.decisions.contains_key("token-format"));
-        assert!(state.patterns.is_empty());
-
-        // Graph index should have: project + auth + token-format = 3 nodes
-        assert_eq!(state.graph_index.nodes.len(), 3);
-        // BelongsTo edge inferred for token-format → auth
-        assert!(
-            state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "token-format"
-                    && e.to == "auth"
-                    && e.kind == EdgeKind::BelongsTo)
+        write_node(
+            &store,
+            &NodeFile::Component("auth".into()),
+            &sample_component(),
         );
+        write_node(
+            &store,
+            &NodeFile::Decision("sign".into()),
+            &sample_decision("auth"),
+        );
+        fs::write(store.root().join("graph.toml"), "not = [toml").unwrap();
+        fs::write(store.root().join(DECISIONS_DIR).join("notes.md"), "#").unwrap();
+
+        let state = store.load_state().unwrap();
+
+        assert_eq!(state.components.keys().collect::<Vec<_>>(), ["auth"]);
+        assert_eq!(state.decisions["sign"], sample_decision("auth"));
+        assert_eq!(state.non_canonical, []);
     }
 
     #[test]
-    fn load_state_names_a_node_file_that_does_not_parse() {
+    fn a_node_file_that_does_not_parse_is_named() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
         let broken = store.decision_path("broken");
-        fs::write(&broken, "[decision]\nchoice = [\n").unwrap();
+        fs::write(&broken, "choice = [\n").unwrap();
 
         let err = store.load_state().map(|_| ()).unwrap_err();
 
@@ -302,7 +184,23 @@ mod tests {
     }
 
     #[test]
-    fn load_state_names_a_node_file_that_cannot_be_read() {
+    fn of_two_broken_files_the_first_by_name_is_named() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        for name in ["b", "a", "c"] {
+            fs::write(store.decision_path(name), "x = [\n").unwrap();
+        }
+        for _ in 0..20 {
+            let err = store.load_state().map(|_| ()).unwrap_err();
+            assert!(
+                matches!(&err, Error::Toml { path, .. } if *path == store.decision_path("a")),
+                "{err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_node_file_that_cannot_be_read_is_named() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
         let unreadable = store.decision_path("unreadable");
@@ -317,239 +215,40 @@ mod tests {
     }
 
     #[test]
-    fn load_state_reconciles_missing_graph_toml() {
+    fn a_node_file_over_the_cap_is_refused_before_it_is_parsed() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
+        let at_cap = store.component_path("at-cap");
+        let mut text = canonical(&sample_component()).into_bytes();
+        text.resize(MAX_NODE_FILE_BYTES, b'\n');
+        fs::write(&at_cap, &text).unwrap();
+        assert!(store.load_state().is_ok(), "a file at the cap loads");
 
-        // Remove graph.toml to simulate pre-graph store
-        let _ = fs::remove_file(store.graph_path());
+        // One byte more, and not TOML: only the size can refuse it.
+        text.push(b'[');
+        fs::write(&at_cap, &text).unwrap();
+        let err = store.load_state().map(|_| ()).unwrap_err();
 
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-
-        let mut dec = sample_decision("token-format", "auth");
-        dec.decision.tags = vec!["security".into(), "auth".into()];
-        store
-            .write_atomic(&lock, &store.decision_path("token-format"), &dec)
-            .unwrap();
-
-        drop(lock);
-        let state = store.load_state().unwrap();
-        // Should still build a graph index from files
-        assert!(state.graph_index.nodes.iter().any(|n| n.name == "project"));
-        assert!(state.graph_index.nodes.iter().any(|n| n.name == "auth"));
-        // A decision's tags and owner live in its file, so no index is needed.
-        let node = state
-            .graph_index
-            .nodes
-            .iter()
-            .find(|n| n.name == "token-format")
-            .unwrap();
-        assert_eq!(node.tags, ["security", "auth"]);
         assert!(
-            state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "token-format"
-                    && e.to == "auth"
-                    && e.kind == EdgeKind::BelongsTo)
+            matches!(&err, Error::NodeTooLarge { path, max: MAX_NODE_FILE_BYTES } if *path == at_cap),
+            "{err:?}"
         );
+        assert!(err.to_string().contains(&at_cap.display().to_string()));
     }
 
     #[test]
-    fn load_state_corrects_stale_belongs_to_edge() {
+    fn a_hand_edit_that_is_not_canonical_loads_and_is_listed() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
+        let decision = sample_decision("project");
+        write_node(&store, &NodeFile::Decision("kept".into()), &decision);
+        let edited =
+            canonical(&decision).replace("status = \"accepted\"\n", "") + "status = 'accepted'\n";
+        fs::write(store.decision_path("edited"), edited).unwrap();
 
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-        let db = sample_component("database");
-        store
-            .write_atomic(&lock, &store.component_path("database"), &db)
-            .unwrap();
-
-        // Decision belongs to "auth" per its file content.
-        let dec = sample_decision("token-format", "auth");
-        store
-            .write_atomic(&lock, &store.decision_path("token-format"), &dec)
-            .unwrap();
-
-        // Write graph.toml with a STALE BelongsTo edge pointing to "database".
-        let auth_hash = hash_file(&store.component_path("auth")).unwrap();
-        let db_hash = hash_file(&store.component_path("database")).unwrap();
-        let dec_hash = hash_file(&store.decision_path("token-format")).unwrap();
-        let project_hash = hash_file(&store.root().join("project.toml")).unwrap();
-
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![
-                NodeEntry {
-                    name: "project".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: project_hash,
-                },
-                NodeEntry {
-                    name: "auth".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: auth_hash,
-                },
-                NodeEntry {
-                    name: "database".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: db_hash,
-                },
-                NodeEntry {
-                    name: "token-format".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: dec_hash,
-                },
-            ],
-            edges: vec![EdgeEntry {
-                from: "token-format".into(),
-                to: "database".into(),
-                kind: EdgeKind::BelongsTo,
-            }],
-        };
-        fs::write(store.graph_path(), toml::to_string_pretty(&index).unwrap()).unwrap();
-
-        drop(lock);
-        let state = store.load_state().unwrap();
-        // BelongsTo must now point to "auth" (from decision file), not "database".
-        assert!(
-            state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "token-format"
-                    && e.to == "auth"
-                    && e.kind == EdgeKind::BelongsTo)
-        );
-        assert!(
-            !state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "token-format"
-                    && e.to == "database"
-                    && e.kind == EdgeKind::BelongsTo)
-        );
-    }
-
-    #[test]
-    fn load_state_skips_dangling_belongs_to() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        // Decision references a component that does not exist on disk.
-        let dec = sample_decision("orphan-dec", "deleted-component");
-        store
-            .write_atomic(&lock, &store.decision_path("orphan-dec"), &dec)
-            .unwrap();
-
-        drop(lock);
-        let state = store.load_state().unwrap();
-        // No BelongsTo edge should reference the missing component.
-        assert!(
-            !state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.to == "deleted-component")
-        );
-    }
-
-    #[test]
-    fn load_state_sorts_edges() {
-        use crate::store::schema::*;
-
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-        let db = sample_component("database");
-        store
-            .write_atomic(&lock, &store.component_path("database"), &db)
-            .unwrap();
-
-        // Write graph.toml with deliberately unsorted edges.
-        let auth_hash = hash_file(&store.component_path("auth")).unwrap();
-        let db_hash = hash_file(&store.component_path("database")).unwrap();
-        let project_hash = hash_file(&store.root().join("project.toml")).unwrap();
-
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![
-                NodeEntry {
-                    name: "database".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: db_hash,
-                },
-                NodeEntry {
-                    name: "project".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: project_hash,
-                },
-                NodeEntry {
-                    name: "auth".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: auth_hash,
-                },
-            ],
-            edges: vec![
-                EdgeEntry {
-                    from: "database".into(),
-                    to: "auth".into(),
-                    kind: EdgeKind::ConnectsTo,
-                },
-                EdgeEntry {
-                    from: "auth".into(),
-                    to: "database".into(),
-                    kind: EdgeKind::ConnectsTo,
-                },
-            ],
-        };
-        fs::write(store.graph_path(), toml::to_string_pretty(&index).unwrap()).unwrap();
-
-        drop(lock);
         let state = store.load_state().unwrap();
 
-        // Nodes sorted by name.
-        let node_names: Vec<&str> = state
-            .graph_index
-            .nodes
-            .iter()
-            .map(|n| n.name.as_str())
-            .collect();
-        assert_eq!(node_names, vec!["auth", "database", "project"]);
-
-        // Edges sorted by (from, to, kind).
-        let edge_froms: Vec<&str> = state
-            .graph_index
-            .edges
-            .iter()
-            .map(|e| e.from.as_str())
-            .collect();
-        assert_eq!(edge_froms, vec!["auth", "database"]);
+        assert_eq!(state.decisions["edited"], decision);
+        assert_eq!(state.non_canonical, [NodeFile::Decision("edited".into())]);
     }
 }
