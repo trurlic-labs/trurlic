@@ -1,7 +1,11 @@
 //! The shell around the code index: it walks and reads the code root,
 //! reads and fills the index's cache through the [`Store`], and hands the
-//! facts to `code` as data. `mcp` (`status`) and `commands` (`check`)
-//! both stand on it, so it is neither of them.
+//! facts to `code` as data. Its entry point is [`resolve_anchors`], which
+//! no command calls yet but the benchmark; it is a module of its own
+//! because `mcp` and `commands` are both to read it, and neither owns
+//! the other. A caller holds no lock of the store while it runs: the
+//! cache's write takes the exclusive lock when it is free, and the
+//! caller's own shared lock would keep it busy.
 //!
 //! A file is read in one bounded read, refused past
 //! [`MAX_SOURCE_FILE_BYTES`] and when it is no regular file, and indexed
@@ -21,11 +25,10 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
-use crate::code::{self, CodeFacts, Entry, FileFault, FileKind, ReadFault, Resolution};
+use crate::code::{self, CodeFacts, Entry, FileFault, FileKind, Indexed, ReadFault, Resolution};
 use crate::console::diag;
 use crate::store::{Anchor, ProjectState, Store, SymbolsKey};
 
-use cache::Indexed;
 use walk::Probe;
 
 /// The largest source file the index reads.
@@ -60,22 +63,13 @@ pub(crate) fn resolve_anchors<'s>(
 /// takes, and what is at each of `anchored`.
 fn gather<'a>(store: &Store, anchored: impl Iterator<Item = &'a str>) -> CodeFacts {
     let root = store.code_root();
-    let mut entries = BTreeMap::new();
-    let mut to_read: BTreeMap<String, FileKind> = walk::tree_sources(root).into_iter().collect();
-    for path in anchored {
-        match (walk::probe(root, path), FileKind::of(path)) {
-            (Probe::Absent, _) => {}
-            (Probe::Directory, _) => {
-                entries.insert(path.to_owned(), Entry::Directory);
-            }
-            (Probe::Other, Some(kind)) => {
-                to_read.insert(path.to_owned(), kind);
-            }
-            (Probe::Other, None) => {
-                entries.insert(path.to_owned(), Entry::Unindexed);
-            }
-        }
-    }
+    let walked: BTreeMap<String, FileKind> = walk::tree_sources(root).into_iter().collect();
+    let (mut entries, anchored) = probe_anchored(root, anchored, &walked);
+    // clone: the facts tell the files the walk took from those an anchor
+    // brought in.
+    let walked_paths: BTreeSet<String> = walked.keys().cloned().collect();
+    let mut to_read = walked;
+    to_read.extend(anchored);
     let read: Vec<(String, FileKind, Option<Sourced>)> = to_read
         .into_par_iter()
         .map(|(path, kind)| {
@@ -101,7 +95,38 @@ fn gather<'a>(store: &Store, anchored: impl Iterator<Item = &'a str>) -> CodeFac
         entries.insert(path, Entry::File { kind, index });
     }
     fill_cache(store, &misses, &live);
-    CodeFacts::new(entries)
+    CodeFacts::new(entries, &walked_paths)
+}
+
+/// What is at each of `anchored` under `root`: the entries of the
+/// directories and of the files no resolver reads, and the files to read,
+/// with the manifests above each anchored Rust file the walk does not
+/// take, which its crate is read from.
+fn probe_anchored<'a>(
+    root: &Path,
+    anchored: impl Iterator<Item = &'a str>,
+    walked: &BTreeMap<String, FileKind>,
+) -> (BTreeMap<String, Entry>, BTreeMap<String, FileKind>) {
+    let mut entries = BTreeMap::new();
+    let mut to_read = BTreeMap::new();
+    for path in anchored {
+        match (walk::probe(root, path), FileKind::of(path)) {
+            (Probe::Absent, _) => {}
+            (Probe::Directory, _) => {
+                entries.insert(path.to_owned(), Entry::Directory);
+            }
+            (Probe::Other, Some(kind)) => {
+                if kind == FileKind::Rust && !walked.contains_key(path) {
+                    to_read.extend(walk::manifests_above(root, path));
+                }
+                to_read.insert(path.to_owned(), kind);
+            }
+            (Probe::Other, None) => {
+                entries.insert(path.to_owned(), Entry::Unindexed);
+            }
+        }
+    }
+    (entries, to_read)
 }
 
 /// What reading a file gave.
@@ -136,7 +161,7 @@ fn read_and_index(store: &Store, path: &Path, kind: FileKind) -> Option<Sourced>
         },
         None => {
             let indexed = code::index(kind, &bytes);
-            let miss = cache::encode(key, &indexed);
+            let miss = Some(cache::encode(key, &indexed));
             Sourced::Indexed { key, indexed, miss }
         }
     })

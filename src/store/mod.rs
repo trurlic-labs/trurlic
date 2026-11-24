@@ -65,6 +65,7 @@ pub use schema::{
     STORE_DIR, Status, StatusName,
 };
 pub use state::{NodeFile, ProjectState};
+pub(crate) use symbols::MAX_SYMBOLS_ENTRY_BYTES;
 pub use symbols::SymbolsKey;
 pub use text::{TextFault, TextField};
 pub use time::{Timestamp, TimestampError};

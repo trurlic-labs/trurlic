@@ -1,6 +1,6 @@
 component = "code"
 choice = "Markdown defines its ATX headings outside fenced code, each named by its path through the headings above and spanning its section; a Makefile defines each target of a rule over its recipe"
-reason = "A heading names a section, so Install::From source is the From source section under Install, spanning from its line to the next heading of its level or a higher one, trailing blank lines left out: a symbol names a section, not a word in one. A fence of three or more backticks or tildes hides what looks like a heading, as does an indent of four spaces; the closing #s and runs of whitespace are dropped from a title. A Makefile rule defines each target before its first colon outside a $(...), unless an equals sign comes first or the colon opens an assignment (:=, ::=); its span runs through the tab-led recipe lines after it, blank and comment lines inside it neither ending it nor joining it, a backslash continuing a line and a define block holding no rule. Setext headings and make's recipe prefix variable are not read: this repository's documents and Makefile use neither."
+reason = "A heading names a section, so Install::From source is the From source section under Install, spanning from its line to the next heading of its level or a higher one, trailing blank lines left out: a symbol names a section, not a word in one. A fence of three or more backticks or tildes hides what looks like a heading, as does an indent of four spaces; the closing #s and runs of whitespace are dropped from a title. A Makefile rule defines each target before its first colon outside a $(...), unless an equals sign comes first or the colon opens an assignment (:=, ::=); its span runs through the tab-led recipe lines after it, blank and comment lines inside it neither ending it nor joining it, a backslash continuing a line and a define block holding no rule. The targets of one rule share its span, so its text is hashed once for all of them. Setext headings and make's recipe prefix variable are not read: this repository's documents and Makefile use neither."
 alternatives = [
     "Any heading holding the word: rejected because a word names no section to hash, and many headings hold it",
     "A Makefile variable as a definition: rejected because an anchor on configuration names a rule or a key, and a variable is neither",
@@ -12,9 +12,9 @@ status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/make.rs", symbol = "definitions" },
+    { file = "src/code/make.rs", symbol = "index" },
     { file = "src/code/make.rs", symbol = "targets" },
     { file = "src/code/markdown.rs", symbol = "Fence" },
-    { file = "src/code/markdown.rs", symbol = "definitions" },
     { file = "src/code/markdown.rs", symbol = "heading" },
+    { file = "src/code/markdown.rs", symbol = "index" },
 ]

@@ -48,29 +48,71 @@ pub(super) struct What {
     pub(super) visibility: Option<Visibility>,
 }
 
-/// The kind of the item a node of `node_kind` is, standing in `within`
-/// with the modifier `own`, and the container its children stand in.
-pub(super) fn item_kind(
-    node_kind: &str,
-    within: Within,
-    own: Visibility,
-) -> (DefinitionKind, Within) {
-    let keyword = match node_kind {
-        "function_item" | "function_signature_item" => "fn",
-        "struct_item" => "struct",
-        "union_item" => "union",
-        "trait_item" => return (DefinitionKind::Trait, Within::Trait(own)),
-        "enum_item" => return (DefinitionKind::Enum, Within::Enum(own)),
-        "mod_item" => "mod",
-        "const_item" => "const",
-        "static_item" => "static",
-        "type_item" => "type",
-        "associated_type" => return (DefinitionKind::AssociatedType, Within::Items),
-        // A variant's fields have the enum's visibility, as it has.
-        "enum_variant" => return (DefinitionKind::Variant, within),
-        // A `field_declaration`, the one other node an item is defined of.
-        _ => return (DefinitionKind::Field, Within::Items),
-    };
-    let kind = DefinitionKind::of_keyword(keyword, within.container());
-    (kind.unwrap_or(DefinitionKind::Function), Within::Items)
+/// A node that defines its `name`: an item, a variant, a named field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Item {
+    Function,
+    Struct,
+    Union,
+    Enum,
+    Trait,
+    Module,
+    Constant,
+    Static,
+    Type,
+    AssociatedType,
+    Variant,
+    Field,
+}
+
+impl Item {
+    /// The item a node of `kind` is; `None` for a node that defines no
+    /// name of its own.
+    pub(super) fn of_node(kind: &str) -> Option<Self> {
+        Some(match kind {
+            "function_item" | "function_signature_item" => Self::Function,
+            "struct_item" => Self::Struct,
+            "union_item" => Self::Union,
+            "enum_item" => Self::Enum,
+            "trait_item" => Self::Trait,
+            "mod_item" => Self::Module,
+            "const_item" => Self::Constant,
+            "static_item" => Self::Static,
+            "type_item" => Self::Type,
+            "associated_type" => Self::AssociatedType,
+            "enum_variant" => Self::Variant,
+            "field_declaration" => Self::Field,
+            _ => return None,
+        })
+    }
+
+    /// Whether what it holds may define more: a function's body, a type's
+    /// fields, a `const`'s initializer; a field's type holds nothing.
+    pub(super) const fn holds_items(self) -> bool {
+        !matches!(self, Self::Field)
+    }
+
+    /// Its kind, standing in `within` with the modifier `own`, and the
+    /// container its children stand in.
+    pub(super) const fn kind(self, within: Within, own: Visibility) -> (DefinitionKind, Within) {
+        let member = matches!(within.container(), Container::Type);
+        match self {
+            Self::Function if member => (DefinitionKind::Method, Within::Items),
+            Self::Function => (DefinitionKind::Function, Within::Items),
+            Self::Struct => (DefinitionKind::Struct, Within::Items),
+            Self::Union => (DefinitionKind::Union, Within::Items),
+            Self::Enum => (DefinitionKind::Enum, Within::Enum(own)),
+            Self::Trait => (DefinitionKind::Trait, Within::Trait(own)),
+            Self::Module => (DefinitionKind::Module, Within::Items),
+            Self::Constant => (DefinitionKind::Constant, Within::Items),
+            Self::Static => (DefinitionKind::Static, Within::Items),
+            Self::Type if member => (DefinitionKind::AssociatedType, Within::Items),
+            Self::Type => (DefinitionKind::TypeAlias, Within::Items),
+            Self::AssociatedType => (DefinitionKind::AssociatedType, Within::Items),
+            // A variant's fields have the enum's visibility, as it has; its
+            // value is walked as items are (`push_children`).
+            Self::Variant => (DefinitionKind::Variant, within),
+            Self::Field => (DefinitionKind::Field, Within::Items),
+        }
+    }
 }

@@ -4,15 +4,13 @@
 //! a `define` block holds no rule, and a recipe line opens with a tab;
 //! blank and comment lines inside a recipe neither end it nor join it.
 
-use super::index::Definition;
+use super::index::{FileIndex, IndexFault};
 use super::kinds::DefinitionKind;
-use super::span::Lines;
-use super::symbol::name_segments;
+use super::lexical::Lexical;
 
-/// The rule targets of `text`.
-pub(super) fn definitions(text: &str) -> Vec<Definition> {
-    let lines = Lines::of(text.as_bytes());
-    let mut definitions = Vec::new();
+/// The index of `text`, a Makefile: its rule targets.
+pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
+    let mut lexical = Lexical::of(text);
     let mut rule: Option<(Vec<&str>, usize, usize)> = None;
     let mut in_define = false;
     for (start, line) in logical_lines(text) {
@@ -27,34 +25,30 @@ pub(super) fn definitions(text: &str) -> Vec<Definition> {
         } else if directive.is_empty() || directive.starts_with('#') {
         } else {
             if let Some(closed) = rule.take() {
-                define(&mut definitions, text, &lines, closed);
+                define(&mut lexical, closed)?;
             }
             in_define = is_define(directive);
             rule = targets(line).map(|targets| (targets, start, end));
         }
     }
     if let Some(closed) = rule {
-        define(&mut definitions, text, &lines, closed);
+        define(&mut lexical, closed)?;
     }
-    definitions
+    Ok(lexical.finish())
 }
 
+/// Define each target of a rule over bytes `start..end`, the rule hashed
+/// once for all of them.
 fn define(
-    definitions: &mut Vec<Definition>,
-    text: &str,
-    lines: &Lines,
+    lexical: &mut Lexical<'_>,
     (targets, start, end): (Vec<&str>, usize, usize),
-) {
+) -> Result<(), IndexFault> {
+    let hash = lexical.hash(start..end)?;
     for target in targets {
-        let path = name_segments(target).collect();
-        definitions.push(Definition::lexical(
-            path,
-            DefinitionKind::Target,
-            text,
-            lines,
-            start..end,
-        ));
+        let scope = lexical.scope(None, target)?;
+        lexical.define(scope, DefinitionKind::Target, start..end, hash);
     }
+    Ok(())
 }
 
 /// Each logical line of `text` with the byte it starts at: physical lines
@@ -119,7 +113,7 @@ fn targets(line: &str) -> Option<Vec<&str>> {
 #[cfg(test)]
 mod tests {
     use crate::code::index::{FileKind, index};
-    use crate::code::symbol::{Symbol, Syntax};
+    use crate::code::testing;
 
     const MAKEFILE: &str = "\
 .PHONY: ci test
@@ -146,14 +140,7 @@ $(OUT)/%.o: %.c
 ";
 
     fn named<'t>(text: &'t str, symbol: &str) -> Vec<&'t str> {
-        let symbol = Symbol::parse(symbol, Syntax::Plain).unwrap();
-        index(FileKind::Make, text.as_bytes())
-            .unwrap()
-            .definitions
-            .iter()
-            .filter(|d| symbol.names(&d.path))
-            .map(|d| &text[d.span.start..d.span.end])
-            .collect()
+        testing::named(FileKind::Make, text, symbol)
     }
 
     #[test]
@@ -167,6 +154,20 @@ $(OUT)/%.o: %.c
         assert_eq!(named(MAKEFILE, "targets"), ["two targets: deps"]);
         assert_eq!(named(MAKEFILE, "$(OUT)/%.o"), ["$(OUT)/%.o: %.c\n\tcc $<"]);
         assert_eq!(named(MAKEFILE, ".PHONY").len(), 1);
+    }
+
+    #[test]
+    fn the_targets_of_one_rule_share_its_hash_within_the_budget() {
+        let text = format!("{}: x\n\techo\n", "t ".repeat(40_000));
+        let indexed = index(FileKind::Make, text.as_bytes()).unwrap();
+
+        assert_eq!(indexed.definitions.len(), 40_000);
+        assert!(
+            indexed
+                .definitions
+                .iter()
+                .all(|d| d.hash == indexed.definitions[0].hash)
+        );
     }
 
     #[test]

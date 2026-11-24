@@ -62,8 +62,10 @@ impl Store {
     }
 
     /// Acquire the exclusive lock when no one holds the lock, without
-    /// waiting: `None` when another process holds it. For a write a read
-    /// makes on the side, which skips it rather than wait.
+    /// waiting: `None` when another holder has it, this process's own
+    /// shared lock included (a lock file opened twice is two holders), so
+    /// a caller that still holds a read's lock always skips. For a write a
+    /// read makes on the side, which skips it rather than wait.
     pub(crate) fn try_lock(&self) -> Result<Option<StoreLock>> {
         let file = self.open_lock_file()?;
         match file.try_lock() {

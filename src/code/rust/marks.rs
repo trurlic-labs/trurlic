@@ -17,21 +17,58 @@ use crate::code::syntax::text_of;
 
 use super::macros::tokens_of;
 
-/// What `attribute`, an `attribute_item` or `inner_attribute_item`, makes
+/// What an attribute says of the item it is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Marks<'n> {
+    pub(super) role: Role,
+    /// `#[macro_export]`, or a `cfg_attr` that applies it.
+    pub(super) macro_export: bool,
+    /// The string of a `#[path = ".."]`.
+    pub(super) path: Option<Node<'n>>,
+}
+
+impl<'n> Marks<'n> {
+    /// What these and `more`, the marks of a later attribute, say
+    /// together.
+    pub(super) fn and(self, more: Self) -> Self {
+        Self {
+            role: self.role.or(more.role),
+            macro_export: self.macro_export || more.macro_export,
+            path: more.path.or(self.path),
+        }
+    }
+}
+
+/// What `attribute`, an `attribute_item` or `inner_attribute_item`, says
 /// of the item it is on.
-pub(super) fn attribute_item_role(attribute: Node<'_>, text: &str) -> Role {
+pub(super) fn attribute_item_marks<'n>(attribute: Node<'n>, text: &str) -> Marks<'n> {
     let mut cursor = attribute.walk();
     let Some(inner) = attribute
         .named_children(&mut cursor)
         .find(|child| child.kind() == "attribute")
     else {
-        return Role::Code;
+        return Marks {
+            role: Role::Code,
+            macro_export: false,
+            path: None,
+        };
     };
-    let tokens: Vec<&str> = tokens_of(inner, usize::MAX)
-        .into_iter()
-        .map(|token| text_of(token, text))
-        .collect();
-    attribute_role(&tokens)
+    let nodes = tokens_of(inner, usize::MAX);
+    let tokens: Vec<&str> = nodes.iter().map(|token| text_of(*token, text)).collect();
+    let macro_export = match tokens.as_slice() {
+        ["macro_export", ..] => true,
+        ["cfg_attr", rest @ ..] => rest.contains(&"macro_export"),
+        _ => false,
+    };
+    let path = match (tokens.as_slice(), nodes.get(2)) {
+        (["path", "=", _], Some(literal)) if literal.kind() == "string_literal" => Some(*literal),
+        _ => None,
+    };
+    Marks {
+        role: attribute_role(&tokens),
+        macro_export,
+        path,
+    }
 }
 
 /// What an attribute spelled by `tokens`, those between its brackets,
@@ -126,17 +163,26 @@ pub(super) fn inner_role(node: Node<'_>, role: Role, text: &str) -> Role {
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
         .filter(|child| child.kind() == "inner_attribute_item")
-        .map(|attribute| attribute_item_role(attribute, text))
+        .map(|attribute| attribute_item_marks(attribute, text).role)
         .fold(role, Role::or)
 }
 
 /// The visibility `item`'s modifier states, `Private` when it has none.
+/// The modifier is read from its tokens, so a comment inside it
+/// (`pub(/* why */ crate)`) changes nothing.
 pub(super) fn visibility_of(item: Node<'_>, text: &str) -> Visibility {
     let mut cursor = item.walk();
-    item.named_children(&mut cursor)
+    let Some(modifier) = item
+        .named_children(&mut cursor)
         .find(|child| child.kind() == "visibility_modifier")
-        .and_then(|modifier| Visibility::of_modifier(text_of(modifier, text)))
-        .unwrap_or(Visibility::Private)
+    else {
+        return Visibility::Private;
+    };
+    let tokens: Vec<&str> = tokens_of(modifier, usize::MAX)
+        .into_iter()
+        .map(|token| text_of(token, text))
+        .collect();
+    Visibility::of_modifier(&tokens.join(" ")).unwrap_or(Visibility::Private)
 }
 
 #[cfg(test)]

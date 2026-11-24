@@ -11,15 +11,12 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::de::{self, Deserializer};
-use serde::{Deserialize, Serialize, Serializer};
-
 /// The normalization a [`SpanHash`] was computed under.
 pub(crate) const HASH_SCHEME: &str = "t1";
 
 /// A definition's place in its file: bytes `start..end`, on lines
 /// `first_line..=last_line`, counted from 1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Span {
     pub(crate) start: usize,
     pub(crate) end: usize,
@@ -86,6 +83,15 @@ impl SpanHash {
         Self(*hasher.finalize().as_bytes())
     }
 
+    /// The hash its 32 bytes are.
+    pub(crate) const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub(crate) const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     /// The hash of `text` with its runs of whitespace made one space and
     /// its ends trimmed.
     pub(super) fn of_text(text: &str) -> Self {
@@ -130,19 +136,6 @@ impl FromStr for SpanHash {
             .and_then(|hex| blake3::Hash::from_hex(hex).ok())
             .map(|hash| Self(*hash.as_bytes()))
             .ok_or(NotASpanHash)
-    }
-}
-
-impl Serialize for SpanHash {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
-    }
-}
-
-impl<'de> Deserialize<'de> for SpanHash {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = <&str>::deserialize(deserializer)?;
-        text.parse().map_err(de::Error::custom)
     }
 }
 

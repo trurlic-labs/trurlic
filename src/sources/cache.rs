@@ -1,19 +1,34 @@
 //! The bytes of a cache entry: a file's index, keyed by its kind and
-//! content together with the versions of the index's shape and of the
-//! span hash, so an entry is never read under rules other than its own,
-//! and a key names the same index in every tree of a shared graph.
+//! content together with the versions of the index's shape, of the span
+//! hash and of the kind's grammar, so an entry is never read under rules
+//! other than its own, and a key names the same index in every tree of a
+//! shared graph.
 //!
-//! An entry is a line with the BLAKE3 of the rest, then the JSON of its
-//! key and the index. One whose sum, key or JSON does not hold is a miss
-//! and is written again, as is one the store refuses to read.
+//! An entry is the BLAKE3 of the rest, then its key, then the index in
+//! `code`'s compact encoding. One whose sum, key or encoding does not hold
+//! is a miss and is written again, as is one the store refuses to read.
+//! An entry is linear in its file, and the store reads one of any file
+//! the index reads (`ENTRY_FITS_THE_STORE`), so no entry is written that a
+//! read would refuse.
 
-use serde::{Deserialize, Serialize};
+use crate::code::{
+    ENTRY_OVERHEAD_BYTES, FileKind, HASH_SCHEME, INDEX_FORMAT, Indexed,
+    MAX_ENTRY_BYTES_PER_SOURCE_BYTE, decode_index, encode_index,
+};
+use crate::store::{MAX_SYMBOLS_ENTRY_BYTES, SymbolsKey};
 
-use crate::code::{FileIndex, FileKind, HASH_SCHEME, INDEX_FORMAT, IndexFault};
-use crate::store::SymbolsKey;
+use super::MAX_SOURCE_FILE_BYTES;
 
-/// What indexing a file's bytes gave.
-pub(super) type Indexed = Result<FileIndex, IndexFault>;
+/// The bytes before the index: its sum and its key.
+const HEADER_BYTES: usize = 64;
+
+// The largest entry of a file the index reads fits what the store reads.
+const _: () = {
+    let per_byte = MAX_ENTRY_BYTES_PER_SOURCE_BYTE as u64;
+    let besides = (ENTRY_OVERHEAD_BYTES + HEADER_BYTES) as u64;
+    let entry = MAX_SOURCE_FILE_BYTES * per_byte + besides;
+    assert!(entry <= MAX_SYMBOLS_ENTRY_BYTES as u64);
+};
 
 /// The key of the index of `bytes`, a file of `kind`.
 pub(super) fn key(kind: FileKind, bytes: &[u8]) -> SymbolsKey {
@@ -23,45 +38,33 @@ pub(super) fn key(kind: FileKind, bytes: &[u8]) -> SymbolsKey {
         hasher.update(field);
     }
     hasher.update(&INDEX_FORMAT.to_le_bytes());
+    hasher.update(&kind.grammar());
     hasher.update(bytes);
     SymbolsKey::new(*hasher.finalize().as_bytes())
 }
 
-#[derive(Serialize)]
-struct EntryOut<'a> {
-    key: String,
-    index: &'a Indexed,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EntryIn {
-    key: String,
-    index: Indexed,
-}
-
 /// The bytes of the entry of `indexed` under `key`.
-pub(super) fn encode(key: SymbolsKey, indexed: &Indexed) -> Option<Vec<u8>> {
-    let entry = EntryOut {
-        key: key.to_string(),
-        index: indexed,
-    };
-    let payload = serde_json::to_vec(&entry).ok()?;
-    let mut bytes = blake3::hash(&payload).to_hex().as_bytes().to_vec();
-    bytes.push(b'\n');
-    bytes.extend(payload);
-    Some(bytes)
+pub(super) fn encode(key: SymbolsKey, indexed: &Indexed) -> Vec<u8> {
+    let index = encode_index(indexed);
+    let mut rest = Vec::with_capacity(32 + index.len());
+    rest.extend_from_slice(key.as_bytes());
+    rest.extend(index);
+    let mut bytes = blake3::hash(&rest).as_bytes().to_vec();
+    bytes.extend(rest);
+    bytes
 }
 
 /// The index `bytes` hold for `key`; `None` when they are no entry of it.
 pub(super) fn decode(key: SymbolsKey, bytes: &[u8]) -> Option<Indexed> {
-    let split = bytes.iter().position(|&b| b == b'\n')?;
-    let (sum, payload) = (bytes.get(..split)?, bytes.get(split + 1..)?);
-    if sum != blake3::hash(payload).to_hex().as_bytes() {
+    let (sum, rest) = bytes.split_at_checked(32)?;
+    if sum != blake3::hash(rest).as_bytes() {
         return None;
     }
-    let entry: EntryIn = serde_json::from_slice(payload).ok()?;
-    (entry.key == key.to_string()).then_some(entry.index)
+    let (stored, index) = rest.split_at_checked(32)?;
+    if stored != key.as_bytes() {
+        return None;
+    }
+    decode_index(index)
 }
 
 #[cfg(test)]
@@ -74,7 +77,7 @@ mod tests {
         let bytes = b"pub struct Table { rows: u32 }";
         let key = key(FileKind::Rust, bytes);
         let indexed = index(FileKind::Rust, bytes);
-        let entry = encode(key, &indexed).unwrap();
+        let entry = encode(key, &indexed);
 
         assert_eq!(decode(key, &entry), Some(indexed));
         assert_eq!(decode(super::key(FileKind::Rust, b"other"), &entry), None);
@@ -90,13 +93,13 @@ mod tests {
     fn a_torn_or_altered_entry_is_a_miss() {
         let bytes = b"fn a() {}";
         let key = key(FileKind::Rust, bytes);
-        let entry = encode(key, &index(FileKind::Rust, bytes)).unwrap();
+        let entry = encode(key, &index(FileKind::Rust, bytes));
         let mut altered = entry.clone();
         *altered.last_mut().unwrap() ^= 1;
 
         assert_eq!(decode(key, &entry[..entry.len() - 1]), None);
         assert_eq!(decode(key, &altered), None);
         assert_eq!(decode(key, b""), None);
-        assert_eq!(decode(key, b"\n{}"), None);
+        assert_eq!(decode(key, &[0; 64]), None);
     }
 }

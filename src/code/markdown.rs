@@ -6,19 +6,17 @@
 //! runs of whitespace made one space; a `::` in it splits it as it splits
 //! a symbol.
 
-use super::index::Definition;
+use super::index::{FileIndex, IndexFault};
 use super::kinds::DefinitionKind;
-use super::span::Lines;
-use super::symbol::{Segment, name_segments};
+use super::lexical::Lexical;
+use super::scope::ScopeId;
 
-/// The heading sections of `text`.
-pub(super) fn definitions(text: &str) -> Vec<Definition> {
-    let lines = Lines::of(text.as_bytes());
+/// The index of `text`, a Markdown file: its heading sections.
+pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
     let mut sections = Sections {
         text,
-        lines: &lines,
         open: Vec::new(),
-        definitions: Vec::new(),
+        lexical: Lexical::of(text),
     };
     let mut fence: Option<Fence> = None;
     let mut start = 0;
@@ -30,51 +28,44 @@ pub(super) fn definitions(text: &str) -> Vec<Definition> {
                 if let Some(opened) = Fence::opened_by(line) {
                     fence = Some(opened);
                 } else if let Some((level, title)) = heading(line) {
-                    sections.open(level, title, start);
+                    sections.open(level, title, start)?;
                 }
             }
         }
         start += line.len();
     }
-    sections.close_from(1, text.len());
-    sections.definitions
+    sections.close_from(1, text.len())?;
+    Ok(sections.lexical.finish())
 }
 
-/// The headings whose sections are still open, outermost first.
+/// The headings whose sections are still open, outermost first: each
+/// one's level, scope and first byte.
 struct Sections<'t> {
     text: &'t str,
-    lines: &'t Lines,
-    open: Vec<(usize, Vec<Segment>, usize)>,
-    definitions: Vec<Definition>,
+    open: Vec<(usize, ScopeId, usize)>,
+    lexical: Lexical<'t>,
 }
 
 impl Sections<'_> {
     /// Open the section of a heading of `level` at byte `start`.
-    fn open(&mut self, level: usize, title: &str, start: usize) {
-        self.close_from(level, start);
-        // clone: the section owns its path, and each section below it too.
-        let mut path = self
-            .open
-            .last()
-            .map(|(_, path, _)| path.clone())
-            .unwrap_or_default();
-        path.extend(name_segments(title));
-        self.open.push((level, path, start));
+    fn open(&mut self, level: usize, title: &str, start: usize) -> Result<(), IndexFault> {
+        self.close_from(level, start)?;
+        let parent = self.open.last().map(|(_, scope, _)| *scope);
+        let scope = self.lexical.scope(parent, title)?;
+        self.open.push((level, scope, start));
+        Ok(())
     }
 
     /// Close every open section of `level` or a deeper one at byte `end`.
-    fn close_from(&mut self, level: usize, end: usize) {
-        while let Some((_, path, start)) = self.open.pop_if(|(open, _, _)| *open >= level) {
+    fn close_from(&mut self, level: usize, end: usize) -> Result<(), IndexFault> {
+        while let Some((_, scope, start)) = self.open.pop_if(|(open, _, _)| *open >= level) {
             let section = self.text.get(start..end).unwrap_or_default();
             let end = start + section.trim_end().len();
-            self.definitions.push(Definition::lexical(
-                path,
-                DefinitionKind::Heading,
-                self.text,
-                self.lines,
-                start..end,
-            ));
+            let hash = self.lexical.hash(start..end)?;
+            self.lexical
+                .define(scope, DefinitionKind::Heading, start..end, hash);
         }
+        Ok(())
     }
 }
 
@@ -135,8 +126,9 @@ impl Fence {
 
 #[cfg(test)]
 mod tests {
-    use crate::code::index::{FileKind, index};
-    use crate::code::symbol::{Symbol, Syntax};
+    use crate::code::index::{FileKind, IndexFault, index};
+    use crate::code::scope::MAX_NESTING;
+    use crate::code::testing;
 
     const README: &str = "\
 # Tool
@@ -165,14 +157,7 @@ Build it.
 ";
 
     fn named<'t>(text: &'t str, symbol: &str) -> Vec<&'t str> {
-        let symbol = Symbol::parse(symbol, Syntax::Plain).unwrap();
-        index(FileKind::Markdown, text.as_bytes())
-            .unwrap()
-            .definitions
-            .iter()
-            .filter(|d| symbol.names(&d.path))
-            .map(|d| &text[d.span.start..d.span.end])
-            .collect()
+        testing::named(FileKind::Markdown, text, symbol)
     }
 
     #[test]
@@ -196,6 +181,17 @@ Build it.
         assert!(source.ends_with("```"), "{source:?}");
         assert!(named(README, "Install")[0].ends_with("### From a package"));
         assert!(named(README, "Tool")[0].ends_with("## Store::open"));
+    }
+
+    #[test]
+    fn a_path_past_the_bound_of_segments_is_refused() {
+        let heading = |segments: usize| format!("# {}\n## b\n", vec!["a"; segments].join("::"));
+
+        assert!(index(FileKind::Markdown, heading(MAX_NESTING - 1).as_bytes()).is_ok());
+        assert_eq!(
+            index(FileKind::Markdown, heading(MAX_NESTING).as_bytes()),
+            Err(IndexFault::TooDeep)
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "src/code/json.rs", symbol = "Scanner" },
-    { file = "src/code/json.rs", symbol = "definitions" },
+    { file = "src/code/json.rs", symbol = "index" },
     { file = "src/code/toml.rs", symbol = "Keys::value" },
-    { file = "src/code/toml.rs", symbol = "definitions" },
+    { file = "src/code/toml.rs", symbol = "index" },
 ]

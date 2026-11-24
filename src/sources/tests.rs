@@ -63,6 +63,7 @@ fn expected(cases: &[(&str, &str, &str)]) -> Vec<String> {
 }
 
 const SYMBOL: &str = "symbol";
+const DEEPER: &str = "its file nests a path deeper than 64 segments";
 const MISSING: &str = "its file defines nothing its symbol names";
 const LEDGER: &str = "crates/ledger/src/lib.rs";
 const BOOKS: &str = "crates/ledger/src/books/mod.rs";
@@ -82,6 +83,7 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (LEDGER, "Book::new", SYMBOL),
     (LEDGER, "Book::close", SYMBOL),
     (LEDGER, "Weight", SYMBOL),
+    (LEDGER, "PageCount", SYMBOL),
     (LEDGER, "Raw::bits", SYMBOL),
     (LEDGER, "Entry::Blank", SYMBOL),
     (LEDGER, "Amount", SYMBOL),
@@ -127,6 +129,8 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (LEDGER, "CURRENT", SYMBOL),
     (LEDGER, "vanished", MISSING),
     (LEDGER, "Phantom", MISSING),
+    (LEDGER, "LedgerView::book", SYMBOL),
+    (LEDGER, "SPELLINGS", SYMBOL),
     (
         LEDGER,
         "Book::<Display",
@@ -181,10 +185,24 @@ const OTHER_CASES: &[(&str, &str, &str)] = &[
     ("Makefile", "check-format", SYMBOL),
     ("Makefile", ".PHONY", SYMBOL),
     ("Makefile", "VERSION", MISSING),
+    ("Makefile", "lint", MISSING),
+    ("Makefile", "fake", MISSING),
+    ("Makefile", "TEMPLATE", MISSING),
     ("docs/guide.md", "Install::From source", SYMBOL),
     ("docs/guide.md", "Guide::Use", SYMBOL),
     ("docs/guide.md", "Not a heading", MISSING),
     ("docs/guide.md", "source", MISSING),
+    ("docs/guide.md", "Hidden by tildes", MISSING),
+    ("docs/guide.md", "Guide::Store::open", SYMBOL),
+    ("settings.json", "caf\u{e9}", SYMBOL),
+    ("bounds/deep.json", "a", SYMBOL),
+    ("bounds/deeper.json", "a", DEEPER),
+    ("bounds/deep.toml", "key", SYMBOL),
+    ("bounds/deeper.toml", "key", DEEPER),
+    ("bounds/deep.md", "b", SYMBOL),
+    ("bounds/deeper.md", "b", DEEPER),
+    ("bounds/deep.rs", "m", SYMBOL),
+    ("bounds/deeper.rs", "m", DEEPER),
     (
         "ci.yml",
         "on",
@@ -403,15 +421,15 @@ fn a_file_gone_before_its_read_is_absent_not_a_fault() {
 fn statements(facts: &CodeFacts) -> Vec<String> {
     facts
         .definitions()
-        .map(|(file, definition, role)| {
-            let path: Vec<String> = definition.path.iter().map(ToString::to_string).collect();
+        .filter(|(file, ..)| !file.starts_with("bounds/"))
+        .map(|(file, scopes, definition, role)| {
+            let path = crate::code::testing::path(scopes, definition.scope);
             let visibility = definition
                 .visibility
                 .map_or("-".to_owned(), |v| format!("{v:?}"));
             format!(
                 "{file} {} {:?} {role:?} {visibility}",
-                path.join("::"),
-                definition.kind
+                path, definition.kind
             )
         })
         .collect()
@@ -445,6 +463,7 @@ const STATEMENTS: &[&str] = &[
     "crates/ids/Cargo.toml package::name Key Code -",
     "crates/ids/src/lib.rs numbered_id Macro Code Public",
     "crates/ids/src/lib.rs crate_only_id Macro Code Private",
+    "crates/ids/src/lib.rs Local Struct Code -",
     "crates/ledger/Cargo.toml package Key Code -",
     "crates/ledger/Cargo.toml package::name Key Code -",
     "crates/ledger/src/books/mod.rs book_id Macro Code Private",
@@ -452,15 +471,25 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/books/mod.rs Shelf Struct Code Public",
     "crates/ledger/src/books/mod.rs Imported Struct Code Public",
     "crates/ledger/src/books/mod.rs call_only Function Code Public",
+    "crates/ledger/src/books/mod.rs CatalogId Struct Code -",
+    "crates/ledger/src/books/mod.rs CatalogId::new Method Code -",
+    "crates/ledger/src/books/mod.rs CatalogId::raw Method Code -",
+    "crates/ledger/src/books/mod.rs Isbn Struct Code -",
+    "crates/ledger/src/books/mod.rs Isbn::new Method Code -",
+    "crates/ledger/src/books/mod.rs Isbn::raw Method Code -",
+    "crates/ledger/src/books/mod.rs ShelfNumber Struct Code -",
+    "crates/ledger/src/books/mod.rs ShelfNumber::get Method Code -",
     "crates/ledger/src/checks.rs balanced Function Test Public",
     "crates/ledger/src/lib.rs PAGE_SIZE Constant Code Public",
     "crates/ledger/src/lib.rs OPENED Static Code Private",
     "crates/ledger/src/lib.rs page_count Function Code Crate",
+    "crates/ledger/src/lib.rs SPELLINGS Constant Code Public",
     "crates/ledger/src/lib.rs tally Macro Code Private",
     "crates/ledger/src/lib.rs Book Struct Code Public",
     "crates/ledger/src/lib.rs Book::title Field Code Public",
     "crates/ledger/src/lib.rs Book::pages Field Code Private",
     "crates/ledger/src/lib.rs Weight Struct Code Public",
+    "crates/ledger/src/lib.rs PageCount TypeAlias Code Public",
     "crates/ledger/src/lib.rs Raw Union Code Public",
     "crates/ledger/src/lib.rs Raw::bits Field Code Private",
     "crates/ledger/src/lib.rs Raw::float Field Code Private",
@@ -502,6 +531,7 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/lib.rs Rack Reexport Code Public",
     "crates/ledger/src/lib.rs external_total Function Code Private",
     "crates/ledger/src/lib.rs LedgerView Struct Code Crate",
+    "crates/ledger/src/lib.rs LedgerView::book Field Code Private",
     "crates/ledger/src/lib.rs CURRENT Static Code Private",
     "crates/ledger/src/lib.rs tests Module Test Private",
     "crates/ledger/src/lib.rs tests::reconcile Function Test Private",
@@ -521,12 +551,19 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/tests/flow.rs a_book_opens Function Test Private",
     "crates/shelf/Cargo.toml package Key Code -",
     "crates/shelf/Cargo.toml package::name Key Code -",
+    "crates/shelf/src/lib.rs ShelfId Struct Code -",
+    "crates/shelf/src/lib.rs ShelfId::get Method Code -",
+    "crates/shelf/src/lib.rs ShelfFull Struct Code -",
     "docs/guide.md Guide Heading Code -",
     "docs/guide.md Guide::Install Heading Code -",
     "docs/guide.md Guide::Install::From source Heading Code -",
     "docs/guide.md Guide::Install::From a package Heading Code -",
     "docs/guide.md Guide::Use Heading Code -",
+    "docs/guide.md Guide::Store::open Heading Code -",
     "loose/single.rs solo Macro Code Private",
+    "loose/single.rs Alone Enum Code -",
+    "loose/single.rs Visible Struct Code -",
+    "loose/single.rs Visible::get Method Code -",
     "settings.json stages Key Code -",
     "settings.json stages::order Key Code -",
     "settings.json stages::parallel Key Code -",
@@ -534,21 +571,7 @@ const STATEMENTS: &[&str] = &[
     "settings.json rules::name Key Code -",
     "settings.json rules::name Key Code -",
     "settings.json esc\"aped Key Code -",
-    "crates/ids/src/lib.rs Local Struct Code -",
-    "crates/ledger/src/books/mod.rs CatalogId::new Method Code -",
-    "crates/ledger/src/books/mod.rs CatalogId::raw Method Code -",
-    "crates/ledger/src/books/mod.rs CatalogId Struct Code -",
-    "crates/ledger/src/books/mod.rs Isbn::new Method Code -",
-    "crates/ledger/src/books/mod.rs Isbn::raw Method Code -",
-    "crates/ledger/src/books/mod.rs Isbn Struct Code -",
-    "crates/ledger/src/books/mod.rs ShelfNumber::get Method Code -",
-    "crates/ledger/src/books/mod.rs ShelfNumber Struct Code -",
-    "crates/shelf/src/lib.rs ShelfId::get Method Code -",
-    "crates/shelf/src/lib.rs ShelfId Struct Code -",
-    "crates/shelf/src/lib.rs ShelfFull Struct Code -",
-    "loose/single.rs Alone Enum Code -",
-    "loose/single.rs Visible::get Method Code -",
-    "loose/single.rs Visible Struct Code -",
+    "settings.json caf\u{e9} Key Code -",
 ];
 
 #[test]
@@ -560,4 +583,45 @@ fn each_definition_of_the_fixture_corpus_states_its_kind_role_and_visibility() {
     );
 
     assert_eq!(statements(&facts), STATEMENTS);
+}
+
+#[test]
+fn an_anchor_resolves_alike_whatever_else_is_anchored() {
+    let tmp = TempDir::new().unwrap();
+    let files = [
+        ("Cargo.toml", "[package]\nname = 'root'\n"),
+        (
+            "src/lib.rs",
+            "macro_rules! id { (x $n:ident) => { pub struct $n; }; }\n",
+        ),
+        ("vendor/sub/.git", ""),
+        ("vendor/sub/Cargo.toml", "[package]\nname = 'sub'\n"),
+        ("vendor/sub/src/lib.rs", "id! { x Thing }\n"),
+        (
+            "vendor/sub/src/own.rs",
+            "macro_rules! id { (x $n:ident) => { pub struct $n; }; }\n",
+        ),
+    ];
+    for (path, text) in files {
+        let path = tmp.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = setup_store(tmp.path());
+    let thing = anchor("vendor/sub/src/lib.rs", "Thing");
+    let resolve = |anchored: &[&str]| {
+        let facts = gather(&store, anchored.iter().copied());
+        outcome(&facts.resolve(&thing))
+    };
+
+    let alone = resolve(&["vendor/sub/src/lib.rs"]);
+    assert_eq!(alone, MISSING);
+    assert_eq!(
+        resolve(&["vendor/sub/Cargo.toml", "vendor/sub/src/lib.rs"]),
+        alone
+    );
+    assert_eq!(
+        resolve(&["vendor/sub/src/own.rs", "vendor/sub/src/lib.rs"]),
+        alone
+    );
 }

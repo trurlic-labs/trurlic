@@ -1,5 +1,6 @@
 {
   "stages": {"order": ["store", "mcp"], "parallel": true},
   "rules": [{"name": "first"}, {"name": "second"}],
-  "esc\"aped": null
+  "esc\"aped": null,
+  "café": 1
 }

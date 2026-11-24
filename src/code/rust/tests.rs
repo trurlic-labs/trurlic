@@ -1,6 +1,8 @@
 use super::*;
 use crate::code::index::{FileKind, TypeArm, TypeMacro, index as index_file};
-use crate::code::kinds::DefinitionKind;
+use crate::code::kinds::{DefinitionKind, Role, Visibility};
+use crate::code::scope::{MAX_NESTING, Scopes};
+use crate::code::testing;
 
 fn index(text: &str) -> FileIndex {
     index_file(FileKind::Rust, text.as_bytes()).unwrap()
@@ -8,14 +10,7 @@ fn index(text: &str) -> FileIndex {
 
 /// Each definition of `text` as its path and the text of its span.
 fn defined(text: &str) -> Vec<(String, &str)> {
-    index(text)
-        .definitions
-        .iter()
-        .map(|d| {
-            let path: Vec<String> = d.path.iter().map(ToString::to_string).collect();
-            (path.join("::"), &text[d.span.start..d.span.end])
-        })
-        .collect()
+    testing::defined(FileKind::Rust, text)
 }
 
 #[test]
@@ -101,6 +96,7 @@ fn a_type_macro_keeps_the_words_of_each_arm_that_defines_a_type() {
                 },
             ],
             members: vec![("rank".into(), DefinitionKind::Method)],
+            items: vec![],
         }]
     );
 }
@@ -113,7 +109,12 @@ fn an_invocation_keeps_its_first_tokens_past_its_attributes() {
     assert_eq!(invocations.len(), 1);
     let invocation = &invocations[0];
     assert_eq!(invocation.macro_name, "id");
-    assert_eq!(invocation.container, [Segment::name("m")]);
+    let indexed = index(text);
+    let scopes = Scopes {
+        file: &indexed.scopes,
+        added: &[],
+    };
+    assert_eq!(testing::path(scopes, invocation.container.unwrap()), "m");
     assert_eq!(
         invocation.tokens,
         ["ordered", "Rank", "(", "u8", ")", ",", "\"a b\""]
@@ -137,4 +138,93 @@ fn a_file_mid_edit_still_defines_what_parses() {
     let paths: Vec<String> = defined(text).into_iter().map(|(path, _)| path).collect();
 
     assert!(paths.contains(&"Kept".to_owned()), "{paths:?}");
+}
+
+#[test]
+fn a_macro_is_exported_by_its_attribute_not_by_a_word_in_its_docs() {
+    let text = "/// Not #[macro_export]: local.\nmacro_rules! local { () => {} }\n#[cfg_attr(feature = \"x\", macro_export)]\nmacro_rules! maybe { () => {} }\n#[macro_export]\nmacro_rules! shared { () => {} }\n";
+    let indexed = index(text);
+    let visibility: Vec<_> = indexed.definitions.iter().map(|d| d.visibility).collect();
+
+    assert_eq!(
+        visibility,
+        [
+            Some(Visibility::Private),
+            Some(Visibility::Public),
+            Some(Visibility::Public)
+        ]
+    );
+}
+
+#[test]
+fn a_macro_of_many_arms_is_read_within_the_budget() {
+    let arms: String = (0..20_000)
+        .map(|n| format!("(w{n} $n:ident) => {{ pub struct $n; }};\n"))
+        .collect();
+    let text = format!("macro_rules! many {{\n{arms}}}\n");
+
+    assert_eq!(index(&text).macros[0].arms.len(), 20_000);
+}
+
+#[test]
+fn spelled_items_nested_past_the_budget_are_refused() {
+    let depth = 20_000;
+    let text = format!(
+        "m! {{ {}{} }}\n",
+        "fn a { ".repeat(depth),
+        "}".repeat(depth)
+    );
+
+    assert_eq!(
+        index_file(FileKind::Rust, text.as_bytes()),
+        Err(IndexFault::TooComplex)
+    );
+}
+
+#[test]
+fn a_plain_comment_between_an_attribute_and_its_item_keeps_the_mark() {
+    let text = "#[cfg(test)]\n// the tests\nmod tests {\n    fn helper() {}\n}\n#[test]\n/* why */\nfn unit() {}\npub(/* only here */ crate) fn narrow() {}\n";
+    let marks: Vec<_> = index(text)
+        .definitions
+        .iter()
+        .map(|d| (d.role, d.visibility))
+        .collect();
+
+    assert_eq!(
+        marks,
+        [
+            (Role::Test, Some(Visibility::Private)),
+            (Role::Test, Some(Visibility::Private)),
+            (Role::Test, Some(Visibility::Private)),
+            (Role::Code, Some(Visibility::Crate)),
+        ]
+    );
+}
+
+#[test]
+fn an_item_in_a_discriminant_has_its_own_visibility() {
+    let text = "pub enum E { C = { const K: isize = 1; K } }\n";
+    let indexed = index(text);
+    let constant = indexed
+        .definitions
+        .iter()
+        .find(|d| d.kind == DefinitionKind::Constant)
+        .unwrap();
+
+    assert_eq!(constant.visibility, Some(Visibility::Private));
+}
+
+#[test]
+fn a_type_macros_members_are_its_impl_blocks_items_and_the_rest_its_containers() {
+    let text = "macro_rules! def {\n    ($name:ident) => {\n        pub struct $name;\n        pub fn make() -> $name { $name }\n        pub mod helpers {}\n        impl $name { pub fn get(&self) {} }\n        impl Other { fn not_its() {} }\n    };\n}\n";
+    let found = &index(text).macros[0];
+
+    assert_eq!(found.members, [("get".to_owned(), DefinitionKind::Method)]);
+    assert_eq!(
+        found.items,
+        [
+            ("helpers".to_owned(), DefinitionKind::Module),
+            ("make".to_owned(), DefinitionKind::Function)
+        ]
+    );
 }

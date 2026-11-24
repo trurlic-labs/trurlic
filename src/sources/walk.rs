@@ -49,6 +49,11 @@ pub(super) fn tree_sources(root: &Path) -> Vec<Source> {
             let Ok(file_type) = entry.file_type() else {
                 continue;
             };
+            // A symlink, to a file or a directory, may lead out of the
+            // tree, and one to a directory may loop.
+            if file_type.is_symlink() {
+                continue;
+            }
             if file_type.is_dir() {
                 let inner = entry.path();
                 if !SKIPPED_MARKERS
@@ -72,6 +77,25 @@ fn tree_wide_kind(name: &str) -> Option<FileKind> {
         Some(FileKind::Toml) if name == MANIFEST => Some(FileKind::Toml),
         Some(FileKind::Toml | FileKind::Json | FileKind::Make | FileKind::Markdown) | None => None,
     }
+}
+
+/// Each `Cargo.toml` of a directory above `path` under `root`, the root's
+/// included: the manifests an anchored Rust file outside the walk takes
+/// its crate and workspace from.
+pub(super) fn manifests_above(root: &Path, path: &str) -> Vec<Source> {
+    let mut found = Vec::new();
+    let mut dir = path;
+    while let Some((above, _)) = dir.rsplit_once('/') {
+        dir = above;
+        let manifest = format!("{dir}/{MANIFEST}");
+        if fs::metadata(root.join(&manifest)).is_ok_and(|m| m.is_file()) {
+            found.push((manifest, FileKind::Toml));
+        }
+    }
+    if fs::metadata(root.join(MANIFEST)).is_ok_and(|m| m.is_file()) {
+        found.push((MANIFEST.to_owned(), FileKind::Toml));
+    }
+    found
 }
 
 /// What is at `path` under `root`, symlinks followed.
@@ -127,7 +151,13 @@ mod tests {
             write(root, path);
         }
         #[cfg(unix)]
-        std::os::unix::fs::symlink(root, root.join("src/loop")).unwrap();
+        {
+            std::os::unix::fs::symlink(root, root.join("src/loop")).unwrap();
+            let outside = TempDir::new().unwrap();
+            write(outside.path(), "far.rs");
+            std::os::unix::fs::symlink(outside.path().join("far.rs"), root.join("src/linked.rs"))
+                .unwrap();
+        }
 
         let mut found = tree_sources(root);
         found.sort();

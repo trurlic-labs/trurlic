@@ -19,88 +19,79 @@ use std::ops::Range;
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
-use super::index::{Definition, IndexFault, MAX_NESTING};
+use super::index::{FileIndex, IndexFault};
 use super::kinds::DefinitionKind;
-use super::span::Lines;
-use super::symbol::{Segment, name_segments};
+use super::lexical::Lexical;
+use super::scope::{MAX_NESTING, ScopeId};
 
-/// The key paths of `text`.
-pub(super) fn definitions(text: &str) -> Result<Vec<Definition>, IndexFault> {
+/// The index of `text`, a TOML file: its key paths.
+pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
     let document = DeTable::parse(text).map_err(|error| IndexFault::Syntax {
         at: error.span().map_or(0, |span| span.start),
     })?;
     let mut keys = Keys {
-        text,
-        lines: Lines::of(text.as_bytes()),
-        definitions: Vec::new(),
-        too_deep: false,
+        lexical: Lexical::of(text),
     };
-    keys.table(&[], document.get_ref(), 0);
-    match keys.too_deep {
-        true => Err(IndexFault::TooDeep),
-        false => Ok(keys.definitions),
-    }
+    keys.table(None, document.get_ref(), 0)?;
+    Ok(keys.lexical.finish())
 }
 
 struct Keys<'t> {
-    text: &'t str,
-    lines: Lines,
-    definitions: Vec<Definition>,
-    too_deep: bool,
+    lexical: Lexical<'t>,
 }
 
 impl Keys<'_> {
-    /// Define each key of `table` under `prefix`; the bytes the table's
+    /// Define each key of `table` under `parent`; the bytes the table's
     /// keys and values cover.
     fn table(
         &mut self,
-        prefix: &[Segment],
+        parent: Option<ScopeId>,
         table: &DeTable<'_>,
         depth: usize,
-    ) -> Option<Range<usize>> {
+    ) -> Result<Option<Range<usize>>, IndexFault> {
         let mut covered = None;
         for (key, value) in table.iter() {
-            let mut path = prefix.to_vec();
-            path.extend(name_segments(key.get_ref()));
-            let below = self.value(&path, value, depth + 1);
+            let scope = self.lexical.scope(parent, key.get_ref())?;
+            let below = self.value(scope, value, depth + 1)?;
             let span = join(join(Some(key.span()), Some(value.span())), below);
             if let Some(span) = &span {
-                self.definitions.push(Definition::lexical(
-                    path,
-                    DefinitionKind::Key,
-                    self.text,
-                    &self.lines,
-                    span.start..span.end,
-                ));
+                let hash = self.lexical.hash(span.start..span.end)?;
+                self.lexical
+                    .define(scope, DefinitionKind::Key, span.start..span.end, hash);
             }
             covered = join(covered, span);
         }
-        covered
+        Ok(covered)
     }
 
-    /// Define what `value` holds under `path`; the bytes it covers.
+    /// Define what `value` holds under `scope`; the bytes it covers. The
+    /// recursion is bounded by [`MAX_NESTING`], below the parser's own
+    /// limit.
     fn value(
         &mut self,
-        path: &[Segment],
+        scope: ScopeId,
         value: &Spanned<DeValue<'_>>,
         depth: usize,
-    ) -> Option<Range<usize>> {
+    ) -> Result<Option<Range<usize>>, IndexFault> {
         if depth > MAX_NESTING {
-            self.too_deep = true;
-            return None;
+            return Err(IndexFault::TooDeep);
         }
-        match value.get_ref() {
-            DeValue::Table(table) => self.table(path, table, depth),
-            DeValue::Array(elements) => elements.iter().fold(None, |covered, element| {
-                let below = self.value(path, element, depth + 1);
-                join(join(covered, Some(element.span())), below)
-            }),
+        Ok(match value.get_ref() {
+            DeValue::Table(table) => self.table(Some(scope), table, depth)?,
+            DeValue::Array(elements) => {
+                let mut covered = None;
+                for element in elements {
+                    let below = self.value(scope, element, depth + 1)?;
+                    covered = join(join(covered, Some(element.span())), below);
+                }
+                covered
+            }
             DeValue::String(_)
             | DeValue::Integer(_)
             | DeValue::Float(_)
             | DeValue::Boolean(_)
             | DeValue::Datetime(_) => None,
-        }
+        })
     }
 }
 
@@ -117,7 +108,7 @@ fn join(one: Option<Range<usize>>, two: Option<Range<usize>>) -> Option<Range<us
 mod tests {
     use super::*;
     use crate::code::index::{FileKind, index};
-    use crate::code::symbol::{Symbol, Syntax};
+    use crate::code::testing;
 
     const MANIFEST: &str = "\
 [package]
@@ -147,14 +138,7 @@ unsafe_code = 'forbid'
 
     /// The text of each definition `symbol` names in `text`.
     fn named<'t>(text: &'t str, symbol: &str) -> Vec<&'t str> {
-        let symbol = Symbol::parse(symbol, Syntax::Plain).unwrap();
-        index(FileKind::Toml, text.as_bytes())
-            .unwrap()
-            .definitions
-            .iter()
-            .filter(|d| symbol.names(&d.path))
-            .map(|d| &text[d.span.start..d.span.end])
-            .collect()
+        testing::named(FileKind::Toml, text, symbol)
     }
 
     #[test]
@@ -205,6 +189,18 @@ unsafe_code = 'forbid'
         assert_eq!(named(text, "a.b"), ["\"a.b\" = 1"]);
         assert_eq!(named(text, "c::d"), ["\"c::d\" = 2"]);
         assert_eq!(named(text, "d"), ["\"c::d\" = 2"]);
+    }
+
+    #[test]
+    fn a_path_past_the_bound_of_segments_is_refused() {
+        let header =
+            |segments: usize| format!("[\"{}\"]\nkey = 1\n", vec!["a"; segments].join("::"));
+
+        assert!(index(FileKind::Toml, header(MAX_NESTING - 1).as_bytes()).is_ok());
+        assert_eq!(
+            index(FileKind::Toml, header(MAX_NESTING).as_bytes()),
+            Err(IndexFault::TooDeep)
+        );
     }
 
     #[test]

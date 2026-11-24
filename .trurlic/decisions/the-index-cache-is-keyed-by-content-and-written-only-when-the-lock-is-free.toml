@@ -1,10 +1,11 @@
 component = "sources"
-choice = "Each file's index is cached in .state/symbols/ under the hash of its kind, versions and bytes; a read writes its misses only when the exclusive lock is free, renaming whole entries"
-reason = "Parsing every Rust file of a large tree on each status call costs more than reading cached indexes: on this repository's src/ a cold index takes several times a warm one, and the gap grows with the tree and shrinks with cores. A key by content, with the file's kind, the span hash scheme and INDEX_FORMAT, means an entry is never read under other rules and the trees of one shared graph share entries; a fingerprint test of the fixture corpus makes a change to how a file is indexed raise INDEX_FORMAT. A read takes no lock to read entries, which are written to their own files and renamed over their names; .state/tmp/ is not used, because a file there makes a reader run recovery. After its own work a read tries the exclusive lock without waiting and skips the write when it is busy: the cache is never authoritative, so a torn, swapped or unreadable entry is a miss and is written again. The directory is bounded without a clock: when it holds more than twice the call's live set and 256 besides, every entry outside the set goes."
+choice = "Each file's index is cached in .state/symbols/ in a compact encoding under the hash of its kind, grammar, versions and bytes; a read writes its misses when the exclusive lock is free"
+reason = "Parsing every Rust file of a large tree on each status call costs more than reading cached indexes, and the gap grows with the tree. A key by content, with the file's kind, the identity of the kind's tree-sitter grammar (its version, counts and node types, which a grammar upgrade changes though no fixture shows it), the span hash scheme and INDEX_FORMAT, means an entry is never read under other rules and the trees of one shared graph share entries; a fingerprint test of the fixture corpus, which holds a case per rule and per bound, makes a change to how a file is indexed raise INDEX_FORMAT. An entry is a sum, its key and a binary encoding with a byte per kind, role and visibility and a hash as its 32 bytes; it is at most 32 times its file, so the store reads an entry of any file the index reads and none is rewritten on every call. A read takes no lock to read entries, which are renamed over their names. After its own work a read tries the exclusive lock without waiting and skips the write when it is busy: the cache is never authoritative, so a torn, swapped or unreadable entry is a miss, and one entry that fails to write, or a directory in its place, stops no other. The directory is bounded without a clock: past twice the call's live set and 256, every entry outside the set goes."
 alternatives = [
     "No cache: rejected because each status call would parse the whole tree, which grows with the project",
     "Key by path and modification time: rejected because a checkout can keep a time, and the trees of a shared graph would not share",
     "Wait for the lock to write: rejected because a read would then stall behind a writer for an optional speedup",
+    "JSON entries: rejected because a hash spelled as text and a word per kind made an entry many times its file",
     "Prune by age: rejected because it needs a clock, which a read has no business reading",
 ]
 tags = [
@@ -16,9 +17,9 @@ origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_code_index" },
+    { file = "src/code/encoding.rs", symbol = "MAX_ENTRY_BYTES_PER_SOURCE_BYTE" },
     { file = "src/code/index.rs", symbol = "INDEX_FORMAT" },
     { file = "src/code/index.rs", symbol = "the_index_format_names_its_rules" },
-    { file = "src/sources/cache.rs", symbol = "decode" },
     { file = "src/sources/cache.rs", symbol = "key" },
     { file = "src/sources/mod.rs", symbol = "fill_cache" },
     { file = "src/store/lock.rs", symbol = "Store::try_lock" },

@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{ErrorKind, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{Error, Result};
@@ -25,8 +25,10 @@ use super::{Store, StoreLock};
 /// The directory of the cache, in `.state/`.
 const SYMBOLS_DIR: &str = "symbols";
 
-/// The largest entry a read takes; a larger one is a miss.
-pub(crate) const MAX_SYMBOLS_ENTRY_BYTES: usize = 16 * 1024 * 1024;
+/// The largest entry a read takes; a larger one is a miss. The index
+/// writes no larger one: an entry is linear in its file, and the files
+/// it reads are bounded (`sources::cache`).
+pub(crate) const MAX_SYMBOLS_ENTRY_BYTES: usize = 160 * 1024 * 1024;
 
 /// The entries the directory may hold for each one of the live set a
 /// write is given, past [`PRUNE_SLACK`], before the rest are removed.
@@ -44,6 +46,10 @@ pub struct SymbolsKey([u8; 32]);
 impl SymbolsKey {
     pub fn new(bytes: [u8; 32]) -> Self {
         Self(bytes)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
     }
 
     /// The key a file name spells; `None` for any other name.
@@ -84,11 +90,13 @@ impl Store {
         (bytes.len() <= MAX_SYMBOLS_ENTRY_BYTES).then_some(bytes)
     }
 
-    /// Write each of `entries` over its key's name, and remove every file
-    /// that is no entry (a write a crash stopped); then, when the
-    /// directory holds more than [`PRUNE_FACTOR`] times `live` and
+    /// Write each of `entries` over its key's name, and remove everything
+    /// that is no entry (a write a crash stopped, a directory); then, when
+    /// the directory holds more than [`PRUNE_FACTOR`] times `live` and
     /// [`PRUNE_SLACK`] besides, remove each entry outside `live`. The
-    /// growth needs no clock: a call's own live set bounds it.
+    /// growth needs no clock: a call's own live set bounds it. One entry
+    /// that fails is passed over and the rest written: the first failure
+    /// is returned once all are tried.
     pub(crate) fn write_symbols(
         &self,
         _lock: &StoreLock,
@@ -97,18 +105,32 @@ impl Store {
     ) -> Result<()> {
         let dir = self.symbols_dir();
         fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        let mut first = None;
         for (key, bytes) in entries {
-            let staged = self.stage_symbols(bytes)?;
-            let target = dir.join(key.to_string());
-            fs::rename(&staged, &target).map_err(|source| {
-                let _ = fs::remove_file(&staged);
-                Error::Io {
-                    path: target,
-                    source,
-                }
-            })?;
+            if let Err(error) = self.write_symbol(&dir.join(key.to_string()), bytes) {
+                first.get_or_insert(error);
+            }
         }
-        self.prune_symbols(live)
+        if let Err(error) = self.prune_symbols(live) {
+            first.get_or_insert(error);
+        }
+        first.map_or(Ok(()), Err)
+    }
+
+    /// Write `bytes` over `target`, removing whatever is there that is no
+    /// file (a directory under an entry's name).
+    fn write_symbol(&self, target: &Path, bytes: &[u8]) -> Result<()> {
+        if fs::symlink_metadata(target).is_ok_and(|found| found.is_dir()) {
+            fs::remove_dir_all(target).map_err(Error::io(target))?;
+        }
+        let staged = self.stage_symbols(bytes)?;
+        fs::rename(&staged, target).map_err(|source| {
+            let _ = fs::remove_file(&staged);
+            Error::Io {
+                path: target.to_path_buf(),
+                source,
+            }
+        })
     }
 
     /// Write `bytes` to a fresh file in the cache's directory, named
@@ -148,14 +170,22 @@ impl Store {
             let dead = keys.iter().filter(|key| !live.contains(key));
             strays.extend(dead.map(|key| dir.join(key.to_string())));
         }
+        let mut first = None;
         for path in strays {
-            match fs::remove_file(&path) {
+            let removed = match fs::symlink_metadata(&path) {
+                Ok(found) if found.is_dir() => fs::remove_dir_all(&path),
+                Ok(_) => fs::remove_file(&path),
+                Err(e) => Err(e),
+            };
+            match removed {
                 Ok(()) => {}
                 Err(e) if e.kind() == ErrorKind::NotFound => {}
-                Err(source) => return Err(Error::Io { path, source }),
+                Err(source) => {
+                    first.get_or_insert(Error::Io { path, source });
+                }
             }
         }
-        Ok(())
+        first.map_or(Ok(()), Err)
     }
 }
 
@@ -209,6 +239,28 @@ mod tests {
 
         assert_eq!(store.read_symbols(key(1)), None);
         assert_eq!(store.read_symbols(key(2)), None);
+    }
+
+    #[test]
+    fn a_directory_in_the_cache_is_removed_and_stops_no_other_write() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let lock = store.lock().unwrap();
+        let dir = store.symbols_dir();
+        fs::create_dir_all(dir.join(key(1).to_string()).join("inner")).unwrap();
+        fs::create_dir_all(dir.join("stray-dir/inner")).unwrap();
+
+        store
+            .write_symbols(
+                &lock,
+                &BTreeMap::from([(key(1), b"one".to_vec()), (key(2), b"two".to_vec())]),
+                &BTreeSet::from([key(1), key(2)]),
+            )
+            .unwrap();
+
+        assert_eq!(store.read_symbols(key(1)), Some(b"one".to_vec()));
+        assert_eq!(store.read_symbols(key(2)), Some(b"two".to_vec()));
+        assert!(!dir.join("stray-dir").exists());
     }
 
     #[test]

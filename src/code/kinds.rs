@@ -2,13 +2,10 @@
 //! and its visibility. A resolver states each from the file's bytes; the
 //! second step adds what the tree says of a whole file (`roles.rs`).
 
-use serde::{Deserialize, Serialize};
-
 /// The kind of a definition. A kind is a different thing in the source,
 /// never a guess: a `static` is no constant, a `union` no struct, and a
 /// `pub use` leaf a re-export of something defined elsewhere.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DefinitionKind {
     /// A `mod`, inline or declared.
     Module,
@@ -46,6 +43,29 @@ pub(crate) enum DefinitionKind {
 }
 
 impl DefinitionKind {
+    /// Every kind, in the order of their codes in a cache entry.
+    pub(super) const ALL: [Self; 19] = [
+        Self::Module,
+        Self::Struct,
+        Self::Union,
+        Self::Enum,
+        Self::Trait,
+        Self::Impl,
+        Self::Function,
+        Self::Method,
+        Self::Field,
+        Self::Variant,
+        Self::Constant,
+        Self::Static,
+        Self::TypeAlias,
+        Self::AssociatedType,
+        Self::Macro,
+        Self::Reexport,
+        Self::Key,
+        Self::Target,
+        Self::Heading,
+    ];
+
     /// The kind of the item a Rust keyword opens (`fn`, `struct`, ...),
     /// in a container whose `fn`s are methods or not; `None` for a word
     /// that opens no item.
@@ -77,8 +97,7 @@ pub(super) enum Container {
 }
 
 /// Whether a definition is test code or the code a project ships.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Role {
     Code,
     Test,
@@ -96,8 +115,7 @@ impl Role {
 
 /// Who may name a Rust definition, as its source states it. A
 /// `pub(in path)` keeps no path: no reader asks which.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Visibility {
     /// No modifier, or `pub(self)`.
     Private,
@@ -111,6 +129,15 @@ pub(crate) enum Visibility {
 }
 
 impl Visibility {
+    /// Every visibility, in the order of their codes in a cache entry.
+    pub(super) const ALL: [Self; 5] = [
+        Self::Private,
+        Self::Crate,
+        Self::Super,
+        Self::InPath,
+        Self::Public,
+    ];
+
     /// The visibility a modifier's text states (`pub`, `pub ( crate )`);
     /// `None` for a text that is no modifier.
     pub(super) fn of_modifier(modifier: &str) -> Option<Self> {

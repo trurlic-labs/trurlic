@@ -12,11 +12,12 @@
 //! of the first arm it opens with, under the container it is in, and
 //! that type holds the items the macro's body names.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::index::{Definition, FileIndex, FileKind, Invocation, TypeMacro};
 use super::kinds::DefinitionKind;
 use super::rust::is_word;
+use super::scope::{Scope, ScopeId};
 use super::symbol::Segment;
 
 /// Macros of other crates that define the type their argument at this
@@ -32,37 +33,61 @@ const FOREIGN_TYPE_MACROS: [(&str, usize, DefinitionKind); 2] = [
 /// The manifest that makes a directory a crate.
 pub(crate) const MANIFEST: &str = "Cargo.toml";
 
+/// What the invocations of one file add: scopes past the file's own, and
+/// the definitions in them.
+#[derive(Debug, Default)]
+pub(super) struct Expansion {
+    pub(super) scopes: Vec<Scope>,
+    pub(super) definitions: Vec<Definition>,
+}
+
 /// The definitions the invocations of each Rust file of `files` add, by
 /// path; `files` maps a path to its kind and index, and `crates` is of
 /// the same files.
 pub(super) fn expand<'i>(
     files: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>,
     crates: &Crates<'i>,
-) -> BTreeMap<&'i str, Vec<Definition>> {
-    let mut added = BTreeMap::new();
-    for (&path, (kind, index)) in files {
-        if *kind != FileKind::Rust || index.invocations.is_empty() {
-            continue;
-        }
+) -> BTreeMap<&'i str, Expansion> {
+    files
+        .iter()
+        .filter(|(_, (kind, _))| *kind == FileKind::Rust)
+        .filter_map(|(&path, (_, index))| Some((path, expand_file(path, index, crates)?)))
+        .collect()
+}
+
+/// What the invocations of `index`, the Rust file at `path`, add with the
+/// macros `crates` shows it; `None` when they add nothing.
+pub(super) fn expand_file(path: &str, index: &FileIndex, crates: &Crates<'_>) -> Option<Expansion> {
+    if index.invocations.is_empty() {
+        return None;
+    }
+    {
         let visible = crates.visible_from(path);
         // An invocation that spells the item it defines (`m! { struct X }`)
         // defines it once: the file's own index holds it.
-        let own: BTreeSet<&[Segment]> = index
+        let own: BTreeMap<(Option<ScopeId>, &[Segment]), ScopeId> = index
             .definitions
             .iter()
-            .map(|d| d.path.as_slice())
+            .filter_map(|d| {
+                let scope = index.scopes.get(d.scope.at())?;
+                Some(((scope.parent, scope.name.as_slice()), d.scope))
+            })
             .collect();
-        let definitions: Vec<_> = index
-            .invocations
-            .iter()
-            .flat_map(|invocation| defined_by(invocation, &visible))
-            .filter(|definition| !own.contains(definition.path.as_slice()))
-            .collect();
-        if !definitions.is_empty() {
-            added.insert(path, definitions);
+        let mut expansion = Expansion::default();
+        for invocation in &index.invocations {
+            let Some(defined) = defined_type(invocation, &visible) else {
+                continue;
+            };
+            let mut adding = Adding {
+                base: index.scopes.len(),
+                own: &own,
+                invocation,
+                expansion: &mut expansion,
+            };
+            adding.define(defined);
         }
+        (!expansion.definitions.is_empty()).then_some(expansion)
     }
-    added
 }
 
 /// The type-defining macros of the tree, by the crate that holds them,
@@ -86,7 +111,12 @@ impl<'i> Crates<'i> {
             .iter()
             .filter(|(_, (_, index))| {
                 let workspace = [Segment::name("workspace")];
-                index.definitions.iter().any(|d| d.path == workspace)
+                index.definitions.iter().any(|d| {
+                    index
+                        .scopes
+                        .get(d.scope.at())
+                        .is_some_and(|scope| scope.parent.is_none() && scope.name == workspace)
+                })
             })
             .map(|(path, _)| parent(path))
             .collect();
@@ -149,7 +179,12 @@ impl<'i> Crates<'i> {
 }
 
 /// What `invocation` defines: the type's name and kind, and its members.
-type Defined<'a> = (&'a String, DefinitionKind, &'a [(String, DefinitionKind)]);
+type Defined<'a> = (
+    &'a String,
+    DefinitionKind,
+    &'a [(String, DefinitionKind)],
+    &'a [(String, DefinitionKind)],
+);
 
 /// The type `invocation` defines with a macro of `visible` or a foreign
 /// one, and its members.
@@ -170,6 +205,7 @@ fn defined_type<'a>(
                     name,
                     arm.kind,
                     found.members.as_slice(),
+                    found.items.as_slice(),
                 ))
             })
         });
@@ -177,42 +213,66 @@ fn defined_type<'a>(
         let (_, position, kind) = FOREIGN_TYPE_MACROS
             .iter()
             .find(|(name, ..)| *name == invocation.macro_name)?;
-        argument(tokens, *position).map(|name| (name, *kind, &[][..]))
+        argument(tokens, *position).map(|name| (name, *kind, &[][..], &[][..]))
     };
     named.or_else(foreign)
 }
 
-/// The definitions `invocation` adds: none, or a type and its members.
-fn defined_by(
-    invocation: &Invocation,
-    visible: &BTreeMap<&str, Vec<&TypeMacro>>,
-) -> Vec<Definition> {
-    let Some((name, kind, members)) = defined_type(invocation, visible) else {
-        return Vec::new();
-    };
-    // clone: each definition owns its path.
-    let mut path = invocation.container.clone();
-    path.push(Segment::name(name));
-    // The invocation states no visibility: the macro's body does.
-    let define = |path: Vec<Segment>, kind| Definition {
-        path,
-        kind,
-        span: invocation.span,
-        hash: invocation.hash,
-        role: invocation.role,
-        visibility: None,
-    };
-    let mut definitions: Vec<_> = members
-        .iter()
-        .map(|(member, kind)| {
-            // clone: each definition owns its path.
-            let mut member_path = path.clone();
-            member_path.push(Segment::name(member));
-            define(member_path, *kind)
-        })
-        .collect();
-    definitions.push(define(path, kind));
-    definitions
+/// The type one invocation defines being added to its file's expansion.
+struct Adding<'a, 'i> {
+    /// The number of the file's own scopes: an added scope's id is past
+    /// them.
+    base: usize,
+    /// The file's own definitions, by their parent and name.
+    own: &'a BTreeMap<(Option<ScopeId>, &'i [Segment]), ScopeId>,
+    invocation: &'a Invocation,
+    expansion: &'a mut Expansion,
+}
+
+impl Adding<'_, '_> {
+    /// Define the type and each member it holds that the file does not
+    /// define itself, over the invocation's span. The invocation states no
+    /// visibility: the macro's body does.
+    fn define(&mut self, (name, kind, members, items): Defined<'_>) {
+        let container = self.invocation.container;
+        for (item, kind) in items {
+            self.scope(container, Segment::name(item), *kind);
+        }
+        let Some(type_scope) = self.scope(container, Segment::name(name), kind) else {
+            return;
+        };
+        for (member, kind) in members {
+            self.scope(Some(type_scope), Segment::name(member), *kind);
+        }
+    }
+
+    /// The scope of `name` under `parent`: the file's own definition of
+    /// it, or one added and defined as a `kind`.
+    fn scope(
+        &mut self,
+        parent: Option<ScopeId>,
+        name: Segment,
+        kind: DefinitionKind,
+    ) -> Option<ScopeId> {
+        let key = (parent, std::slice::from_ref(&name));
+        if let Some(own) = self.own.get(&key) {
+            return Some(*own);
+        }
+        let id = ScopeId::of(self.base + self.expansion.scopes.len())?;
+        self.expansion.scopes.push(Scope {
+            parent,
+            name: vec![name],
+        });
+        self.expansion.definitions.push(Definition {
+            scope: id,
+            kind,
+            span: self.invocation.span,
+            hash: self.invocation.hash,
+            role: self.invocation.role,
+            visibility: None,
+        });
+        Some(id)
+    }
 }
 
 /// The argument at `position` of comma-separated `tokens`, when it is one
@@ -287,16 +347,19 @@ mod tests {
             .map(|(path, kind, index)| (*path, (*kind, index)))
             .collect();
         let crates = Crates::of(&tree);
-        expand(&tree, &crates)
-            .into_iter()
-            .flat_map(|(path, definitions)| {
-                definitions.into_iter().map(move |definition| {
-                    let names: Vec<String> =
-                        definition.path.iter().map(ToString::to_string).collect();
-                    format!("{path}: {}", names.join("::"))
-                })
-            })
-            .collect()
+        let mut found = Vec::new();
+        for (path, expansion) in expand(&tree, &crates) {
+            let (_, index) = tree[path];
+            let scopes = crate::code::scope::Scopes {
+                file: &index.scopes,
+                added: &expansion.scopes,
+            };
+            for definition in &expansion.definitions {
+                let named = crate::code::testing::path(scopes, definition.scope);
+                found.push(format!("{path}: {named}"));
+            }
+        }
+        found
     }
 
     const EXPORTED: &str =

@@ -1,6 +1,6 @@
 component = "code"
-choice = "An invocation defines the type a type-defining macro of its crate, or an exported one of its workspace, gives the name after an arm's words; and every item its own tokens spell"
-reason = "tree-sitter leaves a macro invocation's tokens unparsed, and real code defines types and functions through macros, so two lexical rules read them. First, a macro_rules! macro whose arm opens, after an optional attribute repetition, with literal words and a $name:ident its body defines a type of, defines that type where it is invoked with those words, and the type holds each item its body names; the macro is the crate's own (nearest Cargo.toml) or a #[macro_export] one of the workspace, which a crate's macro of the same name shadows. pyo3's create_exception! and import_exception! come from another crate, so FOREIGN_TYPE_MACROS lists them by argument position. Second, an item keyword followed by a name in an invocation where an item or statement stands is a definition under the invocation's container, from its attributes to its body: define! { struct Name }, proptest! { fn case() }, thread_local! { static SLOT }. A macro_rules! body is a template and defines nothing. A file's index keeps the facts; the expansion is a pure step over the tree."
+choice = "An invocation defines the type a type-defining macro gives the name after an arm's words, with its impl blocks' items, and every item its own tokens spell, with its fields and variants"
+reason = "tree-sitter leaves a macro invocation's tokens unparsed, and real code defines types and functions through macros, so two lexical rules read them. First, a macro_rules! macro whose arm opens, after an optional attribute repetition, with literal words and a $name:ident a body defines a type of, defines that type where it is invoked with those words, its kind the keyword of the arm's own body or of the arm that body hands the name to; the macro is the crate's own or a #[macro_export] one of the workspace. The items of each impl block over a metavariable in any body are members of the type, and the other items at a body's top level are items of the invocation's container; an item reached only through a recursive call's tokens is not seen. pyo3's create_exception! and import_exception! are listed by argument position. Second, an item keyword followed by a name, not a path, in an invocation where an item or statement stands is a definition under its container, spanning to its body or to the next item, with the named fields and variants its braces hold. A macro_rules! body itself defines nothing: it is a template, whose names exist only where it is invoked."
 alternatives = [
     "Expand macros fully: rejected because it needs a Rust compiler's name resolution and macro engine, far past what an anchor asks",
     "Count names in macro bodies as definitions of the file: rejected because a template's names exist only where it is invoked",
@@ -18,7 +18,8 @@ anchors = [
     { file = "src/code/expand.rs", symbol = "Crates::visible_from" },
     { file = "src/code/expand.rs", symbol = "FOREIGN_TYPE_MACROS" },
     { file = "src/code/expand.rs", symbol = "expand" },
-    { file = "src/code/rust.rs", symbol = "Walk::read_invocation" },
-    { file = "src/code/rust/macros.rs", symbol = "spelled_items" },
+    { file = "src/code/rust/invocations.rs", symbol = "Walk::read_invocation" },
+    { file = "src/code/rust/macros.rs", symbol = "body_items" },
     { file = "src/code/rust/macros.rs", symbol = "type_macro" },
+    { file = "src/code/rust/spelled.rs", symbol = "spelled_items" },
 ]

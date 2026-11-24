@@ -1,6 +1,6 @@
 component = "sources"
-choice = "The walk takes every Rust file and Cargo.toml under the code root, passing over dot entries, directories holding .git or CACHEDIR.TAG, and symlinked directories; it runs no git"
-reason = "A Rust file's definitions can come from any crate's macros, and the anchor findings to come count a name's definitions across the tree, so the facts hold every Rust file and manifest; an anchor's own path is looked at wherever it is, a dot directory or an ignored file included. The rule says what the tree's sources are without asking git: a dot entry is tool or editor state, the graph and .git among them; a directory holding .git is the top of another work tree (a submodule, a nested clone, a linked worktree placed inside this one), whose definitions would count twice; CACHEDIR.TAG marks a cache, which cargo writes into every target directory; and a symlinked directory is never followed, so a loop cannot hold the walk and nothing outside the tree is read. status is called often and spawns no process on a tree that holds its graph, and a tree with no git is walked by the same rule, so the answer does not change with git's presence."
+choice = "The walk takes every Rust file and Cargo.toml under the code root, passing over dot entries, directories holding .git or CACHEDIR.TAG, and every symlink; it runs no git"
+reason = "A Rust file's definitions can come from any crate's macros, and a count of a name's definitions across the tree needs every one, so the facts hold every Rust file and manifest; an anchor's own path is looked at wherever it is, a dot directory or an ignored file included. The rule says what the tree's sources are without asking git: a dot entry is tool or editor state, the graph and .git among them; a directory holding .git is the top of another work tree (a submodule, a nested clone, a linked worktree placed inside this one), whose definitions would count twice; CACHEDIR.TAG marks a cache, which cargo writes into every target directory; and a symlink, to a file or a directory, is never followed, so a loop cannot hold the walk and nothing outside the tree is read. status is called often and spawns no process on a tree that holds its graph. The cost is stated: a vendored tree with no CACHEDIR.TAG and no .git is walked, and its exported macros are visible to the workspace it sits in, as git's ignore rules would not have it."
 alternatives = [
     "git ls-files with --others --exclude-standard: rejected because it spawns a process on every call, and a tree with no git would need a second rule",
     "Parse .gitignore files: rejected because git's ignore rules have many layers (global, info/exclude, negation) that a partial copy would get wrong",
@@ -15,6 +15,7 @@ origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "src/sources/walk.rs", symbol = "SKIPPED_MARKERS" },
+    { file = "src/sources/walk.rs", symbol = "manifests_above" },
     { file = "src/sources/walk.rs", symbol = "the_walk_takes_the_trees_rust_files_and_manifests_by_its_rule" },
     { file = "src/sources/walk.rs", symbol = "tree_sources" },
 ]

@@ -1,30 +1,33 @@
-//! A file's index: the definitions it holds, each with its path, span and
-//! span hash, and for Rust the facts a second step expands macros from.
-//! An index is a function of the file's kind and bytes alone, so a cache
-//! keyed by the two holds it whatever path or tree the bytes are under.
+//! A file's index: the scopes of its paths, the definitions it holds,
+//! each with its scope, what it is, its span and span hash, and for Rust
+//! the facts a second step expands macros from. An index is a function
+//! of the file's kind and bytes alone, so a cache keyed by the two holds
+//! it whatever path or tree the bytes are under.
 
 use std::fmt;
-use std::ops::Range;
-
-use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 use super::kinds::{DefinitionKind, Role, Visibility};
-use super::span::{Lines, Span, SpanHash};
-use super::symbol::{Segment, Syntax};
-use super::{json, make, markdown, rust, toml};
+use super::scope::{MAX_NESTING, Scope, ScopeId};
+use super::span::{Span, SpanHash};
+use super::symbol::Syntax;
+use super::{json, make, markdown, rust, syntax, toml};
 
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 2;
+pub(crate) const INDEX_FORMAT: u32 = 3;
 
-/// The containers a definition may be nested in. A file that nests one
-/// deeper has no index: every definition's path is a copy of its
-/// container's, so the nesting bounds the index's size.
-pub(crate) const MAX_NESTING: usize = 64;
+/// The identity of tree-sitter-rust, computed once.
+static RUST_GRAMMAR: LazyLock<[u8; 32]> = LazyLock::new(|| {
+    syntax::grammar_identity(
+        &tree_sitter_rust::LANGUAGE.into(),
+        tree_sitter_rust::NODE_TYPES,
+    )
+});
 
 /// A kind of file the index has a resolver for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum FileKind {
     Rust,
     Toml,
@@ -57,6 +60,18 @@ impl FileKind {
         }
     }
 
+    /// The identity of the grammar the kind is parsed with, in a cache
+    /// key: a grammar's new version may parse the same bytes into
+    /// another tree, which no fixture of the index need show. A lexical
+    /// kind's rules are the index's own, so its identity is
+    /// [`INDEX_FORMAT`]'s.
+    pub(crate) fn grammar(self) -> [u8; 32] {
+        match self {
+            Self::Rust => *RUST_GRAMMAR,
+            Self::Toml | Self::Json | Self::Make | Self::Markdown => [0; 32],
+        }
+    }
+
     /// The kind's name in a cache key.
     pub(crate) const fn name(self) -> &'static str {
         match self {
@@ -69,11 +84,11 @@ impl FileKind {
     }
 }
 
-/// One definition: its path from the outermost container, what it is,
-/// where it is, and the hash of what it holds.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// One definition: its scope, whose path names it, what it is, where it
+/// is, and the hash of what it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Definition {
-    pub(crate) path: Vec<Segment>,
+    pub(crate) scope: ScopeId,
     pub(crate) kind: DefinitionKind,
     pub(crate) span: Span,
     pub(crate) hash: SpanHash,
@@ -86,32 +101,10 @@ pub(crate) struct Definition {
     pub(crate) visibility: Option<Visibility>,
 }
 
-impl Definition {
-    /// The definition of `kind` at `path` of bytes `range` of `text`, a
-    /// file a lexical resolver reads: its hash is of the
-    /// whitespace-normalized text, and it is code with no visibility.
-    pub(super) fn lexical(
-        path: Vec<Segment>,
-        kind: DefinitionKind,
-        text: &str,
-        lines: &Lines,
-        range: Range<usize>,
-    ) -> Self {
-        Self {
-            path,
-            kind,
-            span: lines.span(range.start, range.end),
-            hash: SpanHash::of_text(text.get(range).unwrap_or_default()),
-            role: Role::Code,
-            visibility: None,
-        }
-    }
-}
-
 /// A `macro_rules!` macro whose invocations can define a type: the arms
-/// that do, and the names its body gives items, each with the kind its
-/// keyword opens as a member of the type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// that do, the items its body's `impl`s over the type hold, members of
+/// the type, and the other items its body names.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeMacro {
     pub(crate) name: String,
     /// Marked `#[macro_export]`: its workspace invokes it, not its crate
@@ -119,11 +112,14 @@ pub(crate) struct TypeMacro {
     pub(crate) exported: bool,
     pub(crate) arms: Vec<TypeArm>,
     pub(crate) members: Vec<(String, DefinitionKind)>,
+    /// The other items its body names, items of the invocation's
+    /// container.
+    pub(crate) items: Vec<(String, DefinitionKind)>,
 }
 
 /// An arm of a [`TypeMacro`]: the literal words it opens with before the
 /// `$name:ident` its body defines a type of, and that type's kind.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeArm {
     pub(crate) words: Vec<String>,
     pub(crate) kind: DefinitionKind,
@@ -132,12 +128,12 @@ pub(crate) struct TypeArm {
 /// A macro invocation in item position: what a type-defining macro of
 /// the crate, or one of [`FOREIGN_TYPE_MACROS`](super::expand), would
 /// make of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Invocation {
     /// The macro's name, its path dropped (`ir::id!` is `id`).
     pub(crate) macro_name: String,
-    /// The path of the container the invocation is in.
-    pub(crate) container: Vec<Segment>,
+    /// The scope of the container the invocation is in; `None` at the top.
+    pub(crate) container: Option<ScopeId>,
     pub(crate) span: Span,
     pub(crate) hash: SpanHash,
     /// Its first tokens, its attributes and comments left out.
@@ -146,26 +142,40 @@ pub(crate) struct Invocation {
     pub(crate) role: Role,
 }
 
+/// A `mod name;` whose items are in a file of their own: the module's
+/// scope, whether the declaration is test code, and the file a
+/// `#[path = ".."]` names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ModuleFile {
+    pub(crate) scope: ScopeId,
+    pub(crate) role: Role,
+    pub(crate) path: Option<String>,
+}
+
 /// What a file of a kind with a resolver defines.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FileIndex {
-    /// Sorted by span, then path.
+    pub(crate) scopes: Vec<Scope>,
+    /// Sorted by span, then scope.
     pub(crate) definitions: Vec<Definition>,
     pub(crate) macros: Vec<TypeMacro>,
     /// Sorted by span.
     pub(crate) invocations: Vec<Invocation>,
+    /// In the order of the file.
+    pub(crate) module_files: Vec<ModuleFile>,
 }
 
 /// Why a file's bytes give no index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IndexFault {
     /// The bytes are not UTF-8 from byte `at` on.
     NotUtf8 { at: usize },
     /// A TOML or JSON file that does not parse, from about byte `at`.
     Syntax { at: usize },
-    /// The parser gave up past its budget of steps for the file's size.
+    /// The parse, or the work after it, ran past its budget for the
+    /// file's size.
     TooComplex,
-    /// A definition nested in more than [`MAX_NESTING`] containers.
+    /// A path of more than [`MAX_NESTING`] segments.
     TooDeep,
     /// The grammar is of an ABI the parser does not read.
     Grammar,
@@ -176,8 +186,8 @@ impl fmt::Display for IndexFault {
         match self {
             Self::NotUtf8 { at } => write!(f, "is not UTF-8 from byte {at}"),
             Self::Syntax { at } => write!(f, "does not parse, near byte {at}"),
-            Self::TooComplex => f.write_str("takes the parser past its budget of steps"),
-            Self::TooDeep => write!(f, "nests definitions deeper than {MAX_NESTING} containers"),
+            Self::TooComplex => f.write_str("takes the index past its budget of work"),
+            Self::TooDeep => write!(f, "nests a path deeper than {MAX_NESTING} segments"),
             Self::Grammar => f.write_str("has a grammar of an ABI the parser does not read"),
         }
     }
@@ -190,25 +200,18 @@ pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Result<FileIndex, IndexFaul
     })?;
     let mut index = match kind {
         FileKind::Rust => rust::index(text)?,
-        FileKind::Toml => definitions_only(toml::definitions(text)?),
-        FileKind::Json => definitions_only(json::definitions(text)?),
-        FileKind::Make => definitions_only(make::definitions(text)),
-        FileKind::Markdown => definitions_only(markdown::definitions(text)),
+        FileKind::Toml => toml::index(text)?,
+        FileKind::Json => json::index(text)?,
+        FileKind::Make => make::index(text)?,
+        FileKind::Markdown => markdown::index(text)?,
     };
     index
         .definitions
-        .sort_unstable_by(|a, b| a.span.cmp(&b.span).then_with(|| a.path.cmp(&b.path)));
+        .sort_unstable_by_key(|definition| (definition.span, definition.scope));
     index
         .invocations
         .sort_unstable_by_key(|invocation| invocation.span);
     Ok(index)
-}
-
-fn definitions_only(definitions: Vec<Definition>) -> FileIndex {
-    FileIndex {
-        definitions,
-        ..FileIndex::default()
-    }
 }
 
 #[cfg(test)]
@@ -238,7 +241,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 2] = [
+    const FINGERPRINTS: [(u32, &str); 3] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -246,6 +249,10 @@ mod tests {
         (
             2,
             "01389c905b0ad5576b8b5dd4d082fc317d4995ca273fd3e29e1caa33e8374e72",
+        ),
+        (
+            3,
+            "b4570da0c513783803b110869c4355e155f3e6c81b226233962a84e49517dac8",
         ),
     ];
 
@@ -271,7 +278,7 @@ mod tests {
                 continue;
             };
             let indexed = index(kind, &std::fs::read(&path).unwrap());
-            hasher.update(&serde_json::to_vec(&indexed).unwrap());
+            hasher.update(&crate::code::encoding::encode(&indexed));
         }
         let fingerprint = hasher.finalize().to_hex().to_string();
 

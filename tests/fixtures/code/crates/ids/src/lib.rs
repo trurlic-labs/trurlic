@@ -11,6 +11,7 @@ macro_rules! numbered_id {
     };
 }
 
+/// Not #[macro_export]: its crate alone invokes it.
 macro_rules! crate_only_id {
     ($name:ident) => { pub struct $name(u8); };
 }

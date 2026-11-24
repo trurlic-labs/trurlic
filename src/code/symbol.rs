@@ -16,10 +16,8 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
-
 /// One name of a definition's path, or of a symbol.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Segment {
     /// A name, with its runs of whitespace made one space.
     Name(String),
@@ -91,7 +89,7 @@ pub(crate) enum Syntax {
 }
 
 /// Why a symbol is not in the grammar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SymbolFault {
     /// A `::` at an end or beside another, or a segment of whitespace.
     EmptySegment,
@@ -125,12 +123,13 @@ impl Symbol {
             .map(Self)
     }
 
-    /// Whether this symbol names the definition at `path`: the path ends
-    /// with the symbol's segments, a trait segment of the path the symbol
-    /// leaves out skipped, its last segment never.
-    pub(crate) fn names(&self, path: &[Segment]) -> bool {
+    /// Whether this symbol names the definition whose path's segments,
+    /// from its last, are `from_end`: the path ends with the symbol's
+    /// segments, a trait segment of the path the symbol leaves out
+    /// skipped, its last segment never.
+    pub(crate) fn names<'a>(&self, from_end: impl Iterator<Item = &'a Segment>) -> bool {
         let mut wanted = self.0.iter().rev().peekable();
-        let mut defined = path.iter().rev().enumerate();
+        let mut defined = from_end.enumerate();
         while let Some(want) = wanted.peek() {
             let Some((from_end, segment)) = defined.next() else {
                 return false;
@@ -144,10 +143,14 @@ impl Symbol {
         true
     }
 
-    /// Whether this symbol is the whole path of the definition at `path`,
-    /// no segment left out.
-    pub(crate) fn is_path_of(&self, path: &[Segment]) -> bool {
-        self.0.len() == path.len() && self.names(path)
+    /// Whether this symbol is the whole path whose segments, from its
+    /// last, are `from_end`, no segment left out.
+    pub(crate) fn is_path_of<'a>(
+        &self,
+        from_end: impl Iterator<Item = &'a Segment> + Clone,
+    ) -> bool {
+        // clone: an iterator of references, walked once to count.
+        self.0.len() == from_end.clone().count() && self.names(from_end)
     }
 }
 
@@ -220,16 +223,21 @@ mod tests {
         rust(text).0
     }
 
+    /// Whether `symbol` names `path`.
+    fn names(symbol: &str, path: &[Segment]) -> bool {
+        rust(symbol).names(path.iter().rev())
+    }
+
     #[test]
     fn a_symbol_names_each_definition_its_path_ends_with() {
         let method = path("store::Store::open");
 
-        assert!(rust("Store::open").names(&method));
-        assert!(rust("open").names(&method));
-        assert!(rust("store::Store::open").names(&method));
-        assert!(!rust("Store").names(&method));
-        assert!(!rust("Other::open").names(&method));
-        assert!(!rust("x::store::Store::open").names(&method));
+        assert!(names("Store::open", &method));
+        assert!(names("open", &method));
+        assert!(names("store::Store::open", &method));
+        assert!(!names("Store", &method));
+        assert!(!names("Other::open", &method));
+        assert!(!names("x::store::Store::open", &method));
     }
 
     #[test]
@@ -237,31 +245,31 @@ mod tests {
         let method = path("Config::<Display>::fmt");
         let block = path("Config::<Display>");
 
-        assert!(rust("Config::fmt").names(&method));
-        assert!(rust("Config::<Display>::fmt").names(&method));
-        assert!(rust("Config::<fmt::Display>::fmt").names(&method));
-        assert!(!rust("Config::<Debug>::fmt").names(&method));
-        assert!(rust("Config::<Display>").names(&block));
-        assert!(!rust("Config").names(&block));
-        assert!(!rust("Config::<Display>::fmt").names(&path("Config::fmt")));
+        assert!(names("Config::fmt", &method));
+        assert!(names("Config::<Display>::fmt", &method));
+        assert!(names("Config::<fmt::Display>::fmt", &method));
+        assert!(!names("Config::<Debug>::fmt", &method));
+        assert!(names("Config::<Display>", &block));
+        assert!(!names("Config", &block));
+        assert!(!names("Config::<Display>::fmt", &path("Config::fmt")));
     }
 
     #[test]
     fn a_trait_without_arguments_names_the_impl_of_every_argument() {
         let from_kind = path("Table::<From<Kind>>::from");
 
-        assert!(rust("Table::<From>::from").names(&from_kind));
-        assert!(rust("Table::<From < Kind >>::from").names(&from_kind));
-        assert!(!rust("Table::<From<Site>>::from").names(&from_kind));
-        assert!(!rust("From<Kind>").names(&path("Table::<From<Kind>>")));
+        assert!(names("Table::<From>::from", &from_kind));
+        assert!(names("Table::<From < Kind >>::from", &from_kind));
+        assert!(!names("Table::<From<Site>>::from", &from_kind));
+        assert!(!names("From<Kind>", &path("Table::<From<Kind>>")));
     }
 
     #[test]
     fn a_symbol_is_the_whole_path_only_of_a_definition_it_leaves_nothing_of() {
-        assert!(rust("open").is_path_of(&path("open")));
-        assert!(!rust("open").is_path_of(&path("Store::open")));
-        assert!(rust("Table::<From>").is_path_of(&path("Table::<From<Kind>>")));
-        assert!(!rust("Table::fmt").is_path_of(&path("Table::<Display>::fmt")));
+        assert!(rust("open").is_path_of(path("open").iter().rev()));
+        assert!(!rust("open").is_path_of(path("Store::open").iter().rev()));
+        assert!(rust("Table::<From>").is_path_of(path("Table::<From<Kind>>").iter().rev()));
+        assert!(!rust("Table::fmt").is_path_of(path("Table::<Display>::fmt").iter().rev()));
     }
 
     #[test]

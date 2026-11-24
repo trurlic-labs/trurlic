@@ -78,9 +78,11 @@ fn parse_within(text: &str, language: &Language, budget: usize) -> Result<Tree, 
     }
 }
 
-/// The byte ranges of a tree's leaf tokens, in order, comments and every
-/// other extra left out, and tokens of no width (the parser's inserted
-/// missing tokens) too.
+/// The byte ranges of a tree's tokens, in order: its leaves, and each
+/// literal as one token over its whole range, so a string's prefix and
+/// delimiters, which a grammar may hide (`br"x"`, `r#"x"#`), are hashed
+/// with its content. Comments and every other extra are left out, and
+/// tokens of no width (the parser's inserted missing tokens) too.
 pub(super) struct Leaves {
     ranges: Vec<(usize, usize)>,
 }
@@ -91,11 +93,11 @@ impl Leaves {
         let mut cursor = tree.walk();
         'walk: loop {
             let node = cursor.node();
-            let descend = !node.is_extra() && node.child_count() > 0;
-            if descend && cursor.goto_first_child() {
+            let unit = node.child_count() == 0 || node.kind().ends_with("_literal");
+            if !node.is_extra() && !unit && cursor.goto_first_child() {
                 continue;
             }
-            if !node.is_extra() && node.child_count() == 0 && node.end_byte() > node.start_byte() {
+            if !node.is_extra() && unit && node.end_byte() > node.start_byte() {
                 ranges.push((node.start_byte(), node.end_byte()));
             }
             while !cursor.goto_next_sibling() {
@@ -107,18 +109,43 @@ impl Leaves {
         Self { ranges }
     }
 
-    /// The hash of the tokens within bytes `start..end` of `text`.
-    pub(super) fn hash(&self, text: &str, start: usize, end: usize) -> SpanHash {
+    /// The hash of the tokens within bytes `start..end` of `text`, and how
+    /// many it covers.
+    pub(super) fn hash(&self, text: &str, start: usize, end: usize) -> (SpanHash, usize) {
         let first = self.ranges.partition_point(|&(from, _)| from < start);
-        let tokens = self
-            .ranges
-            .get(first..)
+        let within = self.ranges.get(first..).unwrap_or_default();
+        let count = within.partition_point(|&(_, to)| to <= end);
+        let tokens = within
+            .get(..count)
             .unwrap_or_default()
             .iter()
-            .take_while(|&&(_, to)| to <= end)
             .map(|&(from, to)| text.as_bytes().get(from..to).unwrap_or_default());
-        SpanHash::of_tokens(tokens)
+        (SpanHash::of_tokens(tokens), count)
     }
+}
+
+/// The identity of a grammar: its ABI, its version, the counts of its
+/// symbols, fields and parse states, and its node types, hashed.
+pub(super) fn grammar_identity(language: &Language, node_types: &str) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    let version = language.metadata().map_or([0; 3], |found| {
+        [
+            found.major_version,
+            found.minor_version,
+            found.patch_version,
+        ]
+    });
+    for count in [
+        language.abi_version(),
+        language.node_kind_count(),
+        language.parse_state_count(),
+        language.field_count(),
+    ] {
+        hasher.update(&(count as u64).to_le_bytes());
+    }
+    hasher.update(&version);
+    hasher.update(node_types.as_bytes());
+    *hasher.finalize().as_bytes()
 }
 
 /// The text of `node` in `text`.
@@ -138,11 +165,77 @@ mod tests {
     fn a_hash_of_leaves_ignores_comments_and_layout() {
         let one = "fn f(a: u8) -> u8 { a + 1 }";
         let two = "/// Doc.\nfn f(\n    a: u8 // why\n) -> u8 {\n    a /* x */ + 1\n}";
-        let hash = |text: &str| Leaves::of(&rust_tree(text)).hash(text, 0, text.len());
+        let hash = |text: &str| Leaves::of(&rust_tree(text)).hash(text, 0, text.len()).0;
 
         assert_eq!(hash(one), hash(two));
         assert_ne!(hash(one), hash("fn f(a: u8) -> u8 { a + 2 }"));
         assert_ne!(hash("fn f() { \"a b\" }"), hash("fn f() { \"a  b\" }"));
+    }
+
+    #[test]
+    fn a_literal_is_hashed_with_its_prefix_and_delimiters() {
+        let hash = |text: &str| Leaves::of(&rust_tree(text)).hash(text, 0, text.len()).0;
+        let literals = [
+            "r\"abc\"",
+            "br\"abc\"",
+            "r#\"abc\"#",
+            "cr\"abc\"",
+            "\"abc\"",
+            "b\"abc\"",
+            "c\"abc\"",
+            "'a'",
+            "b'a'",
+            "1u8",
+            "1i8",
+        ];
+        let hashes: std::collections::BTreeSet<SpanHash> = literals
+            .iter()
+            .map(|literal| hash(&format!("fn f() {{ let x = {literal}; }}")))
+            .collect();
+
+        assert_eq!(hashes.len(), literals.len());
+    }
+
+    #[test]
+    fn every_byte_but_comments_and_whitespace_is_in_one_token() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for file in [
+            "src/code/rust.rs",
+            "tests/fixtures/code/crates/ledger/src/lib.rs",
+        ] {
+            let text = std::fs::read_to_string(root.join(file)).unwrap();
+            let tree = rust_tree(&text);
+            let mut covered = vec![false; text.len()];
+            for &(from, to) in &Leaves::of(&tree).ranges {
+                for byte in &mut covered[from..to] {
+                    assert!(!*byte, "{file}: byte {from} in two tokens");
+                    *byte = true;
+                }
+            }
+            let mut comments = vec![false; text.len()];
+            let mut cursor = tree.walk();
+            'walk: loop {
+                let node = cursor.node();
+                if node.is_extra() {
+                    comments[node.byte_range()].fill(true);
+                } else if cursor.goto_first_child() {
+                    continue;
+                }
+                while !cursor.goto_next_sibling() {
+                    if !cursor.goto_parent() {
+                        break 'walk;
+                    }
+                }
+            }
+            for (at, byte) in text.bytes().enumerate() {
+                let silent = byte.is_ascii_whitespace() || comments[at];
+                assert!(
+                    covered[at] || silent,
+                    "{file}: byte {at} ({:?}) is in no token",
+                    byte as char
+                );
+            }
+        }
     }
 
     #[test]
@@ -154,7 +247,7 @@ mod tests {
             leaves.hash(text, 0, 9),
             Leaves::of(&rust_tree("fn a() {}")).hash("fn a() {}", 0, 9)
         );
-        assert_ne!(leaves.hash(text, 0, 9), leaves.hash(text, 10, 19));
+        assert_ne!(leaves.hash(text, 0, 9).0, leaves.hash(text, 10, 19).0);
     }
 
     #[test]

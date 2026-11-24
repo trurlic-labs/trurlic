@@ -7,10 +7,11 @@ use std::io;
 
 use crate::store::Anchor;
 
-use super::expand::{Crates, expand};
+use super::expand::{Crates, Expansion, MANIFEST, expand, expand_file, file_name, parent};
 use super::index::{Definition, FileIndex, FileKind, IndexFault};
 use super::kinds::Role;
 use super::roles::test_files;
+use super::scope::Scopes;
 use super::span::{Span, SpanHash};
 use super::symbol::{Symbol, SymbolFault};
 
@@ -127,19 +128,61 @@ impl fmt::Display for Resolution {
 /// The entries of one tree by path, `/`-separated from its root, the
 /// definitions the macro invocations of its Rust files add, and the Rust
 /// files that are test code whole.
+///
+/// The tree's own facts, its macros, crates and test files, come from the
+/// files the walk takes alone. A file indexed only because an anchor
+/// names it is read against those and the manifests on its own path, and
+/// adds nothing any other file is read against, so what an anchor
+/// resolves to never depends on which other anchors there are.
 #[derive(Debug)]
 pub(crate) struct CodeFacts {
     entries: BTreeMap<String, Entry>,
-    expanded: BTreeMap<String, Vec<Definition>>,
+    expanded: BTreeMap<String, Expansion>,
     test_files: BTreeSet<String>,
+}
+
+/// Whether `manifest` is a `Cargo.toml` of a directory above `path`, or
+/// beside it.
+fn is_manifest_above(manifest: &str, path: &str) -> bool {
+    let dir = parent(manifest);
+    file_name(manifest) == MANIFEST
+        && (dir.is_empty()
+            || path
+                .strip_prefix(dir)
+                .is_some_and(|rest| rest.starts_with('/')))
+}
+
+/// What a Rust file at `path` outside the walk adds, read against the
+/// tree's files and the manifests of `alone` above it: its expansion, and
+/// whether it is test code whole.
+fn read_alone<'i>(
+    path: &'i str,
+    file: (FileKind, &'i FileIndex),
+    tree: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>,
+    alone: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>,
+) -> (Option<Expansion>, bool) {
+    // clone: the view adds this file and its manifests to the tree's own
+    // map of references, which every other file is read against unchanged.
+    let mut own = tree.clone();
+    own.insert(path, file);
+    own.extend(
+        alone
+            .iter()
+            .filter(|(manifest, _)| is_manifest_above(manifest, path)),
+    );
+    let crates = Crates::of(&own);
+    let expansion = expand_file(path, file.1, &crates);
+    (expansion, test_files(&own, &crates).contains(path))
 }
 
 impl CodeFacts {
     /// The facts of `entries`, which hold every path an anchor to be
-    /// resolved names, and every Rust file and `Cargo.toml` of the tree,
-    /// whose macros a file can invoke: a path absent from them is missing.
-    pub(crate) fn new(entries: BTreeMap<String, Entry>) -> Self {
-        let indexed = entries
+    /// resolved names, every file of `walked` (the tree's Rust files and
+    /// manifests, whose macros a file can invoke) and the manifests above
+    /// each anchored Rust file outside them: a path absent from them is
+    /// missing.
+    pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: &BTreeSet<String>) -> Self {
+        let indexed: BTreeMap<&str, (FileKind, &FileIndex)> = entries
             .iter()
             .filter_map(|(path, entry)| match entry {
                 Entry::File {
@@ -149,15 +192,31 @@ impl CodeFacts {
                 Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
             })
             .collect();
-        let crates = Crates::of(&indexed);
-        let expanded = expand(&indexed, &crates)
+        let (tree, alone): (BTreeMap<_, _>, BTreeMap<_, _>) = indexed
+            .iter()
+            .map(|(path, file)| (*path, *file))
+            .partition(|(path, _)| walked.contains(*path));
+        let crates = Crates::of(&tree);
+        let mut expanded: BTreeMap<String, Expansion> = expand(&tree, &crates)
             .into_iter()
-            .map(|(path, definitions)| (path.to_owned(), definitions))
+            .map(|(path, expansion)| (path.to_owned(), expansion))
             .collect();
-        let test_files = test_files(&indexed, &crates)
+        let mut test_files: BTreeSet<String> = test_files(&tree, &crates)
             .into_iter()
             .map(str::to_owned)
             .collect();
+        for (&path, file) in alone
+            .iter()
+            .filter(|(_, (kind, _))| *kind == FileKind::Rust)
+        {
+            let (expansion, test) = read_alone(path, *file, &tree, &alone);
+            if let Some(expansion) = expansion {
+                expanded.insert(path.to_owned(), expansion);
+            }
+            if test {
+                test_files.insert(path.to_owned());
+            }
+        }
         Self {
             entries,
             expanded,
@@ -166,8 +225,9 @@ impl CodeFacts {
     }
 
     /// Every definition of the tree's indexed files, those its macro
-    /// invocations add included, with its file and its role in the tree:
-    /// test code when its file is.
+    /// invocations add included, with its file, the scopes its path is
+    /// walked through, and its role in the tree: test code when its file
+    /// is.
     #[cfg_attr(
         not(test),
         expect(
@@ -175,24 +235,44 @@ impl CodeFacts {
             reason = "the counts of definitions in and out of anchored spans are the first callers"
         )
     )]
-    pub(crate) fn definitions(&self) -> impl Iterator<Item = (&str, &Definition, Role)> {
-        let indexed = self.entries.iter().filter_map(|(path, entry)| match entry {
-            Entry::File {
-                index: Ok(index), ..
-            } => Some((path, &index.definitions)),
-            Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
-        });
-        indexed
-            .chain(&self.expanded)
-            .flat_map(move |(path, definitions)| {
-                let file_role = match self.test_files.contains(path) {
-                    true => Role::Test,
-                    false => Role::Code,
-                };
-                definitions.iter().map(move |definition| {
-                    (path.as_str(), definition, definition.role.or(file_role))
+    pub(crate) fn definitions(
+        &self,
+    ) -> impl Iterator<Item = (&str, Scopes<'_>, &Definition, Role)> {
+        self.entries.iter().flat_map(move |(path, entry)| {
+            let index = match entry {
+                Entry::File {
+                    index: Ok(index), ..
+                } => Some(index),
+                Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
+            };
+            let file_role = match self.test_files.contains(path) {
+                true => Role::Test,
+                false => Role::Code,
+            };
+            let expansion = self.expanded.get(path);
+            let scopes = index.map(|index| self.scopes(index, expansion));
+            let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
+            index
+                .map_or(&[][..], |index| &index.definitions)
+                .iter()
+                .chain(added)
+                .filter_map(move |definition| {
+                    Some((
+                        path.as_str(),
+                        scopes?,
+                        definition,
+                        definition.role.or(file_role),
+                    ))
                 })
-            })
+        })
+    }
+
+    /// The scopes the paths of `index`'s file are walked through.
+    fn scopes<'a>(&self, index: &'a FileIndex, expansion: Option<&'a Expansion>) -> Scopes<'a> {
+        Scopes {
+            file: &index.scopes,
+            added: expansion.map_or(&[][..], |expansion| &expansion.scopes),
+        }
     }
 
     /// What `anchor` names in this tree.
@@ -225,14 +305,18 @@ impl CodeFacts {
     /// The one definition of `file` that `symbol` names: the one it names,
     /// or among several the one whose whole path it is.
     fn find(&self, file: &str, index: &FileIndex, symbol: &Symbol) -> Resolution {
-        let expanded = self.expanded.get(file).into_iter().flatten();
+        let expansion = self.expanded.get(file);
+        let scopes = self.scopes(index, expansion);
+        let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
         let named: Vec<&Definition> = index
             .definitions
             .iter()
-            .chain(expanded)
-            .filter(|definition| symbol.names(&definition.path))
+            .chain(added)
+            .filter(|definition| symbol.names(scopes.path_from_end(definition.scope)))
             .collect();
-        let mut whole = named.iter().filter(|d| symbol.is_path_of(&d.path));
+        let mut whole = named
+            .iter()
+            .filter(|d| symbol.is_path_of(scopes.path_from_end(d.scope)));
         let found = match (named.as_slice(), whole.next(), whole.next()) {
             ([], _, _) => return Resolution::SymbolMissing,
             ([one], _, _) | (_, Some(one), None) => one,

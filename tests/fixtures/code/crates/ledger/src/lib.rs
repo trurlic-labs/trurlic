@@ -12,6 +12,9 @@ pub(crate) const fn page_count() -> char {
     '{'
 }
 
+/// One per kind of literal, each hashed with its prefix and delimiters.
+pub const SPELLINGS: [&[u8]; 4] = [b"abc", br"abc", br#"abc"#, &[b'a']];
+
 macro_rules! tally {
     () => {
         fn helper_in_a_template() {}
@@ -26,6 +29,9 @@ pub struct Book {
 }
 
 pub struct Weight(u32);
+
+/// The count a page holds.
+pub type PageCount = u32;
 
 pub union Raw {
     bits: u32,

@@ -1,6 +1,6 @@
 component = "code"
-choice = "A source file is refused past 4 MiB, when no regular file, unreadable or not UTF-8, when its parse runs past 64 steps or lexed bytes per byte, and when it nests past 64 containers"
-reason = "The index reads whatever a tree holds, a hostile file among them, and nothing may panic, hang or recurse without bound. The shell asks a file's metadata first, so a FIFO is refused before it is opened and a symlink loop is a read fault, reads at most MAX_SOURCE_FILE_BYTES and one byte more, and takes a file that vanishes between the walk and the read as absent. tree-sitter recovers from anything but can take many steps per byte doing so, and its lexer can rescan the rest of the file from each byte, as an unclosed raw string repeated does; the parser reports every hundred steps, and the lexer is handed the text in chunks through a callback that counts what it serves, so both are bounded by the file's size. The bound counts work, not time, so a file is refused on every machine or on none. Every walk keeps its own stack, and a definition's path is a copy of its container's, so MAX_NESTING bounds the index's size; each fault is a typed outcome the report names."
+choice = "A source file is refused past 4 MiB, unreadable or not UTF-8, when its parse runs past 64 steps or lexed bytes per byte, its later work past 128 units per byte, or a path past 64 segments"
+reason = "The index reads whatever a tree holds, a hostile file among them, and nothing may panic, hang or recurse without bound. The shell asks a file's metadata first, so a FIFO is refused before it is opened and a symlink loop is a read fault, reads at most MAX_SOURCE_FILE_BYTES and one byte more, and takes a file that vanishes between the walk and the read as absent. tree-sitter recovers from anything but can take many steps per byte doing so, and its lexer can rescan the rest of the file from each byte, as an unclosed raw string repeated does; the parser reports every hundred steps, and the lexer is handed the text in chunks through a callback that counts what it serves. After the parse, every token a span hash covers and every token a lexical rule scans is spent from a second budget, MAX_WORK_PER_BYTE, twice MAX_NESTING per byte, since a token is hashed once per container around it: a rule that would run quadratic on some input, as a run of keywords in a macro once did, is refused as TooComplex instead of found by its time. The bounds count work, not time, so a file is refused on every machine or on none. Every walk keeps its own stack, and a path of more than MAX_NESTING segments is TooDeep; each fault is a typed outcome the report names. tree-sitter's own work per syntax error is not counted in its steps, so an error-dense file costs a few microseconds a byte, linear."
 alternatives = [
     "A wall-clock timeout on the parse: rejected because code reads no clock, and a file would be refused on a slow machine and not a fast one",
     "No size cap: rejected because one generated file could hold a call for seconds and its index the memory",
@@ -14,10 +14,11 @@ status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/index.rs", symbol = "MAX_NESTING" },
+    { file = "src/code/scope.rs", symbol = "MAX_NESTING" },
     { file = "src/code/syntax.rs", symbol = "MAX_WORK_PER_BYTE" },
     { file = "src/code/syntax.rs", symbol = "a_lexer_that_rescans_the_file_is_stopped_within_its_budget" },
     { file = "src/code/syntax.rs", symbol = "parse_within" },
+    { file = "src/code/work.rs", symbol = "Work" },
     { file = "src/sources/mod.rs", symbol = "MAX_SOURCE_FILE_BYTES" },
     { file = "src/sources/mod.rs", symbol = "read_source" },
     { file = "src/sources/tests.rs", symbol = "hostile_files_are_refused_with_their_cause" },

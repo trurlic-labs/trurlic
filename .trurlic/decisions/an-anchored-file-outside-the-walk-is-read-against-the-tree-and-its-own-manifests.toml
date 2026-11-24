@@ -1,0 +1,20 @@
+component = "code"
+choice = "The tree's macros, crates and test files come from the files the walk takes; an anchored Rust file outside them is read against those and the manifests above it, and adds nothing to them"
+reason = "What an anchor resolves to must be a function of the tree and that anchor, never of which other anchors there are. When a file outside the walk, in a nested work tree for one, was read against whatever manifests happened to be anchored, its crate changed with the anchor set: alone it saw the root crate's macros, with its own Cargo.toml anchored it did not. So the shell reads, for each anchored Rust file the walk does not take, every Cargo.toml on its path, and the facts build the tree's crates, macro expansion and test files from the walked files alone. Each anchored file outside them is then read against the tree, itself and its own manifests, and its macros, crate and test role reach no other file. A manifest only ever governs the files below it, so the files that share an unwalked directory read the same manifests. The cost is a view per such file, which a tree's anchors rarely hold. Its own unwalked crate's other files are not read, so their macros are not seen."
+alternatives = [
+    "Walk every unwalked directory an anchor points into: rejected because its macros would then reach the walked files and move other anchors",
+    "Resolve each anchor against its own gather of the tree: rejected because the tree would be read once per anchor",
+]
+tags = [
+    "anchors",
+    "determinism",
+]
+status = "proposed"
+origin = "code index review"
+created = "2026-11-24T11:27:16.681896640Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::new" },
+    { file = "src/sources/mod.rs", symbol = "probe_anchored" },
+    { file = "src/sources/tests.rs", symbol = "an_anchor_resolves_alike_whatever_else_is_anchored" },
+    { file = "src/sources/walk.rs", symbol = "manifests_above" },
+]

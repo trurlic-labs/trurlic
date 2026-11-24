@@ -7,23 +7,22 @@
 //! [`MAX_NESTING`], and refuses anything that is not JSON (RFC 8259) at
 //! the byte it fails at.
 
-use super::index::{Definition, IndexFault, MAX_NESTING};
+use super::index::{FileIndex, IndexFault};
 use super::kinds::DefinitionKind;
-use super::span::Lines;
-use super::symbol::{Segment, name_segments};
+use super::lexical::Lexical;
+use super::scope::{MAX_NESTING, ScopeId};
 
-/// The key paths of `text`.
-pub(super) fn definitions(text: &str) -> Result<Vec<Definition>, IndexFault> {
+/// The index of `text`, a JSON file: its key paths.
+pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
     let mut scanner = Scanner {
         text,
         bytes: text.as_bytes(),
         at: 0,
-        lines: Lines::of(text.as_bytes()),
         open: Vec::new(),
-        definitions: Vec::new(),
+        lexical: Lexical::of(text),
     };
     scanner.document()?;
-    Ok(scanner.definitions)
+    Ok(scanner.lexical.finish())
 }
 
 /// A container the scanner is in.
@@ -31,11 +30,11 @@ enum Open {
     /// An object, and the member whose value is being read: its path and
     /// where its key starts.
     Object {
-        path: Vec<Segment>,
-        member: Option<(Vec<Segment>, usize)>,
+        path: Option<ScopeId>,
+        member: Option<(ScopeId, usize)>,
     },
     Array {
-        path: Vec<Segment>,
+        path: Option<ScopeId>,
     },
 }
 
@@ -43,14 +42,13 @@ struct Scanner<'t> {
     text: &'t str,
     bytes: &'t [u8],
     at: usize,
-    lines: Lines,
     open: Vec<Open>,
-    definitions: Vec<Definition>,
+    lexical: Lexical<'t>,
 }
 
 impl Scanner<'_> {
     fn document(&mut self) -> Result<(), IndexFault> {
-        let mut path = Vec::new();
+        let mut path = None;
         loop {
             self.skip_space();
             let Some(end) = self.value(path)? else {
@@ -72,7 +70,7 @@ impl Scanner<'_> {
     /// Read the value at the cursor: its end when it is a scalar or an
     /// empty container, `None` after opening a container with something in
     /// it.
-    fn value(&mut self, path: Vec<Segment>) -> Result<Option<usize>, IndexFault> {
+    fn value(&mut self, path: Option<ScopeId>) -> Result<Option<usize>, IndexFault> {
         match self.bytes.get(self.at) {
             Some(b'{') | Some(b'[') => {
                 let object = self.bytes.get(self.at) == Some(&b'{');
@@ -103,48 +101,43 @@ impl Scanner<'_> {
 
     /// The path of the next value in the innermost container, opened or
     /// past a `,`: an element's, or a member's, whose key it reads.
-    fn next_path(&mut self) -> Result<Vec<Segment>, IndexFault> {
+    fn next_path(&mut self) -> Result<Option<ScopeId>, IndexFault> {
         match self.open.last_mut() {
-            // clone: each element's members own their paths.
-            Some(Open::Array { path }) => Ok(path.clone()),
+            Some(Open::Array { path }) => Ok(*path),
             Some(Open::Object { .. }) => self.key(),
             None => Err(self.fault()),
         }
     }
 
     /// Read a member's key and its `:`; the path of its value.
-    fn key(&mut self) -> Result<Vec<Segment>, IndexFault> {
+    fn key(&mut self) -> Result<Option<ScopeId>, IndexFault> {
         self.skip_space();
         let start = self.at;
         let key = self.string()?;
         self.skip_space();
         self.expect(b':')?;
-        let Some(Open::Object { path, member }) = self.open.last_mut() else {
+        let Some(Open::Object { path, .. }) = self.open.last() else {
             return Err(self.fault());
         };
-        // clone: the member owns its path, and its value's members theirs.
-        let mut member_path = path.clone();
-        member_path.extend(name_segments(&key));
-        *member = Some((member_path.clone(), start));
-        Ok(member_path)
+        let scope = self.lexical.scope(*path, &key)?;
+        if let Some(Open::Object { member, .. }) = self.open.last_mut() {
+            *member = Some((scope, start));
+        }
+        Ok(Some(scope))
     }
 
     /// A value ended at `end`: define the member it is the value of, and
     /// close each container it ends; the path of the next value, or `None`
     /// when the document's value is read.
-    fn close_values(&mut self, mut end: usize) -> Result<Option<Vec<Segment>>, IndexFault> {
+    fn close_values(&mut self, mut end: usize) -> Result<Option<Option<ScopeId>>, IndexFault> {
         loop {
             let close = match self.open.last_mut() {
                 None => return Ok(None),
                 Some(Open::Object { member, .. }) => {
-                    if let Some((path, start)) = member.take() {
-                        self.definitions.push(Definition::lexical(
-                            path,
-                            DefinitionKind::Key,
-                            self.text,
-                            &self.lines,
-                            start..end,
-                        ));
+                    if let Some((scope, start)) = member.take() {
+                        let hash = self.lexical.hash(start..end)?;
+                        self.lexical
+                            .define(scope, DefinitionKind::Key, start..end, hash);
                     }
                     b'}'
                 }
@@ -318,7 +311,7 @@ impl Scanner<'_> {
 mod tests {
     use super::*;
     use crate::code::index::{FileKind, index};
-    use crate::code::symbol::{Symbol, Syntax};
+    use crate::code::testing;
 
     const DOCUMENT: &str = r#"{
   "stages": {"order": ["a", "b"], "parallel": true},
@@ -328,14 +321,7 @@ mod tests {
 }"#;
 
     fn named<'t>(text: &'t str, symbol: &str) -> Vec<&'t str> {
-        let symbol = Symbol::parse(symbol, Syntax::Plain).unwrap();
-        index(FileKind::Json, text.as_bytes())
-            .unwrap()
-            .definitions
-            .iter()
-            .filter(|d| symbol.names(&d.path))
-            .map(|d| &text[d.span.start..d.span.end])
-            .collect()
+        testing::named(FileKind::Json, text, symbol)
     }
 
     #[test]
@@ -372,7 +358,7 @@ mod tests {
             ("tru", 0),
         ] {
             assert_eq!(
-                definitions(text),
+                index(FileKind::Json, text.as_bytes()),
                 Err(IndexFault::Syntax { at }),
                 "{text:?}"
             );
@@ -383,14 +369,11 @@ mod tests {
     fn a_nesting_past_the_bound_is_refused() {
         let nested = |depth: usize| format!("{}1{}", "{\"a\":".repeat(depth), "}".repeat(depth));
 
-        assert_eq!(
-            definitions(&nested(MAX_NESTING)).unwrap().len(),
-            MAX_NESTING
-        );
-        assert_eq!(
-            definitions(&nested(MAX_NESTING + 1)),
-            Err(IndexFault::TooDeep)
-        );
-        assert_eq!(definitions(&nested(1_000_000)), Err(IndexFault::TooDeep));
+        let indexed =
+            |text: String| index(FileKind::Json, text.as_bytes()).map(|i| i.definitions.len());
+
+        assert_eq!(indexed(nested(MAX_NESTING)), Ok(MAX_NESTING));
+        assert_eq!(indexed(nested(MAX_NESTING + 1)), Err(IndexFault::TooDeep));
+        assert_eq!(indexed(nested(1_000_000)), Err(IndexFault::TooDeep));
     }
 }
