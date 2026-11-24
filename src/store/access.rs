@@ -88,9 +88,9 @@ impl Store {
 /// to the files on disk. Dropping the writer releases the lock.
 #[must_use = "dropping the writer releases the lock"]
 pub struct Writer<'s> {
-    store: &'s Store,
+    pub(super) store: &'s Store,
     lock: StoreLock,
-    state: ProjectState,
+    pub(super) state: ProjectState,
 }
 
 impl Writer<'_> {

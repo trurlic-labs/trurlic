@@ -6,57 +6,6 @@ use crate::{Error, Result};
 
 use super::open_store;
 
-/// `trurlic status`: a one-screen summary of the graph: its components,
-/// decisions (project-wide and proposed), edges, how many issues and
-/// non-canonical files it has, and under `shared` what its history lacks,
-/// with the graph directory and the code root when the tree reaches a
-/// graph it does not hold. It writes nothing, to the graph's repository
-/// neither.
-pub(crate) fn status(cwd: &Path) -> Result<()> {
-    let (store, state) = open_store(cwd)?;
-    // Asked before any line is printed, so a failure prints none.
-    let history = store.history_findings(state.project.placement)?;
-    let project_wide = state.project_decisions().len();
-    let proposed = state
-        .decisions
-        .values()
-        .filter(|d| matches!(d.status, Status::Proposed { .. }))
-        .count();
-    let edges = state
-        .components
-        .values()
-        .map(|c| c.connects_to.len())
-        .chain(state.decisions.values().map(|d| d.depends_on.len()))
-        .sum::<usize>();
-
-    out!(
-        "project: {} ({})",
-        state.project.name,
-        state.project.placement.as_str()
-    )?;
-    if !store.is_local() {
-        out!("graph: {}", store.root().display())?;
-        out!("code root: {}", store.code_root().display())?;
-    }
-    out!("components: {}", state.components.len())?;
-    out!(
-        "decisions: {} ({project_wide} project-wide, {proposed} proposed)",
-        state.decisions.len()
-    )?;
-    out!("edges: {edges}")?;
-    let issues = state.validate().len();
-    if issues > 0 {
-        out!("issues: {issues}")?;
-    }
-    if !state.non_canonical.is_empty() {
-        out!("not in canonical form: {}", state.non_canonical.len())?;
-    }
-    for finding in &history {
-        out!("history: {finding}")?;
-    }
-    Ok(())
-}
-
 /// `trurlic query file <path>`: every decision anchored on `path`, on a
 /// file under it as a directory, or on a directory that holds it, with its
 /// status and the anchors that matched. The path is normalized and refused when it could

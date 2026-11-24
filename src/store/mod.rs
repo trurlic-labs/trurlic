@@ -4,6 +4,7 @@
 //! git repository (`history.rs`).
 
 mod access;
+mod apply;
 mod canonical;
 mod commit;
 #[cfg(any(test, feature = "bench"))]
@@ -33,6 +34,10 @@ use std::path::{Path, PathBuf};
 use crate::{Error, Result};
 
 pub use access::Writer;
+pub use apply::{
+    AddComponent, AnchorInput, Applied, Batch, Done, Field, ListEdit, Merge, NodeKind, Op, OpAt,
+    OpKind, Record, Refusal, Remove, RemoveComponent, Rename, Revise, ReviseComponent, Rule,
+};
 pub(crate) use durable::sync_dir;
 pub use history::{CommitMessage, HistoryFinding, Tool};
 pub use lock::StoreLock;
@@ -45,9 +50,9 @@ pub use query::{Named, anchors_in, normalize_path};
 pub use schema::{
     AcceptedText, AcceptedVia, Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR,
     Decision, FORMAT_VERSION, PROJECT_COMPONENT, PROJECT_FILE, Placement, Project, STATE_DIR,
-    STORE_DIR, Status,
+    STORE_DIR, Status, StatusName,
 };
-pub use state::{NodeFile, ProjectState, has_control_chars, is_valid_kebab_case};
+pub use state::{NameFault, NodeFile, ProjectState, has_control_chars, is_valid_kebab_case};
 pub use text::{TextFault, TextField};
 pub use time::{Timestamp, TimestampError};
 pub use validate::{Issue, IssueKind};

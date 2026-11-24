@@ -26,3 +26,15 @@ pub(crate) const MAX_ANCHOR_SYMBOL_BYTES: usize = 200;
 /// Maximum byte length of the `Origin:` or the `Session:` a history commit
 /// carries, each one line.
 pub(crate) const MAX_TRAILER_BYTES: usize = 200;
+
+/// Maximum byte length of a node's name, its file stem: within the 255
+/// bytes most file systems allow a file name, `.toml` included, so no write
+/// stages a file it cannot rename into place.
+pub(crate) const MAX_NAME_BYTES: usize = 128;
+
+/// Maximum ops in one `apply` batch: a result names each op, and fifty of
+/// them fit one tool result whatever their names.
+pub(crate) const MAX_BATCH_OPS: usize = 50;
+
+/// Maximum items of one list an op sets, adds or removes.
+pub(crate) const MAX_LIST_ITEMS: usize = 100;

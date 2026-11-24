@@ -1,0 +1,24 @@
+component = "commands"
+choice = "A tool's CLI twin runs the tool's own spec parse and handler through mcp::twin: the same refusals, the same bytes written, the call's JSON with --json and lines for a terminal"
+reason = "Every tool has a CLI twin on the same code. trurlic apply reads a JSON object from a file or stdin, at most one MCP message's size, and trurlic status builds its arguments from its flags; mcp::twin runs ToolSpec::run, the parse and the access a call takes, without a client, and returns the tool's result or its ToolError, which the command prints as error: <message> with exit status 1, or with --json as the refusal's JSON on stdout. A document that is no JSON object is refused before the store is found; arguments are parsed after it, as a call's are. commands reaches mcp for serve and for the twins; the text rendering is the command's."
+alternatives = [
+    "A clap flag per argument of apply: rejected because a batch is a list of tagged ops a command line cannot hold, and the parse would be a second one",
+    "Parse the batch in commands with serde: rejected because the refusals and limits would drift from the tool's",
+]
+tags = [
+    "api",
+    "cli",
+]
+status = "accepted"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/cli.rs", symbol = "ToolCommand" },
+    { file = "src/commands/apply.rs", symbol = "apply" },
+    { file = "src/commands/status.rs", symbol = "status" },
+    { file = "src/mcp/twin.rs" },
+    { file = "tests/integration/apply.rs", symbol = "status_on_the_command_line_is_the_tool" },
+]
+depends_on = [
+    "each-tool-declares-its-arguments-once-in-args-declare",
+]

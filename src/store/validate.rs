@@ -2,21 +2,21 @@
 //! files, the names their stems give, and the text rules of `text.rs`.
 //!
 //! [`ProjectState::validate`] runs every check and sorts what they find, so
-//! the order of the checks never reaches a caller.
-//! [`ProjectState::introduced_errors`] is the rule every write commits
-//! under: a write may keep an issue the graph already had, never add one.
+//! the order of the checks never reaches a caller. [`introduced`] is the
+//! rule every write commits under: a write may keep an issue the graph
+//! already had, never add one.
 
 use std::collections::BTreeSet;
 use std::fmt;
 
 use super::schema::{Decision, PROJECT_COMPONENT};
-use super::state::{NodeFile, ProjectState, is_valid_kebab_case};
+use super::state::{NameFault, NodeFile, ProjectState, name_fault};
 use super::text::{TextField, fault};
 
 /// What an [`Issue`] reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IssueKind {
-    /// A stem that is not kebab-case.
+    /// A stem that is not kebab-case, or longer than a name may be.
     NameInvalid,
     /// A node named like the project-wide component, which has no file.
     NameReserved,
@@ -49,6 +49,48 @@ pub enum IssueKind {
     SecondGraph,
 }
 
+impl IssueKind {
+    pub const ALL: [Self; 15] = [
+        Self::NameInvalid,
+        Self::NameReserved,
+        Self::NameShared,
+        Self::ComponentMissing,
+        Self::ConnectionMissing,
+        Self::DependencyMissing,
+        Self::SelfEdge,
+        Self::DependsOnCycle,
+        Self::InvalidChoice,
+        Self::InvalidReason,
+        Self::TrackedUnversioned,
+        Self::TrackedIgnored,
+        Self::SharedVersioned,
+        Self::SharedOffMain,
+        Self::SecondGraph,
+    ];
+
+    /// The kind as reports name it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NameInvalid => "name_invalid",
+            Self::NameReserved => "name_reserved",
+            Self::NameShared => "name_shared",
+            Self::ComponentMissing => "component_missing",
+            Self::ConnectionMissing => "connection_missing",
+            Self::DependencyMissing => "dependency_missing",
+            Self::SelfEdge => "self_edge",
+            Self::DependsOnCycle => "depends_on_cycle",
+            Self::InvalidChoice => "invalid_choice",
+            Self::InvalidReason => "invalid_reason",
+            Self::TrackedUnversioned => "tracked_unversioned",
+            Self::TrackedIgnored => "tracked_ignored",
+            Self::SharedVersioned => "shared_versioned",
+            Self::SharedOffMain => "shared_off_main",
+            Self::SecondGraph => "second_graph",
+        }
+    }
+}
+
 /// One thing wrong with a loaded graph, or with where it sits: the
 /// placement issues are found from git's answers by
 /// [`ProjectState::placement_issues`], every other kind by
@@ -62,6 +104,39 @@ pub struct Issue {
     pub subject: String,
     /// The file at fault, then what is wrong with it.
     pub message: String,
+}
+
+impl Issue {
+    /// Whether the issue is about the node `name`: the node itself, either
+    /// end of an edge, or a member of a cycle. Read from the subject, so it
+    /// is exact for a kebab-case `name`.
+    pub(super) fn concerns(&self, name: &str) -> bool {
+        let subject = self.subject.as_str();
+        match self.kind {
+            IssueKind::NameInvalid
+            | IssueKind::NameReserved
+            | IssueKind::NameShared
+            | IssueKind::ComponentMissing
+            | IssueKind::InvalidChoice
+            | IssueKind::InvalidReason => subject == name,
+            IssueKind::ConnectionMissing | IssueKind::DependencyMissing | IssueKind::SelfEdge => {
+                let from = subject
+                    .strip_prefix(name)
+                    .is_some_and(|rest| rest.starts_with(" -> "));
+                let to = [EdgeField::ConnectsTo, EdgeField::DependsOn]
+                    .iter()
+                    .any(|field| subject.ends_with(&format!(" -> {name} ({field})")));
+                from || to
+            }
+            IssueKind::DependsOnCycle => subject.split(", ").any(|member| member == name),
+            // Placement issues are about the graph directory, not a node.
+            IssueKind::TrackedUnversioned
+            | IssueKind::TrackedIgnored
+            | IssueKind::SharedVersioned
+            | IssueKind::SharedOffMain
+            | IssueKind::SecondGraph => false,
+        }
+    }
 }
 
 /// The two edge fields, as an edge subject names them.
@@ -94,24 +169,6 @@ impl ProjectState {
         issues
     }
 
-    /// The issues of this graph that `before` does not have, matched on kind
-    /// and subject: a message may change while the issue stays the same.
-    /// `before` is validated only when this graph has an issue.
-    #[must_use]
-    pub fn introduced_errors(&self, before: &Self) -> Vec<Issue> {
-        let mut issues = self.validate();
-        if issues.is_empty() {
-            return issues;
-        }
-        let before_issues = before.validate();
-        let known: BTreeSet<(IssueKind, &str)> = before_issues
-            .iter()
-            .map(|issue| (issue.kind, issue.subject.as_str()))
-            .collect();
-        issues.retain(|issue| !known.contains(&(issue.kind, issue.subject.as_str())));
-        issues
-    }
-
     /// Stems that are no name, the reserved name, and a stem two kinds share.
     fn check_names(&self, issues: &mut Vec<Issue>) {
         let components = self
@@ -123,22 +180,13 @@ impl ProjectState {
             .keys()
             .map(|name| (name, decision_file as FileOf));
         for (name, file) in components.chain(decisions) {
-            if !is_valid_kebab_case(name) {
-                issues.push(issue(
-                    IssueKind::NameInvalid,
-                    name,
-                    format!("{}: the name `{name}` is not kebab-case", file(name)),
-                ));
-            }
-            if name == PROJECT_COMPONENT {
-                issues.push(issue(
-                    IssueKind::NameReserved,
-                    name,
-                    format!(
-                        "{}: `{PROJECT_COMPONENT}` is the component of the project-wide decisions",
-                        file(name)
-                    ),
-                ));
+            if let Some(fault) = name_fault(name) {
+                let kind = match fault {
+                    NameFault::NotKebab | NameFault::TooLong { .. } => IssueKind::NameInvalid,
+                    NameFault::Reserved => IssueKind::NameReserved,
+                };
+                let message = format!("{}: the name `{name}` {fault}", file(name));
+                issues.push(issue(kind, name, message));
             }
         }
         for name in self.components.keys() {
@@ -262,6 +310,19 @@ fn component_file(name: &str) -> NodeFile {
 
 fn decision_file(name: &str) -> NodeFile {
     NodeFile::Decision(name.to_owned())
+}
+
+/// The issues of `after` that `before` does not have, matched on kind and
+/// subject: a message may change while the issue stays the same. This is
+/// the rule every write commits under: it may keep an issue the graph had,
+/// never add one.
+pub(super) fn introduced(mut after: Vec<Issue>, before: &[Issue]) -> Vec<Issue> {
+    let known: BTreeSet<(IssueKind, &str)> = before
+        .iter()
+        .map(|issue| (issue.kind, issue.subject.as_str()))
+        .collect();
+    after.retain(|issue| !known.contains(&(issue.kind, issue.subject.as_str())));
+    after
 }
 
 /// `issues` in the order every report gives them: by kind, subject and
@@ -490,21 +551,47 @@ mod tests {
     fn a_cycle_the_graph_had_is_not_introduced() {
         let before = depends_on_state(&[("a", "b"), ("b", "a")]);
         let after = depends_on_state(&[("a", "b"), ("b", "a"), ("c", "a")]);
-        assert_eq!(after.introduced_errors(&before), []);
+        assert_eq!(introduced(after.validate(), &before.validate()), []);
     }
 
     #[test]
     fn a_second_cycle_is_introduced() {
         let before = depends_on_state(&[("a", "b"), ("b", "a")]);
         let after = depends_on_state(&[("a", "b"), ("b", "a"), ("c", "d"), ("d", "c")]);
-        assert_eq!(after.introduced_errors(&before), [cycle(&["c", "d"])]);
+        assert_eq!(
+            introduced(after.validate(), &before.validate()),
+            [cycle(&["c", "d"])]
+        );
     }
 
     #[test]
     fn a_cycle_that_gains_a_member_is_introduced() {
         let before = depends_on_state(&[("a", "b"), ("b", "a")]);
         let after = depends_on_state(&[("a", "b"), ("b", "a"), ("b", "c"), ("c", "a")]);
-        assert_eq!(after.introduced_errors(&before), [cycle(&["a", "b", "c"])]);
+        assert_eq!(
+            introduced(after.validate(), &before.validate()),
+            [cycle(&["a", "b", "c"])]
+        );
+    }
+
+    #[test]
+    fn an_issue_concerns_its_node_both_ends_of_its_edge_and_its_members() {
+        let mut state = depends_on_state(&[("a", "gone"), ("b", "c"), ("c", "b")]);
+        state.decisions.remove("gone");
+        with_component(&mut state, "auth", &["nowhere"]);
+        let issues = state.validate();
+        let concerned = |name: &str| -> Vec<IssueKind> {
+            issues
+                .iter()
+                .filter(|issue| issue.concerns(name))
+                .map(|issue| issue.kind)
+                .collect()
+        };
+        assert_eq!(concerned("a"), [IssueKind::DependencyMissing]);
+        assert_eq!(concerned("gone"), [IssueKind::DependencyMissing]);
+        assert_eq!(concerned("nowhere"), [IssueKind::ConnectionMissing]);
+        assert_eq!(concerned("b"), [IssueKind::DependsOnCycle]);
+        assert_eq!(concerned("go"), []);
     }
 
     /// The fault's byte offset is in the message, not in the subject.
@@ -520,6 +607,6 @@ mod tests {
         let before = with_choice("One\nbreak");
         let after = with_choice("One more\nbreak");
         assert_ne!(before.validate(), after.validate());
-        assert_eq!(after.introduced_errors(&before), []);
+        assert_eq!(introduced(after.validate(), &before.validate()), []);
     }
 }

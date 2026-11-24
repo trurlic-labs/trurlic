@@ -1,0 +1,24 @@
+component = "git"
+choice = "A graph commit's objects reach the disk through git's batch fsync: one update-index stages every path in one object transaction, flushed by one hardware flush"
+reason = "Under core.fsync=committed alone each loose object is fsynced on its own, about 8 ms each on the seeded corpus's disk: a 50-op batch spent 250 to 330 ms in git and the first commit of a 2000-decision graph 18 to 21 s. With core.fsyncMethod=batch (git 2.37, bulk-checkin.c) a command inside an object transaction writes each object with a writeout-only flush (sync_file_range with WAIT_BEFORE, WRITE and WAIT_AFTER on Linux) into a temporary object directory, then fsyncs one dummy file to flush the device cache before it renames the objects into place (flush_batch_fsync), so no object gets its name before its data is on the device. update-index opens one transaction for all its paths and git commit one for its trees (cache-tree); hash-object opens none, so its objects, the commit object and the ref keep a full fsync each. A git before 2.37 warns that it ignores the value and fsyncs each object, slower and as durable as before. git's documentation states batch mode as safe as fsync on macOS and Windows; on Linux the dummy fsync covers the other objects' metadata on filesystems whose fsync commits one ordered journal (ext4, XFS), and git promises no more. Now a 50-op shared batch takes about 104 ms, the first commit at 2000 decisions about 0.6 s."
+alternatives = [
+    "Keep a full fsync per object: rejected because a design batch or a first commit then costs seconds in fsyncs for the same journal ordering",
+    "fsync the objects from trurlic after a hash-object that fsyncs none: rejected because an object would have its name before its data is durable, and git, which skips writing an object whose file exists, would keep a torn one",
+    "Several hash-object processes in parallel: rejected because it is more processes for a fourth of the gain",
+]
+tags = [
+    "git",
+    "performance",
+    "reliability",
+]
+status = "proposed"
+origin = "apply and status"
+created = "2026-11-24T03:35:48.715992075Z"
+anchors = [
+    { file = "src/git/graph.rs", symbol = "OVERRIDES" },
+    { file = "src/git/graph.rs", symbol = "Repository::stage" },
+    { file = "tests/integration/history.rs", symbol = "a_commit_flushes_its_objects_in_one_batch_however_many_files_it_holds" },
+]
+depends_on = [
+    "the-graph-s-git-reads-no-user-configuration-and-overrides-each-local-key-that-runs-code",
+]

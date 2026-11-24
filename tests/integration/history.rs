@@ -500,3 +500,182 @@ fn a_history_commit_that_fails_is_made_by_the_next_writer() {
     assert!(!project.node(".state/txn.toml").exists());
     assert_eq!(graph_log(&graph(&project)), ["fmt", "hand edit", "init"]);
 }
+
+/// A batch that records two decisions of a new component.
+fn batch(origin: &str, component: &str) -> serde_json::Value {
+    let record = |name: String| {
+        serde_json::json!({
+            "op": "record", "name": name, "component": component,
+            "choice": format!("A rule of {component}"), "reason": "Recorded by a test batch",
+        })
+    };
+    serde_json::json!({ "origin": origin, "ops": [
+        { "op": "add_component", "name": component, "description": "" },
+        record(format!("{component}-one")),
+        record(format!("{component}-two")),
+    ]})
+}
+
+/// Over MCP, each batch is one commit of the shared graph's history,
+/// named `apply`, with the batch's origin as its `Origin:` trailer and
+/// no `Session:`, which no request carries; under `tracked` the project's
+/// history gains no commit.
+#[test]
+fn each_apply_is_one_commit_with_its_origin() {
+    use crate::harness::McpClient;
+
+    let project = shared();
+    let (mut client, _) = McpClient::connect(&project);
+    client.call_tool("apply", batch("task 18", "auth"));
+    client.call_tool("apply", batch("task 19", "billing"));
+
+    assert_eq!(
+        graph_log(&graph(&project)),
+        [
+            "apply\n\nOrigin: task 19",
+            "apply\n\nOrigin: task 18",
+            "init"
+        ]
+    );
+    let changed = graph_git(
+        &graph(&project),
+        &["show", "--name-only", "--format=", "HEAD"],
+    );
+    assert_eq!(
+        changed,
+        "components/billing.toml\ndecisions/billing-one.toml\ndecisions/billing-two.toml\n"
+    );
+
+    let tracked = Project::init();
+    let before = graph_git(tracked.path(), &["rev-parse", "HEAD"]);
+    let (mut client, _) = McpClient::connect(&tracked);
+    client.call_tool("apply", batch("task 18", "auth"));
+    assert_eq!(graph_git(tracked.path(), &["rev-parse", "HEAD"]), before);
+    assert!(!graph(&tracked).join(".git").exists());
+}
+
+/// A batch with removals stopped at each step of its commit under
+/// `shared`: before its journal the next opener finds the graph as it
+/// was and no commit; from the journal on, the batch's files and one
+/// `apply` commit with its origin.
+#[cfg(feature = "failpoints")]
+#[test]
+fn a_stopped_batch_is_finished_by_the_next_opener_with_one_commit() {
+    use crate::harness::trurlic_ok;
+
+    let removals = serde_json::json!({ "origin": "row 2", "ops": [
+        { "op": "rename", "name": "auth-one", "to": "auth-first" },
+        { "op": "remove", "name": "auth-two" },
+    ]});
+    for (spec, lands) in [
+        ("commit.staged:1", false),
+        ("commit.journaled:1", true),
+        ("commit.applied:2", true),
+        ("commit.placed:1", true),
+        ("history.committed:1", true),
+        ("commit.finished:1", true),
+    ] {
+        let project = shared();
+        assert!(project.apply(&batch("row 1", "auth"), &[]).status.success());
+        let file = project.path().join("removals.json");
+        fs::write(&file, removals.to_string()).unwrap();
+        let output = project
+            .command()
+            .arg("apply")
+            .arg(&file)
+            .env("TRURLIC_FAILPOINT", spec)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{spec}: {output:?}");
+
+        assert_eq!(
+            trurlic_ok(project.path(), &["check"]),
+            ".trurlic/ is consistent\n"
+        );
+        let log = graph_log(&graph(&project));
+        let names: Vec<String> = project.graph_files().into_keys().collect();
+        if lands {
+            assert_eq!(log[0], "apply\n\nOrigin: row 2", "{spec}");
+            assert_eq!(log[1], "apply\n\nOrigin: row 1", "{spec}");
+            assert_eq!(log.len(), 3, "{spec}: {log:?}");
+            assert!(
+                names.contains(&"decisions/auth-first.toml".to_owned()),
+                "{spec}"
+            );
+            assert!(
+                !names.contains(&"decisions/auth-two.toml".to_owned()),
+                "{spec}"
+            );
+        } else {
+            assert_eq!(log.len(), 2, "{spec}: {log:?}");
+            assert!(
+                names.contains(&"decisions/auth-two.toml".to_owned()),
+                "{spec}"
+            );
+        }
+    }
+}
+
+/// The hardware flushes the git processes of one command made, and their
+/// writeout-only flushes, read from git's trace2 counters.
+fn fsyncs(project: &Project, args: &[&str]) -> (u64, u64) {
+    let trace = project.path().join("trace2.json");
+    let _ = fs::remove_file(&trace);
+    let output = project
+        .command()
+        .args(args)
+        .env("GIT_TRACE2_EVENT", &trace)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let (mut flushes, mut writeouts) = (0, 0);
+    for line in fs::read_to_string(&trace).unwrap().lines() {
+        let event: serde_json::Value = serde_json::from_str(line).unwrap();
+        if event["event"] == "counter" && event["category"] == "fsync" {
+            let count = event["count"].as_u64().unwrap();
+            match event["name"].as_str().unwrap() {
+                "hardware-flush" => flushes += count,
+                "writeout-only" => writeouts += count,
+                other => panic!("an fsync counter git did not name before: {other}"),
+            }
+        }
+    }
+    (flushes, writeouts)
+}
+
+/// Thirty new decision files, and then the first commit of a repository
+/// made again, which holds every graph file: each commit's objects reach
+/// the disk through one hardware flush per object transaction, not one
+/// per object, so the flushes do not grow with the files.
+#[test]
+fn a_commit_flushes_its_objects_in_one_batch_however_many_files_it_holds() {
+    let project = shared();
+    let ops: Vec<serde_json::Value> = (0..30)
+        .map(|i| {
+            serde_json::json!({
+                "op": "record", "name": format!("rule-{i}"), "component": "project",
+                "choice": format!("Rule {i}"), "reason": "Recorded by a test batch",
+            })
+        })
+        .collect();
+    let file = project.path().join("batch.json");
+    fs::write(&file, serde_json::json!({ "ops": ops }).to_string()).unwrap();
+
+    let (flushes, writeouts) = fsyncs(&project, &["apply", file.to_str().unwrap()]);
+    assert!(writeouts >= 30, "{writeouts} writeouts");
+    assert!(flushes < 10, "{flushes} hardware flushes for 30 objects");
+
+    fs::remove_dir_all(graph(&project).join(".git")).unwrap();
+    hand_edit(&project);
+    let (flushes, writeouts) = fsyncs(&project, &["fmt"]);
+    assert!(writeouts >= 32, "{writeouts} writeouts");
+    assert!(
+        flushes < 10,
+        "{flushes} hardware flushes for the first commit"
+    );
+    assert_eq!(graph_log(&graph(&project)), ["fmt"]);
+    assert_eq!(
+        graph_git(&graph(&project), &["ls-files"]).lines().count(),
+        32
+    );
+}

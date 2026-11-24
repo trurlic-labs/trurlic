@@ -40,6 +40,7 @@ pub enum Tool {
     Init,
     Fmt,
     Migrate,
+    Apply,
 }
 
 impl Tool {
@@ -49,6 +50,7 @@ impl Tool {
             Self::Init => "init",
             Self::Fmt => "fmt",
             Self::Migrate => "migrate",
+            Self::Apply => "apply",
         }
     }
 }

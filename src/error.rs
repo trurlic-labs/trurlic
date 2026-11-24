@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
 use crate::store::{
-    AnchorFault, FormatVersion, PlacementDoubt, TextFault, TextField, TimestampError,
+    AnchorFault, FormatVersion, PlacementDoubt, Refusal, TextFault, TextField, TimestampError,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -242,6 +242,10 @@ pub enum Error {
     /// The system clock reads an instant a `Timestamp` cannot hold.
     #[error("system clock: {source}")]
     Clock { source: TimestampError },
+
+    /// A batch of `apply` the store refused whole, with nothing written.
+    #[error("{0}")]
+    Refused(Box<Refusal>),
 
     #[error("{0} consistency error(s) found")]
     CheckFailed(usize),

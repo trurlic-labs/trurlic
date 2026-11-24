@@ -1,10 +1,11 @@
 //! Benches over the seeded corpus at each of `Corpus::SIZES`: loading the
 //! store from disk, validating the loaded graph, through the MCP server in
-//! process every read tool, and one write, `trurlic fmt` of one file. The
+//! process every read tool and `apply`, and `trurlic fmt` of one file. The
 //! server loads the graph on every call, so each tool bench includes a
-//! load. The write is timed under `tracked`, under `shared` with nothing
-//! but its own commit to make, and under `shared` after a hand edit, which
-//! is a commit of its own: the differences are what the history costs.
+//! load. `fmt` is timed under `tracked`, under `shared` with nothing but
+//! its own commit to make, and under `shared` after a hand edit, which is
+//! a commit of its own: the differences are what the history costs.
+//! `apply` is timed with one op and with fifty, under each placement.
 //!
 //! Read tools come from `tools/list`, so a new one is benched without editing
 //! this file, and setup panics when no request here fits it.
@@ -167,6 +168,7 @@ fn read_tool_arguments(tool: &str, targets: &Targets) -> Value {
     match tool {
         "get_context" => json!({ "component": targets.component }),
         "get_decisions_for_file" => json!({ "file": targets.file }),
+        "status" => json!({}),
         other => panic!("no bench request for the read tool `{other}`"),
     }
 }
@@ -303,11 +305,63 @@ fn bench_write(c: &mut Criterion) {
     group.finish();
 }
 
+/// `apply` end to end through the server, a batch of one op and one of
+/// fifty, under each placement: each op revises the reason of one
+/// decision, anew on every run, so every batch writes and commits.
+fn bench_apply(c: &mut Criterion) {
+    let mut group = c.benchmark_group("apply");
+    group.sample_size(20);
+    for &size in &Corpus::SIZES[1..] {
+        for placement in [Placement::Tracked, Placement::Shared] {
+            let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+                .join(format!("corpus-apply-{size}-{}", placement.as_str()));
+            if dir.exists() {
+                fs::remove_dir_all(&dir).unwrap();
+            }
+            let store = Corpus::new(size).write_as(&dir, placement).unwrap();
+            let names: Vec<String> = store.load_state().unwrap().decisions.into_keys().collect();
+            let mut server = server_at(dir);
+            let runs = Cell::new(0_u64);
+            for ops in [1, 50] {
+                let batch = || {
+                    runs.set(runs.get() + 1);
+                    let revisions: Vec<Value> = names[..ops]
+                        .iter()
+                        .map(|name| {
+                            let reason = format!("Revised by run {} of the bench", runs.get());
+                            json!({ "op": "revise", "name": name, "reason": reason })
+                        })
+                        .collect();
+                    let line = tool_call("apply", json!({ "ops": revisions, "origin": "bench" }));
+                    // The setup's writes reach the disk before the batch
+                    // starts, so its flushes wait for its own data alone.
+                    assert!(Command::new("sync").status().unwrap().success());
+                    line
+                };
+                call(&mut server, &batch());
+                let id = BenchmarkId::new(format!("{}/{ops}_ops", placement.as_str()), size);
+                let mut output = Vec::new();
+                group.bench_function(id, |b| {
+                    b.iter_batched(
+                        batch,
+                        |line| {
+                            output.clear();
+                            server.serve_one(&mut line.as_bytes(), &mut output).unwrap()
+                        },
+                        BatchSize::PerIteration,
+                    );
+                });
+            }
+        }
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_validate, bench_read_tools, bench_write
+    targets = bench_load_state, bench_validate, bench_read_tools, bench_write, bench_apply
 }
 criterion_main!(benches);

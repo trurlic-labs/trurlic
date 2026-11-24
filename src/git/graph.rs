@@ -12,9 +12,15 @@
 //! commit or point it elsewhere. Files are staged as the bytes on disk,
 //! through no filter, and committed as [`NAME`] with the dates git reads
 //! from the clock.
+//!
+//! Staging is one `update-index` over every path, which writes its objects
+//! in one batched flush ([`OVERRIDES`]); it runs the conversions the
+//! attributes ask for, and the repository's own [`ATTRIBUTES`], checked
+//! before every staging, unset every one of them.
 
 use std::ffi::OsStr;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -40,7 +46,7 @@ const NULL: &str = "NUL";
 /// Settings passed with `-c`, which beat the repository's own
 /// configuration, the one the environment does not shut out. `{null}` is
 /// [`NULL`].
-const OVERRIDES: [&str; 8] = [
+const OVERRIDES: [&str; 9] = [
     // No hook runs, `.git/hooks/` included: `--no-verify` skips only
     // pre-commit and commit-msg, not prepare-commit-msg or post-commit.
     "core.hooksPath={null}",
@@ -57,6 +63,12 @@ const OVERRIDES: [&str; 8] = [
     // Objects and refs reach the disk before the journal that would make
     // the commit again is deleted.
     "core.fsync=committed",
+    // The loose objects of one `update-index`, and the trees of one
+    // commit, reach the device with one hardware flush before any of them
+    // gets its name (git 2.37: `bulk-checkin.c`, `flush_batch_fsync`); a
+    // command with no object transaction, or a git before 2.37, which
+    // warns and ignores the value, flushes each object on its own.
+    "core.fsyncMethod=batch",
 ];
 
 /// Set for every call. The system's and the user's configuration are read
@@ -75,9 +87,11 @@ const ENVIRONMENT: [(&str, &str); 6] = [
 /// clock git reads.
 const DATES: [&str; 2] = ["GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"];
 
-/// The repository's `info/attributes`, which beats every `.gitattributes`:
-/// no attribute that converts bytes applies, so `git status`, and `git
-/// commit` when it checks a file again, read the bytes on disk as they are.
+/// The repository's `info/attributes`, which beats every `.gitattributes`
+/// and `core.attributesFile`: no attribute that converts bytes applies, so
+/// `update-index` stages, and `git status` and `git commit` read, the
+/// bytes on disk as they are. With `text` unset, `eol` converts nothing
+/// either; it is unset all the same.
 const ATTRIBUTES: &str = "* -text -eol -filter -ident -working-tree-encoding\n";
 
 /// The repository at `<work tree>/.git`, whose work tree is a graph
@@ -185,35 +199,79 @@ impl Repository {
     /// conversion; a path with no file is taken out, and one the index
     /// never held is no error.
     pub(crate) fn stage(&self, paths: &[PathBuf]) -> Result<()> {
-        let mut present = Vec::with_capacity(paths.len());
-        let mut gone = Vec::new();
+        self.unset_conversions()?;
+        let mut files = Vec::with_capacity(paths.len());
+        let mut links = Vec::new();
         for relative in paths {
             let full = self.work_tree.join(relative);
-            if full.try_exists().map_err(Error::io(&full))? {
-                present.push(relative);
-            } else {
-                gone.push(relative);
+            match fs::symlink_metadata(&full) {
+                Ok(metadata) if metadata.file_type().is_symlink() => links.push(relative),
+                Ok(_) => files.push(relative),
+                Err(e) if e.kind() == ErrorKind::NotFound => files.push(relative),
+                Err(source) => return Err(Error::Io { path: full, source }),
             }
         }
-        if !present.is_empty() {
-            self.add(&present)?;
+        if !files.is_empty() {
+            self.update(&files)?;
         }
-        if !gone.is_empty() {
-            self.remove(&gone)?;
+        if !links.is_empty() {
+            self.add_through(&links)?;
         }
         Ok(())
     }
 
-    /// Write each of `paths` as an object of its bytes, through no filter,
-    /// and point the index at it.
-    fn add(&self, paths: &[&PathBuf]) -> Result<()> {
+    /// Write [`ATTRIBUTES`] to the repository's `info/attributes` when it
+    /// holds anything else, so no attribute converts what [`update`]
+    /// stages, whatever a person did to the file.
+    ///
+    /// [`update`]: Self::update
+    fn unset_conversions(&self) -> Result<()> {
+        let attributes = self.git_dir.join("info").join("attributes");
+        match fs::read(&attributes) {
+            Ok(held) if held == ATTRIBUTES.as_bytes() => return Ok(()),
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(Error::Io {
+                    path: attributes,
+                    source,
+                });
+            }
+        }
+        let info = self.git_dir.join("info");
+        fs::create_dir_all(&info).map_err(Error::io(&info))?;
+        fs::write(&attributes, ATTRIBUTES).map_err(Error::io(&attributes))
+    }
+
+    /// Stage the files and the missing paths of `paths` in one process,
+    /// in one object transaction: each file as its bytes, each missing
+    /// path taken out.
+    fn update(&self, paths: &[&PathBuf]) -> Result<()> {
+        let input: Vec<u8> = paths
+            .iter()
+            .flat_map(|path| path_bytes(path).into_iter().chain([0]))
+            .collect();
+        let args = [
+            "update-index".as_ref(),
+            "-z".as_ref(),
+            "--add".as_ref(),
+            "--remove".as_ref(),
+            "--stdin".as_ref(),
+        ];
+        self.run(&args, Some(&input)).map(drop)
+    }
+
+    /// Stage each of `links`, symlinks, as the bytes of the file it leads
+    /// to, which a load reads, through no filter: `update-index` would
+    /// stage the link itself.
+    fn add_through(&self, links: &[&PathBuf]) -> Result<()> {
         let mut args: Vec<&OsStr> = ["hash-object", "-w", "--no-filters", "--"]
             .iter()
             .map(OsStr::new)
             .collect();
-        args.extend(paths.iter().map(|path| path.as_os_str()));
+        args.extend(links.iter().map(|path| path.as_os_str()));
         let stdout = self.run(&args, None)?;
-        let info = index_info(&stdout, paths).ok_or_else(|| Error::GitOutput {
+        let info = index_info(&stdout, links).ok_or_else(|| Error::GitOutput {
             args: "hash-object -w --no-filters".into(),
             detail: "a different number of object names than paths",
         })?;
@@ -223,21 +281,6 @@ impl Repository {
             "--index-info".as_ref(),
         ];
         self.run(&args, Some(&info)).map(drop)
-    }
-
-    /// Take `paths` out of the index; one it does not hold is no error.
-    fn remove(&self, paths: &[&PathBuf]) -> Result<()> {
-        let input: Vec<u8> = paths
-            .iter()
-            .flat_map(|path| path_bytes(path).into_iter().chain([0]))
-            .collect();
-        let args = [
-            "update-index".as_ref(),
-            "-z".as_ref(),
-            "--force-remove".as_ref(),
-            "--stdin".as_ref(),
-        ];
-        self.run(&args, Some(&input)).map(drop)
     }
 
     /// Commit the index with `message`, kept verbatim. An index that
@@ -478,8 +521,9 @@ mod tests {
         git(repository, &["config", "filter.broken.required", "true"]);
     }
 
-    /// Without the repository's own attributes, staging still takes the
-    /// bytes as they are: hashing applies no filter.
+    /// Without the repository's own attributes, staging writes them again
+    /// and takes the bytes as they are: the filter a `.gitattributes`
+    /// names, which fails, never runs.
     #[test]
     fn stage_takes_the_bytes_on_disk_through_no_filter() {
         let (tmp, repository) = created();
@@ -492,6 +536,73 @@ mod tests {
         repository.stage(&["a.toml".into()]).unwrap();
 
         assert_eq!(git(&repository, &["cat-file", "blob", ":a.toml"]), bytes);
+    }
+
+    /// Each attribute that converts what is staged, asked for by a
+    /// `.gitattributes` in the work tree, and the repository's own
+    /// attributes edited away first: staging restores them and takes the
+    /// bytes on disk. Each case fails when its attribute is not unset.
+    #[test]
+    fn stage_unsets_every_converting_attribute_whatever_info_attributes_held() {
+        let utf16 = b"\xff\xfea\x00\n\x00".as_slice();
+        let cases: [(&str, &[u8]); 5] = [
+            ("* text\n", b"crlf\r\nline\r\n"),
+            ("* eol=lf\n", b"crlf\r\n"),
+            ("* ident\n", b"$Id: 0123456789abcdef $\n"),
+            ("* filter=upper\n", b"lower case\n"),
+            ("* working-tree-encoding=UTF-16\n", utf16),
+        ];
+        for (attributes, bytes) in cases {
+            let (tmp, repository) = created();
+            let dir = tmp.path();
+            fs::write(dir.join(".gitattributes"), attributes).unwrap();
+            git(&repository, &["config", "filter.upper.clean", "tr a-z A-Z"]);
+            let info = repository.git_dir().join("info/attributes");
+            fs::write(&info, "* text ident\n").unwrap();
+            fs::write(dir.join("a.toml"), bytes).unwrap();
+
+            repository.stage(&["a.toml".into()]).unwrap();
+
+            let blob = repository
+                .run(
+                    &["cat-file".as_ref(), "blob".as_ref(), ":a.toml".as_ref()],
+                    None,
+                )
+                .unwrap();
+            assert_eq!(blob, bytes, "{attributes}");
+            assert_eq!(fs::read_to_string(&info).unwrap(), ATTRIBUTES);
+        }
+    }
+
+    /// A symlinked node file is staged as the bytes a load reads through
+    /// it, not as the link.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_file_is_staged_as_the_bytes_it_leads_to() {
+        let (tmp, repository) = created();
+        let dir = tmp.path();
+        fs::write(dir.join("target.md"), "the bytes\n").unwrap();
+        std::os::unix::fs::symlink("target.md", dir.join("a.toml")).unwrap();
+        fs::write(dir.join("b.toml"), "plain\n").unwrap();
+
+        repository
+            .stage(&["a.toml".into(), "b.toml".into()])
+            .unwrap();
+
+        assert_eq!(
+            git(&repository, &["cat-file", "blob", ":a.toml"]),
+            "the bytes\n"
+        );
+        assert_eq!(
+            git(&repository, &["cat-file", "blob", ":b.toml"]),
+            "plain\n"
+        );
+        assert_eq!(
+            git(&repository, &["ls-files", "--stage", "a.toml"])
+                .split(' ')
+                .next(),
+            Some("100644")
+        );
     }
 
     /// The repository's own attributes beat a `.gitattributes`, so status

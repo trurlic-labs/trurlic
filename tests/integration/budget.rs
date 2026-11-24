@@ -64,3 +64,51 @@ fn every_tool_result_fits_the_budget() {
         fitted(&mut client, "get_context", arguments);
     }
 }
+
+/// A graph whose issues alone exceed the budget several times over, and
+/// whose components fill a good part of it: each status section fits, the
+/// issues section counts what it leaves out and says where the rest is,
+/// and asked for alone it shows more of them. Nothing is cut silently: no
+/// result carries a `truncated` notice.
+#[test]
+fn status_fits_the_budget_and_counts_what_it_leaves_out() {
+    const BROKEN: usize = 400;
+    const COMPONENTS: usize = 300;
+    let project = Project::init();
+    for i in 0..COMPONENTS {
+        project.write(
+            &format!("components/part-{i:03}.toml"),
+            "description = \"\"\n",
+        );
+    }
+    for i in 0..BROKEN {
+        let text = decision("project", &format!("Rule {i:03}"), "")
+            .replace("Recorded so the test has a decision to read", "short");
+        project.write(&format!("decisions/rule-{i:03}.toml"), &text);
+    }
+    let (mut client, _) = McpClient::connect(&project);
+
+    let whole = fitted(&mut client, "status", json!({}));
+    let alone = fitted(&mut client, "status", json!({ "section": "issues" }));
+
+    for status in [&whole, &alone] {
+        assert!(status.get("truncated").is_none(), "{status}");
+        let issues = &status["issues"];
+        assert_eq!(issues["total"], BROKEN);
+        let shown = issues["items"].as_array().unwrap().len();
+        assert_eq!(issues["omitted"], BROKEN - shown);
+        assert_eq!(issues["more"], "`trurlic check` lists every issue");
+    }
+    let shown = |status: &Value| status["issues"]["items"].as_array().unwrap().len();
+    assert!(
+        shown(&alone) > shown(&whole),
+        "{} {}",
+        shown(&alone),
+        shown(&whole)
+    );
+    assert!(alone.get("components").is_none());
+    assert_eq!(
+        whole["components"]["items"][0],
+        json!({ "name": "project", "decisions": BROKEN, "proposed": 0 })
+    );
+}

@@ -493,6 +493,7 @@ fn status(rng: &mut SplitMix64, index: usize, component: &str) -> Status {
             choice: choice(rng, index, component),
             reason: rng.prose_within(&REASON_BYTES),
             alternatives: vec![rng.prose_within(&ALTERNATIVE_BYTES)],
+            via: None,
         });
         return Status::Proposed { accepted_text };
     }

@@ -17,8 +17,8 @@ use crate::{Error, Result, commands};
     about = "Structured architectural decisions that constrain AI code generation.",
     long_about = "Trurlic captures architectural decisions and serves them to AI coding agents\n\
                   via MCP.\n\n\
-                  Start with `trurlic init --placement tracked`, then add decision files\n\
-                  under .trurlic/decisions/ and run `trurlic check`."
+                  Start with `trurlic init --placement tracked`, then record decisions\n\
+                  with `trurlic apply <file>` or the `apply` tool, and run `trurlic check`."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -29,6 +29,9 @@ pub struct Cli {
 pub enum Command {
     #[command(flatten)]
     Project(ProjectCommand),
+
+    #[command(flatten)]
+    Tool(ToolCommand),
 
     /// Register the trurlic MCP server with Claude Code, for the current user.
     Install {
@@ -73,9 +76,6 @@ pub enum ProjectCommand {
     #[command(subcommand)]
     Query(QueryCommand),
 
-    /// Show project status: component count, decision count, issues.
-    Status,
-
     /// Validate `.trurlic/` and report each file not in canonical form.
     Check,
 
@@ -95,6 +95,60 @@ pub enum ProjectCommand {
         #[arg(long, value_enum)]
         placement: Option<PlacementArg>,
     },
+}
+
+/// The CLI twins of the MCP tools: each runs the tool's own code on the
+/// project's graph and prints its result, `--json` as the tool returns it.
+#[derive(Subcommand, Debug)]
+pub enum ToolCommand {
+    /// Apply a batch of ops to the graph, all or none, in one commit.
+    ///
+    /// The file holds the JSON object the `apply` tool takes: `ops`, and an
+    /// optional `origin`.
+    Apply {
+        /// The batch file, or `-` for stdin.
+        file: PathBuf,
+
+        /// Print the tool's JSON result instead of a line per op.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show the graph at a glance: counts, issues, history, components.
+    Status {
+        /// Show this section alone, with the whole result budget.
+        #[arg(long, value_enum)]
+        section: Option<StatusSection>,
+
+        /// Count only the decisions recorded under this origin.
+        #[arg(long)]
+        origin: Option<String>,
+
+        /// Print the tool's JSON result.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// The sections `status` can show alone.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum StatusSection {
+    /// The validation issues.
+    Issues,
+    /// What a shared graph's history lacks.
+    History,
+    /// The decisions of each component.
+    Components,
+}
+
+impl StatusSection {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Issues => "issues",
+            Self::History => "history",
+            Self::Components => "components",
+        }
+    }
 }
 
 /// Where the graph is versioned, as `init` and `migrate` take it.
@@ -132,6 +186,7 @@ pub enum QueryCommand {
 pub fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Project(command) => report(run(command)),
+        Command::Tool(command) => report(run_tool(command)),
         Command::Install {
             ide: InstallIde::ClaudeCode,
             binary_path,
@@ -144,6 +199,30 @@ pub fn main() -> ExitCode {
             };
             report(commands::install(binary_path.as_deref(), mode))
         }
+    }
+}
+
+fn run_tool(command: ToolCommand) -> std::result::Result<(), commands::ToolError> {
+    let cwd = std::env::current_dir().map_err(Error::system("read the working directory"))?;
+    let format = |json: bool| {
+        if json {
+            commands::Format::Json
+        } else {
+            commands::Format::Text
+        }
+    };
+    match command {
+        ToolCommand::Apply { file, json } => commands::apply(&cwd, &file, format(json)),
+        ToolCommand::Status {
+            section,
+            origin,
+            json,
+        } => commands::status(
+            &cwd,
+            section.map(StatusSection::as_str),
+            origin.as_deref(),
+            format(json),
+        ),
     }
 }
 
@@ -168,7 +247,6 @@ fn run(command: ProjectCommand) -> Result<()> {
             QueryCommand::File { path } => commands::query_file(&cwd, &path),
         },
         ProjectCommand::Serve => commands::serve(&cwd),
-        ProjectCommand::Status => commands::status(&cwd),
         ProjectCommand::Check => commands::check(&cwd),
         ProjectCommand::Fmt => commands::fmt(&cwd),
         ProjectCommand::Migrate { dry_run, placement } => {

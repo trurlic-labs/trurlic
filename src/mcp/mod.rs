@@ -7,6 +7,7 @@
 //! `tools/list` still answer, and every tool call is refused naming the
 //! command that fixes it.
 
+mod apply;
 mod context;
 #[cfg_attr(
     not(any(test, feature = "failpoints")),
@@ -19,16 +20,11 @@ mod context;
 mod peer;
 mod protocol;
 mod result;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no tool is built on a spec until the first 0.4.0 tool lands"
-    )
-)]
 mod spec;
+mod status;
 mod tools;
 mod truncate;
+pub(crate) mod twin;
 
 use std::any::Any;
 use std::io::{self, BufRead, Write};
@@ -50,7 +46,7 @@ use peer::{Client, ClientCapabilities, Peer};
 use protocol::{
     INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, Message, Request,
 };
-use result::{ToolEnvelope, tool_error, tool_result};
+use result::{ToolEnvelope, structured_result, tool_error};
 
 /// The protocol revisions the server speaks. `initialize` answers with the
 /// client's when it is one of them, else with the latest.
@@ -291,10 +287,9 @@ fn call_tool(cwd: &Path, params: Option<&Map<String, Value>>, peer: &mut Peer<'_
     let envelope = match discover(cwd) {
         Err(e) => tool_error(&e.into()),
         Ok(store) => match spec_tool {
-            Some(tool) => tool.call(&store, peer, object).map_or_else(
-                |refused| tool_error(&refused),
-                |payload| tool_result(&payload),
-            ),
+            Some(tool) => tool
+                .call(&store, peer, object)
+                .map_or_else(|refused| tool_error(&refused), structured_result),
             None => call_unspecified(&store, name, arguments),
         },
     };
@@ -323,7 +318,7 @@ fn ask_the_client(peer: &mut Peer<'_>) -> ToolEnvelope {
         },
     });
     match peer.request(peer::ServerMethod::CreateElicitation, &form) {
-        Ok(answer) => tool_result(&answer),
+        Ok(answer) => result::tool_result(&answer),
         Err(e) => tool_error(&result::ToolError::refused(e.to_string())),
     }
 }

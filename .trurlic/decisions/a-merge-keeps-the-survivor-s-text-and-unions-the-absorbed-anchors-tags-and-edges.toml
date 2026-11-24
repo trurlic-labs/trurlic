@@ -1,0 +1,20 @@
+component = "store"
+choice = "A merge keeps the survivor's text, status, origin and created, unions in the absorbed decision's anchors, tags and depends_on, repoints every edge to it, and drops its text"
+reason = "Two decisions that state one rule become one; the survivor is the one whose text stands, and history keeps the absorbed text. Taking any of the absorbed text (an alternative, a reason) would change the survivor's text and with it the status of an accepted survivor, so the text a caller wants kept is a revise of the survivor in the same batch, under the revise rule. Anchors, tags and edges are where and how the rule applies, which both decisions held, so they are unioned; an edge between the two, or to the survivor from itself, is dropped. A merge that closes a depends_on cycle through the survivor is refused naming its members."
+alternatives = [
+    "Union the alternatives too: rejected because it changes the survivor's text, which an accepted decision may not change outside a revise",
+    "Keep the newer decision's text: rejected because the caller names the survivor and must get the one it named",
+]
+tags = [
+    "api",
+]
+status = "proposed"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/store/apply/decision.rs", symbol = "merge" },
+    { file = "src/store/apply/tests.rs", symbol = "a_merge_repoints_edges_and_unions_anchors_and_tags" },
+]
+depends_on = [
+    "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",
+]

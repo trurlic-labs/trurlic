@@ -2,6 +2,910 @@
   "tools": [
     {
       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Apply"
+      },
+      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of a decision's fields, a list whole or by `add_*`/`remove_*` (never both for one list; a removed element must be held); rename (rewrites every edge to it); merge `absorbed` into `survivor` (edges repointed, anchors, tags and edges unioned, the absorbed text dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component (carries its decisions and connections), remove_component (refused while in use).\nA revise that changes nothing, an edge to a missing node or to itself, and an edge that closes a depends_on cycle are refused. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back to it accepts it again. Anchors, tags, edges and renames leave the status alone. The result names each op's node and what it changed, never the texts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ops": {
+            "description": "The changes, applied in order.",
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "alternatives": {
+                      "description": "Rejected options.",
+                      "items": {
+                        "maxLength": 50000,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "anchors": {
+                      "description": "Where it applies.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "file": {
+                            "description": "A file or directory, relative to the project root, `/`-separated.",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "description": "A symbol in the file, its `::`-separated path.",
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "choice": {
+                      "description": "The rule, one line.",
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "component": {
+                      "description": "Its component, or `project` for a rule that holds everywhere.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "depends_on": {
+                      "description": "Decisions it depends on.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "name": {
+                      "description": "The new decision's name, its file stem: kebab-case, unique across nodes.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "record",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "description": "Why it holds.",
+                      "maxLength": 50000,
+                      "type": "string"
+                    },
+                    "tags": {
+                      "description": "Labels.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name",
+                    "component",
+                    "choice",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "add_alternatives": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "maxLength": 50000,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "add_anchors": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "file": {
+                            "description": "A file or directory, relative to the project root, `/`-separated.",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "description": "A symbol in the file, its `::`-separated path.",
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "add_depends_on": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "add_tags": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "alternatives": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "maxLength": 50000,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "anchors": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "file": {
+                            "description": "A file or directory, relative to the project root, `/`-separated.",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "description": "A symbol in the file, its `::`-separated path.",
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "choice": {
+                      "description": "The new rule, one line.",
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "component": {
+                      "description": "Its new component.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "depends_on": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "name": {
+                      "description": "The decision.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "revise",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "description": "The new reason.",
+                      "maxLength": 50000,
+                      "type": "string"
+                    },
+                    "remove_alternatives": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "maxLength": 50000,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "remove_anchors": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "file": {
+                            "description": "A file or directory, relative to the project root, `/`-separated.",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "description": "A symbol in the file, its `::`-separated path.",
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "remove_depends_on": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "remove_tags": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "tags": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "The node.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "rename",
+                      "type": "string"
+                    },
+                    "to": {
+                      "description": "Its new name.",
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name",
+                    "to"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "absorbed": {
+                      "description": "The decision folded into it and removed.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "merge",
+                      "type": "string"
+                    },
+                    "survivor": {
+                      "description": "The decision kept.",
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "survivor",
+                    "absorbed"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "The decision.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "remove",
+                      "type": "string"
+                    },
+                    "repoint_to": {
+                      "description": "The decision each edge to the removed one points at instead.",
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "connects_to": {
+                      "description": "Components it connects to.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "description": {
+                      "description": "What it is.",
+                      "maxLength": 50000,
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "The new component's name, its file stem.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "add_component",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name",
+                    "description"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "add_connects_to": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "connects_to": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "description": {
+                      "description": "Its new description.",
+                      "maxLength": 50000,
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "The component.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "revise_component",
+                      "type": "string"
+                    },
+                    "remove_connects_to": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "The node.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "rename_component",
+                      "type": "string"
+                    },
+                    "to": {
+                      "description": "Its new name.",
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name",
+                    "to"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "The component.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "remove_component",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              ],
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "origin": {
+            "description": "The task or plan row behind the batch: stored on each decision it records and named in the graph's history.",
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "ops"
+        ],
+        "type": "object"
+      },
+      "name": "apply",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ops": {
+            "description": "What each op did, in order.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "absorbed": {
+                  "description": "A merge's removed decision.",
+                  "type": "string"
+                },
+                "changed": {
+                  "description": "A revise's changed fields.",
+                  "items": {
+                    "enum": [
+                      "component",
+                      "choice",
+                      "reason",
+                      "alternatives",
+                      "tags",
+                      "anchors",
+                      "depends_on",
+                      "description",
+                      "connects_to"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "name": {
+                  "description": "The node it names first; a merge's survivor.",
+                  "type": "string"
+                },
+                "op": {
+                  "description": "The op's kind.",
+                  "enum": [
+                    "record",
+                    "revise",
+                    "rename",
+                    "merge",
+                    "remove",
+                    "add_component",
+                    "revise_component",
+                    "rename_component",
+                    "remove_component"
+                  ],
+                  "type": "string"
+                },
+                "repoint_to": {
+                  "description": "Where a remove pointed the edges to its decision.",
+                  "type": "string"
+                },
+                "rewrote": {
+                  "description": "Files of other nodes it rewrote: edges repointed, a component's decisions and connections renamed.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "status": {
+                  "description": "The decision's new status, when the op changed it.",
+                  "enum": [
+                    "proposed",
+                    "accepted"
+                  ],
+                  "type": "string"
+                },
+                "to": {
+                  "description": "A rename's new name.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "name"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "removed": {
+            "description": "Files removed, a rename's old file included.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "Present only when the result was cut to fit the result budget: each cut, by JSON pointer, with what it omitted.",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "written": {
+            "description": "Files written, a rename's new file included.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ops",
+          "written",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "title": "Apply"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Status"
+      },
+      "description": "The decision graph at a glance: its counts, the validation issues it holds, what a shared graph's history lacks, and the decisions of each component. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "description": "Count only the decisions recorded under this origin.",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "section": {
+            "description": "The one section to return.",
+            "enum": [
+              "issues",
+              "history",
+              "components"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "status",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "code_root": {
+            "description": "The tree anchors resolve against, when the graph is not its own.",
+            "type": "string"
+          },
+          "components": {
+            "additionalProperties": false,
+            "description": "The project-wide decisions, then each component's, by name.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "decisions": {
+                      "description": "Its decisions.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "description": "The component, or `project`.",
+                      "type": "string"
+                    },
+                    "proposed": {
+                      "description": "Of them, the proposed.",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "decisions",
+                    "proposed"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
+          "counts": {
+            "additionalProperties": false,
+            "description": "The graph's counts.",
+            "properties": {
+              "components": {
+                "description": "Components.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "decisions": {
+                "description": "Decisions, under `origin` when given.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "edges": {
+                "description": "`connects_to` and `depends_on` edges.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "issues": {
+                "description": "Validation issues.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "non_canonical": {
+                "description": "Files `trurlic fmt` would rewrite.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "project_wide": {
+                "description": "Of them, the project-wide.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "proposed": {
+                "description": "Of them, the proposed.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "components",
+              "decisions",
+              "project_wide",
+              "proposed",
+              "edges",
+              "issues",
+              "non_canonical"
+            ],
+            "type": "object"
+          },
+          "graph": {
+            "description": "The graph directory, when the tree reaches one it does not hold.",
+            "type": "string"
+          },
+          "history": {
+            "additionalProperties": false,
+            "description": "What a shared graph's own history lacks; empty under `tracked`.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "description": "`missing`, `index_locked` or `uncommitted`.",
+                      "type": "string"
+                    },
+                    "message": {
+                      "description": "What is lacking and what mends it.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
+          "issues": {
+            "additionalProperties": false,
+            "description": "The validation issues, sorted.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "description": "The issue's kind.",
+                      "enum": [
+                        "name_invalid",
+                        "name_reserved",
+                        "name_shared",
+                        "component_missing",
+                        "connection_missing",
+                        "dependency_missing",
+                        "self_edge",
+                        "depends_on_cycle",
+                        "invalid_choice",
+                        "invalid_reason",
+                        "tracked_unversioned",
+                        "tracked_ignored",
+                        "shared_versioned",
+                        "shared_off_main",
+                        "second_graph"
+                      ],
+                      "type": "string"
+                    },
+                    "message": {
+                      "description": "The file at fault, then the fault.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
+          "placement": {
+            "description": "`tracked` when the project's git versions the graph, `shared` when the graph is a repository of its own.",
+            "enum": [
+              "tracked",
+              "shared"
+            ],
+            "type": "string"
+          },
+          "project": {
+            "description": "The project's name.",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "Present only when the result was cut to fit the result budget: each cut, by JSON pointer, with what it omitted.",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "placement",
+          "counts"
+        ],
+        "type": "object"
+      },
+      "title": "Status"
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,

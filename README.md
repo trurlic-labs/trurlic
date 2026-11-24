@@ -23,17 +23,17 @@ Trurlic makes you the architect again. Architectural decisions live in a typed g
 
 ## MCP-first
 
-Trurlic is an **MCP server**. Your coding agent — Claude Code or any other MCP client — talks to it directly: it pulls the architectural context of a component or a file before implementing. The graph is the agent's source of truth: one TOML file per decision and per component, which the agent and you read and edit directly.
+Trurlic is an **MCP server**. Your coding agent — Claude Code or any other MCP client — talks to it directly: it pulls the architectural context of a component or a file before implementing, and records what it decides through `apply`, the one write. The graph is the agent's source of truth: one TOML file per decision and per component, which the agent and you read directly.
 
-The `trurlic` CLI exists for the human: initialize the graph, inspect it, check it and keep its files in canonical form. **The CLI never calls an LLM.** All reasoning runs on your coding agent's own model.
+The `trurlic` CLI exists for the human: initialize the graph, inspect it, write to it with the same `apply` the agent uses, check it and keep its files in canonical form. **The CLI never calls an LLM.** All reasoning runs on your coding agent's own model.
 
 ```
         ┌──────────────┐                      ┌──────────────────┐
   You   │     CLI      │                      │  AI coding agent │
- ──────▶│ init·inspect │                      │  context·design  │
-        │  check·fmt   │                      │  implement       │
+ ──────▶│ init·status  │                      │  context·design  │
+        │ apply·check  │                      │  implement       │
         └──────┬───────┘                      └────────┬─────────┘
-               │ write                     MCP read,   │ file edits
+               │ apply                     MCP read,   │ MCP apply
                ▼                                        ▼
         ┌──────────────────────────────────────────────────────┐
         │   .trurlic/  —  decision graph, one TOML file a node │
@@ -95,7 +95,7 @@ depends_on = [
 ]
 ```
 
-The file stem is the decision's name. A component file holds `description` and `connects_to`. Edit them by hand or through your agent: every load validates them, `trurlic check` reports what is wrong with the graph, and `trurlic fmt` puts each file in its canonical form (sorted sets, one element per line) so branches merge cleanly.
+The file stem is the decision's name. A component file holds `description` and `connects_to`. Write them through `apply`, a batch of ops (`record`, `revise`, `rename`, `merge`, `remove`, and the component ops) that lands whole in one commit or not at all, with every edge a rename or a merge touches rewritten; a decision it records is `proposed`. A hand edit is legal too: every load validates it, `trurlic check` reports what is wrong with the graph, and `trurlic fmt` puts each file in its canonical form (sorted sets, one element per line) so branches merge cleanly.
 
 ## Where the graph lives
 
@@ -158,9 +158,9 @@ Before implementing any task:
    the files you will edit, and read every decision: they constrain the
    code you write.
 2. Implement within them. For a choice no decision covers, search
-   `.trurlic/decisions/`; if none covers it, write a decision file there
-   (status `proposed` when you chose alone, `accepted` when the user decided).
-3. Before committing, run `trurlic fmt` and `trurlic check`.
+   `.trurlic/decisions/`; if none covers it, record it with the `apply`
+   tool: it is `proposed` until the user accepts it.
+3. Before committing, run `trurlic check`.
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the full recommended instructions.
@@ -187,9 +187,10 @@ The agent reasons it out with you, writes each decision you agree on as `accepte
 Before writing a line, the agent pulls the component's brief and generates code that respects every decision.
 
 ```bash
-trurlic status   # the graph at a glance: components, decisions, edges, issues
-trurlic check    # every issue, naming its file; fails when there is one
-trurlic fmt      # rewrite the files that are not in canonical form
+trurlic status              # the graph at a glance: counts, issues, history, components
+trurlic apply batch.json    # a batch of ops, the JSON the apply tool takes, all or none
+trurlic check               # every issue, naming its file; fails when there is one
+trurlic fmt                 # rewrite the files that are not in canonical form
 ```
 
 ## Documentation
@@ -210,18 +211,20 @@ Every task starts from the component's brief. The agent reads it, implements wit
 get_context(component)                →  decisions + rules + related constraints
 get_decisions_for_file(path)          →  the decisions anchored on a file or directory
   … agent implements within the brief …
-.trurlic/decisions/<name>.toml        →  a choice the graph did not cover yet
-trurlic fmt && trurlic check          →  canonical files, no issue
+apply({ops: [{op: "record", ...}]})   →  a choice the graph did not cover yet
+trurlic check                         →  no issue
 ```
 
 ## MCP tools
 
 | Tool | Purpose |
 |------|---------|
+| `apply` | The one write: a batch of ops applied in order, all or none, in one commit; a refusal names the op, the argument and the rule |
+| `status` | The graph at a glance: counts, validation issues, what a shared graph's history lacks, each component's decisions |
 | `get_context` | Architectural brief for a component: decisions, rules, related constraints, health |
 | `get_decisions_for_file` | Every decision anchored on a file, on a file under a directory, or on a directory that holds the file |
 
-Every result fits 24 KiB, which Claude Code shows inline. A larger answer keeps its shape: its longest lists and strings lose their tails, and a `truncated` array names each cut with what it omitted.
+`apply` and `status` declare an `outputSchema` and return `structuredContent` with the same JSON as text; each has a CLI twin on the same code (`trurlic apply <file>`, `trurlic status`, `--json` for the tool's JSON). Every result fits 24 KiB, which Claude Code shows inline. A `status` section that does not fit says how many items it left out and where they are; any other larger answer keeps its shape: its longest lists and strings lose their tails, and a `truncated` array names each cut with what it omitted.
 
 All tools carry [annotations](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#annotations) (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so MCP clients can reason about each invocation.
 

@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 
 use crate::{Error, Result};
 
-use super::schema::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, PROJECT_FILE, Project};
+use super::limits::MAX_NAME_BYTES;
+use super::schema::{
+    COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, PROJECT_COMPONENT, PROJECT_FILE, Project,
+};
 
 // -- ProjectState -------------------------------------------------------------
 
@@ -61,6 +64,50 @@ impl fmt::Display for NodeFile {
 }
 
 // -- Name validation ----------------------------------------------------------
+
+/// Why a stem is no node name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameFault {
+    /// Not kebab-case: see [`is_valid_kebab_case`].
+    NotKebab,
+    TooLong {
+        len: usize,
+    },
+    /// The name of the project-wide component, which has no file.
+    Reserved,
+}
+
+impl fmt::Display for NameFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotKebab => f.write_str(
+                "is not kebab-case: lowercase ASCII letters and digits in words joined by one `-`",
+            ),
+            Self::TooLong { len } => {
+                write!(f, "is {len} bytes, over the limit of {MAX_NAME_BYTES}")
+            }
+            Self::Reserved => write!(
+                f,
+                "is reserved: `{PROJECT_COMPONENT}` is the component of the project-wide decisions"
+            ),
+        }
+    }
+}
+
+/// The first rule a node's name breaks: kebab-case, at most
+/// [`MAX_NAME_BYTES`], not [`PROJECT_COMPONENT`].
+#[must_use]
+pub(super) fn name_fault(name: &str) -> Option<NameFault> {
+    if !is_valid_kebab_case(name) {
+        Some(NameFault::NotKebab)
+    } else if name.len() > MAX_NAME_BYTES {
+        Some(NameFault::TooLong { len: name.len() })
+    } else if name == PROJECT_COMPONENT {
+        Some(NameFault::Reserved)
+    } else {
+        None
+    }
+}
 
 /// Check whether a name is valid kebab-case.
 /// Rules: non-empty, lowercase ASCII letters + digits + hyphens only,
@@ -147,6 +194,21 @@ mod tests {
         ] {
             assert!(!is_valid_kebab_case(name), "{name}");
         }
+    }
+
+    #[test]
+    fn a_name_is_kebab_case_bounded_and_not_reserved() {
+        assert_eq!(name_fault("rate-limiter"), None);
+        assert_eq!(name_fault(&"a".repeat(MAX_NAME_BYTES)), None);
+        assert_eq!(
+            name_fault(&"a".repeat(MAX_NAME_BYTES + 1)),
+            Some(NameFault::TooLong {
+                len: MAX_NAME_BYTES + 1
+            })
+        );
+        assert_eq!(name_fault("Rate_Limiter"), Some(NameFault::NotKebab));
+        assert_eq!(name_fault(""), Some(NameFault::NotKebab));
+        assert_eq!(name_fault(PROJECT_COMPONENT), Some(NameFault::Reserved));
     }
 
     #[test]

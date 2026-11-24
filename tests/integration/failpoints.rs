@@ -3,16 +3,15 @@
 //! it was before the commit or as the commit leaves it, never in between.
 //! `trurlic fmt` is the commit: it rewrites several files in one.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
 use std::process::{ExitStatus, Stdio};
 use std::thread;
 use std::time::Duration;
 
 use serde_json::json;
 
-use crate::harness::{McpClient, Pause, Project, decision};
+use crate::harness::{GraphFiles, McpClient, Pause, Project, decision};
 
 const FAILPOINT: &str = "TRURLIC_FAILPOINT";
 
@@ -62,36 +61,12 @@ fn journal_exists(project: &Project) -> bool {
     project.path().join(".trurlic/.state/txn.toml").exists()
 }
 
-/// Every file of a store outside `.state/`, by path below `.trurlic/`.
-type Snapshot = BTreeMap<String, String>;
-
-fn snapshot(project: &Project) -> Snapshot {
-    fn walk(root: &Path, dir: &Path, files: &mut Snapshot) {
-        for entry in fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                if !path.ends_with(".state") {
-                    walk(root, &path, files);
-                }
-            } else {
-                let key = path
-                    .strip_prefix(root)
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_owned();
-                files.insert(key, fs::read_to_string(&path).unwrap());
-            }
-        }
-    }
-    let root = project.path().join(".trurlic");
-    let mut files = Snapshot::new();
-    walk(&root, &root, &mut files);
-    files
+fn snapshot(project: &Project) -> GraphFiles {
+    project.graph_files()
 }
 
-/// Replace the store's files outside `.state/` with `files`.
-fn restore(project: &Project, files: &Snapshot) {
+/// Replace the store's graph files with `files`.
+fn restore(project: &Project, files: &GraphFiles) {
     let root = project.path().join(".trurlic");
     for path in snapshot(project).keys() {
         fs::remove_file(root.join(path)).unwrap();
@@ -103,11 +78,14 @@ fn restore(project: &Project, files: &Snapshot) {
 
 /// One commit, run on copies of one store.
 struct Scenario {
+    /// Writes the store the commit starts from, and any file the command
+    /// reads.
+    setup: fn(&Project),
     args: &'static [&'static str],
     /// The store the commit starts from.
-    before: Snapshot,
+    before: GraphFiles,
     /// The store the commit leaves when nothing stops it.
-    after: Snapshot,
+    after: GraphFiles,
 }
 
 impl Scenario {
@@ -117,6 +95,7 @@ impl Scenario {
         let before = snapshot(&project);
         project.run_ok(args);
         Self {
+            setup,
             args,
             before,
             after: snapshot(&project),
@@ -125,13 +104,14 @@ impl Scenario {
 
     fn fresh_copy(&self) -> Project {
         let project = Project::init();
+        (self.setup)(&project);
         restore(&project, &self.before);
         project
     }
 
     /// Stop the commit at `spec` on a fresh copy, recover, and return what
     /// the store holds then.
-    fn recovered_from(&self, spec: &str) -> Snapshot {
+    fn recovered_from(&self, spec: &str) -> GraphFiles {
         let project = self.fresh_copy();
         run_aborting(&project, self.args, spec);
         assert_recovers(&project);
@@ -148,6 +128,9 @@ impl Scenario {
         for n in 1..=entries {
             let spec = format!("commit.applied:{n}");
             assert_eq!(self.recovered_from(&spec), self.after, "stopped at {spec}");
+        }
+        for spec in ["commit.placed:1", "commit.finished:1"] {
+            assert_eq!(self.recovered_from(spec), self.after, "stopped at {spec}");
         }
 
         // The commit has no further entry: armed past it, the run completes.
@@ -178,6 +161,35 @@ fn hand_edits(project: &Project) {
 #[test]
 fn every_stop_in_a_format_recovers_the_old_or_the_new_graph() {
     Scenario::new(hand_edits, &["fmt"]).assert_every_stop_recovers(3);
+}
+
+/// A graph a batch changes in every way a commit can: `sign` renamed,
+/// with `rotate`'s edge to it rewritten, `old` removed and `auth`
+/// revised; the batch file beside it.
+fn graph_and_batch(project: &Project) {
+    project.write("components/auth.toml", "description = \"Auth\"\n");
+    project.write("decisions/sign.toml", &decision("auth", "Sign tokens", ""));
+    project.write(
+        "decisions/rotate.toml",
+        &decision("auth", "Rotate keys", "depends_on = [\"sign\"]\n"),
+    );
+    project.write("decisions/old.toml", &decision("auth", "An old rule", ""));
+    let batch = json!({ "origin": "row 7", "ops": [
+        { "op": "rename", "name": "sign", "to": "sign-tokens" },
+        { "op": "remove", "name": "old" },
+        { "op": "revise_component", "name": "auth", "description": "Sign-in" },
+    ]});
+    fs::write(project.path().join("batch.json"), batch.to_string()).unwrap();
+}
+
+/// Renamed: the two decision files, then the component file; removed:
+/// the two old decision files.
+#[test]
+fn every_stop_in_a_batch_with_removals_recovers_the_old_or_the_new_graph() {
+    let scenario = Scenario::new(graph_and_batch, &["apply", "batch.json"]);
+    assert!(!scenario.after.contains_key("decisions/old.toml"));
+    assert!(scenario.after.contains_key("decisions/sign-tokens.toml"));
+    scenario.assert_every_stop_recovers(5);
 }
 
 /// The second rename fails once the journal is in place: the command

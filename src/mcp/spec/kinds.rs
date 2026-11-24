@@ -44,66 +44,12 @@ impl Kind for Text {
     }
 }
 
-/// `true` or `false`.
-pub(crate) struct Flag;
-
-impl Kind for Flag {
-    type Out = bool;
-
-    fn schema(&self) -> Map<String, Value> {
-        schema(json!({ "type": "boolean" }))
-    }
-
-    fn parse(&self, value: &Value, at: At<'_>) -> Result<bool, InvalidArgument> {
-        value
-            .as_bool()
-            .ok_or_else(|| InvalidArgument::new(at, Fault::Expected("a boolean")))
-    }
-}
-
-/// An integer from `min` to `max`, both included.
-pub(crate) struct Integer {
-    pub min: i64,
-    pub max: i64,
-}
-
-impl Kind for Integer {
-    type Out = i64;
-
-    fn schema(&self) -> Map<String, Value> {
-        schema(json!({ "type": "integer", "minimum": self.min, "maximum": self.max }))
-    }
-
-    fn parse(&self, value: &Value, at: At<'_>) -> Result<i64, InvalidArgument> {
-        let out_of_range = || {
-            InvalidArgument::new(
-                at,
-                Fault::OutOfRange {
-                    min: self.min,
-                    max: self.max,
-                },
-            )
-        };
-        if value.is_u64() && !value.is_i64() {
-            return Err(out_of_range());
-        }
-        let number = value
-            .as_i64()
-            .ok_or_else(|| InvalidArgument::new(at, Fault::Expected("an integer")))?;
-        if (self.min..=self.max).contains(&number) {
-            Ok(number)
-        } else {
-            Err(out_of_range())
-        }
-    }
-}
-
 /// One of `values`, named by its string.
 pub(crate) struct Choice<T: 'static> {
     pub values: &'static [(&'static str, T)],
 }
 
-impl<T: Copy + Default> Kind for Choice<T> {
+impl<T: Copy> Kind for Choice<T> {
     type Out = T;
 
     fn schema(&self) -> Map<String, Value> {
@@ -201,7 +147,7 @@ pub(crate) struct Variant<T> {
     pub declare: fn(&mut Fields<'_, '_>) -> T,
 }
 
-impl<T: Default> Kind for Union<T> {
+impl<T> Kind for Union<T> {
     type Out = T;
 
     fn schema(&self) -> Map<String, Value> {

@@ -115,8 +115,13 @@ fn an_unknown_tool_is_a_protocol_error() {
 }
 
 /// One call of each listed tool.
-fn every_tool() -> [(&'static str, Value); 2] {
+fn every_tool() -> [(&'static str, Value); 4] {
     [
+        (
+            "apply",
+            json!({ "ops": [{ "op": "remove", "name": "gone" }] }),
+        ),
+        ("status", json!({})),
         ("get_context", json!({ "component": "project" })),
         ("get_decisions_for_file", json!({ "file": "src" })),
     ]
@@ -131,7 +136,7 @@ fn a_server_without_a_store_lists_its_tools_and_names_init() {
     let (mut client, _) = McpClient::connect(&project);
 
     let listed = client.request("tools/list", json!({}));
-    assert_eq!(listed["tools"].as_array().unwrap().len(), 2, "{listed}");
+    assert_eq!(listed["tools"].as_array().unwrap().len(), 4, "{listed}");
     for (tool, arguments) in every_tool() {
         let refusal = client.call_tool_refusal(tool, arguments);
         assert_eq!(refusal["kind"], "no_project", "{tool}: {refusal}");
@@ -157,7 +162,7 @@ fn assert_format_refused(version_line: &str, named: &str) {
 
     let (mut client, _) = McpClient::connect(&project);
     let listed = client.request("tools/list", json!({}));
-    assert_eq!(listed["tools"].as_array().unwrap().len(), 2, "{listed}");
+    assert_eq!(listed["tools"].as_array().unwrap().len(), 4, "{listed}");
     for (tool, arguments) in every_tool() {
         let refusal = client.call_tool_refusal(tool, arguments);
         assert_eq!(refusal["kind"], "unsupported_format", "{tool}: {refusal}");
@@ -267,8 +272,15 @@ fn every_listed_tool_round_trips() {
     );
     let for_file = client.call_tool("get_decisions_for_file", json!({ "file": "src/auth.rs" }));
     assert_eq!(for_file["decisions"][0]["name"], "use-jwt", "{for_file}");
+    let applied = client.call_tool(
+        "apply",
+        json!({ "ops": [{ "op": "revise", "name": "use-jwt", "add_tags": ["tokens"] }] }),
+    );
+    assert_eq!(applied["ops"][0]["changed"], json!(["tags"]), "{applied}");
+    let status = client.call_tool("status", json!({}));
+    assert_eq!(status["counts"]["decisions"], 1, "{status}");
 
-    let called: BTreeSet<String> = ["get_context", "get_decisions_for_file"]
+    let called: BTreeSet<String> = ["apply", "status", "get_context", "get_decisions_for_file"]
         .map(String::from)
         .into();
     assert_eq!(called, listed, "tools called vs tools listed");

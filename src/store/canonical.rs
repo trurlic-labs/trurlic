@@ -195,6 +195,7 @@ impl Canonical for Decision {
             out.string("choice", &text.choice)?;
             out.string("reason", &text.reason)?;
             out.strings("alternatives", &text.alternatives)?;
+            out.optional("accepted_via", text.via.map(AcceptedVia::as_str))?;
         }
         Ok(())
     }
@@ -225,6 +226,7 @@ mod tests {
                     choice: "Old choice".into(),
                     reason: "The reason the owner accepted".into(),
                     alternatives: vec![],
+                    via: Some(AcceptedVia::Cli),
                 }),
             },
             origin: Some("format 0.5".into()),
@@ -269,6 +271,7 @@ depends_on = [
 [accepted_text]
 choice = "Old choice"
 reason = "The reason the owner accepted"
+accepted_via = "cli"
 "#
         );
     }

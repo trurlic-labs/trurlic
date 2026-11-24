@@ -1,3 +1,4 @@
+mod apply;
 mod check;
 mod fmt;
 mod init;
@@ -6,14 +7,19 @@ mod migrate;
 mod placement;
 mod query;
 mod serve;
+mod status;
 
+pub(crate) use apply::apply;
 pub(crate) use check::check;
 pub(crate) use fmt::fmt;
 pub(crate) use init::init;
 pub(crate) use install::install;
 pub(crate) use migrate::migrate;
-pub(crate) use query::{query_file, status};
+pub(crate) use query::query_file;
 pub(crate) use serve::serve;
+pub(crate) use status::status;
+
+pub(crate) use crate::mcp::twin::ToolError;
 
 use std::path::Path;
 
@@ -21,6 +27,14 @@ use crate::Result;
 use crate::console::diag;
 use crate::discovery::discover;
 use crate::store::{ProjectState, STORE_DIR, Store};
+
+/// How a tool's CLI twin prints its result: for a terminal, or as the
+/// JSON the tool's call returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Format {
+    Text,
+    Json,
+}
 
 /// Whether a mutating command should preview its plan or actually write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

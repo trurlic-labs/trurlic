@@ -104,3 +104,47 @@ fn fmt_lands_beside_the_issues_and_keeps_them() {
             .contains("depends_on = [\n    \"sign-tokens\",\n]\n")
     );
 }
+
+/// A batch that adds no issue lands beside the ones the graph has; one
+/// that adds an issue is refused, and so is one that renames a node out
+/// of an issue, whose subject then changes.
+#[test]
+fn a_batch_that_adds_no_issue_lands_beside_the_issues() {
+    let project = invalid_project();
+    let before = project.run_refused(&["check"]);
+    let (mut client, _) = McpClient::connect(&project);
+
+    client.call_tool(
+        "apply",
+        json!({ "ops": [
+            { "op": "revise", "name": "sign-tokens", "add_tags": ["keys"] },
+            {
+                "op": "record", "name": "audit-log", "component": "auth",
+                "choice": "Log every token", "reason": "An audit needs the issued tokens",
+            },
+        ]}),
+    );
+    let refused = client.call_tool_refusal(
+        "apply",
+        json!({ "ops": [
+            { "op": "revise", "name": "audit-log", "add_depends_on": ["keep-old-api"] },
+            { "op": "rename", "name": "expire-sessions", "to": "end-sessions" },
+        ]}),
+    );
+
+    assert_eq!(refused["rule"], "dependency_missing", "{refused}");
+    assert_eq!(refused["op"]["index"], 1, "{refused}");
+    let errors = |report: &str| -> Vec<String> {
+        report
+            .lines()
+            .filter(|line| line.starts_with("  error: "))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(errors(&project.run_refused(&["check"])), errors(&before));
+    assert!(
+        project
+            .read("decisions/sign-tokens.toml")
+            .contains("\"keys\"")
+    );
+}

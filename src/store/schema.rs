@@ -38,6 +38,8 @@ pub enum Placement {
 }
 
 impl Placement {
+    pub const ALL: [Self; 2] = [Self::Tracked, Self::Shared];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -91,10 +93,36 @@ pub enum Status {
 
 impl Status {
     #[must_use]
-    pub const fn name(&self) -> &'static str {
+    pub const fn kind(&self) -> StatusName {
         match self {
-            Self::Proposed { .. } => "proposed",
-            Self::Accepted { .. } => "accepted",
+            Self::Proposed { .. } => StatusName::Proposed,
+            Self::Accepted { .. } => StatusName::Accepted,
+        }
+    }
+
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        self.kind().as_str()
+    }
+}
+
+/// A [`Status`] without its fields: what the `status` key of a decision
+/// file names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusName {
+    Proposed,
+    Accepted,
+}
+
+impl StatusName {
+    pub const ALL: [Self; 2] = [Self::Proposed, Self::Accepted];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposed => "proposed",
+            Self::Accepted => "accepted",
         }
     }
 }
@@ -118,7 +146,9 @@ impl AcceptedVia {
     }
 }
 
-/// The text of an accepted decision whose revision is proposed.
+/// The text of an accepted decision whose revision is proposed, and how
+/// the owner accepted it: what the decision returns to when the revision
+/// is undone or rejected.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptedText {
@@ -126,6 +156,9 @@ pub struct AcceptedText {
     pub reason: String,
     #[serde(default)]
     pub alternatives: Vec<String>,
+    /// The accepted decision's `accepted_via`.
+    #[serde(rename = "accepted_via")]
+    pub via: Option<AcceptedVia>,
 }
 
 /// A decision file as TOML states it, before its status is read.
@@ -148,13 +181,6 @@ struct DecisionFields {
     anchors: BTreeSet<Anchor>,
     #[serde(default)]
     depends_on: BTreeSet<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum StatusName {
-    Proposed,
-    Accepted,
 }
 
 /// A status its fields contradict.
@@ -427,6 +453,20 @@ created = "2025-06-01T10:30:00Z"
             panic!("{:?}", revision.status);
         };
         assert_eq!(text.choice, "Old");
+        assert_eq!(text.via, None);
+        let revision = toml::from_str::<Decision>(&format!(
+            "{}\n[accepted_text]\nchoice = \"Old\"\nreason = \"The text the owner accepted\"\n\
+             accepted_via = \"elicitation\"\n",
+            DECISION.replace("accepted", "proposed")
+        ))
+        .unwrap();
+        let Status::Proposed {
+            accepted_text: Some(text),
+        } = revision.status
+        else {
+            panic!("{:?}", revision.status);
+        };
+        assert_eq!(text.via, Some(AcceptedVia::Elicitation));
     }
 
     #[test]

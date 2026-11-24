@@ -58,6 +58,24 @@ impl Project {
         std::fs::read_to_string(self.node(file)).unwrap()
     }
 
+    /// Every graph file: see [`graph_files`].
+    pub fn graph_files(&self) -> GraphFiles {
+        graph_files(&self.path().join(".trurlic"))
+    }
+
+    /// Write `batch` to a file in the project and run `trurlic apply` on
+    /// it with `args` after the file.
+    pub fn apply(&self, batch: &Value, args: &[&str]) -> Output {
+        let file = self.path().join("batch.json");
+        std::fs::write(&file, batch.to_string()).unwrap();
+        self.command()
+            .arg("apply")
+            .arg(&file)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
     /// A `trurlic` command with the project as its working directory: see
     /// [`trurlic`].
     pub fn command(&self) -> Command {
@@ -81,6 +99,30 @@ impl Project {
         );
         output
     }
+}
+
+/// The graph files of a graph directory, by path below it: `project.toml`
+/// and the node files, never `.state/` or a graph repository's `.git/`.
+pub type GraphFiles = std::collections::BTreeMap<String, String>;
+
+pub fn graph_files(graph: &Path) -> GraphFiles {
+    let mut files = GraphFiles::new();
+    let project = graph.join("project.toml");
+    files.insert(
+        "project.toml".into(),
+        std::fs::read_to_string(project).unwrap(),
+    );
+    for dir in ["components", "decisions"] {
+        for entry in std::fs::read_dir(graph.join(dir)).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_str().unwrap();
+            files.insert(
+                format!("{dir}/{name}"),
+                std::fs::read_to_string(&path).unwrap(),
+            );
+        }
+    }
+    files
 }
 
 /// A `trurlic` command run in `dir`, with no inherited failpoint, and

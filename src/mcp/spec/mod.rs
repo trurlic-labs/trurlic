@@ -16,12 +16,14 @@
 //! limit meets it, and a non-ASCII string can meet it and still be refused.
 
 pub(crate) mod kinds;
+pub(crate) mod output;
 pub(crate) mod tool;
 
 use std::fmt;
 
 use serde_json::{Map, Value};
 
+pub(crate) use output::{Output, Shown, output_schema, to_value};
 pub(crate) use tool::{TOOLS, find};
 
 // -- Declarations ---------------------------------------------------------
@@ -34,7 +36,9 @@ pub(crate) trait Args: Default {
 
 /// What a field holds: its schema and how a JSON value becomes it.
 pub(crate) trait Kind {
-    type Out: Default;
+    /// A required field's kind also gives the `Default` the schema walk
+    /// builds; a list's items and an optional field need none.
+    type Out;
 
     /// The field's JSON Schema, without its description.
     fn schema(&self) -> Map<String, Value>;
@@ -74,7 +78,7 @@ enum Presence {
 }
 
 impl Fields<'_, '_> {
-    pub(crate) fn required<K: Kind>(
+    pub(crate) fn required<K: Kind<Out: Default>>(
         &mut self,
         name: &'static str,
         description: &'static str,
@@ -256,10 +260,6 @@ pub(crate) enum Fault {
         items: usize,
         max_items: usize,
     },
-    OutOfRange {
-        min: i64,
-        max: i64,
-    },
     NotOneOf(Vec<&'static str>),
     ControlCharacter,
 }
@@ -276,7 +276,6 @@ impl fmt::Display for Fault {
             Self::TooMany { items, max_items } => {
                 write!(f, "has {items} items, over the limit of {max_items}")
             }
-            Self::OutOfRange { min, max } => write!(f, "must be an integer from {min} to {max}"),
             Self::NotOneOf(names) => write!(f, "must be one of: {}", names.join(", ")),
             Self::ControlCharacter => {
                 f.write_str("contains a control character other than tab or a line break")
@@ -291,16 +290,14 @@ impl fmt::Display for Fault {
 mod tests {
     use serde_json::json;
 
-    use super::kinds::{Choice, Flag, Integer, List, Object, Text, Union, Variant};
+    use super::kinds::{Choice, List, Object, Text, Union, Variant};
     use super::*;
 
-    /// Every field kind the 0.4.0 tools need, in one spec.
+    /// Every field kind, in one spec.
     #[derive(Debug, Default, PartialEq)]
     struct Probe {
         name: String,
         depth: Depth,
-        full: Option<bool>,
-        limit: Option<i64>,
         tags: Vec<String>,
         anchors: Vec<Anchor>,
         scope: Option<Scope>,
@@ -336,14 +333,6 @@ mod tests {
         },
     }
 
-    impl Default for Op {
-        fn default() -> Self {
-            Self::Record {
-                choice: String::new(),
-            }
-        }
-    }
-
     const NAME: Text = Text { max_bytes: 8 };
 
     impl Args for Probe {
@@ -357,8 +346,6 @@ mod tests {
                         values: &[("brief", Depth::Brief), ("full", Depth::Full)],
                     },
                 ),
-                full: fields.optional("full", "Everything.", &Flag),
-                limit: fields.optional("limit", "At most this many.", &Integer { min: 1, max: 50 }),
                 tags: fields.required(
                     "tags",
                     "Tags.",
@@ -430,8 +417,6 @@ mod tests {
         json!({
             "name": "auth",
             "depth": "full",
-            "full": true,
-            "limit": 50,
             "tags": ["a", "b"],
             "anchors": [{ "file": "a.rs", "symbol": "f" }, { "file": "b.rs" }],
             "scope": { "component": "store" },
@@ -472,8 +457,6 @@ mod tests {
             Probe {
                 name: "auth".into(),
                 depth: Depth::Full,
-                full: Some(true),
-                limit: Some(50),
                 tags: vec!["a".into(), "b".into()],
                 anchors: vec![
                     Anchor {
@@ -504,14 +487,8 @@ mod tests {
     #[test]
     fn optional_fields_may_be_absent() {
         let mut arguments = valid();
-        for key in ["full", "limit", "scope"] {
-            arguments.as_object_mut().unwrap().remove(key);
-        }
-        let parsed = probe(&arguments).unwrap();
-        assert_eq!(
-            (parsed.full, parsed.limit, parsed.scope),
-            (None, None, None)
-        );
+        arguments.as_object_mut().unwrap().remove("scope");
+        assert_eq!(probe(&arguments).unwrap().scope, None);
     }
 
     /// Each malformed shape is refused with the field it breaks.
@@ -557,33 +534,9 @@ mod tests {
             ),
             (
                 "null for an optional field",
-                with("/full", Some(Value::Null)),
-                "full",
-                Fault::Expected("a boolean"),
-            ),
-            (
-                "boolean of another type",
-                with("/full", Some(json!("yes"))),
-                "full",
-                Fault::Expected("a boolean"),
-            ),
-            (
-                "integer as a fraction",
-                with("/limit", Some(json!(1.5))),
-                "limit",
-                Fault::Expected("an integer"),
-            ),
-            (
-                "integer below its bound",
-                with("/limit", Some(json!(0))),
-                "limit",
-                Fault::OutOfRange { min: 1, max: 50 },
-            ),
-            (
-                "integer past i64",
-                with("/limit", Some(json!(u64::MAX))),
-                "limit",
-                Fault::OutOfRange { min: 1, max: 50 },
+                with("/scope", Some(Value::Null)),
+                "scope",
+                Fault::Expected("an object"),
             ),
             (
                 "unknown enum value",
@@ -745,8 +698,6 @@ mod tests {
             json!({
                 "name": described("A name."),
                 "depth": { "type": "string", "enum": ["brief", "full"], "description": "How much to show." },
-                "full": { "type": "boolean", "description": "Everything." },
-                "limit": { "type": "integer", "minimum": 1, "maximum": 50, "description": "At most this many." },
                 "tags": { "type": "array", "items": name, "maxItems": 2, "description": "Tags." },
                 "anchors": { "type": "array", "items": anchor, "maxItems": 3, "description": "Where it applies." },
                 "scope": scope,

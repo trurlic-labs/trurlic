@@ -150,25 +150,37 @@ mod tests {
         tool_list()["tools"].as_array().unwrap()
     }
 
+    /// The tools that predate specs, listed after the spec-built ones.
+    const UNSPECIFIED: [&str; 2] = ["get_context", "get_decisions_for_file"];
+
+    /// `tools/list` is the specs, in registry order, as each defines
+    /// itself, then the two reads written out by hand.
     #[test]
-    fn tool_list_has_exactly_the_two_reads() {
-        let names: Vec<&str> = tools()
+    fn tool_list_is_the_specs_then_the_two_reads() {
+        let (specified, unspecified) = tools().split_at(spec::TOOLS.len());
+        for (listed, tool) in specified.iter().zip(spec::TOOLS) {
+            assert_eq!(*listed, tool.definition(), "{}", tool.name());
+            assert!(listed["outputSchema"].is_object(), "{}", tool.name());
+        }
+        let names: Vec<&str> = unspecified
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["get_context", "get_decisions_for_file"]);
-        for tool in tools() {
+        assert_eq!(names, UNSPECIFIED);
+        for tool in unspecified {
             assert_eq!(
                 tool["annotations"]["readOnlyHint"], true,
                 "{}",
                 tool["name"]
             );
+            assert_eq!(tool["inputSchema"]["type"], "object");
+        }
+        for tool in tools() {
             assert_eq!(
                 tool["annotations"]["openWorldHint"], false,
                 "{}",
                 tool["name"]
             );
-            assert_eq!(tool["inputSchema"]["type"], "object");
         }
     }
 

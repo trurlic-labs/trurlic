@@ -25,7 +25,8 @@ pub(crate) const INTERNAL_ERROR: i32 = -32603;
 /// queued behind that call are already at their limit.
 pub(crate) const SERVER_BUSY: i32 = -32000;
 
-const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
+/// Bytes of one message, and of the document a tool's CLI twin reads.
+pub(crate) const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
 
 // -- Messages --------------------------------------------------------------
 

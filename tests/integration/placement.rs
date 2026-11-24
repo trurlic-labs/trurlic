@@ -4,7 +4,8 @@
 //! started in each find the graph and read it for their own tree; `check`
 //! refuses each placement git contradicts and a second graph; `init`
 //! refuses a placement git cannot hold; and writers started in different
-//! trees of one graph take one lock. Unix only, for the symlinks.
+//! trees of one graph take one lock, so servers in each tree that apply
+//! batches at once lose none. Unix only, for the symlinks.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -533,6 +534,55 @@ fn every_tree_of_a_shared_graph_commits_to_its_one_repository() {
         [head(&trees.main), head(&trees.linked), head(&trees.clone)],
         heads
     );
+}
+
+/// Three servers, one in each tree of one shared graph, apply batches at
+/// once. Every batch lands, each server's next read sees the others'
+/// writes, and the graph's repository holds exactly one commit per batch,
+/// with its origin.
+#[test]
+fn concurrent_batches_from_every_tree_each_land_as_one_commit() {
+    const BATCHES: usize = 6;
+    let trees = Trees::shared();
+    let before = graph_log(&trees.graph());
+    let writers: Vec<_> = [("main", &trees.main), ("linked", &trees.linked), ("clone", &trees.clone)]
+        .into_iter()
+        .map(|(tree, dir)| {
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                let (mut client, _) = McpClient::connect_in(&dir, &[], json!({}));
+                for batch in 0..BATCHES {
+                    let name = format!("{tree}-{batch}");
+                    client.call_tool(
+                        "apply",
+                        json!({ "origin": name, "ops": [{
+                            "op": "record", "name": name, "component": "auth",
+                            "choice": format!("Rule {name}"), "reason": "Written by one of three servers",
+                        }]}),
+                    );
+                }
+                client
+            })
+        })
+        .collect();
+    let mut clients: Vec<McpClient> = writers
+        .into_iter()
+        .map(|writer| writer.join().unwrap())
+        .collect();
+
+    for client in &mut clients {
+        let status = client.call_tool("status", json!({}));
+        assert_eq!(status["counts"]["decisions"], 1 + 3 * BATCHES, "{status}");
+    }
+    let log = graph_log(&trees.graph());
+    assert_eq!(log.len(), before.len() + 3 * BATCHES, "{log:?}");
+    let origins: std::collections::BTreeSet<&str> = log[..3 * BATCHES]
+        .iter()
+        .map(|message| message.strip_prefix("apply\n\nOrigin: ").unwrap())
+        .collect();
+    assert_eq!(origins.len(), 3 * BATCHES, "{log:?}");
+    assert_eq!(log[3 * BATCHES..], before[..]);
+    trurlic_ok(&trees.linked, &["check"]);
 }
 
 // -- one lock for every tree of one graph -----------------------------------

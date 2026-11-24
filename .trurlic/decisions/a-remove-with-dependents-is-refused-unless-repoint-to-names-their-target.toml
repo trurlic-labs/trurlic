@@ -1,0 +1,21 @@
+component = "store"
+choice = "A remove is refused while decisions depend on it, naming them, unless repoint_to names the decision their edges point at instead; an heir's own edge to it is dropped"
+reason = "Removing a decision others depend on would leave dangling edges, which validation reports; the store refuses it instead, listing the dependents (ten named, the rest counted). With repoint_to each dependent's edge moves to the heir in the same op, and the heir, which depended on the removed decision, does not come to depend on itself: its edge is dropped. A repoint that closes a depends_on cycle through the heir is refused naming the members."
+alternatives = [
+    "Drop the dependents' edges with the decision: rejected because the dependents would silently lose a constraint",
+    "Remove the dependents too: rejected because a cascade of deletes is not what one remove names",
+]
+tags = [
+    "api",
+    "consistency",
+]
+status = "accepted"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/store/apply/decision.rs", symbol = "remove" },
+    { file = "src/store/apply/tests.rs", symbol = "a_remove_with_dependents_is_refused_unless_it_repoints_them" },
+]
+depends_on = [
+    "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",
+]

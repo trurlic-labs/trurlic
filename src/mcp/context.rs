@@ -541,6 +541,7 @@ mod tests {
                 choice: "Rotate keys weekly".into(),
                 reason: "The text the owner accepted".into(),
                 alternatives: vec![],
+                via: None,
             }),
         };
         state.decisions.insert("rotate".into(), revision);

@@ -2,10 +2,17 @@
 //! each fitted to [`MAX_TOOL_RESULT_BYTES`] and wrapped in the MCP
 //! tool-result envelope.
 //!
+//! A result built on a spec carries its JSON twice, as `structuredContent`
+//! and as the text of its one content block, so a client that reads either
+//! reads the same value; a cut result is cut in both.
+//!
 //! A refusal is a result with `isError: true`, never a JSON-RPC error, so
 //! the agent reads it and can correct the call. Its text is the JSON
-//! object `{"error": {"kind", "field"?, "message"}}`; `kind` is what a
-//! caller branches on, `field` names the argument at fault.
+//! object `{"error": {"kind", "field"?, "op"?, "rule"?, "message"}}`;
+//! `kind` is what a caller branches on, `field` names the argument at
+//! fault, and a refused batch names its op and the rule it breaks.
+
+use std::fmt;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -14,12 +21,16 @@ use super::spec::InvalidArgument;
 use super::truncate;
 use crate::Error;
 use crate::budget::MAX_TOOL_RESULT_BYTES;
+use crate::store::Refusal;
 
 /// Typed MCP tool-result envelope, serialized once, directly into the
 /// JSON-RPC response; `text` holds the payload serialized once.
 #[derive(Debug, Serialize)]
 pub(crate) struct ToolEnvelope {
     content: [TextBlock; 1],
+    /// The text's JSON, for a tool with an `outputSchema`.
+    #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
+    structured_content: Option<Value>,
     /// Present and `true` for a refusal, omitted for success.
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     is_error: Option<bool>,
@@ -47,6 +58,9 @@ pub(crate) enum ErrorKind {
     StoreError,
     /// The graph or the tool refused the request as it stands.
     Refused,
+    /// The store refused a batch whole and wrote nothing: `rule` names the
+    /// rule, `op` the op at fault when one is, `field` the argument.
+    BatchRefused,
 }
 
 /// A refused call.
@@ -55,32 +69,60 @@ pub(crate) struct ToolError {
     kind: ErrorKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    op: Option<OpRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rule: Option<&'static str>,
     message: String,
+}
+
+/// The op of a refused batch.
+#[derive(Debug, Serialize)]
+struct OpRef {
+    index: usize,
+    op: &'static str,
+    name: String,
 }
 
 impl ToolError {
     pub(crate) fn refused(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Refused, None, message.into())
+    }
+
+    const fn new(kind: ErrorKind, field: Option<String>, message: String) -> Self {
         Self {
-            kind: ErrorKind::Refused,
-            field: None,
-            message: message.into(),
+            kind,
+            field,
+            op: None,
+            rule: None,
+            message,
         }
+    }
+
+    /// A document a CLI twin read that holds no arguments.
+    pub(crate) const fn bad_document(message: String) -> Self {
+        Self::new(ErrorKind::InvalidArgument, None, message)
+    }
+}
+
+/// The message: what a command prints after `error: `.
+impl fmt::Display for ToolError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
     }
 }
 
 impl From<InvalidArgument> for ToolError {
     fn from(invalid: InvalidArgument) -> Self {
-        Self {
-            kind: ErrorKind::InvalidArgument,
-            message: invalid.to_string(),
-            field: Some(invalid.field),
-        }
+        let message = invalid.to_string();
+        Self::new(ErrorKind::InvalidArgument, Some(invalid.field), message)
     }
 }
 
 impl From<Error> for ToolError {
     fn from(error: Error) -> Self {
         let kind = match error {
+            Error::Refused(refusal) => return Self::from(*refusal),
             Error::StoreNotFound(_) => ErrorKind::NoProject,
             // Every way `project.toml` states a format this binary cannot read.
             Error::VersionMismatch { .. }
@@ -90,10 +132,23 @@ impl From<Error> for ToolError {
             // Every other failure to find, read or write the store.
             _ => ErrorKind::StoreError,
         };
+        Self::new(kind, None, error.to_string())
+    }
+}
+
+impl From<Refusal> for ToolError {
+    fn from(refusal: Refusal) -> Self {
+        let message = refusal.to_string();
         Self {
-            kind,
-            field: None,
-            message: error.to_string(),
+            kind: ErrorKind::BatchRefused,
+            field: Some(refusal.path()),
+            rule: Some(refusal.rule.as_str()),
+            op: refusal.op.map(|op| OpRef {
+                index: op.index,
+                op: op.kind.as_str(),
+                name: op.target,
+            }),
+            message,
         }
     }
 }
@@ -105,6 +160,23 @@ pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
             r#type: "text",
             text: truncate::fit_payload(payload, MAX_TOOL_RESULT_BYTES),
         }],
+        structured_content: None,
+        is_error: None,
+    }
+}
+
+/// [`tool_result`] with the text's JSON as `structuredContent` too: the
+/// payload as it is, or as it was cut to fit.
+pub(crate) fn structured_result(payload: Value) -> ToolEnvelope {
+    let text = truncate::fit_payload(&payload, MAX_TOOL_RESULT_BYTES);
+    // The cut text is JSON: `fit_payload` builds it from a `Value`.
+    let structured = serde_json::from_str(&text).unwrap_or(payload);
+    ToolEnvelope {
+        content: [TextBlock {
+            r#type: "text",
+            text,
+        }],
+        structured_content: Some(structured),
         is_error: None,
     }
 }
@@ -116,6 +188,7 @@ pub(crate) fn tool_error(error: &ToolError) -> ToolEnvelope {
             r#type: "text",
             text: truncate::fit_payload(&json!({ "error": error }), MAX_TOOL_RESULT_BYTES),
         }],
+        structured_content: None,
         is_error: Some(true),
     }
 }
@@ -242,6 +315,58 @@ mod tests {
             let message = payload["error"]["message"].as_str().unwrap();
             assert!(message.contains(named), "{kind}: {message}");
         }
+    }
+
+    #[test]
+    fn a_structured_result_holds_the_same_json_twice_cut_or_not() {
+        for payload in [
+            json!({ "count": 3 }),
+            json!({ "items": vec!["x".repeat(100); MAX_TOOL_RESULT_BYTES / 50] }),
+        ] {
+            let wire = wire(&structured_result(payload));
+            let text: Value =
+                serde_json::from_str(wire["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(text, wire["structuredContent"]);
+        }
+        let cut = wire(&structured_result(
+            json!({ "items": vec!["x".repeat(100); 1000] }),
+        ));
+        assert!(cut["structuredContent"]["truncated"].is_array(), "{cut}");
+        assert!(
+            wire(&tool_result(&json!({})))
+                .get("structuredContent")
+                .is_none()
+        );
+    }
+
+    /// A refused batch names its op, the argument and the rule.
+    #[test]
+    fn a_refused_batch_names_its_op_field_and_rule() {
+        use crate::store::{OpAt, OpKind, Rule};
+
+        let refusal = Refusal {
+            op: Some(OpAt {
+                index: 3,
+                kind: OpKind::Revise,
+                target: "sign".into(),
+            }),
+            field: Some("add_depends_on[0]".into()),
+            rule: Rule::SelfEdge,
+        };
+        let error = Error::Refused(Box::new(refusal));
+
+        let payload = refusal_payload(&tool_error(&error.into()));
+
+        assert_eq!(
+            payload,
+            json!({ "error": {
+                "kind": "batch_refused",
+                "field": "ops[3].add_depends_on[0]",
+                "op": { "index": 3, "op": "revise", "name": "sign" },
+                "rule": "self_edge",
+                "message": "ops[3] (revise `sign`), `add_depends_on[0]`: names the node the edge leaves",
+            }})
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 component = "store"
 choice = "check and status report a shared graph's uncommitted tree, a leftover index.lock and a missing repository, each a typed HistoryFinding with a stable form"
 reason = """
-The owner learns from them what the history lacks before a review reads it. Store::history_findings returns nothing under tracked, where the project's git holds the history. Under shared it returns Missing when .trurlic/.git is gone, IndexLocked when .git/index.lock is there, and Uncommitted with the graph files git status lists, sorted, asked under the shared lock so no write is halfway. status is a read and writes nothing to the repository: git status runs with --no-optional-locks, so no refreshed index is saved and a leftover lock does not stop it. Each finding's Display is its one form, printed by check as an error or a warning and by status as a history: line.
+The owner learns from them what the history lacks before a review reads it. Store::history_findings returns nothing under tracked, where the project's git holds the history. Under shared it returns Missing when .trurlic/.git is gone, IndexLocked when .git/index.lock is there, and Uncommitted with the graph files git status lists, sorted, asked under the shared lock so no write is halfway. status is a read and writes nothing to the repository: git status runs with --no-optional-locks, so no refreshed index is saved and a leftover lock does not stop it. Each finding's Display is its one form, printed by check as an error or a warning, and returned by the status tool as a history item of its kind and that message, which trurlic status prints as a history: line.
 """
 alternatives = [
     "Run git status plainly: rejected because it saves a refreshed index when it can lock it, so a read would write to the repository",
@@ -15,7 +15,8 @@ status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/commands/check.rs", symbol = "check" },
-    { file = "src/commands/query.rs", symbol = "status" },
+    { file = "src/commands/status.rs", symbol = "print" },
+    { file = "src/mcp/status/mod.rs", symbol = "history_item" },
     { file = "src/store/history.rs", symbol = "HistoryFinding" },
     { file = "src/store/history.rs", symbol = "Store::history_findings" },
 ]

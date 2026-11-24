@@ -72,6 +72,11 @@ fn read_calls() -> Vec<(&'static str, Value)> {
         ),
         ("get_context", json!({ "component": "project" })),
         ("get_decisions_for_file", json!({ "file": "src" })),
+        ("status", json!({})),
+        (
+            "status",
+            json!({ "section": "components", "origin": "row 1" }),
+        ),
     ]
 }
 
