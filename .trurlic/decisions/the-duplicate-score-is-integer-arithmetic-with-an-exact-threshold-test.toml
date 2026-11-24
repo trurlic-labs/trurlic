@@ -1,0 +1,21 @@
+component = "lint"
+choice = "The duplicate score is integer arithmetic: idf in Q32 from a fixed-point ln, exact weights and dot products, the threshold tested exactly in 256 bits, a score printed to six decimals"
+reason = "What a call returns must be a function of the files, byte for byte, and a float's ln comes from the platform's libm, which need not round it the same on two machines. sqrt is correctly rounded by IEEE 754, but the score has no use for a float once ln is an integer. So fixed::ln computes ln in Q64 by k ln 2 plus an atanh series, within 90 units of 2^-64, pinned against 100-digit values; the inverse frequency is rounded to Q32; weights, their squares and dot products are exact integers whose sums saturate and cannot overflow for a 1 MiB text; the test (2 dot)^2 >= |a|^2 |b|^2 is exact in 256 bits, so a pair whose cosine over the weights is exactly 1/2 is listed; the score divides by integer square roots and is within 2^-29 of the real-valued cosine, printed rounded half up to six decimals."
+alternatives = [
+    "f64 with the platform's ln: rejected because two machines can differ in the last bits, and a pair at the threshold or a printed digit can flip",
+    "f64 rounded to six decimals before comparing: rejected because rounding moves the boundary without removing it",
+    "A big-number or decimal crate: rejected because a 256-bit product and a series of twenty terms are a few dozen lines",
+]
+tags = [
+    "determinism",
+]
+status = "proposed"
+origin = "likely duplicates"
+created = "2026-11-24T09:53:20.687376285Z"
+anchors = [
+    { file = "src/lint/duplicates/fixed.rs", symbol = "ln" },
+    { file = "src/lint/duplicates/fixed.rs", symbol = "wide" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Score" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::likely" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "a_pair_whose_cosine_is_exactly_the_threshold_is_listed" },
+]

@@ -77,6 +77,9 @@ fn read_calls() -> Vec<(&'static str, Value)> {
             "status",
             json!({ "section": "components", "origin": "row 1" }),
         ),
+        // Every decision shares its reason, so many pairs tie on their
+        // score and are ordered by name.
+        ("status", json!({ "section": "lint" })),
     ]
 }
 

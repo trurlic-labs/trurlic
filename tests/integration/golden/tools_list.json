@@ -8,7 +8,7 @@
         "readOnlyHint": false,
         "title": "Apply"
       },
-      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of a decision's fields, a list whole or by `add_*`/`remove_*` (never both for one list; a removed element must be held); rename (rewrites every edge to it); merge `absorbed` into `survivor` (edges repointed, anchors, tags and edges unioned, the absorbed text dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component (carries its decisions and connections), remove_component (refused while in use).\nA revise that changes nothing, an edge to a missing node or to itself, and an edge that closes a depends_on cycle are refused. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back to it accepts it again. Anchors, tags, edges and renames leave the status alone.\nQuality: each field a record, revise or merge changes meets the bar. Built in: a one-line choice of at most 200 bytes, a reason of real text, at least one alternative and one anchor, alternatives and tags of one line, no hidden character in any text; then the limits and patterns of `[quality]` in project.toml. A refusal names the argument (`ops[3].add_tags[0]`), the rule, the measured value and the limit; a field the op leaves as it is is not judged. A `warn` pattern writes the batch and warns at its first match per op: `warnings` lists one per op, by argument, pattern index and offset, `more_warnings` counts the rest, and `patterns` holds each named pattern's message.\nThe result names each op's node and what it changed, never the texts.",
+      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of its fields, a list whole or by `add_*`/`remove_*` (never both for one list); rename (rewrites every edge to it); merge `absorbed` into `survivor` (its edges, anchors and tags join the survivor, its text is dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component, remove_component (refused while in use).\nRefused too: a revise that changes nothing, an edge to a missing node or to itself, an edge that closes a depends_on cycle. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back accepts it again.\nQuality: each field a record, revise or merge changes meets the bar: built in, a one-line choice of at most 200 bytes, a reason of real text, an alternative and an anchor at least, no hidden character in any text; then `[quality]` in project.toml. A `warn` pattern and a likely duplicate write the batch and warn in the result.\nThe result names each op's node and what it changed, never the texts.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -515,6 +515,51 @@
       "outputSchema": {
         "additionalProperties": false,
         "properties": {
+          "duplicates": {
+            "description": "Each decision the batch recorded or whose choice or reason it revised that has likely duplicates, decisions whose choice and reason have a TF-IDF cosine of 0.5 or more with its own, in the order of the ops: a warning, never a refusal.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "decision": {
+                  "description": "The decision the batch recorded or whose choice or reason it revised, by its name after the batch.",
+                  "type": "string"
+                },
+                "nearest": {
+                  "description": "Its likely duplicates, best first, at most three.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "decision": {
+                        "description": "The other decision.",
+                        "type": "string"
+                      },
+                      "score": {
+                        "description": "The TF-IDF cosine of the two choices and reasons, to six decimals.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "decision",
+                      "score"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "decision",
+                "nearest"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "more_duplicates": {
+            "description": "Decisions with likely duplicates not listed in `duplicates`. `status` ranks the pairs under `lint`: the section lists the best pairs; the ones left out rank at or below the last listed, and come into view as the listed ones are settled (merged, or revised apart).",
+            "minimum": 0,
+            "type": "integer"
+          },
           "more_origin_warnings": {
             "description": "The origin's warnings not listed.",
             "minimum": 0,
@@ -696,7 +741,7 @@
         "readOnlyHint": true,
         "title": "Status"
       },
-      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, and the decisions of each component. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
+      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: the best pairs of likely duplicate decisions, whose choice and reason have a TF-IDF cosine of 0.5 or more, best first. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -710,7 +755,8 @@
             "enum": [
               "issues",
               "history",
-              "components"
+              "components",
+              "lint"
             ],
             "type": "string"
           }
@@ -928,6 +974,64 @@
                   "required": [
                     "kind",
                     "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
+          "lint": {
+            "additionalProperties": false,
+            "description": "What to read that no rule refuses: the best pairs of likely duplicate decisions, best first, out of `total`.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "decision": {
+                      "description": "The decision it is about; a duplicate's first by name.",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "The finding's kind: `duplicate`, two decisions whose choice and reason have a TF-IDF cosine of 0.5 or more.",
+                      "enum": [
+                        "duplicate"
+                      ],
+                      "type": "string"
+                    },
+                    "other": {
+                      "description": "A duplicate's other decision.",
+                      "type": "string"
+                    },
+                    "score": {
+                      "description": "A duplicate's cosine, to six decimals.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "decision"
                   ],
                   "type": "object"
                 },

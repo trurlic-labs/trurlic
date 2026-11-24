@@ -1,9 +1,14 @@
 //! The `apply` tool: its arguments declared once for the schema and the
 //! parse, and a handler that hands the batch to the store's one write.
-//! Every rule a batch is held to is the store's. Its result is declared in
-//! [`result`].
+//! Every rule a batch is held to is the store's; the likely duplicates of
+//! what it wrote are looked for in the graph it left ([`duplicates`]). Its
+//! result is declared in [`result`].
 
+mod duplicates;
 mod result;
+
+pub(crate) use duplicates::Duplicates;
+pub(crate) use result::Answer;
 
 use crate::store::limits::{
     MAX_ALTERNATIVE_BYTES, MAX_ANCHOR_PATH_BYTES, MAX_ANCHOR_SYMBOL_BYTES, MAX_BATCH_OPS,
@@ -11,7 +16,7 @@ use crate::store::limits::{
     MAX_TRAILER_BYTES,
 };
 use crate::store::{
-    AddComponent, AnchorInput, Applied, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
+    AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
     RemoveComponent, Rename, Revise, ReviseComponent, Writer,
 };
 
@@ -19,7 +24,7 @@ use super::spec::kinds::{List, Object, Text, Union, Variant};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
 use super::spec::{Args, Fields, Kind};
 
-pub(super) static APPLY: ToolSpec<ApplyArgs, Applied> = ToolSpec {
+pub(super) static APPLY: ToolSpec<ApplyArgs, Answer> = ToolSpec {
     name: "apply",
     title: "Apply",
     description: DESCRIPTION,
@@ -33,27 +38,20 @@ Each op is checked against the graph the earlier ops left, so add a component \
 before its decisions and a decision before those that depend on it. A refusal \
 names the first op at fault (`op`), the argument (`field`) and the `rule`.\n\
 Ops (`op` tag): record a decision (always `proposed`; carries `origin`); revise \
-any of a decision's fields, a list whole or by `add_*`/`remove_*` (never both for \
-one list; a removed element must be held); rename (rewrites every edge to it); \
-merge `absorbed` into `survivor` (edges repointed, anchors, tags and edges \
-unioned, the absorbed text dropped); remove (refused while decisions depend on it, \
-unless `repoint_to` names their new target); add_component, revise_component, \
-rename_component (carries its decisions and connections), remove_component \
-(refused while in use).\n\
-A revise that changes nothing, an edge to a missing node or to itself, and an \
-edge that closes a depends_on cycle are refused. Revising the choice, reason or \
-alternatives of an accepted decision proposes the new text and keeps the \
-accepted one; revising back to it accepts it again. Anchors, tags, edges and \
-renames leave the status alone.\n\
-Quality: each field a record, revise or merge changes meets the bar. Built in: a \
-one-line choice of at most 200 bytes, a reason of real text, at least one \
-alternative and one anchor, alternatives and tags of one line, no hidden \
-character in any text; then the limits and patterns of `[quality]` in \
-project.toml. A refusal names the argument (`ops[3].add_tags[0]`), the rule, the \
-measured value and the limit; a field the op leaves as it is is not judged. A \
-`warn` pattern writes the batch and warns at its first match per op: `warnings` \
-lists one per op, by argument, pattern index and offset, `more_warnings` counts \
-the rest, and `patterns` holds each named pattern's message.\n\
+any of its fields, a list whole or by `add_*`/`remove_*` (never both for one list); \
+rename (rewrites every edge to it); merge `absorbed` into `survivor` (its edges, \
+anchors and tags join the survivor, its text is dropped); remove (refused while \
+decisions depend on it, unless `repoint_to` names their new target); \
+add_component, revise_component, rename_component, remove_component (refused while \
+in use).\n\
+Refused too: a revise that changes nothing, an edge to a missing node or to itself, \
+an edge that closes a depends_on cycle. Revising the choice, reason or alternatives \
+of an accepted decision proposes the new text and keeps the accepted one; revising \
+back accepts it again.\n\
+Quality: each field a record, revise or merge changes meets the bar: built in, a \
+one-line choice of at most 200 bytes, a reason of real text, an alternative and an \
+anchor at least, no hidden character in any text; then `[quality]` in project.toml. \
+A `warn` pattern and a likely duplicate write the batch and warn in the result.\n\
 The result names each op's node and what it changed, never the texts.";
 
 /// The arguments of `apply`: what a batch file holds too.
@@ -86,7 +84,7 @@ impl Args for ApplyArgs {
     }
 }
 
-fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Applied> {
+fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
     let batch = Batch {
         ops: arguments.ops,
         origin: arguments.origin,
@@ -94,7 +92,8 @@ fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Applied> {
         // none, and `clientInfo` names the client program.
         session: None,
     };
-    Ok(writer.apply(batch)?)
+    let applied = writer.apply(batch)?;
+    Ok(duplicates::answer(applied, writer.state()))
 }
 
 // -- Ops -------------------------------------------------------------------

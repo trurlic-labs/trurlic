@@ -20,6 +20,7 @@ pub(crate) struct Report {
     pub(crate) issues: Option<Part<IssueItem>>,
     pub(crate) history: Option<Part<HistoryItem>>,
     pub(crate) components: Option<Part<ComponentItem>>,
+    pub(crate) lint: Option<Part<LintItem>>,
 }
 
 pub(crate) struct Counts {
@@ -46,19 +47,6 @@ pub(crate) struct Part<T> {
     pub(crate) items: Vec<T>,
     pub(crate) omitted: usize,
     pub(crate) more: Option<&'static str>,
-}
-
-impl<T> Part<T> {
-    /// The section of `items` with none of them shown: what a report
-    /// measures before it is filled.
-    pub(super) fn frame(items: &[T]) -> Self {
-        Self {
-            total: items.len(),
-            items: Vec::new(),
-            omitted: 0,
-            more: None,
-        }
-    }
 }
 
 pub(crate) struct IssueItem {
@@ -95,6 +83,41 @@ pub(crate) struct ComponentItem {
     pub(crate) name: String,
     pub(crate) decisions: usize,
     pub(crate) proposed: usize,
+}
+
+/// A finding of `lint`: something to read, which no rule refuses.
+pub(crate) enum LintItem {
+    /// Two decisions that likely state one rule twice, `decision` first by
+    /// name, and their cosine to six decimals.
+    Duplicate {
+        decision: String,
+        other: String,
+        score: String,
+    },
+}
+
+/// The kind of a [`LintItem`], one per variant.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LintKind {
+    Duplicate,
+}
+
+impl LintKind {
+    const ALL: [Self; 1] = [Self::Duplicate];
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Duplicate => "duplicate",
+        }
+    }
+}
+
+impl LintItem {
+    pub(crate) const fn kind(&self) -> &'static LintKind {
+        match self {
+            Self::Duplicate { .. } => &LintKind::Duplicate,
+        }
+    }
 }
 
 const PLACEMENT: Tag<Placement> = Tag {
@@ -140,6 +163,10 @@ impl Output for Report {
         fields.optional("components", components, &kind, |report| {
             report.components.as_ref()
         });
+        let lint = "What to read that no rule refuses: the best pairs of likely duplicate \
+                    decisions, best first, out of `total`.";
+        let kind = Nested::<Part<LintItem>>::new();
+        fields.optional("lint", lint, &kind, |report| report.lint.as_ref());
     }
 }
 
@@ -239,6 +266,30 @@ impl Output for HistoryItem {
             &Str,
             |item| &item.message,
         );
+    }
+}
+
+impl Output for LintItem {
+    fn declare(fields: &mut Shown<'_, Self>) {
+        let kind = Tag {
+            all: &LintKind::ALL,
+            name: LintKind::as_str,
+        };
+        let about = "The finding's kind: `duplicate`, two decisions whose choice and reason \
+                     have a TF-IDF cosine of 0.5 or more.";
+        fields.required("kind", about, &kind, |item| item.kind());
+        let decision = "The decision it is about; a duplicate's first by name.";
+        fields.required("decision", decision, &Str, |item| match item {
+            LintItem::Duplicate { decision, .. } => decision,
+        });
+        let other = "A duplicate's other decision.";
+        fields.optional("other", other, &Str, |item| match item {
+            LintItem::Duplicate { other, .. } => Some(other),
+        });
+        let score = "A duplicate's cosine, to six decimals.";
+        fields.optional("score", score, &Str, |item| match item {
+            LintItem::Duplicate { score, .. } => Some(score),
+        });
     }
 }
 

@@ -8,6 +8,7 @@
 //! asking it costs several git processes, too many for a call made often.
 
 use crate::budget::{self, MAX_TOOL_RESULT_BYTES, Shrinkable};
+use crate::lint::duplicates::{Score, Similarity};
 use crate::store::limits::MAX_TRAILER_BYTES;
 use crate::store::{
     HistoryFinding, Issue, Level, PROJECT_COMPONENT, ProjectState, Quality, Status, Store,
@@ -21,7 +22,7 @@ use super::truncate::json_len;
 mod report;
 
 use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
-pub(crate) use report::{Part, QualityCounts, Report};
+pub(crate) use report::{LintItem, Part, QualityCounts, Report};
 
 pub(super) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
     name: "status",
@@ -33,7 +34,9 @@ pub(super) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
 
 const DESCRIPTION: &str = "The decision graph at a glance: its counts, the write rules \
 `[quality]` in project.toml adds to the built-in ones (counted), the validation issues \
-it holds, what a shared graph's history lacks, and the decisions of each component. Each section fits the result budget; one that leaves items out gives \
+it holds, what a shared graph's history lacks, the decisions of each component, and \
+`lint`: the best pairs of likely duplicate decisions, whose choice and reason have a TF-IDF \
+cosine of 0.5 or more, best first. Each section fits the result budget; one that leaves items out gives \
 `omitted` and `more`, which says where the rest is. `section` returns one section \
 with the whole budget. `origin` narrows the counts to the decisions recorded under it. \
 Where the graph sits in the project's git is reported by `trurlic check`.";
@@ -49,6 +52,7 @@ pub(super) enum Section {
     Issues,
     History,
     Components,
+    Lint,
 }
 
 impl Section {
@@ -57,23 +61,34 @@ impl Section {
             Self::Issues => "issues",
             Self::History => "history",
             Self::Components => "components",
+            Self::Lint => "lint",
         }
     }
 
-    /// Where a section's omitted items are, every one of them.
+    /// Where a section's omitted items are, every one of them; for the
+    /// ranked findings of `lint`, where they rank and how they come into
+    /// view, since no surface lists them all.
     const fn more(self) -> &'static str {
         match self {
             Self::Issues => "`trurlic check` lists every issue",
             Self::History => "`git status` in the graph directory lists every file",
             Self::Components => "the files under .trurlic/components/ and .trurlic/decisions/",
+            Self::Lint => LINT_MORE,
         }
     }
 }
 
-const SECTIONS: [(&str, Section); 3] = [
+/// What the `lint` section's omitted findings are, in the words every
+/// surface uses of them.
+pub(crate) const LINT_MORE: &str = "the section lists the best pairs; the ones left out rank \
+     at or below the last listed, and come into view as the listed ones are settled (merged, \
+     or revised apart)";
+
+const SECTIONS: [(&str, Section); 4] = [
     (Section::Issues.as_str(), Section::Issues),
     (Section::History.as_str(), Section::History),
     (Section::Components.as_str(), Section::Components),
+    (Section::Lint.as_str(), Section::Lint),
 ];
 
 /// The names `section` takes, in the order the schema lists them.
@@ -110,14 +125,17 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
     let origin = origin.as_deref();
     let issues = state.validate();
     let issue_count = issues.len();
-    let issue_items = shown(Section::Issues).then(|| issues.into_iter().map(issue_item).collect());
+    let issue_items =
+        shown(Section::Issues).then(|| Listed::all(issues.into_iter().map(issue_item)));
     let history_items = if shown(Section::History) {
         let findings = store.history_findings(state.project.placement)?;
-        Some(findings.iter().map(history_item).collect())
+        Some(Listed::all(findings.iter().map(history_item)))
     } else {
         None
     };
-    let component_items = shown(Section::Components).then(|| component_items(state, origin));
+    let component_items =
+        shown(Section::Components).then(|| Listed::all(component_items(state, origin)));
+    let lint_items = shown(Section::Lint).then(|| lint_items(state));
     let local = store.is_local();
     let mut report = Report {
         // clone: the report outlives the state it reads.
@@ -127,32 +145,77 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
         code_root: (!local).then(|| store.code_root().display().to_string()),
         counts: counts(state, origin, issue_count),
         quality: quality_counts(&state.project.quality),
-        issues: issue_items.as_deref().map(Part::frame),
-        history: history_items.as_deref().map(Part::frame),
-        components: component_items.as_deref().map(Part::frame),
+        issues: issue_items.as_ref().map(Listed::frame),
+        history: history_items.as_ref().map(Listed::frame),
+        components: component_items.as_ref().map(Listed::frame),
+        lint: lint_items.as_ref().map(Listed::frame),
     };
-    fill(&mut report, issue_items, history_items, component_items);
+    let items = Items {
+        issues: issue_items,
+        history: history_items,
+        components: component_items,
+        lint: lint_items,
+    };
+    fill(&mut report, items);
     Ok(report)
+}
+
+/// A section's items before the budget cuts them, out of `total`: every
+/// item but a ranked section's, which holds only the best a result can.
+struct Listed<T> {
+    total: usize,
+    items: Vec<T>,
+}
+
+impl<T> Listed<T> {
+    fn all(items: impl IntoIterator<Item = T>) -> Self {
+        let items: Vec<T> = items.into_iter().collect();
+        Self {
+            total: items.len(),
+            items,
+        }
+    }
+
+    /// The section with none of its items shown: what a report measures
+    /// before it is filled.
+    const fn frame(&self) -> Part<T> {
+        Part {
+            total: self.total,
+            items: Vec::new(),
+            omitted: 0,
+            more: None,
+        }
+    }
+}
+
+/// The items of each section asked for, before the budget cuts them.
+struct Items {
+    issues: Option<Listed<IssueItem>>,
+    history: Option<Listed<HistoryItem>>,
+    components: Option<Listed<ComponentItem>>,
+    lint: Option<Listed<LintItem>>,
 }
 
 /// Put into `report`, whose sections hold no item yet, each section's
 /// leading items that fit the budget beside the rest of it.
-fn fill(
-    report: &mut Report,
-    issues: Option<Vec<IssueItem>>,
-    history: Option<Vec<HistoryItem>>,
-    components: Option<Vec<ComponentItem>>,
-) {
+fn fill(report: &mut Report, items: Items) {
+    let Items {
+        issues,
+        history,
+        components,
+        lint,
+    } = items;
     let sizes: Vec<Sizes> = [
         issues
-            .as_deref()
-            .map(|items| Sizes::of(Section::Issues, items)),
+            .as_ref()
+            .map(|listed| Sizes::of(Section::Issues, listed)),
         history
-            .as_deref()
-            .map(|items| Sizes::of(Section::History, items)),
+            .as_ref()
+            .map(|listed| Sizes::of(Section::History, listed)),
         components
-            .as_deref()
-            .map(|items| Sizes::of(Section::Components, items)),
+            .as_ref()
+            .map(|listed| Sizes::of(Section::Components, listed)),
+        lint.as_ref().map(|listed| Sizes::of(Section::Lint, listed)),
     ]
     .into_iter()
     .flatten()
@@ -163,6 +226,7 @@ fn fill(
     report.history = history.map(|items| Sizes::part(&sizes, Section::History, items, level));
     report.components =
         components.map(|items| Sizes::part(&sizes, Section::Components, items, level));
+    report.lint = lint.map(|items| Sizes::part(&sizes, Section::Lint, items, level));
 }
 
 fn counts(state: &ProjectState, origin: Option<&str>, issues: usize) -> Counts {
@@ -272,6 +336,32 @@ fn component_items(state: &ProjectState, origin: Option<&str>) -> Vec<ComponentI
         .collect()
 }
 
+/// The pairs of likely duplicates, best first.
+fn lint_items(state: &ProjectState) -> Listed<LintItem> {
+    let ranked = Similarity::of(state).pairs(lint_limit());
+    let items = ranked.best.into_iter().map(|pair| LintItem::Duplicate {
+        decision: pair.first.to_owned(),
+        other: pair.second.to_owned(),
+        score: pair.score.to_string(),
+    });
+    Listed {
+        total: ranked.total,
+        items: items.collect(),
+    }
+}
+
+/// The most lint findings one result can hold: the budget over the
+/// smallest finding there can be, with the comma before it, so the
+/// selection keeps every finding a result can show and no more.
+fn lint_limit() -> usize {
+    let smallest = LintItem::Duplicate {
+        decision: "a".into(),
+        other: "b".into(),
+        score: Score::THRESHOLD.to_string(),
+    };
+    MAX_TOOL_RESULT_BYTES / json_len(&to_value(&smallest)).saturating_add(1)
+}
+
 // -- Fitting -----------------------------------------------------------------
 
 /// The sizes of a section's items as JSON: what [`budget::level`] cuts.
@@ -279,24 +369,31 @@ struct Sizes {
     section: Section,
     /// The bytes of the first `k + 1` items with the commas between them.
     ends: Vec<usize>,
+    /// Whether the section has items beyond those given, so that even
+    /// whole it carries the note of what it leaves out.
+    beyond: bool,
 }
 
 impl Sizes {
-    fn of<T: Output>(section: Section, items: &[T]) -> Self {
-        let mut ends = Vec::with_capacity(items.len());
+    fn of<T: Output>(section: Section, listed: &Listed<T>) -> Self {
+        let mut ends = Vec::with_capacity(listed.items.len());
         let mut end = 0usize;
-        for (index, item) in items.iter().enumerate() {
+        for (index, item) in listed.items.iter().enumerate() {
             end = end
                 .saturating_add(usize::from(index > 0))
                 .saturating_add(json_len(&to_value(item)));
             ends.push(end);
         }
-        Self { section, ends }
+        Self {
+            section,
+            ends,
+            beyond: listed.total > listed.items.len(),
+        }
     }
 
     /// The items of `section` kept at `level`, with the count of the rest.
-    fn part<T>(all: &[Self], section: Section, mut items: Vec<T>, level: usize) -> Part<T> {
-        let total = items.len();
+    fn part<T>(all: &[Self], section: Section, listed: Listed<T>, level: usize) -> Part<T> {
+        let Listed { total, mut items } = listed;
         let limit = all
             .iter()
             .find(|sizes| sizes.section == section)
@@ -304,7 +401,7 @@ impl Sizes {
         if let Some(keep) = limit {
             items.truncate(keep);
         }
-        let omitted = total - items.len();
+        let omitted = total.saturating_sub(items.len());
         Part {
             total,
             items,
@@ -320,7 +417,12 @@ impl Sizes {
 
 impl Shrinkable for Sizes {
     fn full(&self) -> usize {
-        self.ends.last().copied().unwrap_or(0)
+        let items = self.ends.last().copied().unwrap_or(0);
+        if self.beyond {
+            items.saturating_add(self.note())
+        } else {
+            items
+        }
     }
 
     fn note(&self) -> usize {
@@ -354,7 +456,7 @@ mod tests {
     /// counts the rest with where to find them.
     #[test]
     fn a_cut_section_keeps_a_prefix_and_counts_the_rest() {
-        let items: Vec<ComponentItem> = (0..100).map(|i| item(&format!("c{i:02}"))).collect();
+        let items = Listed::all((0..100).map(|i| item(&format!("c{i:02}"))));
         let sizes = [Sizes::of(Section::Components, &items)];
         let whole = sizes[0].full();
         let level = budget::level(&sizes, 0, whole / 2).unwrap();
@@ -366,8 +468,26 @@ mod tests {
         assert_eq!(part.omitted, 100 - part.items.len());
         assert_eq!(part.items[0].name, "c00");
         assert_eq!(part.more, Some(Section::Components.more()));
-        let fits = Sizes::part(&sizes, Section::Components, vec![item("c00")], whole);
+        let one = Listed::all([item("c00")]);
+        let fits = Sizes::part(&sizes, Section::Components, one, whole);
         assert_eq!((fits.omitted, fits.more), (0, None));
+    }
+
+    /// A ranked section given its best items out of more counts the rest
+    /// even when every given item fits, and its size holds that note.
+    #[test]
+    fn a_ranked_section_counts_what_its_selection_left_out() {
+        let best = Listed {
+            total: 1000,
+            items: vec![item("c00"), item("c01")],
+        };
+        let sizes = Sizes::of(Section::Lint, &best);
+        assert_eq!(sizes.full(), sizes.ends[1] + sizes.note());
+
+        let part = Sizes::part(&[sizes], Section::Lint, best, MAX_TOOL_RESULT_BYTES);
+
+        assert_eq!((part.total, part.items.len(), part.omitted), (1000, 2, 998));
+        assert_eq!(part.more, Some(Section::Lint.more()));
     }
 
     /// The limits set, `require_origin` among them, and the patterns by

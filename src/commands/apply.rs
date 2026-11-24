@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::Result;
 use crate::console::{diag, out};
-use crate::mcp::twin::{self, MAX_DOCUMENT_BYTES, ToolError};
+use crate::mcp::twin::{self, Answer, Duplicates, LINT_MORE, MAX_DOCUMENT_BYTES, ToolError};
 use crate::store::{Applied, Done, Field, OpKind, Warning};
 
 use super::{Format, answer};
@@ -19,7 +19,7 @@ pub(crate) fn apply(cwd: &Path, file: &Path, format: Format) -> std::result::Res
 
 /// The batch is read before the store is found, as a call's request is,
 /// and parsed after it, as a call's arguments are.
-fn run(cwd: &Path, file: &Path) -> std::result::Result<Applied, ToolError> {
+fn run(cwd: &Path, file: &Path) -> std::result::Result<Answer, ToolError> {
     let arguments = twin::arguments(&read(file)?)?;
     twin::apply(cwd, &arguments)
 }
@@ -59,8 +59,10 @@ fn read(file: &Path) -> std::result::Result<Vec<u8>, ToolError> {
 }
 
 /// One line per op, then the files; each warning on stderr, with the
-/// message of its pattern, and the count of those not listed.
-fn print(applied: &Applied) -> Result<()> {
+/// message of its pattern, then the likely duplicates, each with the count
+/// of those not listed.
+fn print(answer: &Answer) -> Result<()> {
+    let applied = &answer.applied;
     for done in &applied.ops {
         out!("{}", line(done))?;
     }
@@ -72,10 +74,34 @@ fn print(applied: &Applied) -> Result<()> {
     if unlisted > 0 {
         diag!("warning: and {unlisted} more, by the same patterns of `[quality]`");
     }
+    for duplicates in &answer.duplicates {
+        diag!("warning: {}", likely(duplicates));
+    }
+    if answer.more_duplicates > 0 {
+        diag!(
+            "warning: and {} more decision(s) with likely duplicates: `trurlic status --section \
+             lint` ranks the pairs, and {LINT_MORE}",
+            answer.more_duplicates
+        );
+    }
     out!(
         "{} file(s) written, {} removed",
         applied.written,
         applied.removed
+    )
+}
+
+/// A decision's likely duplicates as a terminal shows them.
+fn likely(duplicates: &Duplicates) -> String {
+    let nearest: Vec<String> = duplicates
+        .nearest
+        .iter()
+        .map(|nearest| format!("`{}` ({})", nearest.decision, nearest.score))
+        .collect();
+    format!(
+        "`{}` is a likely duplicate of {}",
+        duplicates.decision,
+        nearest.join(", ")
     )
 }
 

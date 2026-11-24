@@ -43,7 +43,7 @@ use criterion::{
 };
 use serde_json::{Value, json};
 
-use trurlic::bench::{Corpus, Server};
+use trurlic::bench::{Corpus, Server, likely_duplicates};
 use trurlic::store::{Placement, ProjectState, Store};
 
 /// The example `[quality]` table the repository ships.
@@ -217,6 +217,19 @@ fn bench_validate(c: &mut Criterion) {
         let state = fixture.store.load_state().unwrap();
         group.bench_function(BenchmarkId::from_parameter(fixture.size), |b| {
             b.iter(|| black_box(&state).validate());
+        });
+    }
+    group.finish();
+}
+
+/// The pass over every pair of decisions that `status` makes for its
+/// likely duplicates, from the loaded graph: the index and the pairs.
+fn bench_duplicates(c: &mut Criterion) {
+    let mut group = c.benchmark_group("duplicates");
+    for fixture in CORPORA.iter() {
+        let state = fixture.store.load_state().unwrap();
+        group.bench_function(BenchmarkId::from_parameter(fixture.size), |b| {
+            b.iter(|| likely_duplicates(black_box(&state)));
         });
     }
     group.finish();
@@ -424,7 +437,7 @@ criterion_group! {
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_validate, bench_read_tools, bench_write, bench_apply,
-        bench_code_index
+    targets = bench_load_state, bench_validate, bench_duplicates, bench_read_tools, bench_write,
+        bench_apply, bench_code_index
 }
 criterion_main!(benches);

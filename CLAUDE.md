@@ -12,11 +12,13 @@ Single crate (`src/lib.rs`). `pub` only on `cli` and `store`; everything else `p
 store      → git                         graph files: schema, canonical form, validation, text and
                                          quality rules, apply, commit/journal/recovery, lock,
                                          migrations, a shared graph's history
-mcp        → store, budget, discovery    JSON-RPC stdio server, tool specs, `apply` and `status`
-                                         and their CLI twins, context reads, result cap
+mcp        → store, lint, budget,        JSON-RPC stdio server, tool specs, `apply` and `status`
+             discovery                   and their CLI twins, context reads, result cap
 commands   → store, mcp, git, discovery  init, apply, status, query, check, fmt, migrate, install, serve
 cli        → commands, store             clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
+lint       → store                       pure findings over the graph that refuse nothing: likely
+                                         duplicate decisions
 sources    → code, store                 code-root walk, bounded reads, index cache, anchor resolution
 code       → store (types)               pure code index: definitions, spans, span hashes, symbols
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
@@ -25,7 +27,7 @@ error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
 ```
 
-`error` and `console` are used by every module but `code`.
+`error` and `console` are used by every module but `code` and `lint`.
 
 ### Where things are
 
@@ -44,6 +46,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Pre-spec reads (`get_context`, `get_decisions_for_file`) | `mcp/tools.rs`, `mcp/context.rs` |
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
+| Likely duplicates (scoring, pair index) | `lint/duplicates/` |
 | Failpoint sites | `store/failpoint.rs` |
 
 ### Invariants

@@ -1,0 +1,24 @@
+component = "lint"
+choice = "The duplicates pass counts every pair and keeps only the best a result can hold, by a bounded selection over a total order, on any number of threads"
+reason = "A graph whose decisions share one text has a pair for every two of them, half a million at a thousand decisions, while a status result holds a few hundred. So the pass offers each pair to a bounded selection, a heap that keeps the smallest keys of the order score descending, then the two decisions by name, and counts every offer; status requests the budget over the smallest finding there can be, and apply's nearest for three. The key order is total, so the kept pairs are the same whichever order the pairs come in, which lets the probes run on the thread pool, each task with its own selection, merged after. The section's total and omitted come from the count."
+alternatives = [
+    "Collect every pair, then fit: rejected because memory and time grow with the pairs, not with the result",
+    "A fixed count of pairs: rejected because the count a result holds follows from the budget and the size of a finding",
+]
+tags = [
+    "budget",
+    "performance",
+]
+status = "proposed"
+origin = "likely duplicates"
+created = "2026-11-24T10:58:17.033994352Z"
+anchors = [
+    { file = "src/lint/duplicates/best.rs", symbol = "Best" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::pairs" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "the_pairs_are_the_same_on_any_number_of_threads" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "the_pass_keeps_the_best_it_is_asked_for_and_counts_every_pair" },
+    { file = "src/mcp/status/mod.rs", symbol = "lint_limit" },
+]
+depends_on = [
+    "duplicate-pairs-come-from-a-prefix-filtered-inverted-index",
+]

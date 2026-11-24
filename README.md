@@ -120,6 +120,8 @@ message = "The subject is a code entity, never \"we\"."
 
 A word is a run of text between whitespace. An op is held to the bar only in the fields it changes, so a decision migrated or edited below the bar stays revisable, and a field it writes must meet the bar whole. A `warn` pattern warns once per op at its first match: the result lists one warning per op in `warnings`, by argument, pattern index and byte offset, counts the rest in the op's `more_warnings`, and carries each named pattern's message once in `patterns`; `trurlic apply` prints them on stderr. The bar is checked on writes alone: `trurlic check` reports the text rules of every file, not the bar, and fails when a pattern does not compile, which would refuse every write; `trurlic status` counts the rules the table sets. [`examples/quality.toml`](examples/quality.toml) is a complete bar for decisions that coding agents follow.
 
+A likely duplicate is a warning, never a refusal. Two decisions are likely duplicates when the TF-IDF cosine of their `choice` and `reason` is 0.5 or more: the terms are lowercased runs of letters and underscores less common stop words, weighted by count times ln((1 + n) / (1 + df)) + 1 over the graph's n decisions. `apply` names, in `duplicates`, each decision whose choice or reason the batch wrote with its three nearest, and `trurlic apply` prints them on stderr; `status` ranks the pairs under `lint`: the section lists the best pairs; the ones left out rank at or below the last listed, and come into view as the listed ones are settled (merged, or revised apart). Scores are computed in integers, so every machine reports the same pairs and the same six decimals.
+
 ## Where the graph lives
 
 `trurlic init --placement tracked` puts `.trurlic/` under the project's git: it is committed with the code, and every worktree and clone carries its own. `--placement shared` keeps it out of git (through `.git/info/exclude`): one graph at the top of the main worktree serves every linked worktree, and a clone or a copy outside the repository reaches it through a symlink named `.trurlic`:
@@ -210,7 +212,7 @@ The agent reasons it out with you and records each decision you agree on through
 Before writing a line, the agent pulls the component's brief and generates code that respects every decision.
 
 ```bash
-trurlic status              # the graph at a glance: counts, issues, history, components
+trurlic status              # the graph at a glance: counts, issues, history, components, lint
 trurlic apply batch.json    # a batch of ops, the JSON the apply tool takes, all or none
 trurlic check               # every issue, naming its file; fails when there is one
 trurlic fmt                 # rewrite the files that are not in canonical form
@@ -243,7 +245,7 @@ trurlic check                         →  no issue
 | Tool | Purpose |
 |------|---------|
 | `apply` | The one write: a batch of ops applied in order, all or none, in one commit; a refusal names the op, the argument and the rule; held to the [quality rules](#quality-rules) |
-| `status` | The graph at a glance: counts, the quality rules `[quality]` sets, validation issues, what a shared graph's history lacks, each component's decisions |
+| `status` | The graph at a glance: counts, the quality rules `[quality]` sets, validation issues, what a shared graph's history lacks, each component's decisions, the pairs of likely duplicate decisions (`lint`) |
 | `get_context` | Architectural brief for a component: decisions, rules, related constraints, health |
 | `get_decisions_for_file` | Every decision anchored on a file, on a file under a directory, or on a directory that holds the file |
 

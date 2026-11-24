@@ -1,0 +1,26 @@
+component = "lint"
+choice = "Duplicate pairs come from an inverted index that leaves out each decision's most common terms whose norm is under half its whole; a Cauchy-Schwarz bound prunes candidates before scoring"
+reason = "status computes every section when none is asked for and is called often, so the pass over every pair must not cost n squared dot products. Terms are ranked most common first; a decision's leading terms whose squares sum under a quarter of its own stay out of the index, since any pair at the threshold then shares a term both index. Decisions probe the index in the order of their boundaries, so a pair's later boundary is the probe's; the dot product over the shared indexed terms plus the product of both norms below that boundary bounds the cosine, and only a candidate that can reach the threshold is scored whole. The probes run on the thread pool in runs of places, each task with cursors into the earlier decisions' squares below the boundary that only move forward. A test holds the pairs to the exact test over every pair on drawn graphs."
+alternatives = [
+    "A dot product for every pair: rejected because it grows with the square of the decisions times their terms",
+    "A plain inverted index over every term: rejected because common terms have postings as long as the graph, which is nearly the same square",
+    "Locality-sensitive hashing: rejected because it can miss a pair, and the list must be the exact one",
+    "A cache under .state: rejected because a read would then depend on state beside the files",
+]
+tags = [
+    "performance",
+]
+status = "proposed"
+origin = "likely duplicates"
+created = "2026-11-24T09:53:20.687376285Z"
+anchors = [
+    { file = "benches/corpus.rs", symbol = "bench_duplicates" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Index" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::pairs" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "the_index_finds_every_pair_the_exact_test_over_all_pairs_finds" },
+    { file = "src/lint/duplicates/vectors.rs", symbol = "Vector::square_below_from" },
+    { file = "src/lint/duplicates/vectors.rs", symbol = "may_reach" },
+]
+depends_on = [
+    "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
+]

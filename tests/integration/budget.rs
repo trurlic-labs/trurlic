@@ -7,6 +7,12 @@ use crate::harness::{McpClient, Project, decision};
 
 const MAX_TOOL_RESULT_BYTES: usize = 24 * 1024;
 
+/// What the `lint` section says of the findings it leaves out: they rank
+/// at or below the last listed, ties included, and no surface lists them.
+const LINT_MORE: &str = "the section lists the best pairs; the ones left out rank at or below \
+                         the last listed, and come into view as the listed ones are settled \
+                         (merged, or revised apart)";
+
 /// Decisions with reasons long enough that `auth`'s context and file queries
 /// each exceed the budget several times over.
 const DECISIONS: usize = 60;
@@ -68,8 +74,9 @@ fn every_tool_result_fits_the_budget() {
 /// A graph whose issues alone exceed the budget several times over, and
 /// whose components fill a good part of it: each status section fits, the
 /// issues section counts what it leaves out and says where the rest is,
-/// and asked for alone it shows more of them. Nothing is cut silently: no
-/// result carries a `truncated` notice.
+/// and asked for alone it shows more of them; so does the lint section,
+/// whose pairs grow with the square of the decisions. Nothing is cut
+/// silently: no result carries a `truncated` notice.
 #[test]
 fn status_fits_the_budget_and_counts_what_it_leaves_out() {
     const BROKEN: usize = 400;
@@ -111,4 +118,27 @@ fn status_fits_the_budget_and_counts_what_it_leaves_out() {
         whole["components"]["items"][0],
         json!({ "name": "project", "decisions": BROKEN, "proposed": 0 })
     );
+
+    // The decisions' texts differ only in digits, which no term holds, so
+    // every pair is a likely duplicate at a score of one.
+    let lint_alone = fitted(&mut client, "status", json!({ "section": "lint" }));
+    let pairs = BROKEN * (BROKEN - 1) / 2;
+    for status in [&whole, &lint_alone] {
+        let lint = &status["lint"];
+        assert_eq!(lint["total"], pairs);
+        let shown = lint["items"].as_array().unwrap().len();
+        assert_eq!(lint["omitted"], pairs - shown);
+        assert_eq!(lint["more"], LINT_MORE);
+        // The pairs left out tie with the last listed one.
+        assert_eq!(lint["items"][shown - 1]["score"], "1.000000");
+        assert_eq!(
+            lint["items"][0],
+            json!({
+                "kind": "duplicate", "decision": "rule-000", "other": "rule-001",
+                "score": "1.000000",
+            })
+        );
+    }
+    let shown = |status: &Value| status["lint"]["items"].as_array().unwrap().len();
+    assert!(shown(&lint_alone) > shown(&whole));
 }

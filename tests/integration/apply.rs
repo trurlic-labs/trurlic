@@ -286,6 +286,91 @@ fn status_on_the_command_line_is_the_tool() {
     );
 }
 
+/// A record of `name` with `choice` and `reason`, at the built-in bar.
+fn worded(name: &str, choice: &str, reason: &str) -> Value {
+    json!({
+        "op": "record", "name": name, "component": "project", "choice": choice,
+        "reason": reason, "alternatives": ["No rule: rejected"],
+        "anchors": [{ "file": "src/lib.rs" }],
+    })
+}
+
+/// The batches of the duplicates test, in order: two unrelated decisions;
+/// a record that restates the first; a revise of the second's reason that
+/// restates it too; a revise of anchors alone.
+fn duplicate_batches() -> [Value; 4] {
+    let lock = "Every write takes the exclusive lock";
+    let why = "Two writers that race on one file lose an update without the lock.";
+    [
+        json!({ "ops": [
+            worded("lock-writes", lock, why),
+            worded("retry", "Retry a failed request with backoff", "A blip passes."),
+        ]}),
+        json!({ "ops": [worded("writes-lock", lock, "Writers race on one file without it.")] }),
+        json!({ "ops": [{ "op": "revise", "name": "retry", "choice": lock, "reason": why }] }),
+        json!({ "ops": [{ "op": "revise", "name": "retry", "add_anchors": [{ "file": "src/b.rs" }] }] }),
+    ]
+}
+
+/// A likely duplicate warns and never refuses, alike over both surfaces:
+/// on a recorded decision and on one whose text a revise changed, with its
+/// nearest best first, and not on a revise of anchors alone. A terminal
+/// gets the warning on stderr, and `status` ranks the pairs under `lint`.
+#[test]
+fn a_likely_duplicate_warns_over_both_surfaces() {
+    let over_mcp = Project::init();
+    let (mut client, _) = McpClient::connect(&over_mcp);
+    let from_file = Project::init();
+
+    let mut answers = Vec::new();
+    for batch in duplicate_batches() {
+        let text = client.call_tool_text("apply", batch.clone());
+        let output = from_file.apply(&batch, &["--json"]);
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!("{text}\n")
+        );
+        answers.push(serde_json::from_str::<Value>(&text).unwrap());
+    }
+
+    assert!(answers[0].get("duplicates").is_none(), "{}", answers[0]);
+    assert_eq!(
+        answers[1]["duplicates"],
+        json!([{ "decision": "writes-lock", "nearest": [
+            { "decision": "lock-writes", "score": "0.815672" },
+        ]}])
+    );
+    assert_eq!(
+        answers[2]["duplicates"],
+        json!([{ "decision": "retry", "nearest": [
+            { "decision": "lock-writes", "score": "1.000000" },
+            { "decision": "writes-lock", "score": "0.820476" },
+        ]}])
+    );
+    assert!(answers[3].get("duplicates").is_none(), "{}", answers[3]);
+
+    let terminal = Project::init();
+    let [first, second, ..] = duplicate_batches();
+    terminal.apply(&first, &[]);
+    let output = terminal.apply(&second, &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "warning: `writes-lock` is a likely duplicate of `lock-writes` (0.815672)\n"
+    );
+    let status = from_file.run_ok(&["status", "--section", "lint"]).stdout;
+    let status = String::from_utf8(status).unwrap();
+    assert!(
+        status.ends_with(
+            "lint: 3\n  likely duplicates (1.000000): `lock-writes` and `retry`\n  \
+             likely duplicates (0.820476): `lock-writes` and `writes-lock`\n  \
+             likely duplicates (0.820476): `retry` and `writes-lock`\n"
+        ),
+        "{status}"
+    );
+}
+
 /// `--section` takes exactly the sections the tool's schema lists: each
 /// one prints what the call returns, and any other is refused naming them.
 #[test]
@@ -384,7 +469,8 @@ fn the_quality_table_holds_both_surfaces_alike() {
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
         "warning: record `zz-two`, `ops[0].choice`: matches `[quality] patterns[0]` at \
-         byte 5: No zz.\n"
+         byte 5: No zz.\n\
+         warning: `zz-two` is a likely duplicate of `zz-one` (1.000000)\n"
     );
     let status = String::from_utf8(project.run_ok(&["status"]).stdout).unwrap();
     assert!(

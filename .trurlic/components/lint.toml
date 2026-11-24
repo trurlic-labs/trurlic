@@ -1,0 +1,4 @@
+description = "Findings over the graph that no rule refuses, pure over ProjectState and the facts a shell hands it: likely duplicate decisions"
+connects_to = [
+    "store",
+]

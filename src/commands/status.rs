@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::console::out;
-use crate::mcp::twin::{self, Part, QualityCounts, Report, ToolError};
+use crate::mcp::twin::{self, LintItem, Part, QualityCounts, Report, ToolError};
 
 use super::{Format, answer};
 
@@ -64,7 +64,29 @@ fn print(report: &Report, origin: Option<&str>) -> Result<()> {
     for finding in report.history.iter().flat_map(|history| &history.items) {
         out!("history: {}", finding.message)?;
     }
-    Ok(())
+    lint(report.lint.as_ref())
+}
+
+/// The lint section's findings, a line each, when it has any.
+fn lint(section: Option<&Part<LintItem>>) -> Result<()> {
+    let Some(lint) = section.filter(|lint| lint.total > 0) else {
+        return Ok(());
+    };
+    out!("lint: {}", lint.total)?;
+    for item in &lint.items {
+        out!("  {}", finding(item))?;
+    }
+    omitted(lint)
+}
+
+fn finding(item: &LintItem) -> String {
+    match item {
+        LintItem::Duplicate {
+            decision,
+            other,
+            score,
+        } => format!("likely duplicates ({score}): `{decision}` and `{other}`"),
+    }
 }
 
 /// The rules `[quality]` adds, counted, or that it adds none.

@@ -1,55 +1,95 @@
-//! What `apply` answers, declared once for its `outputSchema` and its
-//! JSON: each op's node and what it changed, the warnings, and the files
-//! written. The tests below hold the longest result and the longest
-//! refusal of a batch to the result budget.
+//! What `apply` returns, declared once for its `outputSchema` and its
+//! JSON: each op's node and what it changed, the warnings, the likely
+//! duplicates, and the files written. The tests below hold the longest
+//! result and the longest refusal of a batch to the result budget.
 
 use crate::store::{Applied, Done, Field, OpKind, PatternNote, StatusName, Warning, WarningKind};
 
+use super::duplicates::Duplicates;
 use crate::mcp::spec::output::{Count, Items, Nested, Str, Tag};
 use crate::mcp::spec::{Output, Shown};
 
-impl Output for Applied {
+/// What `apply` returns: what the store's write did, and the likely
+/// duplicates of the decisions whose text it wrote.
+#[derive(Debug)]
+pub(crate) struct Answer {
+    pub(crate) applied: Applied,
+    /// The warnings the result budget holds, in the order of the ops.
+    pub(crate) duplicates: Vec<Duplicates>,
+    /// The decisions with likely duplicates not listed.
+    pub(crate) more_duplicates: usize,
+}
+
+impl Output for Answer {
     fn declare(fields: &mut Shown<'_, Self>) {
         let ops = Items {
             item: Nested::<Done>::new(),
         };
-        fields.required("ops", "What each op did, in order.", &ops, |applied| {
-            &applied.ops
+        fields.required("ops", "What each op did, in order.", &ops, |answer| {
+            &answer.applied.ops
         });
-        let warnings = Items {
-            item: Nested::<Warning>::new(),
-        };
-        let about = "What the batch wrote but a `warn` pattern of `[quality]` warns of: each \
-                     pattern's first match per op, and the first of the origin's and of each \
-                     op's, in the order of the ops and the patterns; an op's `more_warnings` \
-                     counts the rest.";
-        fields.optional("warnings", about, &warnings, |applied| {
-            (!applied.warnings.is_empty()).then_some(&applied.warnings)
-        });
-        let more = "The origin's warnings not listed.";
-        fields.optional("more_origin_warnings", more, &Count, |applied| {
-            (applied.more_origin_warnings > 0).then_some(&applied.more_origin_warnings)
-        });
-        let patterns = Items {
-            item: Nested::<PatternNote>::new(),
-        };
-        let about = "The message of each pattern a warning names, once.";
-        fields.optional("patterns", about, &patterns, |applied| {
-            (!applied.patterns.is_empty()).then_some(&applied.patterns)
-        });
+        declare_warnings(fields);
+        declare_duplicates(fields);
         fields.required(
             "written",
             "Files written, a rename's new file included.",
             &Count,
-            |applied| &applied.written,
+            |answer| &answer.applied.written,
         );
         fields.required(
             "removed",
             "Files removed, a rename's old file included.",
             &Count,
-            |applied| &applied.removed,
+            |answer| &answer.applied.removed,
         );
     }
+}
+
+fn declare_warnings(fields: &mut Shown<'_, Answer>) {
+    let warnings = Items {
+        item: Nested::<Warning>::new(),
+    };
+    let about = "What the batch wrote but a `warn` pattern of `[quality]` warns of: each \
+                 pattern's first match per op, and the first of the origin's and of each \
+                 op's, in the order of the ops and the patterns; an op's `more_warnings` \
+                 counts the rest.";
+    fields.optional("warnings", about, &warnings, |answer| {
+        let warnings = &answer.applied.warnings;
+        (!warnings.is_empty()).then_some(warnings)
+    });
+    let more = "The origin's warnings not listed.";
+    fields.optional("more_origin_warnings", more, &Count, |answer| {
+        let more = &answer.applied.more_origin_warnings;
+        (*more > 0).then_some(more)
+    });
+    let patterns = Items {
+        item: Nested::<PatternNote>::new(),
+    };
+    let about = "The message of each pattern a warning names, once.";
+    fields.optional("patterns", about, &patterns, |answer| {
+        let patterns = &answer.applied.patterns;
+        (!patterns.is_empty()).then_some(patterns)
+    });
+}
+
+fn declare_duplicates(fields: &mut Shown<'_, Answer>) {
+    let duplicates = Items {
+        item: Nested::<Duplicates>::new(),
+    };
+    let about = "Each decision the batch recorded or whose choice or reason it revised that \
+                 has likely duplicates, decisions whose choice and reason have a TF-IDF \
+                 cosine of 0.5 or more with its own, in the order of the ops: a warning, \
+                 never a refusal.";
+    fields.optional("duplicates", about, &duplicates, |answer| {
+        (!answer.duplicates.is_empty()).then_some(&answer.duplicates)
+    });
+    let more = "Decisions with likely duplicates not listed in `duplicates`. `status` ranks the \
+                pairs under `lint`: the section lists the best pairs; the ones left out rank at \
+                or below the last listed, and come into view as the listed ones are settled \
+                (merged, or revised apart).";
+    fields.optional("more_duplicates", more, &Count, |answer| {
+        (answer.more_duplicates > 0).then_some(&answer.more_duplicates)
+    });
 }
 
 const OP_KIND: Tag<OpKind> = Tag {
@@ -133,6 +173,7 @@ impl Output for Done {
 mod tests {
     use super::*;
     use crate::budget::MAX_TOOL_RESULT_BYTES;
+    use crate::mcp::apply::duplicates::{NEAREST, Nearest, fit};
     use crate::mcp::spec::to_value;
     use crate::store::limits::{
         MAX_ALTERNATIVE_BYTES, MAX_BATCH_OPS, MAX_LIST_ITEMS, MAX_NAME_BYTES, MAX_TEXT_FIELD_BYTES,
@@ -150,8 +191,13 @@ mod tests {
     /// its index and the offset, at most about 82 bytes: 4.2 KB for fifty
     /// ops and the origin. The message of each pattern a warning names is
     /// carried once: 32 frames of about 25 bytes and at most
-    /// `MAX_WARN_MESSAGES_BYTES` of escaped messages, 2.3 KB. About 24.1 KB
-    /// of the 24 KiB.
+    /// `MAX_WARN_MESSAGES_BYTES` of escaped messages, 2.3 KB. A likely
+    /// duplicate's warning names a decision and its three nearest with
+    /// their scores, about 700 bytes at `MAX_NAME_BYTES`. Fifty take 35 KB,
+    /// which no result holds beside the rest. So the warnings fill what
+    /// room is left, in the order of the ops, and `more_duplicates` counts
+    /// the others, at most fifty, 22 bytes. About 24.2 KB of the 24 KiB, with
+    /// no room left for one warning: the longest batch counts all fifty.
     #[test]
     fn the_longest_result_of_a_full_batch_fits_the_budget() {
         use crate::store::limits::{
@@ -219,8 +265,19 @@ mod tests {
             written: usize::MAX,
             removed: usize::MAX,
         };
-        let bytes = to_value(&applied).to_string().len();
+        let nearest = Nearest {
+            decision: name(),
+            score: "1.000000".into(),
+        };
+        let warned = Duplicates {
+            decision: name(),
+            nearest: vec![nearest; NEAREST],
+        };
+        let answer = fit(applied, vec![warned; MAX_BATCH_OPS]);
+
+        let bytes = to_value(&answer).to_string().len();
         assert!(bytes <= MAX_TOOL_RESULT_BYTES, "{bytes} bytes");
+        assert_eq!(answer.more_duplicates, MAX_BATCH_OPS);
     }
 
     /// The longest refusal of every rule whose message a batch bounds fits

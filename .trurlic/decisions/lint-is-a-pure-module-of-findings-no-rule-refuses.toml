@@ -1,0 +1,17 @@
+component = "lint"
+choice = "lint is a top-level module of findings no rule refuses, pure over ProjectState: it reads no file, no clock and no git, and a shell hands it any other fact"
+reason = "A finding such as a likely duplicate selects something to read; it is not a rule of the write, so it does not belong in store, whose rules refuse a batch and which imports nothing above it. status and apply both report findings, and the code index and quality checks will add kinds of their own, so the findings sit in one module both surfaces call, below mcp. Pure functions over the loaded graph keep every finding a function of the files on disk and testable on a built ProjectState without a store or a server."
+alternatives = [
+    "Findings in store beside validation: rejected because a finding refuses nothing, and store would grow a second kind of check that no write obeys",
+    "Findings computed inside the status and apply handlers in mcp: rejected because both need the same pass, and mcp code is tested through a server or a spec",
+]
+tags = [
+    "architecture",
+]
+status = "proposed"
+origin = "likely duplicates"
+created = "2026-11-24T09:53:20.687376285Z"
+anchors = [
+    { file = "src/lib.rs", symbol = "lint" },
+    { file = "src/lint/mod.rs" },
+]
