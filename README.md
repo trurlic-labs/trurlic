@@ -36,7 +36,7 @@ The `trurlic` CLI exists for the human: initialize the graph, inspect it, check 
                │ write                     MCP read,   │ file edits
                ▼                                        ▼
         ┌──────────────────────────────────────────────────────┐
-        │   .trurlic/  —  decision graph, git-tracked TOML     │
+        │   .trurlic/  —  decision graph, one TOML file a node │
         └──────────────────────────────────────────────────────┘
 ```
 
@@ -96,6 +96,16 @@ depends_on = [
 ```
 
 The file stem is the decision's name. A component file holds `description` and `connects_to`. Edit them by hand or through your agent: every load validates them, `trurlic check` reports what is wrong with the graph, and `trurlic fmt` puts each file in its canonical form (sorted sets, one element per line) so branches merge cleanly.
+
+## Where the graph lives
+
+`trurlic init --placement tracked` puts `.trurlic/` under the project's git: it is committed with the code, and every worktree and clone carries its own. `--placement shared` keeps it out of git (through `.git/info/exclude`): one graph at the top of the main worktree serves every linked worktree, and a clone or a copy outside the repository reaches it through a symlink named `.trurlic`:
+
+```bash
+ln -s /path/to/project/.trurlic .trurlic   # in the clone's root
+```
+
+Every command and the MCP server find the graph from the directory they run in, and resolve anchors against that tree, not against the graph's. `trurlic status` names both when they differ. `trurlic check` fails when git contradicts the placement (a tracked graph git does not track or ignores, a shared one git tracks) and when a worktree carries a second graph beside a shared one.
 
 ## Install
 

@@ -15,6 +15,7 @@ pub(crate) mod limits;
 mod load;
 mod lock;
 mod migration;
+mod placement;
 mod query;
 mod recovery;
 pub mod schema;
@@ -35,6 +36,7 @@ pub use migration::PlacementDoubt;
 pub(crate) use migration::{
     Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, PlacementSource,
 };
+pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
 pub use query::{Named, anchors_in, normalize_path};
 pub use schema::{
     AcceptedText, AcceptedVia, Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR,
@@ -46,35 +48,47 @@ pub use time::{Timestamp, TimestampError};
 pub use validate::{Issue, IssueKind};
 pub use version::FormatVersion;
 
-/// Handle to a `.trurlic/` directory. It holds no graph: a read loads one
-/// with [`Store::load_state`], and every graph write goes through the
-/// [`Writer`] that [`Store::begin_write`] returns.
+/// Handle to a graph directory and the code root it is read for. It holds
+/// no graph: a read loads one with [`Store::load_state`], and every graph
+/// write goes through the [`Writer`] that [`Store::begin_write`] returns.
+///
+/// The two roots differ when a tree reaches a graph it does not hold: a
+/// symlinked clone, a linked worktree of a shared graph. Anchors resolve
+/// against the code root, and `.state/`, the lock and the journal, lives in
+/// the graph directory, so every tree that reaches one graph shares one
+/// lock.
 #[derive(Debug)]
 pub struct Store {
     pub(super) root: PathBuf,
+    code_root: PathBuf,
 }
 
 impl Store {
-    /// The store in `start` or the nearest directory above it.
-    pub fn discover(start: &Path) -> Result<Self> {
-        let mut current = start.canonicalize().map_err(Error::io(start))?;
-        loop {
-            let candidate = current.join(STORE_DIR);
-            if candidate.is_dir() {
-                return Ok(Self { root: candidate });
-            }
-            if !current.pop() {
-                return Err(Error::StoreNotFound(start.to_path_buf()));
-            }
-        }
-    }
-
+    /// The graph at `root`, read for the directory that holds it.
     pub fn at(root: PathBuf) -> Self {
-        Self { root }
+        let code_root = root.parent().unwrap_or(&root).to_path_buf();
+        Self { root, code_root }
     }
 
+    /// The graph at `root`, read for the tree at `code_root`.
+    pub fn reached_from(root: PathBuf, code_root: PathBuf) -> Self {
+        Self { root, code_root }
+    }
+
+    /// The graph directory.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The tree the graph is read for, which anchors are relative to.
+    pub fn code_root(&self) -> &Path {
+        &self.code_root
+    }
+
+    /// Whether the graph directory is the code root's own `.trurlic/`, as
+    /// opposed to one reached through a symlink or a linked worktree.
+    pub fn is_local(&self) -> bool {
+        self.root == self.code_root.join(STORE_DIR)
     }
 
     pub(crate) fn state_dir(&self) -> PathBuf {
@@ -212,7 +226,7 @@ pub(crate) mod testing {
             components: BTreeMap::new(),
             decisions: BTreeMap::new(),
             non_canonical: Vec::new(),
-            project_root: PathBuf::new(),
+            code_root: PathBuf::new(),
         }
     }
 
@@ -237,34 +251,9 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::testing::*;
     use super::*;
     use tempfile::TempDir;
-
-    #[test]
-    fn discover_finds_the_store_here_and_above() {
-        let tmp = TempDir::new().unwrap();
-        setup_store(tmp.path());
-        let nested = tmp.path().join("src").join("deep");
-        fs::create_dir_all(&nested).unwrap();
-
-        for start in [tmp.path(), nested.as_path()] {
-            let store = Store::discover(start).unwrap();
-            assert_eq!(
-                store.root(),
-                tmp.path().canonicalize().unwrap().join(STORE_DIR)
-            );
-        }
-    }
-
-    #[test]
-    fn discover_fails_when_absent() {
-        let tmp = TempDir::new().unwrap();
-        let err = Store::discover(tmp.path()).unwrap_err();
-        assert!(matches!(err, Error::StoreNotFound(_)));
-    }
 
     #[test]
     fn verify_path_accepts_a_child_and_refuses_an_escape() {

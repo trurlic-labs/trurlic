@@ -20,11 +20,16 @@ pub struct Project {
 }
 
 impl Project {
-    /// A project whose graph its git tracks, as `init --placement tracked`
-    /// makes it.
+    /// A git repository on branch `main` whose graph its git tracks, as
+    /// `init --placement tracked` makes it, committed with the
+    /// `.gitignore` it writes.
     pub fn init() -> Self {
         let project = Self::without_store();
+        let dir = project.path();
+        git(dir, &["init", "--quiet", "--initial-branch=main"]);
         project.run_ok(&["init", "--placement", "tracked"]);
+        git(dir, &["add", "--all"]);
+        git(dir, &["commit", "--quiet", "--no-verify", "-m", "init"]);
         project
     }
 
@@ -53,27 +58,16 @@ impl Project {
         std::fs::read_to_string(self.node(file)).unwrap()
     }
 
-    /// A `trurlic` command with the project as its working directory and no
-    /// inherited failpoint.
+    /// A `trurlic` command with the project as its working directory: see
+    /// [`trurlic`].
     pub fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_trurlic"));
-        command
-            .current_dir(self.path())
-            .env_remove("TRURLIC_FAILPOINT");
-        command
+        trurlic(self.path())
     }
 
     /// Run `trurlic <args>`, assert it failed with status 1, and return its
     /// stderr.
     pub fn run_refused(&self, args: &[&str]) -> String {
-        let output = self.command().args(args).output().unwrap();
-        assert_eq!(
-            output.status.code(),
-            Some(1),
-            "trurlic {args:?} must fail\nstdout: {}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        String::from_utf8(output.stderr).unwrap()
+        trurlic_refused(self.path(), args)
     }
 
     /// Run `trurlic <args>` and assert it succeeded.
@@ -87,6 +81,47 @@ impl Project {
         );
         output
     }
+}
+
+/// A `trurlic` command run in `dir`, with no inherited failpoint, and
+/// with the git it runs isolated from the user's and the system's
+/// configuration.
+pub fn trurlic(dir: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_trurlic"));
+    command
+        .current_dir(dir)
+        .env_remove("TRURLIC_FAILPOINT")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    command
+}
+
+/// Run `trurlic <args>` in `dir`, assert it succeeded, and return its
+/// stdout.
+pub fn trurlic_ok(dir: &Path, args: &[&str]) -> String {
+    let output = trurlic(dir).args(args).output().unwrap();
+    assert!(
+        output.status.success(),
+        "trurlic {args:?} in {} failed with {}\nstderr: {}",
+        dir.display(),
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// Run `trurlic <args>` in `dir`, assert it failed with status 1, and
+/// return its stderr.
+pub fn trurlic_refused(dir: &Path, args: &[&str]) -> String {
+    let output = trurlic(dir).args(args).output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "trurlic {args:?} in {} must fail\nstdout: {}",
+        dir.display(),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8(output.stderr).unwrap()
 }
 
 /// `git <args>` in `dir`, isolated from the user's and the system's git
@@ -140,9 +175,14 @@ pub struct Pause {
 impl Pause {
     /// Arm `spec` (`<site>:<n>`) for the processes given [`env`](Self::env).
     pub fn arm(project: &Project, spec: &'static str) -> Self {
+        Self::arm_in(project.path(), spec)
+    }
+
+    /// [`arm`](Self::arm) with the marker file in `dir`.
+    pub fn arm_in(dir: &Path, spec: &'static str) -> Self {
         Self {
             spec,
-            marker: project.path().join("failpoint.paused"),
+            marker: dir.join("failpoint.paused"),
         }
     }
 
@@ -213,8 +253,12 @@ impl McpClient {
 
     /// Spawn `trurlic serve` with extra environment variables.
     pub fn spawn_with_env(project: &Project, vars: &[(&str, &str)]) -> Self {
-        let mut child = project
-            .command()
+        Self::spawn_in(project.path(), vars)
+    }
+
+    /// Spawn `trurlic serve` in `dir` with extra environment variables.
+    pub fn spawn_in(dir: &Path, vars: &[(&str, &str)]) -> Self {
+        let mut child = trurlic(dir)
             .envs(vars.iter().copied())
             .arg("serve")
             .stdin(Stdio::piped())
@@ -251,7 +295,13 @@ impl McpClient {
         vars: &[(&str, &str)],
         capabilities: Value,
     ) -> (Self, Value) {
-        let mut client = Self::spawn_with_env(project, vars);
+        Self::connect_in(project.path(), vars, capabilities)
+    }
+
+    /// [`connect_declaring`](Self::connect_declaring) for a server started
+    /// in `dir`.
+    pub fn connect_in(dir: &Path, vars: &[(&str, &str)], capabilities: Value) -> (Self, Value) {
+        let mut client = Self::spawn_in(dir, vars);
         let handshake = client.request(
             "initialize",
             json!({

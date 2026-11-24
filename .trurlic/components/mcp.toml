@@ -1,4 +1,5 @@
 description = "MCP server: JSON-RPC stdio, version negotiation, the server's own requests, argument specs, tool dispatch, context assembly, the 24 KiB result cap"
 connects_to = [
+    "discovery",
     "store",
 ]

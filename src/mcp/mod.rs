@@ -1,9 +1,9 @@
 //! The MCP server: one session over stdio, each request answered in turn.
 //!
 //! The server holds the directory it was started in and no graph. Every
-//! tool call finds the store from there and loads it, so a call answers
-//! from the files on disk, and a store created or migrated while the
-//! server runs is served from the next call. Without one, `initialize` and
+//! tool call finds the store from there (`discovery`) and loads it, so a
+//! call answers from the files on disk, and a store created or migrated
+//! while the server runs is served from the next call. Without one, `initialize` and
 //! `tools/list` still answer, and every tool call is refused naming the
 //! command that fixes it.
 
@@ -41,6 +41,7 @@ use serde_json::{Map, Value, json};
 
 use crate::Result;
 use crate::console::diag;
+use crate::discovery::discover;
 use crate::store::Store;
 #[cfg(feature = "failpoints")]
 use crate::store::failpoint::{self, Site};
@@ -287,7 +288,7 @@ fn call_tool(cwd: &Path, params: Option<&Map<String, Value>>, peer: &mut Peer<'_
     if failpoint::triggers(Site::ServerRequest) {
         return Reply::Success(Body::Tool(ask_the_client(peer)));
     }
-    let envelope = match Store::discover(cwd) {
+    let envelope = match discover(cwd) {
         Err(e) => tool_error(&e.into()),
         Ok(store) => match spec_tool {
             Some(tool) => tool.call(&store, peer, object).map_or_else(
@@ -509,7 +510,7 @@ mod tests {
         let first = serve(&mut server, &[get_context(1, "auth")]);
         assert_eq!(first[0]["result"]["isError"], true, "{}", first[0]);
 
-        let store = Store::discover(tmp.path()).unwrap();
+        let store = discover(tmp.path()).unwrap();
         std::fs::write(store.component_path("auth"), "description = \"Auth\"\n").unwrap();
 
         let second = serve(&mut server, &[get_context(2, "auth")]);

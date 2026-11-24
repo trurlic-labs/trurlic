@@ -6,18 +6,18 @@ Named after Trurl (Stanisław Lem, *The Cyberiad*) — the constructor who think
 
 ### Architecture
 
-Single crate, eight modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
+Single crate, nine modules (`src/lib.rs`). Visibility enforces boundaries — `pub(crate)` on everything except `cli` and `store`.
 
 ```
 store       → (no internal deps)         Decision graph: TOML node files, their
                                           canonical form, validation, atomic
                                           writes, file locking, migrations
-mcp         → store, budget               MCP server: JSON-RPC stdio, version
+mcp         → store, budget, discovery    MCP server: JSON-RPC stdio, version
                                           negotiation, the server's own requests,
                                           argument specs, tool dispatch, context
                                           assembly, the 24 KiB cap on every tool
                                           result
-commands    → store, mcp, git             CLI command handlers: init, query,
+commands    → store, mcp, git, discovery  CLI command handlers: init, query,
                                           status, check, fmt, migrate, install
                                           (registers the MCP server with Claude
                                           Code), and the `serve` entry point
@@ -31,8 +31,12 @@ console     → (no internal deps)          Terminal I/O: `out!` to stdout, `dia
                                           to stderr
 git         → (no internal deps)          The `git` command line as a child
                                           process: one typed function per
-                                          question, `-z` output, the variables
-                                          that redirect git cleared
+                                          question (tracked, ignored, toplevel,
+                                          common dir, worktree list), `-z`
+                                          output, the variables that redirect
+                                          git cleared
+discovery   → store, git                  Finding the graph and the code root
+                                          from the directory a call starts in
 ```
 
 Every module uses `error` and `console`; the arrows leave them out.
@@ -45,9 +49,9 @@ Every module uses `error` and `console`; the arrows leave them out.
 
 **mcp transport**: `initialize` answers the client's protocol revision when it is in `PROTOCOL_VERSIONS`, else the latest, and keeps the client's capabilities. During a tool call a handler can send the client a request through its `Peer` (`mcp::peer`) and wait for the answer on the same stdin, without a timeout: meanwhile a `ping` is answered, other requests are queued (16 at most) and served after the call, and `notifications/cancelled` for the call ends the wait with no response. Every line gets at most one answer; a line over 10 MiB is discarded whole.
 
-**commands** reaches `mcp` only to start the MCP server (`serve`); every other handler reads and writes the graph through `Store`. `migrate` asks `git` which graph files the project's git tracks and hands the answer to the store as data, so the store spawns no process.
+**commands** reaches `mcp` only to start the MCP server (`serve`); every other handler reads and writes the graph through `Store`. `migrate` asks `git` which graph files the project's git tracks, and `check` what git says of where the graph sits (`commands/placement.rs`), and each hands the answer to the store as data, so the store spawns no process.
 
-**git** runs `git -C <dir>` with stdin closed and clears every variable through which a caller can point git at another repository, index, work tree or configuration (`git::CLEARED`): trurlic runs inside a project's git hooks, where git exports `GIT_DIR` and `GIT_INDEX_FILE`. A missing binary is `Error::GitMissing`, a failed command `Error::GitFailed` with git's stderr. It holds only the questions a caller asks; no libgit2. Until `apply` lands, a write of a node is a hand edit of its file, which every load validates; `trurlic fmt` is the one command that writes graph files.
+**git** runs `git -C <dir>` with stdin closed and clears every variable through which a caller can point git at another repository, index, work tree or configuration (`git::CLEARED`): trurlic runs inside a project's git hooks, where git exports `GIT_DIR` and `GIT_INDEX_FILE`. A missing binary is `Error::GitMissing`, a failed command `Error::GitFailed` with git's stderr. "No work tree" is a typed answer (`toplevel` returns `None`), never a parsed message: git exits 128 for it as for every fatal error, so the runner asks git only when a `.git` is at or above the directory (`git::dot_git`), and answers `None` without git otherwise, or when `--is-inside-work-tree` says `false` (a git directory, a bare repository). It holds only the questions a caller asks; no libgit2. Until `apply` lands, a write of a node is a hand edit of its file, which every load validates; `trurlic fmt` is the one command that writes graph files.
 
 Trurlic makes no LLM calls. Design work happens in the agent that calls the MCP tools.
 
@@ -78,6 +82,8 @@ Writer protocol: every write starts at `Store::begin_write`, which takes the exc
 Readers: every read (`Store::load_state`) takes the shared lock, checks the format and loads the graph. A journal or a temp file seen under the shared lock was left by a writer that stopped, so the read takes the exclusive lock, finishes that commit and loads under it: no read sees half of a commit.
 
 In-memory state: `ProjectState` holds `BTreeMap`s of `Component` and `Decision` by stem, the `Project`, and the files that are not in canonical form; the queries of `store/query.rs` walk the maps. It lives for one call.
+
+Placement and discovery (`src/discovery.rs`): one function, `discover`, finds the graph for `serve` (on every tool call) and every CLI command that opens one, and returns a `Store` holding both roots: the graph directory, by its real path, and the code root, the tree the call comes from, which anchors resolve against (`ProjectState::code_root`), never the graph's real path. The nearest `.trurlic` at or above the directory comes first, and a symlink of that name is followed, so a clone or a copy outside the repository reaches the graph through one; its code root is the directory holding the symlink. Else, in a linked worktree, the main worktree's graph is found when it states `shared` (`git worktree list`, read from the common dir, names the main worktree first). Git runs only for that second step, and only when the first `.git` above is a file, as at the top of every linked worktree: a tree that holds its graph spawns no process, and a linked worktree of a shared graph spawns two (about 2 ms). Git never runs inside a graph directory: a directory inside one finds it in the walk, and the placement facts are asked of the directory that holds the graph. A `.trurlic` that leads to no directory (a dangling or looping symlink, a file) is a typed error that stops the walk. Under `tracked` every worktree carries its own graph; under `shared` one graph in the main worktree serves every linked worktree, and `.state/`, the lock and the journal, belongs to the graph directory, so writers in every tree of one graph take one lock. `check` holds the placement to git (`ProjectState::placement_issues`, pure over the `PlacementFacts` `commands/placement.rs` gathers, by the rule the migration reads git's listing with): a tracked graph is in a work tree, git tracks a file of it and ignores none; a shared one is tracked by no git and, in a work tree, is the graph at the top of the main worktree, beside which no worktree carries another. `init` refuses a tracked graph outside a work tree or under an ignore rule, a shared one in a work tree anywhere but the top of a main worktree, and any graph in a linked worktree the main worktree's shared graph serves; it writes `.trurlic/.state/` to the `.gitignore` beside a tracked graph and `/.trurlic/` to the common dir's `info/exclude` for a shared one.
 
 No state between calls: the MCP server holds the directory it was started in, and every tool call finds the store from there and loads it. A read tool runs on `Store::load_state`, a write tool on a `Writer`, so a hand edit, a `git checkout` or another process's commit is seen by the very next call. `serve` starts without a store or with one in another format, and each call is refused until it is fixed, naming `trurlic init`, `trurlic migrate`, or the file and text of a version that does not parse. `load_state` reads the node files in parallel, each in one bounded read; `make bench` times it.
 
@@ -118,7 +124,7 @@ the choices they leave open; check before committing.
 
 Unit tests: pure functions, same file. Every module has exhaustive tests for its public contract. Every file type reads back from its canonical text as the value written.
 
-Integration tests (`tests/integration/`): drive the built binary. `harness` spawns `trurlic serve` and speaks JSON-RPC over stdio, playing the client for the server's own requests too; `golden` compares output with `tests/integration/golden/` (`TRURLIC_UPDATE_GOLDEN=1` rewrites the files). Every tool in `tools/list` is called once. `stdio.rs` covers each protocol case: version negotiation, each malformed line, an oversize line, an unknown tool, a server with no store or an old one. `malformed_node.rs` has one test per shape a hand edit can break; `canonical_form.rs` holds `check` and `fmt` to a hand edit; `git_merge.rs` merges two branches of a tracked graph in a real git repository.
+Integration tests (`tests/integration/`): drive the built binary. `harness` spawns `trurlic serve` and speaks JSON-RPC over stdio, playing the client for the server's own requests too; `golden` compares output with `tests/integration/golden/` (`TRURLIC_UPDATE_GOLDEN=1` rewrites the files). Every tool in `tools/list` is called once. `stdio.rs` covers each protocol case: version negotiation, each malformed line, an oversize line, an unknown tool, a server with no store or an old one. `malformed_node.rs` has one test per shape a hand edit can break; `canonical_form.rs` holds `check` and `fmt` to a hand edit; `git_merge.rs` merges two branches of a tracked graph in a real git repository; `placement.rs` builds a main worktree, a linked worktree and a symlinked clone with real git and runs `serve`, `status`, `check`, `init` and contending writers in each. `harness::Project::init` is a git repository with its tracked graph committed, and every `trurlic` the harness runs, and the git it spawns, reads no user or system git configuration.
 
 Argument specs: `mcp::spec` holds one table-driven test over a spec with every field kind the 0.4.0 tools need, refusing each malformed shape with its field named.
 

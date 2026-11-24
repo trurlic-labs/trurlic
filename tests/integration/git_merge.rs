@@ -50,7 +50,6 @@ fn add_on_branch(project: &Project, branch: &str, name: &str, choice: &str) {
 fn two_branches_that_each_add_a_decision_and_an_edge_merge_and_pass_check() {
     let project = Project::init();
     let dir = project.path();
-    git(dir, &["init", "--quiet", "--initial-branch=main"]);
     base(&project);
     commit_all(dir, "base");
 

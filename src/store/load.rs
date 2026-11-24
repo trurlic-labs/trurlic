@@ -84,7 +84,8 @@ impl Store {
             components,
             decisions,
             non_canonical,
-            project_root: self.root.parent().unwrap_or(&self.root).to_path_buf(),
+            // clone: each load's state owns the root it was read for.
+            code_root: self.code_root.clone(),
         })
     }
 

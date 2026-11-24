@@ -85,7 +85,7 @@ impl View<'_> {
 }
 
 fn full_context(state: &ProjectState, comp: &Component, view: &View<'_>) -> Value {
-    let orphaned = orphaned(&state.project_root, view.own);
+    let orphaned = orphaned(&state.code_root, view.own);
     let related = state.related_decisions(view.component);
     let seeds: Vec<&str> = view.own.iter().map(|&(name, _)| name).collect();
     let dependencies = state.dependencies(&seeds, 3);
@@ -291,13 +291,13 @@ pub(crate) fn get_decisions_for_file(state: &ProjectState, file: &str) -> Result
 /// The names of the decisions of `own` that have anchors and whose every
 /// anchored file is confirmed gone. A probe that fails counts as present,
 /// so a filesystem error never reports a live file as deleted.
-fn orphaned<'a>(project_root: &Path, own: &[Named<'a>]) -> BTreeSet<&'a str> {
+fn orphaned<'a>(code_root: &Path, own: &[Named<'a>]) -> BTreeSet<&'a str> {
     own.iter()
         .filter(|(_, d)| {
             !d.anchors.is_empty()
-                && d.anchors.iter().all(|anchor| {
-                    matches!(project_root.join(anchor.file()).try_exists(), Ok(false))
-                })
+                && d.anchors
+                    .iter()
+                    .all(|anchor| matches!(code_root.join(anchor.file()).try_exists(), Ok(false)))
         })
         .map(|&(name, _)| name)
         .collect()
@@ -571,7 +571,7 @@ mod tests {
         fs::create_dir(tmp.path().join("src")).unwrap();
         fs::write(tmp.path().join("src/live.rs"), "").unwrap();
         let mut state = test_state();
-        state.project_root = tmp.path().to_path_buf();
+        state.code_root = tmp.path().to_path_buf();
         state
             .decisions
             .insert("gone".into(), anchored("auth", &["src/gone.rs"]));

@@ -1,0 +1,27 @@
+component = "store"
+choice = "The store judges placement from PlacementFacts that check gathers from git, as the migration takes git's listing; the store spawns no process"
+reason = """
+The judgement is pure: ProjectState::placement_issues takes the graph directory and PlacementFacts (no work tree, or the tracked and ignored paths and the main worktree: bare, this graph with the other graphs of the linked worktrees, or elsewhere with its shared graph if any) and returns sorted issues, so each rule is a unit test with no repository. commands/placement.rs gathers the facts in the directory that holds the graph, never inside it: git::toplevel, tracked, ignored and worktrees, then discovery::graph_in for each worktree's .trurlic and the placement the main worktree's graph states. The migration's placement is read the same way, through commands/placement.rs tracked and PlacementSource. These are not issues of ProjectState::validate, which every read and every write runs without git.
+"""
+alternatives = [
+    "Run git from the store: rejected because the store would spawn processes where the command can hand it the answer",
+    "Judge in commands: rejected because the counting rule is shared with the migration, which lives in the store",
+    "Make them validation issues: rejected because validate runs on every read and every write, which would all need git",
+]
+tags = [
+    "git",
+    "module-boundary",
+    "placement",
+]
+status = "proposed"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/commands/placement.rs", symbol = "facts" },
+    { file = "src/commands/placement.rs", symbol = "main_worktree" },
+    { file = "src/store/placement.rs", symbol = "MainWorktree" },
+    { file = "src/store/placement.rs", symbol = "PlacementFacts" },
+]
+depends_on = [
+    "check-refuses-a-placement-git-contradicts-and-a-second-graph",
+    "migrate-reads-the-placement-from-git-unless-it-is-stated",
+]

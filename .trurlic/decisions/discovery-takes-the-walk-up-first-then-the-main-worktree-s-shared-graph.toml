@@ -1,0 +1,26 @@
+component = "discovery"
+choice = "Discovery takes the nearest .trurlic at or above the cwd, a symlink followed, then in a linked worktree the main worktree's graph when it states shared"
+reason = """
+Under tracked the project's git versions the graph and every worktree checks out its own, so the walk up from the directory finds it. Under shared one graph at the top of the main worktree serves every linked worktree, which holds no .trurlic, so the walk finds nothing there and git names the main worktree: git worktree list, read from the common dir, lists it first, also for a repository made with --separate-git-dir, whose common dir is not inside the main worktree; that graph is used when its project.toml states shared, and a tracked one is not, since its worktrees carry their own. A tree outside the repository, a clone or a copy, reaches the graph through a symlink named .trurlic, which the walk follows and checks first, before the common dir, so a symlinked clone needs no git at all. One function, discovery::discover, serves serve on every tool call and every CLI command that opens a graph, so all of them find the same graph from the same directory.
+"""
+alternatives = [
+    "A link file or a path list naming the graph: rejected because a symlink already links a tree, and needs no format of trurlic's",
+    "Ask git first, then walk: rejected because every call would spawn git, and a symlinked clone or a graph outside any repository has no git answer",
+    "Take the main worktree as the parent of the common dir: rejected because a repository made with --separate-git-dir keeps its common dir elsewhere, where git worktree list still names the main worktree",
+]
+tags = [
+    "git",
+    "placement",
+]
+status = "accepted"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/discovery.rs", symbol = "discover" },
+    { file = "src/discovery.rs", symbol = "graph_in" },
+    { file = "src/discovery.rs", symbol = "shared_graph_serving" },
+    { file = "tests/integration/placement.rs", symbol = "a_linked_worktree_of_a_tracked_graph_reads_its_own" },
+    { file = "tests/integration/placement.rs", symbol = "every_tree_finds_the_shared_graph_and_reads_it_for_itself" },
+]
+depends_on = [
+    "trurlic-init-requires-placement",
+]

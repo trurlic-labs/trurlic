@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use crate::{Error, Result};
 
 use super::load::read_node_bytes;
-use super::schema::{FORMAT_VERSION, PROJECT_FILE, Project};
+use super::schema::{FORMAT_VERSION, PROJECT_FILE, Placement, Project};
 use super::{Store, migration};
 
 /// The keys that have held the format version, newest first.
@@ -178,6 +178,13 @@ impl Store {
     pub fn check_version(&self) -> Result<()> {
         let path = self.project_path();
         ensure_current(&path, &read_table(&path)?.0)
+    }
+
+    /// The placement `project.toml` states, read as the current format.
+    /// No lock is taken: a commit replaces `project.toml` by a rename, so
+    /// the file is read whole, before or after it.
+    pub fn stated_placement(&self) -> Result<Placement> {
+        Ok(self.read_current_project()?.0.placement)
     }
 
     /// `project.toml` in the current format and its bytes, read once. A

@@ -1,0 +1,38 @@
+use std::path::Path;
+
+use crate::console::{diag, out};
+use crate::discovery::discover;
+use crate::{Error, Result};
+
+use super::{graph_name, placement};
+
+/// `trurlic check`: every issue of the graph and of its placement as an
+/// error, every file not in canonical form as a warning. Fails when there
+/// is an issue; a file that only needs `trurlic fmt` does not fail it,
+/// since a hand edit is a legal write.
+///
+/// The placement is held to what git says of the directory that holds the
+/// graph: a tracked graph is in a work tree whose git tracks it and
+/// ignores none of its files; a shared one is tracked by no git, and in a
+/// work tree it is the main worktree's graph, beside which no worktree
+/// carries another.
+pub(crate) fn check(cwd: &Path) -> Result<()> {
+    let store = discover(cwd)?;
+    let state = store.load_state()?;
+    let mut issues = state.validate();
+    let facts = placement::facts(&store)?;
+    issues.extend(state.placement_issues(store.root(), &facts));
+    for issue in &issues {
+        diag!("  error: {}", issue.message);
+    }
+    for file in &state.non_canonical {
+        diag!("  warning: {file} is not in canonical form; run `trurlic fmt`");
+    }
+    if !issues.is_empty() {
+        return Err(Error::CheckFailed(issues.len()));
+    }
+    if state.non_canonical.is_empty() {
+        out!("{} is consistent", graph_name(&store))?;
+    }
+    Ok(())
+}

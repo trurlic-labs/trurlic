@@ -126,13 +126,75 @@ pub enum Error {
         stderr: String,
     },
 
+    /// Git exited with status 0 and printed what the runner cannot read.
+    #[error("`git {args}` printed {detail}")]
+    GitOutput { args: String, detail: &'static str },
+
+    /// A symlink named `.trurlic` that leads to nothing: its target is
+    /// gone, or the links loop.
+    #[error(
+        "{}: the symlink to the graph leads nowhere: {source}; point it at a graph directory or remove it",
+        link.display()
+    )]
+    GraphLinkBroken { link: PathBuf, source: io::Error },
+
+    /// A `.trurlic` that is a file, or a symlink to one.
+    #[error(
+        "{}: not a directory; a graph is a directory named .trurlic, or a symlink to one",
+        path.display()
+    )]
+    GraphNotDirectory { path: PathBuf },
+
+    /// `init --placement tracked` where no git work tree holds `dir`.
+    #[error(
+        "placement tracked needs the project's git, and no git work tree holds {}; run \
+         `git init` first, or `trurlic init --placement shared` to keep the graph out of git",
+        dir.display()
+    )]
+    NoWorkTree { dir: PathBuf },
+
+    /// `init --placement tracked` where an ignore rule matches the graph.
+    #[error(
+        "git ignores {}, so it cannot version a tracked graph; remove the rule that \
+         matches it, or run `trurlic init --placement shared`",
+        graph.display()
+    )]
+    GraphIgnored { graph: PathBuf },
+
+    /// `init --placement shared` in a work tree, away from the top of its
+    /// repository's main worktree, `main`.
+    #[error(
+        "a shared graph lives at the top of the main worktree, {}, where every linked \
+         worktree finds it; run `trurlic init --placement shared` there, not in {}",
+        main.display(),
+        dir.display()
+    )]
+    SharedOffMain { dir: PathBuf, main: PathBuf },
+
+    /// `init --placement shared` in a worktree of a bare repository.
+    #[error(
+        "the repository of {} is bare: it has no main worktree to hold a shared graph",
+        dir.display()
+    )]
+    SharedInBare { dir: PathBuf },
+
+    /// `init` in a linked worktree that the main worktree's shared graph
+    /// serves already.
+    #[error(
+        "the shared graph {} of the main worktree serves this worktree; a second graph \
+         beside it is refused",
+        graph.display()
+    )]
+    SharedGraphServes { graph: PathBuf },
+
     /// A path given to a query that could name a place outside the code root.
     #[error("invalid path `{path}`: {fault}")]
     InvalidPath { path: String, fault: AnchorFault },
 
     #[error(
-        "not a trurlic project (no .trurlic/ found in {0} or any parent directory); \
-         run `trurlic init` in the project root"
+        "not a trurlic project (no .trurlic/ in {0} or any parent directory, and no \
+         shared graph in the main worktree of its repository); run \
+         `trurlic init --placement tracked|shared` in the project root"
     )]
     StoreNotFound(PathBuf),
 

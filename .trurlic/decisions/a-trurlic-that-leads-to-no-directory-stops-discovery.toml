@@ -1,0 +1,24 @@
+component = "discovery"
+choice = "A .trurlic that is a file, or a symlink that dangles, loops or leads to a file, is a typed error naming it, and stops the walk"
+reason = """
+A .trurlic in a tree says which graph the tree means; when it leads nowhere, a graph further up is another project's or the parent repository's, and a write would land there. graph_in reads the entry with symlink_metadata and resolves a symlink with canonicalize, which follows the whole chain under the system's bound on symlinks, so a loop fails at once instead of hanging. A dangling or looping link is Error::GraphLinkBroken with the link and the system's reason, a file or a link to a file Error::GraphNotDirectory; serve answers either as a store_error refusal.
+"""
+alternatives = [
+    "Skip the entry and walk on: rejected because the graph found above is not the one the tree links to",
+    "Follow a link one step at a time with a counter of trurlic's: rejected because canonicalize already bounds the chain",
+]
+tags = [
+    "placement",
+    "validation",
+]
+status = "proposed"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/discovery.rs", symbol = "graph_in" },
+    { file = "src/error.rs", symbol = "Error::GraphLinkBroken" },
+    { file = "src/error.rs", symbol = "Error::GraphNotDirectory" },
+    { file = "tests/integration/placement.rs", symbol = "a_broken_symlink_is_refused_by_every_surface" },
+]
+depends_on = [
+    "discovery-takes-the-walk-up-first-then-the-main-worktree-s-shared-graph",
+]

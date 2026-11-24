@@ -21,10 +21,24 @@ pub struct ProjectState {
     /// The files whose bytes are not the canonical form of what they hold,
     /// sorted: hand edits that `trurlic fmt` rewrites.
     pub non_canonical: Vec<NodeFile>,
-    /// The project directory, the parent of `.trurlic/`, which anchors are
-    /// relative to. Empty in a state a test builds, which checks no anchor
-    /// on disk.
-    pub(crate) project_root: PathBuf,
+    /// The tree the graph was read for, which anchors are relative to:
+    /// the store's code root. Empty in a state a test builds, which checks
+    /// no anchor on disk.
+    pub(crate) code_root: PathBuf,
+}
+
+impl ProjectState {
+    /// Every file of the graph, `project.toml` first, then the components
+    /// and the decisions by name.
+    #[must_use]
+    pub fn files(&self) -> Vec<NodeFile> {
+        let components = self.components.keys().cloned().map(NodeFile::Component);
+        let decisions = self.decisions.keys().cloned().map(NodeFile::Decision);
+        std::iter::once(NodeFile::Project)
+            .chain(components)
+            .chain(decisions)
+            .collect()
+    }
 }
 
 /// A file of the graph, as a path under `.trurlic/` names it.

@@ -1,16 +1,17 @@
 use std::path::Path;
 
-use crate::console::{diag, out};
-use crate::store::{self, Status, Store};
+use crate::console::out;
+use crate::store::{self, Status};
 use crate::{Error, Result};
 
 use super::open_store;
 
 /// `trurlic status`: a one-screen summary of the graph: its components,
 /// decisions (project-wide and proposed), edges, and how many issues and
-/// non-canonical files it has.
+/// non-canonical files it has, with the graph directory and the code root
+/// when the tree reaches a graph it does not hold.
 pub(crate) fn status(cwd: &Path) -> Result<()> {
-    let state = open_store(cwd)?;
+    let (store, state) = open_store(cwd)?;
     let project_wide = state.project_decisions().len();
     let proposed = state
         .decisions
@@ -29,6 +30,10 @@ pub(crate) fn status(cwd: &Path) -> Result<()> {
         state.project.name,
         state.project.placement.as_str()
     )?;
+    if !store.is_local() {
+        out!("graph: {}", store.root().display())?;
+        out!("code root: {}", store.code_root().display())?;
+    }
     out!("components: {}", state.components.len())?;
     out!(
         "decisions: {} ({project_wide} project-wide, {proposed} proposed)",
@@ -54,7 +59,7 @@ pub(crate) fn query_file(cwd: &Path, path: &str) -> Result<()> {
         path: path.to_owned(),
         fault,
     })?;
-    let state = open_store(cwd)?;
+    let (_, state) = open_store(cwd)?;
     let matches = state.decisions_in(&normalized);
     if matches.is_empty() {
         out!("No decision is anchored on `{normalized}`.")?;
@@ -75,28 +80,6 @@ pub(crate) fn query_file(cwd: &Path, path: &str) -> Result<()> {
             .collect();
         out!("    anchors: {}", anchors.join(", "))?;
         out!()?;
-    }
-    Ok(())
-}
-
-/// `trurlic check`: every issue of the graph as an error, every file not in
-/// canonical form as a warning. Fails when the graph has an issue; a file
-/// that only needs `trurlic fmt` does not fail it, since a hand edit is a
-/// legal write.
-pub(crate) fn check(cwd: &Path) -> Result<()> {
-    let state = Store::discover(cwd)?.load_state()?;
-    let issues = state.validate();
-    for issue in &issues {
-        diag!("  error: {}", issue.message);
-    }
-    for file in &state.non_canonical {
-        diag!("  warning: {file} is not in canonical form; run `trurlic fmt`");
-    }
-    if !issues.is_empty() {
-        return Err(Error::CheckFailed(issues.len()));
-    }
-    if state.non_canonical.is_empty() {
-        out!(".trurlic/ is consistent")?;
     }
     Ok(())
 }

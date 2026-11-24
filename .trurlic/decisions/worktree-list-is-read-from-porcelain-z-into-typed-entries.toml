@@ -1,0 +1,24 @@
+component = "git"
+choice = "git::worktrees reads worktree list --porcelain -z into typed entries: path, Head (bare, branch or detached) and prunable; unknown attributes are skipped"
+reason = """
+Discovery takes the main worktree from the first entry, init refuses a shared graph in a bare repository's worktree, and check walks the linked worktrees for second graphs, skipping prunable ones and naming each by its branch. --porcelain -z ends each attribute with NUL and each record with an empty one, so a path is read as raw bytes, a line break in it included; a branch drops refs/heads/ and is read lossily, since it is only shown. HEAD, locked and any attribute a newer git adds are skipped, and a record that does not start with its worktree line, or no record, is Error::GitOutput. The common dir (git::common_dir, joined to the directory when git prints it relative) names the info/exclude a shared graph is kept out of git by.
+"""
+alternatives = [
+    "Parse the line-based porcelain output: rejected because a path holding a line break would split a record",
+    "Refuse an unknown attribute: rejected because every newer git that adds one would break discovery",
+]
+tags = [
+    "git",
+]
+status = "proposed"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/git.rs", symbol = "Head" },
+    { file = "src/git.rs", symbol = "Worktree" },
+    { file = "src/git.rs", symbol = "common_dir" },
+    { file = "src/git.rs", symbol = "parse_worktrees" },
+    { file = "src/git.rs", symbol = "worktrees" },
+]
+depends_on = [
+    "the-git-module-is-a-leaf-that-runs-the-git-cli",
+]

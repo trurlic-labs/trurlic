@@ -1,0 +1,583 @@
+//! Placement and discovery over real git repositories: a main worktree, a
+//! linked worktree, and a clone outside the repository that reaches the
+//! graph through a `.trurlic` symlink. `serve`, `status` and `check`
+//! started in each find the graph and read it for their own tree; `check`
+//! refuses each placement git contradicts and a second graph; `init`
+//! refuses a placement git cannot hold; and writers started in different
+//! trees of one graph take one lock. Unix only, for the symlinks.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde_json::json;
+use tempfile::TempDir;
+
+use crate::harness::{McpClient, decision, git, trurlic, trurlic_ok, trurlic_refused};
+
+/// A main worktree at `main` with a graph holding the component `auth`
+/// and the decision `sign-tokens`, anchored at `src/branch.rs`, a file only
+/// the linked worktree has; a linked worktree at `linked` on branch
+/// `feature`; and, under a shared graph, a clone at `clone` whose
+/// `.trurlic` is a symlink to the main worktree's graph. Every path is
+/// canonical.
+struct Trees {
+    _tmp: TempDir,
+    root: PathBuf,
+    main: PathBuf,
+    linked: PathBuf,
+    clone: PathBuf,
+}
+
+impl Trees {
+    fn shared() -> Self {
+        let trees = Self::repository();
+        trurlic_ok(&trees.main, &["init", "--placement", "shared"]);
+        trees.write_graph();
+        trees.add_linked();
+        git(&trees.root, &["clone", "--quiet", "main", "clone"]);
+        symlink(Path::new("../main/.trurlic"), &trees.clone.join(".trurlic"));
+        trees
+    }
+
+    /// The graph is committed before the linked worktree is added, so the
+    /// worktree checks out a graph of its own.
+    fn tracked() -> Self {
+        let trees = Self::repository();
+        trurlic_ok(&trees.main, &["init", "--placement", "tracked"]);
+        trees.write_graph();
+        git(&trees.main, &["add", "--all"]);
+        git(&trees.main, &["commit", "--quiet", "-m", "graph"]);
+        trees.add_linked();
+        trees
+    }
+
+    /// `main`, a repository on branch `main` with one commit.
+    fn repository() -> Self {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let main = root.join("main");
+        fs::create_dir_all(main.join("src")).unwrap();
+        git(&main, &["init", "--quiet", "--initial-branch=main"]);
+        fs::write(main.join("src/lib.rs"), "").unwrap();
+        git(&main, &["add", "--all"]);
+        git(&main, &["commit", "--quiet", "-m", "first"]);
+        Self {
+            _tmp: tmp,
+            linked: root.join("linked"),
+            clone: root.join("clone"),
+            main,
+            root,
+        }
+    }
+
+    fn write_graph(&self) {
+        let graph = self.main.join(".trurlic");
+        fs::write(
+            graph.join("components/auth.toml"),
+            "description = \"Auth\"\n",
+        )
+        .unwrap();
+        fs::write(
+            graph.join("decisions/sign-tokens.toml"),
+            decision(
+                "auth",
+                "Sign tokens",
+                "anchors = [\n    { file = \"src/branch.rs\" },\n]\n",
+            ),
+        )
+        .unwrap();
+        trurlic_ok(&self.main, &["fmt"]);
+    }
+
+    fn add_linked(&self) {
+        git(
+            &self.main,
+            &["worktree", "add", "--quiet", "-b", "feature", "../linked"],
+        );
+        fs::write(self.linked.join("src/branch.rs"), "").unwrap();
+    }
+
+    fn graph(&self) -> PathBuf {
+        self.main.join(".trurlic")
+    }
+}
+
+fn symlink(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+/// `get_context("auth")` from a server started in `dir`: the component's
+/// description and how many of its decisions anchor only files the tree
+/// lacks.
+fn context_from(dir: &Path) -> (String, u64) {
+    let (mut client, _) = McpClient::connect_in(dir, &[], json!({}));
+    let context = client.call_tool("get_context", json!({ "component": "auth" }));
+    (
+        context["component"]["description"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        context["health"]["orphaned_anchors"].as_u64().unwrap(),
+    )
+}
+
+/// The main worktree's shared graph is found from the main worktree, the
+/// linked worktree and the symlinked clone, and from a directory inside
+/// each, and each reads it for its own tree: the decision's anchored file
+/// exists only in the linked worktree, so only there is it not orphaned.
+#[test]
+fn every_tree_finds_the_shared_graph_and_reads_it_for_itself() {
+    let trees = Trees::shared();
+    let graph = trees.graph();
+    let cases = [
+        (&trees.main, ".trurlic/".to_owned(), 1),
+        (&trees.linked, format!("{}/", graph.display()), 0),
+        (&trees.clone, format!("{}/", graph.display()), 1),
+    ];
+    for (tree, name, orphaned) in cases {
+        for start in [tree.clone(), tree.join("src")] {
+            let status = trurlic_ok(&start, &["status"]);
+            assert!(status.contains("components: 1\n"), "{status}");
+            assert!(status.contains("decisions: 1 "), "{status}");
+            let shown = format!(
+                "graph: {}\ncode root: {}\n",
+                graph.display(),
+                tree.display()
+            );
+            assert_eq!(status.contains(&shown), *tree != trees.main, "{status}");
+
+            assert_eq!(
+                trurlic_ok(&start, &["check"]),
+                format!("{name} is consistent\n")
+            );
+            assert_eq!(context_from(&start), ("Auth".to_owned(), orphaned));
+        }
+    }
+}
+
+/// Under `tracked` the linked worktree checks out a graph of its own,
+/// which the walk finds: an edit of the main worktree's graph is not seen
+/// there.
+#[test]
+fn a_linked_worktree_of_a_tracked_graph_reads_its_own() {
+    let trees = Trees::tracked();
+    fs::write(
+        trees.graph().join("components/auth.toml"),
+        "description = \"Edited in main\"\n",
+    )
+    .unwrap();
+
+    let status = trurlic_ok(&trees.linked, &["status"]);
+    assert!(!status.contains("graph: "), "{status}");
+    assert_eq!(context_from(&trees.linked), ("Auth".to_owned(), 0));
+    assert_eq!(context_from(&trees.main), ("Edited in main".to_owned(), 1));
+    for tree in [&trees.main, &trees.linked] {
+        assert_eq!(trurlic_ok(tree, &["check"]), ".trurlic/ is consistent\n");
+    }
+}
+
+// -- check refuses what git contradicts -------------------------------------
+
+/// A git repository on branch `main` with one commit and a tracked graph
+/// `init` made, committed or not.
+fn tracked_repository(commit: bool) -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    git(tmp.path(), &["init", "--quiet", "--initial-branch=main"]);
+    trurlic_ok(tmp.path(), &["init", "--placement", "tracked"]);
+    if commit {
+        git(tmp.path(), &["add", "--all"]);
+        git(tmp.path(), &["commit", "--quiet", "-m", "init"]);
+    }
+    tmp
+}
+
+#[test]
+fn check_refuses_a_tracked_graph_git_tracks_none_of() {
+    let tmp = tracked_repository(false);
+
+    let stderr = trurlic_refused(tmp.path(), &["check"]);
+
+    assert!(
+        stderr.contains("placement = \"tracked\", but git tracks none of its 1 files"),
+        "{stderr}"
+    );
+    git(tmp.path(), &["add", ".trurlic"]);
+    trurlic_ok(tmp.path(), &["check"]);
+}
+
+#[test]
+fn check_refuses_a_tracked_graph_git_ignores_a_file_of() {
+    let tmp = tracked_repository(true);
+    fs::write(tmp.path().join(".gitignore"), ".trurlic/decisions/\n").unwrap();
+    fs::write(
+        tmp.path().join(".trurlic/decisions/sign-tokens.toml"),
+        decision("project", "Sign tokens", ""),
+    )
+    .unwrap();
+
+    let stderr = trurlic_refused(tmp.path(), &["check"]);
+
+    assert!(
+        stderr.contains("git ignores 1 of its 2 files: decisions/sign-tokens.toml;"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn check_refuses_a_tracked_graph_in_no_work_tree() {
+    let tmp = TempDir::new().unwrap();
+    trurlic_ok(tmp.path(), &["init", "--placement", "shared"]);
+    let manifest = tmp.path().join(".trurlic/project.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(&manifest, text.replace("\"shared\"", "\"tracked\"")).unwrap();
+
+    let stderr = trurlic_refused(tmp.path(), &["check"]);
+
+    assert!(
+        stderr.contains("placement = \"tracked\", but no git work tree holds it"),
+        "{stderr}"
+    );
+}
+
+/// The same graph, the same issue, from the main and the linked worktree.
+#[test]
+fn check_refuses_a_shared_graph_git_tracks_from_every_tree() {
+    let trees = Trees::shared();
+    git(&trees.main, &["add", "--force", ".trurlic/project.toml"]);
+
+    for tree in [&trees.main, &trees.linked] {
+        let stderr = trurlic_refused(tree, &["check"]);
+        assert!(
+            stderr.contains(&format!(
+                "{}: placement = \"shared\", but git tracks 1 of its 3 files: project.toml;",
+                trees.graph().display()
+            )),
+            "{stderr}"
+        );
+    }
+}
+
+/// A linked worktree that carries its own `.trurlic/` hides the shared
+/// graph from itself: `check` in the main worktree names it with its
+/// branch, and `check` in it names it beside the main worktree's graph.
+#[test]
+fn check_refuses_a_second_graph_beside_a_shared_one_from_both_sides() {
+    let trees = Trees::shared();
+    let second = trees.linked.join(".trurlic");
+    fs::create_dir_all(second.join("components")).unwrap();
+    fs::create_dir_all(second.join("decisions")).unwrap();
+    fs::copy(
+        trees.graph().join("project.toml"),
+        second.join("project.toml"),
+    )
+    .unwrap();
+
+    let stderr = trurlic_refused(&trees.main, &["check"]);
+    assert!(
+        stderr.contains(&format!(
+            "{}: the worktree {} (branch feature) carries a graph of its own beside the \
+             shared graph {}",
+            second.display(),
+            trees.linked.display(),
+            trees.graph().display()
+        )),
+        "{stderr}"
+    );
+    let stderr = trurlic_refused(&trees.linked, &["check"]);
+    assert!(
+        stderr.contains(&format!(
+            "{}: a second graph beside the shared graph {} of the main worktree",
+            second.display(),
+            trees.graph().display()
+        )),
+        "{stderr}"
+    );
+    // The walk finds the second graph first: the linked worktree reads it.
+    let status = trurlic_ok(&trees.linked, &["status"]);
+    assert!(status.contains("components: 0\n"), "{status}");
+}
+
+/// A shared graph below the top of the main worktree is out of reach of
+/// the linked worktrees' lookup.
+#[test]
+fn check_refuses_a_shared_graph_off_the_top_of_the_main_worktree() {
+    let trees = Trees::repository();
+    let made = TempDir::new().unwrap();
+    trurlic_ok(made.path(), &["init", "--placement", "shared"]);
+    let sub = trees.main.join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    fs::rename(made.path().join(".trurlic"), sub.join(".trurlic")).unwrap();
+
+    let stderr = trurlic_refused(&sub, &["check"]);
+
+    assert!(
+        stderr.contains(&format!(
+            "placement = \"shared\", but linked worktrees find a shared graph only at the top \
+             of the main worktree, {}",
+            trees.main.display()
+        )),
+        "{stderr}"
+    );
+}
+
+// -- init refuses a placement git cannot hold -------------------------------
+
+#[test]
+fn init_tracked_needs_a_work_tree_whose_git_does_not_ignore_the_graph() {
+    let plain = TempDir::new().unwrap();
+    let stderr = trurlic_refused(plain.path(), &["init", "--placement", "tracked"]);
+    assert!(
+        stderr.contains("placement tracked needs the project's git, and no git work tree holds"),
+        "{stderr}"
+    );
+
+    let ignoring = TempDir::new().unwrap();
+    git(ignoring.path(), &["init", "--quiet"]);
+    fs::write(ignoring.path().join(".gitignore"), ".trurlic/\n").unwrap();
+    let stderr = trurlic_refused(ignoring.path(), &["init", "--placement", "tracked"]);
+    assert!(
+        stderr.contains("so it cannot version a tracked graph"),
+        "{stderr}"
+    );
+
+    for dir in [plain.path(), ignoring.path()] {
+        assert!(!dir.join(".trurlic").exists());
+    }
+}
+
+/// Only the top of the main worktree takes a shared graph; once it has
+/// one, no linked worktree takes a graph at all.
+#[test]
+fn init_shared_belongs_at_the_top_of_the_main_worktree() {
+    let trees = Trees::repository();
+    trees.add_linked();
+    for dir in [trees.linked.clone(), trees.main.join("src")] {
+        let stderr = trurlic_refused(&dir, &["init", "--placement", "shared"]);
+        assert!(
+            stderr.contains(&format!(
+                "a shared graph lives at the top of the main worktree, {}",
+                trees.main.display()
+            )),
+            "{stderr}"
+        );
+    }
+
+    let stdout = trurlic_ok(&trees.main, &["init", "--placement", "shared"]);
+
+    let exclude = trees.main.join(".git/info/exclude");
+    assert_eq!(
+        stdout,
+        format!(
+            "Initialized .trurlic/ (shared): kept out of git by {}\n",
+            exclude.display()
+        )
+    );
+    let excluded = fs::read_to_string(&exclude).unwrap();
+    assert!(
+        excluded.lines().any(|line| line == "/.trurlic/"),
+        "{excluded}"
+    );
+    let status = git(
+        &trees.main,
+        &["status", "--porcelain", "--untracked-files=all"],
+    );
+    assert_eq!(String::from_utf8(status.stdout).unwrap(), "");
+    assert!(!trees.main.join(".gitignore").exists());
+    for placement in ["tracked", "shared"] {
+        let stderr = trurlic_refused(&trees.linked, &["init", "--placement", placement]);
+        assert!(
+            stderr.contains(&format!(
+                "the shared graph {} of the main worktree serves this worktree",
+                trees.graph().display()
+            )),
+            "{stderr}"
+        );
+    }
+}
+
+#[test]
+fn init_shared_in_a_worktree_of_a_bare_repository_is_refused() {
+    let trees = Trees::repository();
+    git(
+        &trees.root,
+        &["clone", "--quiet", "--bare", "main", "bare.git"],
+    );
+    let bare = trees.root.join("bare.git");
+    git(&bare, &["worktree", "add", "--quiet", "../work"]);
+
+    let stderr = trurlic_refused(&trees.root.join("work"), &["init", "--placement", "shared"]);
+
+    assert!(
+        stderr.contains("is bare: it has no main worktree"),
+        "{stderr}"
+    );
+    // A bare repository holds no graph and finds none.
+    let stderr = trurlic_refused(&bare, &["status"]);
+    assert!(stderr.contains("not a trurlic project"), "{stderr}");
+}
+
+// -- hostile layouts -------------------------------------------------------
+
+/// A dangling `.trurlic` symlink and one that loops are typed errors in
+/// the CLI and tool refusals in the server, never a hang.
+#[test]
+fn a_broken_symlink_is_refused_by_every_surface() {
+    let tmp = TempDir::new().unwrap();
+    for (name, target) in [("dangling", "../gone"), ("looping", ".trurlic")] {
+        let dir = tmp.path().join(name);
+        fs::create_dir_all(&dir).unwrap();
+        symlink(Path::new(target), &dir.join(".trurlic"));
+
+        let stderr = trurlic_refused(&dir, &["status"]);
+        assert!(
+            stderr.contains("the symlink to the graph leads nowhere"),
+            "{name}: {stderr}"
+        );
+        let (mut client, _) = McpClient::connect_in(&dir, &[], json!({}));
+        let refusal = client.call_tool_refusal("get_context", json!({ "component": "auth" }));
+        assert_eq!(refusal["kind"], "store_error", "{name}: {refusal}");
+    }
+}
+
+/// The linked worktree of a shared graph whose main worktree is gone: git
+/// refuses the worktree, and the refusal is git's, typed. Under `tracked`
+/// the worktree still reads its own graph.
+#[test]
+fn a_worktree_whose_main_worktree_is_gone_says_what_git_says() {
+    let shared = Trees::shared();
+    fs::remove_dir_all(&shared.main).unwrap();
+    let stderr = trurlic_refused(&shared.linked, &["status"]);
+    assert!(
+        stderr.contains("`git rev-parse --show-toplevel`"),
+        "{stderr}"
+    );
+
+    let tracked = Trees::tracked();
+    fs::remove_dir_all(&tracked.main).unwrap();
+    let status = trurlic_ok(&tracked.linked, &["status"]);
+    assert!(status.contains("components: 1\n"), "{status}");
+}
+
+/// With no `git` on `PATH`, a tree that holds its graph, and a directory
+/// inside the graph, are served: discovery spawned no git. The linked
+/// worktree needs git to reach the shared graph and says so.
+#[test]
+fn discovery_runs_no_git_where_the_walk_finds_the_graph() {
+    let trees = Trees::shared();
+    let empty = TempDir::new().unwrap();
+    let no_git = |dir: &Path, args: &[&str]| {
+        trurlic(dir)
+            .args(args)
+            .env("PATH", empty.path())
+            .output()
+            .unwrap()
+    };
+
+    for dir in [trees.main.join("src"), trees.graph().join("decisions")] {
+        let output = no_git(&dir, &["status"]);
+        assert!(output.status.success(), "{}: {output:?}", dir.display());
+        let (mut client, _) = McpClient::connect_in(&dir, &[("PATH", "")], json!({}));
+        client.call_tool("get_context", json!({ "component": "auth" }));
+    }
+    let output = no_git(&trees.linked, &["status"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("cannot run `git`"), "{stderr}");
+}
+
+// -- one lock for every tree of one graph -----------------------------------
+
+/// A hand edit `trurlic fmt` rewrites.
+#[cfg(feature = "failpoints")]
+fn non_canonical(trees: &Trees) {
+    fs::write(
+        trees.graph().join("components/auth.toml"),
+        "description='Auth'\n",
+    )
+    .unwrap();
+}
+
+/// A writer in the main worktree holds the lock with its files staged.
+/// Writers started in the linked worktree and in the clone wait for it,
+/// then each loads the graph it committed and finds nothing to do.
+#[cfg(feature = "failpoints")]
+#[test]
+fn writers_in_every_tree_of_one_graph_take_one_lock() {
+    use std::process::Stdio;
+    use std::time::Duration;
+
+    use crate::harness::Pause;
+
+    let trees = Trees::shared();
+    non_canonical(&trees);
+    let pause = Pause::arm_in(&trees.root, "commit.staged:1");
+    let holder = trurlic(&trees.main)
+        .arg("fmt")
+        .envs(pause.env())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    pause.wait();
+    let mut waiting: Vec<_> = [&trees.linked, &trees.clone]
+        .into_iter()
+        .map(|tree| {
+            trurlic(tree)
+                .arg("fmt")
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+
+    // Several lock polls, well inside the lock timeout.
+    std::thread::sleep(Duration::from_millis(500));
+    for writer in &mut waiting {
+        assert!(
+            writer.try_wait().unwrap().is_none(),
+            "a writer did not wait"
+        );
+    }
+    pause.resume();
+
+    let first = holder.wait_with_output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    assert_eq!(
+        String::from_utf8(first.stdout).unwrap(),
+        "formatted components/auth.toml\n"
+    );
+    for writer in waiting {
+        let output = writer.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!("{}/ is in canonical form\n", trees.graph().display())
+        );
+    }
+}
+
+/// A writer in the linked worktree stops after its journal, the commit
+/// point. The journal is in the graph's `.state/`, and a read in the clone
+/// finishes the commit.
+#[cfg(feature = "failpoints")]
+#[test]
+fn a_commit_stopped_in_one_tree_is_finished_from_another() {
+    let trees = Trees::shared();
+    non_canonical(&trees);
+    let journal = trees.graph().join(".state/txn.toml");
+
+    let stopped = trurlic(&trees.linked)
+        .arg("fmt")
+        .env("TRURLIC_FAILPOINT", "commit.journaled:1")
+        .output()
+        .unwrap();
+    assert!(!stopped.status.success(), "{stopped:?}");
+    assert!(journal.is_file());
+
+    trurlic_ok(&trees.clone, &["status"]);
+
+    assert!(!journal.exists());
+    assert_eq!(
+        fs::read_to_string(trees.graph().join("components/auth.toml")).unwrap(),
+        "description = \"Auth\"\n"
+    );
+}

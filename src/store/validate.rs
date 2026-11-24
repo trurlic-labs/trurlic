@@ -35,9 +35,24 @@ pub enum IssueKind {
     InvalidChoice,
     /// A reason that breaks a rule of `store::text`.
     InvalidReason,
+    /// `tracked`, and no work tree holds the graph or git tracks none of
+    /// its files.
+    TrackedUnversioned,
+    /// `tracked`, and an ignore rule keeps some of its files out of git.
+    TrackedIgnored,
+    /// `shared`, and git tracks some of its files.
+    SharedVersioned,
+    /// `shared`, and the graph is not the one at the top of the main
+    /// worktree, where linked worktrees find it.
+    SharedOffMain,
+    /// A graph in a worktree beside the main worktree's shared graph.
+    SecondGraph,
 }
 
-/// One thing wrong with a loaded graph.
+/// One thing wrong with a loaded graph, or with where it sits: the
+/// placement issues are found from git's answers by
+/// [`ProjectState::placement_issues`], every other kind by
+/// [`ProjectState::validate`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Issue {
     pub kind: IssueKind,
@@ -75,9 +90,7 @@ impl ProjectState {
         self.check_components(&mut issues);
         self.check_decisions(&mut issues);
         self.check_cycles(&mut issues);
-        issues.sort_unstable_by(|a, b| {
-            (a.kind, &a.subject, &a.message).cmp(&(b.kind, &b.subject, &b.message))
-        });
+        sort(&mut issues);
         issues
     }
 
@@ -251,7 +264,15 @@ fn decision_file(name: &str) -> NodeFile {
     NodeFile::Decision(name.to_owned())
 }
 
-fn issue(kind: IssueKind, subject: &str, message: String) -> Issue {
+/// `issues` in the order every report gives them: by kind, subject and
+/// message, so the order of the checks never reaches a caller.
+pub(super) fn sort(issues: &mut [Issue]) {
+    issues.sort_unstable_by(|a, b| {
+        (a.kind, &a.subject, &a.message).cmp(&(b.kind, &b.subject, &b.message))
+    });
+}
+
+pub(super) fn issue(kind: IssueKind, subject: &str, message: String) -> Issue {
     Issue {
         kind,
         subject: subject.to_owned(),

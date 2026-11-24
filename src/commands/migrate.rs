@@ -8,7 +8,6 @@
 //! graph live on only in that copy and its report, so both are flushed to
 //! disk before the commit.
 
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -16,13 +15,14 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use crate::console::{diag, out};
+use crate::discovery::discover;
 use crate::store::{
     FORMAT_VERSION, Fact, Loss, MigrationReport, PatternRecord, Placement, PlacementBasis,
     PlacementSource, Store, Timestamp, sync_dir,
 };
-use crate::{Error, Result, git};
+use crate::{Error, Result};
 
-use super::DryRun;
+use super::{DryRun, graph_name, placement};
 
 /// The report's file in the backup directory.
 const REPORT_FILE: &str = "migration-report.txt";
@@ -34,14 +34,18 @@ const MAX_BACKUPS_PER_SECOND: u32 = 100;
 /// migration writes; without it git tells. `DryRun::Yes` prints the report
 /// and writes nothing.
 pub(crate) fn migrate(cwd: &Path, dry_run: DryRun, placement: Option<Placement>) -> Result<()> {
-    let store = Store::discover(cwd)?;
+    let store = discover(cwd)?;
     let source = match placement {
         Some(placement) => PlacementSource::Stated(placement),
-        None => PlacementSource::Git(tracked(&store)),
+        None => match placement::tracked(&store) {
+            Ok(Some(tracked)) => PlacementSource::Git(Ok(tracked)),
+            Ok(None) => PlacementSource::NoWorkTree,
+            Err(e) => PlacementSource::Git(Err(e)),
+        },
     };
     if dry_run == DryRun::Yes {
         return match store.preview_migration(source)? {
-            Some(migration) => print(&report(&migration.report, DryRun::Yes)),
+            Some(migration) => print(&report(&migration.report, &graph_name(&store), DryRun::Yes)),
             None => up_to_date(),
         };
     }
@@ -52,7 +56,7 @@ pub(crate) fn migrate(cwd: &Path, dry_run: DryRun, placement: Option<Placement>)
     let Some(migration) = store.plan_migration(&lock, source)? else {
         return up_to_date();
     };
-    let lines = report(&migration.report, DryRun::No);
+    let lines = report(&migration.report, &graph_name(&store), DryRun::No);
     // Copied under the lock, so no concurrent write can tear the copy.
     let backup = backup_dir(&store)?;
     if let Err(e) = back_up(store.root(), &backup, &lines) {
@@ -77,25 +81,6 @@ pub(crate) fn migrate(cwd: &Path, dry_run: DryRun, placement: Option<Placement>)
     Ok(())
 }
 
-/// The paths under the store directory, relative to it, that the git of
-/// the directory holding the store tracks. Git runs in that directory, not
-/// in the store, which may be a repository of its own.
-fn tracked(store: &Store) -> Result<BTreeSet<PathBuf>> {
-    let root = store.root();
-    let (Some(parent), Some(name)) = (root.parent(), root.file_name()) else {
-        return Err(Error::Validation(format!(
-            "{}: the store directory has no parent",
-            root.display()
-        )));
-    };
-    let tracked = git::tracked(parent, Path::new(name))?;
-    Ok(tracked
-        .iter()
-        .filter_map(|path| path.strip_prefix(name).ok())
-        .map(Path::to_path_buf)
-        .collect())
-}
-
 fn up_to_date() -> Result<()> {
     out!("Already up to date (format version {FORMAT_VERSION}).")?;
     Ok(())
@@ -108,16 +93,16 @@ fn print(lines: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The report as lines: each step with what it dropped and what else it
-/// reports, then the files written and removed, all in the order the
-/// migration met them.
-fn report(report: &MigrationReport, dry_run: DryRun) -> Vec<String> {
+/// The report on the graph `graph` as lines: each step with what it
+/// dropped and what else it reports, then the files written and removed,
+/// all in the order the migration met them.
+fn report(report: &MigrationReport, graph: &str, dry_run: DryRun) -> Vec<String> {
     let (migrate, rewrite, remove) = match dry_run {
         DryRun::Yes => ("Would migrate", "Would rewrite", "Would remove"),
         DryRun::No => ("Migrated", "Rewrote", "Removed"),
     };
     let mut lines = vec![format!(
-        "{migrate} .trurlic/ from format {} to {FORMAT_VERSION}.",
+        "{migrate} {graph} from format {} to {FORMAT_VERSION}.",
         report.from
     )];
     for step in &report.steps {

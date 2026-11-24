@@ -3,11 +3,12 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::{Error, Result};
 
 use super::super::Store;
+use super::super::placement::{listed, partition};
 use super::super::schema::Placement;
 use super::{File, PlacementBasis};
 
@@ -19,6 +20,8 @@ pub(crate) enum PlacementSource {
     /// The paths under the store directory, relative to it, that the
     /// project's git tracks, or why git could not list them.
     Git(Result<BTreeSet<PathBuf>>),
+    /// No git work tree holds the store directory.
+    NoWorkTree,
 }
 
 /// Why git does not tell the placement of a store.
@@ -30,12 +33,11 @@ pub enum PlacementDoubt {
         tracked: Vec<String>,
         untracked: Vec<String>,
     },
+    /// No git work tree holds the store directory.
+    NoWorkTree,
     /// Git could not list what it tracks.
     Git(Box<Error>),
 }
-
-/// The names a mixed placement shows of its smaller side.
-const SHOWN_FILES: usize = 5;
 
 impl fmt::Display for PlacementDoubt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -49,16 +51,12 @@ impl fmt::Display for PlacementDoubt {
                 };
                 write!(
                     f,
-                    "git tracks {} of its {total} files; {side}: ",
-                    tracked.len()
-                )?;
-                let shown: Vec<&str> = files.iter().take(SHOWN_FILES).map(String::as_str).collect();
-                f.write_str(&shown.join(", "))?;
-                match files.len().saturating_sub(SHOWN_FILES) {
-                    0 => Ok(()),
-                    more => write!(f, " and {more} more"),
-                }
+                    "git tracks {} of its {total} files; {side}: {}",
+                    tracked.len(),
+                    listed(files)
+                )
             }
+            Self::NoWorkTree => f.write_str("no git work tree holds it"),
             Self::Git(error) => write!(f, "{error}"),
         }
     }
@@ -74,14 +72,13 @@ impl Store {
     ) -> Result<(Placement, PlacementBasis)> {
         let tracked = match source {
             PlacementSource::Stated(placement) => return Ok((placement, PlacementBasis::Stated)),
+            PlacementSource::NoWorkTree => return Err(self.doubt(PlacementDoubt::NoWorkTree)),
             PlacementSource::Git(tracked) => {
                 tracked.map_err(|e| self.doubt(PlacementDoubt::Git(Box::new(e))))?
             }
         };
-        let (tracked, untracked): (Vec<String>, Vec<String>) = files
-            .iter()
-            .map(ToString::to_string)
-            .partition(|file| tracked.contains(Path::new(file)));
+        let files: Vec<String> = files.iter().map(ToString::to_string).collect();
+        let (tracked, untracked) = partition(&files, &tracked);
         match (tracked.len(), untracked.len()) {
             (files, 0) => Ok((Placement::Tracked, PlacementBasis::AllTracked { files })),
             (0, files) => Ok((Placement::Shared, PlacementBasis::NoneTracked { files })),

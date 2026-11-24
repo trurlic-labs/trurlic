@@ -1,0 +1,5 @@
+description = "Finding the graph directory and the code root from the directory a call starts in: the walk up, a .trurlic symlink, the main worktree's shared graph"
+connects_to = [
+    "git",
+    "store",
+]

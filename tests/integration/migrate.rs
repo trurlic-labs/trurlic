@@ -16,16 +16,29 @@ const REPORT_FILE: &str = "migration-report.txt";
 /// asks git.
 const MIGRATE: [&str; 3] = ["migrate", "--placement", "tracked"];
 
-/// A project whose `.trurlic/` holds the fixture graph of format `version`.
+/// A project whose `.trurlic/` holds the fixture graph of format `version`,
+/// in the git repository of an `init`-ed tracked graph, whose index still
+/// holds the `project.toml` it committed.
 fn fixture_project(version: &str) -> Project {
     let project = Project::init();
-    let store = store(&project);
-    fs::remove_dir_all(&store).unwrap();
+    fs::remove_dir_all(store(&project)).unwrap();
+    copy_fixture(&project, version);
+    project
+}
+
+/// A directory in no git work tree whose `.trurlic/` holds the fixture
+/// graph of format `version`.
+fn untracked_fixture(version: &str) -> Project {
+    let project = Project::without_store();
+    copy_fixture(&project, version);
+    project
+}
+
+fn copy_fixture(project: &Project, version: &str) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/formats")
         .join(version);
-    copy_dir(&fixture, &store);
-    project
+    copy_dir(&fixture, &store(project));
 }
 
 fn store(project: &Project) -> PathBuf {
@@ -249,7 +262,7 @@ fn the_format_before_this_one_is_refused_until_migrated() {
 /// The 0.4.1 fixture in a git repository, its graph committed, every git
 /// call isolated from the user's configuration.
 fn tracked_fixture() -> Project {
-    let project = fixture_project("0.4.1");
+    let project = untracked_fixture("0.4.1");
     git(project.path(), &["init", "--quiet"]);
     git(project.path(), &["add", ".trurlic"]);
     git(
@@ -259,15 +272,9 @@ fn tracked_fixture() -> Project {
     project
 }
 
-/// `trurlic migrate` reading git with no configuration of the user's.
+/// `trurlic migrate` reading git, with no configuration of the user's.
 fn migrate_reading_git(project: &Project) -> std::process::Output {
-    project
-        .command()
-        .arg("migrate")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .unwrap()
+    project.command().arg("migrate").output().unwrap()
 }
 
 fn placement(project: &Project) -> String {
@@ -296,7 +303,7 @@ fn a_graph_git_tracks_whole_is_tracked() {
 
 #[test]
 fn a_graph_git_does_not_track_is_shared() {
-    let project = fixture_project("0.4.1");
+    let project = untracked_fixture("0.4.1");
     git(project.path(), &["init", "--quiet"]);
     fs::write(project.path().join(".git/info/exclude"), ".trurlic/\n").unwrap();
 
@@ -348,12 +355,12 @@ fn a_graph_git_tracks_in_part_is_refused_naming_how_to_state_it() {
 
 #[test]
 fn a_graph_in_no_work_tree_is_refused_naming_how_to_state_it() {
-    let project = fixture_project("0.4.1");
+    let project = untracked_fixture("0.4.1");
 
     let output = migrate_reading_git(&project);
 
     let stderr = refused_untouched(&project, &output);
-    assert!(stderr.contains("not a git repository"), "{stderr}");
+    assert!(stderr.contains(": no git work tree holds it;"), "{stderr}");
     assert!(
         stderr.contains("`trurlic migrate --placement tracked`"),
         "{stderr}"
@@ -364,7 +371,7 @@ fn a_graph_in_no_work_tree_is_refused_naming_how_to_state_it() {
 /// inherits its variables; git still answers for the project.
 #[test]
 fn the_callers_git_variables_do_not_redirect_the_placement() {
-    let project = fixture_project("0.4.1");
+    let project = untracked_fixture("0.4.1");
     git(project.path(), &["init", "--quiet"]);
     let other = Project::without_store();
     git(other.path(), &["init", "--quiet"]);
@@ -376,8 +383,6 @@ fn the_callers_git_variables_do_not_redirect_the_placement() {
     let output = project
         .command()
         .arg("migrate")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_DIR", &other_git)
         .env("GIT_WORK_TREE", other.path())
         .env("GIT_INDEX_FILE", other_git.join("index"))

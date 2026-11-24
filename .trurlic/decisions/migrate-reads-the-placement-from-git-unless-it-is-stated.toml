@@ -16,7 +16,7 @@ status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
     { file = "src/cli.rs", symbol = "ProjectCommand::Migrate" },
-    { file = "src/commands/migrate.rs", symbol = "tracked" },
+    { file = "src/commands/placement.rs", symbol = "tracked" },
     { file = "src/store/migration/placement.rs", symbol = "PlacementDoubt" },
     { file = "src/store/migration/placement.rs", symbol = "PlacementSource" },
     { file = "src/store/migration/placement.rs", symbol = "Store::placement" },

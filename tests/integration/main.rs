@@ -18,6 +18,8 @@ mod invalid_graph;
 mod malformed_node;
 mod migrate;
 mod output;
+#[cfg(unix)]
+mod placement;
 #[cfg(feature = "failpoints")]
 mod server_failpoints;
 mod stdio;

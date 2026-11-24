@@ -6,11 +6,19 @@
 //! repository or change what the arguments mean ([`CLEARED`]): trurlic runs
 //! inside a project's git hooks, where git exports `GIT_DIR` and
 //! `GIT_INDEX_FILE` for the repository that runs the hook. Paths come from
-//! `-z` output, so no name is quoted or cut at a newline.
+//! `-z` output, or from `rev-parse`, which prints one path and a line
+//! break, so no name is quoted or cut at a newline.
+//!
+//! The questions: which files the index tracks, which an ignore rule
+//! matches, the top of a directory's work tree, the common dir, and the
+//! worktree list. "No work tree" is an answer, `None`, never a parsed
+//! message; a missing binary is [`Error::GitMissing`].
 
 use std::ffi::OsStr;
+use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 use crate::{Error, Result};
 
@@ -59,38 +67,222 @@ pub(crate) fn tracked(dir: &Path, pathspec: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths(&run(dir, &args)?))
 }
 
+/// The files under `pathspec` that the index does not hold and an ignore
+/// rule matches (`.gitignore`, `info/exclude`, `core.excludesFile`),
+/// relative to `dir` as git prints them. A file the index holds is never
+/// ignored, whatever rule matches it.
+pub(crate) fn ignored(dir: &Path, pathspec: &Path) -> Result<Vec<PathBuf>> {
+    let args = [
+        "ls-files".as_ref(),
+        "-z".as_ref(),
+        "--others".as_ref(),
+        "--ignored".as_ref(),
+        "--exclude-standard".as_ref(),
+        "--".as_ref(),
+        pathspec.as_os_str(),
+    ];
+    Ok(paths(&run(dir, &args)?))
+}
+
+/// Whether an ignore rule matches `path`, relative to `dir`, whether or not
+/// the file exists: `git check-ignore`, whose exit status is the answer.
+pub(crate) fn is_ignored(dir: &Path, path: &Path) -> Result<bool> {
+    let args = [
+        "check-ignore".as_ref(),
+        "--quiet".as_ref(),
+        "--".as_ref(),
+        path.as_os_str(),
+    ];
+    let output = spawn(dir, &args)?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        // A fatal error, or a signal.
+        _ => Err(failed(dir, &args, &output)),
+    }
+}
+
+/// The first `.git` that git's discovery meets from a directory upward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DotGit {
+    /// None: no work tree holds the directory, and git is not asked.
+    Absent,
+    /// A directory: a main worktree, or a repository with no other worktree.
+    Directory,
+    /// A file naming the git directory elsewhere: a linked worktree, a
+    /// submodule, or a repository made with `--separate-git-dir`.
+    File,
+}
+
+/// The first `.git` in `dir` or a directory above it, symlinks followed.
+///
+/// Git reports "not a git repository" as it reports every fatal error,
+/// with status 128 and a translated message, so the runner tells that case
+/// from the absence of a `.git` where git's discovery looks for one, and
+/// asks git only when there is one; a failure then is git's error.
+pub(crate) fn dot_git(dir: &Path) -> Result<DotGit> {
+    let dir = dir.canonicalize().map_err(Error::io(dir))?;
+    for ancestor in dir.ancestors() {
+        let path = ancestor.join(".git");
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => return Ok(DotGit::Directory),
+            Ok(_) => return Ok(DotGit::File),
+            // A dangling symlink is no `.git` to git either.
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(source) => return Err(Error::Io { path, source }),
+        }
+    }
+    Ok(DotGit::Absent)
+}
+
+/// The top of the work tree that holds `dir`, or `None` when no work tree
+/// does: no `.git` is at or above `dir`, or `dir` is in a git directory or
+/// a bare repository.
+pub(crate) fn toplevel(dir: &Path) -> Result<Option<PathBuf>> {
+    if dot_git(dir)? == DotGit::Absent {
+        return Ok(None);
+    }
+    let failure = match run(dir, &["rev-parse".as_ref(), "--show-toplevel".as_ref()]) {
+        Ok(stdout) => return Ok(Some(line_path(stdout))),
+        Err(failure @ Error::GitFailed { .. }) => failure,
+        Err(e) => return Err(e),
+    };
+    // `--show-toplevel` fails outside a work tree as it fails for any other
+    // reason; `--is-inside-work-tree` answers `false` there instead.
+    let inside = run(
+        dir,
+        &["rev-parse".as_ref(), "--is-inside-work-tree".as_ref()],
+    );
+    match inside {
+        Ok(answer) if answer == b"false\n" => Ok(None),
+        _ => Err(failure),
+    }
+}
+
+/// The git directory every worktree of the repository holding `dir`
+/// shares: `.git` of the main worktree, or the bare repository. Git prints
+/// it relative to `dir` when it is below it, so a relative answer is joined
+/// to `dir`.
+pub(crate) fn common_dir(dir: &Path) -> Result<PathBuf> {
+    let args = ["rev-parse".as_ref(), "--git-common-dir".as_ref()];
+    let path = line_path(run(dir, &args)?);
+    Ok(if path.is_relative() {
+        dir.join(path)
+    } else {
+        path
+    })
+}
+
+/// One worktree of a repository, as `git worktree list` prints it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Worktree {
+    pub(crate) path: PathBuf,
+    pub(crate) head: Head,
+    /// Git marks it prunable: its directory is gone.
+    pub(crate) prunable: bool,
+}
+
+/// What a worktree has checked out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Head {
+    /// The entry is the bare repository itself, which has no work tree.
+    Bare,
+    /// The branch's name, without `refs/heads/`; a name that is not UTF-8
+    /// is read lossily, since it is only shown.
+    Branch(String),
+    Detached,
+}
+
+/// Every worktree of the repository holding `dir`, the main worktree (or
+/// the bare repository) first, as git lists them from the common dir.
+pub(crate) fn worktrees(dir: &Path) -> Result<Vec<Worktree>> {
+    let args = [
+        "worktree".as_ref(),
+        "list".as_ref(),
+        "--porcelain".as_ref(),
+        "-z".as_ref(),
+    ];
+    let stdout = run(dir, &args)?;
+    parse_worktrees(&stdout).ok_or_else(|| Error::GitOutput {
+        args: shown(&args),
+        detail: "a record that does not start with `worktree <path>`",
+    })
+}
+
+/// The records of `worktree list --porcelain -z`: NUL-terminated
+/// attributes, an empty one after each record. `None` when a record does
+/// not start with its path. Attributes this module does not read, such as
+/// `HEAD` and `locked`, are skipped, so a newer git's are too.
+fn parse_worktrees(stdout: &[u8]) -> Option<Vec<Worktree>> {
+    let mut worktrees = Vec::new();
+    let mut fields = stdout.split(|&byte| byte == 0);
+    while let Some(first) = fields.next() {
+        if first.is_empty() {
+            continue;
+        }
+        let mut worktree = Worktree {
+            path: path(first.strip_prefix(b"worktree ")?),
+            head: Head::Detached,
+            prunable: false,
+        };
+        for field in fields.by_ref().take_while(|field| !field.is_empty()) {
+            if field == b"bare" {
+                worktree.head = Head::Bare;
+            } else if let Some(branch) = field.strip_prefix(b"branch ") {
+                let name = branch.strip_prefix(b"refs/heads/").unwrap_or(branch);
+                worktree.head = Head::Branch(String::from_utf8_lossy(name).into_owned());
+            } else if field == b"prunable" || field.starts_with(b"prunable ") {
+                worktree.prunable = true;
+            }
+        }
+        worktrees.push(worktree);
+    }
+    (!worktrees.is_empty()).then_some(worktrees)
+}
+
 /// The stdout of `git -C <dir> <args>`, which must exit with status 0.
 fn run(dir: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
+    let output = spawn(dir, args)?;
+    if !output.status.success() {
+        return Err(failed(dir, args, &output));
+    }
+    Ok(output.stdout)
+}
+
+/// `git -C <dir> <args>` run to its end, whatever its status.
+fn spawn(dir: &Path, args: &[&OsStr]) -> Result<Output> {
     let mut command = Command::new("git");
     command.arg("-C").arg(dir).args(args).stdin(Stdio::null());
     for variable in CLEARED {
         command.env_remove(variable);
     }
-    let shown = || {
-        args.iter()
-            .map(|arg| arg.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    let output = command.output().map_err(|source| match source.kind() {
-        std::io::ErrorKind::NotFound => Error::GitMissing,
+    command.output().map_err(|source| match source.kind() {
+        ErrorKind::NotFound => Error::GitMissing,
         // Every other reason the process did not start.
         _ => Error::GitSpawn {
-            args: shown(),
+            args: shown(args),
             source,
         },
-    })?;
-    if !output.status.success() {
-        return Err(Error::GitFailed {
-            dir: dir.to_path_buf(),
-            args: shown(),
-            status: output.status,
-            stderr: String::from_utf8_lossy(&output.stderr)
-                .trim_end()
-                .to_owned(),
-        });
+    })
+}
+
+fn failed(dir: &Path, args: &[&OsStr], output: &Output) -> Error {
+    Error::GitFailed {
+        dir: dir.to_path_buf(),
+        args: shown(args),
+        status: output.status,
+        stderr: String::from_utf8_lossy(&output.stderr)
+            .trim_end()
+            .to_owned(),
     }
-    Ok(output.stdout)
+}
+
+/// `args` as one line, for an error.
+fn shown(args: &[&OsStr]) -> String {
+    args.iter()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The NUL-terminated paths of `-z` output.
@@ -100,6 +292,15 @@ fn paths(stdout: &[u8]) -> Vec<PathBuf> {
         .filter(|path| !path.is_empty())
         .map(path)
         .collect()
+}
+
+/// The one path `rev-parse` prints, with its line break: everything but
+/// the last byte, so a line break inside the path stays in it.
+fn line_path(mut stdout: Vec<u8>) -> PathBuf {
+    if stdout.last() == Some(&b'\n') {
+        stdout.pop();
+    }
+    path(&stdout)
 }
 
 /// A path as git printed its bytes.
@@ -179,6 +380,189 @@ mod tests {
         assert_eq!(args, "ls-files -z -- store");
         assert!(stderr.contains("not a git repository"), "{stderr}");
         assert!(err.to_string().contains("not a git repository"), "{err}");
+    }
+
+    /// A repository at `dir/main` with one commit, its git directory
+    /// canonical, and a linked worktree at `dir/linked` on branch `side`.
+    fn main_and_linked(dir: &Path) -> (PathBuf, PathBuf) {
+        let main = dir.join("main");
+        fs::create_dir(&main).unwrap();
+        git(&main, &["init", "--quiet", "--initial-branch=trunk"]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t.invalid",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "first",
+            ],
+        );
+        git(
+            &main,
+            &["worktree", "add", "--quiet", "-b", "side", "../linked"],
+        );
+        (
+            main.canonicalize().unwrap(),
+            dir.join("linked").canonicalize().unwrap(),
+        )
+    }
+
+    #[test]
+    fn toplevel_names_the_work_tree_of_a_directory_and_none_outside_one() {
+        let tmp = TempDir::new().unwrap();
+        let (main, linked) = main_and_linked(tmp.path());
+        fs::create_dir(linked.join("sub")).unwrap();
+        fs::create_dir(tmp.path().join("plain")).unwrap();
+        git(tmp.path(), &["init", "--quiet", "--bare", "bare.git"]);
+
+        assert_eq!(toplevel(&main).unwrap(), Some(main.clone()));
+        assert_eq!(toplevel(&linked.join("sub")).unwrap(), Some(linked));
+        assert_eq!(toplevel(&main.join(".git/refs")).unwrap(), None);
+        assert_eq!(toplevel(&tmp.path().join("bare.git")).unwrap(), None);
+        assert_eq!(toplevel(&tmp.path().join("plain")).unwrap(), None);
+    }
+
+    #[test]
+    fn a_dot_git_that_git_refuses_is_its_failure_not_no_work_tree() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join(".git"), "gitdir: /nowhere/at/all\n").unwrap();
+
+        assert_eq!(dot_git(tmp.path()).unwrap(), DotGit::File);
+        let err = toplevel(tmp.path()).unwrap_err();
+        assert!(
+            matches!(&err, Error::GitFailed { args, .. } if args == "rev-parse --show-toplevel"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn dot_git_is_the_first_one_upward() {
+        let tmp = TempDir::new().unwrap();
+        let (main, linked) = main_and_linked(tmp.path());
+        let nested = linked.join("nested");
+        fs::create_dir_all(nested.join(".git")).unwrap();
+
+        assert_eq!(dot_git(&main).unwrap(), DotGit::Directory);
+        assert_eq!(dot_git(&linked).unwrap(), DotGit::File);
+        assert_eq!(dot_git(&nested).unwrap(), DotGit::Directory);
+    }
+
+    #[test]
+    fn common_dir_is_absolute_from_the_main_and_a_linked_worktree() {
+        let tmp = TempDir::new().unwrap();
+        let (main, linked) = main_and_linked(tmp.path());
+
+        for dir in [&main, &linked] {
+            let common = common_dir(dir).unwrap();
+            assert!(common.is_absolute(), "{}", common.display());
+            assert_eq!(common.canonicalize().unwrap(), main.join(".git"));
+        }
+    }
+
+    #[test]
+    fn worktrees_lists_the_main_worktree_first_with_each_head() {
+        let tmp = TempDir::new().unwrap();
+        let (main, linked) = main_and_linked(tmp.path());
+        git(
+            &main,
+            &["worktree", "add", "--quiet", "--detach", "../detached"],
+        );
+        git(
+            &main,
+            &["worktree", "add", "--quiet", "-b", "gone", "../gone"],
+        );
+        fs::remove_dir_all(tmp.path().join("gone")).unwrap();
+
+        let listed = worktrees(&linked).unwrap();
+
+        let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let mut summary: Vec<(PathBuf, Head, bool)> = listed
+            .into_iter()
+            .map(|w| (canonical(&w.path), w.head, w.prunable))
+            .collect();
+        // Git lists the linked worktrees in no order it documents.
+        summary[1..].sort_by(|a, b| a.0.cmp(&b.0));
+        let tmp_dir = tmp.path().canonicalize().unwrap();
+        assert_eq!(
+            summary,
+            [
+                (main, Head::Branch("trunk".into()), false),
+                (tmp_dir.join("detached"), Head::Detached, false),
+                (tmp_dir.join("gone"), Head::Branch("gone".into()), true),
+                (linked, Head::Branch("side".into()), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bare_repository_lists_itself_first_as_bare() {
+        let tmp = TempDir::new().unwrap();
+        git(tmp.path(), &["init", "--quiet", "--bare", "bare.git"]);
+
+        let listed = worktrees(&tmp.path().join("bare.git")).unwrap();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].head, Head::Bare);
+    }
+
+    #[test]
+    fn worktree_records_are_read_as_bytes_and_unknown_attributes_skipped() {
+        let stdout = b"worktree /a\nb\0HEAD 01\0branch refs/heads/x\0locked why\0\0\
+                       worktree /c\0bare\0\0worktree /d\0detached\0prunable gone\0future\0\0";
+
+        assert_eq!(
+            parse_worktrees(stdout).unwrap(),
+            [
+                Worktree {
+                    path: PathBuf::from("/a\nb"),
+                    head: Head::Branch("x".into()),
+                    prunable: false,
+                },
+                Worktree {
+                    path: PathBuf::from("/c"),
+                    head: Head::Bare,
+                    prunable: false,
+                },
+                Worktree {
+                    path: PathBuf::from("/d"),
+                    head: Head::Detached,
+                    prunable: true,
+                },
+            ]
+        );
+        assert_eq!(parse_worktrees(b"HEAD 01\0\0"), None);
+        assert_eq!(parse_worktrees(b""), None);
+    }
+
+    #[test]
+    fn ignored_lists_untracked_files_a_rule_matches_and_is_ignored_needs_no_file() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "--quiet"]);
+        fs::create_dir_all(dir.join("store/sub")).unwrap();
+        for file in ["store/kept.toml", "store/sub/a b.toml", "store/forced.toml"] {
+            fs::write(dir.join(file), "").unwrap();
+        }
+        fs::write(dir.join(".gitignore"), "sub/\nforced.toml\n").unwrap();
+        git(dir, &["add", "--force", "store/forced.toml"]);
+
+        assert_eq!(
+            ignored(dir, Path::new("store")).unwrap(),
+            [PathBuf::from("store/sub/a b.toml")]
+        );
+        assert!(is_ignored(dir, Path::new("store/sub/new.toml")).unwrap());
+        assert!(!is_ignored(dir, Path::new("store/new.toml")).unwrap());
+    }
+
+    #[test]
+    fn line_path_drops_only_the_last_line_break() {
+        assert_eq!(line_path(b"/a\nb\n".to_vec()), PathBuf::from("/a\nb"));
+        assert_eq!(line_path(b"/a".to_vec()), PathBuf::from("/a"));
     }
 
     #[test]
