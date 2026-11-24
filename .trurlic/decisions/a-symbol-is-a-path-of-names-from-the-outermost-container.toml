@@ -1,0 +1,22 @@
+component = "code"
+choice = "A symbol is a ::-separated path of names from the outermost container, a Rust trait impl a <Trait> segment; it names each definition whose path ends with it: one Resolved, several Ambiguous(n)"
+reason = "One grammar serves every kind of file, so an agent spells an anchor the same way in Rust, TOML, JSON, Makefiles and Markdown: Store::open, Config::<Display>::fmt, profile::release::panic, Install::From source, ci. A definition's canonical path runs from the outermost container, and a symbol names every definition whose path ends with its segments, so a bare name resolves where the file defines it once and the qualified path where it does not. Overloads, a field and a method of one name, cfg-gated twins and one variant name in two enums are distinct definitions: a symbol that names several is Ambiguous with their count rather than resolved to the first, so a span hash never covers the wrong one, unless it is the whole path of one of them (a-symbol-that-is-a-definition-s-whole-path-names-it). In Rust, angle brackets group a trait's arguments, so :: splits only outside them; other kinds split on :: alone, and a heading or key that holds :: is split the same way, so a symbol can name it."
+alternatives = [
+    "Accept any definition of the name in the file: rejected because two definitions of one name give no single span to hash",
+    "Resolve an ambiguous symbol to its first definition: rejected because the order of a file is no statement of which one the decision meant",
+    "A dotted path for TOML and JSON keys: rejected because a key may hold a dot, and one grammar for every kind is simpler to teach",
+]
+tags = [
+    "anchors",
+    "grammar",
+]
+status = "accepted"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::find" },
+    { file = "src/code/symbol.rs", symbol = "Segment" },
+    { file = "src/code/symbol.rs", symbol = "Symbol" },
+    { file = "src/code/symbol.rs", symbol = "Symbol::names" },
+    { file = "src/code/symbol.rs", symbol = "name_segments" },
+]

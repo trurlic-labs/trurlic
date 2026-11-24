@@ -1,0 +1,24 @@
+component = "code"
+choice = "An invocation defines the type a type-defining macro of its crate, or an exported one of its workspace, gives the name after an arm's words; and every item its own tokens spell"
+reason = "tree-sitter leaves a macro invocation's tokens unparsed, and real code defines types and functions through macros, so two lexical rules read them. First, a macro_rules! macro whose arm opens, after an optional attribute repetition, with literal words and a $name:ident its body defines a type of, defines that type where it is invoked with those words, and the type holds each item its body names; the macro is the crate's own (nearest Cargo.toml) or a #[macro_export] one of the workspace, which a crate's macro of the same name shadows. pyo3's create_exception! and import_exception! come from another crate, so FOREIGN_TYPE_MACROS lists them by argument position. Second, an item keyword followed by a name in an invocation where an item or statement stands is a definition under the invocation's container, from its attributes to its body: define! { struct Name }, proptest! { fn case() }, thread_local! { static SLOT }. A macro_rules! body is a template and defines nothing. A file's index keeps the facts; the expansion is a pure step over the tree."
+alternatives = [
+    "Expand macros fully: rejected because it needs a Rust compiler's name resolution and macro engine, far past what an anchor asks",
+    "Count names in macro bodies as definitions of the file: rejected because a template's names exist only where it is invoked",
+    "Only the spelled-item rule: rejected because id! { OrderId(u32) } spells no keyword, so the type it defines would be missing",
+]
+tags = [
+    "anchors",
+    "macros",
+    "rust",
+]
+status = "proposed"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/expand.rs", symbol = "Crates::visible_from" },
+    { file = "src/code/expand.rs", symbol = "FOREIGN_TYPE_MACROS" },
+    { file = "src/code/expand.rs", symbol = "expand" },
+    { file = "src/code/rust.rs", symbol = "Walk::read_invocation" },
+    { file = "src/code/rust/macros.rs", symbol = "spelled_items" },
+    { file = "src/code/rust/macros.rs", symbol = "type_macro" },
+]

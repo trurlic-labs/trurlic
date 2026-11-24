@@ -28,6 +28,7 @@ mod schema;
 #[cfg(any(test, feature = "bench"))]
 pub(crate) mod seeded;
 mod state;
+mod symbols;
 mod text;
 mod time;
 mod validate;
@@ -64,6 +65,7 @@ pub use schema::{
     STORE_DIR, Status, StatusName,
 };
 pub use state::{NodeFile, ProjectState};
+pub use symbols::SymbolsKey;
 pub use text::{TextFault, TextField};
 pub use time::{Timestamp, TimestampError};
 pub use validate::{Issue, IssueKind};

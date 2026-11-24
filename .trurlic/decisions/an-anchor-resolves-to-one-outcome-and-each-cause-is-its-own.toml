@@ -1,0 +1,21 @@
+component = "code"
+choice = "An anchor resolves to Resolved, FileMissing, SymbolMissing, Ambiguous(n), SymbolOnDirectory, NoResolver, Unindexable(fault) or Malformed(fault), each cause named apart"
+reason = "Each outcome asks for a different fix, so none is folded into another. FileMissing means the path is gone; SymbolMissing that the file defines nothing the symbol names; Ambiguous that it defines several and the symbol needs a qualifier; SymbolOnDirectory that a symbol was put on a directory; NoResolver that the file is of a kind the index does not read, such as Python until its grammar is added, which is not the file's fault; Unindexable carries the read or index fault (no regular file, over the cap, not readable, not UTF-8, a TOML or JSON syntax error, a parse past its budget, a nesting past the bound), which a stale anchor report must not hide behind symbol missing; Malformed carries the grammar fault of a symbol (an empty segment, an angle bracket that does not pair). Resolved holds a file, a directory, or the one definition's span and hash. Each has a Display text, the cause a report prints."
+alternatives = [
+    "Fold every failure into one stale outcome: rejected because the fix for a missing file, a file the index cannot read and a symbol needing a qualifier differ",
+    "Report a file the index cannot read as symbol missing: rejected because the anchor may well be right, and the report would blame it",
+]
+tags = [
+    "anchors",
+    "errors",
+]
+status = "proposed"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "FileFault" },
+    { file = "src/code/facts.rs", symbol = "ReadFault" },
+    { file = "src/code/facts.rs", symbol = "Resolution" },
+    { file = "src/code/index.rs", symbol = "IndexFault" },
+    { file = "src/code/symbol.rs", symbol = "SymbolFault" },
+]

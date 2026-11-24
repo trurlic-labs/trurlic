@@ -1,0 +1,24 @@
+component = "code"
+choice = "A Rust file defines its items, fields, enum variants and their fields, trait members, what an impl holds and pub use leaves; a container gives what it holds a segment"
+reason = "Every item with a name is a definition: fn, struct, union, enum, trait, type, const, static, mod (inline or declared), macro_rules!, an associated type or const, a trait's method signature, an extern block's items. A struct's or union's named fields, an enum's variants and a struct variant's fields are definitions under their type. A container gives what it holds a segment, a function included, so an item in a body is outer::inner and a test helper is tests::helper; a tuple field has no name and defines nothing. An inherent impl gives its items the type's segment, its generics, path and references dropped, and is no definition itself, so impls spread over a file add to one type and Table names the struct; a trait impl is the definition Type::<Trait>. A pub use leaf, an alias, or a self in a list, is a definition under the module, unless the file defines that path itself (pub(crate) use name after macro_rules! name); a use without a visibility, a glob and an alias _ define nothing. An item's span takes in its attributes and outer doc comments."
+alternatives = [
+    "Make an inherent impl a definition of the type: rejected because a type with a struct and two impl blocks would be ambiguous by its own name",
+    "Leave functions out of the container path: rejected because a nested item and a module-level one of the same name would collide",
+    "Count every use as a definition: rejected because importing a name is no definition of it",
+]
+tags = [
+    "anchors",
+    "rust",
+]
+status = "proposed"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/rust.rs", symbol = "NAMED_CONTAINERS" },
+    { file = "src/code/rust.rs", symbol = "Walk::enter_impl" },
+    { file = "src/code/rust.rs", symbol = "Walk::visit" },
+    { file = "src/code/rust.rs", symbol = "push_children" },
+    { file = "src/code/rust.rs", symbol = "type_segment" },
+    { file = "src/code/rust.rs", symbol = "use_leaves" },
+    { file = "tests/fixtures/code/crates/ledger/src/lib.rs" },
+]

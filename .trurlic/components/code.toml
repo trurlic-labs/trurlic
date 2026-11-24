@@ -1,0 +1,4 @@
+description = "The code index, pure: each source file's definitions with their spans and span hashes (tree-sitter for Rust, lexical resolvers for TOML, JSON, Makefiles and Markdown), the symbol grammar, macro expansion over a crate, and what an anchor names in a tree"
+connects_to = [
+    "store",
+]

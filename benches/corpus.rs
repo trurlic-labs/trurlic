@@ -11,6 +11,11 @@
 //! whose patterns each batch compiles; `load_state` is timed with that
 //! table too, which a read parses and never compiles.
 //!
+//! The code index is timed over this repository's own `src/`, cold (its
+//! cache emptied before each run) and warm (every file's index read from
+//! the cache): resolving the anchors of the smallest corpus walks, reads
+//! and indexes the whole tree, as `status` and `check` do.
+//!
 //! Read tools come from `tools/list`, so a new one is never skipped: setup
 //! panics until a request here fits it.
 //! Setup also sends each request once and panics on an error response, so no
@@ -389,11 +394,37 @@ fn bench_apply(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_code_index(c: &mut Criterion) {
+    let mut group = c.benchmark_group("code_index");
+    let fixture = CORPORA.first().unwrap();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let store = Store::reached_from(fixture.store.root().to_path_buf(), source);
+    let state = store.load_state().unwrap();
+    let cache = store.root().join(".state/symbols");
+    group.bench_function("src/cold", |b| {
+        b.iter_batched(
+            || {
+                if cache.exists() {
+                    fs::remove_dir_all(&cache).unwrap();
+                }
+            },
+            |()| trurlic::bench::resolve_anchors(&store, &state),
+            BatchSize::PerIteration,
+        );
+    });
+    trurlic::bench::resolve_anchors(&store, &state);
+    group.bench_function("src/warm", |b| {
+        b.iter(|| trurlic::bench::resolve_anchors(&store, &state));
+    });
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_validate, bench_read_tools, bench_write, bench_apply
+    targets = bench_load_state, bench_validate, bench_read_tools, bench_write, bench_apply,
+        bench_code_index
 }
 criterion_main!(benches);

@@ -1,0 +1,22 @@
+component = "code"
+choice = "code takes a file's kind and bytes, or the gathered facts of a tree, and returns values; sources walks, reads and caches, and is the one way status and check reach the index"
+reason = "The index is pure so its rules are tested on bytes alone, and the same function serves a file on disk now and a blob at a git revision for the diff review later. A file's index is a function of its kind and bytes, which is what lets a cache key it by content; what depends on other files, the types a crate's macros define, is a second pure step over the indexes of the whole tree. The shell gathers those facts once per call: it walks the code root, reads each file within a bound, reads and fills the cache through the Store, and hands code a map of entries, every anchored path among them, so a path absent from the map is missing. mcp (status) and commands (check) both need it, so it is a module of its own that neither owns, and code never imports it; a test holds code's sources to naming no file system, process, environment or clock."
+alternatives = [
+    "Let code read files as it resolves: rejected because the rules could then be tested only on a tree on disk, and a git blob would need a second path",
+    "Put the shell in commands: rejected because the status tool in mcp needs it too, and mcp does not import commands",
+    "Expand macros inside each file's index: rejected because the index would depend on other files, and a cache keyed by one file's content would hold stale types",
+]
+tags = [
+    "architecture",
+    "testing",
+]
+status = "proposed"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/expand.rs", symbol = "expand" },
+    { file = "src/code/facts.rs", symbol = "CodeFacts::new" },
+    { file = "src/code/mod.rs" },
+    { file = "src/code/mod.rs", symbol = "the_index_names_no_file_no_process_and_no_clock" },
+    { file = "src/sources/mod.rs", symbol = "gather" },
+]

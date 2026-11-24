@@ -10,6 +10,10 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "Unicode-3.0",
     "CC0-1.0",
+    # foldhash, through the `preserve_order` feature of the serde_json that
+    # tree-sitter's build script reads its grammar metadata with: a
+    # permissive license, OSI approved, with no notice owed in a binary.
+    "Zlib",
 ]
 
 [bans]

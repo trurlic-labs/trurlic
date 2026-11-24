@@ -1,0 +1,22 @@
+component = "code"
+choice = "A span hash is t1: and the BLAKE3 of the span's tree-sitter leaf tokens, comments dropped, each with its length; a lexical span hashes its whitespace-normalized text"
+reason = "Later rows compare a definition's hash between two sides of a diff to tell whether a change touched it, so the hash must move with what the code does and stay put under what it does not: a reformat, a comment, a doc comment. Hashing the leaf tokens of the parse tree, every extra (a comment) left out, gives exactly that, and each token's length goes in before it, so a b and ab differ. A Rust item's span takes in its attributes, which change what it is (a derive, a cfg), and its doc comments, which the hash leaves out. A TOML key, a JSON key, a Makefile rule and a Markdown section have no parse tree of their own, so their text is hashed with each run of whitespace made one space. The scheme prefix names the normalization: a change to it is t2, and a hash of one scheme is never compared as equal to another's."
+alternatives = [
+    "Hash the span's raw bytes: rejected because every reformat and comment edit would read as a change to the code",
+    "Hash the tokens without lengths: rejected because two token runs that join to the same bytes would hash alike",
+    "No scheme prefix: rejected because a stored hash would silently compare against one computed by other rules",
+]
+tags = [
+    "anchors",
+    "hashing",
+]
+status = "accepted"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/index.rs", symbol = "Definition::lexical" },
+    { file = "src/code/span.rs", symbol = "HASH_SCHEME" },
+    { file = "src/code/span.rs", symbol = "SpanHash" },
+    { file = "src/code/syntax.rs", symbol = "Leaves" },
+    { file = "src/code/syntax.rs", symbol = "a_hash_of_leaves_ignores_comments_and_layout" },
+]

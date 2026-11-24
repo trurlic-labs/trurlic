@@ -61,6 +61,21 @@ impl Store {
         Ok(StoreLock::claim(file))
     }
 
+    /// Acquire the exclusive lock when no one holds the lock, without
+    /// waiting: `None` when another process holds it. For a write a read
+    /// makes on the side, which skips it rather than wait.
+    pub(crate) fn try_lock(&self) -> Result<Option<StoreLock>> {
+        let file = self.open_lock_file()?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(StoreLock::claim(file))),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(source)) => Err(Error::Io {
+                path: self.lock_path(),
+                source,
+            }),
+        }
+    }
+
     /// Acquire the shared lock, waiting up to 5 seconds for a writer.
     pub(super) fn lock_shared(&self) -> Result<SharedLock> {
         let mut file = self.open_lock_file()?;
@@ -169,6 +184,21 @@ mod tests {
             let acquired = acquired_rx.recv_timeout(LOCK_TIMEOUT).unwrap();
             assert!(acquired.is_ok(), "{acquired:?}");
         });
+    }
+
+    #[test]
+    fn a_try_of_the_lock_takes_it_only_when_free() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+
+        let shared = store.lock_shared().unwrap();
+        assert!(store.try_lock().unwrap().is_none());
+        drop(shared);
+        let held = store.try_lock().unwrap();
+        assert!(held.is_some());
+        assert!(store.try_lock().unwrap().is_none());
+        drop(held);
+        assert!(store.try_lock().unwrap().is_some());
     }
 
     #[test]

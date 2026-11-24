@@ -67,6 +67,18 @@ rayon = "1"
 # repay.
 regex = { version = "1.13", default-features = false, features = ["std", "unicode", "perf-dfa"] }
 
+# The code index (src/code/): an anchor's symbol is checked against the
+# definitions a file holds, with each definition's span and a hash of its
+# tokens. tree-sitter parses any bytes into a tree, recovering from syntax
+# errors, so an index of a file mid-edit is still a tree of items; a
+# hand-rolled Rust scanner would stand on regular expressions over text,
+# which cannot tell an item from a word in a string or a comment. The
+# grammars are C, compiled by the crate's build script. Without default
+# features: `std` adds only debug-graph output and the regex crate's
+# literal optimizations, which no query of ours needs.
+tree-sitter = { version = "0.27", default-features = false }
+tree-sitter-rust = "0.24"
+
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
 tempfile = "3"

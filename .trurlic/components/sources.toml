@@ -1,0 +1,5 @@
+description = "The shell around the code index: the walk of the code root, bounded reads of source files, the index's cache in .state/symbols/ through the store, and the anchors of a graph resolved for status and check"
+connects_to = [
+    "code",
+    "store",
+]
