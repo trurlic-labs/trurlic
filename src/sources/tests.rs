@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 use super::*;
-use crate::code::{SpanHash, Target};
+use crate::code::{Resolution, SpanHash, Target};
 use crate::store::testing::setup_store;
 
 /// The per-construct fixture corpus, `tests/fixtures/code/`. Its manifests
@@ -50,6 +50,16 @@ fn outcome(resolution: &Resolution) -> String {
             Some(_) | None => text,
         },
     }
+}
+
+/// The facts of the tree at `store`'s code root: every source the walk
+/// takes and what is at each of `anchored`, the cache filled as a call
+/// fills it.
+fn gather<'a>(store: &Store, anchored: impl Iterator<Item = &'a str>) -> CodeFacts {
+    let mut fill = CacheFill::default();
+    let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, &mut fill);
+    fill.write(store);
+    CodeFacts::new(entries, &walked)
 }
 
 /// What each of `cases` resolves to in the tree of `store`.
@@ -523,8 +533,11 @@ fn a_busy_lock_skips_the_cache_write() {
     assert!(!entries(&store).is_empty());
 }
 
+/// The anchors of the graph are judged against the code root: `check`
+/// names a planned anchor, `status`, which runs no git, gives it no
+/// finding; both name a field and its getter mixed.
 #[test]
-fn the_anchors_of_the_graph_resolve_against_the_code_root() {
+fn the_anchors_of_the_graph_are_judged_against_the_code_root() {
     let (tmp, store) = fixture_tree();
     let decision = r#"component = "project"
 choice = "Books keep their pages"
@@ -534,26 +547,63 @@ status = "proposed"
 created = "2026-01-01T00:00:00Z"
 anchors = [
     { file = "crates/ledger/src/lib.rs", symbol = "Book::pages" },
-    { file = "crates/ledger/src/lib.rs", symbol = "Book::new" },
+    { file = "crates/ledger/src/lib.rs", symbol = "Book::torn" },
     { file = "docs" },
 ]
 "#;
     fs::write(tmp.path().join(".trurlic/decisions/pages.toml"), decision).unwrap();
     let state = store.load_state().unwrap();
 
-    let resolved: Vec<String> = resolve_anchors(&store, &state)
+    let checked: Vec<String> = checked_findings(&store, &state.decisions)
+        .findings
         .iter()
-        .map(|(anchor, resolution)| format!("{anchor} -> {}", outcome(resolution)))
+        .map(ToString::to_string)
         .collect();
+    let unasked = tree_findings(&store, &state.decisions);
 
+    let mixed = format!(
+        "anchor `{LEDGER}::Book::pages` of `pages` is mixed: its symbol names 2 definitions of \
+         more than one kind"
+    );
     assert_eq!(
-        resolved,
+        checked,
         [
-            format!("{LEDGER}::Book::new -> {SYMBOL}"),
-            format!("{LEDGER}::Book::pages -> {TWO}"),
-            "docs -> resolves to the directory".to_owned(),
+            mixed.clone(),
+            format!(
+                "anchor `{LEDGER}::Book::torn` of `pages` is planned: its file defines nothing its symbol names"
+            )
         ]
     );
+    let unasked: Vec<String> = unasked.iter().map(ToString::to_string).collect();
+    assert_eq!(unasked, [mixed]);
+}
+
+/// A read of a few paths of another tree shares the call's one cache
+/// write, so the keys of the calling tree stay live: the cache keeps them
+/// however many entries the directory holds.
+#[test]
+fn a_read_of_another_tree_prunes_no_entry_of_the_calling_tree() {
+    let (_tmp, store) = fixture_tree();
+    let other = TempDir::new().unwrap();
+    fs::write(other.path().join("lib.rs"), "pub fn elsewhere() {}").unwrap();
+    resolve_all(&store, RUST_CASES);
+    let written = entries(&store);
+    // Strays past the bound a write of one live key would prune to.
+    let dir = store.root().join(".state/symbols");
+    for n in 0..300u32 {
+        let mut key = [0; 32];
+        key[..4].copy_from_slice(&n.to_le_bytes());
+        fs::write(dir.join(SymbolsKey::new(key).to_string()), b"").unwrap();
+    }
+
+    let mut fill = CacheFill::default();
+    let here = RUST_CASES.iter().map(|(file, _, _)| *file);
+    read_tree(&store, store.code_root(), Scope::Tree, here, &mut fill);
+    let there = BTreeSet::from(["lib.rs".to_owned()]);
+    read_paths(&store, other.path(), there, &mut fill);
+    fill.write(&store);
+
+    assert!(entries(&store).is_superset(&written));
 }
 
 #[test]

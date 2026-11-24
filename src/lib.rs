@@ -24,10 +24,13 @@ pub mod bench {
 
     use crate::store::{ProjectState, Store};
 
-    /// Resolve every anchor of `state` against `store`'s code root, as the
-    /// anchor findings do; the number of anchors resolved.
-    pub fn resolve_anchors(store: &Store, state: &ProjectState) -> usize {
-        crate::sources::resolve_anchors(store, state).len()
+    /// The anchor findings of every decision of `state` in `store`'s code
+    /// root, as `check` gathers them; how many there are.
+    #[must_use]
+    pub fn anchor_findings(store: &Store, state: &ProjectState) -> usize {
+        crate::sources::checked_findings(store, &state.decisions)
+            .findings
+            .len()
     }
 
     /// The likely duplicate pairs of `state`, the pass over every pair

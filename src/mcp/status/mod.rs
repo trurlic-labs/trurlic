@@ -18,9 +18,12 @@ use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
 use super::spec::{Args, Fields, Output, to_value};
 use super::truncate::json_len;
 
+mod anchors;
 mod lint;
 mod report;
 
+pub(crate) use anchors::AnchorCounts;
+use anchors::{AnchorItem, anchor_section};
 pub(crate) use lint::{Cut, LintItem, PAIRS_MORE, PatternCounts};
 use lint::{LINT_MORE, LintKind, Patterns};
 use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
@@ -47,7 +50,10 @@ it reads on from there. Each section fits the \
 result budget; one that leaves items out gives \
 `omitted` and `more`, which says where the rest is. `section` returns one section \
 with the whole budget. `origin` narrows the counts and the findings to the decisions \
-recorded under it. \
+recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do \
+not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are \
+malformed, ambiguous, of a file no resolver reads (unverified), name definitions of \
+mixed kinds, or are one name ten or more files define (weak). \
 Where the graph sits in the project's git is reported by `trurlic check`.";
 
 /// The bytes a report keeps, beyond its frame, for the `truncated`
@@ -62,6 +68,7 @@ pub(super) enum Section {
     History,
     Components,
     Lint,
+    Anchors,
 }
 
 impl Section {
@@ -71,6 +78,7 @@ impl Section {
             Self::History => "history",
             Self::Components => "components",
             Self::Lint => "lint",
+            Self::Anchors => "anchors",
         }
     }
 
@@ -83,15 +91,17 @@ impl Section {
             Self::History => "`git status` in the graph directory lists every file",
             Self::Components => "the files under .trurlic/components/ and .trurlic/decisions/",
             Self::Lint => LINT_MORE,
+            Self::Anchors => "`trurlic check` lists every finding",
         }
     }
 }
 
-const SECTIONS: [(&str, Section); 4] = [
+const SECTIONS: [(&str, Section); 5] = [
     (Section::Issues.as_str(), Section::Issues),
     (Section::History.as_str(), Section::History),
     (Section::Components.as_str(), Section::Components),
     (Section::Lint.as_str(), Section::Lint),
+    (Section::Anchors.as_str(), Section::Anchors),
 ];
 
 /// The names `section` takes, in the order the schema lists them.
@@ -145,12 +155,10 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
     let issue_count = issues.len();
     let issue_items =
         shown(Section::Issues).then(|| Listed::all(issues.into_iter().map(issue_item)));
-    let history_items = if shown(Section::History) {
-        let findings = store.history_findings(state.project.placement)?;
-        Some(Listed::all(findings.iter().map(history_item)))
-    } else {
-        None
-    };
+    let history_items = shown(Section::History)
+        .then(|| store.history_findings(state.project.placement))
+        .transpose()?
+        .map(|findings| Listed::all(findings.iter().map(history_item)));
     let component_items =
         shown(Section::Components).then(|| Listed::all(component_items(state, origin)));
     let mut counts = counts(state, origin, issue_count);
@@ -159,11 +167,18 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
         counts.lint = Some(gathered.counts);
         gathered.kinds
     });
+    // Asked for alone: it reads every source file of the tree.
+    let anchor_items = (section == Some(Section::Anchors)).then(|| {
+        let (items, anchor_counts) = anchor_section(store, state, origin);
+        counts.anchors = Some(anchor_counts);
+        Listed::all(items)
+    });
     let items = Items {
         issues: issue_items,
         history: history_items,
         components: component_items,
         lint: lint_items,
+        anchors: anchor_items,
     };
     let mut report = frame(store, state, counts, &items);
     fill(&mut report, items);
@@ -185,6 +200,7 @@ fn frame(store: &Store, state: &ProjectState, counts: Counts, items: &Items) -> 
         history: items.history.as_ref().map(Listed::frame),
         components: items.components.as_ref().map(Listed::frame),
         lint: items.lint.as_deref().map(lint_frame),
+        anchors: items.anchors.as_ref().map(Listed::frame),
     }
 }
 
@@ -242,38 +258,26 @@ struct Items {
     history: Option<Listed<HistoryItem>>,
     components: Option<Listed<ComponentItem>>,
     lint: Option<Vec<(LintKind, Listed<LintItem>)>>,
+    anchors: Option<Listed<AnchorItem>>,
 }
 
 /// Put into `report`, whose sections hold no item yet, each section's
 /// leading items that fit the budget beside the rest of it.
 fn fill(report: &mut Report, items: Items) {
+    let sizes = sizes(&items);
     let Items {
         issues,
         history,
         components,
         lint,
+        anchors,
     } = items;
-    let mut sizes: Vec<Sizes> = [
-        issues
-            .as_ref()
-            .map(|listed| Sizes::of(Slot::Issues, listed)),
-        history
-            .as_ref()
-            .map(|listed| Sizes::of(Slot::History, listed)),
-        components
-            .as_ref()
-            .map(|listed| Sizes::of(Slot::Components, listed)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let kinds = lint.iter().flatten();
-    sizes.extend(kinds.map(|(kind, listed)| Sizes::of(Slot::Lint(*kind), listed)));
     let fixed = json_len(&to_value(&*report)) + NOTICE_BYTES;
     let level = budget::level(&sizes, fixed, MAX_TOOL_RESULT_BYTES).unwrap_or(0);
     report.issues = issues.map(|items| Sizes::part(&sizes, Slot::Issues, items, level));
     report.history = history.map(|items| Sizes::part(&sizes, Slot::History, items, level));
     report.components = components.map(|items| Sizes::part(&sizes, Slot::Components, items, level));
+    report.anchors = anchors.map(|items| Sizes::part(&sizes, Slot::Anchors, items, level));
     report.lint = lint.map(|kinds| {
         let parts = kinds
             .into_iter()
@@ -288,6 +292,26 @@ fn fill(report: &mut Report, items: Items) {
     });
 }
 
+/// The sizes of each section `items` holds, a kind of the `lint` section
+/// each apart.
+fn sizes(items: &Items) -> Vec<Sizes> {
+    let mut sizes: Vec<Sizes> = [
+        items.issues.as_ref().map(|l| Sizes::of(Slot::Issues, l)),
+        items.history.as_ref().map(|l| Sizes::of(Slot::History, l)),
+        items
+            .components
+            .as_ref()
+            .map(|l| Sizes::of(Slot::Components, l)),
+        items.anchors.as_ref().map(|l| Sizes::of(Slot::Anchors, l)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let kinds = items.lint.iter().flatten();
+    sizes.extend(kinds.map(|(kind, listed)| Sizes::of(Slot::Lint(*kind), listed)));
+    sizes
+}
+
 /// What [`Sizes`] measures: a section, or one kind of the `lint` section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Slot {
@@ -295,6 +319,7 @@ enum Slot {
     History,
     Components,
     Lint(LintKind),
+    Anchors,
 }
 
 impl Slot {
@@ -304,6 +329,7 @@ impl Slot {
             Self::History => Section::History,
             Self::Components => Section::Components,
             Self::Lint(_) => Section::Lint,
+            Self::Anchors => Section::Anchors,
         }
     }
 }
@@ -340,6 +366,7 @@ fn counts(state: &ProjectState, origin: Option<&str>, issues: usize) -> Counts {
         issues,
         non_canonical: state.non_canonical.len(),
         lint: None,
+        anchors: None,
     }
 }
 

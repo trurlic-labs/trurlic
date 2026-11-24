@@ -123,16 +123,20 @@ impl<'a> Patterns<'a> {
     ) -> Result<Self, ToolError> {
         match (section, from) {
             (Some(Section::Lint), from) => Ok(Self::Judged { from }),
-            (Some(Section::Issues | Section::History | Section::Components) | None, None) => {
-                Ok(Self::NotAsked)
-            }
-            (Some(Section::Issues | Section::History | Section::Components) | None, Some(_)) => {
-                Err(ToolError::invalid(
-                    "from",
-                    "`from` reads the `[quality]` patterns on from a decision, which only \
+            (
+                Some(Section::Issues | Section::History | Section::Components | Section::Anchors)
+                | None,
+                None,
+            ) => Ok(Self::NotAsked),
+            (
+                Some(Section::Issues | Section::History | Section::Components | Section::Anchors)
+                | None,
+                Some(_),
+            ) => Err(ToolError::invalid(
+                "from",
+                "`from` reads the `[quality]` patterns on from a decision, which only \
                      `section: \"lint\"` judges: give it with that section",
-                ))
-            }
+            )),
         }
     }
 

@@ -12,15 +12,17 @@ Single crate (`src/lib.rs`). `pub` only on `cli` and `store`; everything else `p
 store      → git                         graph files: schema, canonical form, validation, text and
                                          quality rules, apply, commit/journal/recovery, lock,
                                          migrations, a shared graph's history
-mcp        → store, lint, budget,        JSON-RPC stdio server, tool specs, `apply` and `status`
-             discovery                   and their CLI twins, context reads, result cap
-commands   → store, mcp, git, discovery  init, apply, status, query, check, fmt, migrate, install, serve
+mcp        → store, lint, sources,       JSON-RPC stdio server, tool specs, `apply` and `status`
+             budget, discovery           and their CLI twins, context reads, result cap
+commands   → store, mcp, sources, lint,  init, apply, status, query, check, fmt, migrate, install, serve
+             git, discovery
 cli        → commands, store             clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
-lint       → store                       pure findings over the graph that refuse nothing: likely
+lint       → store, code                 pure findings over the graph that refuse nothing: likely
                                          duplicate decisions, the bar a stored decision breaks,
-                                         decisions with file anchors only
-sources    → code, store                 code-root walk, bounded reads, index cache, anchor resolution
+                                         decisions with file anchors only, anchor findings
+sources    → code, lint, store, git      code-root walk, bounded reads, index cache, other worktrees,
+                                         the anchor findings of `check` and `status`
 code       → store (types)               pure code index: definitions, spans, span hashes, symbols
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
 budget     → —                           fitting output into a byte budget
@@ -48,6 +50,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
 | Likely duplicates (scoring, pair index) | `lint/duplicates/` |
+| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/mod.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
 | Work charged before `[quality]` patterns run | `store/quality/bar/work.rs`, `store/apply/patterns.rs` |
 | A language beyond Rust: grammar, query, test places | `code/language.rs`, `code/language/<name>.scm` |

@@ -19,7 +19,7 @@ use crate::harness::{
 
 /// A main worktree at `main` with a graph holding the component `auth`
 /// and the decision `sign-tokens`, anchored at `src/branch.rs`, a file only
-/// the linked worktree has; a linked worktree at `linked` on branch
+/// the linked worktree's branch has, committed there; a linked worktree at `linked` on branch
 /// `feature`; and, under a shared graph, a clone at `clone` whose
 /// `.trurlic` is a symlink to the main worktree's graph. Every path is
 /// canonical.
@@ -98,6 +98,8 @@ impl Trees {
             &["worktree", "add", "--quiet", "-b", "feature", "../linked"],
         );
         fs::write(self.linked.join("src/branch.rs"), "").unwrap();
+        git(&self.linked, &["add", "src/branch.rs"]);
+        git(&self.linked, &["commit", "--quiet", "-m", "branch"]);
     }
 
     fn graph(&self) -> PathBuf {
@@ -127,17 +129,27 @@ fn context_from(dir: &Path) -> (String, u64) {
 /// The main worktree's shared graph is found from the main worktree, the
 /// linked worktree and the symlinked clone, and from a directory inside
 /// each, and each reads it for its own tree: the decision's anchored file
-/// exists only in the linked worktree, so only there is it not orphaned.
+/// exists only in the linked worktree, so only there is it not orphaned,
+/// `check` finds it pending on the linked worktree's branch from the main
+/// worktree, and stale in the clone, whose repository has no other
+/// worktree.
 #[test]
 fn every_tree_finds_the_shared_graph_and_reads_it_for_itself() {
     let trees = Trees::shared();
     let graph = trees.graph();
+    let stale = "  error: anchor `src/branch.rs` of `sign-tokens` is stale: nothing is at its \
+                 path\nerror: 1 consistency error(s) found\n";
+    let consistent = format!("{}/ is consistent\n", graph.display());
     let cases = [
-        (&trees.main, ".trurlic/".to_owned(), 1),
-        (&trees.linked, format!("{}/", graph.display()), 0),
-        (&trees.clone, format!("{}/", graph.display()), 1),
+        (
+            &trees.main,
+            1,
+            (Some(0), String::new(), pending_on_feature(&trees)),
+        ),
+        (&trees.linked, 0, (Some(0), consistent, String::new())),
+        (&trees.clone, 1, (Some(1), String::new(), stale.to_owned())),
     ];
-    for (tree, name, orphaned) in cases {
+    for (tree, orphaned, check) in cases {
         for start in [tree.clone(), tree.join("src")] {
             let status = trurlic_ok(&start, &["status"]);
             assert!(status.contains("components: 1\n"), "{status}");
@@ -149,13 +161,30 @@ fn every_tree_finds_the_shared_graph_and_reads_it_for_itself() {
             );
             assert_eq!(status.contains(&shown), *tree != trees.main, "{status}");
 
-            assert_eq!(
-                trurlic_ok(&start, &["check"]),
-                format!("{name} is consistent\n")
-            );
+            assert_eq!(checked(&start), check, "{}", start.display());
             assert_eq!(context_from(&start), ("Auth".to_owned(), orphaned));
         }
     }
+}
+
+/// What `check` in `dir` exits with and prints on stdout and stderr.
+fn checked(dir: &Path) -> (Option<i32>, String, String) {
+    let output = trurlic(dir).arg("check").output().unwrap();
+    (
+        output.status.code(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+/// The note `check` prints of the decision's anchor in a tree that lacks
+/// the file the linked worktree holds.
+fn pending_on_feature(trees: &Trees) -> String {
+    format!(
+        "  note: anchor `src/branch.rs` of `sign-tokens` is pending: nothing is at its path \
+         here; it resolves in the worktree at {} on branch `feature`\n",
+        trees.linked.display()
+    )
 }
 
 /// Under `tracked` the linked worktree checks out a graph of its own,
@@ -174,9 +203,314 @@ fn a_linked_worktree_of_a_tracked_graph_reads_its_own() {
     assert!(!status.contains("graph: "), "{status}");
     assert_eq!(context_from(&trees.linked), ("Auth".to_owned(), 0));
     assert_eq!(context_from(&trees.main), ("Edited in main".to_owned(), 1));
-    for tree in [&trees.main, &trees.linked] {
-        assert_eq!(trurlic_ok(tree, &["check"]), ".trurlic/ is consistent\n");
+    assert_eq!(
+        checked(&trees.main),
+        (Some(0), String::new(), pending_on_feature(&trees))
+    );
+    assert_eq!(
+        trurlic_ok(&trees.linked, &["check"]),
+        ".trurlic/ is consistent\n"
+    );
+}
+
+// -- an anchor another worktree holds is pending ----------------------------
+
+/// Under either placement, a symbol only the linked worktree's branch
+/// defines is pending on that branch in `check` from the main worktree,
+/// which exits 0, and unresolved in `status`, which runs no git and
+/// so only says it does not resolve in this tree; it resolves in the
+/// linked one. With the linked worktree's HEAD detached it is pending on
+/// no branch; with its directory gone, git marks it prunable and `check`
+/// fails on it, stale, while `status` says what it said.
+#[test]
+fn a_symbol_only_the_branch_defines_is_pending_on_its_branch() {
+    for trees in [Trees::tracked(), Trees::shared()] {
+        let anchor = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"only_here\" },\n]\n";
+        fs::write(
+            trees.graph().join("decisions/branch-rule.toml"),
+            decision("auth", "Branch rule", anchor),
+        )
+        .unwrap();
+        trurlic_ok(&trees.main, &["fmt"]);
+        if trees.linked.join(".trurlic").is_dir() {
+            fs::copy(
+                trees.graph().join("decisions/branch-rule.toml"),
+                trees.linked.join(".trurlic/decisions/branch-rule.toml"),
+            )
+            .unwrap();
+        }
+        fs::write(trees.linked.join("src/lib.rs"), "pub fn only_here() {}\n").unwrap();
+        git(
+            &trees.linked,
+            &["commit", "--quiet", "-a", "-m", "only here"],
+        );
+        let (mut client, _) = McpClient::connect_in(&trees.main, &[], json!({}));
+
+        let status = client.call_tool("status", json!({ "section": "anchors" }));
+
+        let rule = |items: &serde_json::Value| {
+            items["anchors"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["decision"] == "branch-rule")
+                .cloned()
+        };
+        let unresolved = json!({
+            "decision": "branch-rule", "anchor": "src/lib.rs::only_here", "kind": "unresolved",
+            "cause": "its file defines nothing its symbol names in this tree",
+        });
+        assert_eq!(rule(&status), Some(unresolved.clone()));
+        let missing = "its file defines nothing its symbol names here";
+        let (code, _, stderr) = checked(&trees.main);
+        let pending = format!(
+            "  note: anchor `src/lib.rs::only_here` of `branch-rule` is pending: {missing}; it \
+             resolves in the worktree at {} on branch `feature`\n",
+            trees.linked.display()
+        );
+        assert_eq!(code, Some(0), "{stderr}");
+        assert!(stderr.contains(&pending), "{stderr}");
+        let (mut there, _) = McpClient::connect_in(&trees.linked, &[], json!({}));
+        let from_linked = there.call_tool("status", json!({ "section": "anchors" }));
+        assert_eq!(rule(&from_linked), None, "{from_linked}");
+
+        git(&trees.linked, &["checkout", "--quiet", "--detach"]);
+        let (code, _, stderr) = checked(&trees.main);
+        assert_eq!(code, Some(0), "{stderr}");
+        assert!(
+            stderr.contains("`src/lib.rs::only_here` of `branch-rule` is pending")
+                && stderr.contains(", whose HEAD is detached\n"),
+            "{stderr}"
+        );
+
+        fs::remove_dir_all(&trees.linked).unwrap();
+        let gone = client.call_tool("status", json!({ "section": "anchors" }));
+        assert_eq!(rule(&gone), Some(unresolved), "{gone}");
+        let (code, _, stderr) = checked(&trees.main);
+        assert_eq!(code, Some(1), "{stderr}");
+        assert!(
+            stderr.contains("`src/lib.rs::only_here` of `branch-rule` is stale"),
+            "{stderr}"
+        );
     }
+}
+
+/// A repository whose `main` branch at `dir` holds `src/lib.rs` defining
+/// `foo` and a tracked graph whose accepted decision `rule` anchors it.
+fn anchored_repository(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/lib.rs"), "pub fn foo() {}\n").unwrap();
+    git(dir, &["init", "--quiet", "--initial-branch=main"]);
+    trurlic_ok(dir, &["init", "--placement", "tracked"]);
+    let anchor = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"foo\" },\n]\n";
+    fs::write(
+        dir.join(".trurlic/decisions/rule.toml"),
+        decision("project", "A rule", anchor),
+    )
+    .unwrap();
+    trurlic_ok(dir, &["fmt"]);
+    git(dir, &["add", "--all"]);
+    git(dir, &["commit", "--quiet", "-m", "first"]);
+}
+
+/// A worktree of a branch the calling tree has moved past holds no commit
+/// it lacks: an anchor deleted since is stale, not pending on the old
+/// branch. Nor does a worktree at the same commit, even with the symbol
+/// written there and not committed; nor one of a branch cut before the
+/// deletion with a commit of its own, which never changed the anchor's
+/// file: merging it would not bring the code back.
+#[test]
+fn a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let main = root.join("main");
+    anchored_repository(&main);
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "release-1",
+            "../release",
+        ],
+    );
+    git(
+        &main,
+        &["worktree", "add", "--quiet", "--detach", "../same"],
+    );
+    git(
+        &main,
+        &["worktree", "add", "--quiet", "-b", "feature", "../feature"],
+    );
+    fs::write(root.join("feature/src/other.rs"), "pub fn other() {}\n").unwrap();
+    git(&root.join("feature"), &["add", "src/other.rs"]);
+    git(&root.join("feature"), &["commit", "--quiet", "-m", "other"]);
+    fs::write(main.join("src/lib.rs"), "").unwrap();
+    git(&main, &["commit", "--quiet", "-a", "-m", "drop foo"]);
+    git(
+        &root.join("same"),
+        &["checkout", "--quiet", "--detach", "main"],
+    );
+    fs::write(root.join("same/src/lib.rs"), "pub fn foo() {}\n").unwrap();
+
+    let (code, _, stderr) = checked(&main);
+
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.starts_with("  error: anchor `src/lib.rs::foo` of `rule` is stale: its file defines nothing its symbol names\n"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("pending"), "{stderr}");
+}
+
+/// A linked worktree moved without `git worktree repair` is no live
+/// worktree git lists at or above its tree: `check` there warns that the
+/// other worktrees went unread, beside the anchor it then calls stale,
+/// which was pending before the move.
+#[test]
+fn a_worktree_git_does_not_list_warns_that_the_others_went_unread() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let main = root.join("main");
+    anchored_repository(&main);
+    for (branch, dir) in [("feature", "../feature"), ("other", "../other")] {
+        git(&main, &["worktree", "add", "--quiet", "-b", branch, dir]);
+    }
+    fs::write(
+        root.join("feature/src/lib.rs"),
+        "pub fn foo() {}\npub fn bar() {}\n",
+    )
+    .unwrap();
+    git(
+        &root.join("feature"),
+        &["commit", "--quiet", "-a", "-m", "bar"],
+    );
+    fs::write(root.join("other/src/lib.rs"), "").unwrap();
+    git(
+        &root.join("other"),
+        &["commit", "--quiet", "-a", "-m", "drop foo"],
+    );
+
+    let (before, _, pending) = checked(&root.join("other"));
+    fs::rename(root.join("other"), root.join("moved")).unwrap();
+    let (after, _, stderr) = checked(&root.join("moved"));
+
+    assert_eq!(before, Some(0), "{pending}");
+    assert!(pending.contains("is pending"), "{pending}");
+    assert_eq!(after, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("`src/lib.rs::foo` of `rule` is stale")
+            && stderr.contains(
+                "  warning: the other worktrees were not read for pending anchors: git lists no \
+                 live worktree at or above"
+            ),
+        "{stderr}"
+    );
+}
+
+/// A file read in a worktree ahead is expanded with the calling tree's
+/// macros: a type that a macro of another file defines there, which only
+/// the branch invokes, is pending on it.
+#[test]
+fn a_type_a_macro_defines_on_a_branch_ahead_is_pending_there() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let main = root.join("main");
+    anchored_repository(&main);
+    fs::write(main.join("Cargo.toml"), "[package]\nname = \"p\"\n").unwrap();
+    let maker = "macro_rules! define { ($n:ident) => { pub struct $n; }; }\n";
+    fs::write(main.join("src/macros.rs"), maker).unwrap();
+    let anchor = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"Foo\" },\n]\n";
+    fs::write(
+        main.join(".trurlic/decisions/made.toml"),
+        decision("project", "A made type", anchor),
+    )
+    .unwrap();
+    trurlic_ok(&main, &["fmt"]);
+    git(&main, &["add", "--all"]);
+    git(&main, &["commit", "--quiet", "-m", "macros"]);
+    git(
+        &main,
+        &["worktree", "add", "--quiet", "-b", "feature", "../feature"],
+    );
+    let feature = root.join("feature");
+    fs::write(
+        feature.join("src/lib.rs"),
+        "pub fn foo() {}\ndefine!(Foo);\n",
+    )
+    .unwrap();
+    git(&feature, &["commit", "--quiet", "-a", "-m", "Foo"]);
+
+    let (code, _, stderr) = checked(&main);
+
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(
+        stderr.contains("`src/lib.rs::Foo` of `made` is pending")
+            && stderr.contains("on branch `feature`"),
+        "{stderr}"
+    );
+}
+
+/// A graph in a subdirectory of its work tree is read against that
+/// subdirectory in every worktree: alone in its repository, an anchor
+/// the top of the tree defines and the subdirectory does not is stale;
+/// a worktree whose branch is ahead and defines it in the same
+/// subdirectory makes it pending there.
+#[test]
+fn a_graph_in_a_subdirectory_is_read_at_the_same_place_in_every_worktree() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let repository = root.join("repository");
+    fs::create_dir_all(repository.join("src")).unwrap();
+    fs::write(repository.join("src/lib.rs"), "pub fn foo() {}\n").unwrap();
+    git(&repository, &["init", "--quiet", "--initial-branch=main"]);
+    git(&repository, &["add", "--all"]);
+    git(&repository, &["commit", "--quiet", "-m", "top"]);
+    let sub = repository.join("sub");
+    fs::create_dir_all(sub.join("src")).unwrap();
+    fs::write(sub.join("src/lib.rs"), "pub fn bar() {}\n").unwrap();
+    anchored_sub(&sub);
+
+    let (code, _, stderr) = checked(&sub);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("`src/lib.rs::foo` of `rule` is stale"),
+        "{stderr}"
+    );
+
+    git(
+        &repository,
+        &["worktree", "add", "--quiet", "-b", "ahead", "../linked"],
+    );
+    let linked = root.join("linked");
+    fs::write(linked.join("sub/src/lib.rs"), "pub fn foo() {}\n").unwrap();
+    git(&linked, &["commit", "--quiet", "-a", "-m", "foo"]);
+
+    let (code, _, stderr) = checked(&sub);
+    assert_eq!(code, Some(0), "{stderr}");
+    let pending = format!(
+        "is pending: its file defines nothing its symbol names here; it resolves in the \
+         worktree at {} on branch `ahead`",
+        linked.join("sub").display()
+    );
+    assert!(stderr.contains(&pending), "{stderr}");
+}
+
+/// A tracked graph at `sub`, a subdirectory of a work tree, whose accepted
+/// decision `rule` anchors `src/lib.rs::foo`, committed.
+fn anchored_sub(sub: &Path) {
+    trurlic_ok(sub, &["init", "--placement", "tracked"]);
+    let anchor = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"foo\" },\n]\n";
+    fs::write(
+        sub.join(".trurlic/decisions/rule.toml"),
+        decision("project", "A rule", anchor),
+    )
+    .unwrap();
+    trurlic_ok(sub, &["fmt"]);
+    git(sub, &["add", "--all"]);
+    git(sub, &["commit", "--quiet", "-m", "sub"]);
 }
 
 // -- the walk stays in the work tree it starts in ---------------------------

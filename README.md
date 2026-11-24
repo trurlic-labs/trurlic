@@ -213,8 +213,9 @@ Before writing a line, the agent pulls the component's brief and generates code 
 
 ```bash
 trurlic status              # the graph at a glance: counts, issues, history, components, lint
+trurlic status --section anchors  # the anchors that do not plainly resolve in this tree
 trurlic apply batch.json    # a batch of ops, the JSON the apply tool takes, all or none
-trurlic check               # every issue, naming its file; fails when there is one
+trurlic check               # every issue and anchor finding; fails on an issue, a stale, malformed or ambiguous anchor
 trurlic fmt                 # rewrite the files that are not in canonical form
 ```
 
@@ -240,12 +241,29 @@ apply({ops: [{op: "record", ...}]})   →  a choice the graph did not cover yet
 trurlic check                         →  no issue
 ```
 
+## Anchor findings
+
+`trurlic check` resolves every anchor against the tree it runs in and reports each one that does not plainly resolve, with its cause:
+
+| Finding | When | `check` |
+|---|---|---|
+| `stale` | No file at its path, or no definition its symbol names, on an accepted decision or a proposed revision of one, and no other worktree holds it | error: fails |
+| `malformed` | Its symbol is out of the grammar of its file's kind, or on a directory, so it can never resolve as written, whatever the decision's status | error: fails |
+| `ambiguous` | Its symbol names definitions of several paths (`pages` with `Book::pages` and `Shelf::pages`), so a reader cannot tell which one the decision means | error: fails |
+| `unverified` | Its symbol is on a kind of file no resolver reads, or on a file that cannot be read or indexed: the code may exist, but trurlic cannot say | warning |
+| `mixed` | Its symbol names definitions of one path and more than one kind, a field and its getter: one place, but not whether the data or the code is constrained | warning |
+| `weak` | Its symbol is one name that 10 or more code files of its kind define | warning |
+| `pending` | It would be stale, but another worktree of the repository whose branch changed the anchor's file since it forked from this tree's resolves it, named with its branch. Only that file is read there, its macros taken from this tree: a type a macro this tree lacks defines there is not seen, and the stale line names the worktree whose file spells it | note |
+| `planned` | No file at its path or no definition its symbol names, on a decision never accepted, which may anchor what is not written yet | note |
+
+A worktree of an older branch, one at the same commit, or one of a branch that left the anchor's file alone makes nothing pending, and a worktree git cannot say enough of is a warning. `status` with `section: "anchors"` asks the project's git nothing, so it reports what this tree alone shows: `unresolved` for an anchor that would be stale or pending, `malformed`, `ambiguous`, `unverified`, `mixed` and `weak`. It computes the section only when asked for it, since it reads every source file of the tree, and `origin` narrows it to the decisions recorded under it.
+
 ## MCP tools
 
 | Tool | Purpose |
 |------|---------|
 | `apply` | The one write: a batch of ops applied in order, all or none, in one commit; a refusal names the op, the argument and the rule; held to the [quality rules](#quality-rules) |
-| `status` | The graph at a glance: counts, the quality rules `[quality]` sets, validation issues, what a shared graph's history lacks, each component's decisions, and under `lint` the likely duplicate pairs, each rule of the bar a decision breaks and the decisions with only file anchors |
+| `status` | The graph at a glance: counts, the quality rules `[quality]` sets, validation issues, what a shared graph's history lacks, each component's decisions, and under `lint` the likely duplicate pairs, each rule of the bar a decision breaks and the decisions with only file anchors; asked for, the [anchor findings](#anchor-findings) |
 | `get_context` | Architectural brief for a component: decisions, rules, related constraints, health |
 | `get_decisions_for_file` | Every decision anchored on a file, on a file under a directory, or on a directory that holds the file |
 

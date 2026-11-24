@@ -67,10 +67,6 @@ impl Definitions {
 
     /// Whether the definitions are of more than one kind: a field and its
     /// getter, `mod parse` and `fn parse`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the anchor findings are the first caller")
-    )]
     pub(crate) const fn mixed_kinds(&self) -> bool {
         self.mixed_kinds
     }

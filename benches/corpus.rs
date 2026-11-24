@@ -15,8 +15,8 @@
 //!
 //! The code index is timed over this repository's own `src/`, cold (its
 //! cache emptied before each run) and warm (every file's index read from
-//! the cache): resolving the anchors of the smallest corpus walks, reads
-//! and indexes the whole tree, as `status` and `check` do.
+//! the cache): the anchor findings of the smallest corpus walk, read and
+//! index the whole tree, as `status` and `check` do.
 //!
 //! Read tools come from `tools/list`, so a new one is never skipped: setup
 //! panics until a request here fits it.
@@ -444,13 +444,13 @@ fn bench_code_index(c: &mut Criterion) {
                     fs::remove_dir_all(&cache).unwrap();
                 }
             },
-            |()| trurlic::bench::resolve_anchors(&store, &state),
+            |()| trurlic::bench::anchor_findings(&store, &state),
             BatchSize::PerIteration,
         );
     });
-    trurlic::bench::resolve_anchors(&store, &state);
+    let _warm = trurlic::bench::anchor_findings(&store, &state);
     group.bench_function("src/warm", |b| {
-        b.iter(|| trurlic::bench::resolve_anchors(&store, &state));
+        b.iter(|| trurlic::bench::anchor_findings(&store, &state));
     });
     group.finish();
 }

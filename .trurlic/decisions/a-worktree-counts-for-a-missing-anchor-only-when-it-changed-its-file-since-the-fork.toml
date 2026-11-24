@@ -1,0 +1,28 @@
+component = "sources"
+choice = "check alone asks git for the other worktrees; one counts for a missing anchor only when it changed its file since its line forked, and only that file is read there, with this tree's macros"
+reason = "Pending needs the repository's other worktrees, and asking git costs a process, so sources asks only for check, only when an anchor of a decision ever accepted is missing here, and only when git::dot_git finds a .git at or above the code root: status spawns nothing for its anchors. git runs in the code root, never in a graph directory. The calling tree's own worktree is the listed top nearest at or above the code root, and the code root's place in it is where each other worktree is read. A worktree may hold an anchor only when its line forked from the calling tree's and changed the anchor's file since: git merge-base of the two HEADs, once per worktree at another commit, a base equal to the worktree's HEAD meaning it is behind and skipped, then git diff --name-only of the missing paths from the base in its work tree. A branch cut before a deletion, whose work tree still holds the code, never hides it, since merging it would not bring the code back. The worktrees are read in git's order for the anchors no earlier one holds, and none once every one is held; only the changed files, never a walk, their macro invocations expanded with the calling tree's macros, which stand in for that tree's other files: a type a macro the calling tree lacks defines there stays stale, and the finding names the worktree whose file spells it. A git failure, a calling tree git lists as no live worktree and a path that cannot be made canonical leave worktrees unread, a check warning."
+alternatives = [
+    "Count any worktree whose HEAD is no ancestor of this tree's: rejected because a branch cut before a deletion, with any commit of its own, still holds the deleted code and would hide the deletion",
+    "Walk each worktree ahead whole: rejected because each check would read every source file of every such worktree to see macros the calling tree holds already in the usual case",
+    "Ask the worktrees in status too: rejected because status is called often and asks the project's git nothing, so it names such an anchor unresolved instead",
+]
+tags = [
+    "anchors",
+    "git",
+    "performance",
+]
+status = "proposed"
+origin = "anchor findings"
+created = "2026-11-24T10:39:08.594384541Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::beside" },
+    { file = "src/sources/mod.rs", symbol = "checked_findings" },
+    { file = "src/sources/mod.rs", symbol = "elsewhere" },
+    { file = "src/sources/tests.rs", symbol = "a_read_of_another_tree_prunes_no_entry_of_the_calling_tree" },
+    { file = "src/sources/worktrees.rs", symbol = "fork" },
+    { file = "src/sources/worktrees.rs", symbol = "others" },
+    { file = "tests/integration/anchors.rs", symbol = "a_worktree_git_cannot_say_enough_of_is_a_check_warning" },
+    { file = "tests/integration/placement.rs", symbol = "a_symbol_only_the_branch_defines_is_pending_on_its_branch" },
+    { file = "tests/integration/placement.rs", symbol = "a_type_a_macro_defines_on_a_branch_ahead_is_pending_there" },
+    { file = "tests/integration/placement.rs", symbol = "a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending" },
+]

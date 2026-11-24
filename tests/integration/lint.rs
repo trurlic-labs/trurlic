@@ -65,6 +65,17 @@ const DECISIONS: usize = 19;
 
 fn graph() -> Project {
     let project = Project::init();
+    // The code the decisions anchor, so `check` judges the graph alone.
+    for (file, text) in [
+        ("src/lib.rs", "pub fn run() {}\n"),
+        ("src/a.rs", "pub fn a() {}\n"),
+        ("src/b.rs", "pub fn b() {}\n"),
+        ("src/c.rs", "pub fn c() {}\n"),
+        ("src/store/mod.rs", ""),
+        ("src/zz/yy.rs", "pub fn run() {}\n"),
+    ] {
+        project.source(file, text);
+    }
     let header = project.read("project.toml");
     project.write("project.toml", &format!("{header}\n{TABLE}"));
     let symbol = "{ file = \"src/a.rs\", symbol = \"a\" }";

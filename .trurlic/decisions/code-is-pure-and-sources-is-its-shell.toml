@@ -23,5 +23,5 @@ anchors = [
     { file = "src/code/purity.rs", symbol = "faults" },
     { file = "src/code/purity.rs", symbol = "is_admitted_include" },
     { file = "src/code/purity.rs", symbol = "path_fault" },
-    { file = "src/sources/mod.rs", symbol = "gather" },
+    { file = "src/sources/mod.rs", symbol = "read_tree" },
 ]

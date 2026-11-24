@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use crate::Result;
 use crate::console::out;
 use crate::mcp::twin::{
-    self, Cut, LintItem, Part, PatternCounts, QualityCounts, Report, ToolError,
+    self, AnchorCounts, Cut, LintItem, Part, PatternCounts, QualityCounts, Report, ToolError,
 };
 
 use super::{Format, answer};
@@ -76,7 +76,34 @@ fn print(report: &Report, origin: Option<&str>) -> Result<()> {
     for finding in report.history.iter().flat_map(|history| &history.items) {
         out!("history: {}", finding.message)?;
     }
-    lint(report)
+    lint(report)?;
+    anchors(report)
+}
+
+/// The anchor findings, counted by kind, then a line each, when the
+/// report has the section: the count line even with none, so a clean tree
+/// is told from one not asked.
+fn anchors(report: &Report) -> Result<()> {
+    let (Some(section), Some(counts)) = (&report.anchors, &report.counts.anchors) else {
+        return Ok(());
+    };
+    let AnchorCounts {
+        unresolved,
+        malformed,
+        ambiguous,
+        unverified,
+        mixed,
+        weak,
+    } = counts;
+    out!(
+        "anchors: {unresolved} unresolved, {malformed} malformed, {ambiguous} ambiguous, \
+         {unverified} unverified, {mixed} mixed, {weak} weak"
+    )?;
+    for item in &section.items {
+        let (kind, anchor, decision) = (item.kind.as_str(), &item.anchor, &item.decision);
+        out!("  {kind}: `{anchor}` of `{decision}`: {}", item.cause)?;
+    }
+    omitted(section)
 }
 
 /// The lint section's counts and findings, a line each, when it has any.

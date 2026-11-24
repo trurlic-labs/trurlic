@@ -35,7 +35,7 @@ impl Project {
 
     /// [`init`](Self::init) without the commit: git tracks nothing yet.
     pub fn init_uncommitted() -> Self {
-        let project = Self::without_store();
+        let project = Self::with_source();
         git(
             project.path(),
             &["init", "--quiet", "--initial-branch=main"],
@@ -46,8 +46,16 @@ impl Project {
 
     /// A directory in no git work tree holding a shared graph `init` made.
     pub fn shared() -> Self {
-        let project = Self::without_store();
+        let project = Self::with_source();
         project.run_ok(&["init", "--placement", "shared"]);
+        project
+    }
+
+    /// A temporary directory with no `.trurlic/`, holding the empty
+    /// `src/lib.rs` that [`record`] anchors, so its anchor resolves.
+    fn with_source() -> Self {
+        let project = Self::without_store();
+        project.source("src/lib.rs", "");
         project
     }
 
@@ -79,6 +87,13 @@ impl Project {
 
     pub fn read(&self, file: &str) -> String {
         std::fs::read_to_string(self.node(file)).unwrap()
+    }
+
+    /// Write `text` to `file` of the project's tree, its directories made.
+    pub fn source(&self, file: &str, text: &str) {
+        let path = self.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
     }
 
     /// Every graph file: see [`graph_files`].

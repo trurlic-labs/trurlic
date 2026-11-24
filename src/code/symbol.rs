@@ -167,6 +167,11 @@ impl Symbol {
         Ok(Self { segments, call })
     }
 
+    /// Its segments, from the outermost.
+    pub(crate) fn segments(&self) -> &[Segment] {
+        &self.segments
+    }
+
     /// Whether this symbol may name a definition of `kind`: any kind, or
     /// a function or method alone after `()`.
     pub(crate) const fn admits(&self, kind: DefinitionKind) -> bool {

@@ -2,6 +2,8 @@ description = "CLI command handlers: init, check, fmt, migrate, query, install, 
 connects_to = [
     "discovery",
     "git",
+    "lint",
     "mcp",
+    "sources",
     "store",
 ]

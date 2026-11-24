@@ -26,6 +26,22 @@ fn fixture_project(version: &str) -> Project {
     project
 }
 
+/// The files the fixtures' anchors name, each defining what they name.
+const FIXTURE_SOURCES: [(&str, &str); 6] = [
+    ("Cargo.toml", "[profile.release]\npanic = \"abort\"\n"),
+    ("README.md", "# Install\n"),
+    ("src/store/commit.rs", "pub fn commit_batch() {}\n"),
+    (
+        "src/store/lock.rs",
+        "pub struct StoreLock;\npub fn lock() {}\n",
+    ),
+    ("src/store/schema.rs", "pub struct DecisionFile;\n"),
+    (
+        "tools/check.py",
+        "class Checker:\n    def run(self):\n        pass\n",
+    ),
+];
+
 /// A directory in no git work tree whose `.trurlic/` holds the fixture
 /// graph of format `version`.
 fn untracked_fixture(version: &str) -> Project {
@@ -34,12 +50,39 @@ fn untracked_fixture(version: &str) -> Project {
     project
 }
 
+/// The fixture graph of `version` as the project's `.trurlic/`, and the
+/// files its anchors name.
 fn copy_fixture(project: &Project, version: &str) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/formats")
         .join(version);
     copy_dir(&fixture, &project.graph());
+    for (file, text) in FIXTURE_SOURCES {
+        project.source(file, text);
+    }
 }
+
+/// `check` of the migrated fixture of `version` in a tree of
+/// [`FIXTURE_SOURCES`], whose stderr is `before`, what the command
+/// recovered first: the graph is consistent and every anchor resolves.
+fn checked(project: &Project, before: &str) {
+    let output = project.command().arg("check").output().unwrap();
+    let printed = (
+        output.status.code(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    );
+    let expected = (
+        Some(0),
+        ".trurlic/ is consistent\n".to_owned(),
+        before.to_owned(),
+    );
+    assert_eq!(printed, expected);
+}
+
+/// What a command prints when it finishes a migration a stop left.
+#[cfg(feature = "failpoints")]
+const RECOVERED: &str = "warning: finished a write an interrupted commit left\n";
 
 fn copy_dir(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
@@ -135,8 +178,7 @@ fn migrates_and_passes_check(version: &str) {
     fs::remove_file(backup.join(REPORT_FILE)).unwrap();
     assert_eq!(render(&backup), before);
     // No issue, no file out of canonical form, no history finding.
-    let checked = stdout(&project, &["check"]);
-    assert!(checked.ends_with(" is consistent\n"), "{checked}");
+    checked(&project, "");
     assert_golden(
         &format!("migrate_{version}.txt"),
         &format!("{report}\n{}", render(&project.graph())),
@@ -257,7 +299,7 @@ fn the_format_before_this_one_is_refused_until_migrated() {
     }
     assert_eq!(render(&project.graph()), before);
     project.run_ok(&MIGRATE);
-    project.run_ok(&["check"]);
+    checked(&project, "");
 }
 
 /// The 0.4.1 fixture in a git repository, its graph committed, every git
@@ -434,10 +476,7 @@ fn a_migration_to_shared_makes_the_repository_whose_first_commit_is_the_graph() 
     assert_eq!(committed.lines().collect::<Vec<_>>(), migrated);
     assert!(backup.join("graph.toml").is_file());
     assert!(!backup.join(".git").exists());
-    assert_eq!(
-        String::from_utf8(project.run_ok(&["check"]).stdout).unwrap(),
-        ".trurlic/ is consistent\n"
-    );
+    checked(&project, "");
 }
 
 /// Writing `A constrains B` as `B depends_on A` must not close a cycle:
@@ -502,7 +541,7 @@ fn a_migration_stopped_before_its_journal_is_made_again_by_the_next_migrate() {
     assert_eq!(render(&project.graph()), before);
     assert!(!project.graph().join(".state/txn.toml").exists());
     project.run_ok(&MIGRATE);
-    project.run_ok(&["check"]);
+    checked(&project, "");
     assert_eq!(render(&project.graph()), render(&reference.graph()));
 }
 
@@ -522,7 +561,7 @@ fn a_migration_stopped_after_its_journal_lands_on_the_next_migrate() {
     assert!(project.graph().join("graph.toml").is_file());
     let again = stdout(&project, &MIGRATE);
     assert!(again.starts_with("Already up to date"), "{again}");
-    project.run_ok(&["check"]);
+    checked(&project, "");
     assert_eq!(render(&project.graph()), render(&reference.graph()));
 }
 
@@ -534,7 +573,7 @@ fn a_migration_stopped_after_its_journal_lands_on_the_next_migrate() {
 fn a_migration_stopped_after_project_toml_lands_on_the_next_command() {
     let (project, reference) = stopped_migration("commit.applied:1");
 
-    project.run_ok(&["check"]);
+    checked(&project, RECOVERED);
     assert!(!project.graph().join(".state/txn.toml").exists());
     assert_eq!(render(&project.graph()), render(&reference.graph()));
 }
@@ -554,7 +593,7 @@ fn a_migration_stopped_between_its_removals_lands_on_the_next_command() {
             .join("patterns/durable-storage.toml")
             .is_file()
     );
-    project.run_ok(&["check"]);
+    checked(&project, RECOVERED);
     assert!(
         !project
             .graph()

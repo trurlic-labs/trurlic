@@ -16,6 +16,6 @@ anchors = [
     { file = "src/lint/duplicates/fixed.rs", symbol = "ln" },
     { file = "src/lint/duplicates/fixed.rs", symbol = "wide" },
     { file = "src/lint/duplicates/mod.rs", symbol = "Score" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::likely" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "likely" },
     { file = "src/lint/duplicates/tests.rs", symbol = "a_pair_whose_cosine_is_exactly_the_threshold_is_listed" },
 ]

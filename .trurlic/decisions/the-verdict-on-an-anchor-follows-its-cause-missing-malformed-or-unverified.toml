@@ -1,0 +1,28 @@
+component = "lint"
+choice = "The verdict follows the cause: a missing file or symbol is stale, pending, planned or unresolved; a malformed symbol is an error and an unreadable file a warning, whatever the status"
+reason = "A reader mends each finding differently, so lint::anchors gives each (decision, anchor) one kind and keeps the cause. A missing file or symbol means the code moved, went or is not written yet: on a decision never accepted it is planned and asked of no other worktree; on a decision ever accepted, an accepted one or a proposed revision of one, it is pending with the branch of the first worktree in git's order whose facts resolve it, when the caller asked git, else stale, which check fails on. Only the project's git tells pending from stale, so status judges such an anchor unresolved and gives a planned one no finding. A symbol out of the grammar or on a directory can never resolve as written, so it is malformed, an error whatever the status. A symbol on a kind of file no resolver reads, or on a file that cannot be read or indexed, may name real code trurlic cannot see, so it is unverified, a warning. A symbol that names definitions of several paths is ambiguous, an error, since no reader can tell which one the decision means. One that names definitions of one path and more than one kind, a field and its getter, is mixed, a warning: the set is one place, but the anchor does not say whether the data or the code is constrained. check's findings and status's are two types, Finding<Checked> and Finding<Unasked>. Findings sort by kind, the errors first, then by decision and anchor; each distinct anchor is resolved once per call."
+alternatives = [
+    "One stale for every cause: rejected because a file of a kind no resolver reads would fail check although its code exists, and a malformed symbol on a proposed decision would pass as planned though it can never resolve",
+    "Name the anchor stale in status too: rejected because status asks the project's git nothing, so it cannot know that no other worktree holds the code",
+    "One kind type for status and check: rejected because status would then carry stale, pending and planned kinds it never yields, and check an unresolved one",
+    "List planned anchors in status: rejected because the section reports what this tree shows to be wrong, and a planned anchor is not",
+]
+tags = [
+    "anchors",
+    "lint",
+]
+status = "proposed"
+origin = "anchor findings"
+created = "2026-11-24T10:39:08.594384541Z"
+anchors = [
+    { file = "src/lint/anchors.rs", symbol = "Asked" },
+    { file = "src/lint/anchors.rs", symbol = "Class::of" },
+    { file = "src/lint/anchors.rs", symbol = "Here" },
+    { file = "src/lint/anchors.rs", symbol = "Kind" },
+    { file = "src/lint/anchors.rs", symbol = "findings" },
+    { file = "src/lint/anchors.rs", symbol = "judged" },
+    { file = "src/lint/anchors/tests.rs", symbol = "an_anchor_another_worktree_holds_is_pending_on_its_branch" },
+    { file = "src/lint/anchors/tests.rs", symbol = "several_paths_are_ambiguous_and_one_path_of_several_kinds_mixed" },
+    { file = "src/lint/anchors/tests.rs", symbol = "the_verdict_on_an_anchor_that_names_nothing_follows_its_cause" },
+    { file = "src/lint/anchors/tests.rs", symbol = "with_git_not_asked_an_anchor_that_names_nothing_is_unresolved" },
+]

@@ -1,0 +1,21 @@
+component = "lint"
+choice = "A resolved symbol that is one plain name on a code file is weak when WEAK_FILES (10) or more walked files of that file's kind hold a definition of the name at any depth"
+reason = "A name alone that many files define does not show a reader where to look, even when the anchor's own file defines it once. CodeFacts::spread counts, in one pass over the definitions of the tree, the walked files of the anchor's kind that hold a definition whose own name is the name: items, fields, variants, pub use leaves, and what a macro invocation adds, the type and its members. A file only an anchor brought into the facts is not counted, so the verdict is the tree's whatever decisions origin narrows to. Only a kind whose every file the walk takes can be counted, which FileKind::is_code states for Rust and Python; a data or prose file is read only when an anchor names it. With no anchor of one name no definition is read. A qualified symbol, a file anchor, an ambiguous and a mixed anchor are never weak: one finding per anchor."
+alternatives = [
+    "Count per anchor over the tree: rejected because hundreds of anchors would each scan every definition of the tree",
+    "Leave out the members a macro body gives a type: rejected because it needs a second walk of the expansions, and a member's name is still one a reader cannot place",
+    "A bound in project.toml: rejected because no project has asked to move it, and a constant is one place to change it",
+]
+tags = [
+    "anchors",
+    "lint",
+]
+status = "proposed"
+origin = "anchor findings"
+created = "2026-11-24T10:39:08.594384541Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::spread" },
+    { file = "src/code/index.rs", symbol = "FileKind::is_code()" },
+    { file = "src/lint/anchors.rs", symbol = "WEAK_FILES" },
+    { file = "src/lint/anchors/tests.rs", symbol = "one_name_that_ten_files_of_its_kind_define_is_weak" },
+]

@@ -18,6 +18,7 @@
 
 pub(crate) mod graph;
 
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{ErrorKind, Write};
@@ -106,6 +107,60 @@ pub(crate) fn is_ignored(dir: &Path, path: &Path) -> Result<bool> {
     }
 }
 
+/// The best common ancestor of commits `ours` and `theirs`, in the
+/// repository holding `dir`: `git merge-base`, `None` when they share no
+/// history. Each is a commit id git printed.
+pub(crate) fn merge_base(dir: &Path, ours: &str, theirs: &str) -> Result<Option<String>> {
+    let args = ["merge-base".as_ref(), ours.as_ref(), theirs.as_ref()];
+    let output = finish(command(dir), &args, None)?;
+    match output.status.code() {
+        Some(0) => match std::str::from_utf8(&output.stdout) {
+            Ok(base) => Ok(Some(base.trim_end().to_owned())),
+            Err(_) => Err(Error::GitOutput {
+                args: shown(&args),
+                detail: "a commit id that is not UTF-8",
+            }),
+        },
+        // No common ancestor: the exit status says so, with no output.
+        Some(1) if output.stdout.is_empty() => Ok(None),
+        // A commit the repository lacks, a fatal error, or a signal.
+        _ => Err(failed(dir, &args, &output)),
+    }
+}
+
+/// Which of `paths`, relative to `dir`, differ in the work tree at `dir`
+/// from commit `base`: committed there since, staged or edited and not
+/// committed. `git diff --name-only` with each path a literal pathspec,
+/// no rename paired, without optional locks; a path that is not UTF-8
+/// names no anchor and is left out.
+pub(crate) fn changed_since(dir: &Path, base: &str, paths: &[&str]) -> Result<BTreeSet<String>> {
+    let pathspecs: Vec<String> = paths
+        .iter()
+        .map(|path| format!(":(literal){path}"))
+        .collect();
+    let options = [
+        "--no-optional-locks",
+        "diff",
+        "--name-only",
+        "-z",
+        "--relative",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        base,
+        "--",
+    ];
+    let mut args: Vec<&OsStr> = options.iter().map(OsStr::new).collect();
+    args.extend(pathspecs.iter().map(OsStr::new));
+    let stdout = run(command(dir), dir, &args, None)?;
+    Ok(stdout
+        .split(|&byte| byte == 0)
+        .filter_map(|path| std::str::from_utf8(path).ok())
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
 /// The first `.git` that git's discovery meets from a directory upward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DotGit {
@@ -190,6 +245,9 @@ pub(crate) fn common_dir(dir: &Path) -> Result<PathBuf> {
 pub(crate) struct Worktree {
     pub(crate) path: PathBuf,
     pub(crate) head: Head,
+    /// The commit its HEAD names; `None` on an unborn branch and for a
+    /// bare repository.
+    pub(crate) commit: Option<String>,
     /// Git marks it prunable: its directory is gone.
     pub(crate) prunable: bool,
 }
@@ -224,7 +282,8 @@ pub(crate) fn worktrees(dir: &Path) -> Result<Vec<Worktree>> {
 /// The records of `worktree list --porcelain -z`: NUL-terminated
 /// attributes, an empty one after each record. `None` when a record does
 /// not start with its path. Attributes this module does not read, such as
-/// `HEAD` and `locked`, are skipped, so a newer git's are too.
+/// `locked`, are skipped, so a newer git's are too; a `HEAD` of zeros is an
+/// unborn branch's.
 fn parse_worktrees(stdout: &[u8]) -> Option<Vec<Worktree>> {
     let mut worktrees = Vec::new();
     let mut fields = stdout.split(|&byte| byte == 0);
@@ -235,10 +294,14 @@ fn parse_worktrees(stdout: &[u8]) -> Option<Vec<Worktree>> {
         let mut worktree = Worktree {
             path: path(first.strip_prefix(b"worktree ")?),
             head: Head::Detached,
+            commit: None,
             prunable: false,
         };
         for field in fields.by_ref().take_while(|field| !field.is_empty()) {
-            if field == b"bare" {
+            if let Some(commit) = field.strip_prefix(b"HEAD ") {
+                let unborn = commit.iter().all(|&byte| byte == b'0');
+                worktree.commit = (!unborn).then(|| String::from_utf8_lossy(commit).into_owned());
+            } else if field == b"bare" {
                 worktree.head = Head::Bare;
             } else if let Some(branch) = field.strip_prefix(b"branch ") {
                 let name = branch.strip_prefix(b"refs/heads/").unwrap_or(branch);
@@ -555,6 +618,49 @@ mod tests {
         );
     }
 
+    /// The commit each worktree's HEAD names; the fork of two lines is
+    /// their merge base, the older commit itself when one holds the other;
+    /// and what a work tree changed since a commit, uncommitted edits
+    /// included and other paths left out.
+    #[test]
+    fn worktrees_name_their_commits_and_the_fork_is_asked_of_the_graph() {
+        let tmp = TempDir::new().unwrap();
+        let (main, linked) = main_and_linked(tmp.path());
+        let identity = ["-c", "user.name=t", "-c", "user.email=t@t.invalid"];
+        fs::write(linked.join("a.rs"), "").unwrap();
+        git(&linked, &["add", "a.rs"]);
+        let mut commit = identity.to_vec();
+        commit.extend(["commit", "--quiet", "-m", "second"]);
+        git(&linked, &commit);
+        fs::write(linked.join("b.rs"), "").unwrap();
+        git(&linked, &["add", "b.rs"]);
+        let listed = worktrees(&main).unwrap();
+        let (first, second) = (
+            listed[0].commit.clone().unwrap(),
+            listed[1].commit.clone().unwrap(),
+        );
+
+        assert_ne!(first, second);
+        assert_eq!(
+            merge_base(&main, &first, &second).unwrap(),
+            Some(first.clone())
+        );
+        assert_eq!(
+            merge_base(&main, &second, &first).unwrap(),
+            Some(first.clone())
+        );
+        let unknown = "1".repeat(40);
+        assert!(matches!(
+            merge_base(&main, &unknown, &first),
+            Err(Error::GitFailed { .. })
+        ));
+        let changed = changed_since(&linked, &first, &["a.rs", "b.rs", "c.rs"]).unwrap();
+        assert_eq!(
+            changed,
+            BTreeSet::from(["a.rs".to_owned(), "b.rs".to_owned()])
+        );
+    }
+
     #[test]
     fn a_bare_repository_lists_itself_first_as_bare() {
         let tmp = TempDir::new().unwrap();
@@ -569,7 +675,8 @@ mod tests {
     #[test]
     fn worktree_records_are_read_as_bytes_and_unknown_attributes_skipped() {
         let stdout = b"worktree /a\nb\0HEAD 01\0branch refs/heads/x\0locked why\0\0\
-                       worktree /c\0bare\0\0worktree /d\0detached\0prunable gone\0future\0\0";
+                       worktree /c\0bare\0\0worktree /d\0HEAD 0000\0detached\0prunable gone\0\
+                       future\0\0";
 
         assert_eq!(
             parse_worktrees(stdout).unwrap(),
@@ -577,16 +684,19 @@ mod tests {
                 Worktree {
                     path: PathBuf::from("/a\nb"),
                     head: Head::Branch("x".into()),
+                    commit: Some("01".into()),
                     prunable: false,
                 },
                 Worktree {
                     path: PathBuf::from("/c"),
                     head: Head::Bare,
+                    commit: None,
                     prunable: false,
                 },
                 Worktree {
                     path: PathBuf::from("/d"),
                     head: Head::Detached,
+                    commit: None,
                     prunable: true,
                 },
             ]

@@ -4,6 +4,7 @@
 
 use crate::store::{IssueKind, Placement};
 
+use super::anchors::{self, AnchorCounts, AnchorItem};
 use super::lint::{LintCounts, LintItem};
 
 use crate::mcp::spec::output::{Count, Items, Nested, Str, Tag};
@@ -23,6 +24,7 @@ pub(crate) struct Report {
     pub(crate) history: Option<Part<HistoryItem>>,
     pub(crate) components: Option<Part<ComponentItem>>,
     pub(crate) lint: Option<Part<LintItem>>,
+    pub(crate) anchors: Option<Part<AnchorItem>>,
 }
 
 pub(crate) struct Counts {
@@ -34,6 +36,8 @@ pub(crate) struct Counts {
     pub(crate) issues: usize,
     pub(crate) non_canonical: usize,
     pub(crate) lint: Option<LintCounts>,
+    /// The anchor findings by kind, when the report has the section.
+    pub(crate) anchors: Option<AnchorCounts>,
 }
 
 /// What `[quality]` adds to the built-in rules, counted.
@@ -138,6 +142,7 @@ impl Output for Report {
         });
         let kind = Nested::<Part<LintItem>>::new();
         fields.optional("lint", LINT, &kind, |report| report.lint.as_ref());
+        anchors::declare(fields);
     }
 }
 
@@ -179,6 +184,10 @@ impl Output for Counts {
         let lint = "The `lint` findings of each kind, when the section is asked for.";
         let kind = Nested::<LintCounts>::new();
         fields.optional("lint", lint, &kind, |counts| counts.lint.as_ref());
+        let anchors = "The anchor findings by kind, under `origin` when given, when the \
+                       report has the `anchors` section.";
+        let kind = Nested::<AnchorCounts>::new();
+        fields.optional("anchors", anchors, &kind, |counts| counts.anchors.as_ref());
     }
 }
 

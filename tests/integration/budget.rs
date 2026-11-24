@@ -170,3 +170,54 @@ fn status_fits_the_budget_and_counts_what_it_leaves_out() {
     let shown = |status: &Value| status["lint"]["items"].as_array().unwrap().len();
     assert!(shown(&lint_alone) > shown(&whole));
 }
+
+/// Anchor findings past the budget: the section fits, keeps the
+/// unresolved ones, which sort first, counts every finding by kind, and
+/// says how many it leaves out and where the rest is.
+#[test]
+fn the_anchors_section_fits_the_budget_and_counts_what_it_leaves_out() {
+    const UNRESOLVED: usize = 300;
+    const AMBIGUOUS: usize = 300;
+    let project = Project::init();
+    project.source(
+        "src/lib.rs",
+        "pub struct A { pages: u8 }\npub struct B { pages: u8 }\n",
+    );
+    let gone: Vec<String> = (0..UNRESOLVED)
+        .map(|i| format!("{{ file = \"src/gone/gone_{i:03}.rs\" }}"))
+        .collect();
+    project.write(
+        "decisions/kept.toml",
+        &decision(
+            "project",
+            "Kept",
+            &format!("anchors = [{}]\n", gone.join(", ")),
+        ),
+    );
+    let anchor = "anchors = [{ file = \"src/lib.rs\", symbol = \"pages\" }]\n";
+    for i in 0..AMBIGUOUS {
+        let name = format!("twice-{i:03}");
+        project.write(
+            &format!("decisions/{name}.toml"),
+            &decision("project", &name, anchor),
+        );
+    }
+    let (mut client, _) = McpClient::connect(&project);
+
+    let status = fitted(&mut client, "status", json!({ "section": "anchors" }));
+
+    assert!(status.get("truncated").is_none(), "{status}");
+    let section = &status["anchors"];
+    let shown = section["items"].as_array().unwrap();
+    assert_eq!(section["total"], UNRESOLVED + AMBIGUOUS);
+    assert!(
+        !shown.is_empty() && shown.len() < UNRESOLVED,
+        "{}",
+        shown.len()
+    );
+    assert!(shown.iter().all(|item| item["kind"] == "unresolved"));
+    assert_eq!(section["omitted"], UNRESOLVED + AMBIGUOUS - shown.len());
+    assert_eq!(section["more"], "`trurlic check` lists every finding");
+    assert_eq!(status["counts"]["anchors"]["unresolved"], UNRESOLVED);
+    assert_eq!(status["counts"]["anchors"]["ambiguous"], AMBIGUOUS);
+}

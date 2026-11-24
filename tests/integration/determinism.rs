@@ -17,8 +17,13 @@ const UPSTREAM: [&str; 2] = ["audit", "gateway"];
 
 /// Two decisions per component, both anchored in the component's source
 /// file, the second depending on the first, so file queries and
-/// dependencies span several components.
+/// dependencies span several components. The first also anchors `sign`,
+/// which ten files define, a weak anchor; the second, proposed, also
+/// anchors a function its file does not define yet, a planned anchor.
 fn build_graph(project: &Project) {
+    for n in 0..3 {
+        project.source(&format!("src/extra{n}.rs"), "pub fn sign() {}\n");
+    }
     let downstream: Vec<String> = DOWNSTREAM.iter().map(|to| format!("\"{to}\"")).collect();
     project.write(
         &format!("components/{HUB}.toml"),
@@ -37,7 +42,11 @@ fn build_graph(project: &Project) {
         );
     }
     for component in std::iter::once(&HUB).chain(&DOWNSTREAM).chain(&UPSTREAM) {
-        let anchor = format!("anchors = [{{ file = \"src/{component}.rs\" }}]\n");
+        project.source(&format!("src/{component}.rs"), "pub fn sign() {}\n");
+        let anchor = format!(
+            "anchors = [{{ file = \"src/{component}.rs\" }}, \
+             {{ file = \"src/{component}.rs\", symbol = \"sign\" }}]\n"
+        );
         project.write(
             &format!("decisions/{component}-sign.toml"),
             &decision(
@@ -46,7 +55,12 @@ fn build_graph(project: &Project) {
                 &anchor,
             ),
         );
-        let extra = format!("{anchor}depends_on = [\"{component}-sign\"]\nstatus = \"proposed\"\n");
+        let planned = format!(
+            "anchors = [{{ file = \"src/{component}.rs\" }}, \
+             {{ file = \"src/{component}.rs\", symbol = \"retry\" }}]\n"
+        );
+        let extra =
+            format!("{planned}depends_on = [\"{component}-sign\"]\nstatus = \"proposed\"\n");
         let retry = decision(
             component,
             &format!("{component}: retry with backoff"),
@@ -73,6 +87,7 @@ fn read_calls() -> Vec<(&'static str, Value)> {
         ("get_context", json!({ "component": "project" })),
         ("get_decisions_for_file", json!({ "file": "src" })),
         ("status", json!({})),
+        ("status", json!({ "section": "anchors" })),
         (
             "status",
             json!({ "section": "components", "origin": "row 1" }),
@@ -113,4 +128,6 @@ fn read_tools_answer_the_same_bytes_in_two_servers() {
             "{tool} {arguments} differs between processes\nfirst: {one}\nsecond: {two}"
         );
     }
+    let anchors = first.call_tool_text("status", json!({ "section": "anchors" }));
+    assert!(anchors.contains("\"weak\":7"), "{anchors}");
 }

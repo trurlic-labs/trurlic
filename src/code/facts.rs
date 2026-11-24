@@ -143,6 +143,19 @@ pub(crate) struct CodeFacts {
     /// What each Rust file's invocations add, or why they cannot.
     expanded: BTreeMap<String, Result<Expansion, IndexFault>>,
     test_files: BTreeSet<String>,
+    /// The paths the walk took, which a count over the tree reads.
+    walked: BTreeSet<String>,
+}
+
+/// The kind and index of `entry`, when it is a file with an index.
+fn indexed(entry: &Entry) -> Option<(FileKind, &FileIndex)> {
+    match entry {
+        Entry::File {
+            kind,
+            index: Ok(index),
+        } => Some((*kind, index)),
+        Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
+    }
 }
 
 /// What the invocations of each Rust file of `outside`, files no walk
@@ -196,13 +209,7 @@ impl CodeFacts {
     pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: &BTreeSet<String>) -> Self {
         let indexed: Files<'_> = entries
             .iter()
-            .filter_map(|(path, entry)| match entry {
-                Entry::File {
-                    kind,
-                    index: Ok(index),
-                } => Some((path.as_str(), (*kind, index))),
-                Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
-            })
+            .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
             .collect();
         let (tree, outside): (Files<'_>, Files<'_>) = indexed
             .iter()
@@ -222,20 +229,133 @@ impl CodeFacts {
             entries,
             expanded,
             test_files,
+            // clone: the facts keep which paths the walk took.
+            walked: walked.clone(),
         }
+    }
+
+    /// The facts of `read`, paths of another tree read there with what was
+    /// found, `None` where nothing was: each read against this tree's
+    /// macros and crates, which stand in for that tree's, so no walk of it
+    /// is needed. Only the read paths are in the facts, and none is walked.
+    pub(crate) fn beside(&self, read: &BTreeMap<String, Option<Entry>>) -> Self {
+        let entries: BTreeMap<String, Entry> = read
+            .iter()
+            // clone: the facts own what was read; the paths also mask this tree's.
+            .filter_map(|(path, entry)| Some((path.clone(), entry.clone()?)))
+            .collect();
+        let tree: Files<'_> = self
+            .entries
+            .iter()
+            .filter(|(path, _)| self.walked.contains(*path) && !read.contains_key(*path))
+            .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
+            .collect();
+        let outside: Files<'_> = entries
+            .iter()
+            .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
+            .collect();
+        let crates = Crates::of(&tree, &outside);
+        let expanded = expand_outside(&outside, &crates);
+        let test_files = test_files(&tree, &outside, &crates)
+            .into_iter()
+            .filter(|path| entries.contains_key(*path))
+            .map(str::to_owned)
+            .collect();
+        Self {
+            entries,
+            expanded,
+            test_files,
+            walked: BTreeSet::new(),
+        }
+    }
+
+    /// For each of `anchors` whose symbol is one plain name on a code file,
+    /// how many walked files of that file's kind hold a definition of that
+    /// name at any depth, those macro invocations add included: whether
+    /// the name alone picks out a place. A file only an anchor brought in
+    /// is not counted. One pass over the tree serves them all, and none is
+    /// made when no anchor is one name.
+    pub(crate) fn spread<'a>(
+        &self,
+        anchors: impl IntoIterator<Item = &'a Anchor>,
+    ) -> BTreeMap<&'a Anchor, usize> {
+        let wanted: BTreeMap<&Anchor, (FileKind, String)> = anchors
+            .into_iter()
+            .filter_map(|anchor| Some((anchor, self.lone_name(anchor)?)))
+            .collect();
+        if wanted.is_empty() {
+            return BTreeMap::new();
+        }
+        let names: BTreeSet<(FileKind, &str)> = wanted
+            .values()
+            .map(|(kind, name)| (*kind, name.as_str()))
+            .collect();
+        let mut definers: BTreeMap<(FileKind, &str), BTreeSet<&str>> = BTreeMap::new();
+        for (path, scopes, definition, _) in self.definitions() {
+            let Some(Entry::File { kind, .. }) = self.entries.get(path) else {
+                continue;
+            };
+            let Some(Segment::Name(name)) = scopes.path_from_end(definition.scope).next() else {
+                continue;
+            };
+            if self.walked.contains(path) && names.contains(&(*kind, name.as_str())) {
+                definers
+                    .entry((*kind, name.as_str()))
+                    .or_default()
+                    .insert(path);
+            }
+        }
+        wanted
+            .iter()
+            .map(|(&anchor, (kind, name))| {
+                let files = definers.get(&(*kind, name.as_str()));
+                (anchor, files.map_or(0, BTreeSet::len))
+            })
+            .collect()
+    }
+
+    /// The one plain name `anchor`'s symbol is, with its file's kind, when
+    /// that kind is code and the file has an index.
+    fn lone_name(&self, anchor: &Anchor) -> Option<(FileKind, String)> {
+        let Some(Entry::File { kind, index: Ok(_) }) = self.entries.get(anchor.file()) else {
+            return None;
+        };
+        let symbol = Symbol::parse(anchor.symbol()?, kind.syntax()).ok()?;
+        let [Segment::Name(name)] = symbol.segments() else {
+            return None;
+        };
+        // clone: the name outlives the symbol parsed here.
+        kind.is_code().then(|| (*kind, name.clone()))
+    }
+
+    /// Whether a macro invocation in item position in `anchor`'s file
+    /// spells the last name of its symbol among its first tokens: a type a
+    /// macro the facts do not hold defines may be there.
+    pub(crate) fn spells_in_invocation(&self, anchor: &Anchor) -> bool {
+        let Some(Entry::File {
+            kind,
+            index: Ok(index),
+        }) = self.entries.get(anchor.file())
+        else {
+            return false;
+        };
+        let symbol = anchor
+            .symbol()
+            .and_then(|symbol| Symbol::parse(symbol, kind.syntax()).ok());
+        let Some(Segment::Name(name)) = symbol.as_ref().and_then(|s| s.segments().last()) else {
+            return false;
+        };
+        index
+            .rust
+            .invocations
+            .iter()
+            .any(|invocation| invocation.tokens.iter().any(|token| token == name))
     }
 
     /// Every definition of the tree's indexed files, those its macro
     /// invocations add included, with its file, the scopes its path is
     /// walked through, and its role in the tree: test code when its file
     /// is.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the counts of definitions in and out of anchored spans are the first callers"
-        )
-    )]
     pub(crate) fn definitions(
         &self,
     ) -> impl Iterator<Item = (&str, Scopes<'_>, &Definition, Role)> {
