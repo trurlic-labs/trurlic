@@ -1,8 +1,8 @@
 //! A UTC instant to the nanosecond, written as an RFC 3339 string: the type
-//! of every `created`, `changed_at` and `rebuilt` stamp on disk.
+//! of a decision's `created`.
 //!
-//! Content hashes cover node file bytes, so a load and a write must give
-//! back the bytes earlier releases wrote with chrono 0.4's `DateTime<Utc>`:
+//! A load and a write give back the bytes earlier releases wrote with
+//! chrono 0.4's `DateTime<Utc>`, so a migrated decision keeps its stamp:
 //! the date and the time to the second, then the fewest of 0, 3, 6 or 9
 //! fraction digits that hold the nanoseconds exactly, then `Z`
 //! (`2025-06-01T10:30:00Z`, `2026-11-23T19:27:14.921666493Z`).
@@ -397,7 +397,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::corpus::SplitMix64;
+    use crate::store::seeded::SplitMix64;
 
     fn at(text: &str) -> Timestamp {
         text.parse().unwrap()

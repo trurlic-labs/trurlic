@@ -1,4 +1,3 @@
-[decision]
 component = "commands"
 choice = "install owns InstallError, which wraps Error; the error module depends on store alone"
 reason = "Error carried InstallError through a transparent Error::Install variant, so the error module imported commands, the one arrow in the module graph that ran back up from the foundation, and every match on Error outside install needed an arm for failures only install has (a missing home directory, a binary path that is not UTF-8, a missing or failing claude CLI). install never opens a store, so none of its failures belong to the store's error. commands::install now returns Result<(), InstallError>, and InstallError::Io(#[from] Error) carries the I/O failures it shares with the crate (locating the binary, starting claude, writing to stdout), so those keep naming their file or call through Error::io and Error::system instead of a second set of path-carrying variants."
@@ -11,12 +10,9 @@ tags = [
     "error-handling",
     "maintainability",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-11-23T19:44:25.535585637Z"
-
-[[decision.code_refs]]
-file = "src/commands/install.rs"
-symbol = "InstallError"
-
-[[decision.code_refs]]
-file = "src/error.rs"
+anchors = [
+    { file = "src/commands/install.rs", symbol = "InstallError" },
+    { file = "src/error.rs" },
+]

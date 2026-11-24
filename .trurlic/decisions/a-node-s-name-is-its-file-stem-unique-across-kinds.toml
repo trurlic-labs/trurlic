@@ -1,0 +1,35 @@
+component = "store"
+choice = "A node's name is its file stem, kebab-case, at most 128 bytes and unique across components and decisions; no file holds a name, and project is reserved"
+reason = """
+A name field beside the stem was a second source for one name that could disagree with it, and a rename had to edit both. The stem is the name, so no node type has a name key and deny_unknown_fields refuses one. A name is unique across kinds so that one name means one node wherever it appears: a tool argument, a brief, a report, an edge. project is the component of the project-wide decisions and has no file, so a node of that name would be ambiguous. A name is at most MAX_NAME_BYTES (128): a file system takes 255 bytes for a file name, .toml included, and a write must never stage a file it cannot rename into place, which would leave a journal no opener can finish. store::state::name_fault holds the three rules for validation and for apply alike. A stem that is not kebab-case or is too long, is project, or is shared by a component and a decision is an issue naming the files (NameInvalid, NameReserved, NameShared), so a hand edit that breaks a name stays readable to check.
+"""
+alternatives = [
+    "A name field in each file: rejected because stem and field can disagree, and a rename edits both",
+    "Names unique per kind only: rejected because a name in a brief or a report would not say which node it is",
+]
+tags = [
+    "storage",
+    "validation",
+]
+status = "proposed"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/store/limits.rs", symbol = "MAX_NAME_BYTES" },
+    { file = "src/store/name.rs", symbol = "is_valid_kebab_case" },
+    { file = "src/store/name.rs", symbol = "name_fault" },
+    { file = "src/store/schema.rs", symbol = "PROJECT_COMPONENT" },
+    { file = "src/store/validate.rs", symbol = "ProjectState::check_names" },
+]
+depends_on = [
+    "a-load-fails-only-when-a-file-is-not-its-type",
+]
+
+[accepted_text]
+choice = "A node's name is its file stem, kebab-case and unique across components and decisions; no file holds a name, and project is reserved"
+reason = """
+A name field beside the stem was a second source for one name that could disagree with it, and a rename had to edit both. The stem is the name, so no node type has a name key and deny_unknown_fields refuses one. A name is unique across kinds so that one name means one node wherever it appears: a tool argument, a brief, a report, an edge. project is the component of the project-wide decisions and has no file, so a node of that name would be ambiguous. A stem that is not kebab-case, is project, or is shared by a component and a decision is an issue naming the files (NameInvalid, NameReserved, NameShared), so a hand edit that breaks a name stays readable to check.
+"""
+alternatives = [
+    "A name field in each file: rejected because stem and field can disagree, and a rename edits both",
+    "Names unique per kind only: rejected because a name in a brief or a report would not say which node it is",
+]

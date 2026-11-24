@@ -1,0 +1,24 @@
+component = "commands"
+choice = "init keeps a shared graph out of git with /.trurlic/ in the common dir's info/exclude, and a tracked graph's .state/ with the .gitignore beside it"
+reason = """
+A shared graph stays out of the project's git, which check holds it to, but an untracked directory shows in every git status and git add --all commits it. info/exclude of the common dir is read by every worktree of the repository and is no tracked file, so the project's history never names a graph it does not version and every clone decides for itself. The entry is anchored, /.trurlic/, so it matches the top of each work tree only. A tracked graph keeps its .state/, the lock and the journal, out of git with .trurlic/.state/ in the .gitignore of the directory that holds it, as before; outside any work tree nothing is written. Each entry is appended once.
+"""
+alternatives = [
+    "A /.trurlic/ line in .gitignore: rejected because a tracked file of the project would name a graph the project does not version, in every clone",
+    "Write nothing under shared: rejected because git add --all would commit the graph, which check then refuses",
+]
+tags = [
+    "git",
+    "placement",
+]
+status = "proposed"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/commands/init.rs", symbol = "SHARED_ENTRY" },
+    { file = "src/commands/init.rs", symbol = "STATE_ENTRY" },
+    { file = "src/commands/init.rs", symbol = "append_line" },
+    { file = "tests/integration/placement.rs", symbol = "init_shared_belongs_at_the_top_of_the_main_worktree" },
+]
+depends_on = [
+    "init-refuses-a-placement-git-cannot-hold",
+]

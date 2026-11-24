@@ -1,0 +1,25 @@
+component = "store"
+choice = "A shared graph whose repository is gone gets a new one from its next write, with a warning; a repository's first commit holds every graph file, and one git cannot read is refused"
+reason = """
+One rule for a deleted .trurlic/.git. The history it held is lost already, and a refusal could not bring it back: it would stall every agent's write until a person ran the repair, which is what the write does. prepare_history (and the opener that finishes a stopped write) makes the repository again and prints a warning that its history starts with this write; status and check report it as Missing until then. A repository with no commit yet stages every graph file git lists with the write's, so its first commit holds the whole graph, whichever made it: init, a migration to shared, or a write after a loss. A repository git cannot read fails git status in prepare_history with git's error, before the commit point.
+"""
+alternatives = [
+    "Refuse the write and name a repair: rejected because the history is lost already and the repair is what the write does, while every write until a person acts would fail",
+    "Make it again silently: rejected because the owner must learn that the history restarted",
+    "A first commit of hand edits, then the write: rejected because no edit came before a history that did not exist",
+]
+tags = [
+    "git",
+    "history",
+    "reliability",
+]
+status = "proposed"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/store/history.rs", symbol = "Head" },
+    { file = "src/store/history.rs", symbol = "Store::commit_history" },
+    { file = "src/store/history.rs", symbol = "Store::make_again" },
+]
+depends_on = [
+    "a-shared-graph-is-a-git-repository-of-its-own-and-every-write-is-one-commit-there",
+]

@@ -57,34 +57,33 @@ make bench      # criterion benches over the seeded corpus (local only, not part
 **Single test:**
 
 ```bash
-cargo test -- remove_decision_allows_with_constrains_edge
+cargo test -- a_hand_edited_non_canonical_file_loads_check_flags_it_and_fmt_fixes_it
 ```
 
 ## Making changes
 
-1. Branch from `main`: `git checkout -b feat/my-feature`.
+1. Branch from `master`: `git checkout -b feat/my-feature`.
 2. Make changes. Add tests for non-trivial behavior.
 3. `make fmt` to auto-format.
 4. `make ci` to verify.
 5. Commit using [conventional commits](#commit-conventions).
-6. Open a PR against `main`.
+6. Open a PR against `master`.
 
 ## Working on the store
 
 The `.trurlic/` format is the foundation. Changes to schemas or file operations require extra care:
 
-- All writes use `commit_with_graph` — validates the full graph before touching disk.
-- Atomic protocol: serialize → tmp file → verify round-trip → rename. `graph.toml` renamed last.
-- Schema changes must bump `FORMAT_VERSION` in `schema.rs`.
-- The graph module (`graph.rs`) is pure — no I/O, fully testable with in-memory fixtures.
+- Every write is a method of the `Writer` that `Store::begin_write` returns and commits through the journal; a write may add no validation issue the graph did not have.
+- Atomic protocol: canonical text (`src/store/canonical.rs`, the one serializer of node files) → read back in memory → tmp file → journal → rename.
+- A change to the on-disk shape raises `FORMAT_VERSION` (`src/store/schema.rs`) and appends the step that reaches it to the migration registry (`src/store/migration/steps.rs`), with a fixture test.
+- Validation (`src/store/validate.rs`) and the queries (`src/store/query.rs`) are pure: no I/O, testable with in-memory states.
 
 ## Working on the MCP server
 
 The MCP server assembles specs from stored decisions.
 
 - The `brief` field uses authoritative language (MUST / DO NOT) — constraints, not suggestions.
-- Write tools validate input sizes, check reserved names, and run full graph validation before committing.
-- The server uses `Arc<RwLock<ProjectState>>` shared with a file watcher thread. Tool calls hold the write lock. Keep tool execution fast (<50ms for writes).
+- The server keeps no graph between calls: a read tool runs on `Store::load_state`, a write tool on the `Writer` of `Store::begin_write`, so every call pays one load. Keep tool execution fast, and bench a change to the load path with `make bench`.
 - Test with a real MCP client to verify response format.
 
 ## Commit conventions
@@ -113,7 +112,7 @@ Breaking changes: `BREAKING CHANGE:` in the commit footer.
 - [ ] `make ci` passes locally
 - [ ] New behavior has tests
 - [ ] PR description explains *why*, not just *what*
-- [ ] Schema changes bump `FORMAT_VERSION`
+- [ ] On-disk changes raise `FORMAT_VERSION` and append a migration step
 
 ## Code style
 

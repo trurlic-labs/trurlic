@@ -1,0 +1,85 @@
+Migrated .trurlic/ from format 0.3.0 to 0.5.0.
+  0.3.0 -> 0.4.0 (the supersedes edge is retired):
+    1 value(s) dropped:
+      graph.toml: edges = { from = "newline-delimited-json-rpc-over-stdio", kind = "supersedes", to = "json-rpc-over-stdio" }
+  0.4.0 -> 0.4.1 (the version key becomes format_version): nothing dropped
+  0.4.1 -> 0.5.0 (node files only: edges in their sources, no patterns, status for attribution):
+    placement = "tracked": stated with --placement
+    1 `constrains` edge(s) written as `depends_on`:
+      write-through-a-temp-file-and-rename depends_on json-rpc-over-stdio, for json-rpc-over-stdio constrains write-through-a-temp-file-and-rename
+    1 pattern(s) taken out of the graph:
+      [durable-storage]
+      name = "Durable storage"
+      description = "Node files are written whole or not at all"
+      tags = ["storage"]
+      member_of = ["one-toml-file-per-node", "write-through-a-temp-file-and-rename"]
+      applies_to = ["store"]
+Rewrote 8 file(s):
+  project.toml
+  components/api.toml
+  components/store.toml
+  decisions/json-rpc-over-stdio.toml
+  decisions/newline-delimited-json-rpc-over-stdio.toml
+  decisions/no-unsafe-code.toml
+  decisions/one-toml-file-per-node.toml
+  decisions/write-through-a-temp-file-and-rename.toml
+Removed 2 file(s):
+  graph.toml
+  patterns/durable-storage.toml
+
+--- components/api.toml
+description = "The MCP server"
+connects_to = [
+    "store",
+]
+--- components/store.toml
+description = "Node files and the graph index"
+--- decisions/json-rpc-over-stdio.toml
+component = "api"
+choice = "JSON-RPC over stdio"
+reason = "Every client speaks it and it needs no port"
+status = "proposed"
+created = "2026-11-23T21:56:13.656664319Z"
+--- decisions/newline-delimited-json-rpc-over-stdio.toml
+component = "api"
+choice = "Newline-delimited JSON-RPC over stdio"
+reason = "One message per line keeps the reader a line reader"
+status = "accepted"
+created = "2026-11-23T21:56:13.657648561Z"
+--- decisions/no-unsafe-code.toml
+component = "project"
+choice = "No unsafe code"
+reason = "The crate has no need for it and forbids it"
+status = "accepted"
+created = "2026-11-23T21:56:13.658684834Z"
+--- decisions/one-toml-file-per-node.toml
+component = "store"
+choice = "One TOML file per node"
+reason = "Files diff and merge line by line in version control"
+alternatives = [
+    "SQLite - rejected: a binary file in version control",
+]
+tags = [
+    "storage",
+]
+status = "accepted"
+created = "2026-11-23T21:56:13.654896942Z"
+--- decisions/write-through-a-temp-file-and-rename.toml
+component = "store"
+choice = "Write through a temp file and rename"
+reason = "A crash never leaves a half-written node file"
+tags = [
+    "reliability",
+    "storage",
+]
+status = "accepted"
+created = "2026-11-23T21:56:13.655873094Z"
+depends_on = [
+    "json-rpc-over-stdio",
+    "one-toml-file-per-node",
+]
+--- project.toml
+format_version = "0.5.0"
+name = "demo"
+description = ""
+placement = "tracked"

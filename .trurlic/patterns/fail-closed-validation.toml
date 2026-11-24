@@ -1,3 +1,0 @@
-[pattern]
-name = "fail-closed-validation"
-description = "Every mutation validates before touching disk. Invalid writes are refused with clear errors, never silently committed. Store validates the full graph, commands run cascade analysis before deletions, and MCP hardens inputs against size limits and control characters."

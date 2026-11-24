@@ -1,0 +1,5 @@
+[decision]
+component = "api"
+choice = "JSON-RPC over stdio"
+reason = "Every client speaks it and it needs no port"
+created = "2026-11-23T21:55:57.849620660Z"

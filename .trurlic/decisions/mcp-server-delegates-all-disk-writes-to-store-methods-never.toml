@@ -1,14 +1,21 @@
-[decision]
 component = "mcp"
-choice = "MCP server delegates all disk writes to Store methods, never writes directly"
-reason = "Write tools (record_decision, record_pattern, add_component, add_connection, remove_decision, update_decision) call Store methods that acquire a file lock (StoreLock), validate the graph, perform atomic writes (serialize to temp, verify round-trip, rename), and update in-memory state. The MCP module handles argument parsing, validation of edge targets and quality floors, and JSON response construction, but never touches the filesystem directly. This maintains Store as the single authority for disk mutations and ensures atomic write guarantees are never bypassed."
+choice = "The MCP server delegates every disk write to the store's Writer and never touches a file under .trurlic/"
+reason = """
+A write tool runs on a Writer the dispatch begins for the call: SpecTool::call hands a spec-built tool whose Access is Write the Writer of Store::begin_write, which holds the exclusive lock and the graph loaded under it, validates, commits through the journal and keeps its graph equal to disk. apply is the one write tool: its handler turns the parsed arguments into a store::Batch and calls Writer::apply, which holds every rule; status, get_context and get_decisions_for_file are reads on Store::load_state. The MCP module parses arguments and builds the JSON result but never opens a file under .trurlic/, so the store stays the single authority for disk mutations and no tool bypasses its atomic write guarantees.
+"""
 alternatives = [
-    "MCP module writes TOML files directly — rejected: would bypass atomic write guarantees, file locking, and graph validation in Store",
-    "Separate write layer between MCP and Store — rejected: unnecessary indirection when Store already provides the correct abstraction",
+    "The MCP module writes TOML files directly: rejected because it would bypass the atomic writes, the file lock and validation in the store",
+    "A separate write layer between MCP and the store: rejected because the Writer already is the right abstraction",
 ]
 tags = [
     "data-integrity",
     "module-boundary",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-06-15T09:44:59.411657570Z"
+anchors = [
+    { file = "src/mcp/apply/mod.rs", symbol = "apply" },
+    { file = "src/mcp/mod.rs", symbol = "call_unspecified" },
+    { file = "src/mcp/spec/tool.rs", symbol = "Access" },
+    { file = "src/mcp/spec/tool.rs", symbol = "SpecTool::call" },
+]

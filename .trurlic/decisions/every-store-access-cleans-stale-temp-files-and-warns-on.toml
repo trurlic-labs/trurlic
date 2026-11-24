@@ -1,27 +1,21 @@
-[decision]
 component = "commands"
-choice = "Every command finishes an interrupted write when the lock is free and warns on consistency issues"
-reason = "discover_store (called by every command) runs check_version, then Store::try_recover: if no other process holds the exclusive lock, it applies a commit journal an interrupted write left and removes leftover temp files; while the lock is busy it does nothing, because a live commit owns .state/. open_store and open_store_mut additionally call validate() and warn on stderr if errors exist. A crash therefore heals on the next command without ever touching another process's commit, and the user is always informed about graph inconsistencies without blocking their work (warnings go to stderr, not errors). The version check prevents silent corruption from running an incompatible store format."
+choice = "Every read command tells of the issues of the graph it loads, status by listing them and query by a warning naming trurlic check; the store's load finishes an interrupted write"
+reason = """
+status lists the issues of the graph it loads, counted and fitted to the result budget, and open_store in commands/mod.rs loads the graph for query and warns on stderr when it has issues, naming trurlic check, so the user always learns of a broken graph without being blocked: an issue is reported there, and only check fails on one. Recovery and the format check are not the commands' job: Store::load_state and Store::begin_write refuse a store in another format before reading anything else in it, and finish a commit an interrupted writer left, so a crash heals on the next command of any kind. The one exception is a migration stopped before its first rename: project.toml is still in the old format, so every command refuses the store and names trurlic migrate, which finishes the commit. serve checks nothing at start: each tool call loads through the store, so a store in another format, or one whose version does not parse, is refused per call as unsupported_format.
+"""
 alternatives = [
-    "Only clean on explicit 'trurlic check' — rejected: stale temp files accumulate silently after crashes; users may not run check regularly, and the leaked files waste disk space and could confuse debugging",
-    "Fail hard on any consistency issue — rejected: overly strict; many warnings (e.g., hash mismatches from manual edits) are informational and should not block normal workflow operations",
+    "Recover only on an explicit trurlic check: rejected because temp files and unfinished commits would linger after a crash until someone ran it",
+    "Fail every command on an issue: rejected because one dangling edge from a hand edit would block status and every read while the files are still readable",
 ]
 tags = [
     "data-integrity",
     "error-handling",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-06-15T09:43:22.612061329Z"
-
-[[decision.code_refs]]
-file = "src/commands/mod.rs"
-symbol = "discover_store"
-
-[[decision.code_refs]]
-file = "src/commands/mod.rs"
-symbol = "open_store"
-
-[[decision.history]]
-choice = "Every store access cleans stale temp files and warns on consistency issues"
-reason = "discover_store (called by every command) runs clean_stale_tmp and check_version before returning. open_store and open_store_mut additionally call validate() and warn on stderr if errors exist. This self-healing pattern ensures interrupted atomic writes from previous crashes are cleaned up on the next operation, and the user is always informed about graph inconsistencies without blocking their work (warnings go to stderr, not errors). The version check prevents silent corruption from running an incompatible store format."
-changed_at = "2026-10-02T12:18:48.328836684Z"
+anchors = [
+    { file = "src/commands/mod.rs", symbol = "open_store" },
+    { file = "src/commands/serve.rs", symbol = "serve" },
+    { file = "src/commands/status.rs", symbol = "status" },
+    { file = "src/store/access.rs", symbol = "Store::read" },
+]

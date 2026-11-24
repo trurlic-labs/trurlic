@@ -1,0 +1,25 @@
+component = "git"
+choice = "git::toplevel answers None outside a work tree: with no .git at or above it runs no git, and --is-inside-work-tree false is None; any other failure is git's error"
+reason = """
+Git exits with status 128 for \"not a git repository\" as for every fatal error (dubious ownership, a broken .git file), and its message is translated, so neither the status nor stderr tells the case apart. Its discovery looks for a .git at each directory upward, so the runner does too (git::dot_git, symlinks followed): none means no work tree holds the directory, answered without a process. With one, --show-toplevel answers; when it fails, --is-inside-work-tree prints false inside a git directory or a bare repository, which is None too, and otherwise the first failure stands with git's stderr, as for a linked worktree whose main worktree was deleted. migrate's placement, init and check branch on the None, and the migration names it as PlacementDoubt::NoWorkTree.
+"""
+alternatives = [
+    "Parse stderr for not a git repository: rejected because the message is translated and other fatal errors share the status",
+    "Treat any status 128 as no work tree: rejected because a broken or untrusted repository would pass for no repository, and a tracked graph in it for one outside git",
+]
+tags = [
+    "git",
+    "reliability",
+]
+status = "proposed"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/git.rs", symbol = "DotGit" },
+    { file = "src/git.rs", symbol = "dot_git" },
+    { file = "src/git.rs", symbol = "toplevel" },
+    { file = "src/store/migration/placement.rs", symbol = "PlacementDoubt::NoWorkTree" },
+    { file = "tests/integration/placement.rs", symbol = "a_worktree_whose_main_worktree_is_gone_says_what_git_says" },
+]
+depends_on = [
+    "the-git-module-is-a-leaf-that-runs-the-git-cli",
+]

@@ -2,13 +2,1024 @@
   "tools": [
     {
       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Apply"
+      },
+      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of a decision's fields, a list whole or by `add_*`/`remove_*` (never both for one list; a removed element must be held); rename (rewrites every edge to it); merge `absorbed` into `survivor` (edges repointed, anchors, tags and edges unioned, the absorbed text dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component (carries its decisions and connections), remove_component (refused while in use).\nA revise that changes nothing, an edge to a missing node or to itself, and an edge that closes a depends_on cycle are refused. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back to it accepts it again. Anchors, tags, edges and renames leave the status alone.\nQuality: each field a record, revise or merge changes meets the bar. Built in: a one-line choice of at most 200 bytes, a reason of real text, at least one alternative and one anchor, alternatives and tags of one line, no hidden character in any text; then the limits and patterns of `[quality]` in project.toml. A refusal names the argument (`ops[3].add_tags[0]`), the rule, the measured value and the limit; a field the op leaves as it is is not judged. A `warn` pattern writes the batch and warns at its first match per op: `warnings` lists one per op, by argument, pattern index and offset, `more_warnings` counts the rest, and `patterns` holds each named pattern's message.\nThe result names each op's node and what it changed, never the texts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "ops": {
+            "description": "The changes, applied in order.",
+            "items": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "alternatives": {
+                      "description": "Rejected options, one line each.",
+                      "items": {
+                        "maxLength": 1000,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "anchors": {
+                      "description": "Where it applies.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "file": {
+                            "description": "A file or directory, relative to the project root, `/`-separated.",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "description": "A symbol in the file, its `::`-separated path.",
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "choice": {
+                      "description": "The rule, one line.",
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "component": {
+                      "description": "Its component, or `project` for a rule that holds everywhere.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "depends_on": {
+                      "description": "Decisions it depends on.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "name": {
+                      "description": "The new decision's name, its file stem: kebab-case, unique across nodes.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "record",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "description": "Why it holds.",
+                      "maxLength": 50000,
+                      "type": "string"
+                    },
+                    "tags": {
+                      "description": "Labels, one line each.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name",
+                    "component",
+                    "choice",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "add_alternatives": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "maxLength": 1000,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "add_anchors": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "file": {
+                            "description": "A file or directory, relative to the project root, `/`-separated.",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "description": "A symbol in the file, its `::`-separated path.",
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "add_depends_on": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "add_tags": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "alternatives": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "maxLength": 1000,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "anchors": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "file": {
+                            "description": "A file or directory, relative to the project root, `/`-separated.",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "description": "A symbol in the file, its `::`-separated path.",
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "choice": {
+                      "description": "The new rule, one line.",
+                      "maxLength": 200,
+                      "type": "string"
+                    },
+                    "component": {
+                      "description": "Its new component.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "depends_on": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "name": {
+                      "description": "The decision.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "revise",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "description": "The new reason.",
+                      "maxLength": 50000,
+                      "type": "string"
+                    },
+                    "remove_alternatives": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "maxLength": 1000,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "remove_anchors": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "file": {
+                            "description": "A file or directory, relative to the project root, `/`-separated.",
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "symbol": {
+                            "description": "A symbol in the file, its `::`-separated path.",
+                            "maxLength": 200,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "remove_depends_on": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "remove_tags": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "tags": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "The node.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "rename",
+                      "type": "string"
+                    },
+                    "to": {
+                      "description": "Its new name.",
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name",
+                    "to"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "absorbed": {
+                      "description": "The decision folded into it and removed.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "merge",
+                      "type": "string"
+                    },
+                    "survivor": {
+                      "description": "The decision kept.",
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "survivor",
+                    "absorbed"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "The decision.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "remove",
+                      "type": "string"
+                    },
+                    "repoint_to": {
+                      "description": "The decision each edge to the removed one points at instead.",
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "connects_to": {
+                      "description": "Components it connects to.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "description": {
+                      "description": "What it is.",
+                      "maxLength": 50000,
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "The new component's name, its file stem.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "add_component",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name",
+                    "description"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "add_connects_to": {
+                      "description": "Elements to add.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "connects_to": {
+                      "description": "The whole list, replacing it.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "description": {
+                      "description": "Its new description.",
+                      "maxLength": 50000,
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "The component.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "revise_component",
+                      "type": "string"
+                    },
+                    "remove_connects_to": {
+                      "description": "Elements to remove; each must be in the list.",
+                      "items": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "The node.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "rename_component",
+                      "type": "string"
+                    },
+                    "to": {
+                      "description": "Its new name.",
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name",
+                    "to"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "The component.",
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "op": {
+                      "const": "remove_component",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "op",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              ],
+              "type": "object"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "origin": {
+            "description": "The task or plan row behind the batch: stored on each decision it records and named in the graph's history.",
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "ops"
+        ],
+        "type": "object"
+      },
+      "name": "apply",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "more_origin_warnings": {
+            "description": "The origin's warnings not listed.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ops": {
+            "description": "What each op did, in order.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "absorbed": {
+                  "description": "A merge's removed decision.",
+                  "type": "string"
+                },
+                "changed": {
+                  "description": "A revise's changed fields.",
+                  "items": {
+                    "enum": [
+                      "component",
+                      "choice",
+                      "reason",
+                      "alternatives",
+                      "tags",
+                      "anchors",
+                      "depends_on",
+                      "description",
+                      "connects_to"
+                    ],
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "more_warnings": {
+                  "description": "Its warnings not listed in `warnings`.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "description": "The node it names first; a merge's survivor.",
+                  "type": "string"
+                },
+                "op": {
+                  "description": "The op's kind.",
+                  "enum": [
+                    "record",
+                    "revise",
+                    "rename",
+                    "merge",
+                    "remove",
+                    "add_component",
+                    "revise_component",
+                    "rename_component",
+                    "remove_component"
+                  ],
+                  "type": "string"
+                },
+                "repoint_to": {
+                  "description": "Where a remove pointed the edges to its decision.",
+                  "type": "string"
+                },
+                "rewrote": {
+                  "description": "Files of other nodes it rewrote: edges repointed, a component's decisions and connections renamed.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "status": {
+                  "description": "The decision's new status, when the op changed it.",
+                  "enum": [
+                    "proposed",
+                    "accepted"
+                  ],
+                  "type": "string"
+                },
+                "to": {
+                  "description": "A rename's new name.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "name"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "patterns": {
+            "description": "The message of each pattern a warning names, once.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "index": {
+                  "description": "The pattern's index in `[quality] patterns`.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "message": {
+                  "description": "What the pattern says.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "index",
+                "message"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "removed": {
+            "description": "Files removed, a rename's old file included.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "Present only when the result was cut to fit the result budget: each cut, by JSON pointer, with what it omitted.",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "description": "What the batch wrote but a `warn` pattern of `[quality]` warns of: each pattern's first match per op, and the first of the origin's and of each op's, in the order of the ops and the patterns; an op's `more_warnings` counts the rest.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "description": "The byte offset of the match in the argument's text.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "field": {
+                  "description": "The argument, as `ops[2].reason` or `origin`.",
+                  "type": "string"
+                },
+                "pattern": {
+                  "description": "The pattern's index in `[quality] patterns`.",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "rule": {
+                  "description": "The rule's name.",
+                  "enum": [
+                    "pattern"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "field",
+                "rule",
+                "pattern",
+                "at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "written": {
+            "description": "Files written, a rename's new file included.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ops",
+          "written",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "title": "Apply"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Status"
+      },
+      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, and the decisions of each component. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "description": "Count only the decisions recorded under this origin.",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "section": {
+            "description": "The one section to return.",
+            "enum": [
+              "issues",
+              "history",
+              "components"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "status",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "code_root": {
+            "description": "The tree anchors resolve against, when the graph is not its own.",
+            "type": "string"
+          },
+          "components": {
+            "additionalProperties": false,
+            "description": "The project-wide decisions, then each component's, by name.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "decisions": {
+                      "description": "Its decisions.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "name": {
+                      "description": "The component, or `project`.",
+                      "type": "string"
+                    },
+                    "proposed": {
+                      "description": "Of them, the proposed.",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "decisions",
+                    "proposed"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
+          "counts": {
+            "additionalProperties": false,
+            "description": "The graph's counts.",
+            "properties": {
+              "components": {
+                "description": "Components.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "decisions": {
+                "description": "Decisions, under `origin` when given.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "edges": {
+                "description": "`connects_to` and `depends_on` edges.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "issues": {
+                "description": "Validation issues.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "non_canonical": {
+                "description": "Files `trurlic fmt` would rewrite.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "project_wide": {
+                "description": "Of them, the project-wide.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "proposed": {
+                "description": "Of them, the proposed.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "components",
+              "decisions",
+              "project_wide",
+              "proposed",
+              "edges",
+              "issues",
+              "non_canonical"
+            ],
+            "type": "object"
+          },
+          "graph": {
+            "description": "The graph directory, when the tree reaches one it does not hold.",
+            "type": "string"
+          },
+          "history": {
+            "additionalProperties": false,
+            "description": "What a shared graph's own history lacks; empty under `tracked`.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "description": "The finding's kind.",
+                      "enum": [
+                        "missing",
+                        "index_locked",
+                        "uncommitted"
+                      ],
+                      "type": "string"
+                    },
+                    "message": {
+                      "description": "What is lacking and what mends it.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
+          "issues": {
+            "additionalProperties": false,
+            "description": "The validation issues, sorted.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "description": "The issue's kind.",
+                      "enum": [
+                        "name_invalid",
+                        "name_reserved",
+                        "name_shared",
+                        "component_missing",
+                        "connection_missing",
+                        "dependency_missing",
+                        "self_edge",
+                        "depends_on_cycle",
+                        "invalid_choice",
+                        "invalid_reason",
+                        "invalid_alternative",
+                        "invalid_tag",
+                        "invalid_origin",
+                        "invalid_description",
+                        "tracked_unversioned",
+                        "tracked_ignored",
+                        "shared_versioned",
+                        "shared_off_main",
+                        "second_graph"
+                      ],
+                      "type": "string"
+                    },
+                    "message": {
+                      "description": "The file at fault, then the fault.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
+          "placement": {
+            "description": "`tracked` when the project's git versions the graph, `shared` when the graph is a repository of its own.",
+            "enum": [
+              "tracked",
+              "shared"
+            ],
+            "type": "string"
+          },
+          "project": {
+            "description": "The project's name.",
+            "type": "string"
+          },
+          "quality": {
+            "additionalProperties": false,
+            "description": "What `[quality]` in project.toml adds to the built-in write rules.",
+            "properties": {
+              "limits": {
+                "description": "Limits set: `reason_words` bounds, the maxima, `require_origin`.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "refusing": {
+                "description": "Patterns that refuse a write.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "warning": {
+                "description": "Patterns that warn in the result.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "limits",
+              "refusing",
+              "warning"
+            ],
+            "type": "object"
+          },
+          "truncated": {
+            "description": "Present only when the result was cut to fit the result budget: each cut, by JSON pointer, with what it omitted.",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "placement",
+          "counts",
+          "quality"
+        ],
+        "type": "object"
+      },
+      "title": "Status"
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Get context"
       },
-      "description": "Get the architectural context for a component. Returns decisions, project-wide rules, related decisions from connected components, and an authoritative brief for coding agents. Use depth=\"constraints\" for token-efficient mid-implementation checks (~60-70% fewer tokens).",
+      "description": "Get the architectural context for a component: its decisions, the project-wide rules, the decisions of connected components and of what its decisions depend on, and an authoritative brief for coding agents. Use depth=\"constraints\" for a compact brief of choices only.",
       "inputSchema": {
         "properties": {
           "component": {
@@ -16,7 +1027,7 @@
             "type": "string"
           },
           "depth": {
-            "description": "full (default): complete context with reasoning. constraints: choice text only, compact brief, no related decisions. 60-70% fewer tokens for mid-implementation checks.",
+            "description": "full (default): complete context with reasoning. constraints: choice text only, compact brief, no related decisions.",
             "enum": [
               "full",
               "constraints"
@@ -41,74 +1052,13 @@
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
-        "title": "Check pattern"
-      },
-      "description": "Check whether a pattern or approach is covered by existing decisions. Returns matching decisions sorted by relevance, or suggested_component if not covered.",
-      "inputSchema": {
-        "properties": {
-          "description": {
-            "description": "Pattern or approach to check.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "description"
-        ],
-        "type": "object"
-      },
-      "name": "check_pattern"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true,
-        "title": "Get architecture"
-      },
-      "description": "Full architectural overview: components, connections, decision counts, patterns, and project-wide decisions. Lists components with zero decisions as needing design.",
-      "inputSchema": {
-        "properties": {},
-        "type": "object"
-      },
-      "name": "get_architecture"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true,
-        "title": "Get decision history"
-      },
-      "description": "Trace how a decision evolved. Returns its current choice, reason, attribution, and creation time, plus every prior version in chronological order (oldest first) and a count of revisions.",
-      "inputSchema": {
-        "properties": {
-          "name": {
-            "description": "Decision name (without .toml).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "get_decision_history"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true,
         "title": "Get decisions for file"
       },
-      "description": "Reverse lookup: given a file path, find every decision whose code_refs reference it (exact match or directory prefix). Returns decisions sorted by component then name. Does NOT include project-wide rules — they apply everywhere; pair with get_context for full coverage.",
+      "description": "Reverse lookup: given a file or directory path, find every decision anchored there: on the file itself, on a file under the directory, or on a directory that holds the file. Returns decisions sorted by component then name, each with its matching anchors. Project-wide rules apply everywhere and are not listed unless anchored there; get_context(\"project\") lists them.",
       "inputSchema": {
         "properties": {
           "file": {
-            "description": "Relative file path or directory from project root (e.g. 'src/store/write.rs' or 'src/store'). Leading './' is stripped; backslashes, traversal (..), and absolute paths are rejected.",
+            "description": "File or directory path relative to the project root (e.g. 'src/store/load.rs' or 'src/store'). A leading './' is dropped; backslashes, '..' and absolute paths are refused.",
             "type": "string"
           }
         },
@@ -118,345 +1068,6 @@
         "type": "object"
       },
       "name": "get_decisions_for_file"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": true,
-        "title": "Verify against decisions"
-      },
-      "description": "Call after implementing code, before committing. Returns architectural decisions that apply to the files you changed, with instructions to verify your code respects them. Read each affected file and evaluate.",
-      "inputSchema": {
-        "properties": {
-          "changed_files": {
-            "description": "Relative file paths from project root that you changed (e.g. 'src/store/write.rs'). Leading './' is stripped; backslashes, traversal (..), and absolute paths are rejected.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "component": {
-            "description": "Component name (kebab-case) or 'project'.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "component",
-          "changed_files"
-        ],
-        "type": "object"
-      },
-      "name": "verify_against_decisions"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": false,
-        "title": "Record decision"
-      },
-      "description": "Record a single architectural decision. Validates all edges before writing. Atomic commit. Returns the decision name, path, its code refs, and warnings.",
-      "inputSchema": {
-        "properties": {
-          "alternatives": {
-            "description": "Rejected options with reasons.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "attribution": {
-            "description": "Who authored this decision: \"user\" (human present) or \"agent\" (autonomous).",
-            "enum": [
-              "user",
-              "agent"
-            ],
-            "type": "string"
-          },
-          "choice": {
-            "description": "Concise decision title.",
-            "type": "string"
-          },
-          "code_refs": {
-            "description": "Source code locations where this decision manifests. An agent-attributed decision should always include these.",
-            "items": {
-              "properties": {
-                "file": {
-                  "description": "Relative path from project root (e.g. 'src/store/write.rs').",
-                  "type": "string"
-                },
-                "symbol": {
-                  "description": "Function, struct, constant, or method name.",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "file"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "component": {
-            "description": "Component name or 'project'.",
-            "type": "string"
-          },
-          "constrains": {
-            "description": "Decision names this constrains.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "depends_on": {
-            "description": "Decision names this depends on.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "reason": {
-            "description": "Reasoning behind the decision.",
-            "type": "string"
-          },
-          "tags": {
-            "description": "Categorical tags for filtering.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "component",
-          "choice",
-          "reason",
-          "attribution"
-        ],
-        "type": "object"
-      },
-      "name": "record_decision"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": false,
-        "title": "Record pattern"
-      },
-      "description": "Record a pattern — a synthesis of multiple decisions into a reusable rule. Requires at least 2 decisions. Returns the pattern name (slug) for reference.",
-      "inputSchema": {
-        "properties": {
-          "components": {
-            "description": "Component names (inferred from decisions if omitted).",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "decisions": {
-            "description": "Decision names (must all exist, minimum 2).",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "description": {
-            "description": "What this pattern means.",
-            "type": "string"
-          },
-          "name": {
-            "description": "Human-readable pattern name.",
-            "type": "string"
-          },
-          "tags": {
-            "description": "Categorical tags.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "name",
-          "description",
-          "decisions"
-        ],
-        "type": "object"
-      },
-      "name": "record_pattern"
-    },
-    {
-      "annotations": {
-        "destructiveHint": true,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": false,
-        "title": "Remove decision"
-      },
-      "description": "Remove a decision with cascade awareness. Refuses if other decisions depend on it or a pattern would shrink below 2 members. Reports affected patterns and edges.",
-      "inputSchema": {
-        "properties": {
-          "name": {
-            "description": "Decision filename (without .toml).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "remove_decision"
-    },
-    {
-      "annotations": {
-        "destructiveHint": true,
-        "idempotentHint": true,
-        "openWorldHint": false,
-        "readOnlyHint": false,
-        "title": "Remove pattern"
-      },
-      "description": "Remove a pattern and its member_of and applies_to edges. Member decisions are kept. Remove the pattern first when its members must go, since a pattern cannot drop below 2 members.",
-      "inputSchema": {
-        "properties": {
-          "name": {
-            "description": "Pattern name (the slug record_pattern returned).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "remove_pattern"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": false,
-        "title": "Update decision"
-      },
-      "description": "Modify an existing decision in place. 'revise' updates content and versions the previous choice/reason into history. 'promote' marks an agent decision as human-reviewed by changing its attribution to user. The decision's name and every edge survive unchanged.",
-      "inputSchema": {
-        "properties": {
-          "choice": {
-            "description": "New choice text (revise only, optional — omit to keep current).",
-            "type": "string"
-          },
-          "code_refs": {
-            "description": "New code refs (revise only, optional — omit to keep current).",
-            "items": {
-              "properties": {
-                "file": {
-                  "description": "Relative path from project root (e.g. 'src/store/write.rs').",
-                  "type": "string"
-                },
-                "symbol": {
-                  "description": "Function, struct, constant, or method name.",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "file"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "mode": {
-            "description": "revise: update content, previous version saved to history. promote: mark an agent decision as human-reviewed. Call ONLY when the user has explicitly reviewed the decision and confirmed it in this conversation. Never promote autonomously.",
-            "enum": [
-              "revise",
-              "promote"
-            ],
-            "type": "string"
-          },
-          "name": {
-            "description": "Existing decision name.",
-            "type": "string"
-          },
-          "reason": {
-            "description": "New reason text (revise only, optional — omit to keep current).",
-            "type": "string"
-          },
-          "tags": {
-            "description": "New tags (revise only, optional — omit to keep current).",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "name",
-          "mode"
-        ],
-        "type": "object"
-      },
-      "name": "update_decision"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": false,
-        "title": "Add component"
-      },
-      "description": "Add a new component to the architecture graph.",
-      "inputSchema": {
-        "properties": {
-          "description": {
-            "description": "One-line description of the component's role.",
-            "type": "string"
-          },
-          "name": {
-            "description": "Kebab-case component name (e.g. 'rate-limiter').",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "add_component"
-    },
-    {
-      "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false,
-        "readOnlyHint": false,
-        "title": "Add connection"
-      },
-      "description": "Add a directional connection between two components. Represents data or control flow. A connected component's decisions appear as related decisions in get_context.",
-      "inputSchema": {
-        "properties": {
-          "from": {
-            "description": "Source component name.",
-            "type": "string"
-          },
-          "to": {
-            "description": "Target component name.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "from",
-          "to"
-        ],
-        "type": "object"
-      },
-      "name": "add_connection"
     }
   ]
 }

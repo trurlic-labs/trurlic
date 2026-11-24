@@ -1,838 +1,101 @@
+//! The graph as one load read it: [`ProjectState`], the node maps keyed by
+//! file stem with no edge index beside them, and [`NodeFile`], the name of
+//! one of its files.
+
 use std::collections::BTreeMap;
-use std::fs;
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::fmt;
+use std::path::PathBuf;
 
-use crate::{Error, Result};
+use super::schema::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, PROJECT_FILE, Project};
 
-use super::graph::{InMemoryGraph, Issue};
-use super::schema::{
-    ComponentFile, DecisionFile, EdgeEntry, GraphIndex, NodeEntry, PatternFile, ProjectFile,
-};
-
-// ── ProjectState ─────────────────────────────────────────────────────────────
-
-/// Complete in-memory snapshot of `.trurlic/`.
-/// Keyed by filename stem (e.g. `"auth"`, `"error-strategy"`).
-///
-/// Content values (`ComponentFile`, `DecisionFile`, `PatternFile`) are
-/// `Arc`-wrapped for zero-cost sharing with [`InMemoryGraph`]. Graph
-/// rebuilds (which happen on every write operation) clone only the `Arc`
-/// pointer — not the underlying data — making rebuild cost O(n) pointer
-/// increments instead of O(n) deep copies.
+/// The graph as its files hold it, keyed by file stem (`"auth"`,
+/// `"error-strategy"`). Each edge is a field of the node it leaves; no edge
+/// index is kept beside the node maps.
+#[derive(Debug, Clone)]
 pub struct ProjectState {
-    pub project: ProjectFile,
-    pub components: BTreeMap<String, Arc<ComponentFile>>,
-    pub decisions: BTreeMap<String, Arc<DecisionFile>>,
-    pub patterns: BTreeMap<String, Arc<PatternFile>>,
-    pub graph_index: GraphIndex,
-    /// Absolute path to the project directory (the parent of `.trurlic/`).
-    /// Decision `code_refs` are resolved against this root to detect
-    /// references to deleted files. [`Store::load_state`] fills it in;
-    /// states built directly by tests default to an empty path (which,
-    /// with no `code_refs`, never reports an orphaned ref).
-    pub(crate) project_root: PathBuf,
-    /// Cached in-memory graph. Kept in sync by
-    /// [`Store::commit_with_graph`], which assigns the validated graph
-    /// on successful commit. Writable only from within `store/`.
-    pub(super) graph: InMemoryGraph,
-    /// The commit counter this state reflects: read with the node files by
-    /// [`Store::load_state`], raised by every commit made through it.
-    pub(super) generation: u64,
+    pub project: Project,
+    pub components: BTreeMap<String, Component>,
+    pub decisions: BTreeMap<String, Decision>,
+    /// The files whose bytes are not the canonical form of what they hold,
+    /// sorted: hand edits that `trurlic fmt` rewrites.
+    pub non_canonical: Vec<NodeFile>,
+    /// The tree the graph was read for, which anchors are relative to:
+    /// the store's code root. Empty in a state a test builds, whose anchors
+    /// then resolve against the working directory.
+    pub(crate) code_root: PathBuf,
 }
 
 impl ProjectState {
-    /// Construct from `Arc`-wrapped content maps.
-    ///
-    /// Content values are `Arc`-wrapped so `InMemoryGraph` can share them
-    /// via pointer clone instead of deep copy. Callers that load from disk
-    /// wrap at construction time; test helpers like `sample_component` and
-    /// `sample_decision` return `Arc<T>` directly.
-    pub fn new(
-        project: ProjectFile,
-        components: BTreeMap<String, Arc<ComponentFile>>,
-        decisions: BTreeMap<String, Arc<DecisionFile>>,
-        patterns: BTreeMap<String, Arc<PatternFile>>,
-        graph_index: GraphIndex,
-    ) -> Self {
-        let graph = Self::build_graph_from(&graph_index, &components, &decisions, &patterns);
-        Self {
-            project,
-            components,
-            decisions,
-            patterns,
-            graph_index,
-            project_root: PathBuf::new(),
-            graph,
-            generation: 0,
-        }
-    }
-
-    /// The commit counter this state reflects.
-    #[must_use]
-    pub(super) const fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Whether a watcher must drop this state, loaded while the server served
-    /// generation `served_at_load`, instead of swapping it in for `current`.
-    ///
-    /// It must when `current` changed during the load and is newer: the change
-    /// was a write by this server, which reloaded under the exclusive lock
-    /// after the load, so the swap would undo that write in memory. A load
-    /// that is older although `current` did not change is the store as it is
-    /// now: the counter went back because `.state/` was deleted.
-    #[must_use]
-    pub(super) fn is_overtaken(&self, current: &Self, served_at_load: u64) -> bool {
-        current.generation != served_at_load && self.generation < current.generation
-    }
-
-    /// Read-only access to the cached in-memory graph.
-    #[must_use]
-    pub fn graph(&self) -> &InMemoryGraph {
-        &self.graph
-    }
-
-    /// Validate against the cached graph. Only valid on freshly-loaded state;
-    /// write paths use [`build_graph`] for post-mutation validation.
-    pub fn validate(&self) -> Vec<Issue> {
-        self.graph.validate()
-    }
-
-    /// Build a fresh [`InMemoryGraph`] from the current (potentially mutated)
-    /// state. Used by write paths that need validation after in-memory
-    /// mutations — the cached `graph` field may be stale at that point.
-    pub fn build_graph(&self) -> InMemoryGraph {
-        Self::build_graph_from(
-            &self.graph_index,
-            &self.components,
-            &self.decisions,
-            &self.patterns,
-        )
-    }
-
-    /// Refresh the cached graph to match the current field values.
-    ///
-    /// Production write paths use [`Store::commit_with_graph`] which
-    /// assigns the validated graph directly. This method remains for
-    /// test helpers that mutate `graph_index` without going through
-    /// the commit pipeline.
-    #[cfg(test)]
-    pub fn rebuild_graph(&mut self) {
-        self.graph = Self::build_graph_from(
-            &self.graph_index,
-            &self.components,
-            &self.decisions,
-            &self.patterns,
-        );
-    }
-
-    fn build_graph_from(
-        graph_index: &GraphIndex,
-        components: &BTreeMap<String, Arc<ComponentFile>>,
-        decisions: &BTreeMap<String, Arc<DecisionFile>>,
-        patterns: &BTreeMap<String, Arc<PatternFile>>,
-    ) -> InMemoryGraph {
-        InMemoryGraph::build(graph_index, components, decisions, patterns)
-    }
-
-    /// Check if a name is in use by any node type (component, decision,
-    /// pattern, or virtual). Prevents cross-type collisions that would
-    /// produce confusing graph integrity errors during commit.
-    #[must_use]
-    pub fn is_node_name_taken(&self, name: &str) -> bool {
-        is_reserved_node_name(name)
-            || self.components.contains_key(name)
-            || self.decisions.contains_key(name)
-            || self.patterns.contains_key(name)
-    }
-
-    // ── Graph mutation helpers ───────────────────────────────────────────
-
-    /// Checkpoint the graph index for append-only rollback.
-    ///
-    /// O(1) — captures only the current `Vec` lengths. On rollback,
-    /// nodes and edges are truncated to these lengths, undoing any
-    /// pushes that happened after the checkpoint.
-    ///
-    /// Use [`rollback_graph`](Self::rollback_graph) on commit failure.
-    pub(super) fn graph_checkpoint(&self) -> GraphCheckpoint {
-        GraphCheckpoint {
-            nodes_len: self.graph_index.nodes.len(),
-            edges_len: self.graph_index.edges.len(),
-        }
-    }
-
-    /// Roll back appended nodes and edges to a checkpoint.
-    pub(super) fn rollback_graph(&mut self, cp: GraphCheckpoint) {
-        self.graph_index.nodes.truncate(cp.nodes_len);
-        self.graph_index.edges.truncate(cp.edges_len);
-    }
-
-    /// Remove a named node and all incident edges from the graph index.
-    ///
-    /// Returns the removed items so they can be restored on commit
-    /// failure via [`restore_graph_node`](Self::restore_graph_node).
-    /// Clones only the affected items (typically 1 node + a few edges)
-    /// instead of the entire index.
-    pub(super) fn remove_graph_node(&mut self, name: &str) -> RemovedGraphNode {
-        let nodes: Vec<NodeEntry> = self
-            .graph_index
-            .nodes
-            .iter()
-            .filter(|n| n.name == name)
-            .cloned()
-            .collect();
-        let edges: Vec<EdgeEntry> = self
-            .graph_index
-            .edges
-            .iter()
-            .filter(|e| e.from == name || e.to == name)
-            .cloned()
-            .collect();
-        self.graph_index.nodes.retain(|n| n.name != name);
-        self.graph_index
-            .edges
-            .retain(|e| e.from != name && e.to != name);
-        RemovedGraphNode { nodes, edges }
-    }
-
-    /// Restore a previously removed node and its edges.
-    pub(super) fn restore_graph_node(&mut self, removed: RemovedGraphNode) {
-        self.graph_index.nodes.extend(removed.nodes);
-        self.graph_index.edges.extend(removed.edges);
-    }
-
-    /// Update the hash of a named node. Returns the previous hash
-    /// so the caller can restore it on commit failure.
-    pub(super) fn update_node_hash(&mut self, name: &str, new_hash: String) -> Option<String> {
-        self.graph_index
-            .nodes
-            .iter_mut()
-            .find(|n| n.name == name)
-            .map(|node| std::mem::replace(&mut node.hash, new_hash))
+    /// The path under `.trurlic/` of every file of the graph,
+    /// `project.toml` first, then the components and the decisions by name.
+    pub(super) fn files(&self) -> Vec<String> {
+        let components = self.components.keys().map(|name| {
+            NodePath {
+                dir: COMPONENTS_DIR,
+                name,
+            }
+            .to_string()
+        });
+        let decisions = self.decisions.keys().map(|name| {
+            NodePath {
+                dir: DECISIONS_DIR,
+                name,
+            }
+            .to_string()
+        });
+        std::iter::once(PROJECT_FILE.to_owned())
+            .chain(components)
+            .chain(decisions)
+            .collect()
     }
 }
 
-// ── Graph rollback types ────────────────────────────────────────────────────
-
-/// Checkpoint for append-only graph mutations.
-///
-/// Captures the current `Vec` lengths of nodes and edges. Truncation
-/// on rollback is O(K) where K is the number of appended items —
-/// compared to O(N) for a full `GraphIndex::clone`.
-#[must_use = "discard explicitly with drop() if rollback is not needed"]
-pub(super) struct GraphCheckpoint {
-    nodes_len: usize,
-    edges_len: usize,
+/// A file of the graph, as a path under `.trurlic/` names it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NodeFile {
+    Project,
+    Component(String),
+    Decision(String),
 }
 
-/// Saved state from a [`ProjectState::remove_graph_node`] call.
-///
-/// Holds the removed nodes and edges so they can be restored if the
-/// commit fails. Clones only the affected items (typically 1 node +
-/// 2–5 edges), not the entire graph index.
-#[must_use = "discard explicitly with drop() if rollback is not needed"]
-pub(super) struct RemovedGraphNode {
-    nodes: Vec<NodeEntry>,
-    edges: Vec<EdgeEntry>,
+impl fmt::Display for NodeFile {
+    /// The path under `.trurlic/`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (dir, name) = match self {
+            Self::Project => return f.write_str(PROJECT_FILE),
+            Self::Component(name) => (COMPONENTS_DIR, name),
+            Self::Decision(name) => (DECISIONS_DIR, name),
+        };
+        NodePath { dir, name }.fmt(f)
+    }
 }
 
-// ── Name validation ─────────────────────────────────────────────────────────
-
-/// Check whether a name is valid kebab-case.
-/// Rules: non-empty, lowercase ASCII letters + digits + hyphens only,
-/// no leading/trailing/consecutive hyphens.
-#[must_use]
-pub fn is_valid_kebab_case(name: &str) -> bool {
-    !name.is_empty()
-        && !name.starts_with('-')
-        && !name.ends_with('-')
-        && !name.contains("--")
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+/// The path under `.trurlic/` of the node `name` of the kind `dir` holds.
+struct NodePath<'a> {
+    dir: &'static str,
+    name: &'a str,
 }
 
-/// Names reserved for internal graph nodes. These cannot be used as
-/// component, decision, or pattern identifiers because they would collide
-/// with virtual nodes in the graph index.
-#[must_use]
-pub fn is_reserved_node_name(name: &str) -> bool {
-    name == "project"
+impl fmt::Display for NodePath<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}.toml", self.dir, self.name)
+    }
 }
-
-/// Reject ASCII control characters that could corrupt TOML files or
-/// produce surprising on-disk content. Allows common whitespace
-/// (newline, carriage return, tab).
-///
-/// Shared across all mutation entry points (MCP, CLI) so
-/// every path enforces the same input hygiene.
-#[must_use]
-pub fn has_control_chars(s: &str) -> bool {
-    s.bytes()
-        .any(|b| b < 0x20 && b != b'\n' && b != b'\r' && b != b'\t')
-}
-
-// ── Slugify ─────────────────────────────────────────────────────────────────
-
-const MAX_SLUG_LEN: usize = 60;
-
-/// Convert a free-text string to a kebab-case slug suitable for
-/// filenames and node names.
-///
-/// Lowercases ASCII letters, keeps digits, replaces everything else
-/// with hyphens. Collapses runs, strips leading/trailing hyphens,
-/// truncates at a word boundary, and falls back to `"decision"` for
-/// empty input.
-#[must_use]
-pub fn slugify(input: &str) -> String {
-    let mut slug = String::with_capacity(input.len());
-    let mut prev_hyphen = true;
-
-    for c in input.chars() {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c.to_ascii_lowercase());
-            prev_hyphen = false;
-        } else if !prev_hyphen {
-            slug.push('-');
-            prev_hyphen = true;
-        }
-    }
-
-    while slug.ends_with('-') {
-        slug.pop();
-    }
-
-    if slug.len() > MAX_SLUG_LEN {
-        slug.truncate(MAX_SLUG_LEN);
-        if let Some(last_hyphen) = slug.rfind('-') {
-            slug.truncate(last_hyphen);
-        }
-        while slug.ends_with('-') {
-            slug.pop();
-        }
-    }
-
-    if slug.is_empty() {
-        slug.push_str("decision");
-    }
-
-    slug
-}
-
-// ── Unique decision stem ────────────────────────────────────────────────────
-
-const MAX_DEDUP_SUFFIX: u32 = 10_000;
-
-/// Derive a unique decision filename stem from `base`, appending `-2`,
-/// `-3`, … if `base` collides with any existing node. Checks components,
-/// decisions, patterns, and reserved names to prevent cross-type
-/// collisions that would produce confusing graph integrity errors.
-pub fn unique_decision_stem(state: &ProjectState, base: &str) -> Result<String> {
-    if is_reserved_node_name(base) {
-        let candidate = format!("{base}-decision");
-        return unique_decision_stem(state, &candidate);
-    }
-    if !state.is_node_name_taken(base) {
-        return Ok(base.to_string());
-    }
-    for n in 2..=MAX_DEDUP_SUFFIX {
-        let candidate = format!("{base}-{n}");
-        if !state.is_node_name_taken(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err(Error::Validation(format!(
-        "too many nodes with stem `{base}` (limit: {MAX_DEDUP_SUFFIX})"
-    )))
-}
-
-// ── Directory listing ───────────────────────────────────────────────────────
-
-pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => {
-            return Err(Error::Io {
-                path: dir.to_path_buf(),
-                source,
-            });
-        }
-    };
-
-    let mut names = Vec::new();
-    for entry in entries {
-        let path = entry.map_err(Error::io(dir))?.path();
-        let is_toml = path.extension().is_some_and(|ext| ext == "toml");
-        if is_toml && let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            names.push(stem.to_string());
-        }
-    }
-    names.sort_unstable();
-    Ok(names)
-}
-
-// ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::graph::Severity;
-
-    use crate::store::testing::*;
-
-    use tempfile::TempDir;
-
-    // ── is_overtaken ─────────────────────────────────────────────────────
-
-    fn at_generation(generation: u64) -> ProjectState {
-        let mut state = empty_project_state();
-        state.generation = generation;
-        state
-    }
-
-    /// The server served 4, loaded 4, then committed 5 before the swap.
-    #[test]
-    fn a_load_overtaken_by_the_servers_own_write_is_dropped() {
-        assert!(at_generation(4).is_overtaken(&at_generation(5), 4));
-    }
-
-    /// The server served 4 and wrote 5 before the load began, which read it.
-    #[test]
-    fn a_load_that_read_the_servers_write_is_kept() {
-        assert!(!at_generation(5).is_overtaken(&at_generation(5), 4));
-    }
-
-    /// `.state/` was deleted: the counter reads 0, nothing was written here.
-    #[test]
-    fn a_load_after_the_counter_was_reset_is_kept() {
-        assert!(!at_generation(0).is_overtaken(&at_generation(7), 7));
-    }
-
-    // ── is_valid_kebab_case ──────────────────────────────────────────────
 
     #[test]
-    fn kebab_valid_names() {
-        assert!(is_valid_kebab_case("auth"));
-        assert!(is_valid_kebab_case("rate-limiter"));
-        assert!(is_valid_kebab_case("mcp-server"));
-        assert!(is_valid_kebab_case("a"));
-        assert!(is_valid_kebab_case("component1"));
-        assert!(is_valid_kebab_case("my-app-v2"));
-    }
-
-    #[test]
-    fn kebab_rejects_invalid() {
-        assert!(!is_valid_kebab_case(""));
-        assert!(!is_valid_kebab_case("-leading"));
-        assert!(!is_valid_kebab_case("trailing-"));
-        assert!(!is_valid_kebab_case("double--hyphen"));
-        assert!(!is_valid_kebab_case("UpperCase"));
-        assert!(!is_valid_kebab_case("has_underscore"));
-        assert!(!is_valid_kebab_case("has space"));
-        assert!(!is_valid_kebab_case("has.dot"));
-        assert!(!is_valid_kebab_case("special!char"));
-    }
-
-    // ── is_reserved_node_name ───────────────────────────────────────────
-
-    #[test]
-    fn reserved_names() {
-        assert!(is_reserved_node_name("project"));
-        assert!(!is_reserved_node_name("my-project"));
-        assert!(!is_reserved_node_name("auth"));
-        assert!(!is_reserved_node_name(""));
-    }
-
-    // ── slugify ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn slugify_basic() {
-        assert_eq!(slugify("Use Redis"), "use-redis");
-        assert_eq!(slugify("JWT with DPoP binding"), "jwt-with-dpop-binding");
-    }
-
-    #[test]
-    fn slugify_special_chars() {
-        assert_eq!(slugify("Result<T, AppError>"), "result-t-apperror");
+    fn a_node_file_displays_as_its_path_under_the_store() {
+        assert_eq!(NodeFile::Project.to_string(), "project.toml");
         assert_eq!(
-            slugify("429 + retry-after header"),
-            "429-retry-after-header"
-        );
-    }
-
-    #[test]
-    fn slugify_collapses_runs() {
-        assert_eq!(slugify("one   two---three"), "one-two-three");
-        assert_eq!(slugify("---leading"), "leading");
-        assert_eq!(slugify("trailing---"), "trailing");
-    }
-
-    #[test]
-    fn slugify_truncates_at_word_boundary() {
-        let long = "a ".repeat(100);
-        let slug = slugify(&long);
-        assert!(slug.len() <= MAX_SLUG_LEN);
-        assert!(!slug.ends_with('-'));
-    }
-
-    #[test]
-    fn slugify_empty_input() {
-        assert_eq!(slugify(""), "decision");
-        assert_eq!(slugify("!!!"), "decision");
-    }
-
-    // ── unique_decision_stem ────────────────────────────────────────────
-
-    fn empty_state() -> ProjectState {
-        crate::store::testing::empty_project_state()
-    }
-
-    #[test]
-    fn unique_stem_no_collision() {
-        let state = empty_state();
-        assert_eq!(
-            unique_decision_stem(&state, "use-redis").unwrap(),
-            "use-redis"
-        );
-    }
-
-    #[test]
-    fn unique_stem_appends_suffix_on_collision() {
-        let mut state = empty_state();
-        state.decisions.insert(
-            "use-redis".into(),
-            sample_decision("use-redis", "project").into(),
+            NodeFile::Component("auth".into()).to_string(),
+            "components/auth.toml"
         );
         assert_eq!(
-            unique_decision_stem(&state, "use-redis").unwrap(),
-            "use-redis-2"
-        );
-    }
-
-    #[test]
-    fn unique_stem_skips_taken_suffixes() {
-        let mut state = empty_state();
-        for name in &["use-redis", "use-redis-2", "use-redis-3"] {
-            state
-                .decisions
-                .insert(name.to_string(), sample_decision(name, "project").into());
-        }
-        assert_eq!(
-            unique_decision_stem(&state, "use-redis").unwrap(),
-            "use-redis-4"
-        );
-    }
-
-    #[test]
-    fn unique_stem_disambiguates_reserved_name() {
-        let state = empty_state();
-        let stem = unique_decision_stem(&state, "project").unwrap();
-        assert_ne!(stem, "project", "reserved name must be disambiguated");
-        assert!(
-            stem.starts_with("project-"),
-            "disambiguated stem should keep the prefix: {stem}"
-        );
-    }
-
-    #[test]
-    fn unique_stem_avoids_component_collision() {
-        let mut state = empty_state();
-        state
-            .components
-            .insert("auth".into(), sample_component("auth").into());
-        // "auth" is taken by a component — stem must be suffixed.
-        assert_eq!(unique_decision_stem(&state, "auth").unwrap(), "auth-2");
-    }
-
-    #[test]
-    fn unique_stem_avoids_pattern_collision() {
-        let mut state = empty_state();
-        state.patterns.insert(
-            "state-in-redis".into(),
-            Arc::new(crate::store::schema::PatternFile {
-                pattern: crate::store::schema::Pattern {
-                    name: "state-in-redis".into(),
-                    description: "test".into(),
-                },
-            }),
-        );
-        assert_eq!(
-            unique_decision_stem(&state, "state-in-redis").unwrap(),
-            "state-in-redis-2"
-        );
-    }
-
-    // ── has_control_chars ─────────────────────────────────────────────
-
-    #[test]
-    fn control_chars_rejects_nul() {
-        assert!(has_control_chars("hello\x00world"));
-    }
-
-    #[test]
-    fn control_chars_rejects_bell() {
-        assert!(has_control_chars("alert\x07"));
-    }
-
-    #[test]
-    fn control_chars_rejects_escape() {
-        assert!(has_control_chars("\x1b[31m red"));
-    }
-
-    #[test]
-    fn control_chars_allows_normal_whitespace() {
-        assert!(!has_control_chars("line\nnext\r\nand\ttab"));
-    }
-
-    #[test]
-    fn control_chars_allows_plain_text() {
-        assert!(!has_control_chars("JWT with DPoP binding, 15min lease"));
-    }
-
-    #[test]
-    fn control_chars_allows_empty() {
-        assert!(!has_control_chars(""));
-    }
-
-    #[test]
-    fn control_chars_allows_unicode() {
-        assert!(!has_control_chars("café — naïve résumé"));
-    }
-
-    #[test]
-    fn is_node_name_taken_across_types() {
-        let mut state = empty_state();
-        assert!(state.is_node_name_taken("project"), "reserved");
-        assert!(!state.is_node_name_taken("auth"));
-
-        state
-            .components
-            .insert("auth".into(), sample_component("auth").into());
-        assert!(state.is_node_name_taken("auth"), "component");
-        assert!(!state.is_node_name_taken("use-jwt"));
-
-        state
-            .decisions
-            .insert("use-jwt".into(), sample_decision("use-jwt", "auth").into());
-        assert!(state.is_node_name_taken("use-jwt"), "decision");
-    }
-
-    // ── validate ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn validate_clean_state() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-
-        let db = sample_component("database");
-        store
-            .write_atomic(&lock, &store.component_path("database"), &db)
-            .unwrap();
-
-        let dec = sample_decision("token-format", "auth");
-        store
-            .write_atomic(&lock, &store.decision_path("token-format"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        assert!(state.validate().is_empty());
-    }
-
-    #[test]
-    fn validate_catches_dangling_decision_component() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let dec = sample_decision("stale-decision", "deleted-component");
-        store
-            .write_atomic(&lock, &store.decision_path("stale-decision"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        let issues = state.validate();
-        assert!(issues.iter().any(
-            |i| i.message.contains("deleted-component") && i.message.contains("does not exist")
-        ));
-    }
-
-    #[test]
-    fn validate_allows_project_wide_decisions() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let dec = sample_decision("error-strategy", "project");
-        store
-            .write_atomic(&lock, &store.decision_path("error-strategy"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        assert!(state.validate().is_empty());
-    }
-
-    #[test]
-    fn validate_catches_filename_mismatch() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let comp = sample_component("wrong-name");
-        store
-            .write_atomic(&lock, &store.component_path("actual-file"), &comp)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        let issues = state.validate();
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.message.contains("actual-file") && i.message.contains("wrong-name"))
-        );
-    }
-
-    #[test]
-    fn validate_catches_non_kebab_component_name() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let mut comp = sample_component("bad-name");
-        comp.component.name = "Bad_Name".into();
-        store
-            .write_atomic(&lock, &store.component_path("Bad_Name"), &comp)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        let issues = state.validate();
-        assert!(issues.iter().any(|i| i.message.contains("kebab-case")));
-    }
-
-    #[test]
-    fn validate_catches_empty_decision_choice() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let mut dec = sample_decision("bad-decision", "project");
-        dec.decision.choice = String::new();
-        store
-            .write_atomic(&lock, &store.decision_path("bad-decision"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        let issues = state.validate();
-        assert!(issues.iter().any(|i| i.message.contains("empty choice")));
-    }
-
-    #[test]
-    fn validate_catches_whitespace_only_reason() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let mut dec = sample_decision("bad-decision", "project");
-        dec.decision.reason = "   ".into();
-        store
-            .write_atomic(&lock, &store.decision_path("bad-decision"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        let issues = state.validate();
-        assert!(issues.iter().any(|i| i.message.contains("empty reason")));
-    }
-
-    #[test]
-    fn validate_catches_non_kebab_decision_component() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let mut dec = sample_decision("bad-ref", "project");
-        dec.decision.component = "Not Kebab".into();
-        store
-            .write_atomic(&lock, &store.decision_path("bad-ref"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        let issues = state.validate();
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.message.contains("invalid component"))
-        );
-    }
-
-    #[test]
-    fn validate_catches_empty_pattern_description() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let pat = crate::store::schema::PatternFile {
-            pattern: crate::store::schema::Pattern {
-                name: "empty-pat".into(),
-                description: "   ".into(),
-            },
-        };
-        store
-            .write_atomic(&lock, &store.pattern_path("empty-pat"), &pat)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        let issues = state.validate();
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.message.contains("empty description"))
-        );
-    }
-
-    #[test]
-    fn validate_reports_severity() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        // Empty description is a Warning; empty choice is an Error.
-        let pat = crate::store::schema::PatternFile {
-            pattern: crate::store::schema::Pattern {
-                name: "test-pat".into(),
-                description: "   ".into(),
-            },
-        };
-        store
-            .write_atomic(&lock, &store.pattern_path("test-pat"), &pat)
-            .unwrap();
-
-        let mut dec = sample_decision("bad-dec", "project");
-        dec.decision.choice = String::new();
-        store
-            .write_atomic(&lock, &store.decision_path("bad-dec"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        let issues = state.validate();
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.severity() == Severity::Warning
-                    && i.message.contains("empty description"))
-        );
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.severity() == Severity::Error && i.message.contains("empty choice"))
+            NodeFile::Decision("use-jwt".into()).to_string(),
+            "decisions/use-jwt.toml"
         );
     }
 }

@@ -1,0 +1,5 @@
+trurl_version = "0.1.0"
+
+[project]
+name = "demo"
+description = ""

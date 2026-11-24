@@ -1,42 +1,34 @@
-[decision]
 component = "store"
-choice = "Every commit goes through a flushed journal in .state/txn.toml and lands once the journal is in place"
-reason = "Renaming staged files one by one with graph.toml last protected only against a crash before graph.toml's rename: a rename that failed midway left the earlier renames on disk while the caller rolled memory back, and an abort after graph.toml during remove decision left the decision file behind, so status counted it again while check passed. commit_batch now stages and flushes every file and flushes .state/tmp/, raises the generation, then stages the journal (each staged file, its target and the BLAKE3 of its bytes, plus the files to remove), renames it to .state/txn.toml and flushes .state/. That rename is the commit point. apply_journal renames in order (graph.toml last, so unlocked readers see the old index until every node file is in place), removes, flushes each touched directory, then deletes the journal without a flush, since a journal that reappears applies again as a no-op. After the commit point a failure is Error::CommitPending: the commit is recorded, not rolled back. Store::recover applies a leftover journal under the exclusive lock before anything loads: begin_write does it for every write on every surface, try_recover when a command starts, and a watcher that sees a journal under its shared lock takes the exclusive lock to apply it. Replay skips a write whose staged file is gone (already renamed), and one whose target holds the journal's bytes while its temp name holds another write's leftover (temp names recur once pids wrap). A staged file with other bytes and no such target, an unparsable journal, or a path outside the store is refused with Error::BadJournal naming the file. Cost measured on WSL2 ext4 (fsync about 5 ms): a commit of two files does 8 flushes, and an MCP add_component went from 3.5 ms to 40 ms median."
+choice = "Every write goes through a flushed journal in .state/txn.toml that names only the steps still to do, its file step and its history step, and lands once the journal is in place"
+reason = "Renaming staged files one by one left the earlier renames on disk when a later one failed. commit_batch stages and flushes every file, under shared writes their blobs, then renames the journal (each staged file, its target and the BLAKE3 of its bytes, the files to remove, and under shared the history step: message, parent and blob ids) to .state/txn.toml and flushes .state/: the commit point. apply_journal renames, removes, flushes each touched directory, makes the history commit, deletes the journal and flushes .state/ before the writer returns and releases the lock. A journal is not replayed past what it still has to do. A history commit that fails once the files are in place narrows the journal, staged, renamed and flushed, to the history step alone, so a read that keeps the waiting commit never removes a file the owner re-created since; a journal whose deletion fails is replaced by one that names no step, which the next opener deletes and does nothing else. Replay skips a write whose staged file is gone and one whose target holds the staged bytes; a staged file with other bytes is BadJournal. After the commit point a failure is WritePending."
 alternatives = [
-    "Rename in order with graph.toml as the only commit point, no journal: rejected, a failed rename or an abort after graph.toml left a graph that matched neither the old commit nor the new one",
-    "Journal holding the new file contents (redo log): rejected, doubles the bytes written per commit and still needs every target flushed before the journal may go; naming the already staged files plus their hash costs one small file",
-    "Undo log rolled back on recovery: rejected, needs the old contents saved before every rename, and a commit that failed after its journal would still have to be undone by whoever opens next",
-    "Refuse to load while a journal is pending and leave it to a human: rejected, users work through MCP only, so a commit that stops after its commit point must heal on the next write without a person",
+    "Leave the deletion unflushed and make replay a no-op for a finished journal: rejected because a removal cannot tell a file never removed from one re-created since",
+    "Keep the whole journal when the history commit fails: rejected because every later read would run its removals again and delete a file re-created since",
+    "Rename in order with the last file as the only commit point, no journal: rejected because a failed rename left a graph that matched neither commit",
+    "A journal holding the new file contents: rejected because it doubles the bytes written per commit and still needs every target flushed",
+    "An undo log rolled back on recovery: rejected because a commit that failed after its journal would have to be undone by whoever opens next",
 ]
 tags = [
+    "concurrency",
     "reliability",
     "storage",
-    "concurrency",
 ]
-attribution = "agent"
+status = "proposed"
 created = "2026-10-02T12:18:34.628311449Z"
-
-[[decision.code_refs]]
-file = "src/store/journal.rs"
-symbol = "Store::write_journal"
-
-[[decision.code_refs]]
-file = "src/store/journal.rs"
-symbol = "Store::apply_journal"
-
-[[decision.code_refs]]
-file = "src/store/journal.rs"
-symbol = "Store::replay_journal"
-
-[[decision.code_refs]]
-file = "src/store/commit.rs"
-symbol = "Store::commit_batch"
-
-[[decision.code_refs]]
-file = "src/store/reload.rs"
-symbol = "Store::load_shared"
-
-[[decision.history]]
-choice = "Every commit goes through a flushed journal in .state/txn.toml and lands once the journal is in place"
-reason = "Renaming staged files one by one with graph.toml last protected only against a crash before graph.toml's rename: a rename that failed midway left the earlier renames on disk while the caller rolled memory back, and an abort after graph.toml during remove decision left the decision file behind, so status counted it again while check passed. commit_batch now stages and flushes every file and flushes .state/tmp/, raises the generation, then stages the journal (each staged file, its target and the BLAKE3 of its bytes, plus the files to remove), renames it to .state/txn.toml and flushes .state/. That rename is the commit point. apply_journal renames in order (graph.toml last, so unlocked readers see the old index until every node file is in place), removes, flushes each touched directory, then deletes the journal without a flush, since a journal that reappears applies again as a no-op. After the commit point a failure is Error::CommitPending: the commit is recorded, not rolled back. Store::recover applies a leftover journal under the exclusive lock before anything loads: begin_write does it for every write on every surface, try_recover when a command starts, and a watcher that sees a journal under its shared lock takes the exclusive lock to apply it. Replay skips writes whose staged file is gone (already renamed) and refuses, with Error::BadJournal naming the file, a staged file whose bytes differ from the journal (temp names recur once pids wrap), an unparsable journal, or a path outside the store. Cost measured on WSL2 ext4 (fsync about 5 ms): a commit of two files does 8 flushes, and an MCP add_component went from 3.5 ms to 40 ms median."
-changed_at = "2026-10-02T12:24:26.124772559Z"
+anchors = [
+    { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
+    { file = "src/store/journal.rs", symbol = "Journal" },
+    { file = "src/store/journal.rs", symbol = "Replayed" },
+    { file = "src/store/journal.rs", symbol = "Store::apply_journal" },
+    { file = "src/store/journal.rs", symbol = "Store::finish" },
+    { file = "src/store/journal.rs", symbol = "Store::narrow" },
+    { file = "src/store/journal.rs", symbol = "Store::replace_journal" },
+    { file = "src/store/journal.rs", symbol = "Store::replay_journal" },
+    { file = "src/store/journal.rs", symbol = "Store::unapplied" },
+    { file = "tests/integration/failpoints.rs", symbol = "the_journal_deletion_is_flushed_before_the_write_returns" },
+]
+depends_on = [
+    "a-commit-stages-its-files-in-parallel",
+    "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",
+    "atomic-writes-via-serialize-to-temp-verify-round-trip",
+]

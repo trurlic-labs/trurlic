@@ -1,0 +1,27 @@
+component = "store"
+choice = "A warn pattern writes the batch and warns once per op at its first match; the result lists one per op by argument and pattern index, counts the rest, and carries each message once"
+reason = "A rule that needs judgment must not block a right write, yet the writer has to see it, and the batch is written whether or not its warnings reach the caller, so a cut warning is lost. Thirty-two warn patterns over fifty ops can draw 1,600 warnings, which no result lists beside the fifty op entries within 24 KiB. So each op and the batch's origin list MAX_WARNINGS_PER_OP, as field, rule, pattern index and byte offset, with the op's name only in the op's own entry; more_warnings and more_origin_warnings count the rest exactly, which the caller recomputes from the patterns of project.toml; patterns carries each named pattern's message once, the warn messages together bounded at config load. The arithmetic sits beside the test that holds a full batch's worst result to the budget."
+alternatives = [
+    "List every warning in the shape of a refusal: rejected because a full batch's result is cut, and the cut warnings of a written batch cannot be read again",
+    "A warning per match: rejected because one pattern over a long reason would fill the result",
+    "Drop the messages and name the pattern alone: rejected because the caller would read project.toml to learn what a warning says",
+]
+tags = [
+    "api",
+    "quality",
+]
+status = "proposed"
+origin = "quality rules"
+created = "2026-11-24T04:09:05.642017587Z"
+anchors = [
+    { file = "src/commands/apply.rs", symbol = "print" },
+    { file = "src/mcp/apply/result.rs" },
+    { file = "src/mcp/apply/result.rs", symbol = "the_longest_result_of_a_full_batch_fits_the_budget" },
+    { file = "src/store/apply/tests/quality.rs", symbol = "a_warn_pattern_warns_once_per_op_at_its_first_match" },
+    { file = "src/store/apply/warning.rs", symbol = "Warning" },
+    { file = "src/store/apply/warning.rs", symbol = "report" },
+    { file = "src/store/limits.rs", symbol = "MAX_WARNINGS_PER_OP" },
+]
+depends_on = [
+    "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",
+]

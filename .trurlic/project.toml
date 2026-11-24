@@ -1,5 +1,31 @@
-trurlic_version = "0.4.0"
-
-[project]
+format_version = "0.5.0"
 name = "trurlic"
 description = ""
+placement = "tracked"
+
+[quality]
+reason_words = { min = 20, max = 300 }
+alternatives_max = 5
+alternative_words_max = 50
+anchors_max = 10
+require_origin = true
+
+[[quality.patterns]]
+pattern = '[^\x00-\x7F]'
+fields = [
+    "alternatives",
+    "choice",
+    "reason",
+]
+level = "refuse"
+message = "A decision file is .toml prose of this repository: ASCII only."
+
+[[quality.patterns]]
+pattern = '(?i)\b(?:simply|basically|essentially|leverages?|leveraged|utili[sz]e[sd]?|robust|comprehensive|seamless|powerful|elegant)\b'
+fields = [
+    "alternatives",
+    "choice",
+    "reason",
+]
+level = "warn"
+message = "Cut the filler word: a decision states a fact a reader can check."

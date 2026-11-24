@@ -1,81 +1,92 @@
-mod component;
-mod decision;
-mod gc;
+mod apply;
+mod check;
+mod fmt;
 mod init;
 mod install;
-pub(crate) mod migrate;
-mod pattern;
+mod migrate;
+mod placement;
 mod query;
 mod serve;
+mod status;
 
-pub use component::{
-    add_component, add_connection, remove_component, remove_connection, rename_component,
-};
-pub(crate) use decision::parse_code_ref_arg;
-pub use decision::{decide, remove_agent_decisions, remove_decision};
-pub(crate) use gc::{AggressiveConfirm, resolve_aggressive_confirm};
-pub use gc::{GcExecution, GcScope, gc};
-pub use init::init;
+pub(crate) use apply::apply;
+pub(crate) use check::check;
+pub(crate) use fmt::fmt;
+pub(crate) use init::init;
 pub(crate) use install::install;
-pub use migrate::migrate;
-pub(crate) use pattern::remove_pattern;
-pub(crate) use query::{check, query_file, status};
-pub use serve::serve;
+pub(crate) use migrate::migrate;
+pub(crate) use query::query_file;
+pub(crate) use serve::serve;
+pub(crate) use status::status;
+
+pub(crate) use crate::mcp::twin::{ToolError, section_names as status_sections};
 
 use std::path::Path;
 
 use crate::Result;
-use crate::console::diag;
-use crate::store::{self, ProjectState, Store};
+use crate::console::{diag, out};
+use crate::discovery::discover;
+
+use crate::mcp::twin::{self, Output};
+use crate::store::{ProjectState, STORE_DIR, Store};
+
+/// How a tool's CLI twin prints its result: for a terminal, or as the
+/// JSON the tool's call returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Format {
+    Text,
+    Json,
+}
+
+/// What a tool's CLI twin prints of `outcome`, the tool's result or its
+/// refusal: `print` for a terminal, the text the call returns under
+/// `--json`, its refusal included. A refusal fails the command either way,
+/// and `cli` prints its message on stderr.
+fn answer<O: Output>(
+    outcome: std::result::Result<O, ToolError>,
+    format: Format,
+    print: impl FnOnce(&O) -> Result<()>,
+) -> std::result::Result<(), ToolError> {
+    match (outcome, format) {
+        (Ok(result), Format::Json) => Ok(out!("{}", twin::result_json(&result))?),
+        (Ok(result), Format::Text) => Ok(print(&result)?),
+        (Err(refusal), Format::Json) => {
+            out!("{}", twin::refusal_text(&refusal))?;
+            Err(refusal)
+        }
+        (Err(refusal), Format::Text) => Err(refusal),
+    }
+}
 
 /// Whether a mutating command should preview its plan or actually write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DryRun {
+pub(crate) enum DryRun {
     Yes,
     No,
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Locate the store for `cwd`, verify its format version, and clear what an
-/// interrupted write left, if no other process holds the lock. Every command
-/// funnels through here so a prior crash heals on the next invocation.
-pub(crate) fn discover_store(cwd: &Path) -> Result<Store> {
-    let store = Store::discover(cwd)?;
-    store.check_version()?;
-    store.try_recover()?;
-    Ok(store)
-}
-
-fn warn_on_issues(state: &ProjectState) {
-    let issues = state.validate();
-    let errors = issues
-        .iter()
-        .filter(|i| i.severity() == crate::store::graph::Severity::Error)
-        .count();
-    if errors > 0 {
+/// Load the graph for a read-only command and warn when it has issues. The
+/// load waits only while a writer holds the lock.
+fn open_store(cwd: &Path) -> Result<(Store, ProjectState)> {
+    let store = discover(cwd)?;
+    let state = store.load_state()?;
+    let issues = state.validate().len();
+    if issues > 0 {
         diag!(
-            "warning: .trurlic/ has {errors} consistency issue(s) \u{2014} run `trurlic check` for details"
+            "warning: {} has {issues} issue(s); run `trurlic check` for details",
+            graph_name(&store)
         );
     }
-}
-
-/// Open the store for a read-only command: discover, load state, and warn on
-/// any consistency issues. Waits for no lock: the load runs unlocked, and
-/// recovery in [`discover_store`] is skipped while another process holds it.
-pub(crate) fn open_store(cwd: &Path) -> Result<(Store, ProjectState)> {
-    let store = discover_store(cwd)?;
-    let state = store.load_state()?;
-    warn_on_issues(&state);
     Ok((store, state))
 }
 
-/// Open the store for a mutating command: discover, acquire the exclusive file
-/// lock *before* loading state (closing the TOCTOU window between load and
-/// write), then load and warn on consistency issues.
-pub(crate) fn open_store_mut(cwd: &Path) -> Result<(Store, store::StoreLock, ProjectState)> {
-    let store = discover_store(cwd)?;
-    let ((), lock, state) = store.begin_write(|| ())?;
-    warn_on_issues(&state);
-    Ok((store, lock, state))
+/// The graph directory as a message names it: `.trurlic/` when it is the
+/// code root's own, else its path, since a tree that reaches the graph
+/// through a symlink or a linked worktree holds no such directory.
+fn graph_name(store: &Store) -> String {
+    if store.is_local() {
+        format!("{STORE_DIR}/")
+    } else {
+        format!("{}/", store.root().display())
+    }
 }

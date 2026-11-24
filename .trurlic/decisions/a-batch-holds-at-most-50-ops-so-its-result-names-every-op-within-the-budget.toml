@@ -1,0 +1,22 @@
+component = "store"
+choice = "A batch holds at most MAX_BATCH_OPS (50) ops, so with names of at most 128 bytes its result names every op within the 24 KiB tool result budget"
+reason = "The result of apply is one entry per op, naming its node and what it changed, never echoing texts. Its longest entry names two nodes; fifty such entries with 128-byte names fit the budget, which a unit test asserts over the longest entry each op kind can make, so a result is never cut. A larger change is several batches. Each list of an op holds at most MAX_LIST_ITEMS (100), and every text its store limit."
+alternatives = [
+    "100 ops a batch: rejected because the result could then exceed the budget and be cut",
+    "Counts only in the result: rejected because the caller needs to see which op did what, a status change most of all",
+]
+tags = [
+    "api",
+    "budget",
+]
+status = "proposed"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/mcp/apply/mod.rs", symbol = "ApplyArgs" },
+    { file = "src/mcp/apply/result.rs", symbol = "tests::the_longest_result_of_a_full_batch_fits_the_budget" },
+    { file = "src/store/limits.rs", symbol = "MAX_BATCH_OPS" },
+]
+depends_on = [
+    "every-tool-result-fits-max-tool-result-bytes-24-kib-a",
+]

@@ -1,0 +1,28 @@
+component = "store"
+choice = "The step to 0.5 maps agent to proposed and user or none to accepted, drops history with its count, and moves patterns and component tags out of the graph into the report"
+reason = """
+An agent's decision is one the owner has not accepted, so it is proposed; a user's, and one with no attribution, which 0.4.1 read as the user's, is accepted, with no accepted_via, since no acceptance was recorded. An attribution 0.4.1 refused to read is a loss and the decision proposed: no acceptance is known. History goes, and the report counts its entries per decision; under tracked placement git keeps the revisions. A pattern leaves the graph whole: the report holds its stem, its name and description fields, the decisions of its member_of edges, the components of its applies_to edges and its tags, as a TOML table the owner can read or turn into a decision. A component's tags, and the project's, leave with it; a decision keeps its tags. project.toml's [project] fields move to the top level, and every node file loses its name field: the stem is the name, and a name that differed from the stem is listed.
+"""
+alternatives = [
+    "Map every migrated decision to accepted: rejected because an agent's decision would claim an acceptance the owner never gave",
+    "Keep patterns as project-wide decisions: rejected because a pattern names decisions and components, which is no choice, and the owner decides which of them states a rule",
+    "Drop pattern and component tags without a record: rejected because they exist nowhere else after the migration",
+]
+tags = [
+    "migration",
+    "storage",
+]
+status = "accepted"
+created = "2026-11-24T01:30:00Z"
+anchors = [
+    { file = "src/store/migration/format_0_5.rs", symbol = "decision" },
+    { file = "src/store/migration/format_0_5.rs", symbol = "status" },
+    { file = "src/store/migration/format_0_5/graph.rs", symbol = "Graph::node" },
+    { file = "src/store/migration/report.rs", symbol = "Fact" },
+    { file = "src/store/migration/report.rs", symbol = "PatternRecord" },
+]
+depends_on = [
+    "a-decision-s-status-is-one-typed-value",
+    "node-files-carry-no-history",
+    "patterns-are-deleted-as-a-node-kind",
+]

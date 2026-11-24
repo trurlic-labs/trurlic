@@ -1,0 +1,21 @@
+component = "store"
+choice = "Each historical format has a fixture graph as the trurlic of its time wrote it; a named test migrates it, runs check and pins the report and result in a golden file"
+reason = """
+A migration step is only as true as the store it is tested on. The fixtures under tests/fixtures/formats for 0.1.0 to 0.4.0 were written by the binaries built from git for each format (the pre-release trurl for 0.1.0, v0.1.0, v0.2.0 and v0.3.2) through their CLI and MCP tools, so they hold connections, supersedes links, dependencies, constraints, patterns, tags, attribution, code refs and history as those versions wrote them. No release wrote 0.4.1, so its fixture is the 0.4.0 one taken through the 0.4.1 step, its hashes recomputed, and extended with what a 0.4.1 store can hold that no 0.3.x write made: a decision without attribution and with two history entries, code refs with a line, a ./ path, a path outside the root and the old symbol spellings, and tags on components. Each step has a unit test on the fixture of its from format, the step to 0.5 one per rule, editing the fixture's tables for the shapes a valid 0.4.1 graph cannot hold (a name that differs from its stem, an attribution 0.4.1 refused, an edge to no node, a cycle). format_<v>_migrates_and_passes_check migrates each fixture with the binary and the placement stated, runs check, checks the backup and the report in it, and compares the report and every migrated byte with tests/integration/golden/migrate_<v>.txt.
+"""
+alternatives = [
+    "Build old stores in the test by downgrading the version of a current one: rejected because the old tests did this, and such a store holds none of the shapes the steps exist for",
+    "Resurrect the 0.4 writer to produce the 0.4.1 fixture: rejected because it brings back deleted code for one file set that hand edits and the 0.4.1 step produce",
+]
+tags = [
+    "migration",
+    "testing",
+]
+status = "proposed"
+created = "2026-11-23T22:52:37.882647533Z"
+anchors = [
+    { file = "src/store/migration/format_0_5.rs" },
+    { file = "src/store/migration/steps.rs" },
+    { file = "tests/fixtures/formats" },
+    { file = "tests/integration/migrate.rs", symbol = "migrates_and_passes_check" },
+]

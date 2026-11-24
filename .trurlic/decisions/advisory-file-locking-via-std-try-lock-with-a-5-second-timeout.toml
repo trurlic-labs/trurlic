@@ -1,0 +1,21 @@
+component = "store"
+choice = "Advisory file locking via std File::try_lock and try_lock_shared with 5-second polling timeout"
+reason = "Prevents concurrent mutations from CLI and MCP server processes. Writers take the exclusive lock on .state/lock with std's File::try_lock in a polling loop (50ms interval, 5s deadline); the blocking File::lock has no timeout, so a hung holder would hang every writer. Every read loads under the shared lock (try_lock_shared, same loop), which keeps writers out without excluding other readers, so a read never sees a commit halfway through its renames. std reports contention as TryLockError::WouldBlock on every platform. The lock file is opened read and write, which never blocks, and refused unless it is a regular file before it is locked or read. StoreLock is a proof-of-lock type: every function that changes a file under .trurlic/ takes it, and a Writer owns one. The lock file stores the exclusive holder's PID for the timeout's message."
+alternatives = [
+    "A mutex in the process: rejected because it does not work across the separate CLI and MCP processes",
+    "No locking, last writer wins: rejected because concurrent writes that race lose data silently",
+    "A database with built-in concurrency: rejected because it adds a heavy dependency for a file-based store",
+]
+tags = [
+    "concurrency",
+    "reliability",
+]
+status = "accepted"
+created = "2026-06-15T09:44:30.756424330Z"
+anchors = [
+    { file = "src/store/lock.rs", symbol = "Store::lock" },
+    { file = "src/store/lock.rs", symbol = "Store::lock_shared" },
+    { file = "src/store/lock.rs", symbol = "Store::open_lock_file" },
+    { file = "src/store/lock.rs", symbol = "StoreLock" },
+    { file = "src/store/lock.rs", symbol = "poll" },
+]

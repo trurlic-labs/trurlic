@@ -1,0 +1,25 @@
+component = "git"
+choice = "A graph commit's objects reach the disk through git's batch fsync: a write's blobs in one update-index on a scratch index, a hand edit or first commit in one update-index of its files"
+reason = "Under core.fsync=committed alone each loose object is fsynced on its own, about 8 ms each on the seeded corpus's disk: a 50-op batch spent 250 to 330 ms in git. With core.fsyncMethod=batch (git 2.37, bulk-checkin.c) a command inside an object transaction writes each object with a writeout-only flush into a temporary object directory, then fsyncs one dummy file to flush the device cache before it renames the objects into place, so no object gets its name before its data is on the device. update-index opens one transaction for all its paths, so a write's blobs are written by one update-index on a scratch index whose work tree is .state/tmp/, before the commit point, and a hand edit commit or the first commit of a repository stages its files with one update-index; git commit opens one for its trees. hash-object opens none: measured, 581 ms for fifty blobs against 24 ms for the scratch index, so it writes only a symlinked node file. A git before 2.37 warns and fsyncs each object, slower and as durable."
+alternatives = [
+    "Keep a full fsync per object: rejected because a design batch or a first commit then costs seconds in fsyncs for the same journal ordering",
+    "hash-object -w --stdin-paths for a write's blobs: rejected because it opens no object transaction and flushes each blob on its own",
+    "fsync the objects from trurlic after a hash-object that fsyncs none: rejected because an object would have its name before its data is durable, and git keeps a torn one",
+]
+tags = [
+    "git",
+    "performance",
+    "reliability",
+]
+status = "proposed"
+origin = "apply and status"
+created = "2026-11-24T03:35:48.715992075Z"
+anchors = [
+    { file = "src/git/graph.rs", symbol = "OVERRIDES" },
+    { file = "src/git/graph/index.rs", symbol = "Repository::stage" },
+    { file = "src/git/graph/index.rs", symbol = "Repository::write_blobs" },
+    { file = "tests/integration/history.rs", symbol = "a_commit_flushes_its_objects_in_one_batch_however_many_files_it_holds" },
+]
+depends_on = [
+    "the-graph-s-git-reads-no-user-configuration-and-overrides-each-local-key-that-runs-code",
+]

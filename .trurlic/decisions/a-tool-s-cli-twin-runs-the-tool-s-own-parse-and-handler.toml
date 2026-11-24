@@ -1,0 +1,27 @@
+component = "commands"
+choice = "A tool's CLI twin finds the store, parses and runs the tool through mcp::twin and prints through commands::answer: the call's JSON with --json, every refusal included"
+reason = "Every tool has a CLI twin on the same code. trurlic apply reads a JSON object from a file or stdin, at most one MCP message's size, and trurlic status builds its arguments from its flags; mcp::twin discovers the store from the working directory, as a call does, and runs ToolSpec::run, the parse and the access a call takes, without a client, returning the tool's result or its ToolError. commands::answer is the one path both twins print through: lines for a terminal, or the call's text with --json, a refusal's JSON on stdout included, a store that discovery cannot find or read among them, so the twins cannot differ again. A document that cannot be read or is no JSON object is invalid_argument, refused before the store is found."
+alternatives = [
+    "A clap flag per argument of apply: rejected because a batch is a list of tagged ops a command line cannot hold, and the parse would be a second one",
+    "Parse the batch in commands with serde: rejected because the refusals and limits would drift from the tool's",
+    "Discover the store in each command before the twin: rejected because a failed discovery then left the command's path, printing no JSON under --json",
+]
+tags = [
+    "api",
+    "cli",
+]
+status = "accepted"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/cli.rs", symbol = "ToolCommand" },
+    { file = "src/commands/apply.rs", symbol = "apply" },
+    { file = "src/commands/mod.rs", symbol = "answer" },
+    { file = "src/commands/status.rs", symbol = "status" },
+    { file = "src/mcp/twin.rs" },
+    { file = "tests/integration/apply.rs", symbol = "a_twin_refuses_a_store_it_cannot_find_as_the_call_does" },
+    { file = "tests/integration/apply.rs", symbol = "status_on_the_command_line_is_the_tool" },
+]
+depends_on = [
+    "each-tool-declares-its-arguments-once-in-args-declare",
+]

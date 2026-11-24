@@ -30,9 +30,10 @@ harness = false
 required-features = ["bench"]
 
 [features]
-# Test-only: `TRURLIC_FAILPOINT=<site>:<n>` aborts at a named store write
-# site (src/store/failpoint.rs). Enabled only in the test job; release
-# builds never carry it.
+# Test-only: `TRURLIC_FAILPOINT=<site>:<n>` acts at the n-th hit of a
+# named site of the store's commit path or the MCP server's tool calls
+# (src/store/failpoint.rs): it aborts, pauses, fails, panics or triggers
+# there. Enabled only in the test job; release builds never carry it.
 failpoints = []
 # Bench-only: the seeded corpus (`store::corpus`) and the in-process MCP
 # server the benches in benches/ drive. The library's public surface
@@ -51,14 +52,20 @@ toml  = "1"
 # Error handling
 thiserror = "2"
 
-# Content hashing (pure Rust, no C/OpenSSL dependency)
+# The journal's check that a replay renames the bytes its commit staged
+# (pure Rust, no C/OpenSSL dependency)
 blake3 = "1"
 
 # Parallel file I/O for load_state
 rayon = "1"
 
-# File system watcher for live reload
-notify = "6"
+# The `[quality]` patterns of project.toml: a project states its decision
+# rules as regular expressions, which a hand-rolled matcher would hold to
+# a subset with its own edge cases. Unicode classes and case folding,
+# since a decision's text is in any script; the lazy DFA for speed; no
+# literal optimizations, whose crates a few short texts per write do not
+# repay.
+regex = { version = "1.13", default-features = false, features = ["std", "unicode", "perf-dfa"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
@@ -107,7 +114,8 @@ strip           = true
 lto             = "fat"
 codegen-units   = 1
 overflow-checks = true
-panic           = "abort"
+# `serve` catches a panic per request, answers it -32603 and keeps serving.
+panic           = "unwind"
 
 [profile.bench]
 inherits = "release"

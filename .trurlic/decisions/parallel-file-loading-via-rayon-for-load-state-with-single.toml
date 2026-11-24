@@ -1,15 +1,25 @@
-[decision]
 component = "store"
-choice = "Parallel file loading via rayon for load_state with single-pass read+hash"
-reason = "load_state() lists all node files up front, then uses rayon par_iter to read and hash them concurrently. Each file is read once via read_toml_with_hash() which parses TOML and computes BLAKE3 in a single pass over the raw bytes, eliminating the double-read that would occur if parsing and hashing were separate. On a cold cache with 260 files this reduces wall time from ~300ms (sequential) to ~50ms (parallel). The graph index is then reconciled: BelongsTo edges are always re-derived from decision files (source of truth), dangling edges are filtered, and nodes/edges are sorted for deterministic output."
+choice = "Parallel loading via rayon: the two node kinds read concurrently, each file read once, bounded, parsed and checked for canonical form"
+reason = """
+Store::read_graph reads the component and the decision directories at once with rayon::join, since each kind's directory listing and its slowest file are serial steps, and read_nodes reads and parses the files of one kind on rayon's pool. Each file is read once by read_node_bytes, capped at MAX_NODE_FILE_BYTES, and the same bytes are parsed as the node's type and compared with its canonical form, so a load makes one read per file and allocates nothing for the comparison. Results come back in name order, and when several files fail the error names the first by name, whichever thread met it first, so a load fails the same way on every run. make bench times load_state at 50, 600 and 2000 seeded decisions.
+"""
 alternatives = [
-    "Sequential file loading — rejected: measured at 300ms for 260 files on cold cache; unacceptable for MCP tool response latency",
-    "Memory-mapped files — rejected: adds complexity for marginal benefit on small files (typical node is 200-500 bytes); rayon parallelism gives better wall-time improvement",
-    "Incremental loading (only changed files) — rejected: requires a persistent index of file mtimes; full reload with rayon is fast enough and simpler to reason about for correctness",
+    "Sequential file loading: rejected because each file's open and read adds up serially, which a cold cache makes dominant",
+    "Memory-mapped files: rejected because it adds complexity for small files, and a bounded read already caps what one file costs",
+    "Incremental loading of changed files only: rejected because it needs a persistent record of file state between calls, which the store does not keep",
 ]
 tags = [
     "performance",
     "storage",
 ]
-attribution = "user"
+status = "accepted"
 created = "2026-06-15T09:45:56.889052260Z"
+anchors = [
+    { file = "benches/corpus.rs", symbol = "bench_load_state" },
+    { file = "src/store/load.rs", symbol = "Store::read_graph" },
+    { file = "src/store/load.rs", symbol = "Store::read_nodes" },
+    { file = "src/store/load.rs", symbol = "read_node_bytes" },
+]
+depends_on = [
+    "a-node-file-over-1-mib-is-refused-before-it-is-parsed",
+]

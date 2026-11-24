@@ -1,0 +1,98 @@
+version = 1
+rebuilt = "2026-11-23T21:56:30.899777132Z"
+
+[[nodes]]
+name = "api"
+kind = "component"
+hash = "3e8848206dd5e210c7ea807f8052a12d0e1ee056d32d29876dafb7b738ec88da"
+
+[[nodes]]
+name = "durable-storage"
+kind = "pattern"
+tags = ["storage"]
+hash = "57f42a8d5cab85248931e69095cb07f2d15946c32fe6b5b24942c73c128aec74"
+
+[[nodes]]
+name = "json-rpc-over-stdio"
+kind = "decision"
+hash = "e19354eb1e17a33baf367934e597d7c85d166645fe7a60d765dd2759dc2727b1"
+
+[[nodes]]
+name = "no-unsafe-code"
+kind = "decision"
+hash = "e825ff8578f7e0ad4db75b7470097538114b516ee3fa2ebc4d58067d317d3944"
+
+[[nodes]]
+name = "one-toml-file-per-node"
+kind = "decision"
+tags = ["storage"]
+hash = "c4607ae3de7953801e08397ef596561fb63c84ec0b0acfe68de409167592a9d5"
+
+[[nodes]]
+name = "project"
+kind = "component"
+hash = "53929cadf1c751cb37251ab61f5fbe0e3646e7a3df7734fb1b9c3caa9bdc8cd1"
+
+[[nodes]]
+name = "store"
+kind = "component"
+hash = "90fbfb33aade18fb204ef2d93f58ebd55a5e5dfe1858cbf2bafdba09d0d3a724"
+
+[[nodes]]
+name = "write-through-a-temp-file-and-rename"
+kind = "decision"
+tags = [
+    "storage",
+    "reliability",
+]
+hash = "fa8ed1cbae92c7475c79c1e6808d91680ec1f45b0df3dd9bfeb8c7f8ea07857f"
+
+[[edges]]
+from = "api"
+to = "store"
+kind = "connects_to"
+
+[[edges]]
+from = "durable-storage"
+to = "one-toml-file-per-node"
+kind = "member_of"
+
+[[edges]]
+from = "durable-storage"
+to = "store"
+kind = "applies_to"
+
+[[edges]]
+from = "durable-storage"
+to = "write-through-a-temp-file-and-rename"
+kind = "member_of"
+
+[[edges]]
+from = "json-rpc-over-stdio"
+to = "api"
+kind = "belongs_to"
+
+[[edges]]
+from = "json-rpc-over-stdio"
+to = "write-through-a-temp-file-and-rename"
+kind = "constrains"
+
+[[edges]]
+from = "no-unsafe-code"
+to = "project"
+kind = "belongs_to"
+
+[[edges]]
+from = "one-toml-file-per-node"
+to = "store"
+kind = "belongs_to"
+
+[[edges]]
+from = "write-through-a-temp-file-and-rename"
+to = "one-toml-file-per-node"
+kind = "depends_on"
+
+[[edges]]
+from = "write-through-a-temp-file-and-rename"
+to = "store"
+kind = "belongs_to"

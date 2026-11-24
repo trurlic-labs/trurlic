@@ -1,1957 +1,373 @@
-pub(crate) mod cascade;
+//! The decision graph on disk: `.trurlic/` read into a [`ProjectState`],
+//! validated, and written through a journaled commit, a [`Writer`]'s for
+//! every write but `init` and `migrate`, which under `shared` placement ends with a commit to the graph's own
+//! git repository (`history.rs`).
+
+mod access;
+mod apply;
+mod canonical;
 mod commit;
 #[cfg(any(test, feature = "bench"))]
-pub mod corpus;
+pub(crate) mod corpus;
 mod create;
 mod cycles;
 mod durable;
-mod failpoint;
-mod generation;
-pub mod graph;
+pub(crate) mod failpoint;
+mod history;
 mod journal;
 pub(crate) mod limits;
+mod load;
 mod lock;
-mod pattern_removal;
+mod migration;
+mod name;
+mod placement;
+mod quality;
 mod query;
 mod recovery;
-mod reload;
-pub mod schema;
-mod validate;
-pub(crate) mod watcher;
-
+mod schema;
+#[cfg(any(test, feature = "bench"))]
+pub(crate) mod seeded;
 mod state;
-pub(crate) mod text;
+mod text;
 mod time;
-mod write;
+mod validate;
+mod version;
 
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use rayon::prelude::*;
-use serde::de::DeserializeOwned;
+use std::fmt;
+use std::path::{self, Path, PathBuf};
 
 use crate::{Error, Result};
 
-use schema::{EdgeEntry, EdgeKind, GraphIndex, NodeEntry, NodeKind};
-
-// Re-exports — public API surface of the store module.
-// Graph types (NodeKind, EdgeKind, etc.) are accessible via `store::schema::*`.
-pub use lock::StoreLock;
-pub use schema::{
-    COMPONENTS_DIR, CodeRef, ComponentFile, DECISIONS_DIR, DecisionFile, FORMAT_VERSION,
-    GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile, STATE_DIR, STORE_DIR,
+pub use access::Writer;
+pub use apply::{
+    AddComponent, AnchorInput, Applied, Batch, Done, Field, ListEdit, Merge, NodeKind, Op, OpAt,
+    OpKind, PatternNote, Record, Refusal, Remove, RemoveComponent, Rename, Revise, ReviseComponent,
+    Rule, Warning, WarningKind,
 };
-pub use state::{ProjectState, has_control_chars, is_valid_kebab_case, slugify};
+pub(crate) use durable::sync_dir;
+pub use history::{CommitMessage, HistoryFinding, Tool};
+pub use lock::StoreLock;
+pub use migration::PlacementDoubt;
+pub(crate) use migration::{
+    Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, PlacementSource,
+};
+pub use name::NameFault;
+pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
+pub use quality::{
+    ConfigFault, DecisionField, Level, Limit, Pattern, PatternMatch, Quality, QualityFault,
+    WordRange,
+};
+pub use query::{Named, anchors_in, normalize_path};
+pub use schema::{
+    AcceptedText, AcceptedVia, Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR,
+    Decision, FORMAT_VERSION, PROJECT_COMPONENT, PROJECT_FILE, Placement, Project, STATE_DIR,
+    STORE_DIR, Status, StatusName,
+};
+pub use state::{NodeFile, ProjectState};
+pub use text::{TextFault, TextField};
 pub use time::{Timestamp, TimestampError};
-pub use write::{RecordDecisionParams, RecordPatternParams, ReviseDecisionParams};
+pub use validate::{Issue, IssueKind};
+pub use version::FormatVersion;
 
-/// Syntactic validation for a code reference.
+/// Handle to a graph directory and the code root it is read for. It holds
+/// no graph: a read loads one with [`Store::load_state`], and every write
+/// to a current-format graph goes through the [`Writer`] that
+/// [`Store::begin_write`] returns.
 ///
-/// Paths are NOT validated against the filesystem — the decision may
-/// reference files that don't exist yet (design-first) or files that
-/// were deleted (drift).
-pub(crate) fn validate_code_ref(cr: &CodeRef) -> Result<()> {
-    use limits::{MAX_CODE_REF_PATH_BYTES, MAX_CODE_REF_SYMBOL_BYTES};
-
-    if cr.file.trim().is_empty() {
-        return Err(Error::Validation(
-            "code_ref file path cannot be empty".into(),
-        ));
-    }
-    if cr.file.len() > MAX_CODE_REF_PATH_BYTES {
-        return Err(Error::Validation(format!(
-            "code_ref file path exceeds {MAX_CODE_REF_PATH_BYTES} byte limit"
-        )));
-    }
-    if cr.file.starts_with('/')
-        || cr
-            .file
-            .split('/')
-            .next()
-            .is_some_and(|seg| seg.ends_with(':'))
-        || std::path::Path::new(&cr.file).is_absolute()
-        || matches!(
-            std::path::Path::new(&cr.file).components().next(),
-            Some(std::path::Component::Prefix(_))
-        )
-    {
-        return Err(Error::Validation(
-            "code_ref file path must be relative to the project root".into(),
-        ));
-    }
-    // Component-wise check: reject a `..` path segment (traversal) without
-    // rejecting legitimate filenames that merely contain `..` (e.g. `a..b.rs`).
-    if cr.file.split('/').any(|segment| segment == "..") {
-        return Err(Error::Validation(
-            "code_ref file path must not contain path traversal (..)".into(),
-        ));
-    }
-    if cr.file.contains('\\') {
-        return Err(Error::Validation(
-            "code_ref file path must use forward slashes".into(),
-        ));
-    }
-    if has_control_chars(&cr.file) {
-        return Err(Error::Validation(
-            "code_ref file path contains control characters".into(),
-        ));
-    }
-    if let Some(sym) = &cr.symbol {
-        if sym.trim().is_empty() {
-            return Err(Error::Validation(
-                "code_ref symbol must not be empty".into(),
-            ));
-        }
-        if sym.len() > MAX_CODE_REF_SYMBOL_BYTES {
-            return Err(Error::Validation(format!(
-                "code_ref symbol exceeds {MAX_CODE_REF_SYMBOL_BYTES} byte limit"
-            )));
-        }
-        if has_control_chars(sym) {
-            return Err(Error::Validation(
-                "code_ref symbol contains control characters".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Validate a full set of code references: count limit plus per-ref syntax.
-///
-/// The single slice-level validator. Every write path (the store methods
-/// and MCP `parse_code_refs`) calls this so the `MAX_CODE_REFS` cap and
-/// per-ref rules are enforced identically. The store invokes it as the final
-/// trust boundary no write can bypass.
-pub(crate) fn validate_code_refs(refs: &[CodeRef]) -> Result<()> {
-    if refs.len() > limits::MAX_CODE_REFS {
-        return Err(Error::Validation(format!(
-            "code_refs has too many items ({}, max {})",
-            refs.len(),
-            limits::MAX_CODE_REFS
-        )));
-    }
-    for cr in refs {
-        validate_code_ref(cr)?;
-    }
-    Ok(())
-}
-
-/// Serialize code references to JSON `Value` array.
-///
-/// Single serialization path — every module that needs `CodeRef` as
-/// JSON calls this instead of hand-building `match &cr.symbol` arms.
-pub(crate) fn code_refs_to_json(refs: &[CodeRef]) -> Vec<serde_json::Value> {
-    refs.iter()
-        .map(|cr| {
-            let mut obj = serde_json::json!({ "file": cr.file });
-            if let Some(sym) = &cr.symbol {
-                obj["symbol"] = serde_json::json!(sym);
-            }
-            obj
-        })
-        .collect()
-}
-
-/// Normalize a file path query for `decisions_for_file`.
-///
-/// Strips leading `./`, collapses multiple `/` to single `/`, and strips
-/// trailing `/`. Validates the result against the same syntactic rules as
-/// [`validate_code_ref`] (reuses it directly) — an invalid query is an error,
-/// not an empty result. Returns the normalized path on success.
-pub(crate) fn normalize_file_query(path: &str) -> Result<String> {
-    let trimmed = path.strip_prefix("./").unwrap_or(path);
-
-    // Collapse runs of `/` to a single `/`.
-    let mut normalized = String::with_capacity(trimmed.len());
-    let mut prev_slash = false;
-    for ch in trimmed.chars() {
-        if ch == '/' {
-            if !prev_slash {
-                normalized.push('/');
-            }
-            prev_slash = true;
-        } else {
-            normalized.push(ch);
-            prev_slash = false;
-        }
-    }
-
-    // Strip trailing slash (directory queries don't need it for prefix matching).
-    if normalized.ends_with('/') {
-        normalized.pop();
-    }
-
-    let cr = CodeRef {
-        file: normalized.clone(),
-        symbol: None,
-    };
-    validate_code_ref(&cr)?;
-    Ok(normalized)
-}
-
-/// Format code references as a comma-separated display string.
-///
-/// Returns `"file::symbol, file2"` — callers add their own prefix
-/// and newline.
-pub(crate) fn format_code_refs(refs: &[CodeRef]) -> String {
-    refs.iter()
-        .map(|cr| match &cr.symbol {
-            Some(sym) => format!("{}::{}", cr.file, sym),
-            None => cr.file.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Whether every code reference a decision carries points at a file confirmed
-/// absent from disk — the decision's anchors have all been deleted.
-///
-/// A decision with no code refs is never orphaned: the absence of a link is not
-/// a broken link. Probing uses `try_exists`, and only a definite `Ok(false)`
-/// counts as missing — an `Err` (permission denied, mount not ready, transient
-/// I/O) is treated as *present*, so a filesystem blip can never misreport a live
-/// file as deleted and drive a decision to be flagged as having orphaned refs or
-/// garbage-collected.
-///
-/// This is the single source of truth for reference-orphaning, shared by the
-/// context health report and the `gc` collector so both agree on the predicate.
-pub(crate) fn decision_refs_all_missing(project_root: &Path, dec: &DecisionFile) -> bool {
-    let refs = &dec.decision.code_refs;
-    !refs.is_empty()
-        && refs
-            .iter()
-            .all(|code_ref| matches!(project_root.join(&code_ref.file).try_exists(), Ok(false)))
-}
-
-// ── Hashing ─────────────────────────────────────────────────────────────────
-
-/// BLAKE3 hash of raw file bytes, returned as lowercase hex.
-pub(crate) fn hash_file(path: &Path) -> Result<String> {
-    let bytes = fs::read(path).map_err(Error::io(path))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
-}
-
-/// BLAKE3 hash of an in-memory byte slice, returned as lowercase hex.
-#[must_use]
-pub fn hash_bytes(data: &[u8]) -> String {
-    blake3::hash(data).to_hex().to_string()
-}
-
-/// The first 12 hex digits of `hash`, as messages show it.
-fn abbreviate(hash: &str) -> &str {
-    hash.get(..12).unwrap_or(hash)
-}
-
-// ── Store ────────────────────────────────────────────────────────────────────
-
-/// Handle to a `.trurlic/` directory.
-/// Read methods work without locking. Write methods require a [`StoreLock`]
-/// passed as a proof parameter.
+/// The two roots differ when a tree reaches a graph it does not hold: a
+/// symlinked clone, a linked worktree of a shared graph. Anchors resolve
+/// against the code root, and `.state/`, the lock and the journal, lives in
+/// the graph directory, so every tree that reaches one graph shares one
+/// lock.
 #[derive(Debug)]
 pub struct Store {
-    pub(super) root: PathBuf,
+    root: PathBuf,
+    code_root: PathBuf,
 }
 
 impl Store {
-    pub fn discover(start: &Path) -> Result<Self> {
-        let mut current = start.canonicalize().map_err(Error::io(start))?;
-        loop {
-            let candidate = current.join(STORE_DIR);
-            if candidate.is_dir() {
-                return Ok(Self { root: candidate });
-            }
-            if !current.pop() {
-                return Err(Error::StoreNotFound(start.to_path_buf()));
-            }
-        }
-    }
-
+    /// The graph at `root`, read for the directory that holds it.
     pub fn at(root: PathBuf) -> Self {
-        Self { root }
+        let code_root = root.parent().unwrap_or(&root).to_path_buf();
+        Self { root, code_root }
     }
 
-    // ── Path helpers ─────────────────────────────────────────────────────
+    /// The graph at `root`, read for the tree at `code_root`.
+    pub fn reached_from(root: PathBuf, code_root: PathBuf) -> Self {
+        Self { root, code_root }
+    }
 
+    /// The graph directory.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    pub(crate) fn components_dir(&self) -> PathBuf {
-        self.root.join(COMPONENTS_DIR)
+    /// The tree the graph is read for, which anchors are relative to.
+    pub fn code_root(&self) -> &Path {
+        &self.code_root
     }
 
-    pub(crate) fn decisions_dir(&self) -> PathBuf {
-        self.root.join(DECISIONS_DIR)
+    /// Whether the graph directory is the code root's own `.trurlic/`, as
+    /// opposed to one reached through a symlink or a linked worktree.
+    pub fn is_local(&self) -> bool {
+        self.root == self.code_root.join(STORE_DIR)
     }
 
-    pub(crate) fn patterns_dir(&self) -> PathBuf {
-        self.root.join(PATTERNS_DIR)
-    }
-
-    pub(crate) fn state_dir(&self) -> PathBuf {
+    fn state_dir(&self) -> PathBuf {
         self.root.join(STATE_DIR)
     }
 
-    pub(crate) fn tmp_dir(&self) -> PathBuf {
+    fn tmp_dir(&self) -> PathBuf {
         self.state_dir().join("tmp")
     }
 
-    pub(crate) fn lock_path(&self) -> PathBuf {
+    fn lock_path(&self) -> PathBuf {
         self.state_dir().join("lock")
     }
 
     pub fn component_path(&self, name: &str) -> PathBuf {
-        self.components_dir().join(format!("{name}.toml"))
+        self.root.join(COMPONENTS_DIR).join(format!("{name}.toml"))
     }
 
     pub fn decision_path(&self, name: &str) -> PathBuf {
-        self.decisions_dir().join(format!("{name}.toml"))
+        self.root.join(DECISIONS_DIR).join(format!("{name}.toml"))
     }
 
-    pub fn pattern_path(&self, name: &str) -> PathBuf {
-        self.patterns_dir().join(format!("{name}.toml"))
+    fn path_of(&self, file: &NodeFile) -> PathBuf {
+        self.root.join(file.to_string())
     }
 
-    pub(crate) fn graph_path(&self) -> PathBuf {
-        self.root.join(GRAPH_FILE)
+    /// The directory that holds the graph directory, and the graph
+    /// directory's name in it.
+    pub(crate) fn parent_and_name(&self) -> Result<(&Path, &Path)> {
+        match (self.root.parent(), self.root.file_name()) {
+            (Some(parent), Some(name)) => Ok((parent, Path::new(name))),
+            _ => Err(Error::StorePath {
+                // clone: the error owns the path it names.
+                path: self.root.clone(),
+                fault: StorePathFault::NoParent,
+            }),
+        }
     }
 
-    // ── Path safety ─────────────────────────────────────────────────────
-
-    /// Verify that `path` is inside the store root directory.
-    /// Defense-in-depth: all store paths are derived from `self.root`, so
-    /// this check should never fire in correct code. It guards against
-    /// programming errors that would write or delete files outside `.trurlic/`.
+    /// Refuse `path` unless it is below the graph directory with no `..`
+    /// in it. Every path a write touches is derived from the root, so this
+    /// fires only on a programming error that would write or delete a file
+    /// outside `.trurlic/`. `..` is refused before the prefix test, which
+    /// compares components and would pass `<root>/../elsewhere`.
     fn verify_path(&self, path: &Path) -> Result<()> {
-        // Reject parent-directory components before the prefix check.
-        // `starts_with` on non-canonicalized paths does not prevent
-        // traversal via `..` segments (e.g. `/root/../etc/shadow`).
-        for component in path.components() {
-            if component == std::path::Component::ParentDir {
-                return Err(Error::Validation(format!(
-                    "path contains parent-directory traversal: {}",
-                    path.display()
-                )));
-            }
-        }
-        if path.starts_with(&self.root) {
-            Ok(())
-        } else {
-            Err(Error::Validation(format!(
-                "path escapes store root: {}",
-                path.display()
-            )))
-        }
-    }
-
-    // ── Reading ──────────────────────────────────────────────────────────
-
-    fn read_toml<T: DeserializeOwned>(&self, path: &Path) -> Result<T> {
-        let bytes = fs::read(path).map_err(Error::io(path))?;
-        toml::from_slice(&bytes).map_err(Error::toml(path))
-    }
-
-    /// Read a TOML file and compute its BLAKE3 hash in a single pass.
-    ///
-    /// Returns `(parsed, hex_hash)`. The hash is computed over the raw file
-    /// bytes (not the re-serialized TOML), matching the spec's integrity
-    /// semantics. This eliminates the double-read that would occur if
-    /// parsing and hashing were done separately.
-    fn read_toml_with_hash<T: DeserializeOwned>(&self, path: &Path) -> Result<(T, String)> {
-        let bytes = fs::read(path).map_err(Error::io(path))?;
-        let hash = blake3::hash(&bytes).to_hex().to_string();
-        let parsed = toml::from_slice(&bytes).map_err(Error::toml(path))?;
-        Ok((parsed, hash))
-    }
-
-    pub fn read_project(&self) -> Result<ProjectFile> {
-        self.read_toml(&self.root.join("project.toml"))
-    }
-
-    #[cfg(test)]
-    pub fn read_component(&self, name: &str) -> Result<ComponentFile> {
-        let path = self.component_path(name);
-        match self.read_toml(&path) {
-            Ok(file) => Ok(file),
-            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
-                Err(Error::ComponentNotFound(name.into()))
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn read_decision(&self, name: &str) -> Result<DecisionFile> {
-        let path = self.decision_path(name);
-        match self.read_toml(&path) {
-            Ok(file) => Ok(file),
-            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
-                Err(Error::DecisionNotFound(name.into()))
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    pub fn list_components(&self) -> Result<Vec<String>> {
-        state::list_toml_stems(&self.components_dir())
-    }
-
-    pub fn list_decisions(&self) -> Result<Vec<String>> {
-        state::list_toml_stems(&self.decisions_dir())
-    }
-
-    pub fn list_patterns(&self) -> Result<Vec<String>> {
-        state::list_toml_stems(&self.patterns_dir())
-    }
-
-    // ── load_state ──────────────────────────────────────────────────────
-
-    /// Read and hash the named node files in parallel, each in one pass.
-    fn read_nodes<T: DeserializeOwned + Send>(
-        &self,
-        names: &[String],
-        path: fn(&Self, &str) -> PathBuf,
-    ) -> Result<Vec<(String, T, String)>> {
-        names
-            .par_iter()
-            .map(|name| {
-                let (file, hash) = self.read_toml_with_hash::<T>(&path(self, name))?;
-                Ok((name.clone(), file, hash))
-            })
-            .collect()
-    }
-
-    pub fn load_state(&self) -> Result<ProjectState> {
-        let (project, project_hash) =
-            self.read_toml_with_hash::<ProjectFile>(&self.root.join("project.toml"))?;
-
-        // Read all node files concurrently via rayon, each file read and
-        // BLAKE3-hashed in a single pass. On a cold cache with 260 files,
-        // this reduces wall time from ~300ms (sequential) to ~50ms (parallel).
-        let comp_items =
-            self.read_nodes::<ComponentFile>(&self.list_components()?, Self::component_path)?;
-        let dec_items =
-            self.read_nodes::<DecisionFile>(&self.list_decisions()?, Self::decision_path)?;
-        let pat_items =
-            self.read_nodes::<PatternFile>(&self.list_patterns()?, Self::pattern_path)?;
-
-        let mut hashes = BTreeMap::new();
-        hashes.insert("project".to_string(), project_hash);
-
-        let mut components = BTreeMap::new();
-        for (name, file, hash) in comp_items {
-            hashes.insert(name.clone(), hash);
-            components.insert(name, Arc::new(file));
-        }
-
-        let mut decisions = BTreeMap::new();
-        for (name, file, hash) in dec_items {
-            hashes.insert(name.clone(), hash);
-            decisions.insert(name, Arc::new(file));
-        }
-
-        let mut patterns = BTreeMap::new();
-        for (name, file, hash) in pat_items {
-            hashes.insert(name.clone(), hash);
-            patterns.insert(name, Arc::new(file));
-        }
-
-        let graph_index = self.load_graph_index(&components, &decisions, &patterns, hashes)?;
-
-        let mut state = ProjectState::new(project, components, decisions, patterns, graph_index);
-        state.generation = self.read_generation()?;
-        // code_refs are relative to the project directory, which is the parent
-        // of `.trurlic/`. Orphaned-ref detection resolves them against this root.
-        state.project_root = self.root.parent().unwrap_or(&self.root).to_path_buf();
-        Ok(state)
-    }
-
-    /// Reconcile the on-disk graph index with actual node files.
-    ///
-    /// Uses pre-computed BLAKE3 hashes from `load_state`'s single-pass read,
-    /// avoiding a second read of every node file. Reads `graph.toml` for edges
-    /// that cannot be inferred from node files (ConnectsTo, DependsOn,
-    /// Constrains, etc.), rebuilds the node list from the actual files,
-    /// preserves tags from existing nodes, filters dangling edges, and ensures
-    /// BelongsTo edges for all decisions.
-    fn load_graph_index(
-        &self,
-        components: &BTreeMap<String, Arc<ComponentFile>>,
-        decisions: &BTreeMap<String, Arc<DecisionFile>>,
-        patterns: &BTreeMap<String, Arc<PatternFile>>,
-        mut hashes: BTreeMap<String, String>,
-    ) -> Result<schema::GraphIndex> {
-        let graph_path = self.graph_path();
-
-        // Load existing graph for edges that cannot be inferred from files.
-        let existing: GraphIndex = if graph_path.exists() {
-            self.read_toml(&graph_path)?
-        } else {
-            GraphIndex {
-                version: 1,
-                rebuilt: Some(Timestamp::now()?),
-                nodes: vec![],
-                edges: vec![],
-            }
-        };
-
-        // Build lookup from existing index for O(1) tag preservation.
-        let existing_tags: BTreeMap<&str, &[String]> = existing
-            .nodes
-            .iter()
-            .map(|n| (n.name.as_str(), n.tags.as_slice()))
-            .collect();
-
-        // Build node list from actual files, preserving tags from existing index.
-        let mut nodes = Vec::new();
-
-        // Project virtual node — hash pre-computed during load_state.
-        let project_hash = hashes.remove("project").unwrap_or_default();
-        let project_tags = existing_tags
-            .get("project")
-            .map(|t| t.to_vec())
-            .unwrap_or_default();
-        nodes.push(NodeEntry {
-            name: "project".into(),
-            kind: NodeKind::Component,
-            tags: project_tags,
-            hash: project_hash,
-        });
-
-        for name in components.keys() {
-            let hash = hashes.remove(name.as_str()).unwrap_or_default();
-            let tags = existing_tags
-                .get(name.as_str())
-                .map(|t| t.to_vec())
-                .unwrap_or_default();
-            nodes.push(NodeEntry {
-                name: name.clone(),
-                kind: NodeKind::Component,
-                tags,
-                hash,
-            });
-        }
-
-        for (name, dec) in decisions {
-            let hash = hashes.remove(name.as_str()).unwrap_or_default();
-            // Decision file tags are the source of truth, so they survive a
-            // missing or stale graph.toml.
-            let tags = dec.decision.tags.clone();
-            nodes.push(NodeEntry {
-                name: name.clone(),
-                kind: NodeKind::Decision,
-                tags,
-                hash,
-            });
-        }
-
-        for name in patterns.keys() {
-            let hash = hashes.remove(name.as_str()).unwrap_or_default();
-            let tags = existing_tags
-                .get(name.as_str())
-                .map(|t| t.to_vec())
-                .unwrap_or_default();
-            nodes.push(NodeEntry {
-                name: name.clone(),
-                kind: NodeKind::Pattern,
-                tags,
-                hash,
-            });
-        }
-
-        // Preserve non-BelongsTo edges from existing graph that reference valid nodes.
-        // BelongsTo edges are always re-derived from decision files (source of truth).
-        // This prevents stale BelongsTo edges when decision.component is edited on disk.
-        let valid_names: BTreeSet<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
-
-        let mut edges: Vec<EdgeEntry> = existing
-            .edges
-            .into_iter()
-            .filter(|e| {
-                e.kind != EdgeKind::BelongsTo
-                    && valid_names.contains(e.from.as_str())
-                    && valid_names.contains(e.to.as_str())
-            })
-            .collect();
-
-        // Re-derive BelongsTo edges from decision files.
-        // Skip if the target component doesn't exist — validation will report it.
-        for (name, dec) in decisions {
-            let target = &dec.decision.component;
-            if valid_names.contains(target.as_str()) {
-                edges.push(EdgeEntry {
-                    from: name.clone(),
-                    to: target.clone(),
-                    kind: EdgeKind::BelongsTo,
-                });
-            }
-        }
-
-        let mut index = GraphIndex {
-            version: 1,
-            rebuilt: existing.rebuilt,
-            nodes,
-            edges,
-        };
-        index.sort();
-        Ok(index)
-    }
-
-    // ── Version check ────────────────────────────────────────────────────
-
-    pub fn check_version(&self) -> Result<()> {
-        let project = self.read_project()?;
-        if project.trurlic_version == FORMAT_VERSION {
+        let fault = if path.components().any(|c| c == path::Component::ParentDir) {
+            StorePathFault::Traversal
+        } else if path.starts_with(&self.root) {
             return Ok(());
-        }
-        Err(Error::VersionMismatch {
-            found: project.trurlic_version,
-            expected: FORMAT_VERSION,
+        } else {
+            StorePathFault::Outside
+        };
+        Err(Error::StorePath {
+            path: path.to_path_buf(),
+            fault,
         })
     }
+}
 
-    // ── Hash verification ────────────────────────────────────────────────
+/// How a path the store derived breaks its layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorePathFault {
+    /// It holds a `..` component.
+    Traversal,
+    /// It is not below the graph directory.
+    Outside,
+    NoParent,
+}
 
-    /// Compare stored `graph.toml` hashes against actual file content.
-    ///
-    /// Reports mismatches as warnings — files edited outside Trurlic, bitrot,
-    /// or interrupted writes that were not yet reconciled. This runs
-    /// **before** `load_state` (which silently reconciles), so `trurlic check`
-    /// can surface discrepancies the user would otherwise never see.
-    pub fn verify_hashes(&self) -> Result<Vec<graph::Issue>> {
-        let graph_path = self.graph_path();
-        if !graph_path.exists() {
-            return Ok(vec![graph::Issue {
-                kind: graph::IssueKind::IndexMissing,
-                subject: GRAPH_FILE.into(),
-                message: "graph.toml is missing (will be rebuilt from node files)".into(),
-            }]);
-        }
-
-        let index: GraphIndex = self.read_toml(&graph_path)?;
-        let mut issues = Vec::new();
-
-        for node in index.nodes {
-            let path = match node.kind {
-                NodeKind::Component if node.name == "project" => self.root.join("project.toml"),
-                NodeKind::Component => self.component_path(&node.name),
-                NodeKind::Decision => self.decision_path(&node.name),
-                NodeKind::Pattern => self.pattern_path(&node.name),
-            };
-
-            let (kind, message) = match hash_file(&path) {
-                Ok(actual) if actual != node.hash => (
-                    graph::IssueKind::HashMismatch,
-                    format!(
-                        "{} `{}` content changed since last indexed \
-                         (stored: {}..., actual: {}...)",
-                        node.kind.as_str(),
-                        node.name,
-                        abbreviate(&node.hash),
-                        abbreviate(&actual),
-                    ),
-                ),
-                Ok(_) => continue, // hash matches
-                Err(_) => (
-                    graph::IssueKind::NodeFileMissing,
-                    format!(
-                        "{} `{}` is in graph.toml but the file is missing or unreadable",
-                        node.kind.as_str(),
-                        node.name,
-                    ),
-                ),
-            };
-            issues.push(graph::Issue {
-                kind,
-                subject: node.name,
-                message,
-            });
-        }
-
-        Ok(issues)
+impl fmt::Display for StorePathFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Traversal => "holds a `..` component",
+            Self::Outside => "is outside the graph directory",
+            Self::NoParent => "has no parent directory",
+        })
     }
 }
 
-// ── Version comparison ──────────────────────────────────────────────────────
-
-pub(crate) fn compare_versions(a: &str, b: &str) -> Ordering {
-    let parse = |v: &str| -> (u32, u32, u32) {
-        let mut parts = v.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
-        let major = parts.next().unwrap_or(0);
-        let minor = parts.next().unwrap_or(0);
-        let patch = parts.next().unwrap_or(0);
-        (major, minor, patch)
-    };
-    parse(a).cmp(&parse(b))
-}
-
-// ── Test helpers ────────────────────────────────────────────────────────────
+// -- Test helpers ---------------------------------------------------------------
 
 #[cfg(test)]
 pub(crate) mod testing {
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    use super::canonical::{Canonical, canonical};
     use super::*;
-    use crate::store::schema::{
-        Attribution, Component, ComponentFile, Decision, DecisionFile, EdgeEntry, EdgeKind,
-        GraphIndex, NodeEntry, NodeKind, Project, ProjectFile,
-    };
 
     pub fn setup_store(dir: &Path) -> Store {
-        setup_store_with_version(dir, FORMAT_VERSION)
+        setup_store_with_version(dir, &FORMAT_VERSION.to_string())
     }
 
+    /// An empty store whose `project.toml` states `version` as its
+    /// `format_version`, whatever the text, beside the fields of format 0.5.
     pub fn setup_store_with_version(dir: &Path, version: &str) -> Store {
         let root = dir.join(STORE_DIR);
         fs::create_dir_all(root.join(COMPONENTS_DIR)).unwrap();
         fs::create_dir_all(root.join(DECISIONS_DIR)).unwrap();
-        fs::create_dir_all(root.join(PATTERNS_DIR)).unwrap();
         fs::create_dir_all(root.join(STATE_DIR)).unwrap();
-
-        let project = ProjectFile {
-            trurlic_version: version.into(),
-            project: Project {
-                name: "test-project".into(),
-                description: "A test project".into(),
-            },
-        };
-        let project_content = toml::to_string_pretty(&project).unwrap();
-        fs::write(root.join("project.toml"), &project_content).unwrap();
-
-        let project_hash = hash_bytes(project_content.as_bytes());
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![NodeEntry {
-                name: "project".into(),
-                kind: NodeKind::Component,
-                tags: vec![],
-                hash: project_hash,
-            }],
-            edges: vec![],
-        };
-        fs::write(
-            root.join(GRAPH_FILE),
-            toml::to_string_pretty(&index).unwrap(),
-        )
-        .unwrap();
-
+        let project = format!(
+            "format_version = \"{version}\"\nname = \"test-project\"\n\
+             description = \"A test project\"\nplacement = \"tracked\"\n"
+        );
+        fs::write(root.join(PROJECT_FILE), project).unwrap();
         Store::at(root)
     }
 
-    pub fn sample_component(name: &str) -> ComponentFile {
-        ComponentFile {
-            component: Component {
-                name: name.into(),
-                description: format!("The {name} component"),
-            },
-        }
+    /// An empty `shared` store, whose repository holds the `init` commit.
+    pub fn shared_store(dir: &Path) -> Store {
+        Store::create(dir, "test-project", Placement::Shared).unwrap()
     }
 
-    pub fn sample_decision(name: &str, component: &str) -> DecisionFile {
-        DecisionFile {
-            decision: Decision {
-                component: component.into(),
-                choice: format!("Choice for {name}"),
-                reason: format!("Reason for {name}"),
-                alternatives: vec![],
-                tags: vec![],
-                attribution: Attribution::User,
-                created: "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap(),
-                code_refs: vec![],
-                history: vec![],
-            },
-        }
+    /// `git <args>` in the graph directory of `store`, as a person with no
+    /// user or system configuration; it must succeed.
+    pub fn graph_git(store: &Store, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(store.root())
+            .args([
+                "-c",
+                "user.name=someone",
+                "-c",
+                "user.email=someone@example.invalid",
+            ])
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+        String::from_utf8(output.stdout).unwrap()
     }
 
-    /// Minimal [`ProjectState`] with no components, decisions, or patterns.
-    /// The shared starting point for tests that build state incrementally.
-    pub fn empty_project_state() -> super::state::ProjectState {
-        use crate::store::schema::FORMAT_VERSION;
-        super::state::ProjectState::new(
-            ProjectFile {
-                trurlic_version: FORMAT_VERSION.into(),
-                project: Project {
-                    name: "test".into(),
-                    description: String::new(),
-                },
-            },
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            GraphIndex {
-                version: 1,
-                rebuilt: None,
-                nodes: vec![],
-                edges: vec![],
-            },
-        )
+    /// The messages of the graph's history, newest first, each trimmed of
+    /// the line breaks around it.
+    pub fn graph_log(store: &Store) -> Vec<String> {
+        graph_git(store, &["log", "--format=%B%x00"])
+            .split('\0')
+            .map(|message| message.trim_matches('\n').to_owned())
+            .filter(|message| !message.is_empty())
+            .collect()
     }
 
-    /// Full test state: auth + database + rate-limiter, 3 decisions
-    /// (use-jwt, error-strategy, db-pool), graph tags, ConnectsTo edges.
-    ///
-    /// This is the "kitchen sink" fixture for tests that need a realistic
-    /// graph without constructing one from scratch every time.
-    pub fn rich_test_state() -> super::state::ProjectState {
-        use crate::store::schema::{EdgeEntry, EdgeKind, FORMAT_VERSION, NodeKind};
-
-        let ts = "2025-06-01T10:00:00Z".parse::<Timestamp>().unwrap();
-
-        let mut components = BTreeMap::new();
-        for (name, desc) in [
-            ("auth", "Authentication and token management"),
-            ("database", "Database access layer"),
-            ("rate-limiter", "Request rate limiting"),
-        ] {
-            components.insert(
-                name.into(),
-                Arc::new(ComponentFile {
-                    component: Component {
-                        name: name.into(),
-                        description: desc.into(),
-                    },
-                }),
-            );
-        }
-
-        let mut decisions = BTreeMap::new();
-        decisions.insert(
-            "use-jwt".into(),
-            Arc::new(DecisionFile {
-                decision: Decision {
-                    component: "auth".into(),
-                    choice: "JWT with DPoP binding".into(),
-                    reason: "Stateless, no session store needed".into(),
-                    alternatives: vec!["Session cookies — rejected: server state".into()],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: ts,
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            }),
+    /// The files the commit `rev` changed, sorted.
+    pub fn changed_in(store: &Store, rev: &str) -> Vec<String> {
+        let names = graph_git(
+            store,
+            &["show", "--name-only", "--format=", "--no-renames", rev],
         );
-        decisions.insert(
-            "error-strategy".into(),
-            Arc::new(DecisionFile {
-                decision: Decision {
-                    component: "project".into(),
-                    choice: "ALL error handling MUST use Result<T, AppError>".into(),
-                    reason: "Consistent error propagation".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: ts,
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            }),
-        );
-        decisions.insert(
-            "db-pool".into(),
-            Arc::new(DecisionFile {
-                decision: Decision {
-                    component: "database".into(),
-                    choice: "Shared connection pool via app state".into(),
-                    reason: "Avoid per-request connection overhead".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: ts,
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            }),
-        );
-
-        let graph_index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![
-                NodeEntry {
-                    name: "project".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: String::new(),
-                },
-                NodeEntry {
-                    name: "auth".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: String::new(),
-                },
-                NodeEntry {
-                    name: "database".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: String::new(),
-                },
-                NodeEntry {
-                    name: "rate-limiter".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: String::new(),
-                },
-                NodeEntry {
-                    name: "use-jwt".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec!["auth".into(), "security".into()],
-                    hash: String::new(),
-                },
-                NodeEntry {
-                    name: "error-strategy".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: String::new(),
-                },
-                NodeEntry {
-                    name: "db-pool".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec!["storage".into()],
-                    hash: String::new(),
-                },
-            ],
-            edges: vec![
-                EdgeEntry {
-                    from: "auth".into(),
-                    to: "database".into(),
-                    kind: EdgeKind::ConnectsTo,
-                },
-                EdgeEntry {
-                    from: "rate-limiter".into(),
-                    to: "database".into(),
-                    kind: EdgeKind::ConnectsTo,
-                },
-                EdgeEntry {
-                    from: "use-jwt".into(),
-                    to: "auth".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "error-strategy".into(),
-                    to: "project".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "db-pool".into(),
-                    to: "database".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-            ],
-        };
-
-        super::state::ProjectState::new(
-            ProjectFile {
-                trurlic_version: FORMAT_VERSION.into(),
-                project: Project {
-                    name: "test-project".into(),
-                    description: "A test project".into(),
-                },
-            },
-            components,
-            decisions,
-            BTreeMap::new(),
-            graph_index,
-        )
+        let mut names: Vec<String> = names.lines().map(str::to_owned).collect();
+        names.sort();
+        names
     }
 
-    /// Create a store on disk with named components and return it loaded.
-    ///
-    /// For integration tests that need a real on-disk store without going
-    /// through the `commands` module. Components are written atomically
-    /// and state is loaded with a reconciled graph index.
-    pub fn setup_store_with_components(
-        dir: &Path,
-        components: &[(&str, &str)],
-    ) -> (Store, super::state::ProjectState) {
-        let store = setup_store(dir);
-        let lock = store.lock().unwrap();
-        for &(name, description) in components {
-            let comp = ComponentFile {
-                component: Component {
-                    name: name.into(),
-                    description: description.into(),
-                },
-            };
-            store
-                .write_atomic(&lock, &store.component_path(name), &comp)
-                .unwrap();
-        }
-        drop(lock);
-        let state = store.load_state().unwrap();
-        (store, state)
+    /// `value` written to `file` in its canonical form, outside any commit.
+    pub fn write_node<T: Canonical>(store: &Store, file: &NodeFile, value: &T) {
+        fs::write(store.path_of(file), canonical(value)).unwrap();
     }
-
-    // ── Shared graph fixtures ────────────────────────────────────────────
 
     pub fn ts() -> Timestamp {
         "2025-06-01T10:00:00Z".parse().unwrap()
     }
 
-    pub fn arc_map<T>(map: BTreeMap<String, T>) -> BTreeMap<String, Arc<T>> {
-        map.into_iter().map(|(k, v)| (k, Arc::new(v))).collect()
+    pub fn sample_component() -> Component {
+        Component {
+            description: "A sample component".into(),
+            connects_to: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// An accepted decision of `component` with no sets and no origin.
+    pub fn sample_decision(component: &str) -> Decision {
+        Decision {
+            component: component.into(),
+            choice: "Choice of the sample".into(),
+            reason: "Reason of the sample decision".into(),
+            alternatives: vec![],
+            tags: std::collections::BTreeSet::new(),
+            status: Status::Accepted { via: None },
+            origin: None,
+            created: ts(),
+            anchors: std::collections::BTreeSet::new(),
+            depends_on: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// [`sample_decision`] anchored at each of `files`.
+    pub fn anchored(component: &str, files: &[&str]) -> Decision {
+        let mut decision = sample_decision(component);
+        decision.anchors = files
+            .iter()
+            .map(|&file| Anchor::new(file.into(), None).unwrap())
+            .collect();
+        decision
+    }
+
+    /// A state with no node.
+    pub fn empty_state() -> ProjectState {
+        ProjectState {
+            project: Project {
+                format_version: FORMAT_VERSION,
+                name: "test".into(),
+                description: String::new(),
+                placement: Placement::Tracked,
+                quality: Quality::default(),
+            },
+            components: BTreeMap::new(),
+            decisions: BTreeMap::new(),
+            non_canonical: Vec::new(),
+            code_root: PathBuf::new(),
+        }
     }
 
     /// Project-wide decisions joined by `depends_on` edges in the given
     /// order: a graph whose only issues are the ones the edges make.
-    pub fn depends_on_graph(edges: &[(&str, &str)]) -> graph::InMemoryGraph {
-        let mut names: Vec<&str> = edges.iter().flat_map(|&(from, to)| [from, to]).collect();
-        names.sort_unstable();
-        names.dedup();
-        let mut index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![NodeEntry {
-                name: "project".into(),
-                kind: NodeKind::Component,
-                tags: vec![],
-                hash: String::new(),
-            }],
-            edges: Vec::new(),
-        };
-        let mut decisions = BTreeMap::new();
-        for &name in &names {
-            index.nodes.push(NodeEntry {
-                name: name.into(),
-                kind: NodeKind::Decision,
-                tags: vec![],
-                hash: String::new(),
-            });
-            index.edges.push(EdgeEntry {
-                from: name.into(),
-                to: "project".into(),
-                kind: EdgeKind::BelongsTo,
-            });
-            decisions.insert(name.to_owned(), sample_decision(name, "project"));
+    pub fn depends_on_state(edges: &[(&str, &str)]) -> ProjectState {
+        let mut state = empty_state();
+        for &(from, to) in edges {
+            for name in [from, to] {
+                state
+                    .decisions
+                    .entry(name.to_owned())
+                    .or_insert_with(|| sample_decision(PROJECT_COMPONENT));
+            }
+            if let Some(decision) = state.decisions.get_mut(from) {
+                decision.depends_on.insert(to.to_owned());
+            }
         }
-        index
-            .edges
-            .extend(edges.iter().map(|&(from, to)| EdgeEntry {
-                from: from.into(),
-                to: to.into(),
-                kind: EdgeKind::DependsOn,
-            }));
-        graph::InMemoryGraph::build(
-            &index,
-            &BTreeMap::new(),
-            &arc_map(decisions),
-            &BTreeMap::new(),
-        )
-    }
-
-    /// Realistic graph fixture shared by graph, query, and validate tests.
-    ///
-    ///   Components: project (virtual), auth, database, rate-limiter
-    ///   Decisions: use-jwt (auth), error-strategy (project), db-pool (database)
-    ///   Edges: auth→database (ConnectsTo), rate-limiter→database (ConnectsTo),
-    ///          BelongsTo for all decisions
-    pub fn test_graph() -> graph::InMemoryGraph {
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![
-                NodeEntry {
-                    name: "project".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: "p".into(),
-                },
-                NodeEntry {
-                    name: "auth".into(),
-                    kind: NodeKind::Component,
-                    tags: vec!["security".into()],
-                    hash: "a".into(),
-                },
-                NodeEntry {
-                    name: "database".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: "d".into(),
-                },
-                NodeEntry {
-                    name: "rate-limiter".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: "r".into(),
-                },
-                NodeEntry {
-                    name: "use-jwt".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec!["auth".into()],
-                    hash: "j".into(),
-                },
-                NodeEntry {
-                    name: "error-strategy".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "e".into(),
-                },
-                NodeEntry {
-                    name: "db-pool".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: "b".into(),
-                },
-            ],
-            edges: vec![
-                EdgeEntry {
-                    from: "auth".into(),
-                    to: "database".into(),
-                    kind: EdgeKind::ConnectsTo,
-                },
-                EdgeEntry {
-                    from: "rate-limiter".into(),
-                    to: "database".into(),
-                    kind: EdgeKind::ConnectsTo,
-                },
-                EdgeEntry {
-                    from: "use-jwt".into(),
-                    to: "auth".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "error-strategy".into(),
-                    to: "project".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-                EdgeEntry {
-                    from: "db-pool".into(),
-                    to: "database".into(),
-                    kind: EdgeKind::BelongsTo,
-                },
-            ],
-        };
-
-        let mut components = BTreeMap::new();
-        for name in ["auth", "database", "rate-limiter"] {
-            components.insert(
-                name.into(),
-                ComponentFile {
-                    component: Component {
-                        name: name.into(),
-                        description: format!("The {name} component"),
-                    },
-                },
-            );
-        }
-
-        let mut decisions = BTreeMap::new();
-        decisions.insert(
-            "use-jwt".into(),
-            DecisionFile {
-                decision: Decision {
-                    component: "auth".into(),
-                    choice: "JWT with DPoP".into(),
-                    reason: "Stateless".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: ts(),
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            },
-        );
-        decisions.insert(
-            "error-strategy".into(),
-            DecisionFile {
-                decision: Decision {
-                    component: "project".into(),
-                    choice: "Result<T, AppError>".into(),
-                    reason: "Consistent errors".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: ts(),
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            },
-        );
-        decisions.insert(
-            "db-pool".into(),
-            DecisionFile {
-                decision: Decision {
-                    component: "database".into(),
-                    choice: "Shared connection pool".into(),
-                    reason: "Avoid per-request overhead".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: ts(),
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            },
-        );
-
-        graph::InMemoryGraph::build(
-            &index,
-            &arc_map(components),
-            &arc_map(decisions),
-            &BTreeMap::new(),
-        )
+        state
     }
 }
-
-// ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::testing::*;
     use super::*;
-    use std::cmp::Ordering;
     use tempfile::TempDir;
 
-    // ── discover ─────────────────────────────────────────────────────────
-
     #[test]
-    fn discover_finds_in_current_dir() {
-        let tmp = TempDir::new().unwrap();
-        setup_store(tmp.path());
-
-        let store = Store::discover(tmp.path()).unwrap();
-        assert_eq!(store.root(), tmp.path().join(STORE_DIR));
-    }
-
-    #[test]
-    fn discover_finds_in_parent() {
-        let tmp = TempDir::new().unwrap();
-        setup_store(tmp.path());
-
-        let nested = tmp.path().join("src").join("deep");
-        fs::create_dir_all(&nested).unwrap();
-
-        let store = Store::discover(&nested).unwrap();
-        assert_eq!(store.root(), tmp.path().join(STORE_DIR));
-    }
-
-    #[test]
-    fn discover_fails_when_absent() {
-        let tmp = TempDir::new().unwrap();
-        let err = Store::discover(tmp.path()).unwrap_err();
-        assert!(matches!(err, Error::StoreNotFound(_)));
-    }
-
-    // ── read / write round-trip ──────────────────────────────────────────
-
-    #[test]
-    fn write_and_read_component() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let comp = sample_component("auth");
-        let path = store.component_path("auth");
-        store.write_atomic(&lock, &path, &comp).unwrap();
-
-        let read_back = store.read_component("auth").unwrap();
-        assert_eq!(comp, read_back);
-    }
-
-    #[test]
-    fn write_and_read_decision() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let dec = sample_decision("error-strategy", "project");
-        let path = store.decision_path("error-strategy");
-        store.write_atomic(&lock, &path, &dec).unwrap();
-
-        let read_back = store.read_decision("error-strategy").unwrap();
-        assert_eq!(dec, read_back);
-    }
-
-    #[test]
-    fn read_missing_component_gives_clear_error() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-
-        let err = store.read_component("nonexistent").unwrap_err();
-        assert!(matches!(err, Error::ComponentNotFound(ref n) if n == "nonexistent"));
-    }
-
-    #[test]
-    fn read_missing_decision_gives_clear_error() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-
-        let err = store.read_decision("nonexistent").unwrap_err();
-        assert!(matches!(err, Error::DecisionNotFound(ref n) if n == "nonexistent"));
-    }
-
-    // ── list / load_state ────────────────────────────────────────────────
-
-    #[test]
-    fn list_components_sorted() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        for name in &["database", "auth", "rate-limiter"] {
-            let comp = sample_component(name);
-            store
-                .write_atomic(&lock, &store.component_path(name), &comp)
-                .unwrap();
-        }
-
-        let names = store.list_components().unwrap();
-        assert_eq!(names, vec!["auth", "database", "rate-limiter"]);
-    }
-
-    #[test]
-    fn list_empty_dir_returns_empty() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-
-        assert!(store.list_components().unwrap().is_empty());
-        assert!(store.list_decisions().unwrap().is_empty());
-        assert!(store.list_patterns().unwrap().is_empty());
-    }
-
-    #[test]
-    fn load_state_reads_everything() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-
-        let dec = sample_decision("token-format", "auth");
-        store
-            .write_atomic(&lock, &store.decision_path("token-format"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        assert_eq!(state.components.len(), 1);
-        assert_eq!(state.decisions.len(), 1);
-        assert!(state.components.contains_key("auth"));
-        assert!(state.decisions.contains_key("token-format"));
-        assert!(state.patterns.is_empty());
-
-        // Graph index should have: project + auth + token-format = 3 nodes
-        assert_eq!(state.graph_index.nodes.len(), 3);
-        // BelongsTo edge inferred for token-format → auth
-        assert!(
-            state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "token-format"
-                    && e.to == "auth"
-                    && e.kind == EdgeKind::BelongsTo)
-        );
-    }
-
-    #[test]
-    fn load_state_names_a_node_file_that_does_not_parse() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let broken = store.decision_path("broken");
-        fs::write(&broken, "[decision]\nchoice = [\n").unwrap();
-
-        let err = store.load_state().map(|_| ()).unwrap_err();
-
-        assert!(
-            matches!(&err, Error::Toml { path, .. } if *path == broken),
-            "{err:?}"
-        );
-        assert!(err.to_string().starts_with(&broken.display().to_string()));
-    }
-
-    #[test]
-    fn load_state_names_a_node_file_that_cannot_be_read() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let unreadable = store.decision_path("unreadable");
-        fs::create_dir(&unreadable).unwrap();
-
-        let err = store.load_state().map(|_| ()).unwrap_err();
-
-        assert!(
-            matches!(&err, Error::Io { path, .. } if *path == unreadable),
-            "{err:?}"
-        );
-    }
-
-    #[test]
-    fn load_state_reconciles_missing_graph_toml() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        // Remove graph.toml to simulate pre-graph store
-        let _ = fs::remove_file(store.graph_path());
-
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-
-        let mut dec = sample_decision("token-format", "auth");
-        dec.decision.tags = vec!["security".into(), "auth".into()];
-        store
-            .write_atomic(&lock, &store.decision_path("token-format"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        // Should still build a graph index from files
-        assert!(state.graph_index.nodes.iter().any(|n| n.name == "project"));
-        assert!(state.graph_index.nodes.iter().any(|n| n.name == "auth"));
-        // A decision's tags and owner live in its file, so no index is needed.
-        let node = state
-            .graph_index
-            .nodes
-            .iter()
-            .find(|n| n.name == "token-format")
-            .unwrap();
-        assert_eq!(node.tags, ["security", "auth"]);
-        assert!(
-            state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "token-format"
-                    && e.to == "auth"
-                    && e.kind == EdgeKind::BelongsTo)
-        );
-    }
-
-    #[test]
-    fn load_state_corrects_stale_belongs_to_edge() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-        let db = sample_component("database");
-        store
-            .write_atomic(&lock, &store.component_path("database"), &db)
-            .unwrap();
-
-        // Decision belongs to "auth" per its file content.
-        let dec = sample_decision("token-format", "auth");
-        store
-            .write_atomic(&lock, &store.decision_path("token-format"), &dec)
-            .unwrap();
-
-        // Write graph.toml with a STALE BelongsTo edge pointing to "database".
-        let auth_hash = hash_file(&store.component_path("auth")).unwrap();
-        let db_hash = hash_file(&store.component_path("database")).unwrap();
-        let dec_hash = hash_file(&store.decision_path("token-format")).unwrap();
-        let project_hash = hash_file(&store.root().join("project.toml")).unwrap();
-
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![
-                NodeEntry {
-                    name: "project".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: project_hash,
-                },
-                NodeEntry {
-                    name: "auth".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: auth_hash,
-                },
-                NodeEntry {
-                    name: "database".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: db_hash,
-                },
-                NodeEntry {
-                    name: "token-format".into(),
-                    kind: NodeKind::Decision,
-                    tags: vec![],
-                    hash: dec_hash,
-                },
-            ],
-            edges: vec![EdgeEntry {
-                from: "token-format".into(),
-                to: "database".into(),
-                kind: EdgeKind::BelongsTo,
-            }],
-        };
-        fs::write(store.graph_path(), toml::to_string_pretty(&index).unwrap()).unwrap();
-
-        let state = store.load_state().unwrap();
-        // BelongsTo must now point to "auth" (from decision file), not "database".
-        assert!(
-            state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "token-format"
-                    && e.to == "auth"
-                    && e.kind == EdgeKind::BelongsTo)
-        );
-        assert!(
-            !state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "token-format"
-                    && e.to == "database"
-                    && e.kind == EdgeKind::BelongsTo)
-        );
-    }
-
-    #[test]
-    fn load_state_skips_dangling_belongs_to() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        // Decision references a component that does not exist on disk.
-        let dec = sample_decision("orphan-dec", "deleted-component");
-        store
-            .write_atomic(&lock, &store.decision_path("orphan-dec"), &dec)
-            .unwrap();
-
-        let state = store.load_state().unwrap();
-        // No BelongsTo edge should reference the missing component.
-        assert!(
-            !state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.to == "deleted-component")
-        );
-    }
-
-    // ── check_version ────────────────────────────────────────────────────
-
-    #[test]
-    fn check_version_passes_on_match() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        store.check_version().unwrap();
-    }
-
-    #[test]
-    fn check_version_rejects_newer_format() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "99.0.0");
-
-        let err = store.check_version().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            matches!(&err, Error::VersionMismatch { found, expected: FORMAT_VERSION } if found == "99.0.0"),
-            "{err:?}"
-        );
-        assert!(msg.contains("newer"), "should mention 'newer': {msg}");
-        assert!(
-            msg.contains("upgrade trurlic"),
-            "should suggest upgrade: {msg}"
-        );
-    }
-
-    #[test]
-    fn check_version_rejects_older_format() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store_with_version(tmp.path(), "0.0.1");
-
-        let err = store.check_version().unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            matches!(&err, Error::VersionMismatch { found, expected: FORMAT_VERSION } if found == "0.0.1"),
-            "{err:?}"
-        );
-        assert!(msg.contains("older"), "should mention 'older': {msg}");
-        assert!(
-            msg.contains("trurlic migrate"),
-            "should mention trurlic migrate: {msg}"
-        );
-    }
-
-    // ── verify_path ──────────────────────────────────────────────────────
-
-    #[test]
-    fn verify_path_accepts_child() {
+    fn verify_path_accepts_a_child_and_refuses_an_escape() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
         store.verify_path(&store.component_path("auth")).unwrap();
-    }
 
-    #[test]
-    fn verify_path_rejects_outside() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
         let outside = tmp.path().join("outside.toml");
-        let err = store.verify_path(&outside).unwrap_err();
-        assert!(matches!(err, Error::Validation(_)));
-    }
-
-    #[test]
-    fn verify_path_rejects_traversal() {
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
+        assert!(matches!(
+            store.verify_path(&outside),
+            Err(Error::StorePath { fault: StorePathFault::Outside, path }) if path == outside
+        ));
         let traversal = store.root().join("..").join("escape.toml");
-        let err = store.verify_path(&traversal).unwrap_err();
-        match err {
-            Error::Validation(msg) => {
-                assert!(
-                    msg.contains("parent-directory"),
-                    "should mention traversal: {msg}"
-                );
-            }
-            other => panic!("expected Validation, got: {other}"),
-        }
-    }
-
-    // ── compare_versions ─────────────────────────────────────────────────
-
-    #[test]
-    fn compare_versions_equal() {
-        assert_eq!(compare_versions("0.2.0", "0.2.0"), Ordering::Equal);
-        assert_eq!(compare_versions("1.2.3", "1.2.3"), Ordering::Equal);
-    }
-
-    #[test]
-    fn compare_versions_major_dominates() {
-        assert_eq!(compare_versions("2.0.0", "1.9.9"), Ordering::Greater);
-        assert_eq!(compare_versions("0.9.9", "1.0.0"), Ordering::Less);
-    }
-
-    #[test]
-    fn compare_versions_minor() {
-        assert_eq!(compare_versions("0.2.0", "0.1.9"), Ordering::Greater);
-        assert_eq!(compare_versions("0.0.9", "0.1.0"), Ordering::Less);
-    }
-
-    #[test]
-    fn compare_versions_patch() {
-        assert_eq!(compare_versions("0.1.1", "0.1.0"), Ordering::Greater);
-        assert_eq!(compare_versions("0.1.0", "0.1.1"), Ordering::Less);
-    }
-
-    #[test]
-    fn compare_versions_malformed_defaults_to_zero() {
-        assert_eq!(compare_versions("abc", "0.0.0"), Ordering::Equal);
-        assert_eq!(compare_versions("1", "1.0.0"), Ordering::Equal);
-        assert_eq!(compare_versions("1.2", "1.2.0"), Ordering::Equal);
-    }
-
-    // ── hash ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn hash_file_matches_hash_bytes() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("test.txt");
-        let content = b"test content";
-        fs::write(&path, content).unwrap();
-
-        let file_hash = hash_file(&path).unwrap();
-        let bytes_hash = hash_bytes(content);
-        assert_eq!(file_hash, bytes_hash);
-    }
-
-    #[test]
-    fn load_state_sorts_edges() {
-        use crate::store::schema::*;
-
-        let tmp = TempDir::new().unwrap();
-        let store = setup_store(tmp.path());
-        let lock = store.lock().unwrap();
-
-        let auth = sample_component("auth");
-        store
-            .write_atomic(&lock, &store.component_path("auth"), &auth)
-            .unwrap();
-        let db = sample_component("database");
-        store
-            .write_atomic(&lock, &store.component_path("database"), &db)
-            .unwrap();
-
-        // Write graph.toml with deliberately unsorted edges.
-        let auth_hash = hash_file(&store.component_path("auth")).unwrap();
-        let db_hash = hash_file(&store.component_path("database")).unwrap();
-        let project_hash = hash_file(&store.root().join("project.toml")).unwrap();
-
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: None,
-            nodes: vec![
-                NodeEntry {
-                    name: "database".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: db_hash,
-                },
-                NodeEntry {
-                    name: "project".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: project_hash,
-                },
-                NodeEntry {
-                    name: "auth".into(),
-                    kind: NodeKind::Component,
-                    tags: vec![],
-                    hash: auth_hash,
-                },
-            ],
-            edges: vec![
-                EdgeEntry {
-                    from: "database".into(),
-                    to: "auth".into(),
-                    kind: EdgeKind::ConnectsTo,
-                },
-                EdgeEntry {
-                    from: "auth".into(),
-                    to: "database".into(),
-                    kind: EdgeKind::ConnectsTo,
-                },
-            ],
-        };
-        fs::write(store.graph_path(), toml::to_string_pretty(&index).unwrap()).unwrap();
-
-        let state = store.load_state().unwrap();
-
-        // Nodes sorted by name.
-        let node_names: Vec<&str> = state
-            .graph_index
-            .nodes
-            .iter()
-            .map(|n| n.name.as_str())
-            .collect();
-        assert_eq!(node_names, vec!["auth", "database", "project"]);
-
-        // Edges sorted by (from, to, kind).
-        let edge_froms: Vec<&str> = state
-            .graph_index
-            .edges
-            .iter()
-            .map(|e| e.from.as_str())
-            .collect();
-        assert_eq!(edge_froms, vec!["auth", "database"]);
-    }
-
-    // ── validate_code_ref ──────────────────────────────────────────────
-
-    #[test]
-    fn validate_code_ref_valid_with_symbol() {
-        let cr = CodeRef {
-            file: "src/store/write.rs".into(),
-            symbol: Some("content_hash".into()),
-        };
-        assert!(validate_code_ref(&cr).is_ok());
-    }
-
-    #[test]
-    fn validate_code_ref_valid_without_symbol() {
-        let cr = CodeRef {
-            file: "src/store/write.rs".into(),
-            symbol: None,
-        };
-        assert!(validate_code_ref(&cr).is_ok());
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_empty_path() {
-        let cr = CodeRef {
-            file: String::new(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("empty"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_absolute_path() {
-        let cr = CodeRef {
-            file: "/etc/passwd".into(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("relative to the project root"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_path_traversal() {
-        let cr = CodeRef {
-            file: "../escape/file.rs".into(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("traversal"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_backslashes() {
-        let cr = CodeRef {
-            file: "src\\store\\write.rs".into(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("forward slashes"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_control_chars_in_path() {
-        let cr = CodeRef {
-            file: "src/store\x00write.rs".into(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("control"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_control_chars_in_symbol() {
-        let cr = CodeRef {
-            file: "src/store/write.rs".into(),
-            symbol: Some("fn\x00bad".into()),
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("control"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_long_path() {
-        let cr = CodeRef {
-            file: "x".repeat(501),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("500"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_long_symbol() {
-        let cr = CodeRef {
-            file: "src/lib.rs".into(),
-            symbol: Some("x".repeat(201)),
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("200"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_empty_symbol() {
-        let cr = CodeRef {
-            file: "src/lib.rs".into(),
-            symbol: Some(String::new()),
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("empty"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_whitespace_only_path() {
-        let cr = CodeRef {
-            file: "   ".into(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("empty"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_accepts_dots_within_filename() {
-        // `..` inside a filename is not traversal — only a `..` path segment is.
-        let cr = CodeRef {
-            file: "src/store/a..b.rs".into(),
-            symbol: None,
-        };
-        assert!(validate_code_ref(&cr).is_ok());
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_windows_drive_letter_uppercase() {
-        let cr = CodeRef {
-            file: "C:/Users/x/file.rs".into(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("relative to the project root"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_windows_drive_letter_lowercase() {
-        let cr = CodeRef {
-            file: "c:/x.rs".into(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("relative to the project root"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_bare_drive_letter() {
-        let cr = CodeRef {
-            file: "D:".into(),
-            symbol: None,
-        };
-        let err = validate_code_ref(&cr).unwrap_err().to_string();
-        assert!(err.contains("relative to the project root"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_ref_rejects_windows_backslash_drive_path() {
-        // Already caught by the backslash check — verify it stays rejected.
-        let cr = CodeRef {
-            file: "C:\\x.rs".into(),
-            symbol: None,
-        };
-        assert!(validate_code_ref(&cr).is_err());
-    }
-
-    #[test]
-    fn validate_code_ref_accepts_colon_in_later_segment() {
-        // A `:` in a non-first segment is legal on Unix filesystems.
-        let cr = CodeRef {
-            file: "src/a:b.rs".into(),
-            symbol: None,
-        };
-        assert!(validate_code_ref(&cr).is_ok());
-    }
-
-    // ── validate_code_refs (slice-level count limit) ────────────────────
-
-    #[test]
-    fn validate_code_refs_accepts_within_limit() {
-        let refs: Vec<_> = (0..limits::MAX_CODE_REFS)
-            .map(|i| CodeRef {
-                file: format!("src/f{i}.rs"),
-                symbol: None,
+        assert!(matches!(
+            store.verify_path(&traversal),
+            Err(Error::StorePath {
+                fault: StorePathFault::Traversal,
+                ..
             })
-            .collect();
-        assert!(validate_code_refs(&refs).is_ok());
-    }
-
-    #[test]
-    fn validate_code_refs_rejects_too_many() {
-        let refs: Vec<_> = (0..=limits::MAX_CODE_REFS)
-            .map(|i| CodeRef {
-                file: format!("src/f{i}.rs"),
-                symbol: None,
-            })
-            .collect();
-        let err = validate_code_refs(&refs).unwrap_err().to_string();
-        assert!(err.contains("too many"), "{err}");
-    }
-
-    #[test]
-    fn validate_code_refs_propagates_per_ref_error() {
-        let refs = vec![CodeRef {
-            file: "/absolute.rs".into(),
-            symbol: None,
-        }];
-        let err = validate_code_refs(&refs).unwrap_err().to_string();
-        assert!(err.contains("relative"), "{err}");
+        ));
     }
 }

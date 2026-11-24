@@ -19,7 +19,7 @@
 
 - [ ] PR description explains *why*, not just *what*
 - [ ] No new `unwrap()`/`expect()` in production code
-- [ ] Schema changes bump `FORMAT_VERSION` in `schema.rs` (if applicable)
+- [ ] On-disk changes raise `FORMAT_VERSION` and append a migration step (if applicable)
 - [ ] MCP tool changes documented in README (if applicable)
 
 <!-- Delete sections that don't apply. -->

@@ -1,0 +1,26 @@
+component = "store"
+choice = "A node file or project.toml over MAX_NODE_FILE_BYTES (1 MiB) is refused unparsed: the read stops at the cap and the error names the file"
+reason = """
+A node holds a decision, not a document, and every call loads every node, so one oversized file, by accident or on purpose, would cost every load its memory and parse time. read_node_bytes reads through take(cap + 1), so a file that grows while it is read, or one that never ends, costs at most the cap, and a read that passes it fails with Error::NodeTooLarge naming the file before the TOML parser sees a byte. The migration reads every file through the same function, so a store of an old format is held to the same bound.
+"""
+alternatives = [
+    "Check the length in the file's metadata, then read it whole: rejected because the length can change between the check and the read, and a special file reports none",
+    "Parse first, then measure: rejected because the parse cost is what the cap exists to avoid",
+    "No cap: rejected because one file could make every call slow or exhaust memory",
+]
+tags = [
+    "performance",
+    "security",
+]
+status = "accepted"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/error.rs", symbol = "Error::NodeTooLarge" },
+    { file = "src/store/limits.rs", symbol = "MAX_NODE_FILE_BYTES" },
+    { file = "src/store/load.rs", symbol = "read_node_bytes" },
+    { file = "src/store/version.rs", symbol = "read_table" },
+    { file = "tests/integration/malformed_node.rs", symbol = "a_node_file_over_one_mib" },
+]
+depends_on = [
+    "centralized-size-limits-in-limits-rs-shared-across-all",
+]

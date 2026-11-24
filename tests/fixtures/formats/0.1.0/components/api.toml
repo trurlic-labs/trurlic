@@ -1,0 +1,4 @@
+[component]
+name = "api"
+description = "The MCP server"
+connects_to = ["store"]

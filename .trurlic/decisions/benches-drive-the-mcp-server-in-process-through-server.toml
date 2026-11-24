@@ -1,7 +1,6 @@
-[decision]
 component = "mcp"
 choice = "Benches drive the MCP server in process through Server::serve_one, reachable only with the bench feature"
-reason = "Server holds the shared state and the initialize gate, and serve_one runs one read-dispatch-write turn over any BufRead and Write: run_server loops it over stdin and stdout, and benches/corpus.rs over a byte slice, so a bench times the exact request path minus the transport, with no second process or pipe in any sample. The benches run locally with plain criterion through `make bench`, and no CI job runs them: the project has one user and no public performance dashboard to maintain, so a hosted bench job would spend CI minutes and a third-party service on numbers nobody reads. Criterion compares each run with the previous one on the same machine, which is how a change is judged. The library's public surface stays cli and store: trurlic::bench re-exports Server only under the bench feature, the bench target requires it, and release builds never enable it. cargo-deny's wildcard ban rules out the alternative of a self dev-dependency that enables the feature for plain `cargo bench`, so `make bench` passes it."
+reason = "Server holds the directory it finds the store from and its record of the client, and serve_one runs one read-dispatch-write turn over any BufRead and Write: run_server loops it over stdin and stdout, and benches/corpus.rs over a byte slice, so a bench times the exact request path minus the transport, the load every call makes included, with no second process or pipe in any sample. The benches run locally with plain criterion through `make bench`, and no CI job runs them: the project has one user and no public performance dashboard to maintain, so a hosted bench job would spend CI minutes and a third-party service on numbers nobody reads. Criterion compares each run with the previous one on the same machine, which is how a change is judged. The library's public surface stays cli and store: trurlic::bench re-exports Server only under the bench feature, the bench target requires it, and release builds never enable it. cargo-deny's wildcard ban rules out the alternative of a self dev-dependency that enables the feature for plain `cargo bench`, so `make bench` passes it."
 alternatives = [
     "Spawn `trurlic serve` per bench: every sample would add pipe round trips and a second process's scheduling to the request path it means to time",
     "Run the benches in a CI job on a hosted benchmarking service: CI minutes and a third-party account for numbers one user does not read",
@@ -9,20 +8,14 @@ alternatives = [
     "Self dev-dependency enabling the feature: refused by cargo-deny's wildcard ban",
 ]
 tags = [
+    "api",
     "performance",
     "testing",
-    "api",
 ]
-attribution = "agent"
+status = "proposed"
 created = "2026-11-23T20:24:02.826381615Z"
-
-[[decision.code_refs]]
-file = "src/mcp/mod.rs"
-symbol = "Server::serve_one"
-
-[[decision.code_refs]]
-file = "src/lib.rs"
-symbol = "bench"
-
-[[decision.code_refs]]
-file = "benches/corpus.rs"
+anchors = [
+    { file = "benches/corpus.rs" },
+    { file = "src/lib.rs", symbol = "bench" },
+    { file = "src/mcp/mod.rs", symbol = "Server::serve_one" },
+]

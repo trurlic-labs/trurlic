@@ -1,0 +1,23 @@
+component = "commands"
+choice = "migrate keeps the report in the backup directory beside .trurlic/, both flushed before the commit, and a backup never lands in an earlier one"
+reason = """
+The patterns and the tags a migration takes out of the graph exist nowhere else afterwards, so the report must outlive the terminal. migrate copies the store, but for .state/ and a graph repository's .git/, into a new .trurlic-backup-<UTC time> directory beside .trurlic/, writes the report it prints into migration-report.txt there with create_new, and flushes every file and directory before the commit; a power loss after the commit can then not take the only record with it. The copy flushes in parallel, since each flush waits on the disk. The directory is created with create_dir, and a taken name gets -2, -3 and on, so a second migration in the same second, after an interrupted one, never merges into or deletes an earlier backup. A failure before the commit point removes the new backup; a WritePending keeps it, since the write lands. The backup stays outside the graph's own repository under shared: that history holds only files the current format reads, which a reader of it parses, and the migration's commit there (the repository's first when the migration makes it) already shows every change; the backup is removed with rm -r, touching neither history. The dry run writes nothing.
+"""
+alternatives = [
+    "Print the report only: rejected because what the graph loses would live in scrollback",
+    "Write the report into .trurlic/: rejected because the store would hold a file that is no node, versioned with the graph under tracked placement",
+    "Commit the old files to the graph's repository before the migration instead of a backup: rejected because its history would hold a format no reader of it parses, and a tracked graph has no such repository",
+    "A report file beside the backup directory: rejected because the two would be moved or deleted apart",
+]
+tags = [
+    "migration",
+    "reliability",
+]
+status = "proposed"
+created = "2026-11-24T01:30:00Z"
+anchors = [
+    { file = "src/commands/migrate.rs", symbol = "REPORT_FILE" },
+    { file = "src/commands/migrate.rs", symbol = "back_up" },
+    { file = "src/commands/migrate.rs", symbol = "backup_dir" },
+    { file = "tests/integration/migrate.rs", symbol = "migrates_and_passes_check" },
+]

@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 
-use crate::harness::{McpClient, Project};
+use crate::harness::{McpClient, Project, decision};
 
 const MAX_TOOL_RESULT_BYTES: usize = 24 * 1024;
 
@@ -11,26 +11,24 @@ const MAX_TOOL_RESULT_BYTES: usize = 24 * 1024;
 /// each exceed the budget several times over.
 const DECISIONS: usize = 60;
 
-fn build_graph(client: &mut McpClient) -> Vec<String> {
-    client.call_tool("add_component", json!({ "name": "auth" }));
-    client.call_tool("add_component", json!({ "name": "storage" }));
-    client.call_tool("add_connection", json!({ "from": "auth", "to": "storage" }));
-    (0..DECISIONS)
-        .map(|i| {
-            let recorded = client.call_tool(
-                "record_decision",
-                json!({
-                    "component": "auth",
-                    "choice": format!("Sign request kind {i:02} with a rotating key"),
-                    "reason": "Each hop verifies who sent the request. ".repeat(25),
-                    "attribution": "agent",
-                    "tags": ["security"],
-                    "code_refs": [{ "file": "src/auth.rs", "symbol": format!("sign_{i}") }],
-                }),
-            );
-            recorded["name"].as_str().unwrap().to_owned()
-        })
-        .collect()
+fn build_graph(project: &Project) {
+    project.write(
+        "components/auth.toml",
+        "description = \"\"\nconnects_to = [\"storage\"]\n",
+    );
+    project.write("components/storage.toml", "description = \"\"\n");
+    let reason = "Each hop verifies who sent the request. ".repeat(25);
+    for i in 0..DECISIONS {
+        let choice = format!("Sign request kind {i:02} with a rotating key");
+        let extra = format!(
+            "tags = [\"security\"]\nanchors = [{{ file = \"src/auth.rs\", symbol = \"sign_{i}\" }}]\n"
+        );
+        let text = decision("auth", &choice, &extra)
+            .replace("Recorded so the test has a decision to read", &reason);
+        project.write(&format!("decisions/sign-{i:02}.toml"), &text);
+    }
+    let rule = decision("project", "Every request is signed", "");
+    project.write("decisions/signed.toml", &rule);
 }
 
 fn fitted(client: &mut McpClient, tool: &str, arguments: Value) -> Value {
@@ -46,48 +44,71 @@ fn fitted(client: &mut McpClient, tool: &str, arguments: Value) -> Value {
 #[test]
 fn every_tool_result_fits_the_budget() {
     let project = Project::init();
+    build_graph(&project);
     let (mut client, _) = McpClient::connect(&project);
-    let names = build_graph(&mut client);
 
-    let context = fitted(&mut client, "get_context", json!({ "component": "auth" }));
-    assert!(
-        context["truncated"].is_array(),
-        "the graph must exceed the budget"
-    );
-    let reads = [
-        (
-            "get_context",
-            json!({ "component": "auth", "depth": "constraints" }),
-        ),
-        ("get_architecture", json!({})),
-        (
-            "check_pattern",
-            json!({ "description": "sign request rotating key" }),
-        ),
+    for (tool, arguments) in [
+        ("get_context", json!({ "component": "auth" })),
         ("get_decisions_for_file", json!({ "file": "src/auth.rs" })),
-        ("get_decision_history", json!({ "name": names[0] })),
-        (
-            "verify_against_decisions",
-            json!({ "component": "auth", "changed_files": ["src"] }),
-        ),
-    ];
-    for (tool, arguments) in reads {
-        fitted(&mut client, tool, arguments);
+    ] {
+        let payload = fitted(&mut client, tool, arguments);
+        assert!(
+            payload["truncated"].is_array(),
+            "{tool} must exceed the budget"
+        );
     }
+    for arguments in [
+        json!({ "component": "auth", "depth": "constraints" }),
+        json!({ "component": "project" }),
+    ] {
+        fitted(&mut client, "get_context", arguments);
+    }
+}
 
-    let writes = [
-        (
-            "record_pattern",
-            json!({ "name": "Signed requests", "description": "Every hop signs", "decisions": names }),
-        ),
-        (
-            "update_decision",
-            json!({ "name": names[1], "mode": "revise", "tags": ["security", "keys"] }),
-        ),
-        ("remove_pattern", json!({ "name": "signed-requests" })),
-        ("remove_decision", json!({ "name": names[2] })),
-    ];
-    for (tool, arguments) in writes {
-        fitted(&mut client, tool, arguments);
+/// A graph whose issues alone exceed the budget several times over, and
+/// whose components fill a good part of it: each status section fits, the
+/// issues section counts what it leaves out and says where the rest is,
+/// and asked for alone it shows more of them. Nothing is cut silently: no
+/// result carries a `truncated` notice.
+#[test]
+fn status_fits_the_budget_and_counts_what_it_leaves_out() {
+    const BROKEN: usize = 400;
+    const COMPONENTS: usize = 300;
+    let project = Project::init();
+    for i in 0..COMPONENTS {
+        project.write(
+            &format!("components/part-{i:03}.toml"),
+            "description = \"\"\n",
+        );
     }
+    for i in 0..BROKEN {
+        let text = decision("project", &format!("Rule {i:03}"), "")
+            .replace("Recorded so the test has a decision to read", "short");
+        project.write(&format!("decisions/rule-{i:03}.toml"), &text);
+    }
+    let (mut client, _) = McpClient::connect(&project);
+
+    let whole = fitted(&mut client, "status", json!({}));
+    let alone = fitted(&mut client, "status", json!({ "section": "issues" }));
+
+    for status in [&whole, &alone] {
+        assert!(status.get("truncated").is_none(), "{status}");
+        let issues = &status["issues"];
+        assert_eq!(issues["total"], BROKEN);
+        let shown = issues["items"].as_array().unwrap().len();
+        assert_eq!(issues["omitted"], BROKEN - shown);
+        assert_eq!(issues["more"], "`trurlic check` lists every issue");
+    }
+    let shown = |status: &Value| status["issues"]["items"].as_array().unwrap().len();
+    assert!(
+        shown(&alone) > shown(&whole),
+        "{} {}",
+        shown(&alone),
+        shown(&whole)
+    );
+    assert!(alone.get("components").is_none());
+    assert_eq!(
+        whole["components"]["items"][0],
+        json!({ "name": "project", "decisions": BROKEN, "proposed": 0 })
+    );
 }

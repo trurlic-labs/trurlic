@@ -1,0 +1,20 @@
+component = "store"
+choice = "The example [quality] ships as examples/quality.toml, a generic bar for decisions agents follow, which a test loads through the real reader and holds to its own bar"
+reason = "A config kept in the README alone rots: a renamed key or a pattern that no longer compiles goes unseen. A file a test loads is read as every project.toml is, compiled, shown to let a decision at its bar through and to refuse one below it, and written back canonical. Its rules translate a length and style bar for decisions into keys and patterns; a rule that needs judgment, such as no measurement in a reason, is a warn. It names no project. The apply bench runs under it."
+alternatives = [
+    "A block in the README: rejected because no test reads it",
+    "This repository's own table as the example: rejected because it holds this repository's rules, such as ASCII prose, not a general bar",
+]
+tags = [
+    "quality",
+]
+status = "proposed"
+origin = "quality rules"
+created = "2026-11-24T04:09:05.642017587Z"
+anchors = [
+    { file = "examples/quality.toml" },
+    { file = "src/store/quality/mod.rs", symbol = "the_shipped_example_loads_compiles_and_holds_its_bar" },
+]
+depends_on = [
+    "quality-in-project-toml-is-typed-optional-and-written-canonical",
+]

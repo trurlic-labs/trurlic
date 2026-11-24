@@ -1,0 +1,26 @@
+component = "store"
+choice = "A node file, project.toml, the journal, a staged file a replay reads and the lock are refused unopened unless regular; a node file's name that is not UTF-8 is refused, none skipped"
+reason = "Every reader holds the shared lock while it loads, so a FIFO named like a node file would block every read and, behind it, every write. Each file the store reads by a name anyone can replace is checked before it is opened, one metadata call each, its symlinks followed, made by the parallel read of a node file so a load of many files does not wait on them one by one; the lock file, opened without blocking, is checked by its handle. The listing takes every entry named *.toml, as the history's pathspecs commit them, so nothing a commit holds is skipped by the load: a name that is not UTF-8 fails the load naming it, and a stem that is no node name is a validation issue. The batch file of trurlic apply may be a pipe, as stdin is, since no lock is held while it is read."
+alternatives = [
+    "Open with a non-blocking flag: rejected because std has no portable flag, and a constant per platform is a dependency on libc in all but name",
+    "Skip what is not a regular file: rejected because the history would commit what the load never read",
+]
+tags = [
+    "reliability",
+    "security",
+]
+status = "accepted"
+origin = "review findings of the stateless-server landing"
+created = "2026-11-24T05:11:14.670604818Z"
+anchors = [
+    { file = "src/error.rs", symbol = "Error::NotAFile" },
+    { file = "src/store/journal.rs", symbol = "read_if_regular" },
+    { file = "src/store/load.rs", symbol = "Store::read_nodes" },
+    { file = "src/store/load.rs", symbol = "an_entry_that_is_no_regular_file_is_refused_unopened" },
+    { file = "src/store/load.rs", symbol = "ensure_regular" },
+    { file = "src/store/load.rs", symbol = "read_node_bytes" },
+    { file = "src/store/lock.rs", symbol = "Store::open_lock_file" },
+]
+depends_on = [
+    "a-load-fails-only-when-a-file-is-not-its-type",
+]

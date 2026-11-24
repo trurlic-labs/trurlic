@@ -1,0 +1,24 @@
+component = "store"
+choice = "Uncommitted covers the graph files, project.toml, components/*.toml and decisions/*.toml one level deep, modified, deleted, new or ignored; never .state/, never another file"
+reason = """
+The graph is what a load reads, so the history holds exactly that: graph_files are :(glob) pathspecs of the three kinds, one level deep as list_toml_stems reads them. git status runs with --porcelain=v2 --untracked-files=all --ignored --no-renames, so modified, deleted, untracked and ignored graph files all count: no ignore rule can keep a graph file out of the history. .state/ (lock, journal, temp files) is never matched, whatever the ignore rules say, so a lost info/exclude cannot commit the journal. A file that is no graph file, such as notes the owner keeps in .trurlic/, is the owner's: no commit takes it and no finding names it, and the owner may version it by hand.
+"""
+alternatives = [
+    "git add -A over the work tree: rejected because it commits .state/ the moment an ignore rule is lost, and every file the owner keeps there",
+    "Every .toml at any depth: rejected because a load reads one level, so a deeper file is no part of the graph",
+    "Report files that are no graph file too: rejected because the history is the graph's, and the owner's own files are no finding",
+]
+tags = [
+    "git",
+    "history",
+]
+status = "proposed"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/git/graph.rs", symbol = "Repository::status" },
+    { file = "src/git/graph.rs", symbol = "parse_status" },
+    { file = "src/store/history.rs", symbol = "graph_files" },
+]
+depends_on = [
+    "a-shared-graph-s-write-commits-the-hand-edits-it-finds-first-as-hand-edit",
+]

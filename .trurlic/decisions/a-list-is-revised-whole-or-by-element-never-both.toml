@@ -1,0 +1,22 @@
+component = "store"
+choice = "A revise gives a list whole or by add_ and remove_, never both; removals run first and each must be held, then additions, an element already held staying once"
+reason = "Most revises change one list by one element (an anchor added, a tag dropped), and a whole list from a stale read would undo another writer's element, so add_/remove_ is the common form and the whole list the explicit reset. Both forms for one list in one op have no single meaning, so it is refused (both_forms) rather than ordered by a rule the caller must remember. A removal of an element the list does not hold means the caller's view of the decision is wrong, a typo'd anchor most of all, and is refused (not_held); an addition of one it holds leaves the list as the caller wants it. An added edge is checked as a new one (dependency_missing, connection_missing, self_edge); one already held is not, so a dangling edge a hand edit left blocks no other change. Alternatives keep their order; sets stay sorted."
+alternatives = [
+    "Apply the whole list, then the additions and removals: rejected because the caller must then know an order the batch does not show",
+    "Accept a removal of an element the list lacks: rejected because a typo in an anchor to remove would pass silently and leave the stale one",
+    "Whole lists only: rejected because a one-anchor change would carry, and race, every other anchor",
+]
+tags = [
+    "api",
+]
+status = "proposed"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/mcp/apply/mod.rs", symbol = "edit" },
+    { file = "src/store/apply/check.rs", symbol = "edit_list" },
+    { file = "src/store/apply/ops.rs", symbol = "ListEdit" },
+]
+depends_on = [
+    "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",
+]

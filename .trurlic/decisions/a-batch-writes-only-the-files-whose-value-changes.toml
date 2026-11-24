@@ -1,0 +1,20 @@
+component = "store"
+choice = "A batch writes only the files whose value differs from the one the batch began with and removes those it took away; a node renamed away and back is neither"
+reason = "Writing an untouched file would rewrite a hand edit out of form and add a file to the history commit that no op changed. The undo record names every node an op touched with its starting value; a file is written when its value differs from that value, removed when it is gone, and left alone when the ops returned it to where it began. The files written or removed leave the writer's list of non-canonical files."
+alternatives = [
+    "Write every file an op touched: rejected because a rename and its undo in one batch would rewrite both files and every dependent for nothing",
+]
+tags = [
+    "performance",
+]
+status = "accepted"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/store/apply/edit.rs", symbol = "Before" },
+    { file = "src/store/apply/mod.rs", symbol = "Writer::files" },
+    { file = "src/store/apply/tests.rs", symbol = "only_the_files_whose_value_changes_are_written" },
+]
+depends_on = [
+    "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",
+]

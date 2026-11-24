@@ -1,0 +1,23 @@
+component = "store"
+choice = "A key of an old file the step does not map is a reported loss, never a refusal; a mapped key whose value the 0.5 type cannot hold fails the migration naming the file"
+reason = """
+0.4.1 read its files without refusing unknown keys, so a hand edit or another tool could leave any key in them, and 0.4.1 ignored it. The step to 0.5 builds each table from the keys it knows and reports every other one with its file, dotted field and value: in project.toml, its [project] table, a component, a decision, a code ref, a pattern, graph.toml and its node entries. A refusal would block a whole migration over a value 0.4.1 itself never read, and the backup keeps the old file. A key the step does map but whose value is not of its type (a choice that is a number) was unreadable to 0.4.1 too; it reaches the strict typed read, which fails naming the file, and nothing is written.
+"""
+alternatives = [
+    "Refuse a migration that meets an unknown key: rejected because a key 0.4.1 ignored would stop the migration of the whole store",
+    "Drop unknown keys silently, as the old migrate did: rejected because a value would vanish without a word",
+]
+tags = [
+    "migration",
+    "validation",
+]
+status = "proposed"
+created = "2026-11-24T01:30:00Z"
+anchors = [
+    { file = "src/store/migration/format_0_5.rs", symbol = "Notes::rest" },
+    { file = "src/store/migration/format_0_5.rs", symbol = "Notes::rest_top" },
+    { file = "src/store/migration/format_0_5.rs", symbol = "a_key_of_any_0_4_1_file_the_step_does_not_map_is_reported" },
+]
+depends_on = [
+    "a-migration-rewrites-the-graph-as-toml-tables-reads-the",
+]

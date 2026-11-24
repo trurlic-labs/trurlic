@@ -1,0 +1,24 @@
+component = "store"
+choice = "A [quality] pattern is a regular expression of the regex crate, compiled once per batch by a write and by check, never by a read, within a stated size"
+reason = "A project rule such as a whole word, or a sentence past 25 words, needs classes and counts that a substring cannot state. The regex crate builds with std, unicode and the lazy DFA, without the literal optimizations whose crates a few short texts per write do not repay; Unicode classes and case folding, since a decision's text is in any script and a word boundary must not split a word at its first letter outside ASCII. A read never judges quality, so load_state parses the table and compiles nothing; Writer::apply compiles every pattern once per batch and reuses it for every op. A short pattern can ask for a large automaton, so each is bounded: MAX_QUALITY_PATTERNS, MAX_PATTERN_BYTES of text, MAX_PATTERN_COMPILED_BYTES of compiled program and DFA cache. One that fails is Error::QualityPattern naming project.toml, its index and regex's message: check reports it, every write is refused, and status still answers."
+alternatives = [
+    "Literal substrings: rejected because a whole word or a sentence length needs a class and a count",
+    "Compile at every load: rejected because a read never judges quality, and a batch pays the compile once",
+    "ASCII classes: rejected because a word boundary would split a word at its first letter outside ASCII",
+]
+tags = [
+    "dependencies",
+    "quality",
+]
+status = "accepted"
+origin = "quality rules"
+created = "2026-11-24T04:09:05.642017587Z"
+anchors = [
+    { file = "Cargo.toml", symbol = "dependencies::regex" },
+    { file = "src/commands/check.rs", symbol = "check" },
+    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_COMPILED_BYTES" },
+    { file = "src/store/quality/bar.rs", symbol = "Bar::compile" },
+]
+depends_on = [
+    "quality-in-project-toml-is-typed-optional-and-written-canonical",
+]

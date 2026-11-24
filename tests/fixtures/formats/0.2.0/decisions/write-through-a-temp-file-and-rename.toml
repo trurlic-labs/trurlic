@@ -1,0 +1,9 @@
+[decision]
+component = "store"
+choice = "Write through a temp file and rename"
+reason = "A crash never leaves a half-written node file"
+tags = [
+    "storage",
+    "reliability",
+]
+created = "2026-11-23T21:55:57.848816741Z"

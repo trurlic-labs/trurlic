@@ -1,0 +1,21 @@
+component = "store"
+choice = "trurlic fmt commits a shared graph's hand edits as hand edit even when no file needs a rewrite, so fmt then check leaves the history settled"
+reason = """
+The way to land a hand edit is trurlic fmt, then trurlic check. Under shared, check warns about graph files the history does not hold, and without this rule a canonical hand edit would wait for the next write, which may come after a review has read the history. Writer::format runs Store::prepare_history alone when it has nothing to rewrite, so it makes the one hand edit commit a write would; with files to rewrite it is one hand edit commit and one fmt commit.
+"""
+alternatives = [
+    "Commit hand edits only at a write that changes files: rejected because the owner would have no command but git to settle the history",
+    "A trurlic commit command: rejected because the surface has none, and fmt is the command that settles the files",
+]
+tags = [
+    "git",
+    "history",
+]
+status = "proposed"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/store/access.rs", symbol = "Writer::format" },
+]
+depends_on = [
+    "a-shared-graph-s-write-commits-the-hand-edits-it-finds-first-as-hand-edit",
+]

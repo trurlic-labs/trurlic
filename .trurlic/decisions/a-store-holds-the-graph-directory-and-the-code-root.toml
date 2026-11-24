@@ -1,0 +1,27 @@
+component = "store"
+choice = "A Store holds the graph directory and the code root, the tree the call comes from; anchors resolve against the code root, and .state/ lives in the graph directory"
+reason = """
+A linked worktree and a symlinked clone read a graph that is not theirs, and their code differs from the main worktree's: a branch adds files and moves symbols. Anchors resolve against the tree the call comes from, so Store carries the code root beside the graph directory (Store::reached_from), the load hands it to ProjectState::code_root, and get_context counts an anchor orphaned only when the calling tree lacks its file; span hashes will use the same root. The graph directory is held by its real path, so .state/, the lock and the commit journal, is one directory for every tree that reaches the graph: writers started in the main worktree, a linked worktree and a symlinked clone exclude each other, and a commit one of them left unfinished is finished by a command in another. The backup migrate makes sits beside the real graph too. status prints both roots when they differ, and messages name the graph by its path then, since the tree holds no .trurlic/ of its own.
+"""
+alternatives = [
+    "Resolve anchors against the graph's parent: rejected because a linked worktree or a clone would judge its anchors by the main worktree's files, another branch",
+    "Keep .state/ per tree: rejected because two trees writing one graph would not exclude each other, and a journal left in one tree would never be finished from another",
+    "Hold the graph by the path through the symlink: rejected because migrate's backup and its git listing would land in the clone, which is another repository",
+]
+tags = [
+    "concurrency",
+    "placement",
+]
+status = "accepted"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/store/mod.rs", symbol = "Store" },
+    { file = "src/store/mod.rs", symbol = "Store::code_root" },
+    { file = "src/store/mod.rs", symbol = "Store::reached_from" },
+    { file = "src/store/state.rs", symbol = "ProjectState::code_root" },
+    { file = "tests/integration/placement.rs", symbol = "a_commit_stopped_in_one_tree_is_finished_from_another" },
+    { file = "tests/integration/placement.rs", symbol = "writers_in_every_tree_of_one_graph_take_one_lock" },
+]
+depends_on = [
+    "discovery-takes-the-walk-up-first-then-the-main-worktree-s-shared-graph",
+]

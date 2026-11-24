@@ -1,0 +1,27 @@
+component = "commands"
+choice = "check fails only on an issue and warns about each non-canonical file; trurlic fmt rewrites exactly those files in one journaled commit"
+reason = """
+A hand edit is a legal write and its layout is a matter of form, not of the graph: failing check on it would fail every hand edit until fmt ran. The load lists each file whose bytes differ from its canonical form (ProjectState::non_canonical); check prints each as a warning naming trurlic fmt and exits 1 only on an issue, and status counts them. Writer::format prepares the canonical text of each listed file and commits them in one commit_batch, so a crash lands all or none; a file already canonical is not touched, so its mtime and its diff stay, and a second run writes nothing. fmt runs over a graph with issues too: the text it writes reads back as the value loaded, so it adds none.
+"""
+alternatives = [
+    "Fail check on a non-canonical file: rejected because a hand edit, now the only write, would fail check until fmt ran",
+    "Rewrite every file on fmt: rejected because rewriting canonical files churns mtimes and open editor buffers for no change",
+    "Format on every load or write: rejected because a read would write, and a write would touch files it is not about",
+]
+tags = [
+    "consistency",
+    "developer-experience",
+]
+status = "proposed"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/commands/check.rs", symbol = "check" },
+    { file = "src/commands/fmt.rs", symbol = "fmt" },
+    { file = "src/store/access.rs", symbol = "Writer::format" },
+    { file = "tests/integration/canonical_form.rs", symbol = "a_hand_edited_non_canonical_file_loads_check_flags_it_and_fmt_fixes_it" },
+    { file = "tests/integration/canonical_form.rs", symbol = "fmt_twice_changes_nothing" },
+]
+depends_on = [
+    "every-commit-goes-through-a-flushed-journal-in-state-txn",
+    "one-canonical-form-for-every-graph-file",
+]

@@ -1,1895 +1,654 @@
+//! The two reads agents call through MCP until `brief` replaces them: a
+//! component's context and the decisions anchored in a file.
+
 use std::collections::BTreeSet;
+use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
-use crate::store::graph::InMemoryGraph;
-use crate::store::schema::{Attribution, EdgeKind};
-use crate::store::{self, DecisionFile, PatternFile, ProjectState};
-
-// ── Context depth ──────────────────────────────────────────────────────────
+use crate::store::{self, Anchor, Component, Named, PROJECT_COMPONENT, ProjectState, Status};
 
 /// Controls how much detail `get_context` returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextDepth {
-    /// Full context: decisions with reasoning, related decisions,
-    /// transitive dependencies, patterns, and verbose brief.
+pub(super) enum ContextDepth {
+    /// Decisions with reasoning, related decisions, transitive
+    /// dependencies, and the full brief.
     Full,
-    /// Constraints only: choice text (no reasoning/alternatives),
-    /// no related decisions, compact brief. ~60-70% fewer tokens.
+    /// Choice text only, no related decisions, compact brief.
     Constraints,
 }
 
-// ── get_context ──────────────────────────────────────────────────────────
+// -- get_context ----------------------------------------------------------------
 
-/// Assemble a tailored spec for a component: its decisions, project-wide
-/// rules, related decisions from connected components, applicable patterns,
-/// and a pre-assembled authoritative brief.
-///
-/// `depth` controls verbosity: `Full` returns everything; `Constraints`
-/// strips reasoning, alternatives, and related decisions for ~60-70%
-/// fewer tokens on mid-implementation constraint checks.
-pub(crate) fn get_context(
+/// A component's decisions, the project-wide rules, the decisions of
+/// connected components and of what its decisions depend on, and a brief
+/// assembled from them. `depth` is how much of that is returned.
+pub(super) fn get_context(
     state: &ProjectState,
     component: &str,
-    task_description: Option<&str>,
+    task: Option<&str>,
     depth: ContextDepth,
 ) -> Result<Value, String> {
-    let graph = state.graph();
-
-    if component == "project" {
-        return Ok(project_context(state, graph, task_description));
+    if component == PROJECT_COMPONENT {
+        return Ok(project_context(state, task));
     }
-
     let comp = state
         .components
         .get(component)
         .ok_or_else(|| format!("component `{component}` does not exist"))?;
-
-    let connects_to = graph.connects_to(component);
-    let connects_from = graph.connects_from(component);
-
-    let component_decisions = graph.decisions_for(component);
-    let project_decisions = graph.project_decisions();
-    let patterns = graph.patterns_for(component);
-
-    let status = if !component_decisions.is_empty() {
-        "covered"
-    } else if !project_decisions.is_empty() {
-        "partially_covered"
-    } else {
-        "not_covered"
+    let own = state.decisions_of(component);
+    let rules = state.project_decisions();
+    let view = View {
+        component,
+        task,
+        own: &own,
+        rules: &rules,
     };
-
-    match depth {
-        ContextDepth::Full => {
-            // Decisions whose code_refs all point at deleted files — each ref is
-            // stat'd on disk, so this runs only on the full brief that consumes
-            // it (health summary + orphaned-ref flags), never the light constraints path.
-            let orphaned_ref_names = orphaned_ref_names(&state.project_root, &component_decisions);
-
-            let related_decisions = graph.related_decisions(component);
-            let seeds: Vec<&str> = component_decisions
+    Ok(match depth {
+        ContextDepth::Full => full_context(state, comp, &view),
+        ContextDepth::Constraints => json!({
+            "component": { "name": component },
+            "decisions": own
                 .iter()
-                .map(|(name, _)| name.as_ref())
-                .collect();
-            let transitive_deps = graph.transitive_depends_on(&seeds, 3);
-
-            let brief = build_brief(&BriefParams {
-                component,
-                task: task_description,
-                component_decisions: &component_decisions,
-                project_decisions: &project_decisions,
-                related_decisions: &related_decisions,
-                transitive_deps: &transitive_deps,
-                patterns: &patterns,
-                orphaned_ref_names: &orphaned_ref_names,
-            });
-
-            let mut seen: BTreeSet<&str> = BTreeSet::new();
-            for (name, _) in &component_decisions {
-                seen.insert(name);
-            }
-            let combined_related: Vec<String> = related_decisions
-                .iter()
-                .chain(transitive_deps.iter())
-                .filter(|(name, _)| seen.insert(name))
-                .map(|(_, d)| {
-                    format!(
-                        "{}: {} ({})",
-                        d.decision.component, d.decision.choice, d.decision.reason
-                    )
-                })
-                .collect();
-
-            Ok(serde_json::json!({
-                "component": {
-                    "name": comp.component.name,
-                    "description": comp.component.description,
-                    "connects_to": connects_to,
-                    "connects_from": connects_from,
-                },
-                "decisions": format_decisions(&component_decisions),
-                "project_rules": project_decisions.iter()
-                    .map(|(_, d)| &d.decision.choice)
-                    .collect::<Vec<_>>(),
-                "patterns": format_patterns(&patterns),
-                "related_decisions": combined_related,
-                "health": build_health(&component_decisions, orphaned_ref_names.len()),
-                "brief": brief,
-                "status": status,
-            }))
-        }
-        ContextDepth::Constraints => {
-            let brief = build_brief_compact(
-                component,
-                task_description,
-                &component_decisions,
-                &project_decisions,
-                &patterns,
-            );
-
-            Ok(serde_json::json!({
-                "component": { "name": comp.component.name },
-                "decisions": format_decisions_compact(&component_decisions),
-                "project_rules": project_decisions.iter()
-                    .map(|(_, d)| &d.decision.choice)
-                    .collect::<Vec<_>>(),
-                "patterns": patterns.iter()
-                    .map(|(name, _)| name.as_ref())
-                    .collect::<Vec<_>>(),
-                "brief": brief,
-                "status": status,
-            }))
-        }
-    }
-}
-
-fn project_context(
-    state: &ProjectState,
-    graph: &InMemoryGraph,
-    task_description: Option<&str>,
-) -> Value {
-    let project_decisions = graph.project_decisions();
-
-    let mut brief = String::with_capacity(256);
-    if let Some(task) = task_description {
-        brief.push_str(&format!("TASK: {task}\n\n"));
-    }
-    if project_decisions.is_empty() {
-        brief.push_str("No project-wide decisions recorded yet.\n");
-    } else {
-        brief.push_str("PROJECT-WIDE RULES:\n");
-        for (_, d) in &project_decisions {
-            brief.push_str(&format!("- {}\n", d.decision.choice));
-        }
-    }
-    brief.push_str("\nWHEN UNCERTAIN:\n");
-    brief.push_str("STOP. Ask the user to design project-wide rules first.\n");
-
-    let status = if project_decisions.is_empty() {
-        "not_covered"
-    } else {
-        "covered"
-    };
-
-    serde_json::json!({
-        "component": {
-            "name": "project",
-            "description": state.project.project.description,
-        },
-        "decisions": format_decisions(&project_decisions),
-        "project_rules": project_decisions.iter()
-            .map(|(_, d)| &d.decision.choice).collect::<Vec<_>>(),
-        "patterns": [],
-        "related_decisions": [],
-        "brief": brief,
-        "status": status,
+                .map(|(name, d)| json!({ "name": name, "choice": d.choice }))
+                .collect::<Vec<_>>(),
+            "project_rules": view.project_rules(),
+            "brief": build_brief_compact(&view),
+            "status": view.coverage(),
+        }),
     })
 }
 
-// ── build_brief ──────────────────────────────────────────────────────────
-
-struct BriefParams<'a> {
+/// What both depths of a component's context are built from.
+struct View<'a> {
     component: &'a str,
     task: Option<&'a str>,
-    component_decisions: &'a [(&'a Arc<str>, &'a DecisionFile)],
-    project_decisions: &'a [(&'a Arc<str>, &'a DecisionFile)],
-    related_decisions: &'a [(&'a Arc<str>, &'a DecisionFile)],
-    transitive_deps: &'a [(&'a Arc<str>, &'a DecisionFile)],
-    patterns: &'a [(&'a Arc<str>, &'a PatternFile)],
-    /// Names of component decisions whose code_refs all point at deleted
-    /// files. Flagged inline so the agent knows the reference is untrustworthy.
-    orphaned_ref_names: &'a BTreeSet<&'a str>,
+    own: &'a [Named<'a>],
+    rules: &'a [Named<'a>],
 }
 
-/// Format the authoritative brief that coding agents consume directly.
-fn build_brief(p: &BriefParams<'_>) -> String {
-    let mut brief = String::with_capacity(512);
-
-    if let Some(task) = p.task {
-        brief.push_str(&format!("TASK: {task}\n\n"));
-    }
-
-    if !p.project_decisions.is_empty() {
-        brief.push_str("RULES (inviolable — every generated line must respect these):\n");
-        for (_, d) in p.project_decisions {
-            brief.push_str(&format!("- {}\n", d.decision.choice));
+impl View<'_> {
+    fn coverage(&self) -> &'static str {
+        if !self.own.is_empty() {
+            "covered"
+        } else if !self.rules.is_empty() {
+            "partially_covered"
+        } else {
+            "not_covered"
         }
-        brief.push('\n');
     }
 
-    if !p.patterns.is_empty() {
-        brief.push_str("PATTERNS:\n");
-        for (name, pat) in p.patterns {
-            brief.push_str(&format!(
-                "- {}: {}\n",
-                name.as_ref(),
-                pat.pattern.description
-            ));
-        }
-        brief.push('\n');
+    fn project_rules(&self) -> Vec<&str> {
+        self.rules.iter().map(|(_, d)| d.choice.as_str()).collect()
     }
+}
 
-    brief.push_str(&format!("COMPONENT: {}\n", p.component));
-    if p.component_decisions.is_empty() {
-        brief.push_str("- No decisions recorded yet.\n");
+fn full_context(state: &ProjectState, comp: &Component, view: &View<'_>) -> Value {
+    let orphaned = orphaned(&state.code_root, view.own);
+    let related = state.related_decisions(view.component);
+    let seeds: Vec<&str> = view.own.iter().map(|&(name, _)| name).collect();
+    let dependencies = state.dependencies(&seeds, 3);
+    let brief = build_brief(&Brief {
+        view,
+        related: &related,
+        dependencies: &dependencies,
+        orphaned: &orphaned,
+    });
+    let mut seen: BTreeSet<&str> = seeds.iter().copied().collect();
+    let combined_related: Vec<String> = related
+        .iter()
+        .chain(&dependencies)
+        .filter(|(name, _)| seen.insert(name))
+        .map(|(_, d)| format!("{}: {} ({})", d.component, d.choice, d.reason))
+        .collect();
+    json!({
+        "component": {
+            "name": view.component,
+            "description": comp.description,
+            "connects_to": comp.connects_to,
+            "connects_from": state.connects_from(view.component),
+        },
+        "decisions": format_decisions(view.own),
+        "project_rules": view.project_rules(),
+        "related_decisions": combined_related,
+        "health": health(view.own, orphaned.len()),
+        "brief": brief,
+        "status": view.coverage(),
+    })
+}
+
+fn project_context(state: &ProjectState, task: Option<&str>) -> Value {
+    let rules = state.project_decisions();
+
+    let mut brief = String::with_capacity(256);
+    push_task(&mut brief, task);
+    if rules.is_empty() {
+        brief.push_str("No project-wide decisions recorded yet.\n\n");
     } else {
-        for (name, d) in p.component_decisions {
-            let suffix = attribution_suffix(d.decision.attribution);
-            brief.push_str(&format!(
-                "- {} ({}){}\n",
-                d.decision.choice, d.decision.reason, suffix
-            ));
-            if p.orphaned_ref_names.contains(name.as_ref()) {
-                brief.push_str(ORPHANED_REFS_FLAG);
-            }
-            if d.decision.attribution == Attribution::Agent {
-                brief.push_str(AGENT_REVIEW_CALL_TO_ACTION);
-            }
-            if !d.decision.code_refs.is_empty() {
-                brief.push_str(&format!(
-                    "  Code: {}\n",
-                    store::format_code_refs(&d.decision.code_refs)
-                ));
-            }
+        let listed = rules
+            .iter()
+            .map(|(_, d)| format!("{}{}", d.choice, status_suffix(&d.status)));
+        push_section(&mut brief, "PROJECT-WIDE RULES", listed);
+    }
+    brief.push_str("WHEN UNCERTAIN:\n");
+    brief.push_str("STOP. Ask the user to design project-wide rules first.\n");
+
+    json!({
+        "component": {
+            "name": PROJECT_COMPONENT,
+            "description": state.project.description,
+        },
+        "decisions": format_decisions(&rules),
+        "project_rules": rules.iter().map(|(_, d)| &d.choice).collect::<Vec<_>>(),
+        "related_decisions": [],
+        "brief": brief,
+        "status": if rules.is_empty() { "not_covered" } else { "covered" },
+    })
+}
+
+// -- The brief --------------------------------------------------------------------
+
+struct Brief<'a> {
+    view: &'a View<'a>,
+    related: &'a [Named<'a>],
+    dependencies: &'a [Named<'a>],
+    /// The decisions of `own` whose every anchor names a file that is gone.
+    orphaned: &'a BTreeSet<&'a str>,
+}
+
+const OVERRIDE_POLICY: &str = "OVERRIDE POLICY:\n\
+    RULES are inviolable. Component decisions are strong defaults:\n\
+    follow them unless the user explicitly revises them.\n\
+    Never silently deviate from either.\n\n";
+
+const WHEN_UNCERTAIN: &str = "WHEN UNCERTAIN:\n\
+    STOP. Search .trurlic/decisions/ for a decision that covers it. If none\n\
+    does, ask the user to design it first. Never silently deviate.\n";
+
+/// The brief coding agents read in place of the structured fields.
+fn build_brief(p: &Brief<'_>) -> String {
+    let view = p.view;
+    let mut brief = String::with_capacity(512);
+    push_task(&mut brief, view.task);
+    let rules = view.rules.iter().map(|(_, d)| &d.choice);
+    push_section(
+        &mut brief,
+        "RULES (inviolable: every generated line must respect these)",
+        rules,
+    );
+
+    brief.push_str(&format!("COMPONENT: {}\n", view.component));
+    if view.own.is_empty() {
+        brief.push_str("- No decisions recorded yet.\n");
+    }
+    for &(name, d) in view.own {
+        let suffix = status_suffix(&d.status);
+        brief.push_str(&format!("- {} ({}){suffix}\n", d.choice, d.reason));
+        if p.orphaned.contains(name) {
+            brief.push_str("  ORPHANED ANCHORS: every anchored file is gone\n");
+        }
+        if !d.anchors.is_empty() {
+            brief.push_str(&format!("  Code: {}\n", list_anchors(&d.anchors)));
         }
     }
     brief.push('\n');
 
-    if !p.transitive_deps.is_empty() {
-        brief.push_str("DEPENDENCIES:\n");
-        for (_, d) in p.transitive_deps {
-            brief.push_str(&format!(
-                "- {}: {} ({})\n",
-                d.decision.component, d.decision.choice, d.decision.reason
-            ));
-        }
-        brief.push('\n');
-    }
-
-    if !p.related_decisions.is_empty() {
-        brief.push_str("RELATED:\n");
-        for (_, d) in p.related_decisions {
-            brief.push_str(&format!(
-                "- {}: {}\n",
-                d.decision.component, d.decision.choice
-            ));
-        }
-        brief.push('\n');
-    }
-
-    brief.push_str(
-        "OVERRIDE POLICY:\n\
-         RULES are inviolable. Component decisions are strong defaults —\n\
-         follow them unless the user explicitly revises them.\n\
-         Never silently deviate from either.\n\n",
-    );
-
-    brief.push_str("WHEN UNCERTAIN:\n");
-    brief.push_str(
-        "STOP. Call check_pattern to verify coverage. If not covered,\n\
-         ask the user to design it first. Never silently deviate.\n",
-    );
-
+    let dependencies = p
+        .dependencies
+        .iter()
+        .map(|(_, d)| format!("{}: {} ({})", d.component, d.choice, d.reason));
+    push_section(&mut brief, "DEPENDENCIES", dependencies);
+    let related = p
+        .related
+        .iter()
+        .map(|(_, d)| format!("{}: {}", d.component, d.choice));
+    push_section(&mut brief, "RELATED", related);
+    brief.push_str(OVERRIDE_POLICY);
+    brief.push_str(WHEN_UNCERTAIN);
     brief
 }
 
-// ── check_pattern ────────────────────────────────────────────────────────
-
-/// Check whether a pattern or approach is covered by existing decisions.
-///
-/// Enhanced matching: keywords against decision content + node tags.
-/// Pattern membership (via MemberOf edges) boosts ranking.
-pub(crate) fn check_pattern(state: &ProjectState, description: &str) -> Value {
-    let query_words = extract_words(description);
-    if query_words.is_empty() {
-        return serde_json::json!({
-            "status": "not_covered",
-            "message": "Description too short or vague. Provide more detail \
-                        about the pattern to check.",
-            "decisions": [],
-            "patterns": [],
-        });
+/// Choices without reasoning, dependencies or related decisions, for a
+/// check in the middle of implementing.
+fn build_brief_compact(view: &View<'_>) -> String {
+    let mut brief = String::with_capacity(256);
+    push_task(&mut brief, view.task);
+    push_section(
+        &mut brief,
+        "RULES",
+        view.rules.iter().map(|(_, d)| &d.choice),
+    );
+    brief.push_str(&format!("CONSTRAINTS ({}):\n", view.component));
+    if view.own.is_empty() {
+        brief.push_str("- (none)\n");
     }
-
-    let graph = state.graph();
-
-    struct Match<'a> {
-        score: usize,
-        in_pattern: bool,
-        name: &'a str,
-        dec: &'a DecisionFile,
-    }
-
-    let mut matches: Vec<Match<'_>> = Vec::with_capacity(state.decisions.len());
-
-    for (name, dec) in &state.decisions {
-        let decision_words = extract_words_from(&[
-            &dec.decision.choice,
-            &dec.decision.reason,
-            &dec.decision.component,
-        ]);
-
-        let keyword_hits = query_words
-            .iter()
-            .filter(|qw| decision_words.iter().any(|dw| dw == *qw))
-            .count();
-
-        // Tag hits (weighted 2×) from graph node metadata.
-        let tag_hits = graph
-            .node_meta(name)
-            .map(|m| {
-                query_words
-                    .iter()
-                    .filter(|qw| m.tags.iter().any(|t| t.as_ref() == qw.as_str()))
-                    .count()
-            })
-            .unwrap_or(0);
-
-        let score = keyword_hits + tag_hits * 2;
-        if score == 0 {
-            continue;
-        }
-
-        let in_pattern = graph.is_pattern_member(name);
-
-        matches.push(Match {
-            score,
-            in_pattern,
-            name,
-            dec,
-        });
-    }
-
-    // Pattern members first, then by score descending.
-    matches.sort_by(|a, b| b.in_pattern.cmp(&a.in_pattern).then(b.score.cmp(&a.score)));
-
-    // Collect patterns from matched decisions via targeted reverse-MemberOf lookup.
-    let mut matched_patterns: Vec<Value> = Vec::new();
-    let mut seen_patterns: BTreeSet<&str> = BTreeSet::new();
-    for m in &matches {
-        for (pat_name, pat) in graph.patterns_containing(m.name) {
-            if seen_patterns.insert(pat_name) {
-                matched_patterns.push(serde_json::json!({
-                    "name": pat_name.as_ref(),
-                    "description": pat.pattern.description,
-                }));
-            }
+    for (_, d) in view.own {
+        brief.push_str(&format!("- {}{}\n", d.choice, status_suffix(&d.status)));
+        if !d.anchors.is_empty() {
+            brief.push_str(&format!("  Code: {}\n", list_anchors(&d.anchors)));
         }
     }
+    brief
+}
 
-    if matches.is_empty() {
-        // Suggest the most relevant component for the new decision by
-        // matching query words against component names and descriptions.
-        let suggested_component = suggest_component_for(state, &query_words);
-
-        serde_json::json!({
-            "status": "not_covered",
-            "message": "No existing decisions cover this pattern.",
-            "decisions": [],
-            "patterns": [],
-            "suggested_component": suggested_component,
-        })
-    } else {
-        serde_json::json!({
-            "status": "covered",
-            "message": "This pattern is addressed by existing decisions.",
-            "decisions": matches.iter().map(|m| {
-                serde_json::json!({
-                    "name": m.name,
-                    "component": m.dec.decision.component,
-                    "choice": m.dec.decision.choice,
-                    "reason": m.dec.decision.reason,
-                })
-            }).collect::<Vec<_>>(),
-            "patterns": matched_patterns,
-        })
+fn push_task(brief: &mut String, task: Option<&str>) {
+    if let Some(task) = task {
+        brief.push_str(&format!("TASK: {task}\n\n"));
     }
 }
 
-// ── get_architecture ─────────────────────────────────────────────────────
+/// `title`, then each line as a list item and a blank line; nothing when
+/// there is no line.
+fn push_section(brief: &mut String, title: &str, lines: impl Iterator<Item = impl fmt::Display>) {
+    let mut lines = lines.peekable();
+    if lines.peek().is_none() {
+        return;
+    }
+    brief.push_str(&format!("{title}:\n"));
+    for line in lines {
+        brief.push_str(&format!("- {line}\n"));
+    }
+    brief.push('\n');
+}
 
-pub(crate) fn get_architecture(state: &ProjectState) -> Value {
-    let graph = state.graph();
+// -- get_decisions_for_file -------------------------------------------------------
 
-    let project_rules = graph.project_decisions();
-
-    let components: Vec<Value> = state
-        .components
-        .iter()
-        .map(|(name, comp)| {
-            serde_json::json!({
-                "name": name,
-                "description": comp.component.description,
-                "connects_to": graph.connects_to(name),
-                "decision_count": graph.decisions_for(name).len(),
-            })
-        })
-        .collect();
-
-    let patterns: Vec<Value> = state
-        .patterns
-        .iter()
-        .map(|(name, pat)| {
-            let decision_count = graph.forward_edge_count(name, EdgeKind::MemberOf);
-            let component_count = graph.forward_edge_count(name, EdgeKind::AppliesTo);
-
-            serde_json::json!({
-                "name": name,
-                "description": pat.pattern.description,
-                "decision_count": decision_count,
-                "component_count": component_count,
-            })
-        })
-        .collect();
-
-    let project_decisions: Vec<Value> = project_rules
-        .iter()
+/// Every decision anchored on `file`, on a file under it as a directory, or
+/// on a directory that holds it, by component then name, each with the
+/// anchors that matched. Project-wide rules are left out unless anchored
+/// there: they apply everywhere, and `get_context("project")` lists them.
+pub(super) fn get_decisions_for_file(state: &ProjectState, file: &str) -> Result<Value, String> {
+    let path =
+        store::normalize_path(file).map_err(|fault| format!("invalid file path: {fault}"))?;
+    let decisions: Vec<Value> = state
+        .decisions_in(&path)
+        .into_iter()
         .map(|(name, d)| {
-            serde_json::json!({
-                "name": name.as_ref(),
-                "choice": d.decision.choice,
-                "reason": d.decision.reason,
-            })
-        })
-        .collect();
-
-    let undesigned: Vec<&str> = state
-        .components
-        .iter()
-        .filter(|(name, _)| graph.decisions_for(name).is_empty())
-        .map(|(name, _)| name.as_str())
-        .collect();
-
-    serde_json::json!({
-        "project": {
-            "name": state.project.project.name,
-            "description": state.project.project.description,
-        },
-        "components": components,
-        "patterns": patterns,
-        "project_decisions": project_decisions,
-        "undesigned_components": undesigned,
-        "total_components": state.components.len(),
-        "total_decisions": state.decisions.len(),
-        "total_patterns": state.patterns.len(),
-    })
-}
-
-// ── get_decision_history ───────────────────────────────────────────────────
-
-/// Return a decision's current values alongside its revision history.
-///
-/// History is chronological (oldest first): each entry captures the
-/// choice and reason as they stood before a revision replaced them.
-/// `revision_count` equals the number of history entries — the number of
-/// times choice or reason has changed since the decision was recorded.
-pub(crate) fn get_decision_history(state: &ProjectState, name: &str) -> Result<Value, String> {
-    let dec = state
-        .decisions
-        .get(name)
-        .ok_or_else(|| format!("decision `{name}` does not exist"))?;
-    let d = &dec.decision;
-
-    Ok(serde_json::json!({
-        "name": name,
-        "current": {
-            "choice": d.choice,
-            "reason": d.reason,
-            "attribution": attribution_str(d.attribution),
-            "created": d.created,
-        },
-        "history": d.history,
-        "revision_count": d.history.len(),
-    }))
-}
-
-// ── get_decisions_for_file ─────────────────────────────────────────────────
-
-/// Reverse lookup: given a file path, find every decision whose `code_refs`
-/// reference it (exact match or directory prefix). Project-wide rules are
-/// excluded — they apply everywhere and would add noise; the description
-/// tells agents to pair this with `get_context` for full coverage.
-///
-/// Results are sorted deterministically by (component, decision name).
-pub(crate) fn get_decisions_for_file(state: &ProjectState, file: &str) -> Result<Value, String> {
-    let normalized =
-        store::normalize_file_query(file).map_err(|e| format!("invalid file path: {e}"))?;
-
-    let graph = state.graph();
-    let matches = graph.decisions_for_file(&normalized);
-
-    let decisions: Vec<Value> = matches
-        .iter()
-        .map(|(name, dec)| {
-            let matching_refs = InMemoryGraph::matching_refs_for_decision(dec, &normalized);
-            let mut obj = serde_json::json!({
-                "name": name.as_ref(),
-                "component": dec.decision.component,
-                "choice": dec.decision.choice,
-                "reason": dec.decision.reason,
-                "attribution": attribution_str(dec.decision.attribution),
-            });
-            if !dec.decision.tags.is_empty() {
-                obj["tags"] = serde_json::json!(dec.decision.tags);
+            let mut entry = Map::new();
+            entry.insert("name".into(), json!(name));
+            entry.insert("component".into(), json!(d.component));
+            entry.insert("choice".into(), json!(d.choice));
+            entry.insert("reason".into(), json!(d.reason));
+            entry.insert("status".into(), json!(d.status.name()));
+            if !d.tags.is_empty() {
+                entry.insert("tags".into(), json!(d.tags));
             }
-            obj["matching_refs"] = serde_json::json!(store::code_refs_to_json(
-                &matching_refs.into_iter().cloned().collect::<Vec<_>>()
-            ));
-            obj
+            let matching = anchors_json(store::anchors_in(d, &path));
+            entry.insert("matching_anchors".into(), matching);
+            Value::Object(entry)
         })
         .collect();
-
-    Ok(serde_json::json!({
-        "file": normalized,
-        "decisions": decisions,
+    Ok(json!({
+        "file": path,
         "count": decisions.len(),
+        "decisions": decisions,
     }))
 }
 
-// ── Decision health ────────────────────────────────────────────────────────
+// -- Health -------------------------------------------------------------------------
 
-/// Follow-up line appended under agent-attributed decisions in the brief.
-/// Points the reader at the two ways to clear the unreviewed flag: the user
-/// confirms the decision as-is, or revises it. Line continuations collapse
-/// to one line.
-const AGENT_REVIEW_CALL_TO_ACTION: &str = "  \u{2192} user: call update_decision(mode=\"promote\") \
-     to confirm, or update_decision(mode=\"revise\") to change\n";
-
-/// Inline flag appended under a decision whose every code_ref points at a
-/// file that no longer exists on disk — the recorded constraint has lost its
-/// anchor in the source and should be revised or removed.
-const ORPHANED_REFS_FLAG: &str = "  \u{26a0} ORPHANED REFS \u{2014} all referenced files deleted\n";
-
-/// Names of the decisions in `component_decisions` with orphaned refs: every
-/// `code_ref` resolves to a file confirmed missing from disk, per the shared
-/// [`store::decision_refs_all_missing`] predicate.
-fn orphaned_ref_names<'a>(
-    project_root: &Path,
-    component_decisions: &[(&'a Arc<str>, &'a DecisionFile)],
-) -> BTreeSet<&'a str> {
-    component_decisions
-        .iter()
-        .filter(|(_, d)| store::decision_refs_all_missing(project_root, d))
-        .map(|&(name, _)| name.as_ref())
+/// The names of the decisions of `own` that have anchors and whose every
+/// anchored file is confirmed gone. A probe that fails counts as present,
+/// so a filesystem error never reports a live file as deleted.
+fn orphaned<'a>(code_root: &Path, own: &[Named<'a>]) -> BTreeSet<&'a str> {
+    own.iter()
+        .filter(|(_, d)| {
+            !d.anchors.is_empty()
+                && d.anchors
+                    .iter()
+                    .all(|anchor| matches!(code_root.join(anchor.file()).try_exists(), Ok(false)))
+        })
+        .map(|&(name, _)| name)
         .collect()
 }
 
-/// Summarize the health of a component's decision set: how many decisions it
-/// carries, how many remain unreviewed agent decisions, how many have orphaned
-/// refs (all code_refs point at deleted files), and a single most-pressing
-/// warning.
-///
-/// `orphaned_refs` is computed by the caller via [`orphaned_ref_names`] so the
-/// same pass feeds both this summary and the brief's inline flags. The counts
-/// drive the warning via [`health_warning`].
-fn build_health(component_decisions: &[(&Arc<str>, &DecisionFile)], orphaned_refs: usize) -> Value {
-    let total = component_decisions.len();
-    let agent_unreviewed = component_decisions
-        .iter()
-        .filter(|(_, d)| d.decision.attribution == Attribution::Agent)
-        .count();
-
-    serde_json::json!({
-        "total": total,
-        "agent_unreviewed": agent_unreviewed,
-        "orphaned_refs": orphaned_refs,
-        "warning": health_warning(total, agent_unreviewed, orphaned_refs),
-    })
-}
-
-/// Select the single most-pressing health warning by fixed precedence:
-/// decision overload first, then unreviewed agent decisions, then orphaned
-/// refs. Returns `Null` when the decision set is healthy.
-fn health_warning(total: usize, agent_unreviewed: usize, orphaned_refs: usize) -> Value {
+/// How many decisions a component carries, how many are proposed, how many
+/// have lost every anchored file, and the most pressing warning of these.
+fn health(own: &[Named<'_>], orphaned: usize) -> Value {
     const MAX_HEALTHY_DECISIONS: usize = 20;
-    const MAX_HEALTHY_AGENT_UNREVIEWED: usize = 5;
+    const MAX_HEALTHY_PROPOSED: usize = 5;
 
-    if total > MAX_HEALTHY_DECISIONS {
-        serde_json::json!(
-            "Too many decisions for this component — consider consolidating \
-             with revise or removing outdated ones"
-        )
-    } else if agent_unreviewed > MAX_HEALTHY_AGENT_UNREVIEWED {
-        serde_json::json!("Multiple agent decisions pending review")
-    } else if orphaned_refs > 0 {
-        serde_json::json!(format!(
-            "{orphaned_refs} decisions reference deleted files — consider removing or revising"
+    let total = own.len();
+    let proposed = own
+        .iter()
+        .filter(|(_, d)| matches!(d.status, Status::Proposed { .. }))
+        .count();
+    let warning = if total > MAX_HEALTHY_DECISIONS {
+        json!("Too many decisions for this component: consolidate or remove outdated ones")
+    } else if proposed > MAX_HEALTHY_PROPOSED {
+        json!("Several proposed decisions wait for the owner's review")
+    } else if orphaned > 0 {
+        json!(format!(
+            "{orphaned} decisions anchor only files that are gone: revise or remove them"
         ))
     } else {
         Value::Null
-    }
+    };
+    json!({
+        "total": total,
+        "proposed": proposed,
+        "orphaned_anchors": orphaned,
+        "warning": warning,
+    })
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// -- Formatting ---------------------------------------------------------------------
 
-fn format_decisions(decisions: &[(&Arc<str>, &DecisionFile)]) -> Vec<Value> {
+fn format_decisions(decisions: &[Named<'_>]) -> Vec<Value> {
     decisions
         .iter()
         .map(|(name, d)| {
-            let mut obj = serde_json::json!({
-                "name": name.as_ref(),
-                "choice": d.decision.choice,
-                "reason": d.decision.reason,
-                "attribution": attribution_str(d.decision.attribution),
-            });
-            if !d.decision.code_refs.is_empty() {
-                obj["code_refs"] =
-                    serde_json::json!(store::code_refs_to_json(&d.decision.code_refs));
+            let mut entry = Map::new();
+            entry.insert("name".into(), json!(name));
+            entry.insert("choice".into(), json!(d.choice));
+            entry.insert("reason".into(), json!(d.reason));
+            entry.insert("status".into(), json!(d.status.name()));
+            if !d.anchors.is_empty() {
+                entry.insert("anchors".into(), anchors_json(&d.anchors));
             }
-            obj
+            Value::Object(entry)
         })
         .collect()
 }
 
-fn format_patterns(patterns: &[(&Arc<str>, &PatternFile)]) -> Vec<Value> {
-    patterns
-        .iter()
-        .map(|(name, p)| {
-            serde_json::json!({
-                "name": name.as_ref(),
-                "description": p.pattern.description,
-            })
+fn anchors_json<'a>(anchors: impl IntoIterator<Item = &'a Anchor>) -> Value {
+    anchors
+        .into_iter()
+        .map(|anchor| match anchor.symbol() {
+            Some(symbol) => json!({ "file": anchor.file(), "symbol": symbol }),
+            None => json!({ "file": anchor.file() }),
         })
         .collect()
 }
 
-/// Compact decision format: name + choice only, no reasoning.
-fn format_decisions_compact(decisions: &[(&Arc<str>, &DecisionFile)]) -> Vec<Value> {
-    decisions
-        .iter()
-        .map(|(name, d)| {
-            serde_json::json!({
-                "name": name.as_ref(),
-                "choice": d.decision.choice,
-            })
-        })
-        .collect()
+/// `file` or `file::symbol` of each anchor, comma-separated.
+fn list_anchors<'a>(anchors: impl IntoIterator<Item = &'a Anchor>) -> String {
+    anchors
+        .into_iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-/// Token-efficient brief: constraint list without reasoning, dependencies,
-/// or related decisions. For mid-implementation constraint checks where the
-/// agent already knows the rationale.
-fn build_brief_compact(
-    component: &str,
-    task_description: Option<&str>,
-    component_decisions: &[(&Arc<str>, &DecisionFile)],
-    project_decisions: &[(&Arc<str>, &DecisionFile)],
-    patterns: &[(&Arc<str>, &PatternFile)],
-) -> String {
-    let mut brief = String::with_capacity(256);
-
-    if let Some(task) = task_description {
-        brief.push_str(&format!("TASK: {task}\n\n"));
-    }
-
-    if !project_decisions.is_empty() {
-        brief.push_str("RULES:\n");
-        for (_, d) in project_decisions {
-            brief.push_str(&format!("- {}\n", d.decision.choice));
-        }
-        brief.push('\n');
-    }
-
-    if !patterns.is_empty() {
-        brief.push_str("PATTERNS:\n");
-        for (name, _) in patterns {
-            brief.push_str(&format!("- {}\n", name.as_ref()));
-        }
-        brief.push('\n');
-    }
-
-    brief.push_str(&format!("CONSTRAINTS ({component}):\n"));
-    if component_decisions.is_empty() {
-        brief.push_str("- (none)\n");
-    } else {
-        for (_, d) in component_decisions {
-            let suffix = attribution_suffix(d.decision.attribution);
-            brief.push_str(&format!("- {}{}\n", d.decision.choice, suffix));
-            if !d.decision.code_refs.is_empty() {
-                brief.push_str(&format!(
-                    "  Code: {}\n",
-                    store::format_code_refs(&d.decision.code_refs)
-                ));
-            }
-        }
-    }
-
-    brief
-}
-
-fn attribution_str(attr: Attribution) -> &'static str {
-    match attr {
-        Attribution::User => "user",
-        Attribution::Agent => "agent",
+/// What a brief appends to a decision the owner has not accepted.
+fn status_suffix(status: &Status) -> &'static str {
+    match status {
+        Status::Accepted { .. } => "",
+        Status::Proposed {
+            accepted_text: None,
+        } => " (proposed)",
+        Status::Proposed {
+            accepted_text: Some(_),
+        } => " (proposed revision of an accepted decision)",
     }
 }
 
-fn attribution_suffix(attr: Attribution) -> &'static str {
-    match attr {
-        Attribution::User => "",
-        Attribution::Agent => " (agent \u{2014} unconfirmed)",
-    }
-}
-
-fn extract_words(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() >= 3)
-        .map(|w| w.to_lowercase())
-        .filter(|w| !is_stop_word(w))
-        .collect()
-}
-
-fn extract_words_from(fields: &[&str]) -> Vec<String> {
-    fields
-        .iter()
-        .flat_map(|f| f.split(|c: char| !c.is_alphanumeric()))
-        .filter(|w| w.len() >= 3)
-        .map(|w| w.to_lowercase())
-        .filter(|w| !is_stop_word(w))
-        .collect()
-}
-
-fn is_stop_word(word: &str) -> bool {
-    matches!(
-        word,
-        "the"
-            | "and"
-            | "for"
-            | "are"
-            | "but"
-            | "not"
-            | "you"
-            | "all"
-            | "can"
-            | "had"
-            | "her"
-            | "was"
-            | "one"
-            | "our"
-            | "out"
-            | "has"
-            | "have"
-            | "been"
-            | "were"
-            | "being"
-            | "will"
-            | "would"
-            | "could"
-            | "should"
-            | "must"
-            | "shall"
-            | "may"
-            | "might"
-            | "does"
-            | "did"
-            | "this"
-            | "that"
-            | "these"
-            | "those"
-            | "with"
-            | "from"
-            | "into"
-            | "through"
-            | "during"
-            | "before"
-            | "after"
-            | "above"
-            | "below"
-            | "between"
-            | "under"
-            | "over"
-            | "each"
-            | "every"
-            | "any"
-            | "some"
-            | "use"
-            | "using"
-            | "used"
-            | "new"
-            | "add"
-            | "adding"
-            | "added"
-            | "about"
-            | "which"
-            | "when"
-            | "where"
-            | "what"
-            | "how"
-            | "why"
-            | "also"
-            | "just"
-            | "than"
-            | "then"
-            | "them"
-            | "they"
-            | "their"
-    )
-}
-
-/// Find the component whose name or description best matches the query words.
-/// Returns `None` if no component has any keyword overlap (suggesting the
-/// agent should `add_component` first).
-///
-/// Matching: component name is split on hyphens, description is word-extracted.
-/// Score = count of matching query words. Highest score wins; ties broken by
-/// fewest existing decisions (prefer under-designed components).
-fn suggest_component_for<'a>(state: &'a ProjectState, query_words: &[String]) -> Option<&'a str> {
-    let mut best: Option<(&str, usize, usize)> = None; // (name, score, decision_count)
-
-    for (name, comp) in &state.components {
-        let name_words: Vec<String> = name
-            .split('-')
-            .filter(|w| w.len() >= 3)
-            .map(|w| w.to_lowercase())
-            .collect();
-        let desc_words = extract_words(&comp.component.description);
-
-        let score = query_words
-            .iter()
-            .filter(|qw| name_words.iter().any(|nw| nw == *qw) || desc_words.contains(qw))
-            .count();
-
-        if score == 0 {
-            continue;
-        }
-
-        let dec_count = state.graph().decisions_for(name).len();
-        let dominated = best
-            .as_ref()
-            .is_some_and(|(_, bs, bd)| *bs > score || (*bs == score && *bd <= dec_count));
-        if !dominated {
-            best = Some((name, score, dec_count));
-        }
-    }
-
-    best.map(|(name, _, _)| name)
-}
-
-// ── Tests ────────────────────────────────────────────────────────────────
+// -- Tests ----------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
-    use crate::store::schema::*;
+    use crate::store::testing::{anchored, empty_state, sample_component, sample_decision};
+    use crate::store::{AcceptedText, Decision};
 
+    fn decision(component: &str, choice: &str) -> Decision {
+        let mut decision = sample_decision(component);
+        decision.choice = choice.into();
+        decision
+    }
+
+    /// `auth` connects to `database`; `rate-limiter` connects to `auth`.
     fn test_state() -> ProjectState {
-        crate::store::testing::rich_test_state()
+        let mut state = empty_state();
+        let component = |connects_to: &[&str]| Component {
+            connects_to: connects_to.iter().map(|&to| to.to_owned()).collect(),
+            ..sample_component()
+        };
+        state
+            .components
+            .insert("auth".into(), component(&["database"]));
+        state.components.insert("database".into(), component(&[]));
+        state
+            .components
+            .insert("rate-limiter".into(), component(&["auth"]));
+        let mut jwt = decision("auth", "JWT with DPoP binding");
+        jwt.depends_on.insert("db-pool".into());
+        state.decisions.insert("use-jwt".into(), jwt);
+        state.decisions.insert(
+            "db-pool".into(),
+            decision("database", "Shared connection pool"),
+        );
+        state.decisions.insert(
+            "error-strategy".into(),
+            decision(PROJECT_COMPONENT, "Result<T, AppError>"),
+        );
+        state
     }
 
-    // ── get_context ─────────────────────────────────────────────────────
-
-    #[test]
-    fn get_context_returns_component_info() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-
-        assert_eq!(result["component"]["name"], "auth");
-        assert_eq!(result["component"]["connects_to"][0], "database");
-        assert_eq!(result["status"], "covered");
-    }
-
-    #[test]
-    fn get_context_includes_reverse_connections() {
-        let state = test_state();
-        let result = get_context(&state, "database", None, ContextDepth::Full).unwrap();
-
-        let connects_from = result["component"]["connects_from"].as_array().unwrap();
-        let names: Vec<&str> = connects_from.iter().map(|v| v.as_str().unwrap()).collect();
-        assert!(names.contains(&"auth"));
-        assert!(names.contains(&"rate-limiter"));
-    }
-
-    #[test]
-    fn get_context_includes_project_rules() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-
-        let rules = result["project_rules"].as_array().unwrap();
-        assert_eq!(rules.len(), 1);
-        assert!(rules[0].as_str().unwrap().contains("Result<T, AppError>"));
+    fn full(state: &ProjectState, component: &str) -> Value {
+        get_context(state, component, None, ContextDepth::Full).unwrap()
     }
 
     #[test]
-    fn get_context_includes_related_decisions() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-
-        let related = result["related_decisions"].as_array().unwrap();
-        assert!(!related.is_empty());
-        let text = related[0].as_str().unwrap();
-        assert!(text.contains("database"));
-        assert!(text.contains("connection pool"));
+    fn a_component_context_holds_its_neighbours_rules_and_decisions() {
+        let context = full(&test_state(), "auth");
+        assert_eq!(context["component"]["connects_to"], json!(["database"]));
+        assert_eq!(
+            context["component"]["connects_from"],
+            json!(["rate-limiter"])
+        );
+        assert_eq!(context["project_rules"], json!(["Result<T, AppError>"]));
+        assert_eq!(context["decisions"][0]["name"], "use-jwt");
+        assert_eq!(context["decisions"][0]["status"], "accepted");
+        assert_eq!(context["status"], "covered");
+        assert!(context.get("patterns").is_none());
     }
 
     #[test]
-    fn get_context_includes_patterns_field() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        // Empty patterns for this fixture, but field must exist.
-        let patterns = result["patterns"].as_array().unwrap();
-        assert!(patterns.is_empty());
+    fn related_decisions_and_dependencies_are_listed_once() {
+        let context = full(&test_state(), "auth");
+        let related = context["related_decisions"].as_array().unwrap();
+        assert_eq!(related.len(), 1, "{related:?}");
+        assert!(
+            related[0]
+                .as_str()
+                .unwrap()
+                .starts_with("database: Shared connection pool")
+        );
+        let brief = context["brief"].as_str().unwrap();
+        assert!(
+            brief.contains("DEPENDENCIES:\n- database: Shared connection pool"),
+            "{brief}"
+        );
+        assert!(
+            brief.contains("RELATED:\n- database: Shared connection pool"),
+            "{brief}"
+        );
     }
 
     #[test]
-    fn get_context_not_covered_when_no_decisions() {
+    fn coverage_follows_the_decisions_there_are() {
         let mut state = test_state();
-        state.decisions.clear();
-        // Clear edges that reference decisions
-        state
-            .graph_index
-            .edges
-            .retain(|e| e.kind == EdgeKind::ConnectsTo);
-        state
-            .graph_index
-            .nodes
-            .retain(|n| n.kind == NodeKind::Component);
-        state.rebuild_graph();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        assert_eq!(result["status"], "not_covered");
+        state.components.insert("empty".into(), sample_component());
+        assert_eq!(full(&state, "empty")["status"], "partially_covered");
+        state.decisions.remove("error-strategy");
+        assert_eq!(full(&state, "empty")["status"], "not_covered");
     }
 
     #[test]
-    fn get_context_partially_covered_with_only_project_rules() {
-        let state = test_state();
-        // rate-limiter has no component-specific decisions but project has rules.
-        let result = get_context(&state, "rate-limiter", None, ContextDepth::Full).unwrap();
-        assert_eq!(result["status"], "partially_covered");
+    fn a_component_that_does_not_exist_is_refused() {
+        let err = get_context(&test_state(), "nonexistent", None, ContextDepth::Full).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
     }
 
     #[test]
-    fn get_context_rejects_nonexistent_component() {
-        let state = test_state();
-        let err = get_context(&state, "nonexistent", None, ContextDepth::Full).unwrap_err();
-        assert!(err.contains("does not exist"));
+    fn the_project_context_lists_the_rules() {
+        let context = full(&test_state(), PROJECT_COMPONENT);
+        assert_eq!(context["component"]["name"], PROJECT_COMPONENT);
+        assert_eq!(context["decisions"][0]["name"], "error-strategy");
+        assert!(
+            context["brief"]
+                .as_str()
+                .unwrap()
+                .contains("PROJECT-WIDE RULES:")
+        );
     }
 
     #[test]
-    fn get_context_for_project() {
-        let state = test_state();
-        let result = get_context(&state, "project", None, ContextDepth::Full).unwrap();
-
-        assert_eq!(result["component"]["name"], "project");
-        assert_eq!(result["status"], "covered");
-        let brief = result["brief"].as_str().unwrap();
-        assert!(brief.contains("PROJECT-WIDE RULES"));
-    }
-
-    #[test]
-    fn get_context_includes_task_in_brief() {
-        let state = test_state();
-        let result = get_context(
-            &state,
+    fn the_brief_names_the_task_and_the_policy() {
+        let context = get_context(
+            &test_state(),
             "auth",
-            Some("implement token refresh"),
+            Some("Add token refresh"),
             ContextDepth::Full,
         )
         .unwrap();
-
-        let brief = result["brief"].as_str().unwrap();
-        assert!(
-            brief.contains("TASK: implement token refresh"),
-            "brief must contain the task line"
-        );
-    }
-
-    // ── build_brief ─────────────────────────────────────────────────────
-
-    #[test]
-    fn brief_has_when_uncertain() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let brief = result["brief"].as_str().unwrap();
-
-        assert!(brief.contains("WHEN UNCERTAIN:"));
-        assert!(brief.contains("STOP"));
-        assert!(brief.contains("check_pattern"));
-        assert!(brief.contains("Never silently deviate"));
-    }
-
-    #[test]
-    fn brief_has_override_policy() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let brief = result["brief"].as_str().unwrap();
-
-        assert!(brief.contains("OVERRIDE POLICY:"));
-        assert!(brief.contains("inviolable"));
-        assert!(brief.contains("strong defaults"));
-    }
-
-    #[test]
-    fn brief_has_rules_section() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let brief = result["brief"].as_str().unwrap();
-
+        let brief = context["brief"].as_str().unwrap();
+        assert!(brief.starts_with("TASK: Add token refresh\n\n"));
         assert!(brief.contains("RULES (inviolable"));
-        assert!(brief.contains("Result<T, AppError>"));
+        assert!(brief.contains("OVERRIDE POLICY:"));
+        assert!(brief.contains("Search .trurlic/decisions/"), "{brief}");
+        assert!(brief.is_ascii(), "{brief}");
     }
 
     #[test]
-    fn brief_includes_transitive_dependencies() {
-        use crate::store::Timestamp;
-        use crate::store::schema::*;
-
-        let mut state = test_state();
-
-        // Add a decision that use-jwt depends on (in a non-connected component).
-        state.decisions.insert(
-            "tls-required".into(),
-            Arc::new(DecisionFile {
-                decision: Decision {
-                    component: "rate-limiter".into(),
-                    choice: "TLS everywhere".into(),
-                    reason: "Zero trust".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap(),
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            }),
-        );
-        state.graph_index.nodes.push(NodeEntry {
-            name: "tls-required".into(),
-            kind: NodeKind::Decision,
-            tags: vec![],
-            hash: String::new(),
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "tls-required".into(),
-            to: "rate-limiter".into(),
-            kind: EdgeKind::BelongsTo,
-        });
-        // use-jwt depends on tls-required (cross-component dependency).
-        state.graph_index.edges.push(EdgeEntry {
-            from: "use-jwt".into(),
-            to: "tls-required".into(),
-            kind: EdgeKind::DependsOn,
-        });
-        state.rebuild_graph();
-
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let brief = result["brief"].as_str().unwrap();
-
-        assert!(
-            brief.contains("DEPENDENCIES:"),
-            "brief should have a DEPENDENCIES section when transitive deps exist: {brief}"
-        );
-        assert!(
-            brief.contains("TLS everywhere"),
-            "transitive dependency should appear in brief: {brief}"
-        );
-
-        // Also in the related_decisions field.
-        let related = result["related_decisions"].as_array().unwrap();
-        assert!(
-            related
-                .iter()
-                .any(|r| r.as_str().is_some_and(|s| s.contains("TLS everywhere"))),
-            "transitive dependency should appear in related_decisions: {related:?}"
-        );
-    }
-
-    // ── check_pattern ───────────────────────────────────────────────────
-
-    #[test]
-    fn check_pattern_finds_matching_decisions() {
-        let state = test_state();
-        let result = check_pattern(&state, "JWT token format for authentication");
-
-        assert_eq!(result["status"], "covered");
-        let decisions = result["decisions"].as_array().unwrap();
-        assert!(!decisions.is_empty());
-        assert!(decisions.iter().any(|d| d["name"] == "use-jwt"));
-    }
-
-    #[test]
-    fn check_pattern_returns_not_covered() {
-        let state = test_state();
-        let result = check_pattern(&state, "WebSocket real-time notifications");
-
-        assert_eq!(result["status"], "not_covered");
-        let decisions = result["decisions"].as_array().unwrap();
-        assert!(decisions.is_empty());
-        let patterns = result["patterns"].as_array().unwrap();
-        assert!(patterns.is_empty());
-    }
-
-    #[test]
-    fn check_pattern_handles_empty_description() {
-        let state = test_state();
-        let result = check_pattern(&state, "");
-        assert_eq!(result["status"], "not_covered");
-        assert!(result["decisions"].as_array().unwrap().is_empty());
-        assert!(result["patterns"].as_array().unwrap().is_empty());
-
-        let result = check_pattern(&state, "a b");
-        assert_eq!(result["status"], "not_covered");
-        assert!(result["patterns"].as_array().unwrap().is_empty());
-    }
-
-    #[test]
-    fn check_pattern_case_insensitive() {
-        let state = test_state();
-        let result = check_pattern(&state, "REDIS CONNECTION POOL");
-        assert_eq!(result["status"], "covered");
-    }
-
-    #[test]
-    fn check_pattern_boosts_tag_matches() {
-        let state = test_state();
-        // "security" is a tag on use-jwt. Should boost its ranking.
-        let result = check_pattern(&state, "security authentication tokens");
-        assert_eq!(result["status"], "covered");
-        let decisions = result["decisions"].as_array().unwrap();
-        assert_eq!(decisions[0]["name"], "use-jwt");
-    }
-
-    #[test]
-    fn check_pattern_returns_matched_patterns() {
-        let mut state = test_state();
-
-        // Add a pattern with MemberOf edges.
-        state.patterns.insert(
-            "auth-pattern".into(),
-            Arc::new(PatternFile {
-                pattern: Pattern {
-                    name: "auth-pattern".into(),
-                    description: "Stateless auth via JWT".into(),
-                },
-            }),
-        );
-        state.graph_index.nodes.push(NodeEntry {
-            name: "auth-pattern".into(),
-            kind: NodeKind::Pattern,
-            tags: vec![],
-            hash: String::new(),
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "auth-pattern".into(),
-            to: "use-jwt".into(),
-            kind: EdgeKind::MemberOf,
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "auth-pattern".into(),
-            to: "error-strategy".into(),
-            kind: EdgeKind::MemberOf,
-        });
-
-        state.rebuild_graph();
-
-        let result = check_pattern(&state, "JWT authentication tokens");
-        assert_eq!(result["status"], "covered");
-        let patterns = result["patterns"].as_array().unwrap();
-        assert_eq!(patterns.len(), 1);
-        assert_eq!(patterns[0]["name"], "auth-pattern");
-        assert_eq!(patterns[0]["description"], "Stateless auth via JWT");
-    }
-
-    // ── get_architecture ────────────────────────────────────────────────
-
-    #[test]
-    fn get_architecture_returns_full_overview() {
-        let state = test_state();
-        let result = get_architecture(&state);
-
-        assert_eq!(result["project"]["name"], "test-project");
-        assert_eq!(result["total_components"], 3);
-        assert_eq!(result["total_decisions"], 3);
-        assert_eq!(result["total_patterns"], 0);
-
-        let components = result["components"].as_array().unwrap();
-        assert_eq!(components.len(), 3);
-
-        let auth = components.iter().find(|c| c["name"] == "auth").unwrap();
-        assert_eq!(auth["decision_count"], 1);
-        let auth_connects = auth["connects_to"].as_array().unwrap();
-        assert!(auth_connects.iter().any(|v| v == "database"));
+    fn constraints_depth_keeps_choices_only() {
+        let context = get_context(&test_state(), "auth", None, ContextDepth::Constraints).unwrap();
         assert_eq!(
-            result["undesigned_components"],
-            serde_json::json!(["rate-limiter"])
+            context["decisions"],
+            json!([{ "name": "use-jwt", "choice": "JWT with DPoP binding" }])
+        );
+        assert!(context.get("related_decisions").is_none());
+        let brief = context["brief"].as_str().unwrap();
+        assert!(
+            brief.contains("CONSTRAINTS (auth):\n- JWT with DPoP binding\n"),
+            "{brief}"
         );
     }
 
     #[test]
-    fn get_architecture_includes_pattern_member_counts() {
+    fn a_proposed_decision_is_marked_in_both_briefs_and_counted() {
         let mut state = test_state();
-
-        state.patterns.insert(
-            "state-in-redis".into(),
-            Arc::new(PatternFile {
-                pattern: Pattern {
-                    name: "state-in-redis".into(),
-                    description: "All state uses Redis".into(),
-                },
+        state.decisions.get_mut("use-jwt").unwrap().status = Status::Proposed {
+            accepted_text: None,
+        };
+        let mut revision = decision("auth", "Rotate keys daily");
+        revision.status = Status::Proposed {
+            accepted_text: Some(AcceptedText {
+                choice: "Rotate keys weekly".into(),
+                reason: "The text the owner accepted".into(),
+                alternatives: vec![],
+                via: None,
             }),
-        );
-        state.graph_index.nodes.push(NodeEntry {
-            name: "state-in-redis".into(),
-            kind: NodeKind::Pattern,
-            tags: vec![],
-            hash: String::new(),
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "state-in-redis".into(),
-            to: "use-jwt".into(),
-            kind: EdgeKind::MemberOf,
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "state-in-redis".into(),
-            to: "db-pool".into(),
-            kind: EdgeKind::MemberOf,
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "state-in-redis".into(),
-            to: "auth".into(),
-            kind: EdgeKind::AppliesTo,
-        });
+        };
+        state.decisions.insert("rotate".into(), revision);
 
-        state.rebuild_graph();
-
-        let result = get_architecture(&state);
-        assert_eq!(result["total_patterns"], 1);
-
-        let patterns = result["patterns"].as_array().unwrap();
-        assert_eq!(patterns.len(), 1);
-        assert_eq!(patterns[0]["name"], "state-in-redis");
-        assert_eq!(patterns[0]["decision_count"], 2);
-        assert_eq!(patterns[0]["component_count"], 1);
-    }
-
-    // ── extract_words ───────────────────────────────────────────────────
-
-    #[test]
-    fn extract_words_filters_short_and_stop_words() {
-        let words = extract_words("use the Redis for session storage");
-        assert!(words.contains(&"redis".to_string()));
-        assert!(words.contains(&"session".to_string()));
-        assert!(words.contains(&"storage".to_string()));
-        assert!(!words.contains(&"use".to_string()));
-        assert!(!words.contains(&"the".to_string()));
-        assert!(!words.contains(&"for".to_string()));
-    }
-
-    #[test]
-    fn extract_words_lowercases() {
-        let words = extract_words("JWT DPoP BINDING");
-        assert!(words.contains(&"jwt".to_string()));
-        assert!(words.contains(&"dpop".to_string()));
-        assert!(words.contains(&"binding".to_string()));
-    }
-
-    // ── context depth ─────────────────────────────────────────────────
-
-    #[test]
-    fn constraints_depth_omits_reasoning() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Constraints).unwrap();
-        // Decisions should have name + choice but no reason.
-        let decisions = result["decisions"].as_array().unwrap();
-        assert!(!decisions.is_empty());
-        assert!(decisions[0].get("name").is_some());
-        assert!(decisions[0].get("choice").is_some());
+        let context = full(&state, "auth");
+        let brief = context["brief"].as_str().unwrap();
         assert!(
-            decisions[0].get("reason").is_none(),
-            "constraints depth must omit reasoning"
+            brief.contains("Rotate keys daily (Reason of the sample decision) (proposed revision"),
+            "{brief}"
         );
-    }
-
-    #[test]
-    fn constraints_depth_omits_related_decisions() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Constraints).unwrap();
         assert!(
-            result.get("related_decisions").is_none(),
-            "constraints depth must omit related_decisions"
+            brief.contains("JWT with DPoP binding (Reason of the sample decision) (proposed)"),
+            "{brief}"
         );
-    }
-
-    #[test]
-    fn constraints_depth_has_compact_brief() {
-        let state = test_state();
-        let full = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
+        assert_eq!(context["health"]["proposed"], 2);
         let compact = get_context(&state, "auth", None, ContextDepth::Constraints).unwrap();
-        let full_len = full["brief"].as_str().unwrap().len();
-        let compact_len = compact["brief"].as_str().unwrap().len();
         assert!(
-            compact_len < full_len,
-            "compact brief ({compact_len}) must be shorter than full ({full_len})"
-        );
-    }
-
-    // ── component suggestion ──────────────────────────────────────────
-
-    #[test]
-    fn check_pattern_suggests_matching_component() {
-        let state = test_state();
-        // "rate limiting" should match the "rate-limiter" component by name.
-        let result = check_pattern(&state, "rate limiting for API requests");
-        assert_eq!(result["status"], "not_covered");
-        assert_eq!(result["suggested_component"], "rate-limiter");
-    }
-
-    #[test]
-    fn check_pattern_suggests_null_when_no_match() {
-        let state = test_state();
-        // "WebSocket notifications" matches no existing component.
-        let result = check_pattern(&state, "WebSocket notification streaming");
-        assert_eq!(result["status"], "not_covered");
-        assert!(result["suggested_component"].is_null());
-    }
-
-    // ── attribution in context ────────────────────────────────────────
-
-    #[test]
-    fn context_brief_flags_agent_attribution() {
-        use crate::store::Timestamp;
-
-        let ts = "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap();
-
-        let mut state = test_state();
-        state.decisions.insert(
-            "agent-dec".into(),
-            Arc::new(DecisionFile {
-                decision: Decision {
-                    component: "auth".into(),
-                    choice: "Agent suggested approach".into(),
-                    reason: "Automated".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::Agent,
-                    created: ts,
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            }),
-        );
-        state.graph_index.nodes.push(NodeEntry {
-            name: "agent-dec".into(),
-            kind: NodeKind::Decision,
-            tags: vec![],
-            hash: String::new(),
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "agent-dec".into(),
-            to: "auth".into(),
-            kind: EdgeKind::BelongsTo,
-        });
-        state.rebuild_graph();
-
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let brief = result["brief"].as_str().unwrap();
-
-        assert!(
-            brief.contains("unconfirmed"),
-            "agent decision must be flagged as unconfirmed in brief: {brief}"
-        );
-        // User decision must NOT have the unconfirmed marker.
-        let user_line = brief.lines().find(|l| l.contains("JWT with DPoP")).unwrap();
-        assert!(
-            !user_line.contains("unconfirmed"),
-            "user decision must NOT be flagged: {user_line}"
-        );
-
-        // JSON decisions include attribution field.
-        let decisions = result["decisions"].as_array().unwrap();
-        let agent_dec = decisions.iter().find(|d| d["name"] == "agent-dec").unwrap();
-        assert_eq!(agent_dec["attribution"], "agent");
-
-        let user_dec = decisions.iter().find(|d| d["name"] == "use-jwt").unwrap();
-        assert_eq!(user_dec["attribution"], "user");
-    }
-
-    // ── decision health ───────────────────────────────────────────────
-
-    #[test]
-    fn get_context_includes_health() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let health = &result["health"];
-        assert!(health["total"].is_number());
-        assert!(health["agent_unreviewed"].is_number());
-        assert!(health["orphaned_refs"].is_number());
-        // The old "stale" key must not appear — concept (b) is now "orphaned_refs".
-        assert!(
-            health["stale"].is_null(),
-            "health must not contain 'stale' key"
-        );
-        // auth carries a single user decision → healthy, no warning.
-        assert!(health["warning"].is_null());
-    }
-
-    #[test]
-    fn health_total_matches_decision_count() {
-        let state = test_state();
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let decision_count = result["decisions"].as_array().unwrap().len();
-        assert_eq!(result["health"]["total"], decision_count);
-    }
-
-    #[test]
-    fn health_counts_agent_unreviewed() {
-        use crate::store::Timestamp;
-
-        let user = DecisionFile {
-            decision: Decision {
-                component: "store".into(),
-                choice: "User choice".into(),
-                reason: "Confirmed".into(),
-                alternatives: vec![],
-                tags: vec![],
-                attribution: Attribution::User,
-                created: Timestamp::now().unwrap(),
-                code_refs: vec![],
-                history: vec![],
-            },
-        };
-        let agent = DecisionFile {
-            decision: Decision {
-                component: "store".into(),
-                choice: "Agent choice".into(),
-                reason: "Inferred".into(),
-                alternatives: vec![],
-                tags: vec![],
-                attribution: Attribution::Agent,
-                created: Timestamp::now().unwrap(),
-                code_refs: vec![],
-                history: vec![],
-            },
-        };
-        let un: Arc<str> = Arc::from("user-dec");
-        let an: Arc<str> = Arc::from("agent-dec");
-        let decisions = vec![(&un, &user), (&an, &agent)];
-
-        let health = build_health(&decisions, 0);
-        assert_eq!(health["total"], 2);
-        assert_eq!(health["agent_unreviewed"], 1);
-        assert_eq!(health["orphaned_refs"], 0);
-        assert!(health["warning"].is_null());
-    }
-
-    #[test]
-    fn health_warning_consolidate_when_over_twenty() {
-        let warning = health_warning(21, 0, 0);
-        assert!(warning.as_str().unwrap().contains("consolidating"));
-    }
-
-    #[test]
-    fn health_warning_agent_pending_over_five() {
-        let warning = health_warning(10, 6, 0);
-        assert_eq!(warning, "Multiple agent decisions pending review");
-    }
-
-    #[test]
-    fn health_warning_orphaned_refs() {
-        let warning = health_warning(5, 2, 3);
-        assert!(warning.as_str().unwrap().contains("deleted files"));
-    }
-
-    #[test]
-    fn health_warning_null_when_healthy() {
-        assert!(health_warning(5, 2, 0).is_null());
-    }
-
-    #[test]
-    fn health_warning_precedence_total_over_agent() {
-        // Overload dominates even when agent decisions also exceed threshold.
-        let warning = health_warning(25, 10, 5);
-        assert!(warning.as_str().unwrap().contains("consolidating"));
-    }
-
-    // ── orphaned refs ─────────────────────────────────────────────────
-
-    fn decision_with_refs(refs: Vec<CodeRef>) -> DecisionFile {
-        use crate::store::Timestamp;
-        DecisionFile {
-            decision: Decision {
-                component: "auth".into(),
-                choice: "Custom XML parser".into(),
-                reason: "Avoid libxml2 dependency".into(),
-                alternatives: vec![],
-                tags: vec![],
-                attribution: Attribution::User,
-                created: Timestamp::now().unwrap(),
-                code_refs: refs,
-                history: vec![],
-            },
-        }
-    }
-
-    #[test]
-    fn is_orphaned_when_all_refs_deleted() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let dec = decision_with_refs(vec![
-            CodeRef {
-                file: "src/parsers/xml.rs".into(),
-                symbol: None,
-            },
-            CodeRef {
-                file: "src/parsers/dtd.rs".into(),
-                symbol: Some("validate".into()),
-            },
-        ]);
-        assert!(store::decision_refs_all_missing(tmp.path(), &dec));
-    }
-
-    #[test]
-    fn not_orphaned_when_any_ref_survives() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("live.rs"), "// present").unwrap();
-        let dec = decision_with_refs(vec![
-            CodeRef {
-                file: "live.rs".into(),
-                symbol: None,
-            },
-            CodeRef {
-                file: "gone.rs".into(),
-                symbol: None,
-            },
-        ]);
-        // A single surviving reference keeps the decision anchored.
-        assert!(!store::decision_refs_all_missing(tmp.path(), &dec));
-    }
-
-    #[test]
-    fn not_orphaned_without_code_refs() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let dec = decision_with_refs(vec![]);
-        // No links means nothing to break — never orphaned.
-        assert!(!store::decision_refs_all_missing(tmp.path(), &dec));
-    }
-
-    #[test]
-    fn health_reports_and_flags_orphaned_ref_decisions() {
-        use crate::store::Timestamp;
-
-        let tmp = tempfile::TempDir::new().unwrap();
-        let mut state = test_state();
-        state.project_root = tmp.path().to_path_buf();
-
-        // Anchor a decision entirely to a file absent from the project root.
-        state.decisions.insert(
-            "xml-parser".into(),
-            Arc::new(DecisionFile {
-                decision: Decision {
-                    component: "auth".into(),
-                    choice: "Use custom XML parser".into(),
-                    reason: "Avoid libxml2 dependency".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: Timestamp::now().unwrap(),
-                    code_refs: vec![CodeRef {
-                        file: "src/parsers/xml.rs".into(),
-                        symbol: None,
-                    }],
-                    history: vec![],
-                },
-            }),
-        );
-        state.graph_index.nodes.push(NodeEntry {
-            name: "xml-parser".into(),
-            kind: NodeKind::Decision,
-            tags: vec![],
-            hash: String::new(),
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "xml-parser".into(),
-            to: "auth".into(),
-            kind: EdgeKind::BelongsTo,
-        });
-        state.rebuild_graph();
-
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-
-        // Only the dead-ref decision counts; use-jwt has no code_refs.
-        assert_eq!(result["health"]["orphaned_refs"], 1);
-        // With a small, reviewed set, orphaned refs is the surfaced warning.
-        assert!(
-            result["health"]["warning"]
+            compact["brief"]
                 .as_str()
                 .unwrap()
-                .contains("deleted files"),
-            "orphaned refs should drive the health warning: {:?}",
-            result["health"]["warning"]
-        );
-        // The brief flags the specific decision inline.
-        let brief = result["brief"].as_str().unwrap();
-        assert!(
-            brief.contains("ORPHANED REFS"),
-            "brief must flag the orphaned-ref decision: {brief}"
+                .contains("- JWT with DPoP binding (proposed)\n")
         );
     }
 
     #[test]
-    fn brief_agent_decision_has_review_call_to_action() {
-        use crate::store::Timestamp;
-
-        let ts = "2025-06-01T12:00:00Z".parse::<Timestamp>().unwrap();
+    fn a_decision_whose_anchored_files_are_all_gone_is_flagged() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        fs::create_dir(tmp.path().join("src")).unwrap();
+        fs::write(tmp.path().join("src/live.rs"), "").unwrap();
         let mut state = test_state();
+        state.code_root = tmp.path().to_path_buf();
+        state
+            .decisions
+            .insert("gone".into(), anchored("auth", &["src/gone.rs"]));
         state.decisions.insert(
-            "agent-dec".into(),
-            Arc::new(DecisionFile {
-                decision: Decision {
-                    component: "auth".into(),
-                    choice: "Agent suggested approach".into(),
-                    reason: "Automated".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::Agent,
-                    created: ts,
-                    code_refs: vec![],
-                    history: vec![],
-                },
-            }),
+            "mixed".into(),
+            anchored("auth", &["src/gone.rs", "src/live.rs"]),
         );
-        state.graph_index.nodes.push(NodeEntry {
-            name: "agent-dec".into(),
-            kind: NodeKind::Decision,
-            tags: vec![],
-            hash: String::new(),
-        });
-        state.graph_index.edges.push(EdgeEntry {
-            from: "agent-dec".into(),
-            to: "auth".into(),
-            kind: EdgeKind::BelongsTo,
-        });
-        state.rebuild_graph();
 
-        let result = get_context(&state, "auth", None, ContextDepth::Full).unwrap();
-        let brief = result["brief"].as_str().unwrap();
+        let context = full(&state, "auth");
 
+        assert_eq!(context["health"]["orphaned_anchors"], 1);
         assert!(
-            brief.contains("update_decision(mode=\"promote\")"),
-            "agent decision must offer a promote call-to-action: {brief}"
+            context["health"]["warning"]
+                .as_str()
+                .unwrap()
+                .contains("1 decisions")
         );
+        let brief = context["brief"].as_str().unwrap();
+        assert_eq!(brief.matches("ORPHANED ANCHORS").count(), 1, "{brief}");
         assert!(
-            brief.contains("update_decision(mode=\"revise\")"),
-            "agent decision must offer a revise call-to-action: {brief}"
+            brief.contains("  Code: src/gone.rs, src/live.rs\n"),
+            "{brief}"
         );
-        // The user decision must not carry the call-to-action.
-        let user_line = brief.lines().find(|l| l.contains("JWT with DPoP")).unwrap();
-        assert!(
-            !user_line.contains("promote"),
-            "user decision line must stay clean: {user_line}"
-        );
-    }
-
-    // ── code_refs in brief ────────────────────────────────────────────
-
-    #[test]
-    fn brief_includes_code_refs_line() {
-        use crate::store::Timestamp;
-        let dec = DecisionFile {
-            decision: Decision {
-                component: "store".into(),
-                choice: "BLAKE3 hashing".into(),
-                reason: "Fast integrity checks".into(),
-                alternatives: vec![],
-                tags: vec![],
-                attribution: Attribution::User,
-                created: Timestamp::now().unwrap(),
-                code_refs: vec![
-                    CodeRef {
-                        file: "src/store/write.rs".into(),
-                        symbol: Some("content_hash".into()),
-                    },
-                    CodeRef {
-                        file: "src/store/validate.rs".into(),
-                        symbol: None,
-                    },
-                ],
-                history: vec![],
-            },
-        };
-        let name: Arc<str> = Arc::from("blake3-hashing");
-        let comp_decs = vec![(&name, &dec)];
-        let orphaned_ref_names: BTreeSet<&str> = BTreeSet::new();
-
-        let brief = build_brief(&BriefParams {
-            component: "store",
-            task: None,
-            project_decisions: &[],
-            component_decisions: &comp_decs,
-            transitive_deps: &[],
-            related_decisions: &[],
-            patterns: &[],
-            orphaned_ref_names: &orphaned_ref_names,
-        });
-
-        assert!(
-            brief.contains("Code: src/store/write.rs::content_hash, src/store/validate.rs"),
-            "brief should include code_refs line, got:\n{brief}"
+        let anchors = &context["decisions"][1]["anchors"];
+        assert_eq!(
+            anchors,
+            &json!([{ "file": "src/gone.rs" }, { "file": "src/live.rs" }])
         );
     }
 
     #[test]
-    fn brief_omits_code_line_when_empty() {
-        use crate::store::Timestamp;
-        let dec = DecisionFile {
-            decision: Decision {
-                component: "store".into(),
-                choice: "BLAKE3 hashing".into(),
-                reason: "Fast integrity checks".into(),
-                alternatives: vec![],
-                tags: vec![],
-                attribution: Attribution::User,
-                created: Timestamp::now().unwrap(),
-                code_refs: vec![],
-                history: vec![],
-            },
-        };
-        let name: Arc<str> = Arc::from("blake3-hashing");
-        let comp_decs = vec![(&name, &dec)];
-        let orphaned_ref_names: BTreeSet<&str> = BTreeSet::new();
-
-        let brief = build_brief(&BriefParams {
-            component: "store",
-            task: None,
-            project_decisions: &[],
-            component_decisions: &comp_decs,
-            transitive_deps: &[],
-            related_decisions: &[],
-            patterns: &[],
-            orphaned_ref_names: &orphaned_ref_names,
-        });
-
+    fn health_warns_on_the_most_pressing_count_first() {
+        let accepted: Vec<Decision> = (0..21).map(|_| sample_decision("auth")).collect();
+        let own: Vec<Named<'_>> = accepted.iter().map(|d| ("d", d)).collect();
         assert!(
-            !brief.contains("Code:"),
-            "brief should not contain Code: when code_refs empty"
+            health(&own, 3)["warning"]
+                .as_str()
+                .unwrap()
+                .starts_with("Too many")
+        );
+        assert!(health(&own[..2], 0)["warning"].is_null());
+        assert!(
+            health(&own[..2], 1)["warning"]
+                .as_str()
+                .unwrap()
+                .contains("gone")
         );
     }
 
     #[test]
-    fn format_decisions_includes_code_refs() {
-        use crate::store::Timestamp;
-        let dec = DecisionFile {
-            decision: Decision {
-                component: "store".into(),
-                choice: "Atomic writes".into(),
-                reason: "Crash safety".into(),
-                alternatives: vec![],
-                tags: vec![],
-                attribution: Attribution::User,
-                created: Timestamp::now().unwrap(),
-                code_refs: vec![CodeRef {
-                    file: "src/store/write.rs".into(),
-                    symbol: Some("commit_with_graph".into()),
-                }],
-                history: vec![],
-            },
-        };
-        let name: Arc<str> = Arc::from("atomic-writes");
-        let decisions = vec![(&name, &dec)];
-
-        let formatted = format_decisions(&decisions);
-        assert_eq!(formatted.len(), 1);
-        let refs = formatted[0]["code_refs"].as_array().unwrap();
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0]["file"], "src/store/write.rs");
-        assert_eq!(refs[0]["symbol"], "commit_with_graph");
-    }
-
-    // ── get_decision_history ──────────────────────────────────────────
-
-    #[test]
-    fn get_decision_history_no_history_is_empty() {
-        let state = test_state();
-        // use-jwt is a freshly recorded decision — never revised.
-        let result = get_decision_history(&state, "use-jwt").unwrap();
-
-        assert_eq!(result["name"], "use-jwt");
-        assert_eq!(result["revision_count"], 0);
-        assert!(result["history"].as_array().unwrap().is_empty());
-        // Current values are always present.
-        assert!(result["current"]["choice"].is_string());
-        assert!(result["current"]["reason"].is_string());
-        assert_eq!(result["current"]["attribution"], "user");
-        assert!(result["current"]["created"].is_string());
-    }
-
-    #[test]
-    fn get_decision_history_returns_chronological_entries() {
-        use crate::store::Timestamp;
-
+    fn decisions_for_a_file_carry_their_matching_anchors() {
         let mut state = test_state();
-        state.decisions.insert(
-            "revised-dec".into(),
-            Arc::new(DecisionFile {
-                decision: Decision {
-                    component: "auth".into(),
-                    choice: "JWT with DPoP binding".into(),
-                    reason: "Proof-of-possession prevents replay".into(),
-                    alternatives: vec![],
-                    tags: vec![],
-                    attribution: Attribution::User,
-                    created: "2025-06-01T10:30:00Z".parse::<Timestamp>().unwrap(),
-                    code_refs: vec![],
-                    history: vec![
-                        HistoryEntry {
-                            choice: "JWT tokens".into(),
-                            reason: "Stateless authentication".into(),
-                            changed_at: "2025-07-15T14:00:00Z".parse::<Timestamp>().unwrap(),
-                        },
-                        HistoryEntry {
-                            choice: "JWT with refresh tokens".into(),
-                            reason: "Stateless auth with rotation".into(),
-                            changed_at: "2025-08-01T09:30:00Z".parse::<Timestamp>().unwrap(),
-                        },
-                    ],
-                },
-            }),
+        let mut tagged = anchored("database", &["src/store/write.rs", "src/mcp/mod.rs"]);
+        tagged.tags.insert("reliability".into());
+        state.decisions.insert("atomic".into(), tagged);
+        state
+            .decisions
+            .insert("dir".into(), anchored("auth", &["src/store"]));
+
+        let found = get_decisions_for_file(&state, "./src/store/write.rs").unwrap();
+
+        assert_eq!(found["file"], "src/store/write.rs");
+        assert_eq!(found["count"], 2);
+        assert_eq!(found["decisions"][0]["name"], "dir");
+        assert_eq!(found["decisions"][1]["name"], "atomic");
+        assert_eq!(found["decisions"][1]["tags"], json!(["reliability"]));
+        assert_eq!(
+            found["decisions"][1]["matching_anchors"],
+            json!([{ "file": "src/store/write.rs" }])
         );
-
-        let result = get_decision_history(&state, "revised-dec").unwrap();
-
-        assert_eq!(result["revision_count"], 2);
-        assert_eq!(result["current"]["choice"], "JWT with DPoP binding");
-
-        let history = result["history"].as_array().unwrap();
-        assert_eq!(history.len(), 2);
-        // Oldest first: entries trace the decision's evolution.
-        assert_eq!(history[0]["choice"], "JWT tokens");
-        assert_eq!(history[1]["choice"], "JWT with refresh tokens");
-        assert!(history[0]["changed_at"].is_string());
+        assert_eq!(found["decisions"][1]["status"], "accepted");
     }
 
     #[test]
-    fn get_decision_history_rejects_nonexistent() {
-        let state = test_state();
-        let err = get_decision_history(&state, "ghost").unwrap_err();
-        assert!(err.contains("ghost"));
-        assert!(err.contains("does not exist"));
-    }
-
-    #[test]
-    fn format_decisions_omits_code_refs_when_empty() {
-        use crate::store::Timestamp;
-        let dec = DecisionFile {
-            decision: Decision {
-                component: "store".into(),
-                choice: "Atomic writes".into(),
-                reason: "Crash safety".into(),
-                alternatives: vec![],
-                tags: vec![],
-                attribution: Attribution::User,
-                created: Timestamp::now().unwrap(),
-                code_refs: vec![],
-                history: vec![],
-            },
-        };
-        let name: Arc<str> = Arc::from("atomic-writes");
-        let decisions = vec![(&name, &dec)];
-
-        let formatted = format_decisions(&decisions);
-        assert!(
-            formatted[0].get("code_refs").is_none(),
-            "should omit code_refs key when empty"
-        );
+    fn decisions_for_a_path_outside_the_root_are_refused() {
+        let err = get_decisions_for_file(&test_state(), "/etc/passwd").unwrap_err();
+        assert!(err.starts_with("invalid file path:"), "{err}");
     }
 }

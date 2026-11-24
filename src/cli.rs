@@ -2,9 +2,11 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap::builder::PossibleValuesParser;
 use clap::{Parser, Subcommand};
 
-use crate::console::{self, diag, out};
+use crate::console::diag;
+use crate::store::Placement;
 use crate::{Error, Result, commands};
 
 #[derive(Parser, Debug)]
@@ -16,7 +18,8 @@ use crate::{Error, Result, commands};
     about = "Structured architectural decisions that constrain AI code generation.",
     long_about = "Trurlic captures architectural decisions and serves them to AI coding agents\n\
                   via MCP.\n\n\
-                  Start with `trurlic init`, then `trurlic add component <name>`."
+                  Start with `trurlic init --placement tracked`, then record decisions\n\
+                  with `trurlic apply <file>` or the `apply` tool, and run `trurlic check`."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -27,6 +30,9 @@ pub struct Cli {
 pub enum Command {
     #[command(flatten)]
     Project(ProjectCommand),
+
+    #[command(flatten)]
+    Tool(ToolCommand),
 
     /// Register the trurlic MCP server with Claude Code, for the current user.
     Install {
@@ -57,67 +63,11 @@ pub enum InstallIde {
 #[derive(Subcommand, Debug)]
 pub enum ProjectCommand {
     /// Initialize a new `.trurlic/` directory in the current project.
-    Init,
-
-    /// Add a component or connection.
-    #[command(subcommand)]
-    Add(AddCommand),
-
-    /// Rename a component (updates all references atomically).
-    #[command(subcommand)]
-    Rename(RenameCommand),
-
-    /// Remove a component, decision, pattern or connection.
-    #[command(subcommand)]
-    Remove(RemoveCommand),
-
-    /// Record a user-attributed decision on a component or `project`.
-    Decide {
-        /// Component this decision belongs to (or "project" for project-wide).
-        component: String,
-
-        /// What was decided.
-        #[arg(long)]
-        choice: String,
-
-        /// Why — your reasoning.
-        #[arg(long)]
-        reason: String,
-
-        /// Alternative considered and rejected (repeatable).
-        #[arg(long = "alternative", short = 'a')]
-        alternatives: Vec<String>,
-
-        /// Source code location where this decision manifests (repeatable).
-        /// Format: `file` or `file::symbol`. Split on the first `::` —
-        /// Rust-path-like symbols should use the terminal segment (e.g.
-        /// `Store::lock` → `lock`).
-        #[arg(long = "ref")]
-        refs: Vec<String>,
-    },
-
-    /// Reclaim decisions that have lost their anchor: orphaned (component
-    /// gone), orphaned-ref (all referenced files deleted), or long-unreviewed
-    /// agent decisions. Reports what would be reclaimed by default; pass
-    /// `--apply` to write the removals.
-    Gc {
-        /// Actually write the removals (default: dry-run).
-        #[arg(long)]
-        apply: bool,
-
-        /// Also remove orphaned-ref and long-unreviewed agent decisions, not
-        /// just orphans.
-        #[arg(long)]
-        aggressive: bool,
-
-        /// Skip the interactive confirmation prompt for `--aggressive --apply`.
-        /// Required in non-interactive environments (CI, piped output).
-        #[arg(long)]
-        yes: bool,
-
-        /// Deprecated no-op — dry-run is now the default.
-        #[arg(long, hide = true)]
-        dry_run: bool,
+    Init {
+        /// Whether the project's git versions `.trurlic/` (`tracked`) or
+        /// `.trurlic/` stays out of it (`shared`).
+        #[arg(long, value_enum)]
+        placement: PlacementArg,
     },
 
     /// Start the MCP server for AI coding agent integration.
@@ -127,102 +77,87 @@ pub enum ProjectCommand {
     #[command(subcommand)]
     Query(QueryCommand),
 
-    /// Show project status: component count, decision count, issues.
-    Status,
-
-    /// Validate `.trurlic/` internal consistency.
+    /// Validate `.trurlic/` and report each file not in canonical form.
     Check,
+
+    /// Rewrite every file of `.trurlic/` that is not in canonical form.
+    Fmt,
 
     /// Migrate `.trurlic/` to the current format version.
     Migrate {
         /// Show what would change without writing.
         #[arg(long)]
         dry_run: bool,
+
+        /// The placement to write: `tracked` when the project's git
+        /// versions `.trurlic/`, `shared` when it stays out of it. Without
+        /// it, git tells: `tracked` when it tracks every file of
+        /// `.trurlic/`, `shared` when it tracks none.
+        #[arg(long, value_enum)]
+        placement: Option<PlacementArg>,
     },
 }
 
+/// The CLI twins of the MCP tools: each runs the tool's own code on the
+/// project's graph and prints its result, `--json` as the tool returns it.
 #[derive(Subcommand, Debug)]
-pub enum AddCommand {
-    /// Define a new component.
-    Component {
-        /// Kebab-case component name (e.g. `auth`, `rate-limiter`).
-        name: String,
+pub enum ToolCommand {
+    /// Apply a batch of ops to the graph, all or none, in one commit.
+    ///
+    /// The file holds the JSON object the `apply` tool takes: `ops`, and an
+    /// optional `origin`.
+    Apply {
+        /// The batch file, or `-` for stdin.
+        file: PathBuf,
 
-        /// One-line description of what this component does.
-        #[arg(long, short = 'd')]
-        description: Option<String>,
+        /// Print the tool's JSON result instead of a line per op.
+        #[arg(long)]
+        json: bool,
     },
 
-    /// Connect two components (directional: from → to).
-    Connection {
-        /// Source component name.
-        from: String,
+    /// Show the graph at a glance: counts, issues, history, components.
+    Status {
+        /// Show this section alone, with the whole result budget.
+        #[arg(long, value_parser = PossibleValuesParser::new(commands::status_sections()))]
+        section: Option<String>,
 
-        /// Target component name.
-        to: String,
+        /// Count only the decisions recorded under this origin.
+        #[arg(long)]
+        origin: Option<String>,
+
+        /// Print the tool's JSON result.
+        #[arg(long)]
+        json: bool,
     },
 }
 
-#[derive(Subcommand, Debug)]
-pub enum RenameCommand {
-    /// Rename a component, updating all references atomically.
-    Component {
-        /// Current component name.
-        old: String,
-
-        /// New component name (kebab-case).
-        new: String,
-    },
+/// Where the graph is versioned, as `init` and `migrate` take it.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum PlacementArg {
+    /// The project's git versions `.trurlic/`.
+    Tracked,
+    /// `.trurlic/` stays out of the project's git.
+    Shared,
 }
 
-#[derive(Subcommand, Debug)]
-pub enum RemoveCommand {
-    /// Remove a component (refuses if decisions reference it).
-    Component {
-        /// Component name to remove.
-        name: String,
-    },
-
-    /// Remove a decision, or every agent-recorded decision in a component.
-    Decision {
-        /// Decision filename (without `.toml`). Omit when using `--agent`.
-        name: Option<String>,
-
-        /// Remove every agent-recorded decision in a component at once. The
-        /// batch is atomic — if any removal is cascade-blocked, none happen.
-        #[arg(long, requires = "component", conflicts_with = "name")]
-        agent: bool,
-
-        /// Component to scope `--agent` bulk removal to.
-        #[arg(long, requires = "agent")]
-        component: Option<String>,
-    },
-
-    /// Remove a pattern and its edges; its member decisions are kept.
-    Pattern {
-        /// Pattern name (without `.toml`).
-        name: String,
-    },
-
-    /// Remove a connection between two components.
-    Connection {
-        /// Source component name.
-        from: String,
-
-        /// Target component name.
-        to: String,
-    },
+impl From<PlacementArg> for Placement {
+    fn from(placement: PlacementArg) -> Self {
+        match placement {
+            PlacementArg::Tracked => Self::Tracked,
+            PlacementArg::Shared => Self::Shared,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
 pub enum QueryCommand {
     /// Find decisions that constrain a file or directory.
     ///
-    /// Matches decisions whose code_refs reference the given path (exact match)
-    /// or any file under it (directory prefix). Use when editing a file to
-    /// discover which architectural decisions apply.
+    /// Matches decisions anchored on the given path, on any file under it as
+    /// a directory, or on a directory that holds it. Use when editing a file
+    /// to discover which architectural decisions apply.
     File {
-        /// Relative path from project root (e.g. `src/store/write.rs` or `src/store`).
+        /// Relative path from project root (e.g. `src/store/commit.rs` or `src/store`).
         path: String,
     },
 }
@@ -231,6 +166,7 @@ pub enum QueryCommand {
 pub fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Project(command) => report(run(command)),
+        Command::Tool(command) => report(run_tool(command)),
         Command::Install {
             ide: InstallIde::ClaudeCode,
             binary_path,
@@ -243,6 +179,25 @@ pub fn main() -> ExitCode {
             };
             report(commands::install(binary_path.as_deref(), mode))
         }
+    }
+}
+
+fn run_tool(command: ToolCommand) -> std::result::Result<(), commands::ToolError> {
+    let cwd = std::env::current_dir().map_err(Error::system("read the working directory"))?;
+    let format = |json: bool| {
+        if json {
+            commands::Format::Json
+        } else {
+            commands::Format::Text
+        }
+    };
+    match command {
+        ToolCommand::Apply { file, json } => commands::apply(&cwd, &file, format(json)),
+        ToolCommand::Status {
+            section,
+            origin,
+            json,
+        } => commands::status(&cwd, section.as_deref(), origin.as_deref(), format(json)),
     }
 }
 
@@ -262,98 +217,20 @@ fn report(outcome: std::result::Result<(), impl Display>) -> ExitCode {
 fn run(command: ProjectCommand) -> Result<()> {
     let cwd = std::env::current_dir().map_err(Error::system("read the working directory"))?;
     match command {
-        ProjectCommand::Init => commands::init(&cwd),
-        ProjectCommand::Add(sub) => match sub {
-            AddCommand::Component { name, description } => {
-                commands::add_component(&cwd, &name, description.as_deref())
-            }
-            AddCommand::Connection { from, to } => commands::add_connection(&cwd, &from, &to),
-        },
-        ProjectCommand::Rename(sub) => match sub {
-            RenameCommand::Component { old, new } => commands::rename_component(&cwd, &old, &new),
-        },
-        ProjectCommand::Remove(sub) => match sub {
-            RemoveCommand::Component { name } => commands::remove_component(&cwd, &name),
-            RemoveCommand::Decision {
-                name,
-                agent,
-                component,
-            } => match (name, agent, component) {
-                (Some(name), false, _) => commands::remove_decision(&cwd, &name),
-                (None, true, Some(component)) => commands::remove_agent_decisions(&cwd, &component),
-                _ => Err(Error::Validation(
-                    "specify a decision name, or `--agent --component <name>` to bulk-remove \
-                     agent decisions"
-                        .into(),
-                )),
-            },
-            RemoveCommand::Connection { from, to } => commands::remove_connection(&cwd, &from, &to),
-            RemoveCommand::Pattern { name } => commands::remove_pattern(&cwd, &name),
-        },
-        ProjectCommand::Decide {
-            component,
-            choice,
-            reason,
-            alternatives,
-            refs,
-        } => {
-            let code_refs: Vec<_> = refs
-                .iter()
-                .map(|r| commands::parse_code_ref_arg(r))
-                .collect();
-            commands::decide(
-                &cwd,
-                &component,
-                &choice,
-                &reason,
-                &alternatives,
-                &code_refs,
-            )
-        }
-        ProjectCommand::Gc {
-            apply,
-            aggressive,
-            yes,
-            dry_run: _,
-        } => {
-            let scope = if aggressive {
-                commands::GcScope::Aggressive
-            } else {
-                commands::GcScope::Safe
-            };
-            let execution = if apply {
-                commands::GcExecution::Apply
-            } else {
-                commands::GcExecution::DryRun
-            };
-            if aggressive && apply {
-                match commands::resolve_aggressive_confirm(yes, console::stdout_is_terminal())? {
-                    commands::AggressiveConfirm::Confirmed => {}
-                    commands::AggressiveConfirm::PromptUser => {
-                        let question = "Aggressive gc will permanently remove orphaned-ref \
-                                        and unreviewed agent decisions. Continue?";
-                        if !console::confirm(question)? {
-                            out!("Aborted.")?;
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-            commands::gc(&cwd, scope, execution)
-        }
+        ProjectCommand::Init { placement } => commands::init(&cwd, placement.into()),
         ProjectCommand::Query(sub) => match sub {
             QueryCommand::File { path } => commands::query_file(&cwd, &path),
         },
         ProjectCommand::Serve => commands::serve(&cwd),
-        ProjectCommand::Status => commands::status(&cwd),
         ProjectCommand::Check => commands::check(&cwd),
-        ProjectCommand::Migrate { dry_run } => {
+        ProjectCommand::Fmt => commands::fmt(&cwd),
+        ProjectCommand::Migrate { dry_run, placement } => {
             let mode = if dry_run {
                 commands::DryRun::Yes
             } else {
                 commands::DryRun::No
             };
-            commands::migrate(&cwd, mode)
+            commands::migrate(&cwd, mode, placement.map(Placement::from))
         }
     }
 }

@@ -1,0 +1,45 @@
+[decision]
+component = "store"
+choice = "Take the exclusive lock before every write"
+reason = "Two processes that write at once would each commit over the other"
+alternatives = ["Optimistic writes with a retry - rejected: a lost write is silent"]
+tags = ["concurrency"]
+created = "2026-11-23T21:56:31.401227310Z"
+
+[[decision.code_refs]]
+file = "src/store/lock.rs"
+symbol = "StoreLock"
+line = 12
+
+[[decision.code_refs]]
+file = "src/store/lock.rs"
+symbol = "lock()"
+
+[[decision.code_refs]]
+file = "./src/store/commit.rs"
+symbol = "commit_batch"
+
+[[decision.code_refs]]
+file = "../shared/lock.rs"
+
+[[decision.code_refs]]
+file = "Cargo.toml"
+symbol = "profile.release.panic"
+
+[[decision.code_refs]]
+file = "tools/check.py"
+symbol = "Checker.run"
+
+[[decision.code_refs]]
+file = "README.md"
+symbol = "Install"
+
+[[decision.history]]
+choice = "Lock the store for every write"
+reason = "Two processes that write at once would each commit over the other"
+changed_at = "2026-11-23T21:56:31.452130116Z"
+
+[[decision.history]]
+choice = "Take the lock before every write"
+reason = "Two processes that write at once would each commit over the other"
+changed_at = "2026-11-23T21:56:31.497514906Z"

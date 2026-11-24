@@ -1,0 +1,20 @@
+component = "mcp"
+choice = "A tool call reaches the client through Peer::request: the wait answers ping, queues other requests (16 at most), ends on cancellation or EOF, and has no timeout"
+reason = "accept asks the owner through an elicitation form during its tool call, so the server must send a request of its own and read the answer from the same stdin it reads every request from. Peer::request refuses before sending when the client's initialize did not declare the capability the method needs (form elicitation: elicitation with form, or empty), takes the next id of the server's own, writes the request and reads lines until the response with that id: a ping is answered at once, as the specification requires; any other request is queued and served after the call is answered, since a client may send parallel tool calls while one waits on a form; past 16 queued a request is answered -32000; a stray response is ignored; notifications/cancelled for the call ends the wait and the call gets no response, and for a queued request drops it. The wait has no timeout, because the answer can be a person reading a form; the client's cancellation and the end of stdin end it, the latter with a clean exit."
+alternatives = [
+    "Refuse client requests during the wait: rejected, it fails valid parallel tool calls while one waits on a form",
+    "A timeout on the wait: rejected, a person answers the form; cancellation and EOF already end the wait",
+    "A reader thread with channels: rejected, reading the one line stream in place keeps its order and needs no synchronisation",
+]
+tags = [
+    "api",
+    "protocol",
+]
+status = "proposed"
+created = "2026-11-23T23:15:11.066734150Z"
+anchors = [
+    { file = "src/mcp/peer.rs", symbol = "ClientCapabilities" },
+    { file = "src/mcp/peer.rs", symbol = "Peer::hold" },
+    { file = "src/mcp/peer.rs", symbol = "Peer::request" },
+    { file = "tests/integration/server_failpoints.rs" },
+]

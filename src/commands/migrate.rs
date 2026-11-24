@@ -1,303 +1,315 @@
-use std::cmp::Ordering;
-use std::fs;
-use std::path::Path;
+//! `trurlic migrate`: bring a store in an older format to the current one.
+//!
+//! The store plans the migration (`Store::plan_migration`) and commits it in
+//! one journaled commit. This command tells the store the placement, stated
+//! with `--placement` or read from the project's git; takes the lock; keeps a
+//! copy of the old files beside `.trurlic/`, with the report in it; and
+//! prints the report. The patterns and tags the migration takes out of the
+//! graph live on only in that copy and its report, so both are flushed to
+//! disk before the commit.
+
+use std::fs::{self, File};
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
+
+use rayon::prelude::*;
 
 use crate::console::{diag, out};
-use crate::store::schema::{
-    COMPONENTS_DIR, ComponentFile, DECISIONS_DIR, DecisionFile, EdgeEntry, FORMAT_VERSION,
-    GRAPH_FILE, PATTERNS_DIR, PatternFile, ProjectFile,
+use crate::discovery::discover;
+use crate::store::{
+    FORMAT_VERSION, Fact, Loss, MigrationReport, PatternRecord, Placement, PlacementBasis,
+    PlacementSource, Store, Timestamp, sync_dir,
 };
-use crate::store::{Store, StoreLock, Timestamp};
 use crate::{Error, Result};
 
-use super::DryRun;
+use super::{DryRun, graph_name, placement};
 
-/// `trurlic migrate` — upgrade an on-disk store to the current `FORMAT_VERSION`:
-/// re-serialize every node to the latest schema and drop edges whose kind the
-/// schema retired. `DryRun::Yes` reports the plan without writing.
-pub fn migrate(cwd: &Path, dry_run: DryRun) -> Result<()> {
-    let store = Store::discover(cwd)?;
+/// The report's file in the backup directory.
+const REPORT_FILE: &str = "migration-report.txt";
 
-    let old_version = store.read_project()?.trurlic_version;
+/// The backup names tried for one second before the last one's error stands.
+const MAX_BACKUPS_PER_SECOND: u32 = 100;
 
-    match crate::store::compare_versions(&old_version, FORMAT_VERSION) {
-        Ordering::Greater => {
-            return Err(Error::VersionMismatch {
-                found: old_version,
-                expected: FORMAT_VERSION,
-            });
-        }
-        Ordering::Equal => {
-            out!("Already up to date (format version {FORMAT_VERSION}).")?;
-            return Ok(());
-        }
-        Ordering::Less => {}
-    }
-
-    let root = store.root();
-
+/// Migrate the store above `cwd`. `placement`, when given, is the one the
+/// migration writes; without it git tells. `DryRun::Yes` prints the report
+/// and writes nothing.
+pub(crate) fn migrate(cwd: &Path, dry_run: DryRun, placement: Option<Placement>) -> Result<()> {
+    let store = discover(cwd)?;
+    let source = match placement {
+        Some(placement) => PlacementSource::Stated(placement),
+        None => match placement::tracked(&store) {
+            Ok(Some(tracked)) => PlacementSource::Git(Ok(tracked)),
+            Ok(None) => PlacementSource::NoWorkTree,
+            Err(e) => PlacementSource::Git(Err(e)),
+        },
+    };
     if dry_run == DryRun::Yes {
-        return print_dry_run(root, &old_version);
+        return match store.preview_migration(source)? {
+            Some(migration) => print(&report(&migration.report, &graph_name(&store), DryRun::Yes)),
+            None => up_to_date(),
+        };
     }
 
     let lock = store.lock()?;
-    store.recover(&lock)?;
-
-    // Re-check version under lock to close the TOCTOU window: another process
-    // could have migrated between the initial unlocked read and lock
-    // acquisition. Doing it before the backup avoids a wasted copy on that race.
-    if crate::store::compare_versions(&store.read_project()?.trurlic_version, FORMAT_VERSION)
-        != Ordering::Less
-    {
-        drop(lock);
-        out!("Already up to date (format version {FORMAT_VERSION}).")?;
-        return Ok(());
-    }
-
-    // Snapshot under the lock so no concurrent CLI or MCP write can tear the
-    // backup — a copy taken without the lock could pair a freshly written node
-    // file with a pre-write graph.toml, defeating its purpose as a recovery point.
-    let backup_name = backup_name()?;
-    let backup_path = root
-        .parent()
-        .ok_or_else(|| Error::Validation("store root has no parent directory".into()))?
-        .join(&backup_name);
-    if let Err(e) = copy_dir_recursive(root, &backup_path) {
-        let _ = fs::remove_dir_all(&backup_path);
+    // Planned under the lock, so no write lands between the plan and its
+    // commit, and a store another process migrated meanwhile is current.
+    let Some(migration) = store.plan_migration(&lock, source)? else {
+        return up_to_date();
+    };
+    let lines = report(&migration.report, &graph_name(&store), DryRun::No);
+    // Copied under the lock, so no concurrent write can tear the copy.
+    let backup = backup_dir(&store)?;
+    if let Err(e) = back_up(store.root(), &backup, &lines) {
+        let _ = fs::remove_dir_all(&backup);
         return Err(e);
     }
-
-    let stripped_edges = apply_migration(root, &lock, &store)?;
+    match store.commit_migration(&lock, migration) {
+        Ok(_) => {}
+        // Recorded in the journal: the migration lands, and the copy stays.
+        Err(e @ Error::WritePending { .. }) => return Err(e),
+        Err(e) => {
+            let _ = fs::remove_dir_all(&backup);
+            return Err(e);
+        }
+    }
     drop(lock);
 
-    if stripped_edges > 0 {
-        out!("Removed {stripped_edges} graph edge(s) not recognized by the current schema.")?;
-    }
-    out!("Migrated from {old_version} \u{2192} {FORMAT_VERSION}, backup at {backup_name}/")?;
+    print(&lines)?;
+    let name = Path::new(backup.file_name().unwrap_or_default()).display();
+    out!("backup: {name}/")?;
+    out!("report: {name}/{REPORT_FILE}")?;
     Ok(())
 }
 
-/// `.trurlic-backup-` and the UTC time to the second in ISO 8601 basic
-/// format (`20250601T103000`), which has no `:` for Windows to refuse.
-fn backup_name() -> Result<String> {
+fn up_to_date() -> Result<()> {
+    out!("Already up to date (format version {FORMAT_VERSION}).")?;
+    Ok(())
+}
+
+fn print(lines: &[String]) -> Result<()> {
+    for line in lines {
+        out!("{line}")?;
+    }
+    Ok(())
+}
+
+/// The report on the graph `graph` as lines: each step with what it
+/// dropped and what else it reports, then the files written and removed,
+/// all in the order the migration met them.
+fn report(report: &MigrationReport, graph: &str, dry_run: DryRun) -> Vec<String> {
+    let (migrate, rewrite, remove) = match dry_run {
+        DryRun::Yes => ("Would migrate", "Would rewrite", "Would remove"),
+        DryRun::No => ("Migrated", "Rewrote", "Removed"),
+    };
+    let mut lines = vec![format!(
+        "{migrate} {graph} from format {} to {FORMAT_VERSION}.",
+        report.from
+    )];
+    for step in &report.steps {
+        let title = format!("  {} -> {} ({})", step.from, step.to, step.change);
+        if step.losses.is_empty() && step.facts.is_empty() {
+            lines.push(format!("{title}: nothing dropped"));
+            continue;
+        }
+        lines.push(format!("{title}:"));
+        losses(&mut lines, &step.losses);
+        facts(&mut lines, &step.facts);
+    }
+    lines.push(format!("{rewrite} {} file(s):", report.rewritten.len()));
+    lines.extend(report.rewritten.iter().map(|file| format!("  {file}")));
+    if !report.removed.is_empty() {
+        lines.push(format!("{remove} {} file(s):", report.removed.len()));
+        lines.extend(report.removed.iter().map(|file| format!("  {file}")));
+    }
+    lines
+}
+
+fn losses(lines: &mut Vec<String>, losses: &[Loss]) {
+    if losses.is_empty() {
+        return;
+    }
+    lines.push(format!("    {} value(s) dropped:", losses.len()));
+    for loss in losses {
+        lines.push(format!(
+            "      {}: {} = {}",
+            loss.file, loss.field, loss.value
+        ));
+    }
+}
+
+/// `facts`, sorted, one section per kind: a heading, then one entry each.
+fn facts(lines: &mut Vec<String>, facts: &[Fact]) {
+    for run in facts.chunk_by(|a, b| std::mem::discriminant(a) == std::mem::discriminant(b)) {
+        let Some(first) = run.first() else {
+            continue;
+        };
+        lines.push(format!("    {}", heading(first, run)));
+        for fact in run {
+            entry(lines, fact);
+        }
+    }
+}
+
+/// How the placement was told.
+fn told(basis: PlacementBasis) -> String {
+    match basis {
+        PlacementBasis::Stated => "stated with --placement".to_owned(),
+        PlacementBasis::AllTracked { files } => {
+            format!("git tracks all {files} files of the store")
+        }
+        PlacementBasis::NoneTracked { files } => {
+            format!("git tracks none of the {files} files of the store")
+        }
+    }
+}
+
+/// The heading of `run`, the facts of the kind of `first`.
+fn heading(first: &Fact, run: &[Fact]) -> String {
+    let count = run.len();
+    match first {
+        Fact::Placement { placement, basis } => {
+            format!(
+                "placement = {}: {}",
+                quoted(placement.as_str()),
+                told(*basis)
+            )
+        }
+        Fact::Renamed { .. } => {
+            format!("{count} file(s) whose `name` differs from the stem, which is the name now:")
+        }
+        Fact::Reversed { .. } => format!("{count} `constrains` edge(s) written as `depends_on`:"),
+        Fact::Normalized { .. } => format!("{count} anchor(s) respelled for format 0.5:"),
+        Fact::Unnormalized { .. } => {
+            format!(
+                "{count} anchor symbol(s) kept as written, which format 0.5 may read otherwise:"
+            )
+        }
+        Fact::History { .. } => {
+            let entries: usize = run
+                .iter()
+                .filter_map(|fact| match fact {
+                    Fact::History { entries, .. } => Some(*entries),
+                    // A run holds facts of one kind.
+                    Fact::Placement { .. }
+                    | Fact::Renamed { .. }
+                    | Fact::Reversed { .. }
+                    | Fact::Normalized { .. }
+                    | Fact::Unnormalized { .. }
+                    | Fact::Pattern(_)
+                    | Fact::Tags { .. } => None,
+                })
+                .sum();
+            format!("history entries dropped: {entries}, from {count} decision(s):")
+        }
+        Fact::Pattern(_) => format!("{count} pattern(s) taken out of the graph:"),
+        Fact::Tags { .. } => format!("{count} component(s) whose tags are taken out of the graph:"),
+    }
+}
+
+fn entry(lines: &mut Vec<String>, fact: &Fact) {
+    match fact {
+        // The heading says it all.
+        Fact::Placement { .. } => {}
+        Fact::Renamed { file, name } => {
+            lines.push(format!("      {file}: name = {}", quoted(name)))
+        }
+        Fact::Reversed { from, to } => {
+            lines.push(format!(
+                "      {to} depends_on {from}, for {from} constrains {to}"
+            ));
+        }
+        Fact::Normalized { file, old, new } => lines.push(format!("      {file}: {old} -> {new}")),
+        Fact::Unnormalized { file, anchor, why } => {
+            lines.push(format!("      {file}: {anchor}: {why}"));
+        }
+        Fact::History { file, entries } => lines.push(format!("      {file}: {entries}")),
+        Fact::Pattern(pattern) => pattern_lines(lines, pattern),
+        Fact::Tags { node, tags } => lines.push(format!("      {node}: tags = {}", list(tags))),
+    }
+}
+
+/// `pattern` as the TOML table it was, with its edges and tags as keys.
+fn pattern_lines(lines: &mut Vec<String>, pattern: &PatternRecord) {
+    lines.push(format!("      [{}]", pattern.name));
+    for (key, text) in [
+        ("name", &pattern.title),
+        ("description", &pattern.description),
+    ] {
+        if let Some(text) = text {
+            lines.push(format!("      {key} = {}", quoted(text)));
+        }
+    }
+    for (key, names) in [
+        ("tags", &pattern.tags),
+        ("member_of", &pattern.member_of),
+        ("applies_to", &pattern.applies_to),
+    ] {
+        if !names.is_empty() {
+            lines.push(format!("      {key} = {}", list(names)));
+        }
+    }
+}
+
+/// `text` as a one-line TOML string.
+fn quoted(text: &str) -> String {
+    toml::Value::from(text).to_string()
+}
+
+fn list(names: &[String]) -> String {
+    let quoted: Vec<String> = names.iter().map(|name| quoted(name)).collect();
+    format!("[{}]", quoted.join(", "))
+}
+
+/// A new directory beside the store for its backup: `.trurlic-backup-`
+/// and the UTC time to the second in ISO 8601 basic format
+/// (`20250601T103000`), which has no `:` for Windows to refuse, with `-2`,
+/// `-3` and on appended while the name is taken, so a backup never lands in
+/// an earlier one.
+fn backup_dir(store: &Store) -> Result<PathBuf> {
     let now = Timestamp::now()?.civil();
-    Ok(format!(
+    let name = format!(
         ".trurlic-backup-{:04}{:02}{:02}T{:02}{:02}{:02}",
         now.year, now.month, now.day, now.hour, now.minute, now.second
-    ))
-}
-
-/// Rewrite every node file into the current schema, strip graph edges the
-/// current schema can no longer parse, stamp the new format version into
-/// `project.toml`, and rebuild `graph.toml` last as the commit point. Returns
-/// the number of retired edges removed.
-///
-/// Ordering is load-bearing:
-/// 1. Node files (and `project.toml`) are rewritten into the current format
-///    *before* graph.toml is rebuilt, because graph.toml stores a content hash
-///    per node — including `project`. Bumping the version after the rebuild
-///    would leave that hash stale.
-/// 2. Retired edges are stripped *before* the version bump, so even if the run
-///    is interrupted right after the bump the graph still parses with a typed
-///    read: the store stays loadable (at worst with stale hashes a later write
-///    refreshes) rather than bricked on an unknown edge kind.
-/// 3. graph.toml is written last, per the storage spec's commit-point rule.
-fn apply_migration(root: &Path, lock: &StoreLock, store: &Store) -> Result<usize> {
-    round_trip_dir::<ComponentFile>(root, COMPONENTS_DIR, lock, store)?;
-    round_trip_dir::<DecisionFile>(root, DECISIONS_DIR, lock, store)?;
-    round_trip_dir::<PatternFile>(root, PATTERNS_DIR, lock, store)?;
-
-    // Drop edges whose kind no longer exists in the schema (e.g. `supersedes`,
-    // retired in 0.4.0). These live only in the compiled index, never in node
-    // files, and a typed read rejects the whole graph on one unknown variant —
-    // so this loose pre-pass must run before the typed rebuild below.
-    let stripped = sanitize_graph_edges(root, lock, store)?;
-
-    write_migrated_version(root, lock, store)?;
-
-    // Rebuild graph.toml with fresh BLAKE3 hashes from the finalized node files
-    // (project.toml included). A plain round-trip of the old graph.toml would
-    // leave stale hashes for any file whose content changed (new default fields,
-    // the version bump).
-    let state = store.load_state()?;
-    store.write_atomic(lock, &store.graph_path(), &state.graph_index)?;
-
-    Ok(stripped)
-}
-
-/// Remove edges from graph.toml whose `kind` no longer deserializes into a
-/// current [`EdgeEntry`], returning how many were dropped.
-///
-/// A typed `GraphIndex` read rejects the entire file on a single unknown edge
-/// variant, so this parses loosely as a `toml::Table`, keeps only the edges the
-/// current schema understands, and rewrites the file when any were dropped.
-/// Returns `0` when graph.toml is absent or already clean.
-fn sanitize_graph_edges(root: &Path, lock: &StoreLock, store: &Store) -> Result<usize> {
-    let path = root.join(GRAPH_FILE);
-    let content = match fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(source) => return Err(Error::Io { path, source }),
-    };
-
-    let mut index: toml::Table = toml::from_str(&content).map_err(Error::toml(&path))?;
-    let Some(toml::Value::Array(edges)) = index.get_mut("edges") else {
-        return Ok(0);
-    };
-
-    let before = edges.len();
-    edges.retain(|edge| edge.clone().try_into::<EdgeEntry>().is_ok());
-    let stripped = before - edges.len();
-    if stripped == 0 {
-        return Ok(0);
-    }
-
-    store.write_atomic(lock, &path, &index)?;
-    Ok(stripped)
-}
-
-/// Count graph edges the current schema can no longer parse, without a typed
-/// read that a single retired edge would reject outright. Used by the dry-run
-/// preview, which must not mutate the store.
-fn count_retired_edges(graph_path: &Path, graph_content: &str) -> Result<usize> {
-    let index: toml::Table = toml::from_str(graph_content).map_err(Error::toml(graph_path))?;
-    let Some(toml::Value::Array(edges)) = index.get("edges") else {
-        return Ok(0);
-    };
-    Ok(edges
-        .iter()
-        .filter(|edge| (*edge).clone().try_into::<EdgeEntry>().is_err())
-        .count())
-}
-
-/// Stamp the current [`FORMAT_VERSION`] into `project.toml`. This is the
-/// migration commit point — see [`apply_migration`] for why it runs last.
-fn write_migrated_version(root: &Path, lock: &StoreLock, store: &Store) -> Result<()> {
-    let path = root.join("project.toml");
-    let mut project: ProjectFile = read_node(&path)?.0;
-    project.trurlic_version = FORMAT_VERSION.into();
-    store.write_atomic(lock, &path, &project)?;
-    Ok(())
-}
-
-fn round_trip_dir<T>(
-    root: &Path,
-    subdir: &str,
-    lock: &crate::store::StoreLock,
-    store: &Store,
-) -> Result<()>
-where
-    T: serde::de::DeserializeOwned + serde::Serialize,
-{
-    let dir = root.join(subdir);
-    let entries = match fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => return Err(Error::Io { path: dir, source }),
-    };
-
-    for entry in entries {
-        let path = entry.map_err(Error::io(&dir))?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-            continue;
-        }
-        let (value, _): (T, _) = read_node(&path)?;
-        store.write_atomic(lock, &path, &value)?;
-    }
-    Ok(())
-}
-
-fn print_dry_run(root: &Path, old_version: &str) -> Result<()> {
-    out!("Dry run: would migrate from {old_version} \u{2192} {FORMAT_VERSION}")?;
-    out!()?;
-
-    let mut count = 0;
-
-    let path = root.join("project.toml");
-    let (mut project, content): (ProjectFile, _) = read_node(&path)?;
-    project.trurlic_version = FORMAT_VERSION.into();
-    if content != to_toml(&path, &project)? {
-        out!("  would update: project.toml")?;
-        count += 1;
-    }
-
-    let node_changes = count_changed_files::<ComponentFile>(root, COMPONENTS_DIR)?
-        + count_changed_files::<DecisionFile>(root, DECISIONS_DIR)?
-        + count_changed_files::<PatternFile>(root, PATTERNS_DIR)?;
-    count += node_changes;
-
-    let graph_path = root.join(GRAPH_FILE);
-    if graph_path.exists() {
-        let content = fs::read_to_string(&graph_path).map_err(Error::io(&graph_path))?;
-        // Parse loosely: a retired edge (e.g. `supersedes`) makes a typed read
-        // fail on the very store this command exists to repair, so the dry-run
-        // must not attempt one.
-        let retired = count_retired_edges(&graph_path, &content)?;
-        // graph.toml is rewritten whenever a node file changed (hash refresh) or
-        // a retired edge is stripped.
-        if retired > 0 {
-            out!("  would strip {retired} retired graph edge(s) and rewrite: {GRAPH_FILE}")?;
-            count += 1;
-        } else if node_changes > 0 {
-            out!("  would update: {GRAPH_FILE}")?;
-            count += 1;
+    );
+    let (parent, _) = store.parent_and_name()?;
+    let mut path = parent.join(&name);
+    for suffix in 2..=MAX_BACKUPS_PER_SECOND {
+        match fs::create_dir(&path) {
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                path = parent.join(format!("{name}-{suffix}"));
+            }
+            created => return created.map(|()| path).map_err(Error::io(parent)),
         }
     }
-
-    if count == 0 {
-        out!("  no files would change (aside from version bump)")?;
-    } else {
-        out!()?;
-        out!("{count} file(s) would be updated.")?;
-    }
-
-    Ok(())
+    fs::create_dir(&path).map_err(Error::io(&path))?;
+    Ok(path)
 }
 
-fn count_changed_files<T>(root: &Path, subdir: &str) -> Result<usize>
-where
-    T: serde::de::DeserializeOwned + serde::Serialize,
-{
-    let dir = root.join(subdir);
-    let entries = match fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(source) => return Err(Error::Io { path: dir, source }),
-    };
-
-    let mut count = 0;
-    for entry in entries {
-        let path = entry.map_err(Error::io(&dir))?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-            continue;
+/// Copy the store at `root` to `backup` with the report `lines` in it, all
+/// flushed to disk.
+fn back_up(root: &Path, backup: &Path, lines: &[String]) -> Result<()> {
+    copy_dir_recursive(root, backup)?;
+    let path = backup.join(REPORT_FILE);
+    // A new file: a store file of that name is in the copy already.
+    let written = File::create_new(&path).and_then(|mut file| {
+        for line in lines {
+            writeln!(file, "{line}")?;
         }
-        let (value, content): (T, _) = read_node(&path)?;
-        if content != to_toml(&path, &value)? {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            out!("  would update: {subdir}/{name}")?;
-            count += 1;
-        }
-    }
-    Ok(count)
+        file.sync_all()
+    });
+    written.map_err(Error::io(&path))?;
+    sync_dir(backup).map_err(Error::io(backup))?;
+    let parent = backup.parent().unwrap_or(backup);
+    sync_dir(parent).map_err(Error::io(parent))
 }
 
-/// Parse the TOML file at `path` as `T`, returning its text with it.
-fn read_node<T: serde::de::DeserializeOwned>(path: &Path) -> Result<(T, String)> {
-    let content = fs::read_to_string(path).map_err(Error::io(path))?;
-    let value = toml::from_str(&content).map_err(Error::toml(path))?;
-    Ok((value, content))
-}
-
-/// `value` as the TOML a migration would write to `path`.
-fn to_toml<T: serde::Serialize>(path: &Path, value: &T) -> Result<String> {
-    toml::to_string_pretty(value).map_err(|source| Error::TomlSerialize {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
+/// Copy the directory `src` to `dst`, but for `.state/` and the graph's
+/// repository `.git/`, every file flushed. The files of a directory are
+/// copied in parallel: each flush waits on the disk, and a store holds
+/// hundreds of files.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).map_err(Error::io(dst))?;
+    let mut files = Vec::new();
     for entry in fs::read_dir(src).map_err(Error::io(src))? {
         let entry = entry.map_err(Error::io(src))?;
         let src_path = entry.path();
@@ -307,441 +319,23 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
             // Skip symlinks rather than follow them out of the store tree; warn
             // so an incomplete backup is never silent.
             diag!(
-                "warning: backup skipped symlink {} \u{2014} copy its target manually if needed",
+                "warning: backup skipped symlink {}; copy its target if needed",
                 src_path.display()
             );
-            continue;
-        }
-        if ft.is_dir() {
-            // Skip .state/ — it contains transient data (tmp files, locks, sessions).
-            if entry.file_name() == ".state" {
-                continue;
+        } else if ft.is_dir() {
+            // Skip .state/, which holds the lock, temp files and the journal,
+            // and .git/, whose history the migration's commit extends.
+            if entry.file_name() != ".state" && entry.file_name() != ".git" {
+                copy_dir_recursive(&src_path, &dst_path)?;
             }
-            copy_dir_recursive(&src_path, &dst_path)?;
         } else {
-            fs::copy(&src_path, &dst_path).map_err(Error::io(&dst_path))?;
+            files.push((src_path, dst_path));
         }
     }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::commands::{add_component, decide, init};
-    use crate::store::schema::FORMAT_VERSION;
-    use crate::store::testing::setup_store_with_version;
-    use tempfile::TempDir;
-
-    #[test]
-    fn migrate_already_current_is_noop() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-
-        migrate(tmp.path(), DryRun::No).unwrap();
-    }
-
-    #[test]
-    fn migrate_rejects_newer_version() {
-        let tmp = TempDir::new().unwrap();
-        setup_store_with_version(tmp.path(), "99.0.0");
-
-        let err = migrate(tmp.path(), DryRun::No).unwrap_err();
-        assert!(
-            matches!(&err, Error::VersionMismatch { found, .. } if found == "99.0.0"),
-            "{err:?}"
-        );
-        assert!(err.to_string().contains("upgrade trurlic"), "{err}");
-    }
-
-    #[test]
-    fn migrate_old_version_updates_to_current() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Use JWT tokens",
-            "Stateless auth",
-            &[],
-            &[],
-        )
-        .unwrap();
-
-        // Downgrade the version to simulate an old store.
-        let store = Store::discover(tmp.path()).unwrap();
-        let mut project = store.read_project().unwrap();
-        project.trurlic_version = "0.1.0".into();
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        migrate(tmp.path(), DryRun::No).unwrap();
-
-        // Verify version is updated.
-        let project = store.read_project().unwrap();
-        assert_eq!(project.trurlic_version, FORMAT_VERSION);
-
-        // Verify the store loads successfully with current code.
-        store.check_version().unwrap();
-        let state = store.load_state().unwrap();
-        assert!(state.components.contains_key("auth"));
-        assert!(state.decisions.contains_key("use-jwt-tokens"));
-    }
-
-    #[test]
-    fn migrate_creates_backup() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-
-        // Downgrade.
-        let store = Store::discover(tmp.path()).unwrap();
-        let mut project = store.read_project().unwrap();
-        project.trurlic_version = "0.1.0".into();
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        migrate(tmp.path(), DryRun::No).unwrap();
-
-        // Find the backup directory.
-        let backups: Vec<_> = fs::read_dir(tmp.path())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_str()
-                    .is_some_and(|n| n.starts_with(".trurlic-backup-"))
-            })
-            .collect();
-        assert_eq!(backups.len(), 1, "exactly one backup directory expected");
-
-        // Backup should contain project.toml with the OLD version.
-        let backup_project_path = backups[0].path().join("project.toml");
-        let backup_content = fs::read_to_string(backup_project_path).unwrap();
-        let backup_project: ProjectFile = toml::from_str(&backup_content).unwrap();
-        assert_eq!(backup_project.trurlic_version, "0.1.0");
-
-        // Backup should contain the component file.
-        assert!(
-            backups[0]
-                .path()
-                .join("components")
-                .join("auth.toml")
-                .exists()
-        );
-
-        // Backup should NOT contain .state/ (transient data).
-        assert!(!backups[0].path().join(".state").exists());
-    }
-
-    #[test]
-    fn migrate_dry_run_does_not_modify_files() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-
-        // Downgrade.
-        let store = Store::discover(tmp.path()).unwrap();
-        let mut project = store.read_project().unwrap();
-        project.trurlic_version = "0.1.0".into();
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        migrate(tmp.path(), DryRun::Yes).unwrap();
-
-        // Version should still be old.
-        let project = store.read_project().unwrap();
-        assert_eq!(project.trurlic_version, "0.1.0");
-
-        // No backup directory should exist.
-        let backups: Vec<_> = fs::read_dir(tmp.path())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_str()
-                    .is_some_and(|n| n.starts_with(".trurlic-backup-"))
-            })
-            .collect();
-        assert!(backups.is_empty(), "dry run must not create backup");
-    }
-
-    #[test]
-    fn migrate_fills_in_defaults_for_missing_fields() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Use JWT tokens",
-            "Stateless auth",
-            &[],
-            &[],
-        )
-        .unwrap();
-
-        // Downgrade and strip the attribution field from the decision file
-        // to simulate an older format that didn't have it.
-        let store = Store::discover(tmp.path()).unwrap();
-        let dec_path = store.decision_path("use-jwt-tokens");
-        let content = fs::read_to_string(&dec_path).unwrap();
-        let stripped = content
-            .lines()
-            .filter(|line| !line.starts_with("attribution"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        fs::write(&dec_path, &stripped).unwrap();
-
-        let mut project = store.read_project().unwrap();
-        project.trurlic_version = "0.1.0".into();
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        migrate(tmp.path(), DryRun::No).unwrap();
-
-        // The decision file should now have the attribution field with default.
-        let dec_content = fs::read_to_string(&dec_path).unwrap();
-        assert!(
-            dec_content.contains("attribution"),
-            "migration should fill in default attribution field"
-        );
-
-        // Should load cleanly with correct hashes.
-        store.check_version().unwrap();
-        let hash_issues = store.verify_hashes().unwrap();
-        assert!(
-            hash_issues.is_empty(),
-            "graph.toml hashes must match updated files: {hash_issues:?}"
-        );
-        let state = store.load_state().unwrap();
-        assert!(state.decisions.contains_key("use-jwt-tokens"));
-    }
-
-    #[test]
-    fn migrate_handles_semantically_equal_version() {
-        // VERSION "0.3" is textually different from "0.3.0" but semantically
-        // equivalent via compare_versions. This must not panic.
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-
-        let store = Store::discover(tmp.path()).unwrap();
-        let mut project = store.read_project().unwrap();
-        // Truncate to just major.minor — semantically equal to FORMAT_VERSION.
-        let parts: Vec<&str> = FORMAT_VERSION.split('.').collect();
-        if parts.len() >= 2 && parts.get(2) == Some(&"0") {
-            project.trurlic_version = format!("{}.{}", parts[0], parts[1]);
-        } else {
-            project.trurlic_version = FORMAT_VERSION.to_string();
-        }
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        // Must not panic — should treat as "already up to date".
-        let result = migrate(tmp.path(), DryRun::No);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn migrate_empty_store() {
-        // A store with zero components/decisions/patterns should migrate cleanly.
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-
-        let store = Store::discover(tmp.path()).unwrap();
-        let mut project = store.read_project().unwrap();
-        project.trurlic_version = "0.1.0".into();
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        migrate(tmp.path(), DryRun::No).unwrap();
-
-        store.check_version().unwrap();
-        let hash_issues = store.verify_hashes().unwrap();
-        assert!(
-            hash_issues.is_empty(),
-            "graph.toml hashes must match: {hash_issues:?}"
-        );
-    }
-
-    #[test]
-    fn migrate_strips_retired_supersedes_edge() {
-        // A store written by 0.2.0 (format 0.3.0) could carry a `supersedes`
-        // edge in graph.toml — an edge kind removed in 0.4.0. A typed load
-        // rejects the whole file on it, so migrate must strip it and the store
-        // must open afterward.
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Old choice",
-            "Superseded later",
-            &[],
-            &[],
-        )
-        .unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "New choice",
-            "Replaces the old one",
-            &[],
-            &[],
-        )
-        .unwrap();
-
-        let store = Store::discover(tmp.path()).unwrap();
-
-        // Inject a legacy supersedes edge and downgrade the version, mimicking a
-        // graph.toml this CLI can no longer parse with a typed read.
-        let graph_path = store.graph_path();
-        let mut graph = fs::read_to_string(&graph_path).unwrap();
-        graph.push_str(
-            "\n[[edges]]\nfrom = \"new-choice\"\nto = \"old-choice\"\nkind = \"supersedes\"\n",
-        );
-        fs::write(&graph_path, &graph).unwrap();
-
-        let mut project = store.read_project().unwrap();
-        project.trurlic_version = "0.3.0".into();
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        // A typed load must fail before migration (proves the fixture is real).
-        assert!(
-            store.load_state().is_err(),
-            "supersedes edge should break a typed load pre-migration"
-        );
-
-        migrate(tmp.path(), DryRun::No).unwrap();
-
-        // After migration the store opens and the retired edge is gone.
-        store.check_version().unwrap();
-        let state = store.load_state().unwrap();
-        assert!(
-            !state
-                .graph_index
-                .edges
-                .iter()
-                .any(|e| e.from == "new-choice" && e.to == "old-choice"),
-            "supersedes edge must be stripped"
-        );
-        assert!(state.decisions.contains_key("old-choice"));
-        assert!(state.decisions.contains_key("new-choice"));
-        let hash_issues = store.verify_hashes().unwrap();
-        assert!(hash_issues.is_empty(), "hashes must match: {hash_issues:?}");
-    }
-
-    #[test]
-    fn migrate_dry_run_previews_retired_edge_without_crashing_or_mutating() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", Some("Authentication")).unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "Old choice",
-            "Superseded later",
-            &[],
-            &[],
-        )
-        .unwrap();
-        decide(
-            tmp.path(),
-            "auth",
-            "New choice",
-            "Replaces the old one",
-            &[],
-            &[],
-        )
-        .unwrap();
-
-        let store = Store::discover(tmp.path()).unwrap();
-        let graph_path = store.graph_path();
-        let mut graph = fs::read_to_string(&graph_path).unwrap();
-        graph.push_str(
-            "\n[[edges]]\nfrom = \"new-choice\"\nto = \"old-choice\"\nkind = \"supersedes\"\n",
-        );
-        fs::write(&graph_path, &graph).unwrap();
-
-        let mut project = store.read_project().unwrap();
-        project.trurlic_version = "0.3.0".into();
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        // A typed dry-run parse would choke on the retired edge — the very store
-        // migrate exists to repair. The loose preview must succeed instead.
-        migrate(tmp.path(), DryRun::Yes).unwrap();
-
-        // A dry run writes nothing: the version and the retired edge both remain.
-        assert_eq!(store.read_project().unwrap().trurlic_version, "0.3.0");
-        assert!(
-            fs::read_to_string(&graph_path)
-                .unwrap()
-                .contains("supersedes"),
-            "dry run must not mutate the store"
-        );
-    }
-
-    #[test]
-    fn migrate_with_patterns() {
-        let tmp = TempDir::new().unwrap();
-        init(tmp.path()).unwrap();
-        add_component(tmp.path(), "auth", Some("Auth module")).unwrap();
-        add_component(tmp.path(), "api", Some("API module")).unwrap();
-        decide(tmp.path(), "auth", "JWT tokens", "Stateless.", &[], &[]).unwrap();
-        decide(tmp.path(), "api", "REST API", "Common verbs", &[], &[]).unwrap();
-
-        // Create a pattern file directly (store::record_pattern is pub(crate)
-        // in the private `write` module, so we write TOML by hand).
-        let store = Store::discover(tmp.path()).unwrap();
-        let pat_dir = store.root().join(PATTERNS_DIR);
-        fs::create_dir_all(&pat_dir).unwrap();
-        let pat_content = r#"[pattern]
-name = "auth-pattern"
-description = "Authentication pattern"
-"#;
-        fs::write(pat_dir.join("auth-pattern.toml"), pat_content).unwrap();
-
-        // Downgrade version to force migration.
-        let mut project = store.read_project().unwrap();
-        project.trurlic_version = "0.1.0".into();
-        let lock = store.lock().unwrap();
-        store
-            .write_atomic(&lock, &store.root().join("project.toml"), &project)
-            .unwrap();
-        drop(lock);
-
-        migrate(tmp.path(), DryRun::No).unwrap();
-
-        store.check_version().unwrap();
-        let state = store.load_state().unwrap();
-        assert!(state.patterns.contains_key("auth-pattern"));
-    }
+    files.par_iter().try_for_each(|(from, to)| {
+        fs::copy(from, to)
+            .and_then(|_| File::open(to)?.sync_all())
+            .map_err(Error::io(to))
+    })?;
+    sync_dir(dst).map_err(Error::io(dst))
 }

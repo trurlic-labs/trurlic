@@ -1,0 +1,23 @@
+component = "store"
+choice = "An anchor path has one spelling: relative to the code root, separated by /, with no .., no empty or . segment, no backslash, no leading / and no drive"
+reason = """
+Anchors are a set matched by string, so two spellings of one file would be two anchors that sort apart and match differently. Anchor::new refuses, at parse and through the type, a path that is empty, longer than MAX_ANCHOR_PATH_BYTES, holds a control character, a backslash, a leading / or a first segment ending in a colon, a .. segment, or an empty or . segment (which also refuses a trailing /), naming the fault. A path given to a query is first put in that spelling by normalize_path (a leading ./ and repeated or trailing / dropped) and then held to the same rules, so a query cannot name a place outside the code root. An anchor's file may name a directory.
+"""
+alternatives = [
+    "Normalize anchor paths at load: rejected because the file would hold a spelling the state does not, and fmt would rewrite paths behind the author's back",
+    "Resolve paths against the file system: rejected because the answer depends on the tree it runs in, follows symlinks, and fails for a file that does not exist yet",
+    "Accept a backslash as a separator: rejected because a backslash is a legal file-name character on Linux, so the path would mean two things",
+]
+tags = [
+    "security",
+    "validation",
+]
+status = "accepted"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/store/query.rs", symbol = "normalize_path" },
+    { file = "src/store/schema.rs", symbol = "Anchor::new" },
+    { file = "src/store/schema.rs", symbol = "AnchorFault" },
+    { file = "src/store/schema.rs", symbol = "path_fault" },
+    { file = "tests/integration/malformed_node.rs" },
+]

@@ -1,0 +1,11 @@
+[decision]
+component = "api"
+choice = "Newline-delimited JSON-RPC over stdio"
+reason = "One message per line keeps the reader a line reader"
+attribution = "agent"
+created = "2026-11-23T21:56:31.190409487Z"
+
+[[decision.history]]
+choice = "JSON-RPC over stdio"
+reason = "Every client speaks it and it needs no port"
+changed_at = "2026-11-23T21:56:31.283954543Z"

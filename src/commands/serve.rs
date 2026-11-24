@@ -1,32 +1,11 @@
 use std::path::Path;
 
 use crate::Result;
-use crate::console::diag;
 
-use super::discover_store;
-
-pub fn serve(cwd: &Path) -> Result<()> {
-    let store = discover_store(cwd)?;
-    let state = store.load_state()?;
-
-    let issues = state.validate();
-    let error_count = issues
-        .iter()
-        .filter(|i| i.severity() == crate::store::graph::Severity::Error)
-        .count();
-    if error_count > 0 {
-        diag!(
-            "warning: .trurlic/ has {error_count} consistency issue(s) \u{2014} run `trurlic check`"
-        );
-    }
-
-    diag!(
-        "trurlic: serving {} ({} components, {} decisions, {} patterns)",
-        state.project.project.name,
-        state.components.len(),
-        state.decisions.len(),
-        state.patterns.len(),
-    );
-
-    crate::mcp::run_server(store, state)
+/// `trurlic serve`: the MCP server on stdio. Each tool call finds the store
+/// from `cwd` and loads it, so the server starts without one, and a call
+/// made with none, or with one in another format, is refused naming
+/// `trurlic init` or `trurlic migrate`.
+pub(crate) fn serve(cwd: &Path) -> Result<()> {
+    crate::mcp::run_server(cwd.to_path_buf())
 }

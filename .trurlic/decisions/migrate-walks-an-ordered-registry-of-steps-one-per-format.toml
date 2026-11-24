@@ -1,0 +1,27 @@
+component = "store"
+choice = "migrate walks an ordered registry of steps, one per format change from 0.1.0 on, that must chain to the current format, and reports what each step drops and decides"
+reason = """
+The old migrate round-tripped every file through the current types, so a field the current format lacked vanished without a word, and a 0.1.0 component's connects_to list was lost. Each Step names its from and to versions and the change, and records what it drops as a Loss with the file, the dotted field and the TOML text of the value, and what else the owner must be able to read after the fact as a Fact: the placement and how it was told, a constrains edge written as depends_on, an anchor respelled or kept as written, a history count, a pattern with its edges and tags, a component's tags, a name field that differed from its stem. Facts are sorted per step, so each kind is one section of the report. A store migrates only along a chain: the steps from its version, each starting where the last ended, up to FORMAT_VERSION. A version no step names, or one from which no unbroken chain reaches the current format, is Error::NoMigration naming both versions, refused before anything in the store is touched, so a binary whose registry stops short never half-migrates a store. The walk stamps each step's to version after it, and the report lists the steps in order, so the output is deterministic. A new format appends one step and raises FORMAT_VERSION; one test holds the chain unbroken from 0.1.0 and another requires its last step to reach the current format.
+"""
+alternatives = [
+    "Round-trip through the current types, as before: rejected because it drops unknown fields and old edges silently",
+    "One hand-written function per pair of formats: rejected because it needs n squared paths where a chain of steps covers every start",
+    "Run the steps there are and stamp the last version reached: rejected because the store would state a format this binary does not read, and every command would then refuse it",
+]
+tags = [
+    "migration",
+    "storage",
+]
+status = "accepted"
+created = "2026-11-23T22:52:37.775489213Z"
+anchors = [
+    { file = "src/commands/migrate.rs", symbol = "migrate" },
+    { file = "src/error.rs", symbol = "Error::NoMigration" },
+    { file = "src/store/migration/mod.rs", symbol = "Store::migration_chain" },
+    { file = "src/store/migration/mod.rs", symbol = "chain" },
+    { file = "src/store/migration/report.rs", symbol = "Fact" },
+    { file = "src/store/migration/report.rs", symbol = "Loss" },
+    { file = "src/store/migration/report.rs", symbol = "MigrationReport" },
+    { file = "src/store/migration/steps.rs", symbol = "STEPS" },
+    { file = "src/store/migration/steps.rs", symbol = "Step" },
+]

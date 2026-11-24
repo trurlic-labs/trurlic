@@ -1,117 +1,159 @@
-//! A graph that is already invalid, as a hand edit or an older release can
-//! leave it: `check` reports it the same way on every run, and the writes
-//! that add no error of their own still land.
-
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+//! A graph a hand edit left invalid, which still loads: `check` reports
+//! each issue the same way on every run and fails, the reads still answer,
+//! and a write that adds no issue of its own still lands.
 
 use serde_json::json;
 
-use crate::harness::{McpClient, Project};
+use crate::harness::{McpClient, Project, decision, record};
 
 /// `sign-tokens` and `rotate-keys` depend on each other, `expire-sessions`
-/// depends into that cycle, and `keep-old-api` belongs to a component whose
-/// file is gone.
+/// depends into that cycle and on a decision that is gone, `keep-old-api`
+/// names a component that is gone, `auth` connects to nothing there, and
+/// `billing` shares its name with a decision.
 fn invalid_project() -> Project {
     let project = Project::init();
-    project.run_ok(&["add", "component", "auth"]);
-    project.run_ok(&["add", "component", "legacy"]);
-    for (component, choice) in [
-        ("auth", "Sign tokens"),
-        ("auth", "Rotate keys"),
-        ("auth", "Expire sessions"),
-        ("legacy", "Keep old API"),
+    project.write(
+        "components/auth.toml",
+        "description = \"\"\nconnects_to = [\"ledger\"]\n",
+    );
+    project.write("components/billing.toml", "description = \"\"\n");
+    for (name, component, depends_on) in [
+        ("sign-tokens", "auth", "\"rotate-keys\""),
+        ("rotate-keys", "auth", "\"sign-tokens\""),
+        ("expire-sessions", "auth", "\"sign-tokens\", \"gone\""),
+        ("keep-old-api", "legacy", ""),
+        ("billing", "project", ""),
     ] {
-        let reason = "Recorded so the fixture has something to break";
-        project.run_ok(&["decide", component, "--choice", choice, "--reason", reason]);
+        let extra = format!("depends_on = [{depends_on}]\n");
+        project.write(
+            &format!("decisions/{name}.toml"),
+            &decision(component, name, &extra),
+        );
     }
-    for (from, to) in [
-        ("sign-tokens", "rotate-keys"),
-        ("rotate-keys", "sign-tokens"),
-        ("expire-sessions", "sign-tokens"),
-    ] {
-        add_depends_on(&project, from, to);
-    }
-    fs::remove_file(project.path().join(".trurlic/components/legacy.toml")).unwrap();
     project
 }
 
-fn add_depends_on(project: &Project, from: &str, to: &str) {
-    let mut graph = OpenOptions::new()
-        .append(true)
-        .open(project.path().join(".trurlic/graph.toml"))
-        .unwrap();
-    write!(
-        graph,
-        "\n[[edges]]\nfrom = \"{from}\"\nto = \"{to}\"\nkind = \"depends_on\"\n"
-    )
-    .unwrap();
-}
-
-fn cycle_survives(project: &Project) -> bool {
-    let graph = fs::read_to_string(project.path().join(".trurlic/graph.toml")).unwrap();
-    [
-        "from = \"sign-tokens\"\nto = \"rotate-keys\"",
-        "from = \"rotate-keys\"\nto = \"sign-tokens\"",
-    ]
-    .iter()
-    .all(|edge| graph.contains(edge))
-}
-
-/// Each run is a new process with new hash-map seeds.
+/// Each run is a new process.
 #[test]
-fn check_reports_a_cycle_once_and_identically_on_every_run() {
+fn check_reports_each_issue_once_and_identically_on_every_run() {
     let project = invalid_project();
-    let runs: Vec<Vec<u8>> = (0..5)
-        .map(|_| {
-            let output = project.command().arg("check").output().unwrap();
-            assert!(!output.status.success());
-            output.stderr
-        })
-        .collect();
+    let runs: Vec<String> = (0..5).map(|_| project.run_refused(&["check"])).collect();
 
     assert!(runs.windows(2).all(|pair| pair[0] == pair[1]));
-    let report = String::from_utf8(runs[0].clone()).unwrap();
-    let cycles: Vec<&str> = report
+    let errors: Vec<&str> = runs[0]
         .lines()
-        .filter(|line| line.contains("cycle"))
+        .filter(|line| line.starts_with("  error: "))
         .collect();
     assert_eq!(
-        cycles,
-        ["  error: depends_on cycle among `rotate-keys`, `sign-tokens`"]
+        errors,
+        [
+            "  error: components/billing.toml and decisions/billing.toml share the name \
+             `billing`; a name is unique across node kinds",
+            "  error: decisions/keep-old-api.toml: component `legacy` does not exist",
+            "  error: components/auth.toml: `connects_to` names `ledger`, which is no component",
+            "  error: decisions/expire-sessions.toml: `depends_on` names `gone`, which is no decision",
+            "  error: depends_on cycle among `rotate-keys`, `sign-tokens`",
+        ]
+    );
+    assert!(
+        runs[0].ends_with("error: 5 consistency error(s) found\n"),
+        "{}",
+        runs[0]
     );
 }
 
 #[test]
-fn record_decision_lands_beside_a_cycle() {
+fn the_reads_answer_over_an_invalid_graph() {
     let project = invalid_project();
     let (mut client, _) = McpClient::connect(&project);
 
-    let recorded = client.call_tool(
-        "record_decision",
-        json!({
-            "component": "auth",
-            "choice": "Hash passwords with argon2",
-            "reason": "Memory-hard hashing resists offline cracking",
-            "attribution": "agent",
-        }),
-    );
+    let context = client.call_tool("get_context", json!({ "component": "auth" }));
 
-    assert_eq!(recorded["name"], "hash-passwords-with-argon2");
-    assert!(cycle_survives(&project));
+    let names: Vec<&str> = context["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["expire-sessions", "rotate-keys", "sign-tokens"]);
+    let status = String::from_utf8(project.run_ok(&["status"]).stdout).unwrap();
+    assert!(status.contains("issues: 5"), "{status}");
 }
 
+/// `fmt` adds no issue, so it lands beside the ones the graph has.
 #[test]
-fn gc_collects_an_orphan_beside_a_cycle() {
+fn fmt_lands_beside_the_issues_and_keeps_them() {
     let project = invalid_project();
+    let before = project.run_refused(&["check"]);
 
-    project.run_ok(&["gc", "--apply"]);
+    project.run_ok(&["fmt"]);
 
+    let after = project.run_refused(&["check"]);
+    assert!(!after.contains("canonical form"), "{after}");
+    let errors = |report: &str| -> Vec<String> {
+        report
+            .lines()
+            .filter(|line| line.starts_with("  error: "))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(errors(&after), errors(&before));
+    assert!(
+        project
+            .read("decisions/rotate-keys.toml")
+            .contains("depends_on = [\n    \"sign-tokens\",\n]\n")
+    );
+}
+
+/// A batch that adds no issue lands beside the ones the graph has, a
+/// rename that carries a node's issues to its new name included; one that
+/// adds an issue is refused.
+#[test]
+fn a_batch_that_adds_no_issue_lands_beside_the_issues() {
+    let project = invalid_project();
+    let before = project.run_refused(&["check"]);
+    let (mut client, _) = McpClient::connect(&project);
+
+    client.call_tool(
+        "apply",
+        json!({ "ops": [
+            { "op": "revise", "name": "sign-tokens", "add_tags": ["keys"] },
+            record("audit-log", "auth", "Log every token"),
+        ]}),
+    );
+    client.call_tool(
+        "apply",
+        json!({ "ops": [
+            { "op": "revise", "name": "audit-log", "add_depends_on": ["keep-old-api"] },
+            { "op": "rename", "name": "expire-sessions", "to": "end-sessions" },
+        ]}),
+    );
+    let refused = client.call_tool_refusal(
+        "apply",
+        json!({ "ops": [
+            { "op": "revise", "name": "audit-log", "add_tags": ["audit"] },
+            { "op": "revise", "name": "audit-log", "add_depends_on": ["gone"] },
+        ]}),
+    );
+
+    assert_eq!(refused["rule"], "dependency_missing", "{refused}");
+    assert_eq!(refused["op"]["index"], 1, "{refused}");
+    let errors = |report: &str| -> Vec<String> {
+        report
+            .lines()
+            .filter(|line| line.starts_with("  error: "))
+            .map(|line| line.replace("expire-sessions", "end-sessions"))
+            .collect()
+    };
+    assert_eq!(errors(&project.run_refused(&["check"])), errors(&before));
+    assert!(
+        project
+            .read("decisions/sign-tokens.toml")
+            .contains("\"keys\"")
+    );
     assert!(
         !project
-            .path()
-            .join(".trurlic/decisions/keep-old-api.toml")
-            .exists()
+            .read("decisions/audit-log.toml")
+            .contains("\"audit\"")
     );
-    assert!(cycle_survives(&project));
 }

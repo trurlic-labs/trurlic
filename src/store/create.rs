@@ -1,57 +1,64 @@
-//! Creating an empty store: the node directories, `project.toml` and an
-//! index that holds only the `project` node.
+//! Creating an empty store: the node directories and `project.toml`, and
+//! under `shared` the graph's own repository with its first commit.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::{Error, Result};
 
-use super::schema::{GraphIndex, NodeEntry, NodeKind, Project, ProjectFile};
-use super::time::Timestamp;
-use super::{
-    COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, PATTERNS_DIR, STORE_DIR, Store, hash_file,
-};
+use super::quality::Quality;
+use super::schema::{Placement, Project};
+use super::{COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, STORE_DIR, Store};
 
 impl Store {
-    /// Create `.trurlic/` in `project_dir` for a project named `name`.
-    /// `rebuilt` stamps the first index, and every later commit carries it
-    /// over. Fails with [`Error::StoreExists`] when `.trurlic/` is there.
-    pub fn create(project_dir: &Path, name: &str, rebuilt: Timestamp) -> Result<Self> {
+    /// Create `.trurlic/` in `project_dir` for a project named `name`. Fails
+    /// with [`Error::StoreExists`] when `.trurlic/` is there, and leaves no
+    /// `.trurlic/` behind when it fails otherwise, as it does when a
+    /// `shared` graph finds no `git` to make its repository with.
+    pub fn create(project_dir: &Path, name: &str, placement: Placement) -> Result<Self> {
         let root = project_dir.join(STORE_DIR);
-        if root.exists() {
-            return Err(Error::StoreExists(root));
-        }
-        for dir in [COMPONENTS_DIR, DECISIONS_DIR, PATTERNS_DIR] {
-            let dir = root.join(dir);
-            fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        fs::create_dir_all(project_dir).map_err(Error::io(project_dir))?;
+        match fs::create_dir(&root) {
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => return Err(Error::StoreExists(root)),
+            created => created.map_err(Error::io(&root))?,
         }
         let store = Self::at(root);
-        let tmp_dir = store.tmp_dir();
+        if let Err(e) = store.lay_out(name, placement) {
+            // The directory is this call's own: it did not exist above.
+            let _ = fs::remove_dir_all(store.root());
+            return Err(e);
+        }
+        Ok(store)
+    }
+
+    /// Fill the new, empty graph directory. The repository of a shared
+    /// graph comes first, so a missing `git` fails before any graph file is
+    /// written.
+    fn lay_out(&self, name: &str, placement: Placement) -> Result<()> {
+        for dir in [COMPONENTS_DIR, DECISIONS_DIR] {
+            let dir = self.root.join(dir);
+            fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        }
+        let tmp_dir = self.tmp_dir();
         fs::create_dir_all(&tmp_dir).map_err(Error::io(&tmp_dir))?;
 
-        let lock = store.lock()?;
-        let project_path = store.root().join("project.toml");
-        let project = ProjectFile {
-            trurlic_version: FORMAT_VERSION.into(),
-            project: Project {
-                name: name.into(),
-                description: String::new(),
-            },
+        let lock = self.lock()?;
+        if placement == Placement::Shared {
+            self.create_repository(&lock)?;
+        }
+        let project = Project {
+            format_version: FORMAT_VERSION,
+            name: name.into(),
+            description: String::new(),
+            placement,
+            quality: Quality::default(),
         };
-        store.write_atomic(&lock, &project_path, &project)?;
-        let index = GraphIndex {
-            version: 1,
-            rebuilt: Some(rebuilt),
-            nodes: vec![NodeEntry {
-                name: "project".into(),
-                kind: NodeKind::Component,
-                tags: vec![],
-                hash: hash_file(&project_path)?,
-            }],
-            edges: vec![],
-        };
-        store.write_atomic(&lock, &store.graph_path(), &index)?;
-        Ok(store)
+        self.write_atomic(&lock, &self.project_path(), &project)?;
+        if placement == Placement::Shared {
+            self.commit_init(&lock)?;
+        }
+        Ok(())
     }
 }
 
@@ -59,40 +66,32 @@ impl Store {
 mod tests {
     use super::*;
     use crate::store::STATE_DIR;
-    use crate::store::testing::ts;
     use tempfile::TempDir;
 
     #[test]
     fn create_lays_out_an_empty_store_that_loads_without_issues() {
         let tmp = TempDir::new().unwrap();
-        let store = Store::create(tmp.path(), "demo", ts()).unwrap();
+        let store = Store::create(tmp.path(), "demo", Placement::Shared).unwrap();
 
-        for dir in [COMPONENTS_DIR, DECISIONS_DIR, PATTERNS_DIR] {
+        for dir in [COMPONENTS_DIR, DECISIONS_DIR] {
             assert!(store.root().join(dir).is_dir(), "{dir}");
         }
         assert!(store.root().join(STATE_DIR).join("tmp").is_dir());
+        assert!(!store.root().join("graph.toml").exists());
         let state = store.load_state().unwrap();
-        assert_eq!(state.project.project.name, "demo");
-        assert_eq!(state.project.trurlic_version, FORMAT_VERSION);
-        assert_eq!(state.graph_index.rebuilt, Some(ts()));
-        let names: Vec<&str> = state
-            .graph_index
-            .nodes
-            .iter()
-            .map(|n| n.name.as_str())
-            .collect();
-        assert_eq!(names, ["project"]);
-        assert!(state.graph_index.edges.is_empty());
-        assert!(state.validate().is_empty());
-        assert!(store.verify_hashes().unwrap().is_empty());
+        assert_eq!(state.project.name, "demo");
+        assert_eq!(state.project.placement, Placement::Shared);
+        assert_eq!(state.project.format_version, FORMAT_VERSION);
+        assert_eq!(state.validate(), []);
+        assert_eq!(state.non_canonical, []);
     }
 
     #[test]
     fn create_refuses_an_existing_store() {
         let tmp = TempDir::new().unwrap();
-        Store::create(tmp.path(), "demo", ts()).unwrap();
+        Store::create(tmp.path(), "demo", Placement::Tracked).unwrap();
 
-        let err = Store::create(tmp.path(), "demo", ts()).unwrap_err();
+        let err = Store::create(tmp.path(), "demo", Placement::Tracked).unwrap_err();
 
         assert!(matches!(err, Error::StoreExists(_)));
     }

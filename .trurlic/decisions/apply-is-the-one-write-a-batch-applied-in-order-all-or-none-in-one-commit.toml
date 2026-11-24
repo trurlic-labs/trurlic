@@ -1,0 +1,26 @@
+component = "store"
+choice = "apply is the one write: a batch of ops applied in order to the writer's graph, validated once, then one journaled commit and one history commit, or refused whole with nothing written"
+reason = "A design, a rename with its cascade and a maintenance pass over ten decisions are each one change of the graph, and a half-applied one is a graph nobody chose. Writer::apply runs the ops on the graph loaded under the exclusive lock, in place, keeping each touched node's starting value in an undo record (store/apply/edit.rs); every op is checked against the graph the earlier ops left; then the resulting graph is validated once under no new errors; then the changed files go through one Writer::commit with CommitMessage(Tool::Apply, origin, session). A refused batch, or a commit that fails before its commit point, restores the writer's graph from the undo record. The MCP tool and trurlic apply hand it the same parsed Batch, so both surfaces refuse alike and write the same bytes. Ops: record, revise, rename, merge, remove and the component ops add, revise, rename, remove; at most MAX_BATCH_OPS (50)."
+alternatives = [
+    "One tool per op, as 0.3 had: rejected because a design or a cascade then lands in several commits, and a failure halfway leaves a graph no op meant",
+    "Apply the ops to a copy of the whole graph: rejected because the undo record holds only the touched nodes, and a 2000-decision copy costs more than the batch",
+    "Validate the whole graph after every op: rejected because each op's own checks name its argument, and a batch of 50 would validate 50 times",
+]
+tags = [
+    "api",
+    "consistency",
+]
+status = "accepted"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/commands/apply.rs", symbol = "apply" },
+    { file = "src/mcp/apply/mod.rs", symbol = "APPLY" },
+    { file = "src/store/apply/edit.rs", symbol = "Edit" },
+    { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
+    { file = "src/store/apply/ops.rs", symbol = "Batch" },
+    { file = "tests/integration/apply.rs", symbol = "one_batch_writes_the_same_bytes_over_mcp_and_from_a_file" },
+]
+depends_on = [
+    "full-graph-validation-before-every-disk-write-via-commit",
+]

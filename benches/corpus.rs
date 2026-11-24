@@ -1,9 +1,18 @@
-//! Benches over the seeded corpus at each of `Corpus::SIZES`: loading the
-//! store from disk, building and validating its graph, and, through the MCP
-//! server in process, one write end to end and every read tool.
+//! Benches over the seeded corpus at each of `Corpus::SIZES` (the `fmt` and
+//! `apply` benches skip the smallest): loading the store from disk,
+//! validating the loaded graph, through the MCP server in process every
+//! read tool and `apply`, and `trurlic fmt` of one file. The
+//! server loads the graph on every call, so each tool bench includes a
+//! load. `fmt` is timed under `tracked`, under `shared` with nothing but
+//! its own commit to make, and under `shared` after a hand edit, which is
+//! a commit of its own: the differences are what the history costs.
+//! `apply` is timed with one op and with fifty, under each placement and,
+//! under `tracked`, with the shipped example `[quality]` (eleven patterns),
+//! whose patterns each batch compiles; `load_state` is timed with that
+//! table too, which a read parses and never compiles.
 //!
-//! Read tools come from `tools/list`, so a new one is benched without editing
-//! this file, and setup panics when no request here fits it.
+//! Read tools come from `tools/list`, so a new one is never skipped: setup
+//! panics until a request here fits it.
 //! Setup also sends each request once and panics on an error response, so no
 //! bench times an error path.
 
@@ -13,26 +22,34 @@
     reason = "a bench whose setup fails has nothing to measure"
 )]
 
+use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::process::Command;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use criterion::measurement::WallTime;
 use criterion::{
-    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, SamplingMode, criterion_group,
-    criterion_main,
+    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main,
 };
 use serde_json::{Value, json};
-use tempfile::TempDir;
 
-use trurlic::bench::Server;
-use trurlic::store::corpus::Corpus;
-use trurlic::store::graph::InMemoryGraph;
-use trurlic::store::{DecisionFile, ProjectState, STORE_DIR, Store};
+use trurlic::bench::{Corpus, Server};
+use trurlic::store::{Placement, ProjectState, Store};
+
+/// The example `[quality]` table the repository ships.
+const QUALITY: &str = include_str!("../examples/quality.toml");
+
+/// `store`'s `project.toml` with [`QUALITY`] appended.
+fn add_quality(store: &Store) {
+    let path = store.root().join("project.toml");
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, format!("{text}\n{QUALITY}")).unwrap();
+}
 
 /// One corpus per size, written under `target/tmp` once per run.
 static CORPORA: LazyLock<Vec<Fixture>> = LazyLock::new(|| {
@@ -48,12 +65,11 @@ struct Fixture {
     targets: Targets,
 }
 
-/// What requests name: the component with the most decisions, its decision
-/// with the longest history, and the first files its code refs name.
+/// What requests name: the component with the most decisions, and the
+/// first file its anchors name.
 struct Targets {
     component: String,
-    decision: String,
-    files: Vec<String>,
+    file: String,
 }
 
 impl Fixture {
@@ -77,39 +93,24 @@ impl Targets {
         let component = state
             .components
             .keys()
-            .min_by_key(|name| Reverse(decisions_of(state, name).count()))
+            .min_by_key(|name| Reverse(state.decisions_of(name).len()))
             .unwrap();
-        let decision = decisions_of(state, component)
-            .min_by_key(|(_, file)| Reverse(file.decision.history.len()))
-            .unwrap()
-            .0;
-        let files: BTreeSet<&str> = decisions_of(state, component)
-            .flat_map(|(_, file)| &file.decision.code_refs)
-            .map(|code_ref| code_ref.file.as_str())
+        let files: BTreeSet<&str> = state
+            .decisions_of(component)
+            .into_iter()
+            .flat_map(|(_, decision)| &decision.anchors)
+            .map(|anchor| anchor.file())
             .collect();
         Self {
             component: component.clone(),
-            decision: decision.clone(),
-            files: files.into_iter().take(3).map(str::to_owned).collect(),
+            file: files.first().unwrap().to_string(),
         }
     }
 }
 
-fn decisions_of<'a>(
-    state: &'a ProjectState,
-    component: &'a str,
-) -> impl Iterator<Item = (&'a String, &'a Arc<DecisionFile>)> {
-    state
-        .decisions
-        .iter()
-        .filter(move |(_, file)| file.decision.component == component)
-}
-
-/// A server over the store at `root`, past `initialize`.
-fn server_at(root: PathBuf) -> Server {
-    let store = Store::at(root);
-    let state = store.load_state().unwrap();
-    let mut server = Server::new(store, state);
+/// A server over the project at `dir`, past `initialize`.
+fn server_at(dir: PathBuf) -> Server {
+    let mut server = Server::new(dir);
     call(
         &mut server,
         &request(
@@ -177,20 +178,10 @@ fn read_tools(server: &mut Server) -> Vec<String> {
 }
 
 fn read_tool_arguments(tool: &str, targets: &Targets) -> Value {
-    let Targets {
-        component,
-        decision,
-        files,
-    } = targets;
     match tool {
-        "get_context" => json!({ "component": component }),
-        "check_pattern" => {
-            json!({ "description": "retry the request after a timeout under the lock" })
-        }
-        "get_architecture" => json!({}),
-        "get_decision_history" => json!({ "name": decision }),
-        "get_decisions_for_file" => json!({ "file": files[0] }),
-        "verify_against_decisions" => json!({ "component": component, "changed_files": files }),
+        "get_context" => json!({ "component": targets.component }),
+        "get_decisions_for_file" => json!({ "file": targets.file }),
+        "status" => json!({}),
         other => panic!("no bench request for the read tool `{other}`"),
     }
 }
@@ -201,101 +192,198 @@ fn bench_load_state(c: &mut Criterion) {
         group.bench_function(BenchmarkId::from_parameter(fixture.size), |b| {
             b.iter(|| fixture.store.load_state().unwrap());
         });
+        let dir =
+            Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("corpus-quality-{}", fixture.size));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        let store = Corpus::new(fixture.size).write(&dir).unwrap();
+        add_quality(&store);
+        group.bench_function(BenchmarkId::new("quality", fixture.size), |b| {
+            b.iter(|| store.load_state().unwrap());
+        });
     }
     group.finish();
 }
 
-fn bench_graph(c: &mut Criterion) {
-    let mut group = c.benchmark_group("graph");
+fn bench_validate(c: &mut Criterion) {
+    let mut group = c.benchmark_group("validate");
     for fixture in CORPORA.iter() {
         let state = fixture.store.load_state().unwrap();
-        group.bench_function(BenchmarkId::new("build", fixture.size), |b| {
-            b.iter(|| {
-                InMemoryGraph::build(
-                    black_box(&state.graph_index),
-                    &state.components,
-                    &state.decisions,
-                    &state.patterns,
-                )
-            });
-        });
-        group.bench_function(BenchmarkId::new("validate", fixture.size), |b| {
-            b.iter(|| black_box(state.graph()).validate());
-        });
-    }
-    group.finish();
-}
-
-/// `record_decision` from request to response: the reload under the lock,
-/// validation, and the journaled commit. Each iteration writes into its own
-/// copy of the corpus, so every write lands on a graph of the same size.
-/// A write takes tens of milliseconds, so the group samples flat: linear
-/// sampling needs 55 iterations for 10 samples, more than 3 s holds.
-fn bench_record_decision(c: &mut Criterion) {
-    let mut group = c.benchmark_group("record_decision");
-    group.sample_size(10).sampling_mode(SamplingMode::Flat);
-    for fixture in CORPORA.iter() {
-        let Targets {
-            component,
-            decision,
-            files,
-        } = &fixture.targets;
-        let line = tool_call(
-            "record_decision",
-            json!({
-                "component": component,
-                "choice": "Bench writes land through the journal like every other write",
-                "reason": "A write bench that skipped the journal or the reload would time a path no user takes, so it goes through tools/call.",
-                "attribution": "agent",
-                "alternatives": ["Time Store::record_decision alone: misses argument parsing and the response"],
-                "depends_on": [decision],
-                "tags": ["performance"],
-                "code_refs": [{ "file": files[0] }],
-            }),
-        );
-        let copy = || {
-            let dir = TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-            copy_dir(fixture.store.root(), &dir.path().join(STORE_DIR));
-            let server = server_at(dir.path().join(STORE_DIR));
-            (dir, server)
-        };
-        call(&mut copy().1, &line);
-        let mut output = Vec::new();
         group.bench_function(BenchmarkId::from_parameter(fixture.size), |b| {
-            b.iter_batched_ref(
-                copy,
-                |(_, server)| {
-                    output.clear();
-                    server.serve_one(&mut line.as_bytes(), &mut output).unwrap()
-                },
-                BatchSize::PerIteration,
-            );
+            b.iter(|| black_box(&state).validate());
         });
     }
     group.finish();
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).unwrap();
-        }
-    }
 }
 
 fn bench_read_tools(c: &mut Criterion) {
     let mut group = c.benchmark_group("read_tool");
     for fixture in CORPORA.iter() {
-        let mut server = server_at(fixture.store.root().to_path_buf());
+        let project = fixture.store.root().parent().unwrap().to_path_buf();
+        let mut server = server_at(project);
         for tool in read_tools(&mut server) {
             let line = tool_call(&tool, read_tool_arguments(&tool, &fixture.targets));
             let id = BenchmarkId::new(tool, fixture.size);
             bench_request(&mut group, id, &mut server, &line);
+        }
+    }
+    group.finish();
+}
+
+/// How the write bench leaves the graph before each `fmt`.
+#[derive(Clone, Copy)]
+enum Before {
+    /// `tracked`: the project's git holds the history.
+    Tracked,
+    /// `shared`, the hand edit `fmt` rewrites committed in setup.
+    Committed,
+    /// `shared`, the hand edit left for `fmt` to commit first.
+    HandEdit,
+}
+
+impl Before {
+    const ALL: [Self; 3] = [Self::Tracked, Self::Committed, Self::HandEdit];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Tracked => "fmt/tracked",
+            Self::Committed => "fmt/shared",
+            Self::HandEdit => "fmt/shared_after_hand_edit",
+        }
+    }
+
+    const fn placement(self) -> Placement {
+        match self {
+            Self::Tracked => Placement::Tracked,
+            Self::Committed | Self::HandEdit => Placement::Shared,
+        }
+    }
+}
+
+/// `git <args>` in the graph directory, reading no user configuration.
+fn graph_git(store: &Store, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(store.root())
+        .args([
+            "-c",
+            "user.name=bench",
+            "-c",
+            "user.email=bench@bench.invalid",
+        ])
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+fn bench_write(c: &mut Criterion) {
+    let mut group = c.benchmark_group("write");
+    group.sample_size(20);
+    for &size in &Corpus::SIZES[1..] {
+        for before in Before::ALL {
+            let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+                "corpus-write-{size}-{}",
+                before.name().replace('/', "-")
+            ));
+            if dir.exists() {
+                fs::remove_dir_all(&dir).unwrap();
+            }
+            let store = Corpus::new(size)
+                .write_as(&dir, before.placement())
+                .unwrap();
+            let state = store.load_state().unwrap();
+            let file = store.component_path(state.components.keys().next().unwrap());
+            let canonical = fs::read_to_string(&file).unwrap();
+            // A new description each time, so every commit writes new
+            // objects, as a real write does.
+            let edits = Cell::new(0_u64);
+            let edit = || {
+                edits.set(edits.get() + 1);
+                let edited = canonical.replacen(
+                    "description = \"",
+                    &format!("description=\"{} ", edits.get()),
+                    1,
+                );
+                fs::write(&file, edited).unwrap();
+                if matches!(before, Before::Committed) {
+                    graph_git(&store, &["commit", "--quiet", "--all", "-m", "edit"]);
+                }
+                // The setup's writes reach the disk before the write starts,
+                // so its flushes wait for its own data alone.
+                assert!(Command::new("sync").status().unwrap().success());
+            };
+            group.bench_function(BenchmarkId::new(before.name(), size), |b| {
+                b.iter_batched(
+                    edit,
+                    |()| store.begin_write().unwrap().format().unwrap(),
+                    BatchSize::PerIteration,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
+/// `apply` end to end through the server, a batch of one op and one of
+/// fifty, under each placement and under `tracked` with the example
+/// `[quality]`: each op revises the reason of one decision, anew on every
+/// run, so every batch writes and commits.
+fn bench_apply(c: &mut Criterion) {
+    let mut group = c.benchmark_group("apply");
+    group.sample_size(20);
+    let setups = [
+        ("tracked", Placement::Tracked, false),
+        ("shared", Placement::Shared, false),
+        ("tracked+quality", Placement::Tracked, true),
+    ];
+    for &size in &Corpus::SIZES[1..] {
+        for (setup, placement, quality) in setups {
+            let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+                .join(format!("corpus-apply-{size}-{}", setup.replace('+', "-")));
+            if dir.exists() {
+                fs::remove_dir_all(&dir).unwrap();
+            }
+            let store = Corpus::new(size).write_as(&dir, placement).unwrap();
+            if quality {
+                add_quality(&store);
+            }
+            let names: Vec<String> = store.load_state().unwrap().decisions.into_keys().collect();
+            let mut server = server_at(dir);
+            let runs = Cell::new(0_u64);
+            for ops in [1, 50] {
+                let batch = || {
+                    runs.set(runs.get() + 1);
+                    let revisions: Vec<Value> = names[..ops]
+                        .iter()
+                        .map(|name| {
+                            let reason = format!("Revised by run {} of the bench", runs.get());
+                            json!({ "op": "revise", "name": name, "reason": reason })
+                        })
+                        .collect();
+                    let line = tool_call("apply", json!({ "ops": revisions, "origin": "bench" }));
+                    // The setup's writes reach the disk before the batch
+                    // starts, so its flushes wait for its own data alone.
+                    assert!(Command::new("sync").status().unwrap().success());
+                    line
+                };
+                call(&mut server, &batch());
+                let id = BenchmarkId::new(format!("{setup}/{ops}_ops"), size);
+                let mut output = Vec::new();
+                group.bench_function(id, |b| {
+                    b.iter_batched(
+                        batch,
+                        |line| {
+                            output.clear();
+                            server.serve_one(&mut line.as_bytes(), &mut output).unwrap()
+                        },
+                        BatchSize::PerIteration,
+                    );
+                });
+            }
         }
     }
     group.finish();
@@ -306,6 +394,6 @@ criterion_group! {
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_graph, bench_record_decision, bench_read_tools
+    targets = bench_load_state, bench_validate, bench_read_tools, bench_write, bench_apply
 }
 criterion_main!(benches);

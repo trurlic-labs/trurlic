@@ -1,0 +1,24 @@
+component = "store"
+choice = "A missing git is Error::GitMissing at init of a shared graph, which then leaves no .trurlic/ behind, and at every write to a shared graph, before its commit point"
+reason = """
+A shared graph's history is git, so git missing is never a silent skip. Store::create makes the repository before any graph file and removes the directory it made when anything fails, so a refused init leaves nothing that a second init would refuse as existing. The history step runs git status before a write stages anything, so a missing git refuses the write with the graph as it was. status and check of a shared graph ask git for their findings and fail the same way; a tracked graph's reads and writes need no git.
+"""
+alternatives = [
+    "Skip the history when git is missing: rejected because the history would have a hole nothing reports",
+    "Leave a half-made .trurlic/ after a failed init: rejected because the second init would refuse it as existing",
+]
+tags = [
+    "git",
+    "history",
+]
+status = "accepted"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/error.rs", symbol = "Error::GitMissing" },
+    { file = "src/store/create.rs", symbol = "Store::create" },
+    { file = "src/store/create.rs", symbol = "Store::lay_out" },
+    { file = "tests/integration/history.rs", symbol = "a_missing_git_is_refused_at_init_and_at_a_write" },
+]
+depends_on = [
+    "a-shared-graph-is-a-git-repository-of-its-own-and-every-write-is-one-commit-there",
+]

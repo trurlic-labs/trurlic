@@ -1,0 +1,25 @@
+component = "store"
+choice = "[quality] in project.toml is typed with every key optional, absent meaning the built-in rules alone, refused at load when no write could meet it, and written canonical"
+reason = "The table is part of the format the store reads, so it is read as a type that refuses an unknown key, a maximum of 0 and a reason_words min past its max, with the file named: a misspelled key that set no limit would pass unseen. An absent table and an absent key mean no limit beyond the built-in rules, so a 0.5.0 store reads as it is and fmt leaves it alone, with no migration. Words are counted one way: runs of text between Unicode whitespace. A pattern names its fields from a closed set (choice, reason, alternatives, tags, anchors as file::symbol, origin, the batch's, read once per batch) and a level, refuse or warn. The canonical form writes the limits, then each pattern as a [[quality.patterns]] table whose pattern is a literal string, so its backslashes read as written."
+alternatives = [
+    "A free table of rules read by name: rejected because a misspelled key would silently set no limit",
+    "A format bump with a migration: rejected because an absent table means the built-in rules, so every 0.5.0 store reads as it is",
+]
+tags = [
+    "quality",
+    "storage",
+]
+status = "accepted"
+origin = "quality rules"
+created = "2026-11-24T04:09:05.642017587Z"
+anchors = [
+    { file = "src/store/canonical.rs", symbol = "Emitter::pattern" },
+    { file = "src/store/quality/config.rs", symbol = "ConfigFault" },
+    { file = "src/store/quality/config.rs", symbol = "Quality" },
+    { file = "src/store/quality/mod.rs", symbol = "DecisionField" },
+    { file = "src/store/quality/mod.rs", symbol = "words" },
+    { file = "src/store/schema.rs", symbol = "Project" },
+]
+depends_on = [
+    "one-canonical-form-for-every-graph-file",
+]

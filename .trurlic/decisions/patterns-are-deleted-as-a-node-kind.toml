@@ -1,0 +1,19 @@
+component = "project"
+choice = "Patterns are deleted as a node kind, with their member_of and applies_to edges; a rule a pattern stated is a decision"
+reason = """
+A pattern grouped decisions under a named synthesis and applied it to components, but a brief already carries the decisions themselves, agents rarely recorded one, and the pattern edges were the main source of the deletion rules (a pattern kept at two members, a removal that shrank one). A rule a pattern states is a decision like any other, project-wide when it applies everywhere; the migration reports every pattern with its description and edges so the owner can record such a decision. Each of this repository's three patterns stated a rule decisions already hold: the limits in store::limits, validation before a write, and the no-panic lints with the one error enum.
+"""
+alternatives = [
+    "Keep patterns as a node kind: rejected because their edges carried most of the deletion rules for little a brief used",
+    "Turn each pattern into a tag: rejected because a tag states no rule",
+]
+tags = [
+    "scope",
+    "storage",
+]
+status = "accepted"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/store/migration/mod.rs", symbol = "PATTERNS_DIR" },
+    { file = "src/store/schema.rs" },
+]

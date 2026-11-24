@@ -1,0 +1,25 @@
+component = "git"
+choice = "Every git invocation names its directory with -C and clears the variables that redirect git: repository parts, inherited -c config and pathspec magic"
+reason = """
+trurlic runs inside a project's git hooks, where git exports GIT_DIR and GIT_INDEX_FILE for the repository running the hook, and a GIT_WORK_TREE or GIT_COMMON_DIR set by a caller would make git answer for another tree. The runner clears what names a repository or its parts (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_QUARANTINE_PATH, GIT_NAMESPACE), the configuration a parent git -c or the environment passes down, which can set core.worktree among anything (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT), and what changes how a pathspec matches (GIT_LITERAL_PATHSPECS, GIT_GLOB_PATHSPECS, GIT_NOGLOB_PATHSPECS, GIT_ICASE_PATHSPECS). It keeps the user's and the system's configuration files and the variables that choose them, which say how the user runs git, and GIT_CEILING_DIRECTORIES, a user's bound on discovery that git never sets for a child; GIT_PREFIX, which git sets for an alias and reads nowhere, is left as it is. tests/integration/migrate.rs runs migrate with GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR and GIT_CONFIG_PARAMETERS pointing at another repository and finds the project's placement.
+"""
+alternatives = [
+    "Clear every GIT_ variable: rejected because it would drop the user's choice of configuration file and discovery bound, and tracing",
+    "Clear only GIT_DIR, GIT_INDEX_FILE and GIT_WORK_TREE: rejected because GIT_COMMON_DIR, the object directories and an inherited core.worktree redirect git as well",
+    "Run git with an empty environment: rejected because git needs PATH and HOME, and the user's configuration, such as safe.directory, would be lost",
+]
+tags = [
+    "git",
+    "reliability",
+    "security",
+]
+status = "proposed"
+created = "2026-11-24T01:30:00Z"
+anchors = [
+    { file = "src/git.rs", symbol = "CLEARED" },
+    { file = "src/git.rs", symbol = "run" },
+    { file = "tests/integration/migrate.rs", symbol = "the_callers_git_variables_do_not_redirect_the_placement" },
+]
+depends_on = [
+    "the-git-module-is-a-leaf-that-runs-the-git-cli",
+]

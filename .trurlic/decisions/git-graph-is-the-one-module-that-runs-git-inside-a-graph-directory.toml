@@ -1,0 +1,24 @@
+component = "git"
+choice = "git::graph is the one module that runs git inside a graph directory, in the graph's own repository; store::history is its one caller, and discovery never runs git there"
+reason = "Inside a graph directory git answers for the graph's own repository, not the project's, so the boundary must be visible: git::graph::Repository is the only type whose calls name a graph directory as their repository, and it builds every such call through isolated(), so no call site can forget the isolation; git::graph::index holds what reaches its index and object store. store::history decides when (the history step, the findings) and calls it; that is the store's one arrow to git. Discovery and the placement facts ask git only of the directory that holds a graph, as before. The pure parts are unit-tested without git: status records (parse_status), object names (Oid), and the message and its trailers (CommitMessage::render)."
+alternatives = [
+    "Put the graph repository's calls in store: rejected because spawning git and reading its output is the leaf's work, and the isolation belongs beside the runner it changes",
+    "Pass extra arguments to the project runner at each call site: rejected because any call site could then run git in the graph without the isolation",
+]
+tags = [
+    "git",
+    "module-boundary",
+]
+status = "proposed"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/git.rs" },
+    { file = "src/git/graph.rs", symbol = "Oid" },
+    { file = "src/git/graph.rs", symbol = "Repository" },
+    { file = "src/git/graph.rs", symbol = "parse_status" },
+    { file = "src/git/graph/index.rs" },
+    { file = "src/store/history.rs", symbol = "Store::repository" },
+]
+depends_on = [
+    "the-git-module-is-a-leaf-that-runs-the-git-cli",
+]

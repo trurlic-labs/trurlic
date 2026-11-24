@@ -1,0 +1,31 @@
+component = "mcp"
+choice = "A refused tool call is an isError result whose text is {error: {kind, field?, op?, rule?, message}}; a JSON-RPC error answers only a malformed message, an unknown method or tool, or a panic"
+reason = "The MCP tools specification sends input validation and business errors as tool results with isError, which a client hands to the model so it can correct the call, and protocol errors for requests that fail the CallToolRequest schema and unknown tools. result::ToolError carries one ErrorKind (invalid_argument with the field's path, no_project, unsupported_format, store_error, refused, batch_refused) and the message; a batch the store refused also names the argument at fault as field (ops[3].add_tags[0]), the op as {index, op, name} and the rule, from the store's typed Refusal, so a caller branches on kind and an agent reads the message; every refusal goes through tool_error and fit_payload, so it is JSON within the result budget. The tools that predate specs refuse with kind refused. A missing store or one in another format is a refusal too, since the call itself is valid."
+alternatives = [
+    "The bare message as text: rejected, a caller cannot tell an argument fault from a missing store without parsing prose",
+    "JSON-RPC -32602 for an invalid argument: rejected, the specification sends input validation as a tool result so the model sees it",
+    "structuredContent on a refusal: rejected, a tool's outputSchema describes its result, and a refusal does not conform to it",
+]
+tags = [
+    "api",
+    "error-handling",
+    "protocol",
+]
+status = "proposed"
+created = "2026-11-23T23:15:10.921780295Z"
+anchors = [
+    { file = "src/mcp/mod.rs", symbol = "call_tool" },
+    { file = "src/mcp/result.rs", symbol = "ErrorKind" },
+    { file = "src/mcp/result.rs", symbol = "ToolError" },
+    { file = "src/mcp/result.rs", symbol = "tool_error" },
+    { file = "src/store/apply/refusal.rs", symbol = "Refusal" },
+]
+
+[accepted_text]
+choice = "A refused tool call is an isError result whose text is {error: {kind, field?, message}}; a JSON-RPC error answers only a malformed message, an unknown method or tool, or a panic"
+reason = "The MCP tools specification sends input validation and business errors as tool results with isError, which a client hands to the model so it can correct the call, and protocol errors for requests that fail the CallToolRequest schema and unknown tools. result::ToolError carries one ErrorKind (invalid_argument with the field's path, no_project, unsupported_format, store_error, refused) and the message, so a caller branches on kind and an agent reads the message; every refusal goes through tool_error and fit_payload, so it is JSON within the result budget. The tools that predate specs refuse with kind refused. A missing store or one in another format is a refusal too, since the call itself is valid."
+alternatives = [
+    "The bare message as text: rejected, a caller cannot tell an argument fault from a missing store without parsing prose",
+    "JSON-RPC -32602 for an invalid argument: rejected, the specification sends input validation as a tool result so the model sees it",
+    "structuredContent on a refusal: rejected, a tool's outputSchema describes its result, and a refusal does not conform to it",
+]
