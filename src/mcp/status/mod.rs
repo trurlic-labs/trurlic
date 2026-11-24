@@ -8,8 +8,7 @@
 //! asking it costs several git processes, too many for a call made often.
 
 use crate::budget::{self, MAX_TOOL_RESULT_BYTES, Shrinkable};
-use crate::lint::duplicates::{Score, Similarity};
-use crate::store::limits::MAX_TRAILER_BYTES;
+use crate::store::limits::{MAX_NAME_BYTES, MAX_TRAILER_BYTES};
 use crate::store::{
     HistoryFinding, Issue, Level, PROJECT_COMPONENT, ProjectState, Quality, Status, Store,
 };
@@ -19,10 +18,13 @@ use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
 use super::spec::{Args, Fields, Output, to_value};
 use super::truncate::json_len;
 
+mod lint;
 mod report;
 
+pub(crate) use lint::{Cut, LintItem, PAIRS_MORE, PatternCounts};
+use lint::{LINT_MORE, LintKind, Patterns};
 use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
-pub(crate) use report::{LintItem, Part, QualityCounts, Report};
+pub(crate) use report::{Part, QualityCounts, Report};
 
 pub(super) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
     name: "status",
@@ -35,10 +37,17 @@ pub(super) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
 const DESCRIPTION: &str = "The decision graph at a glance: its counts, the write rules \
 `[quality]` in project.toml adds to the built-in ones (counted), the validation issues \
 it holds, what a shared graph's history lacks, the decisions of each component, and \
-`lint`: the best pairs of likely duplicate decisions, whose choice and reason have a TF-IDF \
-cosine of 0.5 or more, best first. Each section fits the result budget; one that leaves items out gives \
+`lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason \
+of 0.5 or more), each rule of the quality bar a stored decision breaks, and the decisions \
+whose anchors all name a file and no symbol, counted by kind. The call judges the bar's \
+limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over \
+the decisions by name within a work limit: `counts.lint.patterns` says how many decisions \
+they read and names in `next` the first left unread, and the same call with `from` set to \
+it reads on from there. Each section fits the \
+result budget; one that leaves items out gives \
 `omitted` and `more`, which says where the rest is. `section` returns one section \
-with the whole budget. `origin` narrows the counts to the decisions recorded under it. \
+with the whole budget. `origin` narrows the counts and the findings to the decisions \
+recorded under it. \
 Where the graph sits in the project's git is reported by `trurlic check`.";
 
 /// The bytes a report keeps, beyond its frame, for the `truncated`
@@ -78,12 +87,6 @@ impl Section {
     }
 }
 
-/// What the `lint` section's omitted findings are, in the words every
-/// surface uses of them.
-pub(crate) const LINT_MORE: &str = "the section lists the best pairs; the ones left out rank \
-     at or below the last listed, and come into view as the listed ones are settled (merged, \
-     or revised apart)";
-
 const SECTIONS: [(&str, Section); 4] = [
     (Section::Issues.as_str(), Section::Issues),
     (Section::History.as_str(), Section::History),
@@ -101,6 +104,7 @@ pub(crate) fn section_names() -> impl Iterator<Item = &'static str> {
 pub(super) struct StatusArgs {
     section: Option<Section>,
     origin: Option<String>,
+    from: Option<String>,
 }
 
 impl Args for StatusArgs {
@@ -115,12 +119,26 @@ impl Args for StatusArgs {
                     max_bytes: MAX_TRAILER_BYTES,
                 },
             ),
+            from: fields.optional(
+                "from",
+                "With `section: \"lint\"`: the quality findings of the decisions named this \
+                 or after, the `[quality]` patterns reading on from here: a previous call's \
+                 `counts.lint.patterns.next`.",
+                &Text {
+                    max_bytes: MAX_NAME_BYTES,
+                },
+            ),
         }
     }
 }
 
 fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome<Report> {
-    let StatusArgs { section, origin } = arguments;
+    let StatusArgs {
+        section,
+        origin,
+        from,
+    } = arguments;
+    let patterns = Patterns::of(section, from.as_deref())?;
     let shown = |shown| section.is_none_or(|asked| asked == shown);
     let origin = origin.as_deref();
     let issues = state.validate();
@@ -135,29 +153,39 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
     };
     let component_items =
         shown(Section::Components).then(|| Listed::all(component_items(state, origin)));
-    let lint_items = shown(Section::Lint).then(|| lint_items(state));
-    let local = store.is_local();
-    let mut report = Report {
-        // clone: the report outlives the state it reads.
-        project: state.project.name.clone(),
-        placement: state.project.placement,
-        graph: (!local).then(|| store.root().display().to_string()),
-        code_root: (!local).then(|| store.code_root().display().to_string()),
-        counts: counts(state, origin, issue_count),
-        quality: quality_counts(&state.project.quality),
-        issues: issue_items.as_ref().map(Listed::frame),
-        history: history_items.as_ref().map(Listed::frame),
-        components: component_items.as_ref().map(Listed::frame),
-        lint: lint_items.as_ref().map(Listed::frame),
-    };
+    let mut counts = counts(state, origin, issue_count);
+    let lint_items = shown(Section::Lint).then(|| {
+        let gathered = lint::gather(state, origin, patterns);
+        counts.lint = Some(gathered.counts);
+        gathered.kinds
+    });
     let items = Items {
         issues: issue_items,
         history: history_items,
         components: component_items,
         lint: lint_items,
     };
+    let mut report = frame(store, state, counts, &items);
     fill(&mut report, items);
     Ok(report)
+}
+
+/// The report of `items` with no item shown: what [`fill`] measures.
+fn frame(store: &Store, state: &ProjectState, counts: Counts, items: &Items) -> Report {
+    let local = store.is_local();
+    Report {
+        // clone: the report outlives the state it reads.
+        project: state.project.name.clone(),
+        placement: state.project.placement,
+        graph: (!local).then(|| store.root().display().to_string()),
+        code_root: (!local).then(|| store.code_root().display().to_string()),
+        counts,
+        quality: quality_counts(&state.project.quality),
+        issues: items.issues.as_ref().map(Listed::frame),
+        history: items.history.as_ref().map(Listed::frame),
+        components: items.components.as_ref().map(Listed::frame),
+        lint: items.lint.as_deref().map(lint_frame),
+    }
 }
 
 /// A section's items before the budget cuts them, out of `total`: every
@@ -176,6 +204,14 @@ impl<T> Listed<T> {
         }
     }
 
+    /// The first `items` of `total`.
+    fn of(total: usize, items: impl IntoIterator<Item = T>) -> Self {
+        Self {
+            total,
+            items: items.into_iter().collect(),
+        }
+    }
+
     /// The section with none of its items shown: what a report measures
     /// before it is filled.
     const fn frame(&self) -> Part<T> {
@@ -188,12 +224,24 @@ impl<T> Listed<T> {
     }
 }
 
-/// The items of each section asked for, before the budget cuts them.
+/// The `lint` section of `kinds` with none of its items shown.
+fn lint_frame(kinds: &[(LintKind, Listed<LintItem>)]) -> Part<LintItem> {
+    Part {
+        total: kinds.iter().map(|(_, listed)| listed.total).sum(),
+        items: Vec::new(),
+        omitted: 0,
+        more: None,
+    }
+}
+
+/// The items of each section asked for, before the budget cuts them; the
+/// `lint` section's by kind, each kind fitted on its own, so a long kind
+/// does not crowd out a short one.
 struct Items {
     issues: Option<Listed<IssueItem>>,
     history: Option<Listed<HistoryItem>>,
     components: Option<Listed<ComponentItem>>,
-    lint: Option<Listed<LintItem>>,
+    lint: Option<Vec<(LintKind, Listed<LintItem>)>>,
 }
 
 /// Put into `report`, whose sections hold no item yet, each section's
@@ -205,28 +253,59 @@ fn fill(report: &mut Report, items: Items) {
         components,
         lint,
     } = items;
-    let sizes: Vec<Sizes> = [
+    let mut sizes: Vec<Sizes> = [
         issues
             .as_ref()
-            .map(|listed| Sizes::of(Section::Issues, listed)),
+            .map(|listed| Sizes::of(Slot::Issues, listed)),
         history
             .as_ref()
-            .map(|listed| Sizes::of(Section::History, listed)),
+            .map(|listed| Sizes::of(Slot::History, listed)),
         components
             .as_ref()
-            .map(|listed| Sizes::of(Section::Components, listed)),
-        lint.as_ref().map(|listed| Sizes::of(Section::Lint, listed)),
+            .map(|listed| Sizes::of(Slot::Components, listed)),
     ]
     .into_iter()
     .flatten()
     .collect();
+    let kinds = lint.iter().flatten();
+    sizes.extend(kinds.map(|(kind, listed)| Sizes::of(Slot::Lint(*kind), listed)));
     let fixed = json_len(&to_value(&*report)) + NOTICE_BYTES;
     let level = budget::level(&sizes, fixed, MAX_TOOL_RESULT_BYTES).unwrap_or(0);
-    report.issues = issues.map(|items| Sizes::part(&sizes, Section::Issues, items, level));
-    report.history = history.map(|items| Sizes::part(&sizes, Section::History, items, level));
-    report.components =
-        components.map(|items| Sizes::part(&sizes, Section::Components, items, level));
-    report.lint = lint.map(|items| Sizes::part(&sizes, Section::Lint, items, level));
+    report.issues = issues.map(|items| Sizes::part(&sizes, Slot::Issues, items, level));
+    report.history = history.map(|items| Sizes::part(&sizes, Slot::History, items, level));
+    report.components = components.map(|items| Sizes::part(&sizes, Slot::Components, items, level));
+    report.lint = lint.map(|kinds| {
+        let parts = kinds
+            .into_iter()
+            .map(|(kind, listed)| Sizes::part(&sizes, Slot::Lint(kind), listed, level));
+        parts.fold(lint_frame(&[]), |mut lint, part| {
+            lint.total += part.total;
+            lint.omitted += part.omitted;
+            lint.items.extend(part.items);
+            lint.more = lint.more.or(part.more);
+            lint
+        })
+    });
+}
+
+/// What [`Sizes`] measures: a section, or one kind of the `lint` section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Issues,
+    History,
+    Components,
+    Lint(LintKind),
+}
+
+impl Slot {
+    const fn section(self) -> Section {
+        match self {
+            Self::Issues => Section::Issues,
+            Self::History => Section::History,
+            Self::Components => Section::Components,
+            Self::Lint(_) => Section::Lint,
+        }
+    }
 }
 
 fn counts(state: &ProjectState, origin: Option<&str>, issues: usize) -> Counts {
@@ -260,6 +339,7 @@ fn counts(state: &ProjectState, origin: Option<&str>, issues: usize) -> Counts {
         edges,
         issues,
         non_canonical: state.non_canonical.len(),
+        lint: None,
     }
 }
 
@@ -336,37 +416,11 @@ fn component_items(state: &ProjectState, origin: Option<&str>) -> Vec<ComponentI
         .collect()
 }
 
-/// The pairs of likely duplicates, best first.
-fn lint_items(state: &ProjectState) -> Listed<LintItem> {
-    let ranked = Similarity::of(state).pairs(lint_limit());
-    let items = ranked.best.into_iter().map(|pair| LintItem::Duplicate {
-        decision: pair.first.to_owned(),
-        other: pair.second.to_owned(),
-        score: pair.score.to_string(),
-    });
-    Listed {
-        total: ranked.total,
-        items: items.collect(),
-    }
-}
-
-/// The most lint findings one result can hold: the budget over the
-/// smallest finding there can be, with the comma before it, so the
-/// selection keeps every finding a result can show and no more.
-fn lint_limit() -> usize {
-    let smallest = LintItem::Duplicate {
-        decision: "a".into(),
-        other: "b".into(),
-        score: Score::THRESHOLD.to_string(),
-    };
-    MAX_TOOL_RESULT_BYTES / json_len(&to_value(&smallest)).saturating_add(1)
-}
-
 // -- Fitting -----------------------------------------------------------------
 
 /// The sizes of a section's items as JSON: what [`budget::level`] cuts.
 struct Sizes {
-    section: Section,
+    slot: Slot,
     /// The bytes of the first `k + 1` items with the commas between them.
     ends: Vec<usize>,
     /// Whether the section has items beyond those given, so that even
@@ -375,7 +429,7 @@ struct Sizes {
 }
 
 impl Sizes {
-    fn of<T: Output>(section: Section, listed: &Listed<T>) -> Self {
+    fn of<T: Output>(slot: Slot, listed: &Listed<T>) -> Self {
         let mut ends = Vec::with_capacity(listed.items.len());
         let mut end = 0usize;
         for (index, item) in listed.items.iter().enumerate() {
@@ -385,18 +439,18 @@ impl Sizes {
             ends.push(end);
         }
         Self {
-            section,
+            slot,
             ends,
             beyond: listed.total > listed.items.len(),
         }
     }
 
-    /// The items of `section` kept at `level`, with the count of the rest.
-    fn part<T>(all: &[Self], section: Section, listed: Listed<T>, level: usize) -> Part<T> {
+    /// The items of `slot` kept at `level`, with the count of the rest.
+    fn part<T>(all: &[Self], slot: Slot, listed: Listed<T>, level: usize) -> Part<T> {
         let Listed { total, mut items } = listed;
         let limit = all
             .iter()
-            .find(|sizes| sizes.section == section)
+            .find(|sizes| sizes.slot == slot)
             .and_then(|sizes| budget::limit(sizes, level).map(|limit| sizes.count_within(limit)));
         if let Some(keep) = limit {
             items.truncate(keep);
@@ -406,7 +460,7 @@ impl Sizes {
             total,
             items,
             omitted,
-            more: (omitted > 0).then(|| section.more()),
+            more: (omitted > 0).then(|| slot.section().more()),
         }
     }
 
@@ -427,7 +481,7 @@ impl Shrinkable for Sizes {
 
     fn note(&self) -> usize {
         // `,"omitted":N,"more":"..."`, N at most 20 digits.
-        41 + self.section.more().len()
+        41 + self.slot.section().more().len()
     }
 
     fn kept(&self, limit: usize) -> usize {
@@ -457,11 +511,11 @@ mod tests {
     #[test]
     fn a_cut_section_keeps_a_prefix_and_counts_the_rest() {
         let items = Listed::all((0..100).map(|i| item(&format!("c{i:02}"))));
-        let sizes = [Sizes::of(Section::Components, &items)];
+        let sizes = [Sizes::of(Slot::Components, &items)];
         let whole = sizes[0].full();
         let level = budget::level(&sizes, 0, whole / 2).unwrap();
 
-        let part = Sizes::part(&sizes, Section::Components, items, level);
+        let part = Sizes::part(&sizes, Slot::Components, items, level);
 
         assert_eq!(part.total, 100);
         assert!(part.items.len() < 50, "{}", part.items.len());
@@ -469,7 +523,7 @@ mod tests {
         assert_eq!(part.items[0].name, "c00");
         assert_eq!(part.more, Some(Section::Components.more()));
         let one = Listed::all([item("c00")]);
-        let fits = Sizes::part(&sizes, Section::Components, one, whole);
+        let fits = Sizes::part(&sizes, Slot::Components, one, whole);
         assert_eq!((fits.omitted, fits.more), (0, None));
     }
 
@@ -481,10 +535,15 @@ mod tests {
             total: 1000,
             items: vec![item("c00"), item("c01")],
         };
-        let sizes = Sizes::of(Section::Lint, &best);
+        let sizes = Sizes::of(Slot::Lint(LintKind::Duplicate), &best);
         assert_eq!(sizes.full(), sizes.ends[1] + sizes.note());
 
-        let part = Sizes::part(&[sizes], Section::Lint, best, MAX_TOOL_RESULT_BYTES);
+        let part = Sizes::part(
+            &[sizes],
+            Slot::Lint(LintKind::Duplicate),
+            best,
+            MAX_TOOL_RESULT_BYTES,
+        );
 
         assert_eq!((part.total, part.items.len(), part.omitted), (1000, 2, 998));
         assert_eq!(part.more, Some(Section::Lint.more()));

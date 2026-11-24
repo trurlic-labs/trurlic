@@ -7,11 +7,18 @@ use crate::harness::{McpClient, Project, decision};
 
 const MAX_TOOL_RESULT_BYTES: usize = 24 * 1024;
 
-/// What the `lint` section says of the findings it leaves out: they rank
-/// at or below the last listed, ties included, and no surface lists them.
-const LINT_MORE: &str = "the section lists the best pairs; the ones left out rank at or below \
-                         the last listed, and come into view as the listed ones are settled \
-                         (merged, or revised apart)";
+/// What the `lint` section says of the findings it leaves out, of each kind:
+/// pairs rank at or below the last listed, ties included; the others follow
+/// it by decision name; no surface lists them all.
+const LINT_MORE: &str = "each kind lists what fits and `counts.lint` counts it \
+                         whole: the duplicate pairs left out rank at or below the last listed; the \
+                         quality findings and the \
+                         decisions with only file anchors left out follow the last listed by decision \
+                         name, and `section: \"lint\"` with `from` lists the quality findings from a \
+                         decision on; they come into view as the listed ones are settled (pairs merged \
+                         or revised apart, decisions brought to the bar or anchored to a symbol); \
+                         `counts.lint.patterns` says which decisions the `[quality]` patterns did not \
+                         read and how to read them";
 
 /// Decisions with reasons long enough that `auth`'s context and file queries
 /// each exceed the budget several times over.
@@ -120,22 +127,43 @@ fn status_fits_the_budget_and_counts_what_it_leaves_out() {
     );
 
     // The decisions' texts differ only in digits, which no term holds, so
-    // every pair is a likely duplicate at a score of one.
+    // every pair is a likely duplicate at a score of one; and each lacks an
+    // alternative and an anchor, two quality findings.
     let lint_alone = fitted(&mut client, "status", json!({ "section": "lint" }));
-    let pairs = BROKEN * (BROKEN - 1) / 2;
+    let (pairs, shortfalls) = (BROKEN * (BROKEN - 1) / 2, 2 * BROKEN);
     for status in [&whole, &lint_alone] {
         let lint = &status["lint"];
-        assert_eq!(lint["total"], pairs);
-        let shown = lint["items"].as_array().unwrap().len();
-        assert_eq!(lint["omitted"], pairs - shown);
-        assert_eq!(lint["more"], LINT_MORE);
-        // The pairs left out tie with the last listed one.
-        assert_eq!(lint["items"][shown - 1]["score"], "1.000000");
         assert_eq!(
-            lint["items"][0],
+            status["counts"]["lint"],
+            json!({ "duplicates": pairs, "quality": shortfalls, "file_anchors_only": 0 })
+        );
+        assert_eq!(lint["total"], pairs + shortfalls);
+        let items = lint["items"].as_array().unwrap();
+        assert_eq!(lint["omitted"], pairs + shortfalls - items.len());
+        assert_eq!(lint["more"], LINT_MORE);
+        let of = |kind: &str| items.iter().filter(|item| item["kind"] == kind).count();
+        // Each kind keeps its share of the budget: the pairs, far more,
+        // crowd out none of the quality findings' room.
+        let (listed_pairs, listed_shortfalls) = (of("duplicate"), of("quality"));
+        assert!(
+            listed_shortfalls * 3 > listed_pairs,
+            "{listed_pairs} {listed_shortfalls}"
+        );
+        // The pairs left out tie with the last listed one.
+        assert_eq!(items[listed_pairs - 1]["score"], "1.000000");
+        assert_eq!(
+            items[0],
             json!({
                 "kind": "duplicate", "decision": "rule-000", "other": "rule-001",
                 "score": "1.000000",
+            })
+        );
+        assert_eq!(
+            items[listed_pairs],
+            json!({
+                "kind": "quality", "decision": "rule-000", "field": "alternatives",
+                "rule": "alternative_required", "level": "refuse",
+                "limit": { "measured": 0, "bound": 1, "unit": "alternatives" },
             })
         );
     }

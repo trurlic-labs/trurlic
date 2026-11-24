@@ -361,9 +361,11 @@ fn a_likely_duplicate_warns_over_both_surfaces() {
     );
     let status = from_file.run_ok(&["status", "--section", "lint"]).stdout;
     let status = String::from_utf8(status).unwrap();
+    // Their anchors name files alone: three findings of that kind follow.
     assert!(
-        status.ends_with(
-            "lint: 3\n  likely duplicates (1.000000): `lock-writes` and `retry`\n  \
+        status.contains(
+            "lint: 6 (3 likely duplicate pair(s), 0 quality finding(s), 3 decision(s) with \
+             only file anchors)\n  likely duplicates (1.000000): `lock-writes` and `retry`\n  \
              likely duplicates (0.820476): `lock-writes` and `writes-lock`\n  \
              likely duplicates (0.820476): `retry` and `writes-lock`\n"
         ),

@@ -9,7 +9,9 @@
 //! `apply` is timed with one op and with fifty, under each placement and,
 //! under `tracked`, with the shipped example `[quality]` (eleven patterns),
 //! whose patterns each batch compiles; `load_state` is timed with that
-//! table too, which a read parses and never compiles.
+//! table too, which a load parses and never compiles. `status` is timed
+//! with it whole, which judges the limits alone, and with its `lint`
+//! section alone, which compiles the patterns and judges them too.
 //!
 //! The code index is timed over this repository's own `src/`, cold (its
 //! cache emptied before each run) and warm (every file's index read from
@@ -235,6 +237,27 @@ fn bench_duplicates(c: &mut Criterion) {
     group.finish();
 }
 
+/// `status` over a store with the shipped `[quality]`: the whole report,
+/// which judges the bar's limits alone, and the `lint` section alone,
+/// which compiles the patterns and judges them too.
+fn bench_status_lint(c: &mut Criterion) {
+    let mut group = c.benchmark_group("status_quality");
+    for &size in &Corpus::SIZES {
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("corpus-lint-{size}"));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        add_quality(&Corpus::new(size).write(&dir).unwrap());
+        let mut server = server_at(dir);
+        for (name, arguments) in [("all", json!({})), ("lint", json!({ "section": "lint" }))] {
+            let line = tool_call("status", arguments);
+            let id = BenchmarkId::new(name, size);
+            bench_request(&mut group, id, &mut server, &line);
+        }
+    }
+    group.finish();
+}
+
 fn bench_read_tools(c: &mut Criterion) {
     let mut group = c.benchmark_group("read_tool");
     for fixture in CORPORA.iter() {
@@ -437,7 +460,7 @@ criterion_group! {
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_validate, bench_duplicates, bench_read_tools, bench_write,
-        bench_apply, bench_code_index
+    targets = bench_load_state, bench_validate, bench_duplicates, bench_status_lint,
+        bench_read_tools, bench_write, bench_apply, bench_code_index
 }
 criterion_main!(benches);

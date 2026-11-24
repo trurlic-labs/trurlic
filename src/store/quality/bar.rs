@@ -12,11 +12,16 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use regex::{Match, Regex, RegexBuilder};
+use regex_automata::nfa::thompson;
 
 use super::{DecisionField, Level, Limit, PatternMatch, Quality, QualityFault, WordRange, words};
 use crate::store::limits::{MAX_PATTERN_COMPILED_BYTES, MAX_QUOTED_MATCH_BYTES};
 use crate::store::schema::Decision;
 use crate::store::text::{TextFault, TextField, fault};
+
+mod audit;
+
+pub use audit::Shortfall;
 
 /// The rules of one `[quality]` table, its patterns compiled.
 #[derive(Debug)]
@@ -32,16 +37,19 @@ pub(crate) struct Bar {
 #[derive(Debug)]
 struct Compiled {
     regex: Regex,
+    /// The states of the pattern's Thompson NFA: what its slowest engine
+    /// walks per byte, at worst.
+    states: usize,
     fields: BTreeSet<DecisionField>,
     level: Level,
     message: String,
 }
 
 /// A pattern that does not compile: its index and regex's message.
-#[derive(Debug)]
-pub(super) struct PatternFault {
-    pub(super) index: usize,
-    pub(super) message: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternFault {
+    pub index: usize,
+    pub message: String,
 }
 
 /// A field of a decision, and the element of a list field by its position
@@ -97,19 +105,19 @@ impl Bar {
             .iter()
             .enumerate()
             .map(|(index, pattern)| {
+                let fault = |message: String| PatternFault { index, message };
                 let regex = RegexBuilder::new(&pattern.pattern)
                     .size_limit(MAX_PATTERN_COMPILED_BYTES)
                     .dfa_size_limit(MAX_PATTERN_COMPILED_BYTES)
                     .build()
-                    .map_err(|e| PatternFault {
-                        index,
-                        message: e.to_string(),
-                    })?;
+                    .map_err(|e| fault(e.to_string()))?;
+                let states = nfa_states(&pattern.pattern).map_err(fault)?;
                 // clone: the bar outlives the borrow of the graph a batch
                 // changes, so it owns each pattern's fields and message.
                 let (fields, message) = (pattern.fields.clone(), pattern.message.clone());
                 Ok(Compiled {
                     regex,
+                    states,
                     fields,
                     level: pattern.level,
                     message,
@@ -117,13 +125,22 @@ impl Bar {
             })
             .collect::<Result<_, _>>()?;
         Ok(Self {
+            patterns,
+            ..Self::limits_only(quality)
+        })
+    }
+
+    /// The limits of `quality`, with no pattern compiled: what a report
+    /// judges when it judges no pattern.
+    pub(crate) const fn limits_only(quality: &Quality) -> Self {
+        Self {
             reason_words: quality.reason_words,
             alternatives_max: quality.alternatives_max,
             alternative_words_max: quality.alternative_words_max,
             anchors_max: quality.anchors_max,
             require_origin: quality.require_origin,
-            patterns,
-        })
+            patterns: Vec::new(),
+        }
     }
 
     /// `decision` against the bar in the fields of `held`: the first rule
@@ -240,6 +257,18 @@ impl Bar {
 }
 
 impl Compiled {
+    /// The match `found` of this pattern, the one at `index`, as a fault
+    /// names it.
+    fn matched(&self, index: usize, found: &Match<'_>) -> PatternMatch {
+        PatternMatch {
+            index,
+            at: found.start(),
+            found: quoted(found.as_str()),
+            // clone: the fault carries the message it reports.
+            message: self.message.clone(),
+        }
+    }
+
     /// The first of `texts` this pattern matches, and its place.
     fn first_match<'t>(
         &self,
@@ -256,13 +285,7 @@ impl Compiled {
         match self.level {
             Level::Refuse => Err(Breach {
                 place,
-                broken: Broken::Quality(QualityFault::Pattern(PatternMatch {
-                    index,
-                    at: found.start(),
-                    found: quoted(found.as_str()),
-                    // clone: the refusal carries the message it reports.
-                    message: self.message.clone(),
-                })),
+                broken: Broken::Quality(QualityFault::Pattern(self.matched(index, found))),
             }),
             Level::Warn => Ok(Hit {
                 pattern: index,
@@ -270,6 +293,18 @@ impl Compiled {
             }),
         }
     }
+}
+
+/// The states of the Thompson NFA of `pattern`, built as the `regex` crate
+/// builds its own (the same syntax, Unicode on, within the same size), or
+/// why it does not build.
+fn nfa_states(pattern: &str) -> Result<usize, String> {
+    let config = thompson::Config::new().nfa_size_limit(Some(MAX_PATTERN_COMPILED_BYTES));
+    let nfa = thompson::Compiler::new()
+        .configure(config)
+        .build(pattern)
+        .map_err(|e| e.to_string())?;
+    Ok(nfa.states().len())
 }
 
 /// The texts of `field` a pattern reads, each with its place: an anchor

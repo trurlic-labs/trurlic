@@ -61,7 +61,7 @@ fn graph(decisions: &[(&str, &str, &str)]) -> ProjectState {
 
 /// Every likely duplicate pair: the selection bounded by nothing.
 fn every<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
-    let ranked = similarity.pairs(usize::MAX);
+    let ranked = similarity.pairs(usize::MAX, |_| true);
     assert_eq!(ranked.total, ranked.best.len());
     ranked.best
 }
@@ -142,12 +142,12 @@ fn the_pass_keeps_the_best_it_is_asked_for_and_counts_every_pair() {
     let similarity = Similarity::of(&state);
     let whole = every(&similarity);
 
-    let ranked = similarity.pairs(7);
+    let ranked = similarity.pairs(7, |_| true);
 
     assert_eq!(whole.len(), 60 * 59 / 2);
     assert_eq!(ranked.total, whole.len());
     assert_eq!(ranked.best, whole[..7]);
-    let none = similarity.pairs(0);
+    let none = similarity.pairs(0, |_| true);
     assert_eq!((none.total, none.best.len()), (whole.len(), 0));
 }
 
@@ -369,7 +369,7 @@ fn the_pairs_are_the_same_on_any_number_of_threads() {
             .build()
             .unwrap();
         pool.install(|| {
-            let ranked = Similarity::of(&state).pairs(40);
+            let ranked = Similarity::of(&state).pairs(40, |_| true);
             (ranked.total, ranked.best)
         })
     };

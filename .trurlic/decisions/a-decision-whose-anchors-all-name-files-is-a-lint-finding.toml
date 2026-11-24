@@ -1,0 +1,21 @@
+component = "lint"
+choice = "A decision with anchors that all name a file and no symbol is a lint finding of its own kind, file_anchors_only: none of its anchors says what part of its file it constrains"
+reason = "An anchor that names a file or a directory alone does not say which part of it the decision constrains. A reader cannot find the code the decision governs, and a change anywhere in the file may or may not touch it. Such a decision loads and meets the bar, since one anchor of any kind satisfies anchor_required, so only a report shows it; status lists it under lint as its own kind, by name, counted in counts.lint. One symbol anchor among file anchors takes the decision off the list, which the integration fixture holds with a file anchor beside a symbol one. A decision with no anchor at all breaks the bar instead and shows as the quality finding anchor_required, so the two kinds never name one decision for one cause."
+alternatives = [
+    "A quality rule refusing file-only anchors: rejected because a directory or a file is the right anchor for some decisions, and the bar would refuse them",
+    "Leave it to the review: rejected because a review sees only the decisions a diff touches",
+]
+tags = [
+    "quality",
+]
+status = "proposed"
+origin = "quality findings"
+created = "2026-11-24T11:30:37.585834133Z"
+anchors = [
+    { file = "src/lint/quality.rs", symbol = "file_anchors_only" },
+    { file = "src/mcp/status/lint.rs", symbol = "LintItem" },
+    { file = "tests/integration/lint.rs", symbol = "graph" },
+]
+depends_on = [
+    "lint-is-a-pure-module-of-findings-no-rule-refuses",
+]

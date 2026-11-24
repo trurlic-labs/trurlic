@@ -4,28 +4,40 @@ use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::console::out;
-use crate::mcp::twin::{self, LintItem, Part, QualityCounts, Report, ToolError};
+use crate::mcp::twin::{
+    self, Cut, LintItem, Part, PatternCounts, QualityCounts, Report, ToolError,
+};
 
 use super::{Format, answer};
 
-/// `trurlic status`: the `status` tool, its section and origin given as
-/// flags, printed for a terminal or as the tool's JSON. It writes nothing,
-/// to the graph's repository neither.
+/// The arguments of `status` that `trurlic status` takes as flags.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StatusFlags<'a> {
+    pub(crate) section: Option<&'a str>,
+    pub(crate) origin: Option<&'a str>,
+    pub(crate) from: Option<&'a str>,
+}
+
+/// `trurlic status`: the `status` tool, its arguments given as flags,
+/// printed for a terminal or as the tool's JSON. It writes nothing, to
+/// the graph's repository neither.
 pub(crate) fn status(
     cwd: &Path,
-    section: Option<&str>,
-    origin: Option<&str>,
+    flags: StatusFlags<'_>,
     format: Format,
 ) -> std::result::Result<(), ToolError> {
     let mut arguments = Map::new();
-    if let Some(section) = section {
-        arguments.insert("section".into(), Value::from(section));
-    }
-    if let Some(origin) = origin {
-        arguments.insert("origin".into(), Value::from(origin));
+    for (key, flag) in [
+        ("section", flags.section),
+        ("origin", flags.origin),
+        ("from", flags.from),
+    ] {
+        if let Some(flag) = flag {
+            arguments.insert(key.into(), Value::from(flag));
+        }
     }
     answer(twin::status(cwd, &arguments), format, |report| {
-        print(report, origin)
+        print(report, flags.origin)
     })
 }
 
@@ -64,15 +76,29 @@ fn print(report: &Report, origin: Option<&str>) -> Result<()> {
     for finding in report.history.iter().flat_map(|history| &history.items) {
         out!("history: {}", finding.message)?;
     }
-    lint(report.lint.as_ref())
+    lint(report)
 }
 
-/// The lint section's findings, a line each, when it has any.
-fn lint(section: Option<&Part<LintItem>>) -> Result<()> {
-    let Some(lint) = section.filter(|lint| lint.total > 0) else {
+/// The lint section's counts and findings, a line each, when it has any.
+fn lint(report: &Report) -> Result<()> {
+    let lint_counts = report.counts.lint.as_ref();
+    if let Some(patterns) = lint_counts.and_then(|counts| counts.patterns.as_ref()) {
+        unjudged(patterns, &report.quality)?;
+    }
+    let (Some(lint), Some(counts)) = (report.lint.as_ref(), report.counts.lint.as_ref()) else {
         return Ok(());
     };
-    out!("lint: {}", lint.total)?;
+    if lint.total == 0 {
+        return Ok(());
+    }
+    out!(
+        "lint: {} ({} likely duplicate pair(s), {} quality finding(s), {} decision(s) with \
+         only file anchors)",
+        lint.total,
+        counts.duplicates,
+        counts.quality,
+        counts.file_anchors_only
+    )?;
     for item in &lint.items {
         out!("  {}", finding(item))?;
     }
@@ -86,6 +112,62 @@ fn finding(item: &LintItem) -> String {
             other,
             score,
         } => format!("likely duplicates ({score}): `{decision}` and `{other}`"),
+        LintItem::Quality(found) => {
+            let (decision, field, level) = (&found.decision, &found.field, found.level.as_str());
+            let what = match (&found.limit, found.pattern) {
+                (Some(limit), _) => format!(
+                    "{}, {} {} against {}",
+                    found.rule, limit.measured, limit.unit, limit.bound
+                ),
+                (None, Some(matched)) => {
+                    let (index, at) = (matched.index, matched.at);
+                    format!("matches `[quality] patterns[{index}]` at byte {at}")
+                }
+                (None, None) => found.rule.to_owned(),
+            };
+            format!("`{decision}` `{field}`: {what} ({level})")
+        }
+        LintItem::FileAnchorsOnly { decision } => {
+            format!(
+                "`{decision}`: only file anchors, none naming the part of its file it constrains"
+            )
+        }
+    }
+}
+
+/// Why the `[quality]` patterns left decisions unjudged, if they did.
+fn unjudged(patterns: &PatternCounts, quality: &QualityCounts) -> Result<()> {
+    match &patterns.cut {
+        None => Ok(()),
+        Some(Cut::NotAsked) => out!(
+            "lint: the limits alone; `trurlic status --section lint` judges the {} [quality] \
+             pattern(s) too",
+            quality.refusing + quality.warning
+        ),
+        Some(Cut::WorkLimit(work)) => {
+            out!(
+                "lint: the [quality] patterns read {} of {} decision(s), by name, within a work \
+                 of {} state-bytes of the {} they would do",
+                patterns.judged,
+                patterns.judged + patterns.unjudged,
+                work.bound,
+                work.measured
+            )?;
+            if let Some(next) = &work.next {
+                out!("  `trurlic status --section lint --from {next}` reads on from `{next}`")?;
+            }
+            match work.too_costly {
+                0 => Ok(()),
+                costly => {
+                    out!("  {costly} decision(s) pass the bound alone, so no call reads them")
+                }
+            }
+        }
+        Some(Cut::Uncompiled(uncompiled)) => out!(
+            "lint: `[quality] patterns[{}]` does not compile, so no pattern was judged: {}",
+            uncompiled.index,
+            uncompiled.message
+        ),
     }
 }
 

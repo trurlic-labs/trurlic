@@ -1,0 +1,38 @@
+component = "store"
+choice = "A [quality] pattern is a regular expression of the regex crate, compiled within a stated size once per batch by a write, by check, and by status only for its lint section asked for alone"
+reason = "A project rule such as a whole word, or a sentence past 25 words, needs classes and counts that a substring cannot state. The regex crate builds with std, unicode and the lazy DFA, without the literal optimizations whose crates a few short texts per write do not repay; Unicode classes and case folding, since a decision's text is in any script and a word boundary must not split a word at its first letter outside ASCII. load_state parses the table and compiles nothing. Writer::apply compiles every pattern once per batch and reuses it for every op, and check compiles them to report the one that fails. status compiles them only when its section argument is lint. Judging a pattern costs the bytes of every decision it reads at a per-byte cost its compiled size sets, and a Unicode word boundary over text outside ASCII leaves the lazy DFA for a slower engine. On every call the table, not the graph, would set the cost of a read agents call often. Every other status call takes Bar::limits_only, compiles nothing and says so in counts.lint.patterns. A short pattern can ask for a large automaton, so each is bounded: MAX_QUALITY_PATTERNS, MAX_PATTERN_BYTES of text, MAX_PATTERN_COMPILED_BYTES of compiled program and DFA cache. One that fails is Error::QualityPattern naming project.toml, its index and regex's message: check reports it, every write is refused, and status still returns its report, its lint section judging the limits alone and naming the pattern."
+alternatives = [
+    "Literal substrings: rejected because a whole word or a sentence length needs a class and a count",
+    "ASCII classes: rejected because a word boundary would split a word at its first letter outside ASCII",
+    "Compile at every load: rejected because only a write, check and the lint section judge patterns, and a load serves every read",
+    "Patterns in every status call: rejected because their cost follows the table and the text of every decision, so a legal table would make the most frequent read slow",
+    "A cache of verdicts keyed by a decision's content: rejected because the call that fills it pays the whole cost, and its files need rules of their own",
+]
+tags = [
+    "dependencies",
+    "quality",
+]
+status = "proposed"
+origin = "quality rules"
+created = "2026-11-24T04:09:05.642017587Z"
+anchors = [
+    { file = "Cargo.toml", symbol = "dependencies::regex" },
+    { file = "src/commands/check.rs", symbol = "check" },
+    { file = "src/mcp/status/lint/patterns.rs", symbol = "Patterns::of" },
+    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_COMPILED_BYTES" },
+    { file = "src/store/quality/bar.rs", symbol = "Bar::compile" },
+    { file = "src/store/quality/bar.rs", symbol = "Bar::limits_only" },
+    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::for_report" },
+]
+depends_on = [
+    "quality-in-project-toml-is-typed-optional-and-written-canonical",
+]
+
+[accepted_text]
+choice = "A [quality] pattern is a regular expression of the regex crate, compiled once per batch by a write and by check, never by a read, within a stated size"
+reason = "A project rule such as a whole word, or a sentence past 25 words, needs classes and counts that a substring cannot state. The regex crate builds with std, unicode and the lazy DFA, without the literal optimizations whose crates a few short texts per write do not repay; Unicode classes and case folding, since a decision's text is in any script and a word boundary must not split a word at its first letter outside ASCII. A read never judges quality, so load_state parses the table and compiles nothing; Writer::apply compiles every pattern once per batch and reuses it for every op. A short pattern can ask for a large automaton, so each is bounded: MAX_QUALITY_PATTERNS, MAX_PATTERN_BYTES of text, MAX_PATTERN_COMPILED_BYTES of compiled program and DFA cache. One that fails is Error::QualityPattern naming project.toml, its index and regex's message: check reports it, every write is refused, and status still answers."
+alternatives = [
+    "Literal substrings: rejected because a whole word or a sentence length needs a class and a count",
+    "Compile at every load: rejected because a read never judges quality, and a batch pays the compile once",
+    "ASCII classes: rejected because a word boundary would split a word at its first letter outside ASCII",
+]

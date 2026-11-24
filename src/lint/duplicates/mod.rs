@@ -126,7 +126,8 @@ impl<'s> Similarity<'s> {
         }
     }
 
-    /// The count of likely duplicate pairs and the best `limit` of them:
+    /// The count of likely duplicate pairs that touch a decision `touching`
+    /// admits, by name, and the best `limit` of them:
     /// the pass holds no more than `limit` pairs per thread, however many
     /// there are.
     ///
@@ -137,7 +138,7 @@ impl<'s> Similarity<'s> {
     /// order, so the cursors it keeps into the earlier decisions' squares
     /// only move forward. The kept pairs are the smallest keys of a total
     /// order, so they do not depend on the threads.
-    pub(crate) fn pairs(&self, limit: usize) -> Ranked<'s> {
+    pub(crate) fn pairs(&self, limit: usize, touching: impl Fn(&str) -> bool + Sync) -> Ranked<'s> {
         let mut order: Vec<usize> = (0..self.vectors.len()).collect();
         order.sort_unstable_by_key(|&decision| {
             (self.vectors.get(decision).map(|v| v.boundary), decision)
@@ -150,7 +151,7 @@ impl<'s> Similarity<'s> {
             .fold(
                 || Task::new(decisions, limit),
                 |mut task, place| {
-                    self.probe(&index, place, &mut task);
+                    self.probe(&index, place, &mut task, &touching);
                     task
                 },
             )
@@ -172,7 +173,13 @@ impl<'s> Similarity<'s> {
 
     /// Offer to `best` each likely duplicate of the decision at `place` in
     /// `index` among those before it.
-    fn probe(&self, index: &Index, place: usize, task: &mut Task) {
+    fn probe(
+        &self,
+        index: &Index,
+        place: usize,
+        task: &mut Task,
+        touching: &(impl Fn(&str) -> bool + Sync),
+    ) {
         let Task {
             scratch,
             cursors,
@@ -200,7 +207,11 @@ impl<'s> Similarity<'s> {
             if vectors::may_reach(vector, held, partial, rests)
                 && let Some(score) = likely(vector, held)
             {
-                best.offer((Reverse(score), probe.min(other), probe.max(other)));
+                let named =
+                    |decision: usize| self.names.get(decision).is_some_and(|&name| touching(name));
+                if named(probe) || named(other) {
+                    best.offer((Reverse(score), probe.min(other), probe.max(other)));
+                }
             }
         });
     }

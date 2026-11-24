@@ -54,9 +54,10 @@ pub(crate) use migration::{
 };
 pub use name::NameFault;
 pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
+pub(crate) use quality::Bar;
 pub use quality::{
-    ConfigFault, DecisionField, Level, Limit, Pattern, PatternMatch, Quality, QualityFault,
-    WordRange,
+    ConfigFault, DecisionField, Level, Limit, Pattern, PatternFault, PatternMatch, Quality,
+    QualityFault, Shortfall, WordRange,
 };
 pub use query::{Named, anchors_in, normalize_path};
 pub use schema::{

@@ -17,7 +17,7 @@ pub(crate) use install::install;
 pub(crate) use migrate::migrate;
 pub(crate) use query::query_file;
 pub(crate) use serve::serve;
-pub(crate) use status::status;
+pub(crate) use status::{StatusFlags, status};
 
 pub(crate) use crate::mcp::twin::{ToolError, section_names as status_sections};
 

@@ -750,6 +750,7 @@ dependencies = [
  "criterion",
  "rayon",
  "regex",
+ "regex-automata",
  "serde",
  "serde_json",
  "tempfile",

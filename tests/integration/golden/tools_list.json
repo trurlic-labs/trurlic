@@ -741,10 +741,15 @@
         "readOnlyHint": true,
         "title": "Status"
       },
-      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: the best pairs of likely duplicate decisions, whose choice and reason have a TF-IDF cosine of 0.5 or more, best first. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
+      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason of 0.5 or more), each rule of the quality bar a stored decision breaks, and the decisions whose anchors all name a file and no symbol, counted by kind. The call judges the bar's limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over the decisions by name within a work limit: `counts.lint.patterns` says how many decisions they read and names in `next` the first left unread, and the same call with `from` set to it reads on from there. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts and the findings to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "from": {
+            "description": "With `section: \"lint\"`: the quality findings of the decisions named this or after, the `[quality]` patterns reading on from here: a previous call's `counts.lint.patterns.next`.",
+            "maxLength": 128,
+            "type": "string"
+          },
           "origin": {
             "description": "Count only the decisions recorded under this origin.",
             "maxLength": 200,
@@ -848,6 +853,117 @@
                 "description": "Validation issues.",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "lint": {
+                "additionalProperties": false,
+                "description": "The `lint` findings of each kind, when the section is asked for.",
+                "properties": {
+                  "duplicates": {
+                    "description": "Likely duplicate pairs.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "file_anchors_only": {
+                    "description": "Decisions whose anchors all name a file and no symbol.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "patterns": {
+                    "additionalProperties": false,
+                    "description": "How far the `[quality]` patterns were judged, when it has any.",
+                    "properties": {
+                      "judged": {
+                        "description": "Decisions the patterns read, by name.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "more": {
+                        "description": "How the decisions left unjudged come to be judged.",
+                        "type": "string"
+                      },
+                      "next": {
+                        "description": "The first decision the bound left unread: `from` set to it reads on.",
+                        "type": "string"
+                      },
+                      "too_costly": {
+                        "description": "Decisions whose own work passes the bound, which no call reads.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "uncompiled": {
+                        "additionalProperties": false,
+                        "description": "The pattern that does not compile; `trurlic check` reports it.",
+                        "properties": {
+                          "index": {
+                            "description": "Its index in `[quality] patterns`.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "message": {
+                            "description": "Why it does not compile.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "index",
+                          "message"
+                        ],
+                        "type": "object"
+                      },
+                      "unjudged": {
+                        "description": "Decisions they did not read.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "why": {
+                        "description": "Why some went unjudged: `not_asked`, the call judged the limits alone; `work_limit`, the patterns' work reached the bound; `uncompiled`, a pattern does not compile.",
+                        "enum": [
+                          "not_asked",
+                          "work_limit",
+                          "uncompiled"
+                        ],
+                        "type": "string"
+                      },
+                      "work": {
+                        "additionalProperties": false,
+                        "description": "The patterns' work over every decision and the bound, in state-bytes: the bytes each pattern reads times its NFA's states.",
+                        "properties": {
+                          "bound": {
+                            "description": "The most one call does.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "measured": {
+                            "description": "The patterns' work over every decision.",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "measured",
+                          "bound"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "judged",
+                      "unjudged"
+                    ],
+                    "type": "object"
+                  },
+                  "quality": {
+                    "description": "Rules of the bar the stored decisions break: every limit's, and the patterns' in the decisions `patterns` says they read.",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "duplicates",
+                  "quality",
+                  "file_anchors_only"
+                ],
+                "type": "object"
               },
               "non_canonical": {
                 "description": "Files `trurlic fmt` would rewrite.",
@@ -1002,26 +1118,80 @@
           },
           "lint": {
             "additionalProperties": false,
-            "description": "What to read that no rule refuses: the best pairs of likely duplicate decisions, best first, out of `total`.",
+            "description": "What to read that refuses nothing: the best likely duplicate pairs, best first, then the quality findings and the decisions with only file anchors by decision name, out of `total`.",
             "properties": {
               "items": {
                 "description": "The items that fit, in order.",
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "at": {
+                      "description": "The byte offset of the pattern's first match in the field's text.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "decision": {
                       "description": "The decision it is about; a duplicate's first by name.",
                       "type": "string"
                     },
+                    "field": {
+                      "description": "A quality finding's field, an element by its index: `alternatives[1]`.",
+                      "type": "string"
+                    },
                     "kind": {
-                      "description": "The finding's kind: `duplicate`, two decisions whose choice and reason have a TF-IDF cosine of 0.5 or more.",
+                      "description": "The finding's kind: `duplicate`, two decisions whose choice and reason have a TF-IDF cosine of 0.5 or more; `quality`, a rule of the bar the stored decision breaks; `file_anchors_only`, a decision whose anchors all name a file and no symbol, so none says what part of it the decision constrains.",
                       "enum": [
-                        "duplicate"
+                        "duplicate",
+                        "quality",
+                        "file_anchors_only"
                       ],
                       "type": "string"
                     },
+                    "level": {
+                      "description": "`refuse` for a limit and a `refuse` pattern, `warn` for a `warn` one.",
+                      "enum": [
+                        "refuse",
+                        "warn"
+                      ],
+                      "type": "string"
+                    },
+                    "limit": {
+                      "additionalProperties": false,
+                      "description": "A limit's measure and bound, in the rule's unit.",
+                      "properties": {
+                        "bound": {
+                          "description": "The limit it passes.",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "measured": {
+                          "description": "What the field measures.",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "unit": {
+                          "description": "What both count: `words`, `alternatives` or `anchors`.",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "measured",
+                        "bound",
+                        "unit"
+                      ],
+                      "type": "object"
+                    },
                     "other": {
                       "description": "A duplicate's other decision.",
+                      "type": "string"
+                    },
+                    "pattern": {
+                      "description": "A pattern's index in `[quality] patterns`.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "rule": {
+                      "description": "The rule as a refusal names it: a limit's, or `pattern`.",
                       "type": "string"
                     },
                     "score": {

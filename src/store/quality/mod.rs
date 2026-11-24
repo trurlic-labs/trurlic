@@ -26,6 +26,7 @@ use crate::store::Store;
 use crate::{Error, Result};
 
 pub(crate) use bar::{Bar, Broken, Hit, Place, element};
+pub use bar::{PatternFault, Shortfall};
 pub use config::{ConfigFault, Level, Pattern, Quality, WordRange};
 
 /// The fields of a decision the bar reads, and the names a pattern's
@@ -97,7 +98,8 @@ impl Limit {
     }
 
     /// What the limit counts.
-    const fn unit(self) -> &'static str {
+    #[must_use]
+    pub const fn unit(self) -> &'static str {
         match self {
             Self::AlternativeRequired | Self::AlternativesMax => "alternatives",
             Self::AnchorRequired | Self::AnchorsMax => "anchors",

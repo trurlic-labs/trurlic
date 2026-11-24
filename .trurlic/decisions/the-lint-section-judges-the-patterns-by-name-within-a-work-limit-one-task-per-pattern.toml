@@ -1,0 +1,32 @@
+component = "lint"
+choice = "The lint section judges the [quality] patterns over the decisions by name while their work, bytes read times NFA states, stays within MAX_REPORT_PATTERN_WORK, and names where it stopped"
+reason = "A pattern's cost per byte runs from about a nanosecond on the lazy DFA to over a hundred microseconds on the PikeVM, which walks the states of the pattern's Thompson NFA for each byte, so bytes alone bound no time. Bar::pattern_work charges each pattern the bytes of every text it reads, one more per search, times its NFA's state count, so the work bounds the time of the slowest engine and needs no clock: the same cut on every machine. The worst rate measured on one core is about 7 ns per state-byte, for a counted repetition at the compile limit over ASCII text and for a word boundary of a few states over CJK text. So the bound of 2e9 state-bytes costs a call at most about 14 s of CPU. It admits the shipped table over the seeded corpus at 600 decisions whole and cuts it near half at 2000. The decisions are read in name order while the sum stays within the bound; one whose own work passes it is counted in too_costly and passed over; the first that would take the sum past it is named next, and a call with from set to it reads on, so a caller walks every decision but the too costly. The limits run no regex and are judged for every decision in one bounded fold. The patterns run one task per pattern over the decisions in order, so a compiled regex keeps one cache whatever the threads, and the parts merge by decision and rule, so the answer does not depend on the threads."
+alternatives = [
+    "A wall-clock deadline: rejected because the answer would depend on the machine and its load, and lint reads no clock",
+    "A bound on the bytes read: rejected because a pattern near the compile limit costs a hundred thousand times what the lazy DFA does per byte, so one bound either cuts a fast table early or lets one call run an hour",
+    "Nothing judged past the bound: rejected because a graph just past it would show no pattern finding, where a page by name shows them all in turn",
+    "Every pattern over every decision on the whole pool: rejected because each thread keeps its own cache of each pattern, so memory grows with the threads",
+    "Charge what the lazy DFA actually did, falling back to states only when it gives up: rejected for now because it needs the search engines run by hand, where one state count per pattern holds the bound",
+]
+tags = [
+    "performance",
+    "quality",
+]
+status = "proposed"
+origin = "quality findings: bounded pattern judging"
+created = "2026-11-25T15:38:56.432762268Z"
+anchors = [
+    { file = "src/lint/quality.rs", symbol = "reach" },
+    { file = "src/lint/quality.rs", symbol = "shortfalls" },
+    { file = "src/lint/quality.rs", symbol = "tests::a_pattern_of_more_states_reads_fewer_decisions_within_one_limit" },
+    { file = "src/lint/quality.rs", symbol = "tests::a_walk_from_next_to_next_reads_every_decision_it_can" },
+    { file = "src/mcp/status/lint/patterns.rs", symbol = "Patterns::of" },
+    { file = "src/mcp/status/lint/patterns.rs", symbol = "pattern_counts" },
+    { file = "src/store/limits.rs", symbol = "MAX_REPORT_PATTERN_WORK" },
+    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::pattern_work" },
+    { file = "tests/integration/lint.rs", symbol = "from_reads_on_where_the_work_limit_stopped" },
+]
+depends_on = [
+    "quality-patterns-are-regexes-compiled-by-a-write-by-check-and-by-the-lint-section",
+    "status-lint-shows-each-rule-of-the-bar-a-stored-decision-breaks",
+]

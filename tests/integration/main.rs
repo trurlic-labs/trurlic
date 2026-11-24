@@ -17,6 +17,7 @@ mod history;
 #[cfg(unix)]
 mod install;
 mod invalid_graph;
+mod lint;
 mod malformed_node;
 mod migrate;
 mod output;

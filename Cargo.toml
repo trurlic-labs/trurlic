@@ -79,6 +79,13 @@ regex = { version = "1.13", default-features = false, features = ["std", "unicod
 tree-sitter = { version = "0.27", default-features = false }
 tree-sitter-rust = "0.24"
 
+# The size of a `[quality]` pattern's Thompson NFA, its state count, which
+# bounds what the pattern costs per byte it reads: `status` charges its
+# lint section's work in bytes times states. The `regex` crate builds on
+# this crate and exposes no NFA. The dependency adds no crate and no
+# feature to the build: these features are the ones `regex` enables.
+regex-automata = { version = "0.4.19", default-features = false, features = ["std", "syntax", "nfa-thompson", "unicode"] }
+
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
 tempfile = "3"

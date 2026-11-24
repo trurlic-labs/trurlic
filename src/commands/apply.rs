@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::Result;
 use crate::console::{diag, out};
-use crate::mcp::twin::{self, Answer, Duplicates, LINT_MORE, MAX_DOCUMENT_BYTES, ToolError};
+use crate::mcp::twin::{self, Answer, Duplicates, MAX_DOCUMENT_BYTES, PAIRS_MORE, ToolError};
 use crate::store::{Applied, Done, Field, OpKind, Warning};
 
 use super::{Format, answer};
@@ -80,7 +80,7 @@ fn print(answer: &Answer) -> Result<()> {
     if answer.more_duplicates > 0 {
         diag!(
             "warning: and {} more decision(s) with likely duplicates: `trurlic status --section \
-             lint` ranks the pairs, and {LINT_MORE}",
+             lint` ranks the pairs, and {PAIRS_MORE}",
             answer.more_duplicates
         );
     }

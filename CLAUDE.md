@@ -18,7 +18,8 @@ commands   → store, mcp, git, discovery  init, apply, status, query, check, fm
 cli        → commands, store             clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
 lint       → store                       pure findings over the graph that refuse nothing: likely
-                                         duplicate decisions
+                                         duplicate decisions, the bar a stored decision breaks,
+                                         decisions with file anchors only
 sources    → code, store                 code-root walk, bounded reads, index cache, anchor resolution
 code       → store (types)               pure code index: definitions, spans, span hashes, symbols
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
@@ -47,6 +48,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
 | Likely duplicates (scoring, pair index) | `lint/duplicates/` |
+| Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
 | Failpoint sites | `store/failpoint.rs` |
 
 ### Invariants

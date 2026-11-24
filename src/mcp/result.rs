@@ -99,6 +99,16 @@ impl ToolError {
         }
     }
 
+    /// An argument the handler refuses, which its spec alone cannot: one
+    /// that holds only beside another.
+    pub(super) fn invalid(field: &str, message: impl Into<String>) -> Self {
+        Self::new(
+            ErrorKind::InvalidArgument,
+            Some(field.to_owned()),
+            message.into(),
+        )
+    }
+
     /// A document a CLI twin read that holds no arguments.
     pub(crate) const fn bad_document(message: String) -> Self {
         Self::new(ErrorKind::InvalidArgument, None, message)
