@@ -134,6 +134,8 @@ pub enum Rule {
     NotHeld {
         element: String,
     },
+    /// A `repair_anchors` op given an empty list of repairs.
+    NoRepair,
     /// A rule of the quality bar, built in or of `[quality]`.
     Quality(QualityFault),
     /// The `[quality]` patterns would do `work` state-bytes over what the
@@ -189,6 +191,7 @@ impl Rule {
             Self::InUse { .. } => "component_in_use",
             Self::BothForms { .. } => "both_forms",
             Self::NotHeld { .. } => "not_held",
+            Self::NoRepair => "no_repair",
             Self::Quality(fault) => fault.as_str(),
             Self::PatternWork { .. } => "pattern_work",
             Self::Issue(issue) => issue.kind.as_str(),
@@ -222,24 +225,16 @@ impl fmt::Display for Rule {
             }
             Self::NoChange => f.write_str("changes nothing: every file would keep its bytes"),
             Self::SameNode => f.write_str("names the decision the op already names"),
-            Self::Dependents { names } => write!(
-                f,
-                "{} decision(s) depend on it: {}; give `repoint_to`, or revise them first",
-                names.len(),
-                listed(names)
-            ),
+            Self::Dependents { names } => dependents(f, names),
             Self::InUse {
                 decisions,
                 components,
             } => in_use(f, decisions, components),
-            Self::BothForms { whole } => write!(
-                f,
-                "is given with `{}`, which sets the whole list; give one form",
-                whole.as_str()
-            ),
+            Self::BothForms { whole } => both_forms(f, *whole),
             Self::NotHeld { element } => {
                 write!(f, "names `{element}`, which the list does not hold")
             }
+            Self::NoRepair => f.write_str("gives no repair: the list is empty"),
             Self::Quality(fault) => write!(f, "{fault}"),
             Self::PatternWork {
                 work,
@@ -263,13 +258,37 @@ impl fmt::Display for Rule {
                  `[quality] patterns[{index}]` the most; simplify it or write less text"
             ),
             Self::Issue(issue) => write!(f, "the graph would gain an issue: {}", issue.message),
-            Self::FileTooLarge { file, bytes, max } => write!(
-                f,
-                "leaves `{file}` at {bytes} bytes, over the {max} a node file may hold; \
-                 remove elements of its lists, or split the decision"
-            ),
+            Self::FileTooLarge { file, bytes, max } => too_large(f, file, *bytes, *max),
         }
     }
+}
+
+/// An `add_*` or `remove_*` list given beside the list it edits, `whole`.
+fn both_forms(f: &mut fmt::Formatter<'_>, whole: Field) -> fmt::Result {
+    write!(
+        f,
+        "is given with `{}`, which sets the whole list; give one form",
+        whole.as_str()
+    )
+}
+
+/// The decisions a remove is refused for, which depend on its decision.
+fn dependents(f: &mut fmt::Formatter<'_>, names: &[String]) -> fmt::Result {
+    write!(
+        f,
+        "{} decision(s) depend on it: {}; give `repoint_to`, or revise them first",
+        names.len(),
+        listed(names)
+    )
+}
+
+/// A node file a batch would leave past the cap a load reads.
+fn too_large(f: &mut fmt::Formatter<'_>, file: &NodeFile, bytes: usize, max: usize) -> fmt::Result {
+    write!(
+        f,
+        "leaves `{file}` at {bytes} bytes, over the {max} a node file may hold; \
+         remove elements of its lists, or split the decision"
+    )
 }
 
 impl fmt::Display for Refusal {

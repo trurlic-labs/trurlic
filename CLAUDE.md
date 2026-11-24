@@ -20,7 +20,8 @@ cli        → commands, store             clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
 lint       → store, code                 pure findings over the graph that refuse nothing: likely
                                          duplicate decisions, the bar a stored decision breaks,
-                                         decisions with file anchors only, anchor findings
+                                         decisions with file anchors only, anchor findings and
+                                         their repairs
 sources    → code, lint, store, git      code-root walk, bounded reads, index cache, other worktrees,
                                          the anchor findings of `check` and `status`
 code       → store (types)               pure code index: definitions, spans, span hashes, symbols
@@ -51,6 +52,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
 | Likely duplicates (scoring, pair index) | `lint/duplicates/` |
 | Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/mod.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
+| Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/renames.rs`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
 | Work charged before `[quality]` patterns run | `store/quality/bar/work.rs`, `store/apply/patterns.rs` |
 | A language beyond Rust: grammar, query, test places | `code/language.rs`, `code/language/<name>.scm` |

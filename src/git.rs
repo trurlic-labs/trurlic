@@ -17,6 +17,7 @@
 //! graph's own repository is [`graph`]'s alone.
 
 pub(crate) mod graph;
+pub(crate) mod renames;
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;

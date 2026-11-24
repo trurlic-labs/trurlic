@@ -58,14 +58,15 @@ fn read(file: &Path) -> std::result::Result<Vec<u8>, ToolError> {
     Ok(document)
 }
 
-/// One line per op, then the files; each warning on stderr, with the
-/// message of its pattern, then the likely duplicates, each with the count
-/// of those not listed.
+/// One line per op, then each repair and each stale anchor left, then the
+/// files; each warning on stderr, with the message of its pattern, then
+/// the likely duplicates, each with the count of those not listed.
 fn print(answer: &Answer) -> Result<()> {
     let applied = &answer.applied;
     for done in &applied.ops {
         out!("{}", line(done))?;
     }
+    repairs(answer)?;
     for warning in &applied.warnings {
         diag!("warning: {}", said(applied, warning));
     }
@@ -103,6 +104,29 @@ fn likely(duplicates: &Duplicates) -> String {
         duplicates.decision,
         nearest.join(", ")
     )
+}
+
+/// Each repair written and each stale anchor left, with the counts of
+/// those not listed.
+fn repairs(answer: &Answer) -> Result<()> {
+    for repaired in &answer.repaired {
+        let (decision, anchor, repair) = (&repaired.decision, &repaired.anchor, &repaired.repair);
+        out!("  repaired `{anchor}` of `{decision}` as `{repair}`")?;
+    }
+    if answer.more_repaired > 0 {
+        out!("  and {} more repaired", answer.more_repaired)?;
+    }
+    for left in &answer.left {
+        let (decision, anchor, cause) = (&left.decision, &left.anchor, &left.cause);
+        out!("  left `{anchor}` of `{decision}`: {cause}")?;
+    }
+    if answer.more_left > 0 {
+        out!(
+            "  and {} more left: `trurlic check` lists them",
+            answer.more_left
+        )?;
+    }
+    Ok(())
 }
 
 /// A warning as a terminal shows it: the op, the argument and what the
@@ -145,6 +169,8 @@ fn line(done: &Done) -> String {
             )
         }
         OpKind::RemoveComponent => format!("removed component `{name}`"),
+        OpKind::RepairAnchors if name.is_empty() => "repaired no anchor".to_owned(),
+        OpKind::RepairAnchors => format!("repaired anchors of `{name}`"),
     };
     if let Some(status) = done.status {
         line.push_str(&format!(", now {}", status.as_str()));

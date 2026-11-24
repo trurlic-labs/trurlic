@@ -3,20 +3,13 @@
 //! left, at the threshold of `lint::duplicates` or above. A warning, never
 //! a refusal: the batch is written before they are looked for.
 
-use crate::budget::MAX_TOOL_RESULT_BYTES;
 use crate::lint::duplicates::Similarity;
 use crate::mcp::spec::output::{Items, Nested, Str};
-use crate::mcp::spec::{Output, Shown, to_value};
-use crate::mcp::truncate::json_len;
-use crate::store::{Applied, Done, Field, OpKind, ProjectState};
-
-use super::result::Answer;
+use crate::mcp::spec::{Output, Shown};
+use crate::store::{Done, Field, OpKind, ProjectState};
 
 /// The likely duplicates listed per decision, best first.
 pub(super) const NEAREST: usize = 3;
-
-/// Bytes of `,"duplicates":[]`, which the first listed warning brings.
-const LIST_FRAME: usize = 16;
 
 /// A decision the batch wrote the text of, and its likely duplicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,17 +50,16 @@ impl Output for Nearest {
     }
 }
 
-/// `applied` with the likely duplicates of each decision whose text it
-/// wrote, in `state`, the graph it left: as many as the result budget
-/// holds, in the order of the ops, the rest counted.
-pub(super) fn answer(applied: Applied, state: &ProjectState) -> Answer {
-    let written = text_written(&applied.ops);
+/// The likely duplicates of each decision whose text `ops` wrote, in
+/// `state`, the graph they left, in the order of the ops.
+pub(super) fn warned(ops: &[Done], state: &ProjectState) -> Vec<Duplicates> {
+    let written = text_written(ops);
     if written.is_empty() {
-        return fit(applied, Vec::new());
+        return Vec::new();
     }
     let names: Vec<&str> = written.iter().map(String::as_str).collect();
     let nearest = Similarity::of(state).nearest(&names, NEAREST);
-    let warned = names
+    names
         .into_iter()
         .zip(nearest)
         .filter(|(_, nearest)| !nearest.is_empty())
@@ -81,8 +73,7 @@ pub(super) fn answer(applied: Applied, state: &ProjectState) -> Answer {
                 })
                 .collect(),
         })
-        .collect();
-    fit(applied, warned)
+        .collect()
 }
 
 /// The decisions whose choice or reason `ops` wrote, by their names after
@@ -106,9 +97,10 @@ pub(super) fn text_written(ops: &[Done]) -> Vec<String> {
             }
             OpKind::Merge => names.retain(|held| Some(held) != done.absorbed.as_ref()),
             OpKind::Remove => names.retain(|held| held != name),
-            // A revise of other fields, and every component op, leaves each
-            // decision's text and name as they were.
+            // A revise of other fields, a repair and every component op
+            // leave each decision's text and name as they were.
             OpKind::Revise
+            | OpKind::RepairAnchors
             | OpKind::AddComponent
             | OpKind::ReviseComponent
             | OpKind::RenameComponent
@@ -118,34 +110,9 @@ pub(super) fn text_written(ops: &[Done]) -> Vec<String> {
     names
 }
 
-/// The answer of `applied` listing the leading warnings of `warned` that
-/// fit the result budget beside it, and counting the rest.
-pub(super) fn fit(applied: Applied, warned: Vec<Duplicates>) -> Answer {
-    let mut answer = Answer {
-        applied,
-        duplicates: Vec::with_capacity(warned.len()),
-        more_duplicates: warned.len(),
-    };
-    // Measured with every warning counted, the most the count can take.
-    let taken = json_len(&to_value(&answer)).saturating_add(LIST_FRAME);
-    let mut room = MAX_TOOL_RESULT_BYTES.saturating_sub(taken);
-    for duplicates in warned {
-        // The warning and the comma before it.
-        let bytes = json_len(&to_value(&duplicates)).saturating_add(1);
-        if bytes > room {
-            break;
-        }
-        room -= bytes;
-        answer.duplicates.push(duplicates);
-        answer.more_duplicates -= 1;
-    }
-    answer
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::limits::{MAX_BATCH_OPS, MAX_NAME_BYTES};
 
     fn done(op: OpKind, name: &str) -> Done {
         Done {
@@ -193,41 +160,5 @@ mod tests {
         ];
 
         assert_eq!(text_written(&ops), ["renamed", "reworded"]);
-    }
-
-    /// The warnings the budget holds are listed in order and the rest
-    /// counted, and the answer fits.
-    #[test]
-    fn the_warnings_fill_the_room_the_batch_leaves_and_count_the_rest() {
-        let name = |index: usize| format!("{index:n>width$}", width = MAX_NAME_BYTES);
-        let warned: Vec<Duplicates> = (0..MAX_BATCH_OPS)
-            .map(|index| Duplicates {
-                decision: name(index),
-                nearest: (0..NEAREST)
-                    .map(|_| Nearest {
-                        decision: name(index),
-                        score: "0.500000".into(),
-                    })
-                    .collect(),
-            })
-            .collect();
-        let applied = Applied {
-            ops: vec![done(OpKind::Record, "one")],
-            warnings: Vec::new(),
-            more_origin_warnings: 0,
-            patterns: Vec::new(),
-            written: 1,
-            removed: 0,
-        };
-
-        let answer = fit(applied, warned.clone());
-
-        let listed = answer.duplicates.len();
-        assert!((20..MAX_BATCH_OPS).contains(&listed), "{listed}");
-        assert_eq!(answer.duplicates, warned[..listed]);
-        assert_eq!(answer.more_duplicates, MAX_BATCH_OPS - listed);
-        let bytes = json_len(&to_value(&answer));
-        assert!(bytes <= MAX_TOOL_RESULT_BYTES, "{bytes}");
-        assert!(bytes + 700 > MAX_TOOL_RESULT_BYTES, "{bytes}");
     }
 }

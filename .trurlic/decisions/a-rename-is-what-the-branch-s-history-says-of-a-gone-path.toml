@@ -1,0 +1,24 @@
+component = "sources"
+choice = "A gone path's rename is a git mv not committed, else what the branch's last commit changing it renamed it to, followed to a path that exists, at most 8 hops, with the revision before it"
+reason = "git knows renames only by similarity between the two sides of a diff, so the question is asked of the diff that removed the path, and only for check and the repair_anchors op, for the files of stale anchors with nothing at their path: status asks the project's git nothing. What is not committed comes first: git diff HEAD with -M -C, so a git mv is seen; a file moved without git and not added is a deletion and an untracked file, which no diff pairs. Else one git log --name-only --no-renames walk over HEAD's history, limited to the gone paths as literal pathspecs, finds the most recent commit that changed each, which for a path gone from HEAD deleted it, and git diff of that commit against its first parent says what it became, at git's default similarity: one rename is the answer, with its similarity index and the revision before it, HEAD or the commit's parent; several records from the path (a split shows as a copy beside the rename) or a plain deletion are none. A target that is gone too is followed the same way, one walk at the start of each hop taken and one diff per commit, at most MAX_RENAME_HOPS. The answer is exact when every rename on the way has similarity 100. One walk serves all the paths of a hop because a walk of many paths costs about what one costs, while git's changed-path filters cut only a walk of a single path, so walks per path cost their number. Paths are relative to the code root. Any git failure leaves the anchor stale without a repair. A merge's deletion is not seen."
+alternatives = [
+    "One walk per gone path: rejected because each walk costs a whole history even with changed-path filters, so many gone paths cost many times one walk",
+    "git log --follow per path: rejected because it takes one path per process and follows a path forward from its history, not to where a gone file went",
+    "Any similarity threshold of our own: rejected because git's default is what git status and git log show the user",
+]
+tags = [
+    "anchors",
+    "git",
+]
+status = "proposed"
+origin = "anchor repair"
+created = "2026-11-24T11:34:48.414739583Z"
+anchors = [
+    { file = "src/git/renames.rs", symbol = "last_commits" },
+    { file = "src/git/renames.rs", symbol = "moved" },
+    { file = "src/sources/renames.rs", symbol = "History" },
+    { file = "src/sources/renames.rs", symbol = "renamed" },
+    { file = "src/sources/renames.rs", symbol = "revisions" },
+    { file = "src/sources/renames/tests.rs", symbol = "a_chain_past_the_hops_walks_the_history_once_per_hop" },
+    { file = "src/sources/renames/tests.rs", symbol = "a_gone_path_gets_the_path_git_renamed_it_to" },
+]

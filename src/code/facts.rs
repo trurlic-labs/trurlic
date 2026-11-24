@@ -11,8 +11,8 @@ use super::crates::Crates;
 use super::definitions::Definitions;
 use super::expand::{Arms, Expansion, Files, Held, Lookup, expand, expand_file};
 use super::index::{Definition, FileIndex, FileKind, IndexFault};
-use super::kinds::Role;
-use super::roles::test_files;
+use super::kinds::{DefinitionKind, Role};
+use super::roles::{role_of_place, target_of, test_files};
 use super::scope::Scopes;
 use super::symbol::{Segment, Symbol, SymbolFault};
 
@@ -127,6 +127,19 @@ impl fmt::Display for Resolution {
     }
 }
 
+impl Resolution {
+    /// Whether this and `other` each resolve to the definitions of one
+    /// path whose set hash is the same: the same code, wherever it is.
+    pub(crate) fn same_code(&self, other: &Self) -> bool {
+        let (Self::Resolved(Target::Symbol(ours)), Self::Resolved(Target::Symbol(theirs))) =
+            (self, other)
+        else {
+            return false;
+        };
+        ours.hash() == theirs.hash()
+    }
+}
+
 /// The entries of one tree by path, `/`-separated from its root, the
 /// definitions the macro invocations of its Rust files add, and the Rust
 /// files that are test code whole.
@@ -156,6 +169,18 @@ fn indexed(entry: &Entry) -> Option<(FileKind, &FileIndex)> {
         } => Some((*kind, index)),
         Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
     }
+}
+
+/// The indexed files of `entries`, those `walked` holds apart from the
+/// rest: the tree's files and those an anchor brought.
+fn split<'i>(
+    entries: &'i BTreeMap<String, Entry>,
+    walked: &BTreeSet<String>,
+) -> (Files<'i>, Files<'i>) {
+    entries
+        .iter()
+        .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
+        .partition(|(path, _)| walked.contains(*path))
 }
 
 /// What the invocations of each Rust file of `outside`, files no walk
@@ -207,14 +232,7 @@ impl CodeFacts {
     /// each anchored Rust file outside them: a path absent from them is
     /// missing.
     pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: &BTreeSet<String>) -> Self {
-        let indexed: Files<'_> = entries
-            .iter()
-            .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
-            .collect();
-        let (tree, outside): (Files<'_>, Files<'_>) = indexed
-            .iter()
-            .map(|(path, file)| (*path, *file))
-            .partition(|(path, _)| walked.contains(*path));
+        let (tree, outside) = split(&entries, walked);
         let crates = Crates::of(&tree, &outside);
         let mut expanded: BTreeMap<String, Result<Expansion, IndexFault>> = expand(&tree, &crates)
             .into_iter()
@@ -396,6 +414,121 @@ impl CodeFacts {
         })
     }
 
+    /// Whether the file at `path` has an index that holds a definition.
+    pub(crate) fn defines_anything(&self, path: &str) -> bool {
+        self.entries
+            .get(path)
+            .and_then(indexed)
+            .is_some_and(|(_, index)| !index.definitions.is_empty())
+    }
+
+    /// Whether `anchor`'s file defines its symbol as the whole path of a
+    /// definition, no outer segment left out.
+    pub(crate) fn defines_whole(&self, anchor: &Anchor) -> bool {
+        let Some((kind, index)) = self.entries.get(anchor.file()).and_then(indexed) else {
+            return false;
+        };
+        let Some(Ok(symbol)) = anchor.symbol().map(|s| Symbol::parse(s, kind.syntax())) else {
+            return false;
+        };
+        let expansion = self
+            .expanded
+            .get(anchor.file())
+            .and_then(|e| e.as_ref().ok());
+        let scopes = self.scopes(index, expansion);
+        let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
+        index.definitions.iter().chain(added).any(|definition| {
+            symbol.admits(definition.kind)
+                && symbol.is_path_of(scopes.path_from_end(definition.scope))
+        })
+    }
+
+    /// For each of `anchors`, a symbol on a Rust file that may be gone,
+    /// where its code may have moved ([`Namesakes`]). One pass over the
+    /// tree's definitions serves them all, and none is made for no anchor.
+    /// A file of another language is not searched: its crate and target
+    /// are not known.
+    pub(crate) fn namesakes<'a>(
+        &self,
+        anchors: impl IntoIterator<Item = &'a Anchor>,
+    ) -> BTreeMap<&'a Anchor, Namesakes> {
+        let wanted: Vec<(&Anchor, Symbol)> = anchors
+            .into_iter()
+            .filter(|anchor| FileKind::of(anchor.file()) == Some(FileKind::Rust))
+            .filter_map(|anchor| {
+                let symbol = Symbol::parse(anchor.symbol()?, FileKind::Rust.syntax());
+                Some((anchor, symbol.ok()?))
+            })
+            .collect();
+        if wanted.is_empty() {
+            return BTreeMap::new();
+        }
+        let last = wanted
+            .iter()
+            .filter_map(|(_, symbol)| symbol.segments().last())
+            .collect();
+        let holders = self.holders(&last);
+        let (tree, outside) = split(&self.entries, &self.walked);
+        let crates = Crates::of(&tree, &outside);
+        let mut found = BTreeMap::new();
+        for (anchor, symbol) in wanted {
+            let files = symbol.segments().last().and_then(|own| holders.get(own));
+            let at_home = files.is_some_and(|files| files.contains(anchor.file()))
+                || self.spells_in_invocation(anchor);
+            let place = target_of(anchor.file(), &crates);
+            let role = match self.test_files.contains(anchor.file()) {
+                true => Role::Test,
+                false => role_of_place(anchor.file(), &crates),
+            };
+            let elsewhere = files
+                .into_iter()
+                .flatten()
+                .filter(|&&file| file != anchor.file() && self.walked.contains(file))
+                .filter(|&&file| place.is_some() && target_of(file, &crates) == place)
+                .filter(|&&file| self.writes(file, &symbol, role))
+                .map(|&file| file.to_owned())
+                .collect();
+            found.insert(anchor, Namesakes { at_home, elsewhere });
+        }
+        found
+    }
+
+    /// The files that define something whose own segment, the last of its
+    /// path, is one of `last`, by that segment.
+    fn holders<'s>(
+        &'s self,
+        last: &BTreeSet<&Segment>,
+    ) -> BTreeMap<&'s Segment, BTreeSet<&'s str>> {
+        let mut holders: BTreeMap<&Segment, BTreeSet<&str>> = BTreeMap::new();
+        for (path, scopes, definition, _) in self.definitions() {
+            let own = scopes.path_from_end(definition.scope).next();
+            if let Some(own) = own.filter(|own| last.contains(own)) {
+                holders.entry(own).or_default().insert(path);
+            }
+        }
+        holders
+    }
+
+    /// Whether the file at `path` writes an item of `role` whose whole
+    /// path `symbol` is: no re-export, and no type a macro invocation
+    /// defines, whose code is the macro's.
+    fn writes(&self, path: &str, symbol: &Symbol, role: Role) -> bool {
+        let Some((_, index)) = self.entries.get(path).and_then(indexed) else {
+            return false;
+        };
+        let file_role = match self.test_files.contains(path) {
+            true => Role::Test,
+            false => Role::Code,
+        };
+        let scopes = self.scopes(index, None);
+        index.definitions.iter().any(|definition| {
+            definition.kind != DefinitionKind::Reexport
+                && definition.role.or(file_role) == role
+                && symbol.admits(definition.kind)
+                && symbol.is_path_of(scopes.path_from_end(definition.scope))
+        })
+    }
+
     /// The scopes the paths of `index`'s file are walked through.
     fn scopes<'a>(&self, index: &'a FileIndex, expansion: Option<&'a Expansion>) -> Scopes<'a> {
         Scopes {
@@ -475,4 +608,17 @@ impl CodeFacts {
             (Some(_), others) => Resolution::Ambiguous(others + 1),
         }
     }
+}
+
+/// Where a symbol anchor's code may have moved, by what the tree holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Namesakes {
+    /// Whether the anchor's own file defines the symbol's last segment
+    /// under any path, or spells it among the first tokens of a macro
+    /// invocation: the code may be there under another spelling.
+    pub(crate) at_home: bool,
+    /// The other walked files of the anchor's crate target, by place, that
+    /// write an item of its file's test role whose whole path the symbol
+    /// is ([`CodeFacts::namesakes`]).
+    pub(crate) elsewhere: Vec<String>,
 }

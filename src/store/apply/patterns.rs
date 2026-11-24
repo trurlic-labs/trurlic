@@ -24,6 +24,9 @@ pub(super) struct Pending {
     pub(super) decision: Decision,
     pub(super) held: Vec<DecisionField>,
     pub(super) sources: Sources,
+    /// The decision's name when it is not the one the op names first: one
+    /// a repair changed. A refusal names it.
+    pub(super) about: Option<String>,
 }
 
 /// What the patterns found in a batch that passes them: the warnings each
@@ -36,8 +39,10 @@ pub(super) struct Judged {
     pub(super) more_origin: usize,
 }
 
-/// A refusal of the patterns: the op at fault, `None` for the origin.
-pub(super) type Refused = (Option<usize>, Fault);
+/// A refusal of the patterns: the op at fault, `None` for the origin, and
+/// the decision it names when that is not the op's first. Boxed: a fault
+/// is many times the size of what a call that passes returns.
+pub(super) type Refused = Box<(Option<usize>, Option<String>, Fault)>;
 
 /// The batch's `origin` and each of `pending` against the patterns of
 /// `bar`, once their work is charged.
@@ -74,13 +79,14 @@ fn origin_hits(bar: &Bar, origin: Option<&str>) -> Result<Vec<(String, Hit)>, Re
         Ok(hits) => Ok(hits.into_iter().map(|hit| (field(), hit)).collect()),
         Err(breach) => {
             let rule = breach.broken.into();
-            Err((
+            Err(Box::new((
+                None,
                 None,
                 Fault {
                     field: Some(field()),
                     rule,
                 },
-            ))
+            )))
         }
     }
 }
@@ -93,6 +99,7 @@ fn pattern_hits(bar: &Bar, kept: &Pending) -> Result<Vec<(String, Hit)>, Refused
         decision,
         held,
         sources,
+        about,
     } = kept;
     match bar.judge_patterns(decision, held) {
         Ok(found) => Ok(found
@@ -102,7 +109,8 @@ fn pattern_hits(bar: &Bar, kept: &Pending) -> Result<Vec<(String, Hit)>, Refused
         Err(breach) => {
             let field = Some(sources.path(decision, breach.place));
             let rule = breach.broken.into();
-            Err((Some(*op), Fault { field, rule }))
+            // clone: the refusal names the decision past the batch.
+            Err(Box::new((Some(*op), about.clone(), Fault { field, rule })))
         }
     }
 }
@@ -140,7 +148,7 @@ fn check_work(bar: &Bar, origin: Option<&str>, pending: &[Pending]) -> Result<()
         let field = op
             .is_none()
             .then(|| DecisionField::Origin.as_str().to_owned());
-        return Err((op, Fault { field, rule }));
+        return Err(Box::new((op, None, Fault { field, rule })));
     }
     Ok(())
 }

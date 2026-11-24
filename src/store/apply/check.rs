@@ -88,6 +88,7 @@ pub(super) fn bar(
             decision: decision.clone(),
             held: held.to_vec(),
             sources,
+            about: None,
         });
     }
     Ok(())
@@ -153,7 +154,8 @@ pub(super) fn judged(changed: &[Field]) -> Vec<DecisionField> {
             Field::Anchors => Some(DecisionField::Anchors),
             // No rule of the bar reads these: the names an op gives, a
             // decision's component and edges, a component's fields, and the
-            // `add_*` and `remove_*` arguments, which no changed field is.
+            // `add_*` and `remove_*` arguments and a repair's list, which no
+            // changed field is.
             Field::Name
             | Field::To
             | Field::Survivor
@@ -172,7 +174,8 @@ pub(super) fn judged(changed: &[Field]) -> Vec<DecisionField> {
             | Field::Description
             | Field::ConnectsTo
             | Field::AddConnectsTo
-            | Field::RemoveConnectsTo => None,
+            | Field::RemoveConnectsTo
+            | Field::Repairs => None,
         })
         .collect()
 }

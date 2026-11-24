@@ -19,6 +19,7 @@ mod edit;
 mod ops;
 mod patterns;
 mod refusal;
+mod repair;
 mod warning;
 
 use std::collections::BTreeMap;
@@ -30,7 +31,7 @@ use crate::store::canonical::Canonical;
 use crate::store::commit::PendingWrite;
 use crate::store::history::{CommitMessage, Tool};
 use crate::store::quality::{Bar, DecisionField};
-use crate::store::schema::StatusName;
+use crate::store::schema::{Anchor, StatusName};
 use crate::store::state::NodeFile;
 use crate::store::time::Timestamp;
 use crate::store::{Store, Writer};
@@ -43,7 +44,7 @@ use patterns::Judged;
 
 pub use ops::{
     AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
-    RemoveComponent, Rename, Revise, ReviseComponent,
+    RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent,
 };
 pub use refusal::{NodeKind, OpAt, Refusal, Rule};
 pub use warning::{PatternNote, Warning, WarningKind};
@@ -67,6 +68,18 @@ pub struct Applied {
     pub written: usize,
     /// Files removed, a rename's old file included.
     pub removed: usize,
+    /// Each anchor the `repair_anchors` ops replaced, in the order they
+    /// replaced them.
+    pub repaired: Vec<Repaired>,
+}
+
+/// An anchor a `repair_anchors` op replaced in a decision: `from` was held
+/// and `to` is, `from` dropped when the decision held `to` already.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repaired {
+    pub decision: String,
+    pub from: Anchor,
+    pub to: Anchor,
 }
 
 /// What one op did, named, never echoed: the node, the nodes it names
@@ -74,7 +87,8 @@ pub struct Applied {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Done {
     pub op: OpKind,
-    /// The node the op names first; a merge's survivor.
+    /// The node the op names first; a merge's survivor; the first decision
+    /// a repair changed, empty when it changed none.
     pub name: String,
     /// A rename's new name.
     pub to: Option<String>,
@@ -88,7 +102,8 @@ pub struct Done {
     /// The decision's status, when the op changed it.
     pub status: Option<StatusName>,
     /// Files of other nodes the op rewrote: dependents repointed, a
-    /// component's decisions and connections renamed.
+    /// component's decisions and connections renamed, the decisions a
+    /// repair changed after its first.
     pub rewrote: usize,
     /// The op's warnings not listed in [`Applied::warnings`].
     pub more_warnings: usize,
@@ -128,6 +143,7 @@ impl Writer<'_> {
             bar: &bar,
             op: 0,
             pending: Vec::new(),
+            repaired: Vec::new(),
         };
         let mut edit = Edit::new(&mut self.state);
         let (done, named, judged) = match run(&mut edit, batch.ops, &mut context) {
@@ -142,6 +158,7 @@ impl Writer<'_> {
         let (written, removed) = self.land(before, &changed_by, &message)?;
         Ok(Applied {
             ops: done,
+            repaired: context.repaired,
             patterns: warning::notes(&judged.warnings, &bar),
             warnings: judged.warnings,
             more_origin_warnings: judged.more_origin,
@@ -322,13 +339,8 @@ fn run(
             }
         }
     }
-    let judged = match patterns::judge(context.bar, context.origin, &context.pending) {
-        Ok(judged) => judged,
-        Err((op, Fault { field, rule })) => {
-            let at = op.and_then(|index| named.into_iter().nth(index));
-            return Err(refused(at, field, rule));
-        }
-    };
+    let judged = patterns::judge(context.bar, context.origin, &context.pending)
+        .map_err(|refusal| refused_by_patterns(*refusal, &named))?;
     if let Some(Fault { field, rule }) = fault {
         return Err(refused(named.pop(), field, rule));
     }
@@ -342,6 +354,19 @@ fn run(
         }
     }
     Ok((done, named, judged))
+}
+
+/// The refusal of the patterns `refusal`, at the op `named` holds at its
+/// index; a verdict on a decision other than the op's first names it.
+fn refused_by_patterns(refusal: (Option<usize>, Option<String>, Fault), named: &[OpAt]) -> Error {
+    let (op, about, Fault { field, rule }) = refusal;
+    // clone: the refusal owns the op it names.
+    let at = op.and_then(|index| named.get(index).cloned());
+    let at = at.map(|at| OpAt {
+        target: about.unwrap_or(at.target),
+        ..at
+    });
+    refused(at, field, rule)
 }
 
 /// One op on the graph `edit` holds.
@@ -360,6 +385,7 @@ fn apply_op(
         Op::ReviseComponent(op) => component::revise(edit, op),
         Op::RenameComponent(op) => component::rename(edit, op),
         Op::RemoveComponent(op) => component::remove(edit, op),
+        Op::RepairAnchors(op) => repair::repair_anchors(edit, op, context),
     }
 }
 

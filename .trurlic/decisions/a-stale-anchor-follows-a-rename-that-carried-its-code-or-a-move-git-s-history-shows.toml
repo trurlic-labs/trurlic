@@ -1,0 +1,29 @@
+component = "lint"
+choice = "A stale anchor follows a rename only when it carried its code, or a Rust symbol's whole path to the one file of its crate target and test role that writes it, when git's history shows the move"
+reason = "A reader repairs a stale anchor by finding where its code went, and a wrong repair hides the staleness it mends, so each rule gives up rather than guess. git pairs files by similarity alone, so a rename is followed only when it carried the code: a symbol anchor when its symbol resolves at the new path and the rename is exact or the set hash there equals the one at the old path before the rename; a file anchor when the rename is exact into a file that defines at least one item, or one of its symbol anchors followed so. A symbol its file no longer defines is searched for by CodeFacts::namesakes: never when its own file still defines its last segment or spells it in a macro invocation, never to the file a rename took its file to, only on a Rust file, and only as the whole path of an item written in another walked file of the same crate target by place (roles::target_of), of the same test role, and neither a re-export nor a type a macro invocation defines, whose code is the macro's. Another language has no crate or target to bound the search, so it gets none. The one such file is a candidate, and the repair only when git's history shows a move: at the revision where the anchor's file last held its code, that file defined the symbol and the candidate did not, each read from git in one bounded read. A namesake that stood beside the code is then no move. With no git, no search repair."
+alternatives = [
+    "Repair to the one file that defines the name now: rejected because a namesake that already stood beside the deleted code, another function or a test helper, would be taken for it",
+    "Match the symbol as a suffix: rejected because a bare name would land on another type's method or on an inner module's item",
+    "Follow every rename git reports: rejected because a shared license header or boilerplate pairs unrelated files, and every binary resolves main",
+    "Bound the search by the package directory and the first path segment below it: rejected because a binary, a test target and the library share them, while the index states each file's target and role",
+    "Search Python files by directory: rejected because no manifest or module tree says which files one change moves code between",
+]
+tags = [
+    "anchors",
+    "lint",
+]
+status = "proposed"
+origin = "anchor repair"
+created = "2026-11-24T11:34:48.414739583Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::namesakes" },
+    { file = "src/code/facts.rs", symbol = "CodeFacts::writes" },
+    { file = "src/code/roles.rs", symbol = "target_of" },
+    { file = "src/lint/anchors/repair.rs", symbol = "carried" },
+    { file = "src/lint/anchors/repair.rs", symbol = "shown_moved" },
+    { file = "src/lint/anchors/tests.rs", symbol = "a_file_anchor_follows_only_a_verified_rename" },
+    { file = "src/lint/anchors/tests.rs", symbol = "a_namesake_that_stood_beside_the_code_is_no_move" },
+    { file = "src/lint/anchors/tests.rs", symbol = "a_symbol_that_moved_to_one_other_file_is_repaired_there" },
+    { file = "src/lint/anchors/tests.rs", symbol = "the_search_stays_in_the_anchors_own_crate_target_and_test_role" },
+    { file = "tests/integration/repair.rs", symbol = "a_namesake_or_a_rename_that_carried_no_code_is_never_written" },
+]

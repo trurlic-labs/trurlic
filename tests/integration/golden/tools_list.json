@@ -8,7 +8,7 @@
         "readOnlyHint": false,
         "title": "Apply"
       },
-      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of its fields, a list whole or by `add_*`/`remove_*` (never both for one list); rename (rewrites every edge to it); merge `absorbed` into `survivor` (its edges, anchors and tags join the survivor, its text is dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component, remove_component (refused while in use).\nRefused too: a revise that changes nothing, an edge to a missing node or to itself, an edge that closes a depends_on cycle. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back accepts it again.\nQuality: each field a record, revise or merge changes meets the bar: built in, a one-line choice of at most 200 bytes, a reason of real text, an alternative and an anchor at least, no hidden character in any text; then `[quality]` in project.toml. A `warn` pattern and a likely duplicate write the batch and warn in the result.\nThe result names each op's node and what it changed, never the texts.",
+      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of its fields, a list whole or by `add_*`/`remove_*` (never both for one list); rename (rewrites every edge to it); merge `absorbed` into `survivor` (its edges, anchors and tags join the survivor, its text is dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component, remove_component (refused while in use); repair_anchors (stale anchors replaced: the `repairs` given, or with none every repair `trurlic check` shows, in every decision ever accepted that holds the stale anchor; the result lists them and the stale anchors left).\nRefused too: a revise that changes nothing, an edge to a missing node or to itself, an edge that closes a depends_on cycle. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back accepts it again. A repair leaves the status alone.\nQuality: each field a record, revise, merge or repair changes meets the bar: built in, a one-line choice of at most 200 bytes, a reason of real text, an alternative and an anchor at least, no hidden character in any text; then `[quality]` in project.toml. A `warn` pattern and a likely duplicate write the batch and warn in the result.\nThe result names each op's node and what it changed, never the texts.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -493,6 +493,80 @@
                     "name"
                   ],
                   "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "op": {
+                      "const": "repair_anchors",
+                      "type": "string"
+                    },
+                    "repairs": {
+                      "description": "Each stale anchor to replace, in its decision; absent, every repair `trurlic check` shows, in each decision ever accepted that holds the stale anchor when the op runs.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "decision": {
+                            "description": "The decision that holds the anchor.",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "from": {
+                            "additionalProperties": false,
+                            "description": "The stale anchor it holds.",
+                            "properties": {
+                              "file": {
+                                "description": "A file or directory, relative to the project root, `/`-separated.",
+                                "maxLength": 500,
+                                "type": "string"
+                              },
+                              "symbol": {
+                                "description": "A symbol in the file, its `::`-separated path.",
+                                "maxLength": 200,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "file"
+                            ],
+                            "type": "object"
+                          },
+                          "to": {
+                            "additionalProperties": false,
+                            "description": "The anchor it holds instead; when it holds this one already, the stale one is dropped.",
+                            "properties": {
+                              "file": {
+                                "description": "A file or directory, relative to the project root, `/`-separated.",
+                                "maxLength": 500,
+                                "type": "string"
+                              },
+                              "symbol": {
+                                "description": "A symbol in the file, its `::`-separated path.",
+                                "maxLength": 200,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "file"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "decision",
+                          "from",
+                          "to"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "op"
+                  ],
+                  "type": "object"
                 }
               ],
               "type": "object"
@@ -555,13 +629,50 @@
             },
             "type": "array"
           },
+          "left": {
+            "description": "For a `repair_anchors` op with no `repairs`: each stale anchor the tree shows no repair for, left as it was.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "anchor": {
+                  "description": "The stale anchor, `file` or `file::symbol`.",
+                  "type": "string"
+                },
+                "cause": {
+                  "description": "Why it names nothing.",
+                  "type": "string"
+                },
+                "decision": {
+                  "description": "The decision.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision",
+                "anchor",
+                "cause"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "more_duplicates": {
             "description": "Decisions with likely duplicates not listed in `duplicates`. `status` ranks the pairs under `lint`: the section lists the best pairs; the ones left out rank at or below the last listed, and come into view as the listed ones are settled (merged, or revised apart).",
             "minimum": 0,
             "type": "integer"
           },
+          "more_left": {
+            "description": "Stale anchors left and not listed: `trurlic check` lists every one.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "more_origin_warnings": {
             "description": "The origin's warnings not listed.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "more_repaired": {
+            "description": "Repairs written and not listed: `trurlic check` shows the anchors as they are.",
             "minimum": 0,
             "type": "integer"
           },
@@ -598,7 +709,7 @@
                   "type": "integer"
                 },
                 "name": {
-                  "description": "The node it names first; a merge's survivor.",
+                  "description": "The node it names first; a merge's survivor; the first decision a repair changed, empty when it changed none.",
                   "type": "string"
                 },
                 "op": {
@@ -612,7 +723,8 @@
                     "add_component",
                     "revise_component",
                     "rename_component",
-                    "remove_component"
+                    "remove_component",
+                    "repair_anchors"
                   ],
                   "type": "string"
                 },
@@ -621,7 +733,7 @@
                   "type": "string"
                 },
                 "rewrote": {
-                  "description": "Files of other nodes it rewrote: edges repointed, a component's decisions and connections renamed.",
+                  "description": "Files of other nodes it rewrote: edges repointed, a component's decisions and connections renamed, the decisions a repair changed after its first.",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -673,6 +785,33 @@
             "description": "Files removed, a rename's old file included.",
             "minimum": 0,
             "type": "integer"
+          },
+          "repaired": {
+            "description": "Each anchor a `repair_anchors` op replaced, with what it replaced it by.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "anchor": {
+                  "description": "The anchor replaced, `file` or `file::symbol`.",
+                  "type": "string"
+                },
+                "decision": {
+                  "description": "The decision.",
+                  "type": "string"
+                },
+                "repair": {
+                  "description": "The anchor written instead.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision",
+                "anchor",
+                "repair"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "truncated": {
             "description": "Present only when the result was cut to fit the result budget: each cut, by JSON pointer, with what it omitted.",

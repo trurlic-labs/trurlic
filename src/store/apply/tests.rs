@@ -1118,6 +1118,7 @@ fn a_batch_is_one_history_commit_of_its_files() {
 }
 
 mod quality;
+mod repair;
 
 /// Lists grown op by op pass the cap a load reads: the batch is refused
 /// naming the op that last changed the file, its size and the cap, and

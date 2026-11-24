@@ -24,6 +24,8 @@ mod migrate;
 mod output;
 #[cfg(unix)]
 mod placement;
+#[cfg(unix)]
+mod repair;
 #[cfg(feature = "failpoints")]
 mod server_failpoints;
 mod stdio;

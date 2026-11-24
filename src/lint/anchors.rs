@@ -19,7 +19,8 @@
 //! another worktree. A symbol that names several definitions is
 //! ambiguous; a resolved symbol that is one plain name [`WEAK_FILES`] or
 //! more files of its kind define is weak. Findings sort by kind, the most
-//! severe first, then by decision and anchor.
+//! severe first, then by decision and anchor. A stale anchor carries its
+//! repair when the tree and git's history show one ([`repair`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -27,6 +28,10 @@ use std::path::PathBuf;
 
 use crate::code::{CodeFacts, Resolution, Target};
 use crate::store::{Anchor, Decision, Status};
+
+mod repair;
+
+pub(crate) use repair::{Prior, Renamed, Renames, Search};
 
 /// The files of its kind that define a name, at least, for an anchor whose
 /// symbol is that name alone to be weak.
@@ -162,8 +167,12 @@ pub(crate) enum Checked {
     /// No other worktree holds it, on a decision ever accepted. When its
     /// file in another worktree spells its name in a macro invocation this
     /// tree's macros do not expand, `unexpanded` is that worktree's path:
-    /// it may be pending there.
-    Stale { unexpanded: Option<PathBuf> },
+    /// it may be pending there. `repair` is the anchor it is repaired as,
+    /// when the tree and git's history show one.
+    Stale {
+        unexpanded: Option<PathBuf>,
+        repair: Option<Anchor>,
+    },
     /// It names what `0` holds, on a decision ever accepted.
     Pending(Worktree),
     /// It is on a decision never accepted.
@@ -244,15 +253,22 @@ impl Verdict for Checked {
 
     fn describe(&self, cause: &Missing, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Stale { unexpanded: None } | Self::Planned => fmt::Display::fmt(cause, f),
-            Self::Stale {
-                unexpanded: Some(path),
-            } => write!(
-                f,
-                "{cause}; its file in the worktree at {} spells it in a macro invocation this \
-                 tree's macros do not expand, so it may be pending there",
-                path.display()
-            ),
+            Self::Planned => fmt::Display::fmt(cause, f),
+            Self::Stale { unexpanded, repair } => {
+                fmt::Display::fmt(cause, f)?;
+                if let Some(path) = unexpanded {
+                    write!(
+                        f,
+                        "; its file in the worktree at {} spells it in a macro invocation this \
+                         tree's macros do not expand, so it may be pending there",
+                        path.display()
+                    )?;
+                }
+                match repair {
+                    Some(repair) => write!(f, "; repair: `{repair}`"),
+                    None => Ok(()),
+                }
+            }
             Self::Pending(worktree) => {
                 let path = worktree.path.display();
                 write!(f, "{cause} here; it resolves in the worktree at {path}")?;
@@ -375,7 +391,7 @@ impl<'s, 'f> Here<'s, 'f> {
     pub(crate) fn unresolved(&self, decisions: &Decisions<'s>) -> BTreeSet<&'s Anchor> {
         decisions
             .iter()
-            .filter(|(_, decision)| ever_accepted(&decision.status))
+            .filter(|(_, decision)| decision.status.ever_accepted())
             .flat_map(|(_, decision)| &decision.anchors)
             .filter(|anchor| {
                 let resolution = self.resolutions.get(anchor);
@@ -389,29 +405,91 @@ impl<'s, 'f> Here<'s, 'f> {
 /// What the repository's git says beyond the calling tree, which `check`
 /// reads and `status` does not: the first other worktree, in the shell's
 /// order, that holds each anchor [`Here::unresolved`] gives, and for one
-/// none holds, the first whose file spells its name in a macro invocation
-/// the calling tree's macros do not expand.
-#[derive(Debug, Default)]
+/// none holds, which is stale, the first whose file spells its name in a
+/// macro invocation the calling tree's macros do not expand; where the
+/// stale anchors' gone files went, and what git's history held of the
+/// files a repair is judged by.
+#[derive(Debug)]
 pub(crate) struct Asked<'s, 'w> {
     holders: BTreeMap<&'s Anchor, &'w Worktree>,
     unexpanded: BTreeMap<&'s Anchor, &'w Worktree>,
+    stale: BTreeSet<&'s Anchor>,
+    renames: Renames,
+    prior: Prior,
 }
 
 impl<'s, 'w> Asked<'s, 'w> {
-    /// What `elsewhere`, the other worktrees read, say of `unresolved`.
+    /// What `elsewhere`, the other worktrees read, say of `unresolved`,
+    /// with no rename and no earlier revision known yet.
     pub(crate) fn of(unresolved: &BTreeSet<&'s Anchor>, elsewhere: &'w [Elsewhere]) -> Self {
-        let mut asked = Self::default();
+        let mut asked = Self {
+            holders: BTreeMap::new(),
+            unexpanded: BTreeMap::new(),
+            stale: BTreeSet::new(),
+            renames: Renames::none(),
+            prior: Prior::default(),
+        };
         for &anchor in unresolved {
             if let Some(holder) = elsewhere.iter().find(|tree| tree.holds(anchor)) {
                 asked.holders.insert(anchor, &holder.worktree);
-            } else if let Some(tree) = elsewhere
+                continue;
+            }
+            asked.stale.insert(anchor);
+            let spelled = elsewhere
                 .iter()
-                .find(|tree| tree.facts.spells_in_invocation(anchor))
-            {
+                .find(|tree| tree.facts.spells_in_invocation(anchor));
+            if let Some(tree) = spelled {
                 asked.unexpanded.insert(anchor, &tree.worktree);
             }
         }
         asked
+    }
+
+    /// The files of the stale anchors with nothing at their path here:
+    /// those git is asked where they went.
+    pub(crate) fn gone(&self, here: &Here<'s, '_>) -> BTreeSet<&'s str> {
+        self.stale
+            .iter()
+            .filter(|anchor| here.resolutions.get(*anchor) == Some(&Resolution::FileMissing))
+            .map(|anchor| anchor.file())
+            .collect()
+    }
+
+    /// These findings with `renames`, what git says of the gone files.
+    pub(crate) fn with_renames(self, renames: Renames) -> Self {
+        Self { renames, ..self }
+    }
+
+    /// The renames whose files git is asked for at the revision before
+    /// them, to hold a symbol anchor that follows one to its code.
+    pub(crate) fn renames(&self) -> &Renames {
+        &self.renames
+    }
+
+    /// The stale anchors the symbol search would repair, each with the one
+    /// file it would repair it to, whose earlier revision git is asked for
+    /// ([`Search`]).
+    pub(crate) fn searched(&self, here: &Here<'s, '_>) -> Vec<Search<'s>> {
+        let renamed = repair::followed(
+            &self.stale,
+            &here.resolutions,
+            here.facts,
+            self.renames(),
+            &self.prior,
+        );
+        repair::candidates(
+            &self.stale,
+            &here.resolutions,
+            here.facts,
+            &self.renames,
+            &renamed,
+        )
+    }
+
+    /// These findings with more of what git's history held, `prior`.
+    pub(crate) fn with_prior(mut self, prior: Prior) -> Self {
+        self.prior.extend(prior);
+        self
     }
 }
 
@@ -422,6 +500,13 @@ pub(crate) fn findings<'s>(
     here: &Here<'s, '_>,
     asked: &Asked<'s, '_>,
 ) -> Vec<Finding<'s, Checked>> {
+    let repairs = repair::repairs(
+        &asked.stale,
+        &here.resolutions,
+        here.facts,
+        &asked.renames,
+        &asked.prior,
+    );
     judged(decisions, here, |anchor, accepted| {
         if !accepted {
             return Some(Checked::Planned);
@@ -435,6 +520,8 @@ pub(crate) fn findings<'s>(
                     .get(anchor)
                     // clone: as above.
                     .map(|worktree| worktree.path.clone()),
+                // clone: each finding owns its repair, which decisions share.
+                repair: repairs.get(anchor).cloned(),
             },
         })
     })
@@ -460,7 +547,7 @@ fn judged<'s, V: Verdict>(
     let spread = here.facts.spread(here.resolutions.keys().copied());
     let judge = |anchor: &Anchor, status: &Status| -> Option<Kind<V>> {
         Some(match Class::of(here.resolutions.get(anchor)?) {
-            Class::Missing(cause) => Kind::Missing(cause, missing(anchor, ever_accepted(status))?),
+            Class::Missing(cause) => Kind::Missing(cause, missing(anchor, status.ever_accepted())?),
             Class::Broken(cause) => Kind::Malformed(cause),
             Class::Unread(cause) => Kind::Unverified(cause),
             Class::Ambiguous(count) => Kind::Ambiguous(count),
@@ -488,21 +575,6 @@ fn judged<'s, V: Verdict>(
         (a.kind.name(), a.decision, a.anchor).cmp(&(b.kind.name(), b.decision, b.anchor))
     });
     found
-}
-
-/// Whether a decision of `status` was accepted: an accepted one, or a
-/// proposed revision of one, all of whose anchors are judged as the
-/// accepted decision's, since the accepted text keeps none.
-const fn ever_accepted(status: &Status) -> bool {
-    match status {
-        Status::Accepted { .. }
-        | Status::Proposed {
-            accepted_text: Some(_),
-        } => true,
-        Status::Proposed {
-            accepted_text: None,
-        } => false,
-    }
 }
 
 #[cfg(test)]

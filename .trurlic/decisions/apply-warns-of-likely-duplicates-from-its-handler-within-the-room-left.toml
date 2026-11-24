@@ -1,6 +1,6 @@
 component = "mcp"
 choice = "apply's handler, not the store, warns of likely duplicates in the graph the write left: each decision whose text the batch wrote, its three nearest, listed while the result has room"
-reason = "store imports no module above it, so Writer::apply cannot call lint, and a likely duplicate is not a rule of the write. The batch is written first, and the handler looks for duplicates in the writer's graph. The CLI twin runs that handler too, so both surfaces warn alike. The decisions are those a record wrote or a revise changed the choice or reason of, followed through the batch's renames and dropped by a remove or a merge that absorbs them; an anchors-only revise warns of nothing. Each gets its three nearest at the threshold or above, best first. Fifty such warnings at 128-byte names exceed the 24 KiB result beside the longest ops, so the warnings fill the room the rest leaves, in op order, and more_duplicates counts the others, whose pairs status ranks under lint."
+reason = "store imports no module above it, so Writer::apply cannot call lint, and a likely duplicate is not a rule of the write. The batch is written first, and the handler looks for duplicates in the writer's graph. The CLI twin runs that handler too, so both surfaces warn alike. The decisions are those a record wrote or a revise changed the choice or reason of, followed through the batch's renames and dropped by a remove or a merge that absorbs them; an anchors-only revise warns of nothing. Each gets its three nearest at the threshold or above, best first. Fifty such warnings at 128-byte names exceed the 24 KiB result beside the longest ops, so the warnings fill the room the rest leaves, the repairs and stale anchors a repair_anchors op lists before them, in op order, and more_duplicates counts the others, whose pairs status ranks under lint."
 alternatives = [
     "The check in Writer::apply: rejected because store would import lint, and a warning is no rule of the write",
     "A fixed count of warnings per batch: rejected because the longest batch leaves room for none while a usual one has room for all",
@@ -15,10 +15,10 @@ origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "print" },
-    { file = "src/mcp/apply/duplicates.rs", symbol = "answer" },
-    { file = "src/mcp/apply/duplicates.rs", symbol = "fit" },
     { file = "src/mcp/apply/duplicates.rs", symbol = "text_written" },
+    { file = "src/mcp/apply/duplicates.rs", symbol = "warned" },
     { file = "src/mcp/apply/result.rs", symbol = "Answer" },
+    { file = "src/mcp/apply/result.rs", symbol = "fit" },
     { file = "src/mcp/apply/result.rs", symbol = "tests::the_longest_result_of_a_full_batch_fits_the_budget" },
     { file = "tests/integration/apply.rs", symbol = "a_likely_duplicate_warns_over_both_surfaces" },
 ]

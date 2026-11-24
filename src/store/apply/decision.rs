@@ -3,19 +3,19 @@
 
 use std::collections::BTreeSet;
 
-use super::Done;
 use super::check::{self, Fault, Sources, anchor_edit, edit_list, new_name};
 use super::edit::Edit;
 use super::ops::{Field, ListEdit, Merge, OpKind, Record, Remove, Rename, Revise};
 use super::patterns::Pending;
 use super::refusal::{NodeKind, Rule};
+use super::{Done, Repaired};
 use crate::store::quality::{Bar, DecisionField};
 use crate::store::schema::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
 use crate::store::time::Timestamp;
 
 /// What the ops of one batch share: what every record carries, the bar
-/// each written decision meets, and what the patterns judge once every op
-/// has run.
+/// each written decision meets, what the patterns judge once every op has
+/// run, and what the repairs did.
 pub(super) struct Context<'b> {
     pub(super) origin: Option<&'b str>,
     pub(super) created: Timestamp,
@@ -24,6 +24,8 @@ pub(super) struct Context<'b> {
     pub(super) op: usize,
     /// Each decision an op wrote, kept for the patterns, in op order.
     pub(super) pending: Vec<Pending>,
+    /// The anchors the batch's repairs replaced so far.
+    pub(super) repaired: Vec<Repaired>,
 }
 
 pub(super) fn record(

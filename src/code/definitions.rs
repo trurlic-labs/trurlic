@@ -72,13 +72,6 @@ impl Definitions {
     }
 
     /// The hash of the set: one definition's own, or that of several.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the anchor findings and the diff review are the first callers"
-        )
-    )]
     pub(crate) const fn hash(&self) -> SpanHash {
         self.hash
     }

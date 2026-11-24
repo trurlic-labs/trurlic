@@ -1,10 +1,13 @@
 //! The `apply` tool: its arguments declared once for the schema and the
 //! parse, and a handler that hands the batch to the store's one write.
-//! Every rule a batch is held to is the store's; the likely duplicates of
-//! what it wrote are looked for in the graph it left ([`duplicates`]). Its
-//! result is declared in [`result`].
+//! Every rule a batch is held to is the store's; every repair the tree
+//! shows, which the store cannot read, is read here before the write lock
+//! is taken and handed to the store as a map ([`repairs`]); the likely
+//! duplicates of what it wrote are looked for in the graph it left
+//! ([`duplicates`]). Its result is declared in [`result`].
 
 mod duplicates;
+mod repairs;
 mod result;
 
 pub(crate) use duplicates::Duplicates;
@@ -17,8 +20,10 @@ use crate::store::limits::{
 };
 use crate::store::{
     AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
-    RemoveComponent, Rename, Revise, ReviseComponent, Writer,
+    RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent, Store, Writer,
 };
+
+use repairs::{Requested, Shown};
 
 use super::spec::kinds::{List, Object, Text, Union, Variant};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
@@ -29,7 +34,10 @@ pub(super) static APPLY: ToolSpec<ApplyArgs, Answer> = ToolSpec {
     title: "Apply",
     description: DESCRIPTION,
     destructive: Destructive::Yes,
-    access: Access::Write(apply),
+    access: Access::Write {
+        read: Some(read_repairs),
+        write: apply,
+    },
 };
 
 const DESCRIPTION: &str = "The one write of the decision graph: a batch of ops, \
@@ -43,22 +51,27 @@ rename (rewrites every edge to it); merge `absorbed` into `survivor` (its edges,
 anchors and tags join the survivor, its text is dropped); remove (refused while \
 decisions depend on it, unless `repoint_to` names their new target); \
 add_component, revise_component, rename_component, remove_component (refused while \
-in use).\n\
+in use); repair_anchors (stale anchors replaced: the `repairs` given, or with none \
+every repair `trurlic check` shows, in every decision ever accepted that holds the \
+stale anchor; the result lists them and the stale anchors left).\n\
 Refused too: a revise that changes nothing, an edge to a missing node or to itself, \
 an edge that closes a depends_on cycle. Revising the choice, reason or alternatives \
 of an accepted decision proposes the new text and keeps the accepted one; revising \
-back accepts it again.\n\
-Quality: each field a record, revise or merge changes meets the bar: built in, a \
-one-line choice of at most 200 bytes, a reason of real text, an alternative and an \
-anchor at least, no hidden character in any text; then `[quality]` in project.toml. \
-A `warn` pattern and a likely duplicate write the batch and warn in the result.\n\
+back accepts it again. A repair leaves the status alone.\n\
+Quality: each field a record, revise, merge or repair changes meets the bar: built \
+in, a one-line choice of at most 200 bytes, a reason of real text, an alternative \
+and an anchor at least, no hidden character in any text; then `[quality]` in \
+project.toml. A `warn` pattern and a likely duplicate write the batch and warn in \
+the result.\n\
 The result names each op's node and what it changed, never the texts.";
 
-/// The arguments of `apply`: what a batch file holds too.
+/// The arguments of `apply`: what a batch file holds too, and, read
+/// before the write, what the tree shows for an op asking for every repair.
 #[derive(Debug)]
 pub(super) struct ApplyArgs {
-    ops: Vec<Op>,
+    ops: Vec<Requested>,
     origin: Option<String>,
+    shown: Shown,
 }
 
 impl Args for ApplyArgs {
@@ -80,20 +93,31 @@ impl Args for ApplyArgs {
                     max_bytes: MAX_TRAILER_BYTES,
                 },
             ),
+            shown: Shown::default(),
         }
     }
 }
 
+/// Read, holding no lock, the repairs an op asking for every repair
+/// writes: the tree walk and git run before the write lock is taken.
+fn read_repairs(store: &Store, mut arguments: ApplyArgs) -> Outcome<ApplyArgs> {
+    arguments.shown = repairs::shown(store, &arguments.ops)?;
+    Ok(arguments)
+}
+
 fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
+    let ApplyArgs { ops, origin, shown } = arguments;
     let batch = Batch {
-        ops: arguments.ops,
-        origin: arguments.origin,
+        ops: repairs::ops(ops, &shown),
+        origin,
         // No request names the agent's session: MCP over stdio carries
         // none, and `clientInfo` names the client program.
         session: None,
     };
     let applied = writer.apply(batch)?;
-    Ok(duplicates::answer(applied, writer.state()))
+    let left = repairs::left(writer.state(), &shown);
+    let warned = duplicates::warned(&applied.ops, writer.state());
+    Ok(result::fit(applied, warned, left))
 }
 
 // -- Ops -------------------------------------------------------------------
@@ -128,25 +152,35 @@ const ANCHORS: List<Object<AnchorInput>> = List {
     max_items: MAX_LIST_ITEMS,
 };
 
-static VARIANTS: [Variant<Op>; 9] = [
-    variant(OpKind::Record, record),
-    variant(OpKind::Revise, revise),
-    variant(OpKind::Rename, |fields| Op::Rename(rename(fields))),
-    variant(OpKind::Merge, merge),
-    variant(OpKind::Remove, remove),
-    variant(OpKind::AddComponent, add_component),
-    variant(OpKind::ReviseComponent, revise_component),
+static VARIANTS: [Variant<Requested>; 10] = [
+    variant(OpKind::Record, |fields| Requested::op(record(fields))),
+    variant(OpKind::Revise, |fields| Requested::op(revise(fields))),
+    variant(OpKind::Rename, |fields| {
+        Requested::op(Op::Rename(rename(fields)))
+    }),
+    variant(OpKind::Merge, |fields| Requested::op(merge(fields))),
+    variant(OpKind::Remove, |fields| Requested::op(remove(fields))),
+    variant(OpKind::AddComponent, |fields| {
+        Requested::op(add_component(fields))
+    }),
+    variant(OpKind::ReviseComponent, |fields| {
+        Requested::op(revise_component(fields))
+    }),
     variant(OpKind::RenameComponent, |fields| {
-        Op::RenameComponent(rename(fields))
+        Requested::op(Op::RenameComponent(rename(fields)))
     }),
     variant(OpKind::RemoveComponent, |fields| {
-        Op::RemoveComponent(RemoveComponent {
+        Requested::op(Op::RemoveComponent(RemoveComponent {
             name: fields.required(Field::Name.as_str(), "The component.", &NAME),
-        })
+        }))
     }),
+    variant(OpKind::RepairAnchors, repair_anchors),
 ];
 
-const fn variant(kind: OpKind, declare: fn(&mut Fields<'_, '_>) -> Op) -> Variant<Op> {
+const fn variant(
+    kind: OpKind,
+    declare: fn(&mut Fields<'_, '_>) -> Requested,
+) -> Variant<Requested> {
     Variant {
         name: kind.as_str(),
         declare,
@@ -246,6 +280,39 @@ fn revise_component(fields: &mut Fields<'_, '_>) -> Op {
     })
 }
 
+const REPAIRS: List<Object<Repair>> = List {
+    item: Object::new(),
+    max_items: MAX_LIST_ITEMS,
+};
+
+/// The repairs given, or every repair the tree shows when none are.
+fn repair_anchors(fields: &mut Fields<'_, '_>) -> Requested {
+    let about = "Each stale anchor to replace, in its decision; absent, every repair \
+                 `trurlic check` shows, in each decision ever accepted that holds the stale \
+                 anchor when the op runs.";
+    match fields.optional(Field::Repairs.as_str(), about, &REPAIRS) {
+        Some(repairs) => Requested::op(Op::RepairAnchors(RepairAnchors::Listed(repairs))),
+        None => Requested::EveryRepair,
+    }
+}
+
+/// A repair as a batch writes it.
+impl Args for Repair {
+    fn declare(fields: &mut Fields<'_, '_>) -> Self {
+        let anchor = Object::<AnchorInput>::new();
+        Self {
+            decision: fields.required("decision", "The decision that holds the anchor.", &NAME),
+            from: fields.required("from", "The stale anchor it holds.", &anchor),
+            to: fields.required(
+                "to",
+                "The anchor it holds instead; when it holds this one already, the stale \
+                 one is dropped.",
+                &anchor,
+            ),
+        }
+    }
+}
+
 /// An optional list field, empty when absent.
 fn list<K: Kind>(
     fields: &mut Fields<'_, '_>,
@@ -303,7 +370,7 @@ mod tests {
     use super::*;
     use crate::mcp::spec::{At, parse};
 
-    fn ops(arguments: &Value) -> Vec<Op> {
+    fn ops(arguments: &Value) -> Vec<Requested> {
         parse::<ApplyArgs>(arguments.as_object().unwrap(), At::Root)
             .unwrap()
             .ops
@@ -339,6 +406,13 @@ mod tests {
             { "op": "rename_component", "name": "c", "to": "e" },
             { "op": "remove_component", "name": "c" },
         ]}));
+        let parsed: Vec<Op> = parsed
+            .into_iter()
+            .map(|requested| match requested {
+                Requested::Op(op) => *op,
+                Requested::EveryRepair => panic!("no op asked for every repair"),
+            })
+            .collect();
         assert_eq!(
             parsed,
             [

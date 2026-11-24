@@ -423,7 +423,13 @@ fn each_kind_has_its_severity() {
         branch: None,
     };
     let kinds: [Kind<Checked>; 7] = [
-        Kind::Missing(missing(), Checked::Stale { unexpanded: None }),
+        Kind::Missing(
+            missing(),
+            Checked::Stale {
+                unexpanded: None,
+                repair: None,
+            },
+        ),
         Kind::Malformed(Broken(Resolution::SymbolOnDirectory)),
         Kind::Ambiguous(2),
         Kind::Unverified(Unread(Resolution::NoResolver)),
@@ -553,5 +559,457 @@ fn another_worktrees_file_is_expanded_with_the_calling_trees_macros() {
              /w/feature spells it in a macro invocation this tree's macros do not expand, so \
              it may be pending there"
         )]
+    );
+}
+
+/// The findings of `decisions` with `renames` and what git's history held,
+/// `prior`, as `check` prints them, no other worktree holding any anchor.
+fn repaired(
+    decisions: &[(&str, Decision)],
+    here: &CodeFacts,
+    renames: Renames,
+    prior: Prior,
+) -> Vec<String> {
+    let named: Vec<(&str, &Decision)> = decisions.iter().map(|(n, d)| (*n, d)).collect();
+    let here = Here::of(&named, here);
+    let unresolved = here.unresolved(&named);
+    let asked = Asked::of(&unresolved, &[])
+        .with_renames(renames)
+        .with_prior(prior);
+    findings(&named, &here, &asked)
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// What git's history held at revision `R`, each of `files` a path and its
+/// text, every one judged at `R`.
+fn prior(files: &[(&str, &str)]) -> Prior {
+    let mut prior = Prior::default();
+    for (path, text) in files {
+        let kind = FileKind::of(path).unwrap();
+        let index = index(kind, text.as_bytes()).map_err(FileFault::Index);
+        prior.insert("R".into(), (*path).to_owned(), Entry::File { kind, index });
+        prior.judge_at((*path).to_owned(), "R".into());
+    }
+    prior
+}
+
+/// The manifest of a package at the root of the tree.
+const MANIFEST: (&str, &str) = ("Cargo.toml", "[package]\nname = \"p\"\n");
+
+const BOOK: &str = "pub struct Book;\nimpl Book { fn pages() {} }\n";
+
+/// A stale symbol anchor is repaired to the one other file of its crate
+/// target that defines its symbol as its whole path when git's history
+/// shows the move: not when two files define it, nor when it moved and was
+/// renamed, nor on a file of another language, nor for any other cause.
+#[test]
+fn a_symbol_that_moved_to_one_other_file_is_repaired_there() {
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/lib.rs", "pub fn stay() {}\n"),
+            ("src/moved.rs", BOOK),
+            ("src/twice_a.rs", "pub fn twice() {}\n"),
+            ("src/twice_b.rs", "pub fn twice() {}\n"),
+            ("src/moved.py", "def run():\n    pass\n"),
+        ],
+        &[("notes.txt", Entry::Unindexed)],
+    );
+    let anchors = [
+        "src/lib.rs::Book::pages",
+        "src/gone.rs::Book",
+        "src/lib.rs::twice",
+        "src/gone.py::run",
+        "src/lib.rs::renamed_too",
+        "notes.txt::line",
+        "docs.md::Install",
+    ];
+    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
+    let history = || {
+        let before = "pub fn stay() {}\npub struct Book;\nimpl Book { fn pages() {} }\n";
+        let python = "def run():\n    pass\n";
+        prior(&[
+            ("src/lib.rs", before),
+            ("src/gone.rs", BOOK),
+            ("src/gone.py", python),
+        ])
+    };
+
+    let lines = repaired(&decisions, &here, Renames::none(), history());
+    let unshown = repaired(&decisions, &here, Renames::none(), Prior::default());
+
+    let stale = |at: &str, cause: &str| format!("anchor `{at}` of `d` is stale: {cause}");
+    let missing = "its file defines nothing its symbol names";
+    let stales = |book: &str, pages: &str| {
+        vec![
+            stale("docs.md::Install", "nothing is at its path"),
+            stale("src/gone.py::run", "nothing is at its path"),
+            stale(
+                "src/gone.rs::Book",
+                &format!("nothing is at its path{book}"),
+            ),
+            stale("src/lib.rs::Book::pages", &format!("{missing}{pages}")),
+            stale("src/lib.rs::renamed_too", missing),
+            stale("src/lib.rs::twice", missing),
+        ]
+    };
+    let mut expected = stales(
+        "; repair: `src/moved.rs::Book`",
+        "; repair: `src/moved.rs::Book::pages`",
+    );
+    let unverified = "anchor `notes.txt::line` of `d` is unverified: its symbol is on a kind of file no resolver reads, so what it names is not verified";
+    expected.push(unverified.to_owned());
+    assert_eq!(lines, expected);
+    let mut expected = stales("", "");
+    expected.push(unverified.to_owned());
+    assert_eq!(unshown, expected, "no history shows no move");
+}
+
+/// A namesake is no move: the search matches the symbol as a whole path,
+/// so a bare name never lands on a type's method or a test module's
+/// helper, and gives no repair to a file that defined the symbol at the
+/// revision where the anchor's own file last held it, the two having stood
+/// side by side.
+#[test]
+fn a_namesake_that_stood_beside_the_code_is_no_move() {
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/cli.rs", "pub fn main() {}\n"),
+            (
+                "src/parse.rs",
+                "pub fn parse() {}\n#[cfg(test)]\nmod tests { fn run() {} }\n",
+            ),
+            (
+                "src/state.rs",
+                "pub struct Bets;\nimpl Bets { fn waits_on(&self) {} }\n",
+            ),
+            ("src/mail.rs", "pub fn parse_header() {}\n"),
+        ],
+        &[],
+    );
+    let anchors = [
+        "src/cli.rs::run",
+        "src/cli.rs::waits_on",
+        "src/http.rs::parse_header",
+    ];
+    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
+    let history = prior(&[
+        ("src/cli.rs", "pub fn run() {}\npub fn waits_on() {}\n"),
+        ("src/http.rs", "pub fn parse_header() {}\n"),
+        ("src/mail.rs", "pub fn parse_header() {}\n"),
+    ]);
+
+    let lines = repaired(&decisions, &here, Renames::none(), history);
+
+    assert!(
+        lines.iter().all(|line| !line.contains("repair")),
+        "{lines:#?}"
+    );
+    assert_eq!(lines.len(), anchors.len(), "{lines:#?}");
+}
+
+/// The search gives no repair where a reader would not accept one, git's
+/// history showing the move or not: the anchor's own file still defines
+/// its last segment (a trait method spelled without its impl, while the
+/// trait declares it in another file), or spells it in a macro invocation
+/// the index cannot expand, while another file re-exports it; the one file
+/// that defines it is of another crate target (a test, a binary, a crate
+/// of its own, vendored code with a manifest of its own), defines it as
+/// test code for code, by a macro invocation or as a re-export; or no
+/// manifest the walk took is above the anchor, so its crate is unknown.
+#[test]
+fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
+    let here = facts(
+        &[
+            MANIFEST,
+            (
+                "src/spi.rs",
+                "pub trait Routing { fn route_cost(&self) -> u8; }\n",
+            ),
+            (
+                "src/fbqc.rs",
+                "pub struct Fbqc;\nimpl crate::spi::Routing for Fbqc { fn route_cost(&self) -> u8 { 0 } }\n",
+            ),
+            ("src/cli.rs", "pub fn main() {}\n"),
+            (
+                "src/refusal.rs",
+                "mirror! { Report in \"m\" from other::Report {} }\n",
+            ),
+            ("src/lib.rs", "mod refusal;\npub use refusal::Report;\n"),
+            ("tests/cli.rs", "fn run(args: &[&str]) {}\n"),
+            ("src/bin/tool.rs", "fn main() {}\nfn usage() {}\n"),
+            ("src/fixtures.rs", "#[cfg(test)]\npub fn sample() {}\n"),
+            ("src/api.rs", "pub use crate::inner::Engine;\n"),
+            (
+                "src/made.rs",
+                "macro_rules! make { ($n:ident) => { pub struct $n; }; }\nmake!(Widget);\n",
+            ),
+            ("crates/b/Cargo.toml", "[package]\nname = \"b\"\n"),
+            (
+                "crates/b/src/lib.rs",
+                "pub struct Config;\nimpl Config { pub fn new() {} }\n",
+            ),
+            ("src/de.rs", "pub trait Other {}\n"),
+            ("vendor/serde/Cargo.toml", "[package]\nname = \"serde\"\n"),
+            (
+                "vendor/serde/src/de.rs",
+                "pub trait Deserializer { fn deserialize_any(self); }\n",
+            ),
+        ],
+        &[],
+    );
+    let anchors = [
+        "src/fbqc.rs::Routing::route_cost",
+        "src/cli.rs::run",
+        "src/refusal.rs::Report",
+        "crates/a/src/lib.rs::Config::new",
+        "src/de.rs::Deserializer::deserialize_any",
+        "src/cli.rs::usage",
+        "src/cli.rs::sample",
+        "src/cli.rs::Widget",
+        "src/cli.rs::Engine",
+    ];
+    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
+    let history = prior(&[
+        (
+            "src/fbqc.rs",
+            "pub trait Routing { fn route_cost(&self) -> u8; }\n",
+        ),
+        (
+            "src/cli.rs",
+            "pub fn run() {}\nfn usage() {}\nfn sample() {}\npub struct Widget;\npub struct Engine;\n",
+        ),
+        ("src/refusal.rs", "pub struct Report;\n"),
+        (
+            "crates/a/src/lib.rs",
+            "pub struct Config;\nimpl Config { pub fn new() {} }\n",
+        ),
+        (
+            "src/de.rs",
+            "pub trait Deserializer { fn deserialize_any(self); }\n",
+        ),
+    ]);
+
+    let lines = repaired(&decisions, &here, Renames::none(), history);
+
+    assert!(
+        lines.iter().all(|line| !line.contains("repair")),
+        "{lines:#?}"
+    );
+    assert_eq!(lines.len(), anchors.len(), "{lines:#?}");
+    let unknown = facts(&[("lib/moved.rs", BOOK)], &[]);
+    let lone = [("d", decision(&["lib/gone.rs::Book"], StatusName::Accepted))];
+    let history = prior(&[("lib/gone.rs", BOOK)]);
+    assert_eq!(
+        repaired(&lone, &unknown, Renames::none(), history),
+        ["anchor `lib/gone.rs::Book` of `d` is stale: nothing is at its path"]
+    );
+}
+
+/// A file git reports renamed repairs the anchors on it when the rename is
+/// shown to carry their code: a symbol anchor whose symbol's span hash at
+/// the new path equals its hash at the old path before the rename, the new
+/// path read from the renamed paths' facts when the tree's lack it; the
+/// file anchor, which that symbol verifies; a symbol the renamed file
+/// lacks is searched for as a moved one; one the edit changed follows no
+/// inexact rename.
+#[test]
+fn a_file_git_reports_renamed_repairs_its_anchors() {
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/new.rs", "pub fn kept() {}\npub fn edited() { 2 }\n"),
+            ("src/other.rs", "pub fn left() {}\n"),
+        ],
+        &[],
+    );
+    let renamed = |to: &str| Renamed {
+        to: to.to_owned(),
+        exact: false,
+        before: "R".to_owned(),
+    };
+    let renames = Renames {
+        to: BTreeMap::from([
+            ("src/old.rs".to_owned(), renamed("src/new.rs")),
+            ("conf/old.toml".to_owned(), renamed("conf/new.toml")),
+        ]),
+        facts: facts(&[("conf/new.toml", "[profile]\npanic = 1\n")], &[]),
+    };
+    let history = prior(&[
+        (
+            "src/old.rs",
+            "pub fn kept() {}\npub fn edited() { 1 }\npub fn left() {}\npub fn lost() {}\n",
+        ),
+        ("conf/old.toml", "[profile]\npanic = 1\n"),
+    ]);
+    let anchors = [
+        "src/old.rs",
+        "src/old.rs::kept",
+        "src/old.rs::edited",
+        "src/old.rs::left",
+        "src/old.rs::lost",
+        "conf/old.toml::profile::panic",
+        "src/never.rs",
+    ];
+    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
+
+    let lines = repaired(&decisions, &here, renames, history);
+
+    let gone = |at: &str, repair: Option<&str>| {
+        let fix = repair.map_or(String::new(), |to| format!("; repair: `{to}`"));
+        format!("anchor `{at}` of `d` is stale: nothing is at its path{fix}")
+    };
+    assert_eq!(
+        lines,
+        [
+            gone(
+                "conf/old.toml::profile::panic",
+                Some("conf/new.toml::profile::panic")
+            ),
+            gone("src/never.rs", None),
+            gone("src/old.rs", Some("src/new.rs")),
+            gone("src/old.rs::edited", None),
+            gone("src/old.rs::kept", Some("src/new.rs::kept")),
+            gone("src/old.rs::left", Some("src/other.rs::left")),
+            gone("src/old.rs::lost", None),
+        ]
+    );
+}
+
+/// git pairs two files by similarity alone, so a rename carries a file
+/// anchor only when it is shown to: exact into a file that defines at least
+/// one item, or followed by a symbol anchor whose code is unchanged. A
+/// header-only or an empty file has no identity to carry, and a `main` the
+/// rename edited is no evidence.
+#[test]
+fn a_file_anchor_follows_only_a_verified_rename() {
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/beta.rs", "// License.\n"),
+            ("src/empty.rs", ""),
+            ("src/bin/report.rs", "fn main() { report() }\n"),
+            ("src/same.rs", "pub fn same() {}\n"),
+        ],
+        &[],
+    );
+    let renamed = |to: &str, exact| Renamed {
+        to: to.to_owned(),
+        exact,
+        before: "R".to_owned(),
+    };
+    let renames = Renames {
+        to: BTreeMap::from([
+            ("src/alpha.rs".to_owned(), renamed("src/beta.rs", true)),
+            ("src/void.rs".to_owned(), renamed("src/empty.rs", true)),
+            (
+                "src/bin/import.rs".to_owned(),
+                renamed("src/bin/report.rs", false),
+            ),
+            ("src/copy.rs".to_owned(), renamed("src/same.rs", true)),
+        ]),
+        facts: facts(&[], &[]),
+    };
+    let history = prior(&[("src/bin/import.rs", "fn main() { import() }\n")]);
+    let anchors = [
+        "src/alpha.rs",
+        "src/void.rs",
+        "src/bin/import.rs",
+        "src/bin/import.rs::main",
+        "src/copy.rs",
+    ];
+    let decisions = [("cfg", decision(&anchors, StatusName::Accepted))];
+
+    let lines = repaired(&decisions, &here, renames, history);
+
+    let gone = "nothing is at its path";
+    assert_eq!(
+        lines,
+        [
+            format!("anchor `src/alpha.rs` of `cfg` is stale: {gone}"),
+            format!("anchor `src/bin/import.rs` of `cfg` is stale: {gone}"),
+            format!("anchor `src/bin/import.rs::main` of `cfg` is stale: {gone}"),
+            format!("anchor `src/copy.rs` of `cfg` is stale: {gone}; repair: `src/same.rs`"),
+            format!("anchor `src/void.rs` of `cfg` is stale: {gone}"),
+        ]
+    );
+}
+
+/// Only a stale anchor is repaired: a planned one names what is not
+/// written yet, a pending one's code is on a branch, and with git not
+/// asked no anchor is known stale. A proposed revision of an accepted
+/// decision is stale, so repaired.
+#[test]
+fn a_planned_or_pending_anchor_is_never_repaired() {
+    use crate::store::AcceptedText;
+
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/lib.rs", ""),
+            ("src/moved.rs", "pub fn gone() {}\n"),
+        ],
+        &[],
+    );
+    let elsewhere = [Elsewhere {
+        worktree: Worktree {
+            path: PathBuf::from("/w/branch"),
+            branch: Some("branch".into()),
+        },
+        facts: facts(&[("src/lib.rs", "pub fn branch() {}\n")], &[]),
+    }];
+    let mut revised = decision(&["src/lib.rs::gone"], StatusName::Proposed);
+    revised.status = Status::Proposed {
+        accepted_text: Some(AcceptedText {
+            choice: "The accepted choice".into(),
+            reason: "The accepted reason".into(),
+            alternatives: Vec::new(),
+            via: None,
+        }),
+    };
+    let decisions = [
+        (
+            "planned",
+            decision(&["src/lib.rs::gone"], StatusName::Proposed),
+        ),
+        (
+            "pending",
+            decision(&["src/lib.rs::branch"], StatusName::Accepted),
+        ),
+        ("revised", revised),
+    ];
+    let named: Vec<(&str, &Decision)> = decisions.iter().map(|(n, d)| (*n, d)).collect();
+    let here = Here::of(&named, &here);
+    let unresolved = here.unresolved(&named);
+    let history = prior(&[("src/lib.rs", "pub fn gone() {}\npub fn branch() {}\n")]);
+    let asked = Asked::of(&unresolved, &elsewhere).with_prior(history);
+
+    let found = findings(&named, &here, &asked);
+
+    let repairs: Vec<(&str, Option<String>)> = found
+        .iter()
+        .map(|finding| {
+            let repair = match &finding.kind {
+                Kind::Missing(_, Checked::Stale { repair, .. }) => repair.as_ref(),
+                Kind::Missing(_, Checked::Pending(_) | Checked::Planned)
+                | Kind::Malformed(_)
+                | Kind::Unverified(_)
+                | Kind::Ambiguous(_)
+                | Kind::Mixed(_)
+                | Kind::Weak(_) => None,
+            };
+            (finding.decision, repair.map(ToString::to_string))
+        })
+        .collect();
+    assert_eq!(
+        repairs,
+        [
+            ("revised", Some("src/moved.rs::gone".to_owned())),
+            ("pending", None),
+            ("planned", None),
+        ]
     );
 }

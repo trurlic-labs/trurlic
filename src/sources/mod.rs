@@ -1,12 +1,13 @@
 //! The shell around the code index and the anchor findings: it walks and
 //! reads the code root, and, for `check`, the files of the anchors
 //! missing in it that the other live worktrees changed since their line
-//! forked from the calling tree's; reads and fills the index's cache
-//! through the [`Store`]; and hands the facts to `code` and `lint` as
-//! data. `mcp` (`status`) and `commands` (`check`) both stand on it. A
-//! caller holds no lock of the store while it runs: the cache's write
-//! takes the exclusive lock when it is free, and the caller's own shared
-//! lock would keep it busy.
+//! forked from the calling tree's, and what git's history says of the
+//! stale anchors' files and their repairs; reads and fills the index's
+//! cache through the [`Store`]; and hands the facts to `code` and `lint`
+//! as data. `mcp` (`status`, `apply`) and `commands` (`check`) stand on
+//! it. A caller holds no lock of the store while it runs: the cache's
+//! write takes the exclusive lock when it is free, and the caller's own
+//! shared lock would keep it busy.
 //!
 //! A file is read in one bounded read, refused past
 //! [`MAX_SOURCE_FILE_BYTES`] and when it is no regular file, and indexed
@@ -17,6 +18,7 @@
 //! lock skips the write, since the cache is never authoritative.
 
 mod cache;
+mod renames;
 mod walk;
 mod worktrees;
 
@@ -31,7 +33,10 @@ use rayon::prelude::*;
 
 use crate::code::{self, CodeFacts, Entry, FileFault, FileKind, Indexed, ReadFault};
 use crate::console::diag;
-use crate::lint::anchors::{self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Unasked};
+use crate::git;
+use crate::lint::anchors::{
+    self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Prior, Renames, Unasked,
+};
 use crate::store::{Anchor, Decision, Store, SymbolsKey};
 
 use walk::Probe;
@@ -66,8 +71,9 @@ pub(crate) fn checked_findings<'s>(
     let here = Here::of(&decisions, &facts);
     let unresolved = here.unresolved(&decisions);
     let (elsewhere, unread) = elsewhere(store, &facts, &unresolved, &mut fill);
-    fill.write(store);
     let asked = Asked::of(&unresolved, &elsewhere);
+    let asked = with_history(store, &facts, &here, asked, &mut fill);
+    fill.write(store);
     CheckedFindings {
         findings: anchors::findings(&decisions, &here, &asked),
         unread,
@@ -111,6 +117,91 @@ fn calling_tree(store: &Store, decisions: &Decisions<'_>, fill: &mut CacheFill) 
         .map(Anchor::file);
     let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, fill);
     CodeFacts::new(entries, &walked)
+}
+
+/// `asked` with what git says of the stale anchors' repairs: where their
+/// gone files went and, for a rename that changed the file, its old path
+/// before it; then, for the symbol search's candidates, each anchor's file
+/// and candidate at the revision where that file last held its code.
+fn with_history<'s, 'w>(
+    store: &Store,
+    facts: &CodeFacts,
+    here: &Here<'s, '_>,
+    asked: Asked<'s, 'w>,
+    fill: &mut CacheFill,
+) -> Asked<'s, 'w> {
+    let root = store.code_root();
+    let renames = renames(store, facts, &asked.gone(here), fill);
+    let before: BTreeSet<(String, String)> = renames
+        .to
+        .iter()
+        .filter(|(_, renamed)| !renamed.exact)
+        // clone: the reads are keyed by revision and path apart from the map.
+        .map(|(from, renamed)| (renamed.before.clone(), from.clone()))
+        .collect();
+    let asked = asked.with_renames(renames).with_prior(prior(root, &before));
+    let searched = asked.searched(here);
+    if searched.is_empty() {
+        return asked;
+    }
+    let files: BTreeSet<&str> = searched.iter().map(|search| search.anchor.file()).collect();
+    let revisions = renames::revisions(root, &files);
+    let mut wanted = BTreeSet::new();
+    for search in &searched {
+        if let Some(revision) = revisions.get(search.anchor.file()) {
+            // clone: each read names its revision and path.
+            wanted.insert((revision.clone(), search.anchor.file().to_owned()));
+            // clone: as above, for the candidate.
+            wanted.insert((revision.clone(), search.target.clone()));
+        }
+    }
+    let mut evidence = prior(root, &wanted);
+    for (file, revision) in revisions {
+        evidence.judge_at(file, revision);
+    }
+    asked.with_prior(evidence)
+}
+
+/// Where git says each of `gone`, the files of stale anchors with nothing
+/// at their path, was renamed to, and the facts of those paths beside
+/// `here`, the calling tree's, read as an anchor's path is.
+fn renames(
+    store: &Store,
+    here: &CodeFacts,
+    gone: &BTreeSet<&str>,
+    fill: &mut CacheFill,
+) -> Renames {
+    let to = renames::renamed(store.code_root(), gone);
+    if to.is_empty() {
+        return Renames::none();
+    }
+    // clone: the paths are read apart from the map that keeps them.
+    let paths = to.values().map(|renamed| renamed.to.clone()).collect();
+    let facts = here.beside(&read_paths(store, store.code_root(), paths, fill));
+    Renames { to, facts }
+}
+
+/// What git's history held of each of `files`, a revision and a path, each
+/// read in a bounded read and indexed; a file git holds no blob of there,
+/// or any failure of git, leaves it out.
+fn prior(root: &Path, files: &BTreeSet<(String, String)>) -> Prior {
+    let mut prior = Prior::default();
+    if files.is_empty() {
+        return prior;
+    }
+    // clone: git is handed the files as a list.
+    let asked: Vec<(String, String)> = files.iter().cloned().collect();
+    let Ok(blobs) = git::renames::blobs(root, &asked, MAX_SOURCE_FILE_BYTES) else {
+        return prior;
+    };
+    for ((revision, path), bytes) in blobs {
+        let Some(kind) = FileKind::of(&path) else {
+            continue;
+        };
+        let index = code::index(kind, &bytes).map_err(FileFault::Index);
+        prior.insert(revision, path, Entry::File { kind, index });
+    }
+    prior
 }
 
 /// The facts of the other worktrees for `missing`, the anchors of
