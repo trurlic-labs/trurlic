@@ -166,11 +166,10 @@ pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
 }
 
 /// [`tool_result`] with the text's JSON as `structuredContent` too: the
-/// payload as it is, or as it was cut to fit.
+/// payload as it is, or as it was cut to fit. The text is the serialization
+/// of the value sent as `structuredContent`, so the two cannot differ.
 pub(crate) fn structured_result(payload: Value) -> ToolEnvelope {
-    let text = truncate::fit_payload(&payload, MAX_TOOL_RESULT_BYTES);
-    // The cut text is JSON: `fit_payload` builds it from a `Value`.
-    let structured = serde_json::from_str(&text).unwrap_or(payload);
+    let (structured, text) = truncate::fit_value(payload, MAX_TOOL_RESULT_BYTES);
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",
@@ -332,6 +331,16 @@ mod tests {
             json!({ "items": vec!["x".repeat(100); 1000] }),
         ));
         assert!(cut["structuredContent"]["truncated"].is_array(), "{cut}");
+        // Deeper than a JSON reader nests: the text cannot be read back,
+        // and `structuredContent` is still the value it serializes.
+        let mut deep = json!({ "text": "x".repeat(MAX_TOOL_RESULT_BYTES) });
+        for _ in 0..200 {
+            deep = json!({ "nested": deep });
+        }
+        let sent = wire(&structured_result(deep));
+        let text = sent["content"][0]["text"].as_str().unwrap();
+        assert!(text.len() <= MAX_TOOL_RESULT_BYTES);
+        assert_eq!(sent["structuredContent"].to_string(), text);
         assert!(
             wire(&tool_result(&json!({})))
                 .get("structuredContent")

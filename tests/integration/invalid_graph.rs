@@ -105,9 +105,9 @@ fn fmt_lands_beside_the_issues_and_keeps_them() {
     );
 }
 
-/// A batch that adds no issue lands beside the ones the graph has; one
-/// that adds an issue is refused, and so is one that renames a node out
-/// of an issue, whose subject then changes.
+/// A batch that adds no issue lands beside the ones the graph has, a
+/// rename that carries a node's issues to its new name included; one that
+/// adds an issue is refused.
 #[test]
 fn a_batch_that_adds_no_issue_lands_beside_the_issues() {
     let project = invalid_project();
@@ -121,11 +121,18 @@ fn a_batch_that_adds_no_issue_lands_beside_the_issues() {
             record("audit-log", "auth", "Log every token"),
         ]}),
     );
-    let refused = client.call_tool_refusal(
+    client.call_tool(
         "apply",
         json!({ "ops": [
             { "op": "revise", "name": "audit-log", "add_depends_on": ["keep-old-api"] },
             { "op": "rename", "name": "expire-sessions", "to": "end-sessions" },
+        ]}),
+    );
+    let refused = client.call_tool_refusal(
+        "apply",
+        json!({ "ops": [
+            { "op": "revise", "name": "audit-log", "add_tags": ["audit"] },
+            { "op": "revise", "name": "audit-log", "add_depends_on": ["gone"] },
         ]}),
     );
 
@@ -135,7 +142,7 @@ fn a_batch_that_adds_no_issue_lands_beside_the_issues() {
         report
             .lines()
             .filter(|line| line.starts_with("  error: "))
-            .map(str::to_owned)
+            .map(|line| line.replace("expire-sessions", "end-sessions"))
             .collect()
     };
     assert_eq!(errors(&project.run_refused(&["check"])), errors(&before));
@@ -143,5 +150,10 @@ fn a_batch_that_adds_no_issue_lands_beside_the_issues() {
         project
             .read("decisions/sign-tokens.toml")
             .contains("\"keys\"")
+    );
+    assert!(
+        !project
+            .read("decisions/audit-log.toml")
+            .contains("\"audit\"")
     );
 }

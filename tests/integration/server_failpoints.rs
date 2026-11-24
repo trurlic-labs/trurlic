@@ -70,6 +70,12 @@ fn a_tool_call_waits_for_the_answer_to_its_request_while_serving_the_line() {
         client.receive(),
         json!({ "jsonrpc": "2.0", "id": "ping-1", "result": {} })
     );
+    // A malformed answer to the server's own request is answered with
+    // `id: null`: its `id` is the server's, and the wait goes on.
+    client.send(&json!({ "jsonrpc": "1.0", "id": request["id"], "result": {} }));
+    let malformed = client.receive();
+    assert_eq!(malformed["id"], Value::Null, "{malformed}");
+    assert_eq!(malformed["error"]["code"], -32600, "{malformed}");
     client.notify("notifications/progress");
     let queued = client.next_id();
     client.send(&json!({ "jsonrpc": "2.0", "id": queued, "method": "tools/list" }));

@@ -22,5 +22,5 @@ anchors = [
     { file = "src/store/access.rs", symbol = "Writer::format" },
 ]
 depends_on = [
-    "exclusive-advisory-file-locking-via-fs2-with-5-second",
+    "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",
 ]

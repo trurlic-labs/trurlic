@@ -1,31 +1,48 @@
-//! The rules for a decision's choice and reason, which validation holds
-//! every decision to, whichever surface or hand edit wrote it, for the
-//! `Origin:` and `Session:` a write's history commit carries, and for the
-//! message of a `[quality]` pattern.
+//! The rules for every text a graph file holds and a write takes: what a
+//! reader sees is what an agent is held to.
 //!
-//! A choice is one line of at most [`MAX_CHOICE_BYTES`]; a reason holds at
-//! least [`MIN_REASON_BYTES`] of reasoning and may span lines; an origin or
-//! a session is one line of at most [`MAX_TRAILER_BYTES`], a message one
-//! of at most [`MAX_PATTERN_MESSAGE_BYTES`]. None may carry a
-//! character that renders as nothing or reorders the text around it, so what
-//! a reader sees is what an agent is held to, nor the markup of a tool call,
-//! which only lands in an argument when the call was malformed.
+//! No text may carry a character that renders as nothing or reorders the
+//! text around it, nor the markup of a tool call, which only lands in an
+//! argument when the call was malformed. Each field adds its shape:
+//!
+//! | field | blank | lines | bytes |
+//! |---|---|---|---|
+//! | a decision's `choice` | no | one | at most [`MAX_CHOICE_BYTES`] |
+//! | a decision's `reason` | no | many | [`MIN_REASON_BYTES`] of reasoning to [`MAX_TEXT_FIELD_BYTES`] |
+//! | an alternative | no | one | at most [`MAX_ALTERNATIVE_BYTES`] |
+//! | a tag | no | one | at most [`MAX_TAG_BYTES`] |
+//! | an `origin`, a `Session:` | no | one | at most [`MAX_TRAILER_BYTES`] |
+//! | a component's `description` | yes | many | at most [`MAX_TEXT_FIELD_BYTES`] |
+//! | a `[quality]` pattern's message | no | one | at most [`MAX_PATTERN_MESSAGE_BYTES`] |
+//!
+//! Each rule is a property of every file: validation reports a decision or
+//! a component that breaks one, whoever wrote it, and `check` fails on it,
+//! while the reads still answer. A write is refused for one in each field
+//! it writes (`store::quality`). An anchor's `file` and `symbol` meet the
+//! character rule as part of their type (`schema::Anchor`), whose faults a
+//! load refuses, and a `[quality]` message as part of `Quality`.
 
 use std::fmt;
 
 use super::limits::{
-    MAX_CHOICE_BYTES, MAX_PATTERN_MESSAGE_BYTES, MAX_TEXT_FIELD_BYTES, MAX_TRAILER_BYTES,
-    MIN_REASON_BYTES,
+    MAX_ALTERNATIVE_BYTES, MAX_CHOICE_BYTES, MAX_PATTERN_MESSAGE_BYTES, MAX_TAG_BYTES,
+    MAX_TEXT_FIELD_BYTES, MAX_TRAILER_BYTES, MIN_REASON_BYTES,
 };
 
-/// The field a [`TextFault`] was found in: a decision's, a trailer of a
-/// history commit, or a `[quality]` pattern's message.
+/// The field a [`TextFault`] was found in: a decision's or a component's,
+/// a trailer of a history commit, or a `[quality]` pattern's message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextField {
     Choice,
     Reason,
+    /// One element of a decision's `alternatives`.
+    Alternative,
+    /// One element of a decision's `tags`.
+    Tag,
     Origin,
     Session,
+    /// A component's.
+    Description,
     Message,
 }
 
@@ -34,10 +51,60 @@ impl fmt::Display for TextField {
         f.write_str(match self {
             Self::Choice => "choice",
             Self::Reason => "reason",
+            Self::Alternative => "alternative",
+            Self::Tag => "tag",
             Self::Origin => "origin",
             Self::Session => "session",
+            Self::Description => "description",
             Self::Message => "message",
         })
+    }
+}
+
+/// What a field's text may be besides the character rule.
+struct Shape {
+    max: usize,
+    /// Bytes of reasoning, not counting the whitespace around it.
+    min: usize,
+    blank: Blank,
+    lines: Lines,
+}
+
+#[derive(PartialEq, Eq)]
+enum Blank {
+    Allowed,
+    Refused,
+}
+
+/// Whether a field spans lines: one that may also keeps tabs.
+#[derive(PartialEq, Eq)]
+enum Lines {
+    One,
+    Many,
+}
+
+impl TextField {
+    const fn shape(self) -> Shape {
+        let (max, min, blank, lines) = match self {
+            Self::Choice => (MAX_CHOICE_BYTES, 0, Blank::Refused, Lines::One),
+            Self::Reason => (
+                MAX_TEXT_FIELD_BYTES,
+                MIN_REASON_BYTES,
+                Blank::Refused,
+                Lines::Many,
+            ),
+            Self::Alternative => (MAX_ALTERNATIVE_BYTES, 0, Blank::Refused, Lines::One),
+            Self::Tag => (MAX_TAG_BYTES, 0, Blank::Refused, Lines::One),
+            Self::Origin | Self::Session => (MAX_TRAILER_BYTES, 0, Blank::Refused, Lines::One),
+            Self::Description => (MAX_TEXT_FIELD_BYTES, 0, Blank::Allowed, Lines::Many),
+            Self::Message => (MAX_PATTERN_MESSAGE_BYTES, 0, Blank::Refused, Lines::One),
+        };
+        Shape {
+            max,
+            min,
+            blank,
+            lines,
+        }
     }
 }
 
@@ -84,52 +151,53 @@ impl fmt::Display for TextFault {
 
 /// The first rule of `field` that `text` breaks, if any.
 pub(crate) fn fault(field: TextField, text: &str) -> Option<TextFault> {
+    let Shape {
+        max,
+        min,
+        blank,
+        lines,
+    } = field.shape();
     let len = text.len();
     let reasoning = text.trim().len();
-    let max = match field {
-        TextField::Choice => MAX_CHOICE_BYTES,
-        TextField::Reason => MAX_TEXT_FIELD_BYTES,
-        TextField::Origin | TextField::Session => MAX_TRAILER_BYTES,
-        TextField::Message => MAX_PATTERN_MESSAGE_BYTES,
-    };
-    if reasoning == 0 {
+    if reasoning == 0 && blank == Blank::Refused {
         return Some(TextFault::Blank);
     }
     if len > max {
         return Some(TextFault::TooLong { max, len });
     }
-    if field == TextField::Reason && reasoning < MIN_REASON_BYTES {
+    if reasoning < min {
         return Some(TextFault::TooShort {
-            min: MIN_REASON_BYTES,
+            min,
             len: reasoning,
         });
     }
-    find_character(field, text).or_else(|| find_tool_markup(text))
+    find_character(&lines, text).or_else(|| find_tool_markup(text))
 }
 
-fn find_character(field: TextField, text: &str) -> Option<TextFault> {
+/// The first character of `text` that no text may hold, and its byte
+/// offset: the character rule alone, a line break and a tab included.
+pub(crate) fn hidden_character(text: &str) -> Option<(char, usize)> {
     text.char_indices()
-        .find_map(|(at, found)| match (field, found) {
+        .find(|&(_, found)| character_class(found).is_some())
+        .map(|(at, found)| (found, at))
+}
+
+fn find_character(lines: &Lines, text: &str) -> Option<TextFault> {
+    text.char_indices()
+        .find_map(|(at, found)| match (lines, found) {
             // A line break in a trailer would end it and start another.
-            (
-                TextField::Choice | TextField::Origin | TextField::Session | TextField::Message,
-                '\n',
-            ) => Some(TextFault::LineBreak { at }),
-            (TextField::Reason, '\n' | '\t') => None,
-            (
-                TextField::Choice
-                | TextField::Reason
-                | TextField::Origin
-                | TextField::Session
-                | TextField::Message,
-                _,
-            ) => character_class(found).map(|_| TextFault::Character { found, at }),
+            (Lines::One, '\n') => Some(TextFault::LineBreak { at }),
+            (Lines::Many, '\n' | '\t') => None,
+            (Lines::One | Lines::Many, _) => {
+                character_class(found).map(|_| TextFault::Character { found, at })
+            }
         })
 }
 
-/// The class of a character no decision text may hold, or `None` for one
-/// it may. Line and tab are classed as controls here; a reason allows them.
-fn character_class(c: char) -> Option<&'static str> {
+/// The class of a character no text may hold, or `None` for one it may.
+/// Line and tab are classed as controls here; a text of many lines allows
+/// them.
+pub(crate) fn character_class(c: char) -> Option<&'static str> {
     match c {
         '\u{0}'..='\u{1F}' | '\u{7F}'..='\u{9F}' => Some("control character"),
         '\u{61C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => {
@@ -260,6 +328,50 @@ mod tests {
         for field in [TextField::Choice, TextField::Reason] {
             assert_eq!(fault(field, " \n\t "), Some(TextFault::Blank));
         }
+    }
+
+    /// Every field but a component's description refuses a blank text;
+    /// only a reason and a description span lines.
+    #[test]
+    fn each_field_has_its_shape() {
+        let fields = [
+            (TextField::Choice, Blank::Refused, Lines::One),
+            (TextField::Reason, Blank::Refused, Lines::Many),
+            (TextField::Alternative, Blank::Refused, Lines::One),
+            (TextField::Tag, Blank::Refused, Lines::One),
+            (TextField::Origin, Blank::Refused, Lines::One),
+            (TextField::Session, Blank::Refused, Lines::One),
+            (TextField::Description, Blank::Allowed, Lines::Many),
+            (TextField::Message, Blank::Refused, Lines::One),
+        ];
+        for (field, blank, lines) in fields {
+            let blank_fault = fault(field, " ");
+            assert_eq!(blank_fault.is_none(), blank == Blank::Allowed, "{field}");
+            let two_lines = fault(field, "Two lines of text,\nthe second as plain");
+            assert_eq!(two_lines.is_none(), lines == Lines::Many, "{field}");
+            let max = field.shape().max;
+            assert_eq!(
+                fault(field, &"x".repeat(max + 1)),
+                Some(TextFault::TooLong { max, len: max + 1 }),
+                "{field}"
+            );
+            assert_eq!(
+                fault(field, &format!("{REASON} \u{200B}")),
+                Some(TextFault::Character {
+                    found: '\u{200B}',
+                    at: REASON.len() + 1
+                }),
+                "{field}"
+            );
+            assert!(
+                matches!(
+                    fault(field, &format!("{REASON} </parameter>")),
+                    Some(TextFault::ToolMarkup { .. })
+                ),
+                "{field}"
+            );
+        }
+        assert_eq!(fault(TextField::Description, ""), None);
     }
 
     #[test]

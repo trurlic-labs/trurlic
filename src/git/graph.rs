@@ -227,6 +227,14 @@ impl Repository {
     /// [`update`]: Self::update
     fn unset_conversions(&self) -> Result<()> {
         let attributes = self.git_dir.join("info").join("attributes");
+        // Neither read nor written when it is no regular file: either one
+        // would wait on a FIFO for its other end forever.
+        match fs::metadata(&attributes) {
+            Ok(metadata) if !metadata.is_file() => {
+                return Err(Error::NotAFile { path: attributes });
+            }
+            Ok(_) | Err(_) => {}
+        }
         match fs::read(&attributes) {
             Ok(held) if held == ATTRIBUTES.as_bytes() => return Ok(()),
             Ok(_) => {}

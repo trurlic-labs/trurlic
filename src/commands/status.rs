@@ -4,10 +4,9 @@ use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::console::out;
-use crate::discovery::discover;
 use crate::mcp::twin::{self, Part, QualityCounts, Report, ToolError};
 
-use super::Format;
+use super::{Format, answer};
 
 /// `trurlic status`: the `status` tool, its section and origin given as
 /// flags, printed for a terminal or as the tool's JSON. It writes nothing,
@@ -25,17 +24,9 @@ pub(crate) fn status(
     if let Some(origin) = origin {
         arguments.insert("origin".into(), Value::from(origin));
     }
-    let store = discover(cwd)?;
-    let report = twin::status(&store, &arguments);
-    match (report, format) {
-        (Ok(report), Format::Json) => Ok(out!("{}", twin::result_json(&report))?),
-        (Ok(report), Format::Text) => Ok(print(&report, origin)?),
-        (Err(refusal), Format::Json) => {
-            out!("{}", twin::refusal_json(&refusal))?;
-            Err(refusal)
-        }
-        (Err(refusal), Format::Text) => Err(refusal),
-    }
+    answer(twin::status(cwd, &arguments), format, |report| {
+        print(report, origin)
+    })
 }
 
 fn print(report: &Report, origin: Option<&str>) -> Result<()> {

@@ -1,6 +1,6 @@
 //! The checks the ops share, each refusing with the argument at fault:
-//! a new name, the quality bar of a decision, an anchor, and an edit of a
-//! list.
+//! a new name, the quality bar of a decision, which names the argument
+//! that brought the element at fault, an anchor, and an edit of a list.
 
 use std::collections::BTreeSet;
 use std::fmt::Display;
@@ -9,7 +9,7 @@ use super::decision::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, ListEdit};
 use super::refusal::{NodeKind, Rule};
-use crate::store::quality::DecisionField;
+use crate::store::quality::{DecisionField, Place, element};
 use crate::store::schema::{Anchor, Decision};
 use crate::store::state::name_fault;
 
@@ -63,18 +63,79 @@ pub(super) fn new_name(edit: &Edit<'_>, name: &str, field: Field) -> Result<(), 
 }
 
 /// `decision` meets the bar in the fields of `held`, refused naming the
-/// decision's field at fault; the warnings join the op's.
+/// argument at fault as `sources` place it; the warnings join the op's.
 pub(super) fn bar(
     context: &mut Context<'_>,
     decision: &Decision,
     held: &[DecisionField],
+    sources: &Sources,
 ) -> Result<(), Fault> {
     let hits = context.bar.judge(decision, held).map_err(|breach| Fault {
-        field: Some(breach.place.to_string()),
+        field: Some(sources.path(decision, breach.place)),
         rule: breach.broken.into(),
     })?;
-    context.hits.extend(hits);
+    let located = hits
+        .into_iter()
+        .map(|hit| (sources.path(decision, hit.place), hit.found));
+    context.hits.extend(located);
     Ok(())
+}
+
+/// The arguments of an op that bring elements into a decision's lists,
+/// each element as the bar reads it, in the caller's order: what a verdict
+/// of the bar on one element names. An element no argument of the op
+/// brought (one the decision held already, or a merge's union) and a rule
+/// on a whole list (a count) name the decision's field alone.
+#[derive(Debug, Default)]
+pub(super) struct Sources {
+    arguments: Vec<(DecisionField, Field, Vec<String>)>,
+}
+
+impl Sources {
+    /// `elements`, given as `argument`, bring elements into `field`.
+    pub(super) fn add(&mut self, field: DecisionField, argument: Field, elements: Vec<String>) {
+        self.arguments.push((field, argument, elements));
+    }
+
+    /// The list `edit` of `field` brings in, its whole list and its
+    /// `add_*` list, each element as `render` gives it.
+    pub(super) fn add_edit<T>(
+        &mut self,
+        field: DecisionField,
+        argument: Field,
+        edit: &ListEdit<T>,
+        render: impl Fn(&T) -> String,
+    ) {
+        let (add, _) = by_element(argument);
+        for (argument, given) in [(argument, &edit.whole), (add, &edit.add)] {
+            if let Some(given) = given {
+                self.add(field, argument, given.iter().map(&render).collect());
+            }
+        }
+    }
+
+    /// The argument path of `place` in `decision`: `add_tags[0]`, or the
+    /// decision's field for a place no argument holds.
+    fn path(&self, decision: &Decision, place: Place) -> String {
+        let named = element(decision, place).and_then(|element| {
+            self.arguments
+                .iter()
+                .find_map(|(field, argument, elements)| {
+                    let at = elements.iter().position(|given| *given == element)?;
+                    (*field == place.field).then(|| format!("{}[{at}]", argument.as_str()))
+                })
+        });
+        named.unwrap_or_else(|| place.field.as_str().to_owned())
+    }
+}
+
+/// An anchor as the bar reads it: `file::symbol`, or `file`.
+pub(super) fn rendered(input: &AnchorInput) -> String {
+    match &input.symbol {
+        Some(symbol) => format!("{}::{symbol}", input.file),
+        // clone: the rendering owns its text, as a symbol's does.
+        None => input.file.clone(),
+    }
 }
 
 /// The fields of `changed` the bar reads.

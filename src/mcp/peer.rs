@@ -375,7 +375,7 @@ mod tests {
             written[1],
             json!({ "jsonrpc": "2.0", "id": "p", "result": {} })
         );
-        assert_eq!(written[2]["id"], 8);
+        assert_eq!(written[2]["id"], Value::Null);
         assert_eq!(written[2]["error"]["code"], protocol::INVALID_REQUEST);
         assert_eq!(written.len(), 3);
         let queued: Vec<Value> = std::iter::from_fn(|| client.next_queued())

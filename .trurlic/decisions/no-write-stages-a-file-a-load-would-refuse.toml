@@ -1,0 +1,25 @@
+component = "store"
+choice = "Store::prepare_write refuses canonical text over MAX_NODE_FILE_BYTES: apply names the op as file_too_large, fmt and migrate fail with CanonicalTooLarge, and nothing is written"
+reason = "A file over the cap is refused by every load, so a write that stages one leaves a graph no command can read, and apply remove cannot repair it. Every write of a graph file passes prepare_write, so the check lives there once: lists grown op by op through add_* or a merge's union, and a hand edit whose literal strings of backslashes double when fmt escapes them, are both caught before anything touches disk. apply maps the error to the refusal file_too_large, naming the op that last changed the file, its size and the cap; fmt and migrate report the typed error naming the file. A legal file whose canonical form would pass the cap still loads, stays listed as not canonical, and fmt says why it is not rewritten."
+alternatives = [
+    "Bound every stored list: rejected because the cap is on bytes, and a list bound would still let text pass it",
+    "Check in apply alone: rejected because fmt and migrate write through the same function and can stage an oversize file too",
+]
+tags = [
+    "reliability",
+    "storage",
+]
+status = "accepted"
+origin = "review findings of the stateless-server landing"
+created = "2026-11-24T05:11:14.670604818Z"
+anchors = [
+    { file = "src/error.rs", symbol = "Error::CanonicalTooLarge" },
+    { file = "src/store/access.rs", symbol = "format_refuses_a_rewrite_a_load_could_not_read" },
+    { file = "src/store/apply/mod.rs", symbol = "Writer::files" },
+    { file = "src/store/apply/refusal.rs", symbol = "Rule" },
+    { file = "src/store/apply/tests.rs", symbol = "a_batch_that_leaves_a_file_over_the_cap_is_refused_naming_its_op" },
+    { file = "src/store/commit.rs", symbol = "Store::prepare_write" },
+]
+depends_on = [
+    "a-node-file-over-1-mib-is-refused-before-it-is-parsed",
+]

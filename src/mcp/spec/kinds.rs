@@ -1,5 +1,6 @@
-//! The kinds a field can hold: each knows its JSON Schema and how a JSON
-//! value becomes it, and each bounded kind holds its limit as a field.
+//! The kinds a field can hold: each states its JSON Schema and turns a
+//! JSON value into its type, and each bounded kind holds its limit as a
+//! field.
 
 use std::marker::PhantomData;
 

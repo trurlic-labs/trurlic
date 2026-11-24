@@ -1,0 +1,23 @@
+component = "store"
+choice = "A bar verdict on one element names the argument that brought it, by its index in the caller's list; one on a whole list, a merge's union or an element held before names the field"
+reason = "The bar judges the decision an op leaves, whose tags and anchors are sorted sets, so the index of an element there is not the index the caller wrote, and a revise's add_tags element is no element of tags in the caller's batch. Each op hands the bar the arguments that bring elements into its lists (check::Sources: the record's lists, a revise's whole list and its add_* list), and a refusal or a warning on an element names the first argument that holds it and its position there, as ops[3].add_tags[0]. A fault no single argument holds, a count of the whole list, an element the decision held before the op, or a merge's union, names the decision's field without an index."
+alternatives = [
+    "Name the element by its index in the decision: rejected because a sorted set renumbers what the caller wrote",
+    "Quote the element instead of an index: rejected because an element can be long, and the argument path is what a caller fixes",
+]
+tags = [
+    "api",
+    "quality",
+]
+status = "accepted"
+origin = "review findings of the stateless-server landing"
+created = "2026-11-24T05:11:14.670604818Z"
+anchors = [
+    { file = "src/store/apply/check.rs", symbol = "Sources" },
+    { file = "src/store/apply/check.rs", symbol = "bar" },
+    { file = "src/store/apply/tests/quality.rs", symbol = "a_verdict_on_an_element_names_the_argument_that_brought_it" },
+    { file = "src/store/quality/bar.rs", symbol = "element" },
+]
+depends_on = [
+    "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",
+]

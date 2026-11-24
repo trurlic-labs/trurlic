@@ -14,6 +14,7 @@ use serde::Deserialize;
 
 use super::limits::{MAX_ANCHOR_PATH_BYTES, MAX_ANCHOR_SYMBOL_BYTES};
 use super::quality::Quality;
+use super::text::{character_class, hidden_character};
 use super::time::Timestamp;
 use super::version::FormatVersion;
 
@@ -321,10 +322,17 @@ pub enum AnchorFault {
     /// An empty or `.` segment: the path has a shorter spelling.
     Unnormalized,
     Backslash,
-    PathControl,
+    /// A character no text may hold (`store::text`), at its byte offset.
+    PathCharacter {
+        found: char,
+        at: usize,
+    },
     EmptySymbol,
     SymbolTooLong,
-    SymbolControl,
+    SymbolCharacter {
+        found: char,
+        at: usize,
+    },
 }
 
 impl fmt::Display for AnchorFault {
@@ -342,15 +350,24 @@ impl fmt::Display for AnchorFault {
                  nor end with `/`",
             ),
             Self::Backslash => f.write_str("an anchor's `file` separates segments with `/`"),
-            Self::PathControl => f.write_str("an anchor's `file` holds a control character"),
+            Self::PathCharacter { found, at } => character(f, "file", *found, *at),
             Self::EmptySymbol => f.write_str("an anchor's `symbol` is empty"),
             Self::SymbolTooLong => write!(
                 f,
                 "an anchor's `symbol` is longer than {MAX_ANCHOR_SYMBOL_BYTES} bytes"
             ),
-            Self::SymbolControl => f.write_str("an anchor's `symbol` holds a control character"),
+            Self::SymbolCharacter { found, at } => character(f, "symbol", *found, *at),
         }
     }
+}
+
+fn character(f: &mut fmt::Formatter<'_>, key: &str, found: char, at: usize) -> fmt::Result {
+    write!(
+        f,
+        "an anchor's `{key}` contains {} U+{:04X} at byte {at}",
+        character_class(found).unwrap_or("character"),
+        u32::from(found)
+    )
 }
 
 fn path_fault(file: &str) -> Option<AnchorFault> {
@@ -359,8 +376,8 @@ fn path_fault(file: &str) -> Option<AnchorFault> {
         Some(AnchorFault::EmptyPath)
     } else if file.len() > MAX_ANCHOR_PATH_BYTES {
         Some(AnchorFault::PathTooLong)
-    } else if file.chars().any(char::is_control) {
-        Some(AnchorFault::PathControl)
+    } else if let Some((found, at)) = hidden_character(file) {
+        Some(AnchorFault::PathCharacter { found, at })
     } else if file.contains('\\') {
         Some(AnchorFault::Backslash)
     } else if file.starts_with('/') || first.ends_with(':') {
@@ -383,8 +400,8 @@ fn symbol_fault(symbol: &str) -> Option<AnchorFault> {
         Some(AnchorFault::EmptySymbol)
     } else if symbol.len() > MAX_ANCHOR_SYMBOL_BYTES {
         Some(AnchorFault::SymbolTooLong)
-    } else if symbol.chars().any(char::is_control) {
-        Some(AnchorFault::SymbolControl)
+    } else if let Some((found, at)) = hidden_character(symbol) {
+        Some(AnchorFault::SymbolCharacter { found, at })
     } else {
         None
     }
@@ -510,8 +527,21 @@ created = "2025-06-01T10:30:00Z"
             ("../x.rs", AnchorFault::Traversal),
             ("src/../../x.rs", AnchorFault::Traversal),
             ("src\\x.rs", AnchorFault::Backslash),
-            ("src/\u{0}x.rs", AnchorFault::PathControl),
-            ("src/\nx.rs", AnchorFault::PathControl),
+            (
+                "src/\u{0}x.rs",
+                AnchorFault::PathCharacter { found: '\0', at: 4 },
+            ),
+            (
+                "src/\nx.rs",
+                AnchorFault::PathCharacter { found: '\n', at: 4 },
+            ),
+            (
+                "src/x\u{202E}.rs",
+                AnchorFault::PathCharacter {
+                    found: '\u{202E}',
+                    at: 5,
+                },
+            ),
             ("./src/x.rs", AnchorFault::Unnormalized),
             ("src//x.rs", AnchorFault::Unnormalized),
             ("src/", AnchorFault::Unnormalized),
@@ -529,7 +559,17 @@ created = "2025-06-01T10:30:00Z"
     fn an_anchor_symbol_is_one_non_blank_line() {
         let anchor = |symbol: &str| Anchor::new("src/a.rs".into(), Some(symbol.into()));
         assert_eq!(anchor(" "), Err(AnchorFault::EmptySymbol));
-        assert_eq!(anchor("a\nb"), Err(AnchorFault::SymbolControl));
+        assert_eq!(
+            anchor("a\nb"),
+            Err(AnchorFault::SymbolCharacter { found: '\n', at: 1 })
+        );
+        assert_eq!(
+            anchor("a\u{200B}b"),
+            Err(AnchorFault::SymbolCharacter {
+                found: '\u{200B}',
+                at: 1
+            })
+        );
         assert_eq!(
             anchor(&"s".repeat(MAX_ANCHOR_SYMBOL_BYTES + 1)),
             Err(AnchorFault::SymbolTooLong)

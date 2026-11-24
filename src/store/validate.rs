@@ -6,10 +6,10 @@
 //! rule every write commits under: a write may keep an issue the graph
 //! already had, never add one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use super::schema::{Decision, PROJECT_COMPONENT};
+use super::schema::{Decision, PROJECT_COMPONENT, Status};
 use super::state::{NameFault, NodeFile, ProjectState, name_fault};
 use super::text::{TextField, fault};
 
@@ -35,6 +35,14 @@ pub enum IssueKind {
     InvalidChoice,
     /// A reason that breaks a rule of `store::text`.
     InvalidReason,
+    /// An alternative that breaks a rule of `store::text`.
+    InvalidAlternative,
+    /// A tag that breaks a rule of `store::text`.
+    InvalidTag,
+    /// A decision's `origin` that breaks a rule of `store::text`.
+    InvalidOrigin,
+    /// A component's description that breaks a rule of `store::text`.
+    InvalidDescription,
     /// `tracked`, and no work tree holds the graph or git tracks none of
     /// its files.
     TrackedUnversioned,
@@ -50,7 +58,7 @@ pub enum IssueKind {
 }
 
 impl IssueKind {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 19] = [
         Self::NameInvalid,
         Self::NameReserved,
         Self::NameShared,
@@ -61,6 +69,10 @@ impl IssueKind {
         Self::DependsOnCycle,
         Self::InvalidChoice,
         Self::InvalidReason,
+        Self::InvalidAlternative,
+        Self::InvalidTag,
+        Self::InvalidOrigin,
+        Self::InvalidDescription,
         Self::TrackedUnversioned,
         Self::TrackedIgnored,
         Self::SharedVersioned,
@@ -82,6 +94,10 @@ impl IssueKind {
             Self::DependsOnCycle => "depends_on_cycle",
             Self::InvalidChoice => "invalid_choice",
             Self::InvalidReason => "invalid_reason",
+            Self::InvalidAlternative => "invalid_alternative",
+            Self::InvalidTag => "invalid_tag",
+            Self::InvalidOrigin => "invalid_origin",
+            Self::InvalidDescription => "invalid_description",
             Self::TrackedUnversioned => "tracked_unversioned",
             Self::TrackedIgnored => "tracked_ignored",
             Self::SharedVersioned => "shared_versioned",
@@ -118,7 +134,11 @@ impl Issue {
             | IssueKind::NameShared
             | IssueKind::ComponentMissing
             | IssueKind::InvalidChoice
-            | IssueKind::InvalidReason => subject == name,
+            | IssueKind::InvalidReason
+            | IssueKind::InvalidAlternative
+            | IssueKind::InvalidTag
+            | IssueKind::InvalidOrigin
+            | IssueKind::InvalidDescription => subject == name,
             IssueKind::ConnectionMissing | IssueKind::DependencyMissing | IssueKind::SelfEdge => {
                 let from = subject
                     .strip_prefix(name)
@@ -135,6 +155,45 @@ impl Issue {
             | IssueKind::SharedVersioned
             | IssueKind::SharedOffMain
             | IssueKind::SecondGraph => false,
+        }
+    }
+
+    /// The subject with each node name in `carried` replaced by the name it
+    /// maps to: a cycle's members sorted again, one that two names now
+    /// share listed once. A subject that is no edge of kebab-case names is
+    /// kept as it is, so a write that renames such a node is refused.
+    fn carried(&self, carried: &BTreeMap<String, String>) -> String {
+        let to = |name: &str| carried.get(name).map_or(name, String::as_str).to_owned();
+        let subject = self.subject.as_str();
+        match self.kind {
+            IssueKind::NameInvalid
+            | IssueKind::NameReserved
+            | IssueKind::NameShared
+            | IssueKind::ComponentMissing
+            | IssueKind::InvalidChoice
+            | IssueKind::InvalidReason
+            | IssueKind::InvalidAlternative
+            | IssueKind::InvalidTag
+            | IssueKind::InvalidOrigin
+            | IssueKind::InvalidDescription => to(subject),
+            IssueKind::ConnectionMissing | IssueKind::DependencyMissing | IssueKind::SelfEdge => {
+                let edge = subject.split_once(" -> ").and_then(|(from, rest)| {
+                    let (target, field) = rest.rsplit_once(" (")?;
+                    Some(format!("{} -> {} ({field}", to(from), to(target)))
+                });
+                edge.unwrap_or_else(|| subject.to_owned())
+            }
+            IssueKind::DependsOnCycle => {
+                let members: BTreeSet<String> = subject.split(", ").map(to).collect();
+                let members: Vec<String> = members.into_iter().collect();
+                members.join(", ")
+            }
+            // About the graph directory, which no write renames.
+            IssueKind::TrackedUnversioned
+            | IssueKind::TrackedIgnored
+            | IssueKind::SharedVersioned
+            | IssueKind::SharedOffMain
+            | IssueKind::SecondGraph => subject.to_owned(),
         }
     }
 }
@@ -204,9 +263,17 @@ impl ProjectState {
         }
     }
 
-    /// Each `connects_to` names a component, and not its own.
+    /// Each `connects_to` names a component, and not its own, and the
+    /// description meets `store::text`.
     fn check_components(&self, issues: &mut Vec<Issue>) {
         for (name, component) in &self.components {
+            if let Some(fault) = fault(TextField::Description, &component.description) {
+                issues.push(issue(
+                    IssueKind::InvalidDescription,
+                    name,
+                    format!("{}: `description` {fault}", component_file(name)),
+                ));
+            }
             for target in &component.connects_to {
                 let exists = target == PROJECT_COMPONENT || self.components.contains_key(target);
                 check_edge(issues, name, EdgeField::ConnectsTo, target, exists);
@@ -215,7 +282,7 @@ impl ProjectState {
     }
 
     /// Each decision's component exists, each `depends_on` names a
-    /// decision, not its own, and its choice and reason meet `store::text`.
+    /// decision, not its own, and every text it holds meets `store::text`.
     fn check_decisions(&self, issues: &mut Vec<Issue>) {
         for (name, decision) in &self.decisions {
             let component = &decision.component;
@@ -276,28 +343,83 @@ fn check_edge(issues: &mut Vec<Issue>, from: &str, field: EdgeField, to: &str, e
     }
 }
 
-/// The choice and the reason of the decision `name` against the rules every
-/// surface holds them to.
+/// Every text of the decision `name` against the rules of `store::text`:
+/// its choice, reason, alternatives, tags and origin, and the accepted
+/// text a proposed revision keeps.
 fn check_text(issues: &mut Vec<Issue>, name: &str, decision: &Decision) {
-    for (field, text, kind) in [
-        (
-            TextField::Choice,
-            &decision.choice,
-            IssueKind::InvalidChoice,
-        ),
-        (
-            TextField::Reason,
-            &decision.reason,
-            IssueKind::InvalidReason,
-        ),
-    ] {
+    let file = decision_file(name);
+    let mut check = |kind: IssueKind, field: TextField, key: &dyn fmt::Display, text: &str| {
         if let Some(fault) = fault(field, text) {
-            issues.push(issue(
-                kind,
-                name,
-                format!("{}: `{field}` {fault}", decision_file(name)),
-            ));
+            issues.push(issue(kind, name, format!("{file}: `{key}` {fault}")));
         }
+    };
+    check_prose(
+        &mut check,
+        "",
+        &decision.choice,
+        &decision.reason,
+        &decision.alternatives,
+    );
+    for (index, tag) in decision.tags.iter().enumerate() {
+        check(
+            IssueKind::InvalidTag,
+            TextField::Tag,
+            &format_args!("tags[{index}]"),
+            tag,
+        );
+    }
+    if let Some(origin) = &decision.origin {
+        check(
+            IssueKind::InvalidOrigin,
+            TextField::Origin,
+            &"origin",
+            origin,
+        );
+    }
+    if let Status::Proposed {
+        accepted_text: Some(accepted),
+    } = &decision.status
+    {
+        let (choice, reason) = (&accepted.choice, &accepted.reason);
+        check_prose(
+            &mut check,
+            "accepted_text.",
+            choice,
+            reason,
+            &accepted.alternatives,
+        );
+    }
+}
+
+/// A choice, a reason and alternatives, each key after `prefix`.
+fn check_prose(
+    check: &mut impl FnMut(IssueKind, TextField, &dyn fmt::Display, &str),
+    prefix: &str,
+    choice: &str,
+    reason: &str,
+    alternatives: &[String],
+) {
+    let (choice_kind, reason_kind) = (IssueKind::InvalidChoice, IssueKind::InvalidReason);
+    check(
+        choice_kind,
+        TextField::Choice,
+        &format_args!("{prefix}choice"),
+        choice,
+    );
+    check(
+        reason_kind,
+        TextField::Reason,
+        &format_args!("{prefix}reason"),
+        reason,
+    );
+    for (index, alternative) in alternatives.iter().enumerate() {
+        let key = &format_args!("{prefix}alternatives[{index}]");
+        check(
+            IssueKind::InvalidAlternative,
+            TextField::Alternative,
+            key,
+            alternative,
+        );
     }
 }
 
@@ -315,13 +437,24 @@ fn decision_file(name: &str) -> NodeFile {
 /// The issues of `after` that `before` does not have, matched on kind and
 /// subject: a message may change while the issue stays the same. This is
 /// the rule every write commits under: it may keep an issue the graph had,
-/// never add one.
-pub(super) fn introduced(mut after: Vec<Issue>, before: &[Issue]) -> Vec<Issue> {
-    let known: BTreeSet<(IssueKind, &str)> = before
-        .iter()
-        .map(|issue| (issue.kind, issue.subject.as_str()))
-        .collect();
-    after.retain(|issue| !known.contains(&(issue.kind, issue.subject.as_str())));
+/// never add one. `carried` maps each node a write renamed, or merged into
+/// another, to the name it has after the write, so an issue of `before`
+/// that the node keeps under its new name is not new.
+pub(super) fn introduced(
+    mut after: Vec<Issue>,
+    before: &[Issue],
+    carried: &BTreeMap<String, String>,
+) -> Vec<Issue> {
+    let mut known: BTreeMap<IssueKind, BTreeSet<String>> = BTreeMap::new();
+    for issue in before {
+        let subject = issue.carried(carried);
+        known.entry(issue.kind).or_default().insert(subject);
+    }
+    after.retain(|issue| {
+        !known
+            .get(&issue.kind)
+            .is_some_and(|subjects| subjects.contains(issue.subject.as_str()))
+    });
     after
 }
 
@@ -497,6 +630,84 @@ mod tests {
         );
     }
 
+    /// Every text a node file holds is held to `store::text`: each
+    /// alternative and tag, the origin, the accepted text a revision keeps
+    /// and a component's description, each fault naming its key.
+    #[test]
+    fn every_text_of_a_node_file_is_checked_and_named_by_its_key() {
+        use crate::store::schema::{AcceptedText, Status};
+
+        let mut state = empty_state();
+        let mut decision = sample_decision("project");
+        decision.alternatives = vec!["Fine".into(), " ".into(), "Two\nlines".into()];
+        decision.tags = ["\u{200B}".to_owned(), "ok".to_owned()].into();
+        decision.origin = Some("row\nSession: forged".into());
+        decision.status = Status::Proposed {
+            accepted_text: Some(AcceptedText {
+                choice: "\u{202E}gnis".into(),
+                reason: decision.reason.clone(),
+                alternatives: vec!["".into()],
+                via: None,
+            }),
+        };
+        state.decisions.insert("d".into(), decision);
+        let mut component = sample_component();
+        component.description = "Hidden \u{2066}text".into();
+        state.components.insert("c".into(), component);
+        // Blank and on many lines, a description is plain prose.
+        let mut plain = sample_component();
+        plain.description = "\nTwo lines\n\tand a tab".into();
+        state.components.insert("plain".into(), plain);
+
+        let messages: Vec<(IssueKind, String)> = state
+            .validate()
+            .into_iter()
+            .map(|issue| (issue.kind, issue.message))
+            .collect();
+
+        let file = "decisions/d.toml";
+        assert_eq!(
+            messages,
+            [
+                (
+                    IssueKind::InvalidChoice,
+                    format!(
+                        "{file}: `accepted_text.choice` contains bidirectional control U+202E \
+                         at byte 0"
+                    )
+                ),
+                (
+                    IssueKind::InvalidAlternative,
+                    format!("{file}: `accepted_text.alternatives[0]` is blank")
+                ),
+                (
+                    IssueKind::InvalidAlternative,
+                    format!("{file}: `alternatives[1]` is blank")
+                ),
+                (
+                    IssueKind::InvalidAlternative,
+                    format!(
+                        "{file}: `alternatives[2]` must be a single line, but breaks at byte 3"
+                    )
+                ),
+                (
+                    IssueKind::InvalidTag,
+                    format!("{file}: `tags[1]` contains zero-width character U+200B at byte 0")
+                ),
+                (
+                    IssueKind::InvalidOrigin,
+                    format!("{file}: `origin` must be a single line, but breaks at byte 3")
+                ),
+                (
+                    IssueKind::InvalidDescription,
+                    "components/c.toml: `description` contains bidirectional control U+2066 \
+                     at byte 7"
+                        .to_owned()
+                ),
+            ]
+        );
+    }
+
     fn cycle(members: &[&str]) -> Issue {
         let listed: Vec<String> = members.iter().map(|name| format!("`{name}`")).collect();
         Issue {
@@ -551,7 +762,10 @@ mod tests {
     fn a_cycle_the_graph_had_is_not_introduced() {
         let before = depends_on_state(&[("a", "b"), ("b", "a")]);
         let after = depends_on_state(&[("a", "b"), ("b", "a"), ("c", "a")]);
-        assert_eq!(introduced(after.validate(), &before.validate()), []);
+        assert_eq!(
+            introduced(after.validate(), &before.validate(), &BTreeMap::new()),
+            []
+        );
     }
 
     #[test]
@@ -559,7 +773,7 @@ mod tests {
         let before = depends_on_state(&[("a", "b"), ("b", "a")]);
         let after = depends_on_state(&[("a", "b"), ("b", "a"), ("c", "d"), ("d", "c")]);
         assert_eq!(
-            introduced(after.validate(), &before.validate()),
+            introduced(after.validate(), &before.validate(), &BTreeMap::new()),
             [cycle(&["c", "d"])]
         );
     }
@@ -569,7 +783,7 @@ mod tests {
         let before = depends_on_state(&[("a", "b"), ("b", "a")]);
         let after = depends_on_state(&[("a", "b"), ("b", "a"), ("b", "c"), ("c", "a")]);
         assert_eq!(
-            introduced(after.validate(), &before.validate()),
+            introduced(after.validate(), &before.validate(), &BTreeMap::new()),
             [cycle(&["a", "b", "c"])]
         );
     }
@@ -607,6 +821,9 @@ mod tests {
         let before = with_choice("One\nbreak");
         let after = with_choice("One more\nbreak");
         assert_ne!(before.validate(), after.validate());
-        assert_eq!(introduced(after.validate(), &before.validate()), []);
+        assert_eq!(
+            introduced(after.validate(), &before.validate(), &BTreeMap::new()),
+            []
+        );
     }
 }

@@ -1,10 +1,8 @@
 component = "discovery"
-choice = "Discovery runs git only when the walk found no graph and the first .git above is a file; a tree that holds its graph spawns no process, and discovery never runs git inside a graph"
-reason = """
-serve finds the graph on every tool call, so discovery is on the per-call path. Where the walk finds the graph (a tree with its own .trurlic, a symlinked clone) no process is spawned; measured with the release binary on WSL2, trurlic status costs the same there as in a clone, about 2.8 ms, and two git processes, about 1 ms each, are added in a linked worktree of a shared graph. Only a linked worktree can reach a graph the walk did not see, and every linked worktree has a .git file at its top, so a .git directory (a main worktree) or none needs no git; a submodule or a --separate-git-dir repository also has a .git file and costs the two processes for no graph. A directory inside a graph directory finds it in the walk before any git, and the placement facts are asked of the directory that holds the graph, so git never answers for a graph kept in a repository of its own; git::graph alone runs git there, for that repository's history. tests/integration/placement.rs runs status and serve with no git on PATH in a tree and inside its graph.
-"""
+choice = "Discovery runs git only at the top of a linked worktree or submodule where the walk found no graph, one git worktree list; a tree that holds its graph spawns no process"
+reason = "serve finds the graph on every tool call, so discovery is on the per-call path. The walk makes two metadata calls per directory, for .trurlic and .git, and spawns nothing where it finds the graph: a tree with its own .trurlic, a symlinked clone, a directory inside a graph. Only the top of a linked worktree, whose .git is a file, can be served by a graph the walk does not see, and there the directory is the work tree's top, so one git worktree list names the main worktree and no rev-parse is needed. A submodule or a separate-git-dir repository has a .git file too and pays that one process for no graph. Discovery never runs git inside a graph directory, where the graph's own repository would answer; git::graph alone runs git there."
 alternatives = [
-    "Ask git on every call: rejected because the walk already answered for every tree but a linked worktree, and a process per tool call is the cost serve should not pay",
+    "Ask git on every call: rejected because the walk already answers for every tree but a linked worktree, and a process per tool call is the cost serve should not pay",
     "Read the .git file and the commondir file directly: rejected because that reimplements git's discovery, its gitdir files, commondir and separate git directories",
     "Cache the answer between calls: rejected because no process holds state between calls, and a cached answer would miss a new or moved graph",
 ]
@@ -16,8 +14,9 @@ tags = [
 status = "proposed"
 created = "2026-11-24T03:00:00Z"
 anchors = [
-    { file = "src/discovery.rs", symbol = "shared_graph_serving" },
-    { file = "src/git.rs", symbol = "dot_git" },
+    { file = "src/discovery.rs", symbol = "discover" },
+    { file = "src/discovery.rs", symbol = "shared_graph_of" },
+    { file = "src/git.rs", symbol = "dot_git_in" },
     { file = "tests/integration/placement.rs", symbol = "discovery_runs_no_git_where_the_walk_finds_the_graph" },
 ]
 depends_on = [

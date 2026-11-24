@@ -11,7 +11,11 @@
 //!
 //! Applying is idempotent. A write whose staged file is gone was renamed
 //! already, removing a file that is gone is done, and a history commit
-//! whose files the last commit holds as they are is made already.
+//! whose files the last commit holds as they are is made already. The
+//! journal's deletion is flushed before the writer returns and releases
+//! the lock, so a journal is on disk exactly while its write is not
+//! finished: one that came back after a power loss would remove a file
+//! re-created since and commit a later hand edit as the write's.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -56,6 +60,19 @@ struct StagedWrite {
     blake3: String,
 }
 
+/// What a replay of a leftover journal did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Replayed {
+    /// No journal was left.
+    Nothing,
+    /// The write is finished: its files in place, its history commit made
+    /// when it has one, the journal gone.
+    Finished,
+    /// The write's files are in place, and its history commit could not
+    /// be made: the journal stays for the next writer.
+    HistoryWaits,
+}
+
 /// What a recovery does when the history commit of the write it finishes
 /// fails, with the write's files in place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +108,36 @@ impl Journal {
             // clone: the history step stages paths the journal keeps.
             .cloned()
             .collect()
+    }
+}
+
+/// The bytes of the file at `path`, `None` when it is gone, refused
+/// unopened when it is no regular file once its symlinks are followed:
+/// a replay reads names a stopped writer left, which anyone could have
+/// replaced since.
+fn read_if_regular(path: &Path) -> Result<Option<Vec<u8>>> {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return Err(Error::NotAFile {
+                path: path.to_path_buf(),
+            });
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(Error::Io {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    }
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(Error::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
     }
 }
 
@@ -227,12 +274,22 @@ impl Store {
                 .map_err(|e| self.pending(e))?;
             failpoint::hit(Site::HistoryCommitted);
         }
-        // Not flushed: a journal that reappears after a power loss applies
-        // again as a no-op, and its history commit is made already.
-        if let Err(e) = fs::remove_file(self.journal_path()) {
+        let journal = self.journal_path();
+        if let Err(e) = fs::remove_file(&journal) {
             diag!(
                 "warning: the write is applied, but {} remains: {e}",
-                self.journal_path().display()
+                journal.display()
+            );
+            return Ok(());
+        }
+        // Flushed under the lock: no writer or reader after this one can
+        // act before the deletion is on disk.
+        let state_dir = self.state_dir();
+        if let Err(e) = failpoint::fail(Site::Forgotten).and_then(|()| sync_dir(&state_dir)) {
+            diag!(
+                "warning: the write is applied, but the deletion of {} is not flushed: {e}; \
+                 after a power loss it would be finished again",
+                journal.display()
             );
         }
         failpoint::hit(Site::Finished);
@@ -271,33 +328,36 @@ impl Store {
     }
 
     /// Finish the write an interrupted commit left, if there is one, and
-    /// report whether there was. `pending` says what a history commit that
+    /// report what was done. `pending` says what a history commit that
     /// fails then does.
-    pub(super) fn replay_journal(&self, lock: &StoreLock, pending: PendingHistory) -> Result<bool> {
+    pub(super) fn replay_journal(
+        &self,
+        lock: &StoreLock,
+        pending: PendingHistory,
+    ) -> Result<Replayed> {
         let Some(journal) = self.read_journal()? else {
-            return Ok(false);
+            return Ok(Replayed::Nothing);
         };
         // Every path of the write, the ones renamed before the stop too.
         let paths = journal.paths();
         let unapplied = self.unapplied(journal)?;
         self.apply(&unapplied).map_err(|e| self.pending(e))?;
         match self.finish(lock, unapplied.history.as_ref(), &paths, None) {
-            Ok(()) => {}
-            Err(e) if pending == PendingHistory::Keep => diag!("warning: {e}"),
-            Err(e) => return Err(e),
+            Ok(()) => Ok(Replayed::Finished),
+            Err(e) if pending == PendingHistory::Keep => {
+                diag!("warning: {e}");
+                Ok(Replayed::HistoryWaits)
+            }
+            Err(e) => Err(e),
         }
-        Ok(true)
     }
 
     fn read_journal(&self) -> Result<Option<Journal>> {
-        let path = self.journal_path();
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(source) => return Err(Error::Io { path, source }),
+        let Some(bytes) = read_if_regular(&self.journal_path())? else {
+            return Ok(None);
         };
         let journal: Journal =
-            toml::from_str(&text).map_err(|e| self.bad_journal(e.to_string()))?;
+            toml::from_slice(&bytes).map_err(|e| self.bad_journal(e.to_string()))?;
         if let Some(path) = journal.escaping_path() {
             return Err(self.bad_journal(format!("`{}` leaves the store", path.display())));
         }
@@ -335,12 +395,7 @@ impl Store {
 
     /// The bytes of `path`, relative to the store root; `None` when it is gone.
     fn read_if_present(&self, path: &Path) -> Result<Option<Vec<u8>>> {
-        let path = self.root.join(path);
-        match fs::read(&path) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(Error::Io { path, source }),
-        }
+        read_if_regular(&self.root.join(path))
     }
 
     /// `path` relative to the store root, as the journal records it.
@@ -468,12 +523,18 @@ mod tests {
         let first = &journal.writes[0];
         fs::rename(store.root.join(&first.temp), store.root.join(&first.target)).unwrap();
 
-        assert!(store.replay_journal(&lock, PendingHistory::Fail).unwrap());
+        assert_eq!(
+            store.replay_journal(&lock, PendingHistory::Fail).unwrap(),
+            Replayed::Finished
+        );
 
         assert!(store.component_path("auth").exists());
         assert!(store.component_path("billing").exists());
         assert!(!store.has_journal().unwrap());
-        assert!(!store.replay_journal(&lock, PendingHistory::Fail).unwrap());
+        assert_eq!(
+            store.replay_journal(&lock, PendingHistory::Fail).unwrap(),
+            Replayed::Nothing
+        );
     }
 
     /// The journal of an applied commit reappears, and its temp name now
@@ -492,7 +553,10 @@ mod tests {
         let committed = fs::read(&target).unwrap();
         fs::write(store.root.join(&write.temp), "another write").unwrap();
 
-        assert!(store.replay_journal(&lock, PendingHistory::Fail).unwrap());
+        assert_eq!(
+            store.replay_journal(&lock, PendingHistory::Fail).unwrap(),
+            Replayed::Finished
+        );
 
         assert_eq!(fs::read(&target).unwrap(), committed);
         assert!(!store.has_journal().unwrap());
@@ -570,6 +634,28 @@ mod tests {
 
         assert!(!store.has_journal().unwrap());
         assert_eq!(graph_log(&store), ["reworded", "init"]);
+    }
+
+    /// A replay that puts the files in place and cannot make the history
+    /// commit says so, and keeps the journal; once the commit can be made,
+    /// the replay finishes the write.
+    #[test]
+    fn a_replay_tells_a_finished_write_from_one_whose_commit_waits() {
+        let tmp = TempDir::new().unwrap();
+        let store = shared_store(tmp.path());
+        stopped_after_its_renames(&store);
+        let index_lock = store.root().join(".git/index.lock");
+        fs::write(&index_lock, "").unwrap();
+        let lock = store.lock().unwrap();
+
+        let replayed = store.replay_journal(&lock, PendingHistory::Keep).unwrap();
+
+        assert_eq!(replayed, Replayed::HistoryWaits);
+        assert!(store.has_journal().unwrap());
+        fs::remove_file(&index_lock).unwrap();
+        let replayed = store.replay_journal(&lock, PendingHistory::Keep).unwrap();
+        assert_eq!(replayed, Replayed::Finished);
+        assert!(!store.has_journal().unwrap());
     }
 
     /// A read finds the history commit cannot be made: it sees the write's

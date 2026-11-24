@@ -13,6 +13,7 @@ use super::canonical::{Canonical, canonical};
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
 use super::history::History;
+use super::limits::MAX_NODE_FILE_BYTES;
 use super::{Store, StoreLock};
 
 /// A file write staged for batch commit.
@@ -46,7 +47,9 @@ impl Store {
     }
 
     /// The canonical text of `value` for `target`, refused before anything
-    /// touches disk unless it reads back as `value`.
+    /// touches disk unless a load reads it back as `value`: within
+    /// [`MAX_NODE_FILE_BYTES`] ([`Error::CanonicalTooLarge`]), and as the
+    /// value written. Every write of a graph file passes here.
     pub(crate) fn prepare_write<T: Canonical + DeserializeOwned + PartialEq>(
         &self,
         target: &Path,
@@ -54,6 +57,13 @@ impl Store {
     ) -> Result<PendingWrite> {
         self.verify_path(target)?;
         let content = canonical(value);
+        if content.len() > MAX_NODE_FILE_BYTES {
+            return Err(Error::CanonicalTooLarge {
+                path: target.to_path_buf(),
+                bytes: content.len(),
+                max: MAX_NODE_FILE_BYTES,
+            });
+        }
         let read_back = toml::from_str::<T>(&content).map_err(|source| Error::RoundTrip {
             path: target.to_path_buf(),
             detail: source.to_string(),

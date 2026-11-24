@@ -849,22 +849,71 @@ fn only_the_files_whose_value_changes_are_written() {
 /// The final check refuses what no op rule did: a renamed decision
 /// carries an edge a hand edit left dangling, which is an issue of a new
 /// subject.
+/// `sign` with a dangling `depends_on` and a reason below the text rule:
+/// two issues a hand edit left.
+fn with_issues(store: &Store) {
+    let mut sign = decision(store, "sign");
+    sign.depends_on.insert("gone".into());
+    sign.reason = "Too short".into();
+    write_node(store, &NodeFile::Decision("sign".into()), &sign);
+}
+
+/// An issue a node had is not new when the batch's own rename or merge
+/// carries it to the node's new name, renamed twice included.
 #[test]
-fn the_resulting_graph_adds_no_issue_and_a_refusal_names_the_op_behind_it() {
+fn a_rename_or_a_merge_carries_the_issues_a_node_had() {
     let tmp = TempDir::new().unwrap();
     let store = graph(tmp.path());
+    with_issues(&store);
+    let issues = |store: &Store| -> Vec<(IssueKind, String)> {
+        let state = store.load_state().unwrap();
+        let issues = state.validate().into_iter();
+        issues.map(|issue| (issue.kind, issue.subject)).collect()
+    };
+
+    apply(
+        &store,
+        vec![
+            Op::Rename(rename("sign", "signing")),
+            Op::Rename(rename("signing", "sign-tokens")),
+        ],
+    )
+    .unwrap();
+    let merge = Merge {
+        survivor: "rotate".into(),
+        absorbed: "sign-tokens".into(),
+    };
+    apply(&store, vec![Op::Merge(merge)]).unwrap();
+
+    assert_eq!(
+        issues(&store),
+        [(
+            IssueKind::DependencyMissing,
+            "rotate -> gone (depends_on)".to_owned()
+        )]
+    );
+}
+
+/// A rename carries the node's issues, not the license to add one: `sign`
+/// depends on a `sign-tokens` that does not exist, and renaming it to that
+/// name makes the edge a self-edge, which is new.
+#[test]
+fn a_new_issue_under_a_rename_is_refused_naming_its_op() {
+    let tmp = TempDir::new().unwrap();
+    let store = graph(tmp.path());
+    with_issues(&store);
     let mut sign = decision(&store, "sign");
-    sign.depends_on.insert("gone".into());
+    sign.depends_on.insert("sign-tokens".into());
     write_node(&store, &NodeFile::Decision("sign".into()), &sign);
     let ops = vec![
-        Op::Rename(rename("sign", "sign-tokens")),
         Op::Record(record("new", "auth")),
+        Op::Rename(rename("sign", "sign-tokens")),
     ];
 
     let refusal = refused(&store, ops);
 
-    assert_eq!(refusal.op.as_ref().unwrap().index, 0);
-    assert_eq!(refusal.rule.as_str(), "dependency_missing");
+    assert_eq!(refusal.op.as_ref().unwrap().index, 1);
+    assert_eq!(refusal.rule.as_str(), "self_edge");
     assert!(
         refusal
             .to_string()
@@ -942,3 +991,70 @@ fn a_batch_is_one_history_commit_of_its_files() {
 }
 
 mod quality;
+
+/// Lists grown op by op pass the cap a load reads: the batch is refused
+/// naming the op that last changed the file, its size and the cap, and
+/// nothing is written.
+#[test]
+fn a_batch_that_leaves_a_file_over_the_cap_is_refused_naming_its_op() {
+    use crate::store::limits::{MAX_ANCHOR_PATH_BYTES, MAX_LIST_ITEMS, MAX_NODE_FILE_BYTES};
+
+    let tmp = TempDir::new().unwrap();
+    let store = graph(tmp.path());
+    let mut ops = vec![Op::Record(record("new", "project"))];
+    for op in 0..25 {
+        let mut grown = revise("sign");
+        grown.anchors = ListEdit {
+            add: Some(
+                (0..MAX_LIST_ITEMS)
+                    .map(|n| {
+                        let file =
+                            format!("{op:03}{n:0>width$}", width = MAX_ANCHOR_PATH_BYTES - 3);
+                        anchor(&file, None)
+                    })
+                    .collect(),
+            ),
+            ..ListEdit::keep()
+        };
+        ops.push(Op::Revise(grown));
+    }
+
+    let refusal = refused(&store, ops);
+
+    let Rule::FileTooLarge { file, bytes, max } = &refusal.rule else {
+        panic!("{refusal}");
+    };
+    assert_eq!(*file, NodeFile::Decision("sign".into()));
+    assert!(*bytes > MAX_NODE_FILE_BYTES, "{bytes}");
+    assert_eq!(*max, MAX_NODE_FILE_BYTES);
+    assert_eq!(refusal.op.as_ref().unwrap().index, 25);
+    assert_eq!(refusal.path(), "ops[25]");
+    assert!(
+        refusal
+            .to_string()
+            .contains("leaves `decisions/sign.toml` at "),
+        "{refusal}"
+    );
+    store.load_state().unwrap();
+}
+
+/// A component's description is held to the text rule where an op gives
+/// it; a blank one is plain prose.
+#[test]
+fn a_description_with_a_hidden_character_is_refused_naming_it() {
+    let tmp = TempDir::new().unwrap();
+    let store = graph(tmp.path());
+    let add = |description: &str| {
+        Op::AddComponent(AddComponent {
+            name: "ledger".into(),
+            description: description.into(),
+            connects_to: Vec::new(),
+        })
+    };
+
+    let refusal = refused(&store, vec![add("Books \u{202E}skoob")]);
+
+    assert_eq!(named(&refusal).1, "ops[0].description", "{refusal}");
+    assert_eq!(refusal.rule.as_str(), "invalid_text");
+    apply(&store, vec![add("")]).unwrap();
+}

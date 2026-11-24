@@ -9,7 +9,7 @@ use std::fmt;
 use serde::Deserialize;
 
 use super::DecisionField;
-use crate::store::limits::{MAX_PATTERN_BYTES, MAX_QUALITY_PATTERNS};
+use crate::store::limits::{MAX_PATTERN_BYTES, MAX_QUALITY_PATTERNS, MAX_WARN_MESSAGES_BYTES};
 use crate::store::text::{TextFault, TextField, fault};
 
 /// The project's quality bar beyond the built-in rules. The default, an
@@ -120,6 +120,11 @@ pub enum ConfigFault {
         index: usize,
         fault: TextFault,
     },
+    /// The messages of the `warn` patterns take `bytes` together, as a
+    /// JSON string writes them, over [`MAX_WARN_MESSAGES_BYTES`].
+    WarnMessagesTooLong {
+        bytes: usize,
+    },
 }
 
 impl fmt::Display for ConfigFault {
@@ -153,6 +158,12 @@ impl fmt::Display for ConfigFault {
             Self::Message { index, fault } => {
                 write!(f, "`[quality] patterns[{index}].message` {fault}")
             }
+            Self::WarnMessagesTooLong { bytes } => write!(
+                f,
+                "the messages of the `warn` patterns take {bytes} bytes together, counting a \
+                 `\"` or a `\\` twice, over the limit of {MAX_WARN_MESSAGES_BYTES}: an `apply` \
+                 result carries each one it names"
+            ),
         }
     }
 }
@@ -185,6 +196,14 @@ impl TryFrom<QualityFields> for Quality {
         for (index, pattern) in fields.patterns.iter().enumerate() {
             pattern_fault(index, pattern).map_or(Ok(()), Err)?;
         }
+        let warned = fields
+            .patterns
+            .iter()
+            .filter(|pattern| pattern.level == Level::Warn);
+        let bytes = warned.map(|pattern| escaped_len(&pattern.message)).sum();
+        if bytes > MAX_WARN_MESSAGES_BYTES {
+            return Err(ConfigFault::WarnMessagesTooLong { bytes });
+        }
         Ok(Self {
             reason_words: fields.reason_words,
             alternatives_max: fields.alternatives_max,
@@ -194,6 +213,16 @@ impl TryFrom<QualityFields> for Quality {
             patterns: fields.patterns,
         })
     }
+}
+
+/// Bytes of `message` in a JSON string: each `"` and `\\` escaped. The
+/// text rule of a message refuses every control character, which JSON
+/// writes longer.
+fn escaped_len(message: &str) -> usize {
+    let escaped = message
+        .bytes()
+        .filter(|&byte| byte == b'"' || byte == b'\\');
+    message.len() + escaped.count()
 }
 
 fn pattern_fault(index: usize, pattern: &Pattern) -> Option<ConfigFault> {
@@ -312,5 +341,25 @@ mod tests {
         }
         let at_limits = format!("[[patterns]]\n{PATTERN}").repeat(MAX_QUALITY_PATTERNS);
         assert!(quality(&at_limits).is_ok());
+    }
+
+    /// The `warn` messages together, a quote counted twice, fit the bound
+    /// an `apply` result's budget sets; a `refuse` message does not count.
+    #[test]
+    fn the_warn_messages_together_are_bounded() {
+        let warn = |message: &str| PATTERN.replace("\"M\"", &format!("'{message}'"));
+        // Messages of 192 quotes, 384 bytes escaped each.
+        let quotes = "\"".repeat(192);
+        let fits = format!("[[patterns]]\n{}", warn(&quotes)).repeat(MAX_WARN_MESSAGES_BYTES / 384);
+        assert!(quality(&fits).is_ok());
+        let over = format!("{fits}[[patterns]]\n{}", warn("x"));
+        let err = quality(&over).unwrap_err();
+        let said = format!("take {} bytes together", MAX_WARN_MESSAGES_BYTES + 1);
+        assert!(err.message().contains(&said), "{err}");
+        let refusing = format!(
+            "{fits}[[patterns]]\n{}",
+            warn("x").replace("warn", "refuse")
+        );
+        assert!(quality(&refusing).is_ok());
     }
 }

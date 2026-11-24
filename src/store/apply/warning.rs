@@ -1,22 +1,27 @@
 //! What a batch that went through reports beside its ops: the matches of
-//! the `warn` patterns, each located as a refusal is, so a later kind of
-//! warning takes the same shape.
+//! the `warn` patterns, each naming the argument it is about as a refusal
+//! does and the pattern by its index, whose message the result carries
+//! once. An op lists at most [`MAX_WARNINGS_PER_OP`] and counts the rest,
+//! and so does the batch's `origin`, so a full batch's result fits its
+//! budget whatever its warnings.
 
-use std::fmt;
+use std::collections::BTreeSet;
 
-use super::refusal::{OpAt, located, path};
-use crate::store::quality::Hit;
+use crate::store::limits::MAX_WARNINGS_PER_OP;
+use crate::store::quality::{Bar, PatternMatch};
 
 /// A warning of an applied batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Warning {
-    /// The op it is about; `None` for the batch's own `origin`.
-    pub op: Option<OpAt>,
+    /// The index of the op it is about; `None` for the batch's `origin`.
+    pub op: Option<usize>,
     /// The argument path, as a refusal's: `ops[2].reason`, `origin`.
-    pub field: Option<String>,
+    pub field: String,
     pub kind: WarningKind,
-    /// What it says, the op and the field first, as a refusal's message.
-    pub message: String,
+    /// The index of the pattern in `[quality] patterns`.
+    pub pattern: usize,
+    /// The byte offset of the match in the argument's text.
+    pub at: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,34 +41,45 @@ impl WarningKind {
     }
 }
 
-impl Warning {
-    /// The warning of `hit`, a match within the op `op` or the batch.
-    pub(super) fn of(op: Option<OpAt>, hit: &Hit) -> Self {
-        let place = hit.place.to_string();
-        let message = Message {
-            op: op.as_ref(),
-            field: &place,
-            hit,
-        }
-        .to_string();
-        Self {
-            field: path(op.as_ref(), Some(&place)),
-            op,
-            kind: WarningKind::Pattern,
-            message,
-        }
-    }
+/// The message of a pattern a listed warning names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternNote {
+    /// The index of the pattern in `[quality] patterns`.
+    pub index: usize,
+    pub message: String,
 }
 
-struct Message<'h> {
-    op: Option<&'h OpAt>,
-    field: &'h str,
-    hit: &'h Hit,
+/// Move the first [`MAX_WARNINGS_PER_OP`] of `hits`, the warn matches of
+/// the op at `op` (or of the batch's `origin`, for `None`) in the order of
+/// the patterns, to `warnings`; the count of the others.
+pub(super) fn report(
+    op: Option<usize>,
+    hits: &mut Vec<(String, PatternMatch)>,
+    warnings: &mut Vec<Warning>,
+) -> usize {
+    let count = hits.len();
+    let listed = hits.drain(..).take(MAX_WARNINGS_PER_OP);
+    warnings.extend(listed.map(|(field, found)| Warning {
+        field: match op {
+            Some(index) => format!("ops[{index}].{field}"),
+            None => field,
+        },
+        op,
+        kind: WarningKind::Pattern,
+        pattern: found.index,
+        at: found.at,
+    }));
+    count.saturating_sub(MAX_WARNINGS_PER_OP)
 }
 
-impl fmt::Display for Message<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        located(f, self.op, Some(self.field))?;
-        write!(f, "{}", self.hit.found)
-    }
+/// The message of each pattern `warnings` names, by index.
+pub(super) fn notes(warnings: &[Warning], bar: &Bar) -> Vec<PatternNote> {
+    let named: BTreeSet<usize> = warnings.iter().map(|warning| warning.pattern).collect();
+    named
+        .into_iter()
+        .filter_map(|index| {
+            let message = bar.message(index)?.to_owned();
+            Some(PatternNote { index, message })
+        })
+        .collect()
 }

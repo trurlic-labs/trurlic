@@ -127,16 +127,25 @@ pub(crate) enum DotGit {
 pub(crate) fn dot_git(dir: &Path) -> Result<DotGit> {
     let dir = dir.canonicalize().map_err(Error::io(dir))?;
     for ancestor in dir.ancestors() {
-        let path = ancestor.join(".git");
-        match fs::metadata(&path) {
-            Ok(metadata) if metadata.is_dir() => return Ok(DotGit::Directory),
-            Ok(_) => return Ok(DotGit::File),
-            // A dangling symlink is no `.git` to git either.
-            Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(source) => return Err(Error::Io { path, source }),
+        match dot_git_in(ancestor)? {
+            DotGit::Absent => {}
+            found @ (DotGit::Directory | DotGit::File) => return Ok(found),
         }
     }
     Ok(DotGit::Absent)
+}
+
+/// The `.git` in `dir` itself, symlinks followed: one metadata call, no
+/// process.
+pub(crate) fn dot_git_in(dir: &Path) -> Result<DotGit> {
+    let path = dir.join(".git");
+    match fs::metadata(&path) {
+        Ok(metadata) if metadata.is_dir() => Ok(DotGit::Directory),
+        Ok(_) => Ok(DotGit::File),
+        // A dangling symlink is no `.git` to git either.
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(DotGit::Absent),
+        Err(source) => Err(Error::Io { path, source }),
+    }
 }
 
 /// The top of the work tree that holds `dir`, or `None` when no work tree

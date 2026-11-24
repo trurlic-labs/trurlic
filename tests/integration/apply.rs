@@ -335,23 +335,19 @@ fn the_quality_table_holds_both_surfaces_alike() {
     let warned =
         |name: &str| json!({ "origin": "row 1", "ops": [record(name, "project", "Rule zz")] });
     let result = client.call_tool("apply", warned("zz-one"));
-    let said = |name: &str| {
-        format!(
-            "ops[0] (record `{name}`), `choice`: matches `[quality] patterns[0]` at byte 5 (`zz`): No zz."
-        )
-    };
     assert_eq!(
-        result["warnings"],
-        json!([{
-            "op": { "index": 0, "op": "record", "name": "zz-one" },
-            "field": "ops[0].choice", "rule": "pattern", "message": said("zz-one"),
-        }])
+        (&result["warnings"], &result["patterns"]),
+        (
+            &json!([{ "field": "ops[0].choice", "rule": "pattern", "pattern": 0, "at": 5 }]),
+            &json!([{ "index": 0, "message": "No zz." }])
+        )
     );
     let output = project.apply(&warned("zz-two"), &[]);
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        format!("warning: {}\n", said("zz-two"))
+        "warning: record `zz-two`, `ops[0].choice`: matches `[quality] patterns[0]` at \
+         byte 5: No zz.\n"
     );
     let status = String::from_utf8(project.run_ok(&["status"]).stdout).unwrap();
     assert!(
@@ -369,4 +365,79 @@ fn the_quality_table_holds_both_surfaces_alike() {
     project.run_ok(&["status"]);
     let refusal = client.call_tool_refusal("apply", warned("zz-three"));
     assert_eq!(refusal["kind"], "store_error", "{refusal}");
+}
+
+/// Every refusal of a twin is the tool's refusal JSON on stdout under
+/// `--json`, a failed discovery's included, as the MCP call answers it.
+#[test]
+fn a_twin_refuses_a_store_it_cannot_find_as_the_call_does() {
+    let batch = json!({ "ops": [{ "op": "remove", "name": "gone" }] });
+    /// What makes the project's directory hold no store it can read.
+    type Breaks = fn(&Project);
+    let cases: [(&str, Breaks, &str); 4] = [
+        ("no store", |_| {}, "no_project"),
+        (
+            "dangling symlink",
+            |project| std::os::unix::fs::symlink("gone", project.path().join(".trurlic")).unwrap(),
+            "store_error",
+        ),
+        (
+            ".trurlic a file",
+            |project| std::fs::write(project.path().join(".trurlic"), "").unwrap(),
+            "store_error",
+        ),
+        (
+            "old format",
+            |project| {
+                std::fs::create_dir_all(project.path().join(".trurlic")).unwrap();
+                project.write("project.toml", "version = \"0.3.0\"\nname = \"old\"\n");
+            },
+            "unsupported_format",
+        ),
+    ];
+    for (case, make, kind) in cases {
+        let project = Project::without_store();
+        make(&project);
+        let (mut client, _) = McpClient::connect(&project);
+        let file = project.path().join("batch.json");
+        std::fs::write(&file, batch.to_string()).unwrap();
+        for (tool, arguments, args) in [
+            ("status", json!({}), vec!["status", "--json"]),
+            (
+                "apply",
+                batch.clone(),
+                vec!["apply", file.to_str().unwrap(), "--json"],
+            ),
+        ] {
+            let call = client.call_tool_refusal(tool, arguments);
+            let output = project.command().args(&args).output().unwrap();
+            assert_eq!(output.status.code(), Some(1), "{case}: {output:?}");
+            let refusal: Value = serde_json::from_slice(&output.stdout)
+                .unwrap_or_else(|e| panic!("{case}: {tool}: {e}: {output:?}"));
+            assert_eq!(refusal, json!({ "error": call }), "{case}: {tool}");
+            assert_eq!(refusal["error"]["kind"], kind, "{case}: {tool}");
+        }
+    }
+}
+
+/// A batch file that cannot be read holds no batch: the refusal is the
+/// document's, the kind a batch over its size gets.
+#[test]
+fn a_batch_file_that_cannot_be_read_is_a_bad_document() {
+    let project = Project::init();
+    for missing in ["absent.json", "."] {
+        let output = project
+            .command()
+            .args(["apply", missing, "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let refusal: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(refusal["error"]["kind"], "invalid_argument", "{refusal}");
+        let message = refusal["error"]["message"].as_str().unwrap();
+        assert!(
+            message.starts_with(&format!("{missing}: cannot read the batch")),
+            "{message}"
+        );
+    }
 }

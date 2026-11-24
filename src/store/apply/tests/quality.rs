@@ -14,7 +14,7 @@ use crate::store::canonical::canonical;
 use crate::store::schema::Anchor;
 use crate::store::state::NodeFile;
 use crate::store::testing::{sample_decision, write_node};
-use crate::store::{ListEdit, Store, Warning, WarningKind};
+use crate::store::{ListEdit, PatternNote, Store, Warning, WarningKind};
 
 /// `table` appended to `project.toml` as its `[quality]`.
 fn with_quality(store: &Store, table: &str) {
@@ -270,11 +270,22 @@ fn a_pattern_matches_only_its_fields_at_its_level() {
             panic!("{field}: {:?}", applied.warnings)
         };
         assert_eq!(
-            (warning.field.as_deref(), warning.kind),
-            (Some(path), WarningKind::Pattern)
+            (
+                warning.field.as_str(),
+                warning.kind,
+                warning.pattern,
+                warning.at
+            ),
+            (path, WarningKind::Pattern, 0, at)
         );
         assert_eq!(warning.op.is_some(), field != "origin");
-        assert!(warning.message.ends_with(&said), "{}", warning.message);
+        assert_eq!(
+            applied.patterns,
+            [PatternNote {
+                index: 0,
+                message: "No zz.".into()
+            }]
+        );
 
         let tmp = TempDir::new().unwrap();
         let (store, ops) = under_pattern(&tmp, field, "refuse");
@@ -446,24 +457,184 @@ fn a_warn_pattern_warns_once_per_op_at_its_first_match() {
 
     let applied = apply(&store, ops).unwrap();
 
-    let warnings: Vec<(&str, Option<&str>)> = applied
+    let warnings: Vec<(Option<usize>, &str, usize, usize)> = applied
         .warnings
         .iter()
-        .map(|warning: &Warning| (warning.message.as_str(), warning.field.as_deref()))
+        .map(|warning: &Warning| {
+            let Warning {
+                op,
+                field,
+                pattern,
+                at,
+                ..
+            } = warning;
+            (*op, field.as_str(), *pattern, *at)
+        })
         .collect();
     assert_eq!(
         warnings,
         [
-            (
-                "ops[0] (record `expire`), `choice`: matches `[quality] patterns[0]` at byte 7 \
-                 (`zz`): No zz.",
-                Some("ops[0].choice")
-            ),
-            (
-                "ops[1] (record `second`), `reason`: matches `[quality] patterns[0]` at byte 9 \
-                 (`zz`): No zz.",
-                Some("ops[1].reason")
-            ),
+            (Some(0), "ops[0].choice", 0, 7),
+            (Some(1), "ops[1].reason", 0, 9)
         ]
+    );
+    assert_eq!(applied.patterns.len(), 1);
+    assert_eq!(applied.ops[1].more_warnings, 0);
+}
+
+/// `tags` holding `zz`, written to the decision `name` by hand.
+fn tagged_zz(store: &Store, name: &str) {
+    let mut decision = store.load_state().unwrap().decisions.remove(name).unwrap();
+    decision.tags.insert("zz".into());
+    write_node(store, &NodeFile::Decision(name.into()), &decision);
+}
+
+/// A verdict of the bar on one element names the argument that brought
+/// it and its index there, in every list field and in each form (a
+/// record's list, a revise's whole list and its `add_*` list), whatever
+/// the element's place in the decision's sorted set; an element no
+/// argument brought (one held before, a merge's union) names the field.
+/// A `refuse` and a `warn` pattern name it alike.
+#[test]
+fn a_verdict_on_an_element_names_the_argument_that_brought_it() {
+    let strings = |items: &[&str]| -> Vec<String> { items.iter().map(|&i| i.into()).collect() };
+    let files = |items: &[&str]| -> Vec<_> { items.iter().map(|&f| anchor(f, None)).collect() };
+    let revised = |change: &dyn Fn(&mut crate::store::Revise)| {
+        let mut op = revise("sign");
+        change(&mut op);
+        vec![Op::Revise(op)]
+    };
+    let whole = |items: Vec<String>| ListEdit {
+        whole: Some(items),
+        ..ListEdit::keep()
+    };
+    let added = |items: Vec<String>| ListEdit {
+        add: Some(items),
+        ..ListEdit::keep()
+    };
+    let before_twice = |op: &mut crate::store::Revise| {
+        op.alternatives = whole(strings(&["Old way"]));
+    };
+    /// What a case writes to the graph before its batch.
+    type Setup = fn(&Store);
+    let mut cases: Vec<(&str, Setup, Vec<Op>, &str)> = vec![
+        (
+            "alternatives",
+            |_| {},
+            expire(|op| op.alternatives = strings(&["Plain way", "Other zz way"])),
+            "ops[0].alternatives[1]",
+        ),
+        (
+            "tags",
+            |_| {},
+            expire(|op| op.tags = strings(&["zz", "aa"])),
+            "ops[0].tags[0]",
+        ),
+        (
+            "anchors",
+            |_| {},
+            expire(|op| op.anchors = files(&["src/zz.rs", "src/a.rs"])),
+            "ops[0].anchors[0]",
+        ),
+        (
+            "alternatives",
+            |_| {},
+            revised(&|op| op.alternatives = whole(strings(&["Plain way", "zz way"]))),
+            "ops[0].alternatives[1]",
+        ),
+        (
+            "tags",
+            |_| {},
+            revised(&|op| op.tags = whole(strings(&["zz", "aa"]))),
+            "ops[0].tags[0]",
+        ),
+        (
+            "tags",
+            |_| {},
+            revised(&|op| op.tags = added(strings(&["zz", "aa"]))),
+            "ops[0].add_tags[0]",
+        ),
+        (
+            "anchors",
+            |_| {},
+            revised(&|op| {
+                op.anchors = ListEdit {
+                    whole: Some(files(&["src/zz.rs", "src/a.rs"])),
+                    ..ListEdit::keep()
+                }
+            }),
+            "ops[0].anchors[0]",
+        ),
+        (
+            "anchors",
+            |_| {},
+            revised(&|op| {
+                op.anchors = ListEdit {
+                    add: Some(files(&["src/zz.rs", "src/a.rs"])),
+                    ..ListEdit::keep()
+                }
+            }),
+            "ops[0].add_anchors[0]",
+        ),
+        (
+            "tags",
+            |store| tagged_zz(store, "sign"),
+            revised(&|op| op.tags = added(strings(&["aa"]))),
+            "ops[0].tags",
+        ),
+        (
+            "tags",
+            |store| tagged_zz(store, "rotate"),
+            vec![Op::Merge(Merge {
+                survivor: "audit".into(),
+                absorbed: "rotate".into(),
+            })],
+            "ops[0].tags",
+        ),
+    ];
+    let mut twice = revised(&before_twice);
+    twice.extend(revised(&|op| {
+        op.alternatives = added(strings(&["Plain", "zz way"]));
+    }));
+    cases.push(("alternatives", |_| {}, twice, "ops[1].add_alternatives[1]"));
+    for (field, setup, ops, path) in cases {
+        for level in ["refuse", "warn"] {
+            let tmp = TempDir::new().unwrap();
+            let (store, _) = under_pattern(&tmp, field, level);
+            setup(&store);
+            let outcome = store
+                .begin_write()
+                .unwrap()
+                .apply(with_origin(ops.clone(), "row"));
+            let named = match outcome {
+                Err(Error::Refused(refusal)) => refusal.path(),
+                Ok(applied) => applied.warnings[0].field.clone(),
+                Err(e) => panic!("{field} {path}: {e}"),
+            };
+            assert_eq!(named, path, "{field} at {level}");
+        }
+    }
+}
+
+/// A text rule on an element names the argument too: a blank tag added.
+#[test]
+fn a_text_fault_in_an_element_names_its_argument() {
+    let tmp = TempDir::new().unwrap();
+    let store = store_under(&tmp, None);
+    let mut op = revise("sign");
+    op.tags = super::add(&["zz", " "]);
+
+    let err = apply(&store, vec![Op::Revise(op)]).unwrap_err();
+
+    let Error::Refused(refusal) = err else {
+        panic!("{err}")
+    };
+    assert_eq!(
+        named(&refusal),
+        (
+            "invalid_text",
+            "ops[0].add_tags[1]".to_owned(),
+            "ops[0] (revise `sign`), `add_tags[1]`: is blank".to_owned()
+        )
     );
 }

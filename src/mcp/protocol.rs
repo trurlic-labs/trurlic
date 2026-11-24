@@ -3,8 +3,10 @@
 //! answer.
 //!
 //! Every line the client sends gets at most one answer: a request one
-//! response, a line that is no message one error (carrying the `id` when
-//! one can be read), a notification or a response none. A line longer
+//! response, a line that is no message one error (carrying the `id` of a
+//! line with a `method` when one can be read; a line without one would be
+//! a response, whose `id` is the server's), a notification or a response
+//! none. A line longer
 //! than [`MAX_MESSAGE_BYTES`] is read to its end and discarded whole, so
 //! its tail is never taken for a message of its own.
 
@@ -186,13 +188,17 @@ fn classify(message: Value) -> Result<Message, Malformed> {
         Some(id) if id.is_string() || id.is_i64() || id.is_u64() => Id::Valid(id),
         Some(_) => Id::Invalid,
     };
+    let method = object.remove("method");
     if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-        return Err(Malformed::invalid(
-            id.into_reply(),
-            "`jsonrpc` must be \"2.0\"",
-        ));
+        // A line without `method` is no request: its `id` is from the
+        // server's own id space, so the error carries `null`.
+        let reply = match method {
+            Some(_) => id.into_reply(),
+            None => Value::Null,
+        };
+        return Err(Malformed::invalid(reply, "`jsonrpc` must be \"2.0\""));
     }
-    match object.remove("method") {
+    match method {
         Some(method) => classify_call(method, object.remove("params"), id),
         None => classify_response(object, id),
     }
@@ -225,19 +231,19 @@ fn classify_call(method: Value, params: Option<Value>, id: Id) -> Result<Message
     }
 }
 
+/// A line without `method`, read as a response. Its `id` is one of the
+/// server's own, so every error answering a malformed one carries `null`.
 fn classify_response(mut object: Map<String, Value>, id: Id) -> Result<Message, Malformed> {
     let outcome = match (object.remove("result"), object.remove("error")) {
         (Some(result), None) => Some(Ok(result)),
         (None, Some(error)) => rpc_error(&error).map(Err),
         (Some(_), Some(_)) | (None, None) => {
             return Err(Malformed::invalid(
-                id.into_reply(),
+                Value::Null,
                 "a message needs a `method`, or exactly one of `result` and `error`",
             ));
         }
     };
-    // The `id` of a response is one of the server's own, so an error
-    // answering a malformed one carries `null`.
     let (Id::Valid(id), Some(outcome)) = (id, outcome) else {
         return Err(Malformed::invalid(
             Value::Null,
@@ -398,11 +404,14 @@ mod tests {
     }
 
     /// Each malformed shape is answered `-32600`, with the line's `id`
-    /// whenever it is a string or an integer.
+    /// when it is a string or an integer and the line has a `method`: a
+    /// line without one is no request, and its `id` is the server's.
     #[test]
     fn a_malformed_message_is_an_invalid_request_with_its_id_recovered() {
         let cases = [
-            (r#"{"jsonrpc":"2.0","id":7}"#, json!(7)),
+            (r#"{"jsonrpc":"2.0","id":7}"#, Value::Null),
+            (r#"{"jsonrpc":"1.0","id":7,"result":{}}"#, Value::Null),
+            (r#"{"id":7,"error":{"code":1,"message":"m"}}"#, Value::Null),
             (r#"{"jsonrpc":"1.0","id":"a","method":"ping"}"#, json!("a")),
             (r#"{"id":8,"method":"ping"}"#, json!(8)),
             (r#"{"jsonrpc":"2.0","id":9,"method":5}"#, json!(9)),
@@ -412,7 +421,7 @@ mod tests {
             ),
             (
                 r#"{"jsonrpc":"2.0","id":11,"result":1,"error":{}}"#,
-                json!(11),
+                Value::Null,
             ),
             (
                 r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#,

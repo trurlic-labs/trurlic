@@ -1,0 +1,23 @@
+component = "store"
+choice = "No new errors matches an issue the graph began with under the names the batch's renames and merges gave its nodes, so a node's issues move with it and a new one is still refused"
+reason = "An issue's subject holds the names of its nodes, so renaming or merging a decision with a dangling depends_on or a short reason changed the subject, and the issue it always had counted as new: no batch could rename or merge such a decision. Edit::carry records each node of the starting graph a rename or a merge carried to another name, twice renamed included, and validate::introduced rewrites the subjects of the starting issues through that map, a cycle's members sorted again, before it compares. The rule itself is unchanged: a batch that adds a real issue under cover of a rename, such as a self-edge the new name closes, is refused naming its op."
+alternatives = [
+    "Compare issues by kind alone for renamed nodes: rejected because a rename could then hide a new issue of an old kind",
+    "Exempt renames and merges from the comparison: rejected because the rule would no longer hold for every write",
+]
+tags = [
+    "validation",
+]
+status = "accepted"
+origin = "review findings of the stateless-server landing"
+created = "2026-11-24T05:11:14.670604818Z"
+anchors = [
+    { file = "src/store/apply/edit.rs", symbol = "Edit::carry" },
+    { file = "src/store/apply/tests.rs", symbol = "a_new_issue_under_a_rename_is_refused_naming_its_op" },
+    { file = "src/store/apply/tests.rs", symbol = "a_rename_or_a_merge_carries_the_issues_a_node_had" },
+    { file = "src/store/validate.rs", symbol = "Issue::carried" },
+    { file = "src/store/validate.rs", symbol = "introduced" },
+]
+depends_on = [
+    "validation-issues-carry-an-issuekind-and-a-subject-and",
+]

@@ -134,7 +134,12 @@ pub fn has_control_chars(s: &str) -> bool {
 
 // -- Directory listing --------------------------------------------------------
 
-/// The stems of the `.toml` files in `dir`, sorted; none when `dir` is gone.
+/// The stems of the node files in `dir`, sorted; none when `dir` is gone.
+/// A node file is every entry whose name ends in `.toml`, as the history's
+/// pathspecs match them, so none is skipped: a name that is not UTF-8 is
+/// [`Error::NodeFileName`]. A stem that is no node name is listed, and
+/// validation reports it; an entry that is no regular file is refused by
+/// the read of it (`load::read_node_bytes`), which runs in parallel.
 pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -149,14 +154,31 @@ pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
 
     let mut names = Vec::new();
     for entry in entries {
-        let path = entry.map_err(Error::io(dir))?.path();
-        let is_toml = path.extension().is_some_and(|ext| ext == "toml");
-        if is_toml && let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            names.push(stem.to_string());
+        let entry = entry.map_err(Error::io(dir))?;
+        let name = entry.file_name();
+        if !name.as_encoded_bytes().ends_with(b".toml") {
+            continue;
         }
+        let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".toml")) else {
+            return Err(Error::NodeFileName { path: entry.path() });
+        };
+        names.push(stem.to_owned());
     }
     names.sort_unstable();
     Ok(names)
+}
+
+/// Refuse `path` unless it is a regular file once its symlinks are
+/// followed: checked before it is opened, so a FIFO never blocks a read.
+pub(super) fn ensure_regular(path: &Path) -> Result<()> {
+    let metadata = fs::metadata(path).map_err(Error::io(path))?;
+    if metadata.is_file() {
+        Ok(())
+    } else {
+        Err(Error::NotAFile {
+            path: path.to_path_buf(),
+        })
+    }
 }
 
 // -- Tests --------------------------------------------------------------------

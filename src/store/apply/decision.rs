@@ -3,13 +3,13 @@
 
 use std::collections::BTreeSet;
 
-use super::check::{self, Fault, anchor_edit, edit_list, new_name};
+use super::check::{self, Fault, Sources, anchor_edit, edit_list, new_name, rendered};
 use super::edit::Edit;
 use super::ops::{Field, ListEdit, Merge, OpKind, Record, Remove, Rename, Revise};
 use super::refusal::{NodeKind, Rule};
 use super::{Done, Warning};
-use crate::store::quality::{Bar, DecisionField, Hit};
-use crate::store::schema::{AcceptedText, Decision, PROJECT_COMPONENT, Status};
+use crate::store::quality::{Bar, DecisionField, PatternMatch};
+use crate::store::schema::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
 use crate::store::time::Timestamp;
 
 /// What the ops of one batch share: what every record carries, the bar
@@ -18,8 +18,9 @@ pub(super) struct Context<'b> {
     pub(super) origin: Option<&'b str>,
     pub(super) created: Timestamp,
     pub(super) bar: &'b Bar,
-    /// The `warn` matches of the op running now.
-    pub(super) hits: Vec<Hit>,
+    /// The `warn` matches of the op running now, each with the argument
+    /// it is in.
+    pub(super) hits: Vec<(String, PatternMatch)>,
     /// The batch's warnings so far.
     pub(super) warnings: Vec<Warning>,
 }
@@ -42,6 +43,7 @@ pub(super) fn record(
         dependency(edit, &op.name, target)
     })?;
     let gains_edges = !depends_on.is_empty();
+    let sources = record_sources(&op.alternatives, &op.tags, &anchors);
     let decision = Decision {
         component: op.component,
         choice: op.choice,
@@ -56,7 +58,7 @@ pub(super) fn record(
         anchors: anchors.into_iter().collect(),
         depends_on,
     };
-    check::bar(batch, &decision, &DecisionField::IN_FILE_ORDER)?;
+    check::bar(batch, &decision, &DecisionField::IN_FILE_ORDER, &sources)?;
     // clone: the graph keys the node by its name, and the result names it.
     edit.put_decision(op.name.clone(), decision);
     // A dangling edge a hand edit left can point at the new name.
@@ -64,6 +66,23 @@ pub(super) fn record(
         closes_no_cycle(edit, &op.name, Field::DependsOn)?;
     }
     Ok(Done::of(OpKind::Record, op.name))
+}
+
+/// A record's lists in the caller's order, for a verdict of the bar to
+/// name.
+fn record_sources(alternatives: &[String], tags: &[String], anchors: &[Anchor]) -> Sources {
+    let mut sources = Sources::default();
+    let rendered = anchors.iter().map(ToString::to_string).collect();
+    sources.add(DecisionField::Anchors, Field::Anchors, rendered);
+    // clone: the decision owns its lists, and the sources keep them beside it.
+    let (alternatives, tags) = (alternatives.to_vec(), tags.to_vec());
+    sources.add(
+        DecisionField::Alternatives,
+        Field::Alternatives,
+        alternatives,
+    );
+    sources.add(DecisionField::Tags, Field::Tags, tags);
+    sources
 }
 
 /// A revise is held to the bar in the fields whose values it changes: a
@@ -75,13 +94,14 @@ pub(super) fn revise(
 ) -> Result<Done, Fault> {
     // clone: the op is consumed by its revision, and the result names it.
     let name = op.name.clone();
+    let sources = revise_sources(&op);
     let mut after = revised(edit, op)?;
     let before = existing(edit, &name, Field::Name)?;
     if after == *before {
         return Err(Fault::op(Rule::NoChange));
     }
     let changed = changed(before, &after);
-    check::bar(batch, &after, &check::judged(&changed))?;
+    check::bar(batch, &after, &check::judged(&changed), &sources)?;
     restatus(before, &mut after);
     let gains_edges = !after.depends_on.is_subset(&before.depends_on);
     let status = (after.status.kind() != before.status.kind()).then(|| after.status.kind());
@@ -95,6 +115,27 @@ pub(super) fn revise(
         status,
         ..Done::of(OpKind::Revise, name)
     })
+}
+
+/// The lists of `op` that bring elements into the decision.
+fn revise_sources(op: &Revise) -> Sources {
+    let mut sources = Sources::default();
+    // clone: the sources keep the caller's text beside the revision.
+    let text = |text: &String| text.clone();
+    sources.add_edit(
+        DecisionField::Alternatives,
+        Field::Alternatives,
+        &op.alternatives,
+        text,
+    );
+    sources.add_edit(DecisionField::Tags, Field::Tags, &op.tags, text);
+    sources.add_edit(
+        DecisionField::Anchors,
+        Field::Anchors,
+        &op.anchors,
+        rendered,
+    );
+    sources
 }
 
 /// The decision `op` names with each field `op` gives, its names and
@@ -144,6 +185,7 @@ pub(super) fn rename(edit: &mut Edit<'_>, op: Rename) -> Result<Done, Fault> {
         // clone: the graph keys the node by its name, and the result names it.
         edit.put_decision(op.to.clone(), decision);
     }
+    edit.carry(&op.name, &op.to);
     let rewrote = repoint_dependents(edit, &op.name, Some(&op.to));
     Ok(Done {
         to: Some(op.to),
@@ -165,6 +207,7 @@ pub(super) fn merge(
     }
     existing(edit, &op.absorbed, Field::Absorbed)?;
     let absorbed = edit.take_decision(&op.absorbed);
+    edit.carry(&op.absorbed, &op.survivor);
     if let (Some(absorbed), Some(survivor)) = (absorbed, edit.decision_mut(&op.survivor)) {
         let grown = [
             (
@@ -185,7 +228,8 @@ pub(super) fn merge(
             .into_iter()
             .filter_map(|(field, grew)| grew.then_some(field))
             .collect();
-        check::bar(batch, survivor, &held)?;
+        // A merge brings no argument's elements: a fault names the field.
+        check::bar(batch, survivor, &held, &Sources::default())?;
     }
     let rewrote = repoint_dependents(edit, &op.absorbed, Some(&op.survivor));
     closes_no_cycle(edit, &op.survivor, Field::Absorbed)?;

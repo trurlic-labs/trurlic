@@ -30,9 +30,10 @@ harness = false
 required-features = ["bench"]
 
 [features]
-# Test-only: `TRURLIC_FAILPOINT=<site>:<n>` aborts at a named store write
-# site (src/store/failpoint.rs). Enabled only in the test job; release
-# builds never carry it.
+# Test-only: `TRURLIC_FAILPOINT=<site>:<n>` acts at the n-th hit of a
+# named site of the store's commit path or the MCP server's tool calls
+# (src/store/failpoint.rs): it aborts, pauses, fails, panics or triggers
+# there. Enabled only in the test job; release builds never carry it.
 failpoints = []
 # Bench-only: the seeded corpus (`store::corpus`) and the in-process MCP
 # server the benches in benches/ drive. The library's public surface

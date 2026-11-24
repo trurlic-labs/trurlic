@@ -34,10 +34,24 @@ const CHECKPOINT: usize = 64;
 /// describes when it does not fit. A payload that is not an object is
 /// wrapped as `{"value": payload}` before it is cut.
 pub(crate) fn fit_payload(payload: &Value, max_bytes: usize) -> String {
-    if let Some(text) = serialize_within(payload, max_bytes) {
-        return text;
+    match serialize_within(payload, max_bytes) {
+        Some(text) => text,
+        None => cut(payload, max_bytes).1,
     }
+}
 
+/// [`fit_payload`] with the value the text serializes: `payload` itself
+/// when it fits, else the cut value. Both come from the one value, so they
+/// cannot differ.
+pub(crate) fn fit_value(payload: Value, max_bytes: usize) -> (Value, String) {
+    match serialize_within(&payload, max_bytes) {
+        Some(text) => (payload, text),
+        None => cut(&payload, max_bytes),
+    }
+}
+
+/// `payload`, which does not fit `max_bytes`, cut to fit, with its text.
+fn cut(payload: &Value, max_bytes: usize) -> (Value, String) {
     let wrapped;
     let root = match payload {
         Value::Object(map) => map,
@@ -51,18 +65,19 @@ pub(crate) fn fit_payload(payload: &Value, max_bytes: usize) -> String {
     for (key, value) in root {
         collect(value, &mut pointer_to(key), &mut units, max_bytes);
     }
-    match cut_root(root, &units, object_skeleton_len(root), max_bytes) {
-        Some(cut) if cut.len() <= max_bytes => cut,
-        cut => {
-            if let Some(cut) = cut {
-                diag!(
-                    "trurlic: a cut tool result took {} of {max_bytes} bytes; sent as omitted",
-                    cut.len()
-                );
-            }
-            omitted_whole(serialized_len(payload, usize::MAX))
+    if let Some(cut) = cut_root(root, &units, object_skeleton_len(root), max_bytes) {
+        let text = cut.to_string();
+        if text.len() <= max_bytes {
+            return (cut, text);
         }
+        diag!(
+            "trurlic: a cut tool result took {} of {max_bytes} bytes; sent as omitted",
+            text.len()
+        );
     }
+    let omitted = omitted_whole(serialized_len(payload, usize::MAX));
+    let text = omitted.to_string();
+    (omitted, text)
 }
 
 /// `payload` serialized, or `None` once it passes `max_bytes`: a payload
@@ -106,8 +121,8 @@ fn floor_char_boundary(text: &str, index: usize) -> usize {
 
 /// `{"truncated":[{"at":"","omitted_bytes":N}]}`: the whole payload omitted,
 /// for a payload whose skeleton alone exceeds the budget.
-fn omitted_whole(bytes: usize) -> String {
-    json!({ NOTICE_KEY: [{ "at": "", "omitted_bytes": bytes }] }).to_string()
+fn omitted_whole(bytes: usize) -> Value {
+    json!({ NOTICE_KEY: [{ "at": "", "omitted_bytes": bytes }] })
 }
 
 /// Cut every unit of `root` to the highest level that fits, or `None` when
@@ -117,7 +132,7 @@ fn cut_root(
     units: &[Unit<'_>],
     skeleton: usize,
     max_bytes: usize,
-) -> Option<String> {
+) -> Option<Value> {
     let level = budget::level(units, skeleton + NOTICE_FRAME, max_bytes)?;
 
     let mut cuts = units.iter().map(|unit| unit.cut(level));
@@ -130,7 +145,7 @@ fn cut_root(
     if !notice.is_empty() {
         kept.insert(NOTICE_KEY.to_owned(), Value::Array(notice));
     }
-    Some(Value::Object(kept).to_string())
+    Some(Value::Object(kept))
 }
 
 /// Bytes of `map` serialized with every unit [`collect`] finds in it emptied.

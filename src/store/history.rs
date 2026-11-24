@@ -14,6 +14,7 @@
 //! history already, made before the stop or by hand since, and none is made
 //! again.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::path::PathBuf;
@@ -313,13 +314,13 @@ impl Store {
             Some(head) => head,
             None => self.head_now(lock, &repository)?,
         };
-        let staged: Vec<PathBuf> = match head {
-            Head::Born => paths.to_vec(),
+        let staged: Cow<'_, [PathBuf]> = match head {
+            Head::Born => Cow::Borrowed(paths),
             Head::Unborn { files } => {
                 // clone: the first commit's set owns the write's paths too.
                 let all: BTreeSet<PathBuf> =
                     files.into_iter().chain(paths.iter().cloned()).collect();
-                all.into_iter().collect()
+                Cow::Owned(all.into_iter().collect())
             }
         };
         repository.stage(&staged)?;

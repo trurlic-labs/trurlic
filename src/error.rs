@@ -72,10 +72,42 @@ pub enum Error {
         expected: FormatVersion,
     },
 
+    /// A file the store reads by a name it did not create (a node file,
+    /// `project.toml`, the journal, the lock) that is no regular file once
+    /// its symlinks are followed, refused before it is opened.
+    #[error(
+        "{}: not a regular file (a directory, a FIFO, a device or a socket), so it is not \
+         read; replace it with a file or remove it",
+        path.display()
+    )]
+    NotAFile { path: PathBuf },
+
+    /// An entry of a node directory whose name ends in `.toml` but is not
+    /// UTF-8: no node can have it as its name.
+    #[error(
+        "{}: a node file's name is its node's name, and this one is not UTF-8; rename or \
+         remove it",
+        path.display()
+    )]
+    NodeFileName { path: PathBuf },
+
     /// A node file or `project.toml` larger than a node may be, refused
     /// before it is parsed.
     #[error("{}: larger than the {max} bytes a node file may hold", path.display())]
     NodeTooLarge { path: PathBuf, max: usize },
+
+    /// The canonical text of a value for `path` is over the cap a load
+    /// reads: nothing is written, since no later load could read it.
+    #[error(
+        "{}: its canonical form is {bytes} bytes, over the {max} a node file may hold, so it is \
+         not written; shorten its text",
+        path.display()
+    )]
+    CanonicalTooLarge {
+        path: PathBuf,
+        bytes: usize,
+        max: usize,
+    },
 
     /// The canonical text of a value for `path` does not read back as it.
     #[error("{}: the canonical form does not read back as the value written: {detail}", path.display())]
@@ -203,7 +235,7 @@ pub enum Error {
     #[error(".trurlic/ already exists at {0}")]
     StoreExists(PathBuf),
 
-    #[error("could not acquire lock within {timeout_secs}s — {detail}")]
+    #[error("could not acquire lock within {timeout_secs}s: {detail}")]
     LockTimeout { timeout_secs: u64, detail: String },
 
     /// A failure after the commit point: the journal holds the write, and

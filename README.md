@@ -72,7 +72,7 @@ Every decision states whether you accepted it.
 
 |  | **`accepted`** | **`proposed`** |
 |--|------------|-------------|
-| **Recorded when** | You made or confirmed the choice | The agent chose on its own while implementing |
+| **Recorded when** | You accepted it: set `status = "accepted"` in its file | `apply` records every decision so, the agent's and yours alike |
 | **In the brief** | A plain constraint | Marked `(proposed)` until you accept it |
 
 ## The files
@@ -116,7 +116,7 @@ level = "refuse"                          # or "warn": written, with a warning i
 message = "The subject is a code entity, never \"we\"."
 ```
 
-A word is a run of text between whitespace. An op is held to the bar only in the fields it changes, so a decision migrated or edited below the bar stays revisable, and a field it writes must meet the bar whole. A `warn` pattern adds an entry to the result's `warnings` (printed on stderr by `trurlic apply`), once per op at its first match. The bar is checked on writes alone: `trurlic check` reports the text rules of every file, not the bar, and fails when a pattern does not compile, which would refuse every write; `trurlic status` counts the rules the table sets. [`examples/quality.toml`](examples/quality.toml) is a complete bar for decisions that coding agents follow.
+A word is a run of text between whitespace. An op is held to the bar only in the fields it changes, so a decision migrated or edited below the bar stays revisable, and a field it writes must meet the bar whole. A `warn` pattern warns once per op at its first match: the result lists one warning per op in `warnings`, by argument, pattern index and byte offset, counts the rest in the op's `more_warnings`, and carries each named pattern's message once in `patterns`; `trurlic apply` prints them on stderr. The bar is checked on writes alone: `trurlic check` reports the text rules of every file, not the bar, and fails when a pattern does not compile, which would refuse every write; `trurlic status` counts the rules the table sets. [`examples/quality.toml`](examples/quality.toml) is a complete bar for decisions that coding agents follow.
 
 ## Where the graph lives
 
@@ -199,7 +199,7 @@ trurlic install --ide claude-code  # wire up your coding agent over MCP
 
 > Let's design the rate limiter, and write each decision we agree on to Trurlic.
 
-The agent reasons it out with you, writes each decision you agree on as `accepted`, then implements against the constraints it just captured.
+The agent reasons it out with you and records each decision you agree on through `apply`, as `proposed`; you accept the ones that are yours by setting `status = "accepted"` in their files. Then it implements against the constraints it just captured.
 
 **Implementing within what already exists?** Just say what you want:
 

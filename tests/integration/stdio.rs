@@ -48,13 +48,20 @@ fn initialize_negotiates_the_protocol_version() {
 }
 
 /// Each line that is no request is answered once, with the `id` it holds
-/// when that is a string or an integer, and the session goes on.
+/// when that is a string or an integer and the line has a `method`, and
+/// the session goes on. A line without one would be a response, whose
+/// `id` is the server's own: its error carries `null`.
 #[test]
 fn a_malformed_line_is_answered_once_and_the_session_goes_on() {
     let project = Project::init();
     let (mut client, _) = McpClient::connect(&project);
     let cases = [
-        (r#"{"jsonrpc":"2.0","id":41}"#, json!(41), -32600),
+        (r#"{"jsonrpc":"2.0","id":41}"#, Value::Null, -32600),
+        (
+            r#"{"jsonrpc":"1.0","id":42,"result":{}}"#,
+            Value::Null,
+            -32600,
+        ),
         (
             r#"{"jsonrpc":"1.0","id":"x","method":"ping"}"#,
             json!("x"),

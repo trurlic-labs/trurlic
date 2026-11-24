@@ -68,18 +68,25 @@ impl Store {
     }
 
     /// Read+write rather than append: Windows refuses to lock a handle
-    /// opened for append only.
+    /// opened for append only. Opening a FIFO for both does not block, and
+    /// a lock file that is no regular file is refused before it is locked
+    /// or read: a read of a FIFO would wait for a writer forever.
     fn open_lock_file(&self) -> Result<File> {
         let state_dir = self.state_dir();
         fs::create_dir_all(&state_dir).map_err(Error::io(&state_dir))?;
         let path = self.lock_path();
-        File::options()
+        let file = File::options()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
             .open(&path)
-            .map_err(Error::io(&path))
+            .map_err(Error::io(&path))?;
+        if file.metadata().map_err(Error::io(&path))?.is_file() {
+            Ok(file)
+        } else {
+            Err(Error::NotAFile { path })
+        }
     }
 }
 

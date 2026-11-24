@@ -41,8 +41,8 @@ body:
     attributes:
       label: Component
       options:
-        - CLI (init, query, status, check, fmt, migrate)
-        - MCP server (trurlic serve)
+        - CLI (init, apply, status, query, check, fmt, migrate)
+        - MCP server (trurlic serve, the apply and status tools)
         - Decision store (.trurlic/ format)
         - Claude Code registration (trurlic install)
         - Install script

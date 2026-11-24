@@ -1,9 +1,9 @@
 component = "mcp"
-choice = "Typed ToolEnvelope serialized directly into JSON-RPC response, single serialization pass"
-reason = "A tool result is the typed ToolEnvelope (one TextBlock, an optional isError), whose text holds the payload serialized once by truncate::fit_payload into a buffer that stops at MAX_TOOL_RESULT_BYTES: a payload that fits costs that one serialization, and one that does not is cut and serialized from its cut. The envelope then goes into the response through Body, an untagged enum beside initialize's and tools/list's values, so protocol::write_success serializes the whole response in one pass, with no intermediate serde_json::Value, into the line buffer it writes in one call."
+choice = "Typed ToolEnvelope serialized directly into the JSON-RPC response; its text and its structuredContent come from one fitted value"
+reason = "A tool result is the typed ToolEnvelope (one TextBlock, an optional structuredContent, an optional isError). truncate::fit_value fits a payload once: one that fits is serialized into a buffer that stops at MAX_TOOL_RESULT_BYTES and kept as it is, one that does not is cut and the cut value serialized. structured_result sends that value as structuredContent and its serialization as the text, so the two cannot differ, cut or not, and no text is parsed back, which also failed for a value nested deeper than a JSON reader reads. The envelope goes into the response through Body, an untagged enum beside initialize's and tools/list's values, so protocol::write_success serializes the whole response in one pass into the line it writes."
 alternatives = [
-    "Serialize everything through serde_json::Value intermediate — rejected: double serialization (to_value then to_writer) wastes allocations on the hot path",
-    "Custom wire-format writer — rejected: serde_json::to_writer with typed structs is already zero-intermediate-allocation",
+    "Serialize the text, then parse it back for structuredContent: rejected because it parses every result twice, and a parse that fails sent the uncut payload beside a cut text",
+    "Serialize everything through a serde_json::Value intermediate: rejected because to_value then to_writer doubles the allocations on the hot path",
 ]
 tags = [
     "performance",
@@ -13,6 +13,8 @@ status = "accepted"
 created = "2026-06-15T09:45:18.917975440Z"
 anchors = [
     { file = "src/mcp/protocol.rs", symbol = "write_line" },
+    { file = "src/mcp/result.rs", symbol = "structured_result" },
     { file = "src/mcp/result.rs", symbol = "tool_result" },
     { file = "src/mcp/truncate.rs", symbol = "fit_payload" },
+    { file = "src/mcp/truncate.rs", symbol = "fit_value" },
 ]

@@ -2,8 +2,8 @@ component = "project"
 choice = "Deny unwrap, expect, panic, todo, unimplemented and dbg outside tests through Cargo lints"
 reason = "A panic in production is a bug: a CLI command dies of it, and the MCP server answers the request -32603 instead of its result. Cargo.toml's [lints.clippy] denies unwrap_used, expect_used, panic, todo, unimplemented and dbg_macro in every target; clippy.toml's allow-unwrap-in-tests, allow-expect-in-tests and allow-panic-in-tests exempt #[test] bodies, #[cfg(test)] items and, from clippy 1.100, the integration test crates under tests/, helpers included, where a panic is the assertion. The bench is not a test crate, so it carries one crate-level #[expect] for its setup helpers. Clippy before 1.100 still flags the tests/ helpers; CI runs clippy only on the pinned toolchain, and the MSRV job runs cargo check, which does not run clippy lints. An exception elsewhere is #[expect(lint, reason)] at its site: allow_attributes and allow_attributes_without_reason are denied, so no #[allow] lands and an expectation fails once it stops applying. tests/lints.rs proves each lint refuses a seeded violation."
 alternatives = [
-    "Allow unwrap/expect everywhere and rely on code review — rejected because human review is unreliable for this class of bug",
-    "Forbid unwrap/expect even in tests — rejected because test panics are idiomatic Rust and .unwrap() in tests is clearer than propagating errors",
+    "Allow unwrap and expect everywhere and rely on code review: rejected because review is unreliable for this class of bug",
+    "Forbid unwrap and expect even in tests: rejected because a test panic is idiomatic Rust and unwrap in a test is clearer than propagating errors",
 ]
 tags = [
     "error-handling",

@@ -15,7 +15,7 @@ use std::io::ErrorKind;
 use crate::console::diag;
 use crate::{Error, Result};
 
-use super::journal::PendingHistory;
+use super::journal::{PendingHistory, Replayed};
 use super::{Store, StoreLock};
 
 impl Store {
@@ -28,8 +28,13 @@ impl Store {
     /// [`recover`](Self::recover), with `pending` saying what a history
     /// commit that fails does.
     pub(super) fn recover_with(&self, lock: &StoreLock, pending: PendingHistory) -> Result<()> {
-        if self.replay_journal(lock, pending)? {
-            diag!("warning: finished a write an interrupted commit left");
+        match self.replay_journal(lock, pending)? {
+            Replayed::Nothing => {}
+            Replayed::Finished => diag!("warning: finished a write an interrupted commit left"),
+            Replayed::HistoryWaits => diag!(
+                "warning: put in place the files of a write an interrupted commit left; its \
+                 history commit waits for the next write"
+            ),
         }
         let removed = self.remove_temps()?;
         if removed > 0 {

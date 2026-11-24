@@ -179,6 +179,104 @@ fn a_linked_worktree_of_a_tracked_graph_reads_its_own() {
     }
 }
 
+// -- the walk stays in the work tree it starts in ---------------------------
+
+impl Trees {
+    /// A linked worktree nested in the main worktree at
+    /// `.worktrees/nested`, on a new branch from `commit`, with the file the
+    /// decision anchors; the main worktree's git ignores the directory.
+    fn add_nested(&self, commit: &str) -> PathBuf {
+        let exclude = self.main.join(".git/info/exclude");
+        let held = fs::read_to_string(&exclude).unwrap_or_default();
+        fs::write(&exclude, format!("{held}\n/.worktrees/\n")).unwrap();
+        git(
+            &self.main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "nested",
+                ".worktrees/nested",
+                commit,
+            ],
+        );
+        let nested = self.main.join(".worktrees/nested");
+        fs::create_dir_all(nested.join("src")).unwrap();
+        fs::write(nested.join("src/branch.rs"), "").unwrap();
+        nested
+    }
+}
+
+/// Under `shared`, a linked worktree inside the main worktree reads the
+/// main worktree's graph for itself, as a sibling does: its code root is
+/// its own top, from there and from a directory inside it, and its write
+/// lands in the one graph.
+#[test]
+fn a_nested_worktree_of_a_shared_graph_reads_it_for_itself() {
+    let trees = Trees::shared();
+    let nested = trees.add_nested("HEAD");
+    let graph = trees.graph();
+
+    for start in [nested.clone(), nested.join("src")] {
+        let status = trurlic_ok(&start, &["status"]);
+        let shown = format!(
+            "graph: {}\ncode root: {}\n",
+            graph.display(),
+            nested.display()
+        );
+        assert!(status.contains(&shown), "{status}");
+        assert_eq!(context_from(&start), ("Auth".to_owned(), 0));
+    }
+    let batch = nested.join("batch.json");
+    let ops = json!({ "origin": "nested", "ops": [record("from-nested", "auth", "A rule")] });
+    fs::write(&batch, ops.to_string()).unwrap();
+    trurlic_ok(&nested.join("src"), &["apply", batch.to_str().unwrap()]);
+    assert!(graph.join("decisions/from-nested.toml").is_file());
+}
+
+/// Under `tracked`, a linked worktree inside the main worktree on a branch
+/// that holds no graph has none: it neither reads nor writes the main
+/// worktree's.
+#[test]
+fn a_nested_worktree_of_a_tracked_graph_never_reaches_the_main_one() {
+    let trees = Trees::tracked();
+    let nested = trees.add_nested("HEAD~1");
+    let before = trees.graph().join("decisions");
+    let decisions = || fs::read_dir(&before).unwrap().count();
+    let held = decisions();
+
+    for start in [nested.clone(), nested.join("src")] {
+        let stderr = trurlic_refused(&start, &["status"]);
+        assert!(stderr.contains("not a trurlic project"), "{stderr}");
+        let batch = nested.join("batch.json");
+        let ops = json!({ "origin": "nested", "ops": [record("from-nested", "auth", "A rule")] });
+        fs::write(&batch, ops.to_string()).unwrap();
+        let stderr = trurlic_refused(&start, &["apply", batch.to_str().unwrap()]);
+        assert!(stderr.contains("not a trurlic project"), "{stderr}");
+        let (mut client, _) = McpClient::connect_in(&start, &[], json!({}));
+        let refusal = client.call_tool_refusal("apply", ops);
+        assert_eq!(refusal["kind"], "no_project", "{refusal}");
+    }
+    assert_eq!(decisions(), held);
+}
+
+/// A repository cloned inside a project's tree is a tree of its own: the
+/// project's graph above it is not its graph.
+#[test]
+fn a_repository_inside_a_project_does_not_reach_its_graph() {
+    let trees = Trees::tracked();
+    let inner = trees.main.join("vendor/lib");
+    fs::create_dir_all(inner.join("src")).unwrap();
+    git(&inner, &["init", "--quiet", "--initial-branch=main"]);
+
+    for start in [inner.clone(), inner.join("src")] {
+        let stderr = trurlic_refused(&start, &["status"]);
+        assert!(stderr.contains("not a trurlic project"), "{stderr}");
+    }
+    trurlic_ok(&trees.main.join("vendor"), &["status"]);
+}
+
 // -- check refuses what git contradicts -------------------------------------
 
 /// A git repository on branch `main` with one commit and a tracked graph
@@ -463,10 +561,7 @@ fn a_worktree_whose_main_worktree_is_gone_says_what_git_says() {
     let shared = Trees::shared();
     fs::remove_dir_all(&shared.main).unwrap();
     let stderr = trurlic_refused(&shared.linked, &["status"]);
-    assert!(
-        stderr.contains("`git rev-parse --show-toplevel`"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("`git worktree list"), "{stderr}");
 
     let tracked = Trees::tracked();
     fs::remove_dir_all(&tracked.main).unwrap();

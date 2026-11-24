@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use crate::store::Writer;
 use crate::store::commit::PendingWrite;
 use crate::store::history::{CommitMessage, Tool};
-use crate::store::quality::Bar;
+use crate::store::quality::{Bar, DecisionField, PatternMatch};
 use crate::store::schema::StatusName;
 use crate::store::state::NodeFile;
 use crate::store::text::{TextField, fault};
@@ -41,16 +41,23 @@ pub use ops::{
     RemoveComponent, Rename, Revise, ReviseComponent,
 };
 pub use refusal::{NodeKind, OpAt, Refusal, Rule};
-pub use warning::{Warning, WarningKind};
+pub use warning::{PatternNote, Warning, WarningKind};
 
 /// What a batch wrote: each op's outcome, in order, its warnings, and the
 /// files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Applied {
     pub ops: Vec<Done>,
-    /// The batch's warnings: each `warn` pattern's first match per op,
-    /// the origin's first, in the order of the ops.
+    /// The warnings listed: each `warn` pattern warns at its first match
+    /// per op, and the first [`MAX_WARNINGS_PER_OP`] of the origin's and of
+    /// each op's are listed, in the order of the ops and the patterns.
+    ///
+    /// [`MAX_WARNINGS_PER_OP`]: crate::store::limits::MAX_WARNINGS_PER_OP
     pub warnings: Vec<Warning>,
+    /// The origin's warnings not listed.
+    pub more_origin_warnings: usize,
+    /// The message of each pattern a listed warning names.
+    pub patterns: Vec<PatternNote>,
     /// Files written, a rename's new file included.
     pub written: usize,
     /// Files removed, a rename's old file included.
@@ -78,6 +85,8 @@ pub struct Done {
     /// Files of other nodes the op rewrote: dependents repointed, a
     /// component's decisions and connections renamed.
     pub rewrote: usize,
+    /// The op's warnings not listed in [`Applied::warnings`].
+    pub more_warnings: usize,
 }
 
 impl Done {
@@ -91,6 +100,7 @@ impl Done {
             changed: Vec::new(),
             status: None,
             rewrote: 0,
+            more_warnings: 0,
         }
     }
 }
@@ -110,35 +120,48 @@ impl Writer<'_> {
             origin: batch.origin.as_deref(),
             created: Timestamp::now()?,
             bar: &bar,
-            hits: Vec::new(),
-            warnings: origin_warnings(&batch, &bar)?,
+            hits: origin_hits(&batch, &bar)?,
+            warnings: Vec::new(),
         };
+        let more_origin_warnings = warning::report(None, &mut context.hits, &mut context.warnings);
         let mut edit = Edit::new(&mut self.state);
-        let done = match run(&mut edit, batch.ops, &mut context) {
-            Ok(done) => done,
+        let (done, named) = match run(&mut edit, batch.ops, &mut context) {
+            Ok(ran) => ran,
             Err(refusal) => {
                 edit.undo();
                 return Err(refusal);
             }
         };
-        let before = edit.finish();
-        let (written, removed) = self.land(before, &message)?;
+        let (before, last_op) = edit.finish();
+        let changed_by = |name: &str| last_op.get(name).and_then(|&op| named.get(op)).cloned();
+        let (written, removed) = self.land(before, &changed_by, &message)?;
         Ok(Applied {
             ops: done,
+            patterns: warning::notes(&context.warnings, &bar),
             warnings: context.warnings,
+            more_origin_warnings,
             written,
             removed,
         })
     }
 
     /// Commit the files the batch changed from `before`, and count them
-    /// written and removed. The writer's graph follows the files: past the
-    /// commit point it is the batch's, before it the one `before` holds.
-    fn land(&mut self, before: Before, message: &CommitMessage) -> Result<(usize, usize)> {
-        let committed = self.files(&before).and_then(|(writes, removes)| {
-            self.commit(&writes, &removes, message)?;
-            Ok((writes.len(), removes.len()))
-        });
+    /// written and removed; `changed_by` names the op that last changed a
+    /// node, for a file a load could not read back. The writer's graph
+    /// follows the files: past the commit point it is the batch's, before
+    /// it the one `before` holds.
+    fn land(
+        &mut self,
+        before: Before,
+        changed_by: &dyn Fn(&str) -> Option<OpAt>,
+        message: &CommitMessage,
+    ) -> Result<(usize, usize)> {
+        let committed = self
+            .files(&before, changed_by)
+            .and_then(|(writes, removes)| {
+                self.commit(&writes, &removes, message)?;
+                Ok((writes.len(), removes.len()))
+            });
         match committed {
             Ok(counts) => {
                 self.settle(&before);
@@ -156,8 +179,14 @@ impl Writer<'_> {
     }
 
     /// The writes and removals that take the files from `before` to the
-    /// writer's graph: a node whose value is as it was is not written.
-    fn files(&self, before: &Before) -> Result<(Vec<PendingWrite>, Vec<PathBuf>)> {
+    /// writer's graph: a node whose value is as it was is not written. A
+    /// file whose canonical text a load would refuse refuses the batch,
+    /// naming the op `changed_by` gives.
+    fn files(
+        &self,
+        before: &Before,
+        changed_by: &dyn Fn(&str) -> Option<OpAt>,
+    ) -> Result<(Vec<PendingWrite>, Vec<PathBuf>)> {
         let (store, state) = (self.store, &self.state);
         let mut writes = Vec::new();
         let mut removes = Vec::new();
@@ -165,7 +194,8 @@ impl Writer<'_> {
             let path = store.decision_path(name);
             match state.decisions.get(name) {
                 Some(new) if old.as_ref() != Some(new) => {
-                    writes.push(store.prepare_write(&path, new)?);
+                    let too_large = oversize(NodeFile::Decision, name, changed_by);
+                    writes.push(store.prepare_write(&path, new).map_err(too_large)?);
                 }
                 Some(_) => {}
                 None if old.is_some() => removes.push(path),
@@ -176,7 +206,8 @@ impl Writer<'_> {
             let path = store.component_path(name);
             match state.components.get(name) {
                 Some(new) if old.as_ref() != Some(new) => {
-                    writes.push(store.prepare_write(&path, new)?);
+                    let too_large = oversize(NodeFile::Component, name, changed_by);
+                    writes.push(store.prepare_write(&path, new).map_err(too_large)?);
                 }
                 Some(_) => {}
                 None if old.is_some() => removes.push(path),
@@ -198,26 +229,55 @@ impl Writer<'_> {
     }
 }
 
+/// The refusal of a batch that leaves the canonical text of the node `name`
+/// of the kind `file` over the cap a load reads, naming the op
+/// `changed_by` gives; every other error as it is.
+fn oversize<'a>(
+    file: fn(String) -> NodeFile,
+    name: &'a str,
+    changed_by: &'a dyn Fn(&str) -> Option<OpAt>,
+) -> impl FnOnce(Error) -> Error + 'a {
+    move |error| match error {
+        Error::CanonicalTooLarge { bytes, max, .. } => {
+            let file = file(name.to_owned());
+            refused(
+                changed_by(name),
+                None,
+                Rule::FileTooLarge { file, bytes, max },
+            )
+        }
+        other => other,
+    }
+}
+
 /// The batch's own faults, before any op runs: no op, and an origin the
-/// bar refuses; else the origin's warnings.
-fn origin_warnings(batch: &Batch, bar: &Bar) -> Result<Vec<Warning>> {
+/// bar refuses; else the origin's warn matches.
+fn origin_hits(batch: &Batch, bar: &Bar) -> Result<Vec<(String, PatternMatch)>> {
     if batch.ops.is_empty() {
         return Err(refused(None, Some("ops".to_owned()), Rule::EmptyBatch));
     }
     let records = batch.ops.iter().any(|op| matches!(op, Op::Record(_)));
     match bar.judge_origin(batch.origin.as_deref(), records) {
-        Ok(hits) => Ok(hits.iter().map(|hit| Warning::of(None, hit)).collect()),
+        Ok(hits) => Ok(hits
+            .into_iter()
+            .map(|hit| (DecisionField::Origin.as_str().to_owned(), hit.found))
+            .collect()),
         Err(breach) => Err(refused(
             None,
-            Some(breach.place.to_string()),
+            Some(DecisionField::Origin.as_str().to_owned()),
             breach.broken.into(),
         )),
     }
 }
 
 /// Run each op in order, refusing at the first fault, then the check of
-/// the resulting graph. Each op's warnings join the batch's.
-fn run(edit: &mut Edit<'_>, ops: Vec<Op>, context: &mut Context<'_>) -> Result<Vec<Done>> {
+/// the resulting graph: each op's outcome, with its warnings listed in
+/// `context`, and each op as a refusal names it.
+fn run(
+    edit: &mut Edit<'_>,
+    ops: Vec<Op>,
+    context: &mut Context<'_>,
+) -> Result<(Vec<Done>, Vec<OpAt>)> {
     let mut done = Vec::with_capacity(ops.len());
     let mut named = Vec::with_capacity(ops.len());
     for (index, op) in ops.into_iter().enumerate() {
@@ -239,20 +299,20 @@ fn run(edit: &mut Edit<'_>, ops: Vec<Op>, context: &mut Context<'_>) -> Result<V
             Op::RemoveComponent(op) => component::remove(edit, op),
         };
         match outcome {
-            Ok(outcome) => done.push(outcome),
+            Ok(mut outcome) => {
+                let (hits, warnings) = (&mut context.hits, &mut context.warnings);
+                outcome.more_warnings = warning::report(Some(index), hits, warnings);
+                done.push(outcome);
+            }
             Err(Fault { field, rule }) => return Err(refused(Some(at), field, rule)),
         }
-        let hits = context.hits.drain(..);
-        // clone: each warning names the op it is about.
-        let warnings = hits.map(|hit| Warning::of(Some(at.clone()), &hit));
-        context.warnings.extend(warnings);
         named.push(at);
     }
     if let Some((index, issue)) = edit.first_introduced() {
         let at = named.into_iter().nth(index);
         return Err(refused(at, None, Rule::Issue(issue)));
     }
-    Ok(done)
+    Ok((done, named))
 }
 
 /// The batch's history message, its origin and session held to the

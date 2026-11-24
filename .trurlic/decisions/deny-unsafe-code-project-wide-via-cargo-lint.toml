@@ -2,8 +2,8 @@ component = "project"
 choice = "Forbid unsafe code project-wide via Cargo lint"
 reason = "The crate has no need for unsafe: every dependency it calls is safe Rust. Cargo.toml sets [lints.rust] unsafe_code = \"forbid\", which makes any unsafe block a compile error in every target, and unlike \"deny\" no #[allow] or #[expect] can lift it at a site (E0453). tests/lints.rs seeds both an unsafe block and an #[expect(unsafe_code)] and requires each to be refused."
 alternatives = [
-    "Allow unsafe with clippy::allow annotations on a case-by-case basis — rejected because no use case requires it and the blanket deny is simpler to audit",
-    "Use #![forbid(unsafe_code)] in lib.rs — rejected because Cargo.toml [lints] is the canonical location and applies to the entire crate uniformly",
+    "Allow unsafe with clippy::allow annotations case by case: rejected because no use case requires it and the blanket deny is simpler to audit",
+    "Use #![forbid(unsafe_code)] in lib.rs: rejected because Cargo.toml [lints] is the canonical location and applies to the entire crate uniformly",
 ]
 tags = [
     "coding-standards",

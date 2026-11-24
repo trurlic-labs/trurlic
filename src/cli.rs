@@ -177,7 +177,7 @@ pub enum QueryCommand {
     /// a directory, or on a directory that holds it. Use when editing a file
     /// to discover which architectural decisions apply.
     File {
-        /// Relative path from project root (e.g. `src/store/write.rs` or `src/store`).
+        /// Relative path from project root (e.g. `src/store/commit.rs` or `src/store`).
         path: String,
     },
 }

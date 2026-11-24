@@ -18,6 +18,9 @@ pub(super) struct Edit<'s> {
     op: usize,
     /// The op that last changed each node, by name.
     last_op: BTreeMap<String, usize>,
+    /// Each node of the starting graph the batch renamed or merged into
+    /// another, by its starting name, and the name it has now.
+    carried: BTreeMap<String, String>,
     /// The cycles of the graph the batch began with, by sorted members;
     /// found once, when an op first leaves a node in a cycle.
     start_cycles: Option<BTreeSet<Vec<String>>>,
@@ -38,6 +41,7 @@ impl<'s> Edit<'s> {
             before: Before::default(),
             op: 0,
             last_op: BTreeMap::new(),
+            carried: BTreeMap::new(),
             start_cycles: None,
         }
     }
@@ -109,6 +113,23 @@ impl<'s> Edit<'s> {
         }
     }
 
+    /// Record that the node `from` goes on as `to`: renamed, or merged
+    /// into it. Called once the op has touched `from`, so `before` tells
+    /// whether it is a node of the starting graph or one the batch made.
+    pub(super) fn carry(&mut self, from: &str, to: &str) {
+        for name in self.carried.values_mut() {
+            if name == from {
+                to.clone_into(name);
+            }
+        }
+        let started = |held: Option<bool>| held == Some(true);
+        let in_start = started(self.before.decisions.get(from).map(Option::is_some))
+            || started(self.before.components.get(from).map(Option::is_some));
+        if in_start {
+            self.carried.insert(from.to_owned(), to.to_owned());
+        }
+    }
+
     /// The members of the `depends_on` cycle through `pivot`, when the
     /// graph has one there that the graph the batch began with lacks:
     /// the cycle an op closed by adding edges at `pivot`.
@@ -159,7 +180,9 @@ impl<'s> Edit<'s> {
         self.before.swap(self.state);
         let at_start = self.state.validate();
         self.before.swap(self.state);
-        let issue = introduced(after, &at_start).into_iter().next()?;
+        let issue = introduced(after, &at_start, &self.carried)
+            .into_iter()
+            .next()?;
         let op = self
             .last_op
             .iter()
@@ -175,9 +198,10 @@ impl<'s> Edit<'s> {
         self.before.restore(self.state);
     }
 
-    /// End the batch, keeping what it changed.
-    pub(super) fn finish(self) -> Before {
-        self.before
+    /// End the batch, keeping what it changed and the op that last
+    /// changed each node.
+    pub(super) fn finish(self) -> (Before, BTreeMap<String, usize>) {
+        (self.before, self.last_op)
     }
 }
 

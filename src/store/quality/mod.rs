@@ -25,7 +25,7 @@ use serde::Deserialize;
 use crate::store::Store;
 use crate::{Error, Result};
 
-pub(crate) use bar::{Bar, Broken, Hit};
+pub(crate) use bar::{Bar, Broken, Place, element};
 pub use config::{ConfigFault, Level, Pattern, Quality, WordRange};
 
 /// The fields of a decision the bar reads, and the names a pattern's

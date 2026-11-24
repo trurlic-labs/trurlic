@@ -26,15 +26,17 @@ use super::Store;
 use super::canonical::{Canonical, is_canonical};
 use super::limits::MAX_NODE_FILE_BYTES;
 use super::schema::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, Project};
-use super::state::{NodeFile, ProjectState, list_toml_stems};
+use super::state::{NodeFile, ProjectState, ensure_regular, list_toml_stems};
 
 /// One byte past the cap, so a read that fills it proves the file too large.
 const READ_LIMIT: u64 = MAX_NODE_FILE_BYTES as u64 + 1;
 
-/// The bytes of the node file or `project.toml` at `path`, refused unread
-/// past [`MAX_NODE_FILE_BYTES`]: the read stops at the cap, so a file that
-/// grows while it is read, or a device that never ends, costs no more.
+/// The bytes of the node file or `project.toml` at `path`, refused unopened
+/// when it is no regular file ([`ensure_regular`]), and unread past
+/// [`MAX_NODE_FILE_BYTES`]: the read stops at the cap, so a file that grows
+/// while it is read costs no more.
 pub(super) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
+    ensure_regular(path)?;
     let file = File::open(path).map_err(Error::io(path))?;
     let hint = file
         .metadata()
@@ -205,12 +207,110 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
         let unreadable = store.decision_path("unreadable");
-        fs::create_dir(&unreadable).unwrap();
+        fs::write(&unreadable, "").unwrap();
+        let mut permissions = fs::metadata(&unreadable).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o000);
+        fs::set_permissions(&unreadable, permissions).unwrap();
+        if File::open(&unreadable).is_ok() {
+            // Run as root, which reads any file.
+            return;
+        }
 
         let err = store.load_state().map(|_| ()).unwrap_err();
 
         assert!(
             matches!(&err, Error::Io { path, .. } if *path == unreadable),
+            "{err:?}"
+        );
+    }
+
+    /// `mkfifo <path>`: std makes no FIFO.
+    fn fifo(path: &Path) {
+        let made = std::process::Command::new("mkfifo").arg(path).status();
+        assert!(made.unwrap().success(), "mkfifo {}", path.display());
+    }
+
+    /// A directory, a FIFO, a symlink to either, and `project.toml` as a
+    /// FIFO are refused unopened, naming the entry: a reader that opened
+    /// the FIFO would wait for a writer forever.
+    #[test]
+    fn an_entry_that_is_no_regular_file_is_refused_unopened() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let decisions = store.root().join(DECISIONS_DIR);
+        /// What a case makes at the entry's path.
+        type Make = fn(&Path);
+        let cases: [(&str, Make); 4] = [
+            ("directory.toml", |path| fs::create_dir(path).unwrap()),
+            ("fifo.toml", fifo),
+            ("to-fifo.toml", |path| {
+                fifo(&path.with_file_name("elsewhere"));
+                std::os::unix::fs::symlink("elsewhere", path).unwrap();
+            }),
+            ("to-dir.toml", |path| {
+                std::os::unix::fs::symlink(".", path).unwrap();
+            }),
+        ];
+        for (name, make) in cases {
+            let path = decisions.join(name);
+            make(&path);
+
+            let err = store.load_state().map(|_| ()).unwrap_err();
+
+            assert!(
+                matches!(&err, Error::NotAFile { path: named } if *named == path),
+                "{name}: {err:?}"
+            );
+            fs::remove_file(&path)
+                .or_else(|_| fs::remove_dir(&path))
+                .unwrap();
+        }
+        let linked = decisions.join("linked.toml");
+        write_node(
+            &store,
+            &NodeFile::Decision("target".into()),
+            &sample_decision("project"),
+        );
+        std::os::unix::fs::symlink("target.toml", &linked).unwrap();
+        assert!(store.load_state().unwrap().decisions.contains_key("linked"));
+
+        let project = store.project_path();
+        fs::remove_file(&project).unwrap();
+        fifo(&project);
+        let err = store.load_state().map(|_| ()).unwrap_err();
+        assert!(
+            matches!(&err, Error::NotAFile { path } if *path == project),
+            "{err:?}"
+        );
+    }
+
+    /// Every entry the history commits is a node file to the load: one
+    /// named `.toml` is the empty stem, an issue; one whose name is not
+    /// UTF-8 is refused, naming it.
+    #[test]
+    fn every_entry_named_toml_is_a_node_file_none_skipped() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let decisions = store.root().join(DECISIONS_DIR);
+        fs::write(
+            decisions.join(".toml"),
+            canonical(&sample_decision("project")),
+        )
+        .unwrap();
+        let state = store.load_state().unwrap();
+        assert!(state.decisions.contains_key(""));
+        assert_eq!(
+            state.validate()[0].kind,
+            crate::store::IssueKind::NameInvalid
+        );
+
+        let foreign = decisions.join(std::ffi::OsStr::from_bytes(b"caf\xe9.toml"));
+        fs::write(&foreign, canonical(&sample_decision("project"))).unwrap();
+        let err = store.load_state().map(|_| ()).unwrap_err();
+        assert!(
+            matches!(&err, Error::NodeFileName { path } if *path == foreign),
             "{err:?}"
         );
     }

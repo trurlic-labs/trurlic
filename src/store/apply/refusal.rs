@@ -7,7 +7,7 @@ use std::fmt;
 use super::ops::{Field, OpKind};
 use crate::store::quality::{Broken, QualityFault};
 use crate::store::schema::AnchorFault;
-use crate::store::state::NameFault;
+use crate::store::state::{NameFault, NodeFile};
 use crate::store::text::{TextFault, TextField};
 use crate::store::validate::Issue;
 
@@ -21,9 +21,11 @@ pub struct Refusal {
     /// empty batch, its origin or session.
     pub op: Option<OpAt>,
     /// The argument at fault, within the op (`add_tags[0]`) or the batch
-    /// (`origin`); for a rule of the quality bar, the decision's field the
-    /// op leaves at fault (`alternatives[2]`); `None` when the op as a
-    /// whole breaks the rule.
+    /// (`origin`). A rule of the quality bar on one element names the
+    /// argument that brought it, by its index there; a rule on what no one
+    /// argument holds (a count of a whole list, a merge's union, an element
+    /// the decision held already) names the decision's field without an
+    /// index. `None` when the op as a whole breaks the rule.
     pub field: Option<String>,
     pub rule: Rule,
 }
@@ -134,6 +136,13 @@ pub enum Rule {
     /// An issue the resulting graph has and the loaded one lacks, which
     /// no rule above refused.
     Issue(Issue),
+    /// The canonical text of `file` the batch leaves is `bytes`, over the
+    /// `max` a load reads: lists grown by `add_*` or a merge's union.
+    FileTooLarge {
+        file: NodeFile,
+        bytes: usize,
+        max: usize,
+    },
 }
 
 impl From<Broken> for Rule {
@@ -170,6 +179,7 @@ impl Rule {
             Self::NotHeld { .. } => "not_held",
             Self::Quality(fault) => fault.as_str(),
             Self::Issue(issue) => issue.kind.as_str(),
+            Self::FileTooLarge { .. } => "file_too_large",
         }
     }
 }
@@ -231,6 +241,11 @@ impl fmt::Display for Rule {
             }
             Self::Quality(fault) => write!(f, "{fault}"),
             Self::Issue(issue) => write!(f, "the graph would gain an issue: {}", issue.message),
+            Self::FileTooLarge { file, bytes, max } => write!(
+                f,
+                "leaves `{file}` at {bytes} bytes, over the {max} a node file may hold; \
+                 remove elements of its lists, or split the decision"
+            ),
         }
     }
 }

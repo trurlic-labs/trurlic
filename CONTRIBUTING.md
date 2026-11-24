@@ -62,12 +62,12 @@ cargo test -- a_hand_edited_non_canonical_file_loads_check_flags_it_and_fmt_fixe
 
 ## Making changes
 
-1. Branch from `main`: `git checkout -b feat/my-feature`.
+1. Branch from `master`: `git checkout -b feat/my-feature`.
 2. Make changes. Add tests for non-trivial behavior.
 3. `make fmt` to auto-format.
 4. `make ci` to verify.
 5. Commit using [conventional commits](#commit-conventions).
-6. Open a PR against `main`.
+6. Open a PR against `master`.
 
 ## Working on the store
 

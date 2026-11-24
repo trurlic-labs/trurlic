@@ -1,14 +1,11 @@
 component = "store"
-choice = "Every write goes through a flushed journal in .state/txn.toml, which carries the message of its history commit, and lands once the journal is in place"
-reason = """
-Renaming staged files one by one left the earlier renames on disk when a later one failed, a graph that matched neither the old commit nor the new. commit_batch stages and flushes every file and flushes .state/tmp/, then stages the journal (each staged file, its target and the BLAKE3 of its bytes, plus the files to remove), renames it to .state/txn.toml and flushes .state/. That rename is the commit point. Under shared the journal also holds the CommitMessage of the write's history commit, as its [history] table. apply_journal renames in order, removes after every rename, flushes each touched directory, makes the history commit when the journal carries one, then deletes the journal without a flush, since a journal that reappears applies again as a no-op and its commit is made already. After the commit point a failure is Error::WritePending, carrying the error behind it: the write is recorded, not rolled back.
-Store::recover finishes a leftover journal, its history commit included, under the exclusive lock before anything loads: begin_write does it for every write, and a read that finds a journal or a temp file under its shared lock takes the exclusive lock to apply it before it loads. Replay skips a write whose staged file is gone (already renamed), and one whose target holds the journal's bytes while its temp name holds another write's leftover: temp names recur once process ids wrap, which is why the journal hashes each staged file. That hash is the crate's one use of blake3; node files carry no hash. A staged file with other bytes and no such target, an unparsable journal, or a path outside the store is refused with Error::BadJournal naming the file. A commit of two files does 8 flushes.
-"""
+choice = "Every write goes through a flushed journal in .state/txn.toml, which carries the message of its history commit, lands once the journal is in place, and whose deletion is flushed"
+reason = "Renaming staged files one by one left the earlier renames on disk when a later one failed. commit_batch stages and flushes every file, then renames the journal (each staged file, its target and the BLAKE3 of its bytes, the files to remove, and under shared the message of the history commit) to .state/txn.toml and flushes .state/: the commit point. apply_journal renames, removes, flushes each touched directory, makes the history commit, deletes the journal and flushes .state/ again before the writer returns and releases the lock. A journal is thus on disk exactly while its write is unfinished: one that came back after a power loss would remove a file re-created since and commit a later hand edit as the write's, a second history commit for one write. Replay skips a write whose staged file is gone and one whose target holds the staged bytes; a staged file with other bytes is BadJournal. After the commit point a failure is WritePending. A commit of two files does 9 flushes."
 alternatives = [
+    "Leave the deletion unflushed and make replay a no-op for a finished journal: rejected because a removal cannot tell a file never removed from one re-created since, and a later hand edit would be staged as the write's",
     "Rename in order with the last file as the only commit point, no journal: rejected because a failed rename left a graph that matched neither commit",
-    "A journal holding the new file contents (redo log): rejected because it doubles the bytes written per commit and still needs every target flushed; naming the staged files plus their hash costs one small file",
-    "An undo log rolled back on recovery: rejected because it needs the old contents saved before every rename, and a commit that failed after its journal would still have to be undone by whoever opens next",
-    "Refuse to load while a journal is pending and leave it to a person: rejected because a commit that stops after its commit point must heal on the next command, read or write",
+    "A journal holding the new file contents: rejected because it doubles the bytes written per commit and still needs every target flushed",
+    "An undo log rolled back on recovery: rejected because a commit that failed after its journal would have to be undone by whoever opens next",
 ]
 tags = [
     "concurrency",
@@ -21,16 +18,16 @@ anchors = [
     { file = "src/store/access.rs", symbol = "Store::read" },
     { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
     { file = "src/store/journal.rs", symbol = "Journal" },
-    { file = "src/store/journal.rs", symbol = "StagedWrite" },
+    { file = "src/store/journal.rs", symbol = "Replayed" },
     { file = "src/store/journal.rs", symbol = "Store::apply_journal" },
     { file = "src/store/journal.rs", symbol = "Store::finish" },
     { file = "src/store/journal.rs", symbol = "Store::replay_journal" },
     { file = "src/store/journal.rs", symbol = "Store::unapplied" },
-    { file = "src/store/journal.rs", symbol = "Store::write_journal" },
     { file = "src/store/journal.rs", symbol = "hash_bytes" },
+    { file = "tests/integration/failpoints.rs", symbol = "the_journal_deletion_is_flushed_before_the_write_returns" },
 ]
 depends_on = [
     "a-commit-stages-its-files-in-parallel",
+    "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",
     "atomic-writes-via-serialize-to-temp-verify-round-trip",
-    "exclusive-advisory-file-locking-via-fs2-with-5-second",
 ]

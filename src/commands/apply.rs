@@ -2,78 +2,98 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
+use crate::Result;
 use crate::console::{diag, out};
-use crate::discovery::discover;
 use crate::mcp::twin::{self, MAX_DOCUMENT_BYTES, ToolError};
-use crate::store::{Applied, Done, Field, OpKind};
-use crate::{Error, Result};
+use crate::store::{Applied, Done, Field, OpKind, Warning};
 
-use super::Format;
+use super::{Format, answer};
 
 /// `trurlic apply <file>`: the `apply` tool on the batch `file` holds, the
 /// JSON object the tool takes as its arguments, or on stdin for `-`. It
 /// refuses as the tool does, and a batch it writes leaves the bytes the
 /// tool's would.
 pub(crate) fn apply(cwd: &Path, file: &Path, format: Format) -> std::result::Result<(), ToolError> {
-    let applied = run(cwd, file);
-    match (applied, format) {
-        (Ok(applied), Format::Json) => Ok(out!("{}", twin::result_json(&applied))?),
-        (Ok(applied), Format::Text) => Ok(print(&applied)?),
-        (Err(refusal), Format::Json) => {
-            out!("{}", twin::refusal_json(&refusal))?;
-            Err(refusal)
-        }
-        (Err(refusal), Format::Text) => Err(refusal),
-    }
+    answer(run(cwd, file), format, print)
 }
 
 /// The batch is read before the store is found, as a call's request is,
 /// and parsed after it, as a call's arguments are.
 fn run(cwd: &Path, file: &Path) -> std::result::Result<Applied, ToolError> {
     let arguments = twin::arguments(&read(file)?)?;
-    let store = discover(cwd)?;
-    twin::apply(&store, &arguments)
+    twin::apply(cwd, &arguments)
 }
 
 /// The bytes of `file`, or of stdin for `-`, refused past the size of one
-/// MCP message.
+/// MCP message. A file that cannot be read holds no batch, as one that is
+/// not JSON holds none: the refusal is the batch's, not the store's. A
+/// pipe is read as a file is (`trurlic apply <(...)`), so a FIFO is not
+/// refused: no lock is held while it is read.
 fn read(file: &Path) -> std::result::Result<Vec<u8>, ToolError> {
     let limit = u64::try_from(MAX_DOCUMENT_BYTES)
         .unwrap_or(u64::MAX)
         .saturating_add(1);
     let mut document = Vec::new();
-    if file == Path::new("-") {
-        io::stdin()
-            .lock()
-            .take(limit)
-            .read_to_end(&mut document)
-            .map_err(Error::system("read the batch from stdin"))?;
+    let read = if file == Path::new("-") {
+        io::stdin().lock().take(limit).read_to_end(&mut document)
     } else {
-        File::open(file)
-            .and_then(|opened| opened.take(limit).read_to_end(&mut document))
-            .map_err(Error::io(file))?;
+        File::open(file).and_then(|opened| opened.take(limit).read_to_end(&mut document))
+    };
+    let shown = || match file.to_str() {
+        Some("-") => "stdin".to_owned(),
+        _ => file.display().to_string(),
+    };
+    if let Err(e) = read {
+        return Err(ToolError::bad_document(format!(
+            "{}: cannot read the batch: {e}",
+            shown()
+        )));
     }
     if document.len() > MAX_DOCUMENT_BYTES {
         return Err(ToolError::bad_document(format!(
             "{}: a batch is at most {MAX_DOCUMENT_BYTES} bytes",
-            file.display()
+            shown()
         )));
     }
     Ok(document)
 }
 
-/// One line per op, then the files; each warning on stderr.
+/// One line per op, then the files; each warning on stderr, with the
+/// message of its pattern, and the count of those not listed.
 fn print(applied: &Applied) -> Result<()> {
     for done in &applied.ops {
         out!("{}", line(done))?;
     }
     for warning in &applied.warnings {
-        diag!("warning: {}", warning.message);
+        diag!("warning: {}", said(applied, warning));
+    }
+    let unlisted = applied.ops.iter().map(|done| done.more_warnings);
+    let unlisted = unlisted.fold(applied.more_origin_warnings, usize::saturating_add);
+    if unlisted > 0 {
+        diag!("warning: and {unlisted} more, by the same patterns of `[quality]`");
     }
     out!(
         "{} file(s) written, {} removed",
         applied.written,
         applied.removed
+    )
+}
+
+/// A warning as a terminal shows it: the op, the argument and what the
+/// pattern says.
+fn said(applied: &Applied, warning: &Warning) -> String {
+    let op = warning.op.and_then(|index| applied.ops.get(index));
+    let at = op.map_or_else(String::new, |done| {
+        format!("{} `{}`, ", done.op.as_str(), done.name)
+    });
+    let message = applied
+        .patterns
+        .iter()
+        .find(|note| note.index == warning.pattern)
+        .map_or("", |note| note.message.as_str());
+    format!(
+        "{at}`{}`: matches `[quality] patterns[{}]` at byte {}: {message}",
+        warning.field, warning.pattern, warning.at
     )
 }
 

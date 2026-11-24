@@ -221,6 +221,33 @@ fn a_failed_rename_is_applied_by_the_next_command() {
     );
 }
 
+/// The journal's deletion is flushed before the writer returns, under the
+/// lock: a flush that fails is reported, and the write stands.
+#[test]
+fn the_journal_deletion_is_flushed_before_the_write_returns() {
+    let project = Project::init();
+    hand_edits(&project);
+
+    let output = project
+        .command()
+        .arg("fmt")
+        .env(FAILPOINT, "commit.forgotten:1")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("txn.toml is not flushed: injected failure at commit.forgotten:1"),
+        "{stderr}"
+    );
+    assert!(!journal_exists(&project));
+    assert_eq!(
+        project.read("components/store.toml"),
+        "description = \"Store\"\n"
+    );
+}
+
 /// A read command runs while another process holds the lock with its files
 /// staged. It waits for the commit, leaves its files alone, and then reads
 /// the commit whole.

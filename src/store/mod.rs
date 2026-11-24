@@ -37,8 +37,8 @@ use crate::{Error, Result};
 pub use access::Writer;
 pub use apply::{
     AddComponent, AnchorInput, Applied, Batch, Done, Field, ListEdit, Merge, NodeKind, Op, OpAt,
-    OpKind, Record, Refusal, Remove, RemoveComponent, Rename, Revise, ReviseComponent, Rule,
-    Warning, WarningKind,
+    OpKind, PatternNote, Record, Refusal, Remove, RemoveComponent, Rename, Revise, ReviseComponent,
+    Rule, Warning, WarningKind,
 };
 pub(crate) use durable::sync_dir;
 pub use history::{CommitMessage, HistoryFinding, Tool};

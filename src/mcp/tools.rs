@@ -102,9 +102,14 @@ pub(crate) fn tool_list() -> &'static Value {
 /// Whether `tools/list` lists `name`; a call to any other name is refused
 /// as a protocol error.
 pub(crate) fn is_listed(name: &str) -> bool {
-    TOOL_DEFINITIONS["tools"]
-        .as_array()
-        .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == name))
+    TOOL_DEFINITIONS
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| {
+            tools
+                .iter()
+                .any(|tool| tool.get("name") == Some(&name.into()))
+        })
 }
 
 /// Call the tool `name` on `state`, the graph loaded under the shared lock.

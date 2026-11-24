@@ -10,7 +10,6 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
-use std::fmt;
 
 use regex::{Regex, RegexBuilder};
 
@@ -45,7 +44,9 @@ pub(crate) struct PatternFault {
     pub(crate) message: String,
 }
 
-/// A field of a decision, and the element of a list field.
+/// A field of a decision, and the element of a list field by its position
+/// in the decision's list: the op that judged the decision names the
+/// argument that brought it (`apply::check`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Place {
     pub(crate) field: DecisionField,
@@ -56,15 +57,11 @@ impl Place {
     const fn whole(field: DecisionField) -> Self {
         Self { field, index: None }
     }
-}
 
-impl fmt::Display for Place {
-    /// `reason`, `alternatives[2]`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.field.as_str())?;
-        match self.index {
-            Some(index) => write!(f, "[{index}]"),
-            None => Ok(()),
+    const fn element(field: DecisionField, index: usize) -> Self {
+        Self {
+            field,
+            index: Some(index),
         }
     }
 }
@@ -153,6 +150,13 @@ impl Bar {
         Ok(hits)
     }
 
+    /// The message of the pattern at `index` of `[quality] patterns`.
+    pub(crate) fn message(&self, index: usize) -> Option<&str> {
+        self.patterns
+            .get(index)
+            .map(|pattern| pattern.message.as_str())
+    }
+
     /// The batch's `origin` against `require_origin`, when the batch
     /// `records` a decision, and against the patterns that read it.
     pub(crate) fn judge_origin(
@@ -199,17 +203,10 @@ impl Bar {
                 at_least(place, Limit::AlternativeRequired, count, Some(1))?;
                 at_most(place, Limit::AlternativesMax, count, self.alternatives_max)?;
                 for (index, alternative) in decision.alternatives.iter().enumerate() {
-                    let place = Place {
-                        field,
-                        index: Some(index),
-                    };
-                    let measured = words(alternative);
-                    at_most(
-                        place,
-                        Limit::AlternativeWordsMax,
-                        measured,
-                        self.alternative_words_max,
-                    )?;
+                    let place = Place::element(field, index);
+                    text(place, TextField::Alternative, alternative)?;
+                    let (limit, bound) = (Limit::AlternativeWordsMax, self.alternative_words_max);
+                    at_most(place, limit, words(alternative), bound)?;
                 }
                 Ok(())
             }
@@ -218,8 +215,15 @@ impl Bar {
                 at_least(place, Limit::AnchorRequired, count, Some(1))?;
                 at_most(place, Limit::AnchorsMax, count, self.anchors_max)
             }
-            // No limit counts tags; the origin is the batch's.
-            DecisionField::Tags | DecisionField::Origin => Ok(()),
+            DecisionField::Tags => {
+                for (index, tag) in decision.tags.iter().enumerate() {
+                    text(Place::element(field, index), TextField::Tag, tag)?;
+                }
+                Ok(())
+            }
+            // The origin is the batch's, judged once (`judge_origin`) and
+            // held to the text rules with the batch's trailers.
+            DecisionField::Origin => Ok(()),
         }
     }
 }
@@ -264,34 +268,44 @@ impl Compiled {
 /// The texts of `field` a pattern reads, each with its place: an anchor
 /// as `file::symbol`.
 fn texts(decision: &Decision, field: DecisionField) -> Vec<(Place, Cow<'_, str>)> {
-    let each = |index: usize| Place {
-        field,
-        index: Some(index),
-    };
+    let each = |(index, text)| (Place::element(field, index), text);
     match field {
         DecisionField::Choice => vec![(Place::whole(field), Cow::Borrowed(&*decision.choice))],
         DecisionField::Reason => vec![(Place::whole(field), Cow::Borrowed(&*decision.reason))],
-        DecisionField::Alternatives => decision
-            .alternatives
-            .iter()
-            .enumerate()
-            .map(|(index, text)| (each(index), Cow::Borrowed(text.as_str())))
-            .collect(),
-        DecisionField::Tags => decision
-            .tags
-            .iter()
-            .enumerate()
-            .map(|(index, text)| (each(index), Cow::Borrowed(text.as_str())))
-            .collect(),
-        DecisionField::Anchors => decision
-            .anchors
-            .iter()
-            .enumerate()
-            .map(|(index, anchor)| (each(index), Cow::Owned(anchor.to_string())))
-            .collect(),
+        DecisionField::Alternatives => {
+            let texts = decision
+                .alternatives
+                .iter()
+                .map(|text| Cow::Borrowed(text.as_str()));
+            texts.enumerate().map(each).collect()
+        }
+        DecisionField::Tags => {
+            let texts = decision
+                .tags
+                .iter()
+                .map(|text| Cow::Borrowed(text.as_str()));
+            texts.enumerate().map(each).collect()
+        }
+        DecisionField::Anchors => {
+            let texts = decision
+                .anchors
+                .iter()
+                .map(|anchor| Cow::Owned(anchor.to_string()));
+            texts.enumerate().map(each).collect()
+        }
         // The batch's origin is judged once, by `judge_origin`.
         DecisionField::Origin => Vec::new(),
     }
+}
+
+/// The element of `decision` that `place` names, as the bar reads it:
+/// `None` for a whole field.
+pub(crate) fn element(decision: &Decision, place: Place) -> Option<Cow<'_, str>> {
+    let index = place.index?;
+    texts(decision, place.field)
+        .into_iter()
+        .nth(index)
+        .map(|(_, text)| text)
 }
 
 fn text(place: Place, field: TextField, text: &str) -> Result<(), Breach> {

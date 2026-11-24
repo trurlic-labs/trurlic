@@ -1,17 +1,23 @@
 //! Finding the graph from the directory a call starts in, and the code
 //! root: the tree the call comes from, which anchors resolve against.
 //!
-//! The order: the nearest `.trurlic` at or above the directory, a symlink
+//! The walk goes up from the directory and never leaves the work tree it
+//! starts in. In each directory it takes the `.trurlic` there, a symlink
 //! of that name followed to the graph it leads to, so a clone or a copy
-//! outside the repository reaches the graph through one; else, in a linked
-//! worktree, the main worktree's graph when it states `shared`, which git
-//! names from the common dir. Git runs only for that second step, and only
-//! when the first `.git` above the directory is a file, as it is at the
-//! top of every linked worktree: a call from a tree that holds its graph,
-//! the per-call path of `serve`, spawns no process. Discovery never runs
-//! git inside a graph directory, where a shared graph's own repository
-//! would answer (`git::graph` alone runs git there): a directory inside one
-//! finds it in the walk.
+//! outside the repository reaches the graph through one. A directory with
+//! no `.trurlic` whose `.git` is a file is the top of a linked worktree,
+//! or of a submodule: the walk stops, and the graph is the main worktree's
+//! when that one states `shared`, which git names from the common dir. A
+//! directory whose `.git` is a directory is the top of a main worktree,
+//! or of a repository cloned inside another project's tree: a graph above
+//! it is not that repository's, and the walk stops with none. A tree with
+//! no git at all is walked to the root of the file system. Git runs only
+//! at a linked worktree's top, with no graph found below it: a call from a
+//! tree that holds its graph, the per-call path of `serve`, makes two
+//! metadata calls per directory and spawns no process. The graph's own
+//! repository, `.trurlic/.git`, is no work tree: the walk passes through
+//! a graph directory to the tree that holds it, and discovery never runs
+//! git inside one (`git::graph` alone does).
 
 use std::fs;
 use std::io::ErrorKind;
@@ -22,17 +28,27 @@ use crate::store::{Placement, STORE_DIR, Store};
 use crate::{Error, Result};
 
 /// The graph a call from `cwd` reads, with the tree it is read for. Fails
-/// with [`Error::StoreNotFound`] when there is none, and with a typed
-/// error for a `.trurlic` that leads to no directory, which stops the
-/// walk: a graph above it is not the one the tree means.
+/// with [`Error::StoreNotFound`] when the work tree holds none, and with a
+/// typed error for a `.trurlic` that leads to no directory, which stops
+/// the walk: a graph above it is not the one the tree means.
 pub(crate) fn discover(cwd: &Path) -> Result<Store> {
     let start = cwd.canonicalize().map_err(Error::io(cwd))?;
+    let not_found = || Error::StoreNotFound(cwd.to_path_buf());
     for dir in start.ancestors() {
         if let Some(graph) = graph_in(dir)? {
             return Ok(Store::reached_from(graph, dir.to_path_buf()));
         }
+        // A graph directory's own `.git` is its history, no work tree.
+        if dir.file_name().is_some_and(|name| name == STORE_DIR) {
+            continue;
+        }
+        match git::dot_git_in(dir)? {
+            DotGit::Absent => {}
+            DotGit::File => return shared_graph_of(dir)?.ok_or_else(not_found),
+            DotGit::Directory => return Err(not_found()),
+        }
     }
-    shared_graph_serving(&start)?.ok_or_else(|| Error::StoreNotFound(cwd.to_path_buf()))
+    Err(not_found())
 }
 
 /// The real path of the graph directory `dir/.trurlic` leads to: itself,
@@ -87,17 +103,26 @@ pub(crate) fn shared_graph_serving(dir: &Path) -> Result<Option<Store>> {
         return Ok(None);
     };
     let top = top.canonicalize().map_err(Error::io(&top))?;
-    let worktrees = git::worktrees(&top)?;
+    shared_graph_of(&top)
+}
+
+/// The main worktree's graph, when it states `shared`, read for `top`,
+/// the canonical top of a work tree whose `.git` is a file: a linked
+/// worktree's, a submodule's. `None` when the main worktree is `top`
+/// itself (a submodule, a repository made with `--separate-git-dir`) or
+/// holds no shared graph, and in a bare repository's worktree.
+fn shared_graph_of(top: &Path) -> Result<Option<Store>> {
+    let worktrees = git::worktrees(top)?;
     let Some(main) = worktrees.first().filter(|main| main.head != Head::Bare) else {
         return Ok(None);
     };
-    if same_dir(&main.path, &top) {
+    if same_dir(&main.path, top) {
         return Ok(None);
     }
     let Some(graph) = graph_in(&main.path)? else {
         return Ok(None);
     };
-    let store = Store::reached_from(graph, top);
+    let store = Store::reached_from(graph, top.to_path_buf());
     match store.stated_placement()? {
         Placement::Shared => Ok(Some(store)),
         Placement::Tracked => Ok(None),
@@ -199,6 +224,24 @@ mod tests {
                 "{err:?}"
             );
         }
+    }
+
+    /// The top of a repository inside the project's tree ends the walk:
+    /// the project's graph above it is not its graph. Asking takes no git.
+    #[test]
+    fn the_walk_stops_at_the_top_of_a_nested_repository() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        store_in(&root);
+        let nested = root.join("vendor/lib");
+        fs::create_dir_all(nested.join(".git")).unwrap();
+        fs::create_dir_all(nested.join("src")).unwrap();
+
+        for start in [nested.clone(), nested.join("src")] {
+            let err = discover(&start).unwrap_err();
+            assert!(matches!(err, Error::StoreNotFound(_)), "{err:?}");
+        }
+        assert_eq!(discover(&root.join("vendor")).unwrap().code_root(), root);
     }
 
     #[test]

@@ -212,6 +212,36 @@ mod tests {
         assert_eq!(store.begin_write().unwrap().format().unwrap(), []);
     }
 
+    /// A file under the cap whose canonical form is over it, a literal
+    /// string of backslashes that the canonical form escapes: it loads,
+    /// and `fmt` writes nothing and names it, its size and the cap.
+    #[test]
+    fn format_refuses_a_rewrite_a_load_could_not_read() {
+        use crate::store::limits::MAX_NODE_FILE_BYTES;
+
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let canonical = canonical(&sample_decision("project"));
+        let reason = "\\".repeat(MAX_NODE_FILE_BYTES / 2 + 1);
+        let text = canonical.replace(
+            "reason = \"Reason of the sample decision\"",
+            &format!("reason = '{reason}'"),
+        );
+        assert!(text.len() < MAX_NODE_FILE_BYTES);
+        fs::write(store.decision_path("d"), &text).unwrap();
+        let state = store.load_state().unwrap();
+        assert_eq!(state.non_canonical, [NodeFile::Decision("d".into())]);
+
+        let err = store.begin_write().unwrap().format().unwrap_err();
+
+        assert!(
+            matches!(&err, Error::CanonicalTooLarge { path, bytes, max: MAX_NODE_FILE_BYTES }
+                if *path == store.decision_path("d") && *bytes > MAX_NODE_FILE_BYTES),
+            "{err:?}"
+        );
+        assert_eq!(fs::read_to_string(store.decision_path("d")).unwrap(), text);
+    }
+
     #[test]
     fn format_rewrites_project_toml_too() {
         let tmp = TempDir::new().unwrap();

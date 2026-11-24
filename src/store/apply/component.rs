@@ -10,9 +10,11 @@ use super::edit::Edit;
 use super::ops::{AddComponent, Field, ListEdit, OpKind, RemoveComponent, Rename, ReviseComponent};
 use super::refusal::{NodeKind, Rule};
 use crate::store::schema::{Component, PROJECT_COMPONENT};
+use crate::store::text::{TextField, fault};
 
 pub(super) fn add(edit: &mut Edit<'_>, op: AddComponent) -> Result<Done, Fault> {
     new_name(edit, &op.name, Field::Name)?;
+    description(&op.description)?;
     let mut connects_to = BTreeSet::new();
     let whole = ListEdit {
         whole: Some(op.connects_to),
@@ -34,8 +36,9 @@ pub(super) fn add(edit: &mut Edit<'_>, op: AddComponent) -> Result<Done, Fault> 
 pub(super) fn revise(edit: &mut Edit<'_>, op: ReviseComponent) -> Result<Done, Fault> {
     // clone: the revision is built beside the value it is judged against.
     let mut after = existing(edit, &op.name, Field::Name)?.clone();
-    if let Some(description) = op.description {
-        after.description = description;
+    if let Some(text) = op.description {
+        description(&text)?;
+        after.description = text;
     }
     edit_list(
         &mut after.connects_to,
@@ -75,6 +78,7 @@ pub(super) fn rename(edit: &mut Edit<'_>, op: Rename) -> Result<Done, Fault> {
         }
         edit.put_component(op.to.clone(), component);
     }
+    edit.carry(&op.name, &op.to);
     let (decisions, components) = uses(edit, &op.name);
     for name in &decisions {
         if let Some(decision) = edit.decision_mut(name) {
@@ -107,6 +111,20 @@ pub(super) fn remove(edit: &mut Edit<'_>, op: RemoveComponent) -> Result<Done, F
     }
     edit.take_component(&op.name);
     Ok(Done::of(OpKind::RemoveComponent, op.name))
+}
+
+/// A description meets `store::text`.
+fn description(text: &str) -> Result<(), Fault> {
+    match fault(TextField::Description, text) {
+        Some(fault) => Err(Fault::at(
+            Field::Description,
+            Rule::Text {
+                field: TextField::Description,
+                fault,
+            },
+        )),
+        None => Ok(()),
+    }
 }
 
 /// The component `name`, given as `field`, as the graph holds it now.
