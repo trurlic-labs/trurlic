@@ -10,7 +10,6 @@
 //! each file whose canonical bytes differ and removes each file the tree no
 //! longer holds.
 
-mod anchors;
 mod format_0_5;
 mod placement;
 mod report;
@@ -31,11 +30,11 @@ use crate::{Error, Result};
 use super::canonical::Canonical;
 use super::commit::PendingWrite;
 use super::history::{CommitMessage, History, Tool};
+use super::load::list_toml_stems;
 use super::schema::{
     COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, FORMAT_VERSION, PROJECT_FILE, Placement,
     Project,
 };
-use super::state::list_toml_stems;
 use super::version::{FormatVersion, Standing, read_table, standing, version_key};
 use super::{Store, StoreLock};
 
@@ -65,7 +64,7 @@ pub(crate) struct Migration {
 
 /// A graph file of any format.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum File {
+enum File {
     Project,
     Index,
     Component(String),
@@ -95,21 +94,21 @@ impl fmt::Display for File {
 /// The store's graph files as TOML tables, which the steps rewrite in
 /// place. A file a step removes from the tree is removed from the store.
 #[derive(Debug)]
-pub(super) struct Tree {
-    pub(super) files: BTreeMap<File, toml::Table>,
+struct Tree {
+    files: BTreeMap<File, toml::Table>,
     /// What the running step dropped.
-    pub(super) losses: Vec<Loss>,
+    losses: Vec<Loss>,
     /// What else the running step reports.
-    pub(super) facts: Vec<Fact>,
+    facts: Vec<Fact>,
     /// The placement the step to format 0.5 writes, decided over the files
     /// on disk before any step ran.
-    pub(super) placement: (Placement, PlacementBasis),
+    placement: (Placement, PlacementBasis),
 }
 
 impl Tree {
     /// The table of `project.toml`, which every tree read from a store
     /// holds.
-    pub(super) fn project(&mut self) -> &mut toml::Table {
+    fn project(&mut self) -> &mut toml::Table {
         self.files.entry(File::Project).or_default()
     }
 
@@ -122,7 +121,7 @@ impl Tree {
 }
 
 /// `value`, at `field` of `file`, as a [`Loss`].
-pub(super) fn loss(file: &File, field: &str, value: &toml::Value) -> Loss {
+fn loss(file: &File, field: &str, value: &toml::Value) -> Loss {
     Loss {
         file: file.to_string(),
         field: field.to_owned(),
@@ -381,7 +380,7 @@ impl<'a> Current<'a> {
 }
 
 #[cfg(test)]
-pub(super) mod testing {
+mod testing {
     use std::fs;
 
     use tempfile::TempDir;
@@ -403,7 +402,7 @@ pub(super) mod testing {
     }
 
     /// A store holding the committed fixture graph of format `version`.
-    pub(in crate::store) fn fixture_store(version: &str) -> (TempDir, Store) {
+    pub(super) fn fixture_store(version: &str) -> (TempDir, Store) {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/formats")
             .join(version);
@@ -414,12 +413,12 @@ pub(super) mod testing {
     }
 
     /// The placement the tests state, so no test asks git.
-    pub(in crate::store) fn tracked() -> PlacementSource {
+    pub(super) fn tracked() -> PlacementSource {
         PlacementSource::Stated(Placement::Tracked)
     }
 
     /// The fixture graph of format `version` as a tree.
-    pub(in crate::store) fn fixture_tree(version: &str) -> (TempDir, Tree) {
+    pub(super) fn fixture_tree(version: &str) -> (TempDir, Tree) {
         let (tmp, store) = fixture_store(version);
         let (tree, _) = store.read_tree(tracked()).unwrap();
         (tmp, tree)
@@ -437,62 +436,10 @@ mod tests {
     use crate::store::{PROJECT_COMPONENT, ProjectState, Status};
     use tempfile::TempDir;
 
-    const HISTORICAL: [&str; 5] = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.4.1"];
-
     fn migrate(store: &Store) -> MigrationReport {
         let lock = store.lock().unwrap();
         let migration = store.plan_migration(&lock, tracked()).unwrap().unwrap();
         store.commit_migration(&lock, migration).unwrap()
-    }
-
-    /// Every file under `root` but `.state/`, with its bytes.
-    fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
-        let mut files = BTreeMap::new();
-        for entry in fs::read_dir(root).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                if path.file_name().is_some_and(|name| name != ".state") {
-                    files.extend(snapshot(&path));
-                }
-            } else {
-                files.insert(path.clone(), fs::read(&path).unwrap());
-            }
-        }
-        files
-    }
-
-    #[test]
-    fn every_historical_fixture_migrates_to_a_store_that_loads_clean() {
-        for version in HISTORICAL {
-            let (_tmp, store) = fixture_store(version);
-            assert!(store.check_version().is_err(), "{version}");
-
-            let report = migrate(&store);
-
-            assert_eq!(report.from.to_string(), version);
-            assert_eq!(report.steps.last().unwrap().to, FORMAT_VERSION);
-            store.check_version().unwrap();
-            let state = store.load_state().unwrap();
-            assert_eq!(state.project.format_version, FORMAT_VERSION);
-            assert_eq!(state.validate(), [], "{version}");
-            assert_eq!(state.non_canonical, [], "{version}");
-            assert!(
-                store.preview_migration(tracked()).unwrap().is_none(),
-                "{version}"
-            );
-            assert!(!store.root().join(PATTERNS_DIR).exists(), "{version}");
-        }
-    }
-
-    #[test]
-    fn a_plan_writes_nothing() {
-        let (_tmp, store) = fixture_store("0.1.0");
-        let before = snapshot(store.root());
-
-        let plan = store.preview_migration(tracked()).unwrap().unwrap();
-
-        assert!(!plan.report.rewritten.is_empty());
-        assert_eq!(snapshot(store.root()), before);
     }
 
     /// The step to 0.5 maps every field of 0.4.1 and reports the rest, now

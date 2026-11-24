@@ -14,7 +14,7 @@ tags = [
 status = "accepted"
 created = "2026-06-15T09:44:59.411657570Z"
 anchors = [
-    { file = "src/mcp/apply.rs", symbol = "apply" },
+    { file = "src/mcp/apply/mod.rs", symbol = "apply" },
     { file = "src/mcp/mod.rs", symbol = "call_unspecified" },
     { file = "src/mcp/spec/tool.rs", symbol = "Access" },
     { file = "src/mcp/spec/tool.rs", symbol = "SpecTool::call" },

@@ -80,14 +80,12 @@ fn tracked_allowed(dir: &Path, in_work_tree: bool) -> Result<()> {
 /// The `info/exclude` that keeps a shared graph in `dir` out of git,
 /// refused unless `dir` is the top of the main worktree.
 fn shared_exclude(dir: &Path) -> Result<PathBuf> {
-    let worktrees = git::worktrees(dir)?;
-    match worktrees.first() {
+    match git::worktrees(dir)?.into_iter().next() {
         Some(main) if main.head != Head::Bare => {
             if !same_dir(&main.path, dir) {
                 return Err(Error::SharedOffMain {
                     dir: dir.to_path_buf(),
-                    // clone: the error owns the path it names.
-                    main: main.path.clone(),
+                    main: main.path,
                 });
             }
         }

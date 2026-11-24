@@ -397,7 +397,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::corpus::SplitMix64;
+    use crate::store::seeded::SplitMix64;
 
     fn at(text: &str) -> Timestamp {
         text.parse().unwrap()

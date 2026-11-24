@@ -1,8 +1,9 @@
 component = "store"
-choice = "Every write goes through a flushed journal in .state/txn.toml, which carries the message of its history commit, lands once the journal is in place, and whose deletion is flushed"
-reason = "Renaming staged files one by one left the earlier renames on disk when a later one failed. commit_batch stages and flushes every file, then renames the journal (each staged file, its target and the BLAKE3 of its bytes, the files to remove, and under shared the message of the history commit) to .state/txn.toml and flushes .state/: the commit point. apply_journal renames, removes, flushes each touched directory, makes the history commit, deletes the journal and flushes .state/ again before the writer returns and releases the lock. A journal is thus on disk exactly while its write is unfinished: one that came back after a power loss would remove a file re-created since and commit a later hand edit as the write's, a second history commit for one write. Replay skips a write whose staged file is gone and one whose target holds the staged bytes; a staged file with other bytes is BadJournal. After the commit point a failure is WritePending. A commit of two files does 9 flushes."
+choice = "Every write goes through a flushed journal in .state/txn.toml that names only the steps still to do, its file step and its history step, and lands once the journal is in place"
+reason = "Renaming staged files one by one left the earlier renames on disk when a later one failed. commit_batch stages and flushes every file, under shared writes their blobs, then renames the journal (each staged file, its target and the BLAKE3 of its bytes, the files to remove, and under shared the history step: message, parent and blob ids) to .state/txn.toml and flushes .state/: the commit point. apply_journal renames, removes, flushes each touched directory, makes the history commit, deletes the journal and flushes .state/ before the writer returns and releases the lock. A journal is not replayed past what it still has to do. A history commit that fails once the files are in place narrows the journal, staged, renamed and flushed, to the history step alone, so a read that keeps the waiting commit never removes a file the owner re-created since; a journal whose deletion fails is replaced by one that names no step, which the next opener deletes and does nothing else. Replay skips a write whose staged file is gone and one whose target holds the staged bytes; a staged file with other bytes is BadJournal. After the commit point a failure is WritePending."
 alternatives = [
-    "Leave the deletion unflushed and make replay a no-op for a finished journal: rejected because a removal cannot tell a file never removed from one re-created since, and a later hand edit would be staged as the write's",
+    "Leave the deletion unflushed and make replay a no-op for a finished journal: rejected because a removal cannot tell a file never removed from one re-created since",
+    "Keep the whole journal when the history commit fails: rejected because every later read would run its removals again and delete a file re-created since",
     "Rename in order with the last file as the only commit point, no journal: rejected because a failed rename left a graph that matched neither commit",
     "A journal holding the new file contents: rejected because it doubles the bytes written per commit and still needs every target flushed",
     "An undo log rolled back on recovery: rejected because a commit that failed after its journal would have to be undone by whoever opens next",
@@ -15,15 +16,15 @@ tags = [
 status = "proposed"
 created = "2026-10-02T12:18:34.628311449Z"
 anchors = [
-    { file = "src/store/access.rs", symbol = "Store::read" },
     { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
     { file = "src/store/journal.rs", symbol = "Journal" },
     { file = "src/store/journal.rs", symbol = "Replayed" },
     { file = "src/store/journal.rs", symbol = "Store::apply_journal" },
     { file = "src/store/journal.rs", symbol = "Store::finish" },
+    { file = "src/store/journal.rs", symbol = "Store::narrow" },
+    { file = "src/store/journal.rs", symbol = "Store::replace_journal" },
     { file = "src/store/journal.rs", symbol = "Store::replay_journal" },
     { file = "src/store/journal.rs", symbol = "Store::unapplied" },
-    { file = "src/store/journal.rs", symbol = "hash_bytes" },
     { file = "tests/integration/failpoints.rs", symbol = "the_journal_deletion_is_flushed_before_the_write_returns" },
 ]
 depends_on = [

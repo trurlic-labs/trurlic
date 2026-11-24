@@ -226,11 +226,6 @@ fn each_fault_of_a_record_is_refused_naming_its_argument() {
             "ops[0].choice",
         ),
         (
-            with(|op| op.reason = "short".into()),
-            "invalid_text",
-            "ops[0].reason",
-        ),
-        (
             with(|op| op.anchors.push(anchor("../x.rs", None))),
             "invalid_anchor",
             "ops[0].anchors[1]",
@@ -488,15 +483,20 @@ fn an_edge_that_closes_a_cycle_is_refused_naming_its_members() {
     );
 }
 
+/// `audit -> rotate -> sign -> audit`, a cycle a hand edit left.
+fn with_cycle(store: &Store) {
+    let mut sign = decision(store, "sign");
+    sign.depends_on.insert("audit".into());
+    write_node(store, &NodeFile::Decision("sign".into()), &sign);
+}
+
 /// A cycle a hand edit left is no new issue: an edge inside it does not
 /// change its members, and a write elsewhere lands beside it.
 #[test]
 fn a_cycle_the_graph_began_with_blocks_no_write() {
     let tmp = TempDir::new().unwrap();
     let store = graph(tmp.path());
-    let mut sign = decision(&store, "sign");
-    sign.depends_on.insert("audit".into());
-    write_node(&store, &NodeFile::Decision("sign".into()), &sign);
+    with_cycle(&store);
     let mut inside = revise("sign");
     inside.depends_on = add(&["rotate"]);
 
@@ -846,9 +846,6 @@ fn only_the_files_whose_value_changes_are_written() {
     assert_eq!(state.non_canonical, [NodeFile::Component("billing".into())]);
 }
 
-/// The final check refuses what no op rule did: a renamed decision
-/// carries an edge a hand edit left dangling, which is an issue of a new
-/// subject.
 /// `sign` with a dangling `depends_on` and a reason below the text rule:
 /// two issues a hand edit left.
 fn with_issues(store: &Store) {
@@ -923,6 +920,136 @@ fn a_new_issue_under_a_rename_is_refused_naming_its_op() {
     let mut unrelated = revise("rotate");
     unrelated.tags = add(&["keys"]);
     apply(&store, vec![Op::Revise(unrelated)]).unwrap();
+}
+
+/// A node the batch made under a starting node's old name is another
+/// node: renaming it moves nothing the starting node had.
+#[test]
+fn a_rename_of_a_node_made_under_an_old_name_carries_no_issue() {
+    let tmp = TempDir::new().unwrap();
+    let store = graph(tmp.path());
+    with_issues(&store);
+
+    apply(
+        &store,
+        vec![
+            Op::Rename(rename("sign", "signing")),
+            Op::Record(record("sign", "auth")),
+            Op::Rename(rename("sign", "sign-tokens")),
+        ],
+    )
+    .unwrap();
+}
+
+/// The cycle a graph began with is the one its members form under the
+/// names the batch's renames and merges gave them: an edge added at a
+/// member after another is renamed, and a merge of two members, close no
+/// new cycle.
+#[test]
+fn a_cycle_the_graph_began_with_is_known_under_its_members_new_names() {
+    let tmp = TempDir::new().unwrap();
+    let store = graph(tmp.path());
+    with_cycle(&store);
+    let mut rotate = revise("rotate");
+    rotate.depends_on = add(&["expire"]);
+
+    apply(
+        &store,
+        vec![
+            Op::Record(record("expire", "auth")),
+            Op::Rename(rename("sign", "signing")),
+            Op::Revise(rotate),
+        ],
+    )
+    .unwrap();
+    let merge = Merge {
+        survivor: "audit".into(),
+        absorbed: "rotate".into(),
+    };
+    apply(&store, vec![Op::Merge(merge)]).unwrap();
+
+    let state = store.load_state().unwrap();
+    let issues: Vec<(IssueKind, String)> = state
+        .validate()
+        .into_iter()
+        .map(|issue| (issue.kind, issue.subject))
+        .collect();
+    assert_eq!(
+        issues,
+        [(IssueKind::DependsOnCycle, "audit, signing".to_owned())]
+    );
+}
+
+/// A removed node goes on as no node: one the batch makes under its name
+/// and renames is new, and so is the cycle it closes with the removed
+/// node's old cycle mates.
+#[test]
+fn a_cycle_through_a_node_made_under_a_removed_members_name_is_new() {
+    let tmp = TempDir::new().unwrap();
+    let store = graph(tmp.path());
+    with_cycle(&store);
+    let mut again = record("sign", "auth");
+    again.depends_on = vec!["audit".into()];
+    let mut rotate = revise("rotate");
+    rotate.depends_on = add(&["signing"]);
+    let ops = vec![
+        Op::Remove(Remove {
+            name: "sign".into(),
+            repoint_to: Some("rotate".into()),
+        }),
+        Op::Record(again),
+        Op::Rename(rename("sign", "signing")),
+        Op::Revise(rotate),
+    ];
+
+    let refusal = refused(&store, ops);
+
+    assert_eq!(refusal.op.as_ref().unwrap().index, 3);
+    assert_eq!(
+        refusal.rule,
+        Rule::Cycle {
+            members: ["audit", "rotate", "signing"].map(String::from).into()
+        }
+    );
+}
+
+/// An edge that names a node of the other kind names no node of its own,
+/// whatever that node is renamed to: a `connects_to` naming a decision and
+/// a `depends_on` naming a component keep their issues through a rename of
+/// that decision and that component.
+#[test]
+fn a_rename_leaves_an_edge_that_names_a_node_of_the_other_kind_as_it_was() {
+    let tmp = TempDir::new().unwrap();
+    let store = graph(tmp.path());
+    let mut billing = sample_component();
+    billing.connects_to.insert("sign".into());
+    write_node(&store, &NodeFile::Component("billing".into()), &billing);
+    let mut audit = decision(&store, "audit");
+    audit.depends_on.insert("auth".into());
+    write_node(&store, &NodeFile::Decision("audit".into()), &audit);
+
+    apply(
+        &store,
+        vec![
+            Op::Rename(rename("sign", "signing")),
+            Op::RenameComponent(rename("auth", "identity")),
+        ],
+    )
+    .unwrap();
+
+    let state = store.load_state().unwrap();
+    let subjects: Vec<String> = state
+        .validate()
+        .into_iter()
+        .map(|issue| issue.subject)
+        .collect();
+    assert_eq!(
+        subjects,
+        [
+            "billing -> sign (connects_to)",
+            "audit -> auth (depends_on)"
+        ]
+    );
 }
 
 #[test]

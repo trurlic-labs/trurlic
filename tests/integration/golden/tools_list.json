@@ -844,7 +844,12 @@
                   "additionalProperties": false,
                   "properties": {
                     "kind": {
-                      "description": "`missing`, `index_locked` or `uncommitted`.",
+                      "description": "The finding's kind.",
+                      "enum": [
+                        "missing",
+                        "index_locked",
+                        "uncommitted"
+                      ],
                       "type": "string"
                     },
                     "message": {

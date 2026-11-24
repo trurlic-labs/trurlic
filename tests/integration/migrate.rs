@@ -21,7 +21,7 @@ const MIGRATE: [&str; 3] = ["migrate", "--placement", "tracked"];
 /// holds the `project.toml` it committed.
 fn fixture_project(version: &str) -> Project {
     let project = Project::init();
-    fs::remove_dir_all(store(&project)).unwrap();
+    fs::remove_dir_all(project.graph()).unwrap();
     copy_fixture(&project, version);
     project
 }
@@ -38,11 +38,7 @@ fn copy_fixture(project: &Project, version: &str) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/formats")
         .join(version);
-    copy_dir(&fixture, &store(project));
-}
-
-fn store(project: &Project) -> PathBuf {
-    project.path().join(".trurlic")
+    copy_dir(&fixture, &project.graph());
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -126,7 +122,7 @@ fn split_report(project: &Project, output: &str) -> (String, PathBuf) {
 /// to do.
 fn migrates_and_passes_check(version: &str) {
     let project = fixture_project(version);
-    let before = render(&store(&project));
+    let before = render(&project.graph());
 
     let output = stdout(&project, &MIGRATE);
 
@@ -138,12 +134,14 @@ fn migrates_and_passes_check(version: &str) {
     );
     fs::remove_file(backup.join(REPORT_FILE)).unwrap();
     assert_eq!(render(&backup), before);
-    project.run_ok(&["check"]);
+    // No issue, no file out of canonical form, no history finding.
+    let checked = stdout(&project, &["check"]);
+    assert!(checked.ends_with(" is consistent\n"), "{checked}");
     assert_golden(
         &format!("migrate_{version}.txt"),
-        &format!("{report}\n{}", render(&store(&project))),
+        &format!("{report}\n{}", render(&project.graph())),
     );
-    assert!(!store(&project).join("patterns").exists());
+    assert!(!project.graph().join("patterns").exists());
     let again = stdout(&project, &MIGRATE);
     assert!(again.starts_with("Already up to date"), "{again}");
 }
@@ -176,14 +174,14 @@ fn format_0_4_1_migrates_and_passes_check() {
 #[test]
 fn a_dry_run_prints_the_report_and_writes_nothing() {
     let project = fixture_project("0.4.1");
-    let before = render(&store(&project));
+    let before = render(&project.graph());
 
     let dry = stdout(
         &project,
         &["migrate", "--dry-run", "--placement", "tracked"],
     );
 
-    assert_eq!(render(&store(&project)), before);
+    assert_eq!(render(&project.graph()), before);
     assert!(backups(&project).is_empty());
     let migrated = stdout(&project, &MIGRATE);
     let (report, _) = split_report(&project, &migrated);
@@ -198,7 +196,7 @@ fn a_dry_run_prints_the_report_and_writes_nothing() {
 /// A project whose `project.toml` states `version` as its format version.
 fn project_with_version(version: &str) -> (Project, PathBuf) {
     let project = Project::init();
-    let path = store(&project).join("project.toml");
+    let path = project.graph().join("project.toml");
     let text = fs::read_to_string(&path).unwrap();
     let (_, rest) = text.split_once('\n').unwrap();
     fs::write(&path, format!("format_version = \"{version}\"\n{rest}")).unwrap();
@@ -248,7 +246,7 @@ fn a_newer_format_is_refused_naming_both_versions() {
 #[test]
 fn the_format_before_this_one_is_refused_until_migrated() {
     let project = fixture_project("0.4.1");
-    let before = render(&store(&project));
+    let before = render(&project.graph());
 
     for args in [&["check"][..], &["status"], &["fmt"]] {
         let stderr = project.run_refused(args);
@@ -257,7 +255,7 @@ fn the_format_before_this_one_is_refused_until_migrated() {
             "{args:?}: {stderr}"
         );
     }
-    assert_eq!(render(&store(&project)), before);
+    assert_eq!(render(&project.graph()), before);
     project.run_ok(&MIGRATE);
     project.run_ok(&["check"]);
 }
@@ -281,7 +279,7 @@ fn migrate_reading_git(project: &Project) -> std::process::Output {
 }
 
 fn placement(project: &Project) -> String {
-    let text = fs::read_to_string(store(project).join("project.toml")).unwrap();
+    let text = fs::read_to_string(project.graph().join("project.toml")).unwrap();
     let line = text
         .lines()
         .find(|line| line.starts_with("placement"))
@@ -336,7 +334,7 @@ fn a_graph_git_tracks_in_part_is_refused_naming_how_to_state_it() {
         "decisions/added-after-the-commit.toml",
         &project.read("decisions/no-unsafe-code.toml"),
     );
-    let before = render(&store(&project));
+    let before = render(&project.graph());
 
     let output = migrate_reading_git(&project);
 
@@ -352,7 +350,7 @@ fn a_graph_git_tracks_in_part_is_refused_naming_how_to_state_it() {
         "{stderr}"
     );
     assert!(stderr.contains("`--placement shared`"), "{stderr}");
-    assert_eq!(render(&store(&project)), before);
+    assert_eq!(render(&project.graph()), before);
     project.run_ok(&MIGRATE);
 }
 
@@ -378,8 +376,8 @@ fn the_callers_git_variables_do_not_redirect_the_placement() {
     git(project.path(), &["init", "--quiet"]);
     let other = Project::without_store();
     git(other.path(), &["init", "--quiet"]);
-    fs::create_dir_all(other.path().join(".trurlic")).unwrap();
-    fs::write(other.path().join(".trurlic/project.toml"), "").unwrap();
+    fs::create_dir_all(other.graph()).unwrap();
+    other.write("project.toml", "");
     git(other.path(), &["add", ".trurlic"]);
     let other_git = other.path().join(".git");
 
@@ -421,12 +419,12 @@ fn a_migration_to_shared_makes_the_repository_whose_first_commit_is_the_graph() 
     let output = stdout(&project, &["migrate", "--placement", "shared"]);
 
     let (_, backup) = split_report(&project, &output);
-    assert_eq!(graph_log(&store(&project)), ["migrate"]);
-    let committed = graph_git(&store(&project), &["ls-tree", "-r", "--name-only", "HEAD"]);
-    let mut migrated: Vec<String> = files(&store(&project))
+    assert_eq!(graph_log(&project.graph()), ["migrate"]);
+    let committed = graph_git(&project.graph(), &["ls-tree", "-r", "--name-only", "HEAD"]);
+    let mut migrated: Vec<String> = files(&project.graph())
         .iter()
         .map(|path| {
-            path.strip_prefix(store(&project))
+            path.strip_prefix(project.graph())
                 .unwrap()
                 .display()
                 .to_string()
@@ -456,7 +454,7 @@ fn a_constrains_edge_that_closes_a_cycle_is_refused_naming_its_members() {
              to = \"one-toml-file-per-node\"\nkind = \"constrains\"\n"
         ),
     );
-    let before = render(&store(&project));
+    let before = render(&project.graph());
 
     let output = project.command().args(MIGRATE).output().unwrap();
 
@@ -468,7 +466,7 @@ fn a_constrains_edge_that_closes_a_cycle_is_refused_naming_its_members() {
         ),
         "{stderr}"
     );
-    assert_eq!(render(&store(&project)), before);
+    assert_eq!(render(&project.graph()), before);
 }
 
 /// Run `trurlic migrate` on the 0.4.1 fixture stopped at failpoint `spec`,
@@ -498,14 +496,14 @@ fn stopped_migration(spec: &str) -> (Project, Project) {
 #[cfg(feature = "failpoints")]
 #[test]
 fn a_migration_stopped_before_its_journal_is_made_again_by_the_next_migrate() {
-    let before = render(&store(&fixture_project("0.4.1")));
+    let before = render(&fixture_project("0.4.1").graph());
     let (project, reference) = stopped_migration("commit.staged:1");
 
-    assert_eq!(render(&store(&project)), before);
-    assert!(!store(&project).join(".state/txn.toml").exists());
+    assert_eq!(render(&project.graph()), before);
+    assert!(!project.graph().join(".state/txn.toml").exists());
     project.run_ok(&MIGRATE);
     project.run_ok(&["check"]);
-    assert_eq!(render(&store(&project)), render(&store(&reference)));
+    assert_eq!(render(&project.graph()), render(&reference.graph()));
 }
 
 /// Stopped after its journal, the commit point, with `project.toml` still
@@ -520,12 +518,12 @@ fn a_migration_stopped_after_its_journal_lands_on_the_next_migrate() {
 
     let stderr = project.run_refused(&["check"]);
     assert!(stderr.contains("run `trurlic migrate`"), "{stderr}");
-    assert!(store(&project).join(".state/txn.toml").is_file());
-    assert!(store(&project).join("graph.toml").is_file());
+    assert!(project.graph().join(".state/txn.toml").is_file());
+    assert!(project.graph().join("graph.toml").is_file());
     let again = stdout(&project, &MIGRATE);
     assert!(again.starts_with("Already up to date"), "{again}");
     project.run_ok(&["check"]);
-    assert_eq!(render(&store(&project)), render(&store(&reference)));
+    assert_eq!(render(&project.graph()), render(&reference.graph()));
 }
 
 /// Stopped after its first rename, which puts `project.toml` in the
@@ -537,8 +535,8 @@ fn a_migration_stopped_after_project_toml_lands_on_the_next_command() {
     let (project, reference) = stopped_migration("commit.applied:1");
 
     project.run_ok(&["check"]);
-    assert!(!store(&project).join(".state/txn.toml").exists());
-    assert_eq!(render(&store(&project)), render(&store(&reference)));
+    assert!(!project.graph().join(".state/txn.toml").exists());
+    assert_eq!(render(&project.graph()), render(&reference.graph()));
 }
 
 /// The 0.4.1 fixture's migration renames eight files, then removes
@@ -549,17 +547,19 @@ fn a_migration_stopped_after_project_toml_lands_on_the_next_command() {
 fn a_migration_stopped_between_its_removals_lands_on_the_next_command() {
     let (project, reference) = stopped_migration("commit.applied:9");
 
-    assert!(!store(&project).join("graph.toml").exists());
+    assert!(!project.graph().join("graph.toml").exists());
     assert!(
-        store(&project)
+        project
+            .graph()
             .join("patterns/durable-storage.toml")
             .is_file()
     );
     project.run_ok(&["check"]);
     assert!(
-        !store(&project)
+        !project
+            .graph()
             .join("patterns/durable-storage.toml")
             .exists()
     );
-    assert_eq!(render(&store(&project)), render(&store(&reference)));
+    assert_eq!(render(&project.graph()), render(&reference.graph()));
 }

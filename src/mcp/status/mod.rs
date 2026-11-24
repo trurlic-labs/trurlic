@@ -7,8 +7,6 @@
 //! history hold. Where the graph sits in the project's git is `check`'s:
 //! asking it costs several git processes, too many for a call made often.
 
-use serde_json::Value;
-
 use crate::budget::{self, MAX_TOOL_RESULT_BYTES, Shrinkable};
 use crate::store::limits::MAX_TRAILER_BYTES;
 use crate::store::{
@@ -18,14 +16,14 @@ use crate::store::{
 use super::spec::kinds::{Choice, Text};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
 use super::spec::{Args, Fields, Output, to_value};
+use super::truncate::json_len;
 
 mod report;
 
-pub(crate) use report::{
-    ComponentItem, Counts, HistoryItem, IssueItem, Part, QualityCounts, Report,
-};
+use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
+pub(crate) use report::{Part, QualityCounts, Report};
 
-pub(crate) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
+pub(super) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
     name: "status",
     title: "Status",
     description: DESCRIPTION,
@@ -46,9 +44,8 @@ Where the graph sits in the project's git is reported by `trurlic check`.";
 const NOTICE_BYTES: usize = 64;
 
 /// A part of the report that can be asked for alone.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Section {
-    #[default]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Section {
     Issues,
     History,
     Components,
@@ -79,9 +76,14 @@ const SECTIONS: [(&str, Section); 3] = [
     (Section::Components.as_str(), Section::Components),
 ];
 
+/// The names `section` takes, in the order the schema lists them.
+pub(crate) fn section_names() -> impl Iterator<Item = &'static str> {
+    SECTIONS.iter().map(|&(name, _)| name)
+}
+
 /// The arguments of `status`, and the flags of `trurlic status`.
-#[derive(Debug, Default)]
-pub(crate) struct StatusArgs {
+#[derive(Debug)]
+pub(super) struct StatusArgs {
     section: Option<Section>,
     origin: Option<String>,
 }
@@ -107,7 +109,8 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
     let shown = |shown| section.is_none_or(|asked| asked == shown);
     let origin = origin.as_deref();
     let issues = state.validate();
-    let issue_items = shown(Section::Issues).then(|| issues.iter().map(issue_item).collect());
+    let issue_count = issues.len();
+    let issue_items = shown(Section::Issues).then(|| issues.into_iter().map(issue_item).collect());
     let history_items = if shown(Section::History) {
         let findings = store.history_findings(state.project.placement)?;
         Some(findings.iter().map(history_item).collect())
@@ -122,7 +125,7 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
         placement: state.project.placement,
         graph: (!local).then(|| store.root().display().to_string()),
         code_root: (!local).then(|| store.code_root().display().to_string()),
-        counts: counts(state, origin, issues.len()),
+        counts: counts(state, origin, issue_count),
         quality: quality_counts(&state.project.quality),
         issues: issue_items.as_deref().map(Part::frame),
         history: history_items.as_deref().map(Part::frame),
@@ -222,22 +225,21 @@ fn quality_counts(quality: &Quality) -> QualityCounts {
     }
 }
 
-fn issue_item(issue: &Issue) -> IssueItem {
+fn issue_item(issue: Issue) -> IssueItem {
     IssueItem {
         kind: issue.kind,
-        // clone: the report outlives the validation it reads.
-        message: issue.message.clone(),
+        message: issue.message,
     }
 }
 
 fn history_item(finding: &HistoryFinding) -> HistoryItem {
     let kind = match finding {
-        HistoryFinding::Missing { .. } => "missing",
-        HistoryFinding::IndexLocked { .. } => "index_locked",
-        HistoryFinding::Uncommitted { .. } => "uncommitted",
+        HistoryFinding::Missing { .. } => HistoryKind::Missing,
+        HistoryFinding::IndexLocked { .. } => HistoryKind::IndexLocked,
+        HistoryFinding::Uncommitted { .. } => HistoryKind::Uncommitted,
     };
     HistoryItem {
-        kind: kind.to_owned(),
+        kind,
         message: finding.to_string(),
     }
 }
@@ -307,7 +309,7 @@ impl Sizes {
             total,
             items,
             omitted,
-            more: (omitted > 0).then(|| section.more().to_owned()),
+            more: (omitted > 0).then(|| section.more()),
         }
     }
 
@@ -323,7 +325,7 @@ impl Shrinkable for Sizes {
 
     fn note(&self) -> usize {
         // `,"omitted":N,"more":"..."`, N at most 20 digits.
-        40 + self.section.more().len()
+        41 + self.section.more().len()
     }
 
     fn kept(&self, limit: usize) -> usize {
@@ -333,10 +335,6 @@ impl Shrinkable for Sizes {
             .copied()
             .unwrap_or(0)
     }
-}
-
-fn json_len(value: &Value) -> usize {
-    serde_json::to_string(value).map_or(0, |text| text.len())
 }
 
 #[cfg(test)]
@@ -367,7 +365,7 @@ mod tests {
         assert!(part.items.len() < 50, "{}", part.items.len());
         assert_eq!(part.omitted, 100 - part.items.len());
         assert_eq!(part.items[0].name, "c00");
-        assert_eq!(part.more.as_deref(), Some(Section::Components.more()));
+        assert_eq!(part.more, Some(Section::Components.more()));
         let fits = Sizes::part(&sizes, Section::Components, vec![item("c00")], whole);
         assert_eq!((fits.omitted, fits.more), (0, None));
     }

@@ -14,7 +14,7 @@ use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
 use super::history::History;
 use super::limits::MAX_NODE_FILE_BYTES;
-use super::{Store, StoreLock};
+use super::{Store, StoreLock, StorePathFault};
 
 /// A file write staged for batch commit.
 /// Created via [`Store::prepare_write`], executed via [`Store::commit_batch`].
@@ -28,16 +28,17 @@ impl Store {
     /// Write `value` to `target` on its own, outside a commit: staged and
     /// flushed in `.state/tmp/`, renamed into place, and the directory
     /// flushed. For `init`, which writes before a graph exists to commit.
-    pub(crate) fn write_atomic<T: Canonical + DeserializeOwned + PartialEq>(
+    pub(super) fn write_atomic<T: Canonical + DeserializeOwned + PartialEq>(
         &self,
         _lock: &StoreLock,
         target: &Path,
         value: &T,
     ) -> Result<()> {
         let write = self.prepare_write(target, value)?;
-        let parent = target
-            .parent()
-            .ok_or_else(|| Error::Validation(format!("{} has no parent", target.display())))?;
+        let parent = target.parent().ok_or_else(|| Error::StorePath {
+            path: target.to_path_buf(),
+            fault: StorePathFault::NoParent,
+        })?;
         let tmp_dir = self.tmp_dir();
         fs::create_dir_all(&tmp_dir).map_err(Error::io(&tmp_dir))?;
         fs::create_dir_all(parent).map_err(Error::io(parent))?;
@@ -48,9 +49,10 @@ impl Store {
 
     /// The canonical text of `value` for `target`, refused before anything
     /// touches disk unless a load reads it back as `value`: within
-    /// [`MAX_NODE_FILE_BYTES`] ([`Error::CanonicalTooLarge`]), and as the
-    /// value written. Every write of a graph file passes here.
-    pub(crate) fn prepare_write<T: Canonical + DeserializeOwned + PartialEq>(
+    /// [`MAX_NODE_FILE_BYTES`] ([`Error::CanonicalTooLarge`]), as TOML of
+    /// its type ([`Error::CanonicalUnreadable`]), and as the value written
+    /// ([`Error::CanonicalDrift`]). Every write of a graph file passes here.
+    pub(super) fn prepare_write<T: Canonical + DeserializeOwned + PartialEq>(
         &self,
         target: &Path,
         value: &T,
@@ -64,14 +66,14 @@ impl Store {
                 max: MAX_NODE_FILE_BYTES,
             });
         }
-        let read_back = toml::from_str::<T>(&content).map_err(|source| Error::RoundTrip {
-            path: target.to_path_buf(),
-            detail: source.to_string(),
-        })?;
-        if read_back != *value {
-            return Err(Error::RoundTrip {
+        let read_back =
+            toml::from_str::<T>(&content).map_err(|source| Error::CanonicalUnreadable {
                 path: target.to_path_buf(),
-                detail: "it reads back as another value".into(),
+                source,
+            })?;
+        if read_back != *value {
+            return Err(Error::CanonicalDrift {
+                path: target.to_path_buf(),
             });
         }
         Ok(PendingWrite {
@@ -86,10 +88,11 @@ impl Store {
     /// Under [`History::Graph`] the history step runs first: graph files a
     /// hand edit left uncommitted are committed as `hand edit`, and a write
     /// the graph's repository cannot take is refused with nothing written.
-    /// Then the writes are staged and flushed, and the journal, carrying the
-    /// message, put in place, which commits them; each staged file is
+    /// Then the writes are staged and flushed, under `shared` written to
+    /// the graph's repository as blobs too, and the journal, carrying the
+    /// history step, put in place, which commits them; each staged file is
     /// renamed onto its target, the removed files go, and the history
-    /// commit is made. After the journal, a failure is
+    /// commit is made from the blobs. After the journal, a failure is
     /// [`Error::WritePending`]: the write lands at the next read or write.
     pub(super) fn commit_batch(
         &self,
@@ -104,13 +107,21 @@ impl Store {
         for path in writes.iter().map(|write| &write.target).chain(removes) {
             self.verify_path(path)?;
         }
-        let (message, head) = match history {
-            History::Project => (None, None),
-            History::Graph(message) => (Some(message), Some(self.prepare_history(lock)?)),
+        let head = match history {
+            History::Project => None,
+            History::Graph(message) => Some((message, self.prepare_history(lock)?)),
         };
 
-        let journal = self.stage_commit(writes, removes, message)?;
+        let mut journal = self.stage_commit(lock, writes, removes)?;
         failpoint::hit(Site::Staged);
+        let head = match head {
+            Some((message, head)) => {
+                self.attach_history(lock, &mut journal, message, &head)?;
+                failpoint::hit(Site::Blobs);
+                Some(head)
+            }
+            None => None,
+        };
         self.write_journal(lock, &journal)?;
         failpoint::hit(Site::Journaled);
         self.apply_journal(lock, &journal, head)
@@ -155,7 +166,10 @@ mod tests {
         let err = store
             .write_atomic(&lock, &outside, &sample_component())
             .unwrap_err();
-        assert!(matches!(err, Error::Validation(_)));
+        assert!(
+            matches!(&err, Error::StorePath { path, fault: StorePathFault::Outside } if *path == outside),
+            "{err:?}"
+        );
     }
 
     #[test]

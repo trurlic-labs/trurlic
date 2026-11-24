@@ -13,7 +13,7 @@ status = "proposed"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"
 anchors = [
-    { file = "src/mcp/apply.rs", symbol = "ALTERNATIVES" },
+    { file = "src/mcp/apply/mod.rs", symbol = "ALTERNATIVES" },
     { file = "src/store/limits.rs", symbol = "MAX_ALTERNATIVE_BYTES" },
     { file = "src/store/limits.rs", symbol = "MAX_TAG_BYTES" },
     { file = "src/store/text.rs", symbol = "TextField" },

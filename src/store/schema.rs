@@ -60,7 +60,6 @@ impl Placement {
 #[serde(deny_unknown_fields)]
 pub struct Component {
     pub description: String,
-    /// The components this one connects to.
     #[serde(default)]
     pub connects_to: BTreeSet<String>,
 }
@@ -81,7 +80,6 @@ pub struct Decision {
     pub origin: Option<String>,
     pub created: Timestamp,
     pub anchors: BTreeSet<Anchor>,
-    /// The decisions this one depends on.
     pub depends_on: BTreeSet<String>,
 }
 
@@ -137,7 +135,7 @@ impl StatusName {
 pub enum AcceptedVia {
     /// The owner answered a form the MCP client showed.
     Elicitation,
-    /// The owner ran `trurlic accept` on a terminal.
+    /// The owner accepted it on a terminal.
     Cli,
 }
 
@@ -152,8 +150,8 @@ impl AcceptedVia {
 }
 
 /// The text of an accepted decision whose revision is proposed, and how
-/// the owner accepted it: what the decision returns to when the revision
-/// is undone or rejected.
+/// the owner accepted it: a revision back to this text accepts the decision
+/// again as it was accepted.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AcceptedText {

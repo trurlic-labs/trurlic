@@ -8,7 +8,7 @@ use std::mem;
 use crate::store::cycles::cycles;
 use crate::store::schema::{Component, Decision};
 use crate::store::state::ProjectState;
-use crate::store::validate::{Issue, introduced};
+use crate::store::validate::{Issue, carry_members, introduced};
 
 /// The writer's graph while a batch applies to it.
 pub(super) struct Edit<'s> {
@@ -19,11 +19,15 @@ pub(super) struct Edit<'s> {
     /// The op that last changed each node, by name.
     last_op: BTreeMap<String, usize>,
     /// Each node of the starting graph the batch renamed or merged into
-    /// another, by its starting name, and the name it has now.
+    /// another and did not remove, by its starting name, and the name it
+    /// has now.
     carried: BTreeMap<String, String>,
+    /// The starting names whose starting node has left them: renamed,
+    /// merged or removed.
+    left: BTreeSet<String>,
     /// The cycles of the graph the batch began with, by sorted members;
     /// found once, when an op first leaves a node in a cycle.
-    start_cycles: Option<BTreeSet<Vec<String>>>,
+    start_cycles: Option<Vec<Vec<String>>>,
 }
 
 /// The value each touched node had when the batch began, `None` for a
@@ -42,6 +46,7 @@ impl<'s> Edit<'s> {
             op: 0,
             last_op: BTreeMap::new(),
             carried: BTreeMap::new(),
+            left: BTreeSet::new(),
             start_cycles: None,
         }
     }
@@ -114,25 +119,38 @@ impl<'s> Edit<'s> {
     }
 
     /// Record that the node `from` goes on as `to`: renamed, or merged
-    /// into it. Called once the op has touched `from`, so `before` tells
-    /// whether it is a node of the starting graph or one the batch made.
+    /// into it. Called once the op has taken `from`.
     pub(super) fn carry(&mut self, from: &str, to: &str) {
         for name in self.carried.values_mut() {
             if name == from {
                 to.clone_into(name);
             }
         }
-        let started = |held: Option<bool>| held == Some(true);
-        let in_start = started(self.before.decisions.get(from).map(Option::is_some))
-            || started(self.before.components.get(from).map(Option::is_some));
-        if in_start {
+        if self.leaves_start(from) {
             self.carried.insert(from.to_owned(), to.to_owned());
         }
     }
 
+    /// Record that the node `name` goes on as no node: removed. Called
+    /// once the op has taken it.
+    pub(super) fn end(&mut self, name: &str) {
+        self.carried.retain(|_, now| now != name);
+        self.leaves_start(name);
+    }
+
+    /// Record that the node at `name` leaves it; whether that node is the
+    /// one `name` held when the batch began. A node the batch made under a
+    /// name a starting node left is another node.
+    fn leaves_start(&mut self, name: &str) -> bool {
+        let in_start = matches!(self.before.decisions.get(name), Some(Some(_)))
+            || matches!(self.before.components.get(name), Some(Some(_)));
+        in_start && self.left.insert(name.to_owned())
+    }
+
     /// The members of the `depends_on` cycle through `pivot`, when the
-    /// graph has one there that the graph the batch began with lacks:
-    /// the cycle an op closed by adding edges at `pivot`.
+    /// graph has one there that the graph the batch began with lacks under
+    /// the names the batch carried its nodes to: the cycle an op closed by
+    /// adding edges at `pivot`.
     pub(super) fn new_cycle(&mut self, pivot: &str) -> Option<Vec<String>> {
         let decisions = &self.state.decisions;
         let found = cycles([pivot], |name| {
@@ -148,12 +166,15 @@ impl<'s> Edit<'s> {
             Some(start) => start,
             None => self.cycles_at_start(),
         };
-        let new = !start.contains(&members);
+        let carried = &self.carried;
+        let new = !start
+            .iter()
+            .any(|cycle| carry_members(cycle.iter().map(String::as_str), carried) == members);
         self.start_cycles = Some(start);
         new.then_some(members)
     }
 
-    fn cycles_at_start(&self) -> BTreeSet<Vec<String>> {
+    fn cycles_at_start(&self) -> Vec<Vec<String>> {
         let (before, now) = (&self.before.decisions, &self.state.decisions);
         let at_start = |name: &str| match before.get(name) {
             Some(old) => old.as_ref(),

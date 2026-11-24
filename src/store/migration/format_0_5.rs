@@ -19,12 +19,13 @@ use toml::{Table, Value};
 
 use crate::Result;
 
+mod anchors;
 mod graph;
 
 use super::super::schema::Placement;
-use super::anchors::anchors;
 use super::{Fact, File, Loss, PatternRecord, Tree, loss};
 
+use anchors::anchors;
 use graph::Graph;
 
 pub(super) fn reshape(tree: &mut Tree) -> Result<()> {
@@ -125,7 +126,7 @@ fn decision(file: &File, name: &str, mut table: Table, notes: &mut Notes<'_>) ->
         status(file, fields.remove("attribution"), notes).into(),
     );
     if let Some(code_refs) = fields.remove("code_refs") {
-        let anchors = anchors(file, code_refs, notes.facts, notes.losses);
+        let anchors = anchors(file, code_refs, notes);
         if !anchors.is_empty() {
             decision.insert("anchors".into(), Value::Array(anchors));
         }

@@ -4,7 +4,6 @@
 //! with no store or an old one.
 
 use std::collections::BTreeSet;
-use std::fs;
 
 use serde_json::{Value, json};
 
@@ -34,8 +33,10 @@ fn initialize_negotiates_the_protocol_version() {
     let cases = [
         ("2025-11-25", "2025-11-25"),
         ("2025-06-18", "2025-06-18"),
+        ("2025-03-26", "2025-11-25"),
         ("2024-11-05", "2025-11-25"),
         ("2999-01-01", "2025-11-25"),
+        ("", "2025-11-25"),
     ];
     for (requested, answered) in cases {
         let mut client = McpClient::spawn(&project);
@@ -44,6 +45,10 @@ fn initialize_negotiates_the_protocol_version() {
             json!({ "protocolVersion": requested, "capabilities": {} }),
         );
         assert_eq!(handshake["protocolVersion"], answered, "{requested}");
+        assert!(
+            handshake["capabilities"]["tools"].is_object(),
+            "{requested}"
+        );
     }
 }
 
@@ -161,11 +166,10 @@ fn a_server_without_a_store_lists_its_tools_and_names_init() {
 /// refused as `unsupported_format` with a message naming `named`.
 fn assert_format_refused(version_line: &str, named: &str) {
     let project = Project::init();
-    let manifest = project.path().join(".trurlic/project.toml");
     let current = format!("format_version = \"{}\"\n", trurlic::store::FORMAT_VERSION);
-    let text = fs::read_to_string(&manifest).unwrap();
+    let text = project.read("project.toml");
     assert!(text.starts_with(&current), "{text}");
-    fs::write(&manifest, text.replacen(&current, version_line, 1)).unwrap();
+    project.write("project.toml", &text.replacen(&current, version_line, 1));
 
     let (mut client, _) = McpClient::connect(&project);
     let listed = client.request("tools/list", json!({}));
@@ -203,14 +207,23 @@ fn tools_list_matches_golden() {
     assert_golden("tools_list.json", &rendered);
 }
 
+/// Before `initialize`, `tools/list` and `tools/call` are refused and
+/// `ping` is answered.
 #[test]
 fn tools_are_refused_before_initialize() {
     let project = Project::init();
     let mut client = McpClient::spawn(&project);
 
-    let response = client.exchange("tools/list", json!({}));
-    assert!(response.get("result").is_none(), "{response}");
-    assert_eq!(response["error"]["code"], -32600, "{response}");
+    let listed = client.exchange("tools/list", json!({}));
+    let called = client.exchange(
+        "tools/call",
+        json!({ "name": "get_context", "arguments": { "component": "project" } }),
+    );
+    for response in [listed, called] {
+        assert!(response.get("result").is_none(), "{response}");
+        assert_eq!(response["error"]["code"], -32600, "{response}");
+    }
+    assert_eq!(client.request("ping", json!({})), json!({}));
 }
 
 /// The server keeps no graph between calls: node files edited and added by

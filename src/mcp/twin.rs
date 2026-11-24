@@ -2,24 +2,23 @@
 //! runs the tool's own spec parse and handler on it, without a client, and
 //! gets the tool's result or its refusal, a missing store included, so a
 //! command and a call refuse alike and write the same bytes. `--json`
-//! prints what the call's text holds.
+//! prints the text the call returns, rendered by the call's own functions.
 
 use std::path::Path;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::apply::APPLY;
+use super::result::result_text;
 use super::spec::to_value;
 use super::status::STATUS;
-use super::truncate::fit_payload;
-use crate::budget::MAX_TOOL_RESULT_BYTES;
 use crate::discovery::discover;
 use crate::store::Applied;
 
 pub(crate) use super::protocol::MAX_MESSAGE_BYTES as MAX_DOCUMENT_BYTES;
-pub(crate) use super::result::ToolError;
+pub(crate) use super::result::{ToolError, refusal_text};
 pub(crate) use super::spec::Output;
-pub(crate) use super::status::{Part, QualityCounts, Report};
+pub(crate) use super::status::{Part, QualityCounts, Report, section_names};
 
 /// The arguments `document` holds: a JSON object, as a batch file holds
 /// the arguments of `apply`.
@@ -47,10 +46,5 @@ pub(crate) fn status(cwd: &Path, arguments: &Map<String, Value>) -> Result<Repor
 
 /// The text a call's result holds for `result`.
 pub(crate) fn result_json<O: Output>(result: &O) -> String {
-    fit_payload(&to_value(result), MAX_TOOL_RESULT_BYTES)
-}
-
-/// The text a call's refusal holds for `error`.
-pub(crate) fn refusal_json(error: &ToolError) -> String {
-    fit_payload(&json!({ "error": error }), MAX_TOOL_RESULT_BYTES)
+    result_text(to_value(result)).1
 }

@@ -8,8 +8,8 @@ use super::open_store;
 
 /// `trurlic query file <path>`: every decision anchored on `path`, on a
 /// file under it as a directory, or on a directory that holds it, with its
-/// status and the anchors that matched. The path is normalized and refused when it could
-/// leave the code root, before the graph is read.
+/// status and the anchors that matched. The path is normalized and refused
+/// when it could leave the code root, before the graph is read.
 pub(crate) fn query_file(cwd: &Path, path: &str) -> Result<()> {
     let normalized = store::normalize_path(path).map_err(|fault| Error::InvalidPath {
         path: path.to_owned(),

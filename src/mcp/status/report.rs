@@ -45,7 +45,7 @@ pub(crate) struct Part<T> {
     pub(crate) total: usize,
     pub(crate) items: Vec<T>,
     pub(crate) omitted: usize,
-    pub(crate) more: Option<String>,
+    pub(crate) more: Option<&'static str>,
 }
 
 impl<T> Part<T> {
@@ -67,8 +67,28 @@ pub(crate) struct IssueItem {
 }
 
 pub(crate) struct HistoryItem {
-    pub(crate) kind: String,
+    pub(crate) kind: HistoryKind,
     pub(crate) message: String,
+}
+
+/// The kind of a history finding, one per `HistoryFinding` variant.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum HistoryKind {
+    Missing,
+    IndexLocked,
+    Uncommitted,
+}
+
+impl HistoryKind {
+    const ALL: [Self; 3] = [Self::Missing, Self::IndexLocked, Self::Uncommitted];
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::IndexLocked => "index_locked",
+            Self::Uncommitted => "uncommitted",
+        }
+    }
 }
 
 pub(crate) struct ComponentItem {
@@ -93,10 +113,10 @@ impl Output for Report {
             &report.placement
         });
         let graph = "The graph directory, when the tree reaches one it does not hold.";
-        fields.optional("graph", graph, &Str, |report| report.graph.as_ref());
+        fields.optional("graph", graph, &Str, |report| report.graph.as_deref());
         let code_root = "The tree anchors resolve against, when the graph is not its own.";
         fields.optional("code_root", code_root, &Str, |report| {
-            report.code_root.as_ref()
+            report.code_root.as_deref()
         });
         let counts = Nested::<Counts>::new();
         fields.required("counts", "The graph's counts.", &counts, |report| {
@@ -185,7 +205,7 @@ impl<T: Output> Output for Part<T> {
             (part.omitted > 0).then_some(&part.omitted)
         });
         fields.optional("more", "Where the items left out are.", &Str, |part| {
-            part.more.as_ref()
+            part.more
         });
     }
 }
@@ -208,12 +228,11 @@ impl Output for IssueItem {
 
 impl Output for HistoryItem {
     fn declare(fields: &mut Shown<'_, Self>) {
-        fields.required(
-            "kind",
-            "`missing`, `index_locked` or `uncommitted`.",
-            &Str,
-            |item| &item.kind,
-        );
+        let kind = Tag {
+            all: &HistoryKind::ALL,
+            name: HistoryKind::as_str,
+        };
+        fields.required("kind", "The finding's kind.", &kind, |item| &item.kind);
         fields.required(
             "message",
             "What is lacking and what mends it.",

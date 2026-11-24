@@ -9,23 +9,19 @@
 //! its language. A spelling whose meaning the syntax does not settle is
 //! kept as written and reported. A ref whose path breaks the anchor rules
 //! is dropped, and a symbol 0.5 refuses or a key 0.5 does not hold is
-//! dropped from it; each drop is a [`Loss`].
+//! dropped from it; each drop is a [`Loss`](crate::store::migration::Loss).
 
 use toml::Value;
 
-use super::super::schema::Anchor;
-use super::{Fact, File, Loss, RefText, loss};
+use super::super::super::schema::Anchor;
+use super::super::{Fact, File, RefText};
+use super::Notes;
 
 /// The anchors of the `code_refs` of `file`, with what was rewritten, kept
-/// or dropped on the way.
-pub(super) fn anchors(
-    file: &File,
-    code_refs: Value,
-    facts: &mut Vec<Fact>,
-    losses: &mut Vec<Loss>,
-) -> Vec<Value> {
+/// or dropped on the way noted.
+pub(super) fn anchors(file: &File, code_refs: Value, notes: &mut Notes<'_>) -> Vec<Value> {
     let Value::Array(refs) = code_refs else {
-        losses.push(loss(file, "decision.code_refs", &code_refs));
+        notes.loss(file, "decision.code_refs", &code_refs);
         return Vec::new();
     };
     let mut anchors = Vec::with_capacity(refs.len());
@@ -34,8 +30,7 @@ pub(super) fn anchors(
         let mut migrated = Migrated {
             file,
             field: &field,
-            facts: &mut *facts,
-            losses: &mut *losses,
+            notes: &mut *notes,
         };
         if let Some(anchor) = migrated.anchor(code_ref) {
             anchors.push(anchor);
@@ -44,32 +39,35 @@ pub(super) fn anchors(
     anchors
 }
 
-/// One ref of `file` at `field`, and where its changes are reported.
-struct Migrated<'a> {
+/// One ref of `file` at `field`, and where its changes are noted.
+struct Migrated<'a, 'n> {
     file: &'a File,
     field: &'a str,
-    facts: &'a mut Vec<Fact>,
-    losses: &'a mut Vec<Loss>,
+    notes: &'a mut Notes<'n>,
 }
 
-impl Migrated<'_> {
+impl Migrated<'_, '_> {
     /// The anchor `code_ref` becomes, as an inline table; `None` when it is
     /// dropped.
     fn anchor(&mut self, code_ref: Value) -> Option<Value> {
         let Value::Table(mut fields) = code_ref else {
-            self.losses.push(loss(self.file, self.field, &code_ref));
+            self.notes.loss(self.file, self.field, &code_ref);
             return None;
         };
-        let Some(Value::String(written)) = fields.remove("file") else {
-            self.losses
-                .push(loss(self.file, self.field, &Value::Table(fields)));
-            return None;
+        let written = match fields.remove("file") {
+            Some(Value::String(written)) => written,
+            other => {
+                // The ref is reported whole, a `file` of another type included.
+                if let Some(file) = other {
+                    fields.insert("file".into(), file);
+                }
+                self.notes
+                    .loss(self.file, self.field, &Value::Table(fields));
+                return None;
+            }
         };
         let symbol = fields.remove("symbol");
-        for (key, value) in &fields {
-            self.losses
-                .push(loss(self.file, &format!("{}.{key}", self.field), value));
-        }
+        self.notes.rest(self.file, self.field, fields);
         let Some(path) = one_spelling(&written) else {
             self.drop_ref(written, symbol);
             return None;
@@ -85,7 +83,7 @@ impl Migrated<'_> {
         let respelled = matches!((&old.symbol, &new.symbol), (Some(old), Some(new)) if old != new);
         let value = new.to_value();
         if respelled || old.file != new.file {
-            self.facts.push(Fact::Normalized {
+            self.notes.facts.push(Fact::Normalized {
                 file: self.file.to_string(),
                 old,
                 new,
@@ -101,8 +99,8 @@ impl Migrated<'_> {
         if let Some(symbol) = symbol {
             dropped.insert("symbol".into(), symbol);
         }
-        self.losses
-            .push(loss(self.file, self.field, &Value::Table(dropped)));
+        self.notes
+            .loss(self.file, self.field, &Value::Table(dropped));
     }
 
     /// The symbol of an anchor at `path`, in the 0.5 spelling where its
@@ -111,7 +109,7 @@ impl Migrated<'_> {
     fn symbol(&mut self, path: &str, symbol: Value) -> Option<String> {
         let field = format!("{}.symbol", self.field);
         let Value::String(written) = symbol else {
-            self.losses.push(loss(self.file, &field, &symbol));
+            self.notes.loss(self.file, &field, &symbol);
             return None;
         };
         let (spelled, kept) = match spelling(path, &written) {
@@ -120,12 +118,11 @@ impl Migrated<'_> {
             Spelling::Kept(why) => (written.clone(), Some(why)),
         };
         let Ok(anchor) = Anchor::new(path.to_owned(), Some(spelled)) else {
-            self.losses
-                .push(loss(self.file, &field, &Value::String(written)));
+            self.notes.loss(self.file, &field, &Value::String(written));
             return None;
         };
         if let Some(why) = kept {
-            self.facts.push(Fact::Unnormalized {
+            self.notes.facts.push(Fact::Unnormalized {
                 file: self.file.to_string(),
                 anchor: RefText {
                     file: path.to_owned(),
@@ -247,10 +244,6 @@ fn uncalled(symbol: &str) -> &str {
 mod tests {
     use super::*;
 
-    fn grammar(path: &str, symbol: &str) -> Spelling {
-        spelling(path, symbol)
-    }
-
     #[test]
     fn an_old_spelling_its_syntax_settles_takes_the_grammar() {
         for (path, old, new) in [
@@ -269,7 +262,7 @@ mod tests {
             ("src/a.rs", " padded ", "padded"),
             ("Makefile", "ci-test", "ci-test"),
         ] {
-            assert_eq!(grammar(path, old), Spelling::Grammar(new.into()), "{old}");
+            assert_eq!(spelling(path, old), Spelling::Grammar(new.into()), "{old}");
         }
     }
 
@@ -289,6 +282,33 @@ mod tests {
         }
     }
 
+    /// A ref whose `file` is no string is dropped and reported whole, its
+    /// `file` included.
+    #[test]
+    fn a_ref_with_a_file_of_another_type_is_reported_whole() {
+        let code_refs: Value = toml::from_str::<toml::Table>("refs = [{ file = 7, line = 3 }]")
+            .unwrap()
+            .remove("refs")
+            .unwrap();
+        let (mut facts, mut losses) = (Vec::new(), Vec::new());
+        let mut notes = Notes {
+            facts: &mut facts,
+            losses: &mut losses,
+        };
+
+        let kept = anchors(&File::Decision("d".into()), code_refs, &mut notes);
+
+        assert_eq!(kept, []);
+        let reported: Vec<(&str, &str)> = losses
+            .iter()
+            .map(|loss| (loss.field.as_str(), loss.value.as_str()))
+            .collect();
+        assert_eq!(
+            reported,
+            [("decision.code_refs[0]", "{ file = 7, line = 3 }")]
+        );
+    }
+
     #[test]
     fn an_old_spelling_its_syntax_does_not_settle_is_kept() {
         for (path, old, why) in [
@@ -299,7 +319,7 @@ mod tests {
             ("src/a.rs", "self.field", RUST_DOT),
             ("README.md", "sweep", MARKDOWN),
         ] {
-            assert_eq!(grammar(path, old), Spelling::Kept(why), "{old}");
+            assert_eq!(spelling(path, old), Spelling::Kept(why), "{old}");
         }
     }
 }

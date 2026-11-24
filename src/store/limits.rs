@@ -7,7 +7,7 @@
 /// file over it (`Store::prepare_write`), and one record at every limit
 /// below stays under it, its text and the accepted text a revision keeps
 /// beside it included (the test below).
-pub(crate) const MAX_NODE_FILE_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_NODE_FILE_BYTES: usize = 1024 * 1024;
 
 /// Maximum byte length for a decision's `reason` and a component's
 /// `description`.
@@ -23,7 +23,7 @@ pub(crate) const MAX_TAG_BYTES: usize = 128;
 
 /// Minimum byte length for a decision's `reason` field.
 /// Forces actual reasoning instead of rubber-stamp approvals.
-pub(crate) const MIN_REASON_BYTES: usize = 10;
+pub(super) const MIN_REASON_BYTES: usize = 10;
 
 /// Maximum byte length for a decision's `choice` field.
 /// A choice is a concise title, not a paragraph.
@@ -56,12 +56,12 @@ pub(crate) const MAX_LIST_ITEMS: usize = 100;
 pub(crate) const MAX_QUALITY_PATTERNS: usize = 32;
 
 /// Maximum byte length of one `[quality]` pattern's text.
-pub(crate) const MAX_PATTERN_BYTES: usize = 500;
+pub(super) const MAX_PATTERN_BYTES: usize = 500;
 
 /// Maximum bytes one compiled pattern and its lazy DFA's cache may take;
 /// a pattern that compiles past it is refused. A short text can still ask
 /// for a large automaton: `\w{50}` over Unicode needs about 2.5 MB.
-pub(crate) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
 
 /// Maximum byte length of a `[quality]` pattern's message, one line.
 pub(crate) const MAX_PATTERN_MESSAGE_BYTES: usize = 200;

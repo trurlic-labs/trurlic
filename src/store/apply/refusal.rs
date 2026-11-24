@@ -5,9 +5,10 @@
 use std::fmt;
 
 use super::ops::{Field, OpKind};
+use crate::store::name::NameFault;
 use crate::store::quality::{Broken, QualityFault};
 use crate::store::schema::AnchorFault;
-use crate::store::state::{NameFault, NodeFile};
+use crate::store::state::NodeFile;
 use crate::store::text::{TextFault, TextField};
 use crate::store::validate::Issue;
 
@@ -35,18 +36,20 @@ impl Refusal {
     /// `ops[3]`, `origin`.
     #[must_use]
     pub fn path(&self) -> String {
-        path(self.op.as_ref(), self.field.as_deref()).unwrap_or_else(|| "ops".to_owned())
+        let op = self.op.as_ref().map(|op| op.index);
+        argument_path(op, self.field.as_deref())
     }
 }
 
-/// `field` within the op `op` or the batch, as an argument path; `None`
-/// when neither names one.
-pub(super) fn path(op: Option<&OpAt>, field: Option<&str>) -> Option<String> {
+/// `field` within the op at index `op`, or within the batch for `None`, as
+/// a refusal and a warning name it: `ops[3].add_tags[0]`, `ops[3]` for the
+/// op as a whole, `origin`, and `ops` for the batch as a whole.
+pub(super) fn argument_path(op: Option<usize>, field: Option<&str>) -> String {
     match (op, field) {
-        (Some(op), Some(field)) => Some(format!("ops[{}].{field}", op.index)),
-        (Some(op), None) => Some(format!("ops[{}]", op.index)),
-        (None, Some(field)) => Some(field.to_owned()),
-        (None, None) => None,
+        (Some(index), Some(field)) => format!("ops[{index}].{field}"),
+        (Some(index), None) => format!("ops[{index}]"),
+        (None, Some(field)) => field.to_owned(),
+        (None, None) => "ops".to_owned(),
     }
 }
 
@@ -218,19 +221,7 @@ impl fmt::Display for Rule {
             Self::InUse {
                 decisions,
                 components,
-            } => {
-                let mut uses = Vec::new();
-                if !decisions.is_empty() {
-                    uses.push(format!("the decisions {} belong to it", listed(decisions)));
-                }
-                if !components.is_empty() {
-                    uses.push(format!(
-                        "the components {} connect to it",
-                        listed(components)
-                    ));
-                }
-                write!(f, "{}; move them first", uses.join(" and "))
-            }
+            } => in_use(f, decisions, components),
             Self::BothForms { whole } => write!(
                 f,
                 "is given with `{}`, which sets the whole list; give one form",
@@ -257,13 +248,25 @@ impl fmt::Display for Refusal {
     }
 }
 
-/// The start of a refusal's or a warning's message: the op and the
-/// argument it is about, when it is about one.
-pub(super) fn located(
-    f: &mut fmt::Formatter<'_>,
-    op: Option<&OpAt>,
-    field: Option<&str>,
-) -> fmt::Result {
+/// What uses a component a remove is refused for: the decisions that
+/// belong to it, the components that connect to it, or both.
+fn in_use(f: &mut fmt::Formatter<'_>, decisions: &[String], components: &[String]) -> fmt::Result {
+    let mut uses = Vec::new();
+    if !decisions.is_empty() {
+        uses.push(format!("the decisions {} belong to it", listed(decisions)));
+    }
+    if !components.is_empty() {
+        uses.push(format!(
+            "the components {} connect to it",
+            listed(components)
+        ));
+    }
+    write!(f, "{}; move them first", uses.join(" and "))
+}
+
+/// The start of a refusal's message: the op and the argument it is about,
+/// when it is about one.
+fn located(f: &mut fmt::Formatter<'_>, op: Option<&OpAt>, field: Option<&str>) -> fmt::Result {
     if let Some(op) = op {
         write!(
             f,

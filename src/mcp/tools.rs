@@ -95,25 +95,25 @@ fn get_decisions_for_file_definition() -> Value {
     })
 }
 
-pub(crate) fn tool_list() -> &'static Value {
+pub(super) fn tool_list() -> &'static Value {
     &TOOL_DEFINITIONS
 }
 
 /// Whether `tools/list` lists `name`; a call to any other name is refused
 /// as a protocol error.
-pub(crate) fn is_listed(name: &str) -> bool {
+pub(super) fn is_listed(name: &str) -> bool {
     TOOL_DEFINITIONS
         .get("tools")
         .and_then(Value::as_array)
         .is_some_and(|tools| {
             tools
                 .iter()
-                .any(|tool| tool.get("name") == Some(&name.into()))
+                .any(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
         })
 }
 
 /// Call the tool `name` on `state`, the graph loaded under the shared lock.
-pub(crate) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> ToolEnvelope {
+pub(super) fn call_read_tool(state: &ProjectState, name: &str, args: &Value) -> ToolEnvelope {
     let answer = match name {
         "get_context" => get_context(state, args),
         "get_decisions_for_file" => get_decisions_for_file(state, args),

@@ -2,6 +2,7 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap::builder::PossibleValuesParser;
 use clap::{Parser, Subcommand};
 
 use crate::console::diag;
@@ -117,8 +118,8 @@ pub enum ToolCommand {
     /// Show the graph at a glance: counts, issues, history, components.
     Status {
         /// Show this section alone, with the whole result budget.
-        #[arg(long, value_enum)]
-        section: Option<StatusSection>,
+        #[arg(long, value_parser = PossibleValuesParser::new(commands::status_sections()))]
+        section: Option<String>,
 
         /// Count only the decisions recorded under this origin.
         #[arg(long)]
@@ -128,27 +129,6 @@ pub enum ToolCommand {
         #[arg(long)]
         json: bool,
     },
-}
-
-/// The sections `status` can show alone.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum StatusSection {
-    /// The validation issues.
-    Issues,
-    /// What a shared graph's history lacks.
-    History,
-    /// The decisions of each component.
-    Components,
-}
-
-impl StatusSection {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Issues => "issues",
-            Self::History => "history",
-            Self::Components => "components",
-        }
-    }
 }
 
 /// Where the graph is versioned, as `init` and `migrate` take it.
@@ -217,12 +197,7 @@ fn run_tool(command: ToolCommand) -> std::result::Result<(), commands::ToolError
             section,
             origin,
             json,
-        } => commands::status(
-            &cwd,
-            section.map(StatusSection::as_str),
-            origin.as_deref(),
-            format(json),
-        ),
+        } => commands::status(&cwd, section.as_deref(), origin.as_deref(), format(json)),
     }
 }
 

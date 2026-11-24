@@ -20,16 +20,19 @@ mod ops;
 mod refusal;
 mod warning;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::store::Writer;
+use serde::de::DeserializeOwned;
+
+use crate::store::canonical::Canonical;
 use crate::store::commit::PendingWrite;
 use crate::store::history::{CommitMessage, Tool};
-use crate::store::quality::{Bar, DecisionField, PatternMatch};
+use crate::store::quality::{Bar, DecisionField, Hit};
 use crate::store::schema::StatusName;
 use crate::store::state::NodeFile;
-use crate::store::text::{TextField, fault};
 use crate::store::time::Timestamp;
+use crate::store::{Store, Writer};
 use crate::{Error, Result};
 
 use check::Fault;
@@ -133,7 +136,7 @@ impl Writer<'_> {
             }
         };
         let (before, last_op) = edit.finish();
-        let changed_by = |name: &str| last_op.get(name).and_then(|&op| named.get(op)).cloned();
+        let changed_by = |name: &str| last_op.get(name).and_then(|&op| named.get(op));
         let (written, removed) = self.land(before, &changed_by, &message)?;
         Ok(Applied {
             ops: done,
@@ -153,7 +156,7 @@ impl Writer<'_> {
     fn land(
         &mut self,
         before: Before,
-        changed_by: &dyn Fn(&str) -> Option<OpAt>,
+        changed_by: ChangedBy<'_, '_>,
         message: &CommitMessage,
     ) -> Result<(usize, usize)> {
         let committed = self
@@ -179,42 +182,33 @@ impl Writer<'_> {
     }
 
     /// The writes and removals that take the files from `before` to the
-    /// writer's graph: a node whose value is as it was is not written. A
-    /// file whose canonical text a load would refuse refuses the batch,
-    /// naming the op `changed_by` gives.
+    /// writer's graph.
     fn files(
         &self,
         before: &Before,
-        changed_by: &dyn Fn(&str) -> Option<OpAt>,
+        changed_by: ChangedBy<'_, '_>,
     ) -> Result<(Vec<PendingWrite>, Vec<PathBuf>)> {
-        let (store, state) = (self.store, &self.state);
-        let mut writes = Vec::new();
-        let mut removes = Vec::new();
-        for (name, old) in &before.decisions {
-            let path = store.decision_path(name);
-            match state.decisions.get(name) {
-                Some(new) if old.as_ref() != Some(new) => {
-                    let too_large = oversize(NodeFile::Decision, name, changed_by);
-                    writes.push(store.prepare_write(&path, new).map_err(too_large)?);
-                }
-                Some(_) => {}
-                None if old.is_some() => removes.push(path),
-                None => {}
-            }
-        }
-        for (name, old) in &before.components {
-            let path = store.component_path(name);
-            match state.components.get(name) {
-                Some(new) if old.as_ref() != Some(new) => {
-                    let too_large = oversize(NodeFile::Component, name, changed_by);
-                    writes.push(store.prepare_write(&path, new).map_err(too_large)?);
-                }
-                Some(_) => {}
-                None if old.is_some() => removes.push(path),
-                None => {}
-            }
-        }
-        Ok((writes, removes))
+        let mut files = Files {
+            store: self.store,
+            changed_by,
+            writes: Vec::new(),
+            removes: Vec::new(),
+        };
+        let state = &self.state;
+        let (decision, component) = (Store::decision_path, Store::component_path);
+        files.add(
+            &before.decisions,
+            &state.decisions,
+            decision,
+            NodeFile::Decision,
+        )?;
+        files.add(
+            &before.components,
+            &state.components,
+            component,
+            NodeFile::Component,
+        )?;
+        Ok((files.writes, files.removes))
     }
 
     /// Drop from the non-canonical list every file the batch wrote or
@@ -229,30 +223,64 @@ impl Writer<'_> {
     }
 }
 
-/// The refusal of a batch that leaves the canonical text of the node `name`
-/// of the kind `file` over the cap a load reads, naming the op
-/// `changed_by` gives; every other error as it is.
-fn oversize<'a>(
-    file: fn(String) -> NodeFile,
-    name: &'a str,
-    changed_by: &'a dyn Fn(&str) -> Option<OpAt>,
-) -> impl FnOnce(Error) -> Error + 'a {
-    move |error| match error {
-        Error::CanonicalTooLarge { bytes, max, .. } => {
-            let file = file(name.to_owned());
-            refused(
-                changed_by(name),
-                None,
-                Rule::FileTooLarge { file, bytes, max },
-            )
+/// The op that last changed a node, by the node's name.
+type ChangedBy<'f, 'n> = &'f dyn Fn(&str) -> Option<&'n OpAt>;
+
+/// The files a batch commits, gathered one node kind at a time.
+struct Files<'f, 'n> {
+    store: &'f Store,
+    changed_by: ChangedBy<'f, 'n>,
+    writes: Vec<PendingWrite>,
+    removes: Vec<PathBuf>,
+}
+
+impl Files<'_, '_> {
+    /// Add the writes and removals that take the nodes of one kind from
+    /// `before` to `now`, each node's file at `path` and, in a refusal,
+    /// named by `file`: a node whose value is as it was is not written. A
+    /// canonical text over the cap a load reads refuses the batch, naming
+    /// the op that last changed the node.
+    fn add<T: Canonical + DeserializeOwned + PartialEq>(
+        &mut self,
+        before: &BTreeMap<String, Option<T>>,
+        now: &BTreeMap<String, T>,
+        path: fn(&Store, &str) -> PathBuf,
+        file: fn(String) -> NodeFile,
+    ) -> Result<()> {
+        for (name, old) in before {
+            match now.get(name) {
+                Some(new) if old.as_ref() != Some(new) => {
+                    let write = self.store.prepare_write(&path(self.store, name), new);
+                    let write = write.map_err(|error| self.too_large(error, name, file))?;
+                    self.writes.push(write);
+                }
+                Some(_) => {}
+                None if old.is_some() => self.removes.push(path(self.store, name)),
+                None => {}
+            }
         }
-        other => other,
+        Ok(())
+    }
+
+    /// `error`; for a canonical text over the cap a load reads, the
+    /// refusal naming the file `file` gives the node `name` and the op that
+    /// last changed it.
+    fn too_large(&self, error: Error, name: &str, file: fn(String) -> NodeFile) -> Error {
+        match error {
+            Error::CanonicalTooLarge { bytes, max, .. } => {
+                // clone: the refusal owns the op it names.
+                let op = (self.changed_by)(name).cloned();
+                let file = file(name.to_owned());
+                refused(op, None, Rule::FileTooLarge { file, bytes, max })
+            }
+            other => other,
+        }
     }
 }
 
 /// The batch's own faults, before any op runs: no op, and an origin the
 /// bar refuses; else the origin's warn matches.
-fn origin_hits(batch: &Batch, bar: &Bar) -> Result<Vec<(String, PatternMatch)>> {
+fn origin_hits(batch: &Batch, bar: &Bar) -> Result<Vec<(String, Hit)>> {
     if batch.ops.is_empty() {
         return Err(refused(None, Some("ops".to_owned()), Rule::EmptyBatch));
     }
@@ -260,7 +288,7 @@ fn origin_hits(batch: &Batch, bar: &Bar) -> Result<Vec<(String, PatternMatch)>> 
     match bar.judge_origin(batch.origin.as_deref(), records) {
         Ok(hits) => Ok(hits
             .into_iter()
-            .map(|hit| (DecisionField::Origin.as_str().to_owned(), hit.found))
+            .map(|hit| (DecisionField::Origin.as_str().to_owned(), hit))
             .collect()),
         Err(breach) => Err(refused(
             None,
@@ -315,23 +343,17 @@ fn run(
     Ok((done, named))
 }
 
-/// The batch's history message, its origin and session held to the
-/// one-line rule of a trailer.
+/// The batch's history message; an origin or a session that breaks the
+/// one-line rule of a trailer refuses the batch, naming it.
 fn commit_message(batch: &Batch) -> Result<CommitMessage> {
-    for (field, value) in [
-        (TextField::Origin, &batch.origin),
-        (TextField::Session, &batch.session),
-    ] {
-        if let Some(fault) = value.as_deref().and_then(|text| fault(field, text)) {
-            return Err(refused(
-                None,
-                Some(field.to_string()),
-                Rule::Text { field, fault },
-            ));
-        }
-    }
     // clone: the message and the recorded decisions each own the origin.
-    CommitMessage::new(Tool::Apply, batch.origin.clone(), batch.session.clone())
+    let message = CommitMessage::new(Tool::Apply, batch.origin.clone(), batch.session.clone());
+    message.map_err(|error| match error {
+        Error::TrailerText { field, fault } => {
+            refused(None, Some(field.to_string()), Rule::Text { field, fault })
+        }
+        other => other,
+    })
 }
 
 fn refused(op: Option<OpAt>, field: Option<String>, rule: Rule) -> Error {

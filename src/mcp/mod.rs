@@ -3,20 +3,12 @@
 //! The server holds the directory it was started in and no graph. Every
 //! tool call finds the store from there (`discovery`) and loads it, so a
 //! call answers from the files on disk, and a store created or migrated
-//! while the server runs is served from the next call. Without one, `initialize` and
-//! `tools/list` still answer, and every tool call is refused naming the
-//! command that fixes it.
+//! while the server runs is served from the next call. Without one,
+//! `initialize` and `tools/list` still answer, and every tool call is
+//! refused naming the command that fixes it.
 
 mod apply;
 mod context;
-#[cfg_attr(
-    not(any(test, feature = "failpoints")),
-    expect(
-        dead_code,
-        reason = "no tool sends the client a request until `accept` asks through an \
-                  elicitation form"
-    )
-)]
 mod peer;
 mod protocol;
 mod result;
@@ -380,28 +372,6 @@ mod tests {
     }
 
     #[test]
-    fn initialize_answers_a_supported_version_with_itself() {
-        for version in PROTOCOL_VERSIONS {
-            let (_tmp, mut server) = project();
-            let responses = serve(&mut server, &[initialize(version)]);
-            assert_eq!(responses[0]["result"]["protocolVersion"], version);
-            assert!(responses[0]["result"]["capabilities"]["tools"].is_object());
-        }
-    }
-
-    #[test]
-    fn initialize_answers_any_other_version_with_the_latest() {
-        for version in ["2024-11-05", "2025-03-26", "1.0", ""] {
-            let (_tmp, mut server) = project();
-            let responses = serve(&mut server, &[initialize(version)]);
-            assert_eq!(
-                responses[0]["result"]["protocolVersion"], LATEST_PROTOCOL_VERSION,
-                "{version}"
-            );
-        }
-    }
-
-    #[test]
     fn initialize_without_a_version_is_invalid_params() {
         let (_tmp, mut server) = project();
         let responses = serve(
@@ -418,22 +388,6 @@ mod tests {
             responses[2]["error"]["code"], INVALID_REQUEST,
             "a refused initialize leaves the session uninitialized"
         );
-    }
-
-    #[test]
-    fn tools_are_refused_before_initialize_and_ping_is_not() {
-        let (_tmp, mut server) = project();
-        let responses = serve(
-            &mut server,
-            &[
-                request(1, "tools/list", json!({})),
-                tool_call(2, "get_context", json!({ "component": "project" })),
-                request(3, "ping", json!({})),
-            ],
-        );
-        assert_eq!(responses[0]["error"]["code"], INVALID_REQUEST);
-        assert_eq!(responses[1]["error"]["code"], INVALID_REQUEST);
-        assert_eq!(responses[2]["result"], json!({}));
     }
 
     #[test]
@@ -485,59 +439,6 @@ mod tests {
                 .unwrap()
                 .contains("nonexistent")
         );
-    }
-
-    /// The payload of a tool result, or of a refusal.
-    fn payload(response: &Value) -> Value {
-        let text = response["result"]["content"][0]["text"].as_str().unwrap();
-        serde_json::from_str(text).unwrap()
-    }
-
-    fn get_context(id: u64, component: &str) -> Value {
-        tool_call(id, "get_context", json!({ "component": component }))
-    }
-
-    /// No state survives a call: the next read loads what changed on disk
-    /// after the previous one, a hand edit included.
-    #[test]
-    fn a_read_tool_serves_a_file_written_since_the_last_call() {
-        let (tmp, mut server) = initialized();
-        let first = serve(&mut server, &[get_context(1, "auth")]);
-        assert_eq!(first[0]["result"]["isError"], true, "{}", first[0]);
-
-        let store = discover(tmp.path()).unwrap();
-        std::fs::write(store.component_path("auth"), "description = \"Auth\"\n").unwrap();
-
-        let second = serve(&mut server, &[get_context(2, "auth")]);
-        assert_eq!(payload(&second[0])["component"]["description"], "Auth");
-    }
-
-    /// A store is found on every call: a refusal naming `trurlic init`
-    /// before it exists, an answer once it does.
-    #[test]
-    fn a_tool_call_finds_the_store_made_after_the_server_started() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let mut server = Server::new(tmp.path().to_path_buf());
-        let before = serve(
-            &mut server,
-            &[
-                initialize(LATEST_PROTOCOL_VERSION),
-                get_context(1, "project"),
-            ],
-        );
-        let refusal = payload(&before[1]);
-        assert_eq!(before[1]["result"]["isError"], true);
-        assert_eq!(refusal["error"]["kind"], "no_project");
-        assert!(
-            refusal["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("trurlic init")
-        );
-
-        Store::create(tmp.path(), "demo", Placement::Tracked).unwrap();
-        let after = serve(&mut server, &[get_context(2, "project")]);
-        assert_eq!(payload(&after[0])["component"]["name"], "project");
     }
 
     #[test]

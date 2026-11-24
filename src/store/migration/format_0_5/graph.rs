@@ -289,6 +289,7 @@ fn merge(
     for (from, targets) in right {
         // clone: as above.
         let union = merged.entry(from.clone()).or_default();
+        // clone: as above.
         union.extend(targets.iter().cloned());
     }
     merged

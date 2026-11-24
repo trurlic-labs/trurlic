@@ -11,86 +11,56 @@
 
 use std::fs;
 use std::io::ErrorKind;
+use std::path::PathBuf;
 
 use crate::console::diag;
 use crate::{Error, Result};
 
 use super::journal::{PendingHistory, Replayed};
+use super::load::read_dir_if_present;
 use super::{Store, StoreLock};
 
 impl Store {
     /// Finish the write an interrupted commit left, its history commit
     /// included, then remove the temp files left behind.
-    pub(crate) fn recover(&self, lock: &StoreLock) -> Result<()> {
-        self.recover_with(lock, PendingHistory::Fail)
+    pub(super) fn recover(&self, lock: &StoreLock) -> Result<()> {
+        self.recover_with(lock, PendingHistory::Fail).map(drop)
     }
 
     /// [`recover`](Self::recover), with `pending` saying what a history
-    /// commit that fails does.
-    pub(super) fn recover_with(&self, lock: &StoreLock, pending: PendingHistory) -> Result<()> {
-        match self.replay_journal(lock, pending)? {
+    /// commit that fails does; returns what the replay of the journal did.
+    pub(super) fn recover_with(
+        &self,
+        lock: &StoreLock,
+        pending: PendingHistory,
+    ) -> Result<Replayed> {
+        let replayed = self.replay_journal(lock, pending)?;
+        match replayed {
             Replayed::Nothing => {}
             Replayed::Finished => diag!("warning: finished a write an interrupted commit left"),
             Replayed::HistoryWaits => diag!(
-                "warning: put in place the files of a write an interrupted commit left; its \
+                "warning: the files of a write an interrupted commit left are in place; its \
                  history commit waits for the next write"
             ),
         }
-        let removed = self.remove_temps()?;
+        let removed = self.remove_temps(lock)?;
         if removed > 0 {
             diag!("warning: removed {removed} temp file(s) left by an interrupted write");
         }
-        Ok(())
+        Ok(replayed)
     }
 
     /// Whether an interrupted write left a journal or a temp file. Asked
     /// under the shared lock, when no commit is in flight, so either one is
     /// a leftover.
     pub(super) fn has_leftovers(&self) -> Result<bool> {
-        if self.has_journal()? {
-            return Ok(true);
-        }
-        let tmp_dir = self.tmp_dir();
-        let entries = match fs::read_dir(&tmp_dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
-            Err(source) => {
-                return Err(Error::Io {
-                    path: tmp_dir,
-                    source,
-                });
-            }
-        };
-        // What `remove_temps` removes, so a recovery leaves no leftover behind.
-        for entry in entries {
-            let entry = entry.map_err(Error::io(&tmp_dir))?;
-            let path = entry.path();
-            if entry.file_type().map_err(Error::io(&path))?.is_file() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(self.has_journal()? || self.leftover_temps()?.next().transpose()?.is_some())
     }
 
-    fn remove_temps(&self) -> Result<usize> {
-        let tmp_dir = self.tmp_dir();
-        let entries = match fs::read_dir(&tmp_dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(0),
-            Err(source) => {
-                return Err(Error::Io {
-                    path: tmp_dir,
-                    source,
-                });
-            }
-        };
+    fn remove_temps(&self, _lock: &StoreLock) -> Result<usize> {
         let mut removed = 0;
-        for entry in entries {
-            let entry = entry.map_err(Error::io(&tmp_dir))?;
-            let path = entry.path();
-            if !entry.file_type().map_err(Error::io(&path))?.is_file() {
-                continue;
-            }
+        for path in self.leftover_temps()? {
+            let path = path?;
             match fs::remove_file(&path) {
                 Ok(()) => removed += 1,
                 Err(e) if e.kind() == ErrorKind::NotFound => {}
@@ -98,6 +68,20 @@ impl Store {
             }
         }
         Ok(removed)
+    }
+
+    /// The files in `.state/tmp/`, which only a commit in flight writes:
+    /// what recovery removes, and what makes a read recover first.
+    fn leftover_temps(&self) -> Result<impl Iterator<Item = Result<PathBuf>>> {
+        let tmp_dir = self.tmp_dir();
+        let entries = read_dir_if_present(&tmp_dir)?;
+        Ok(entries.into_iter().flatten().filter_map(move |entry| {
+            let file = entry.and_then(|entry| {
+                let is_file = entry.file_type()?.is_file();
+                Ok(is_file.then(|| entry.path()))
+            });
+            file.map_err(Error::io(&tmp_dir)).transpose()
+        }))
     }
 }
 

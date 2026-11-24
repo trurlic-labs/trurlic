@@ -72,10 +72,11 @@ pub(super) fn rename(edit: &mut Edit<'_>, op: Rename) -> Result<Done, Fault> {
     }
     new_name(edit, &op.to, Field::To)?;
     if let Some(mut component) = edit.take_component(&op.name) {
-        // clone: the edge, the graph's key and the result each own the name.
         if component.connects_to.remove(&op.name) {
+            // clone: the self-edge and the graph's key each own the name.
             component.connects_to.insert(op.to.clone());
         }
+        // clone: the graph keys the node by its name, and the result names it.
         edit.put_component(op.to.clone(), component);
     }
     edit.carry(&op.name, &op.to);
@@ -110,6 +111,7 @@ pub(super) fn remove(edit: &mut Edit<'_>, op: RemoveComponent) -> Result<Done, F
         }));
     }
     edit.take_component(&op.name);
+    edit.end(&op.name);
     Ok(Done::of(OpKind::RemoveComponent, op.name))
 }
 

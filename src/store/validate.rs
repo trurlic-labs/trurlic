@@ -9,8 +9,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use super::name::{NameFault, name_fault};
 use super::schema::{Decision, PROJECT_COMPONENT, Status};
-use super::state::{NameFault, NodeFile, ProjectState, name_fault};
+use super::state::{NodeFile, ProjectState};
 use super::text::{TextField, fault};
 
 /// What an [`Issue`] reports.
@@ -159,11 +160,11 @@ impl Issue {
     }
 
     /// The subject with each node name in `carried` replaced by the name it
-    /// maps to: a cycle's members sorted again, one that two names now
-    /// share listed once. A subject that is no edge of kebab-case names is
-    /// kept as it is, so a write that renames such a node is refused.
+    /// maps to, a cycle's members as [`carry_members`] gives them. The
+    /// target of a missing edge names no node of the edge's kind, so no
+    /// node a write carries, and stays as written; so does a subject that
+    /// is no edge, so a write that renames its node is refused.
     fn carried(&self, carried: &BTreeMap<String, String>) -> String {
-        let to = |name: &str| carried.get(name).map_or(name, String::as_str).to_owned();
         let subject = self.subject.as_str();
         match self.kind {
             IssueKind::NameInvalid
@@ -175,19 +176,22 @@ impl Issue {
             | IssueKind::InvalidAlternative
             | IssueKind::InvalidTag
             | IssueKind::InvalidOrigin
-            | IssueKind::InvalidDescription => to(subject),
-            IssueKind::ConnectionMissing | IssueKind::DependencyMissing | IssueKind::SelfEdge => {
-                let edge = subject.split_once(" -> ").and_then(|(from, rest)| {
-                    let (target, field) = rest.rsplit_once(" (")?;
-                    Some(format!("{} -> {} ({field}", to(from), to(target)))
+            | IssueKind::InvalidDescription => carried_name(subject, carried).to_owned(),
+            IssueKind::ConnectionMissing | IssueKind::DependencyMissing => {
+                match subject.split_once(" -> ") {
+                    Some((from, rest)) => format!("{} -> {rest}", carried_name(from, carried)),
+                    None => subject.to_owned(),
+                }
+            }
+            IssueKind::SelfEdge => {
+                let edge = subject.split_once(" -> ").and_then(|(node, rest)| {
+                    let (_, field) = rest.rsplit_once(" (")?;
+                    let node = carried_name(node, carried);
+                    Some(format!("{node} -> {node} ({field}"))
                 });
                 edge.unwrap_or_else(|| subject.to_owned())
             }
-            IssueKind::DependsOnCycle => {
-                let members: BTreeSet<String> = subject.split(", ").map(to).collect();
-                let members: Vec<String> = members.into_iter().collect();
-                members.join(", ")
-            }
+            IssueKind::DependsOnCycle => carry_members(subject.split(", "), carried).join(", "),
             // About the graph directory, which no write renames.
             IssueKind::TrackedUnversioned
             | IssueKind::TrackedIgnored
@@ -348,33 +352,24 @@ fn check_edge(issues: &mut Vec<Issue>, from: &str, field: EdgeField, to: &str, e
 /// text a proposed revision keeps.
 fn check_text(issues: &mut Vec<Issue>, name: &str, decision: &Decision) {
     let file = decision_file(name);
-    let mut check = |kind: IssueKind, field: TextField, key: &dyn fmt::Display, text: &str| {
-        if let Some(fault) = fault(field, text) {
+    let mut check = |field: TextField, key: &dyn fmt::Display, text: &str| {
+        if let (Some(kind), Some(fault)) = (issue_kind(field), fault(field, text)) {
             issues.push(issue(kind, name, format!("{file}: `{key}` {fault}")));
         }
     };
+    let alternatives = &decision.alternatives;
     check_prose(
         &mut check,
         "",
         &decision.choice,
         &decision.reason,
-        &decision.alternatives,
+        alternatives,
     );
     for (index, tag) in decision.tags.iter().enumerate() {
-        check(
-            IssueKind::InvalidTag,
-            TextField::Tag,
-            &format_args!("tags[{index}]"),
-            tag,
-        );
+        check(TextField::Tag, &format_args!("tags[{index}]"), tag);
     }
     if let Some(origin) = &decision.origin {
-        check(
-            IssueKind::InvalidOrigin,
-            TextField::Origin,
-            &"origin",
-            origin,
-        );
+        check(TextField::Origin, &"origin", origin);
     }
     if let Status::Proposed {
         accepted_text: Some(accepted),
@@ -393,33 +388,32 @@ fn check_text(issues: &mut Vec<Issue>, name: &str, decision: &Decision) {
 
 /// A choice, a reason and alternatives, each key after `prefix`.
 fn check_prose(
-    check: &mut impl FnMut(IssueKind, TextField, &dyn fmt::Display, &str),
+    check: &mut impl FnMut(TextField, &dyn fmt::Display, &str),
     prefix: &str,
     choice: &str,
     reason: &str,
     alternatives: &[String],
 ) {
-    let (choice_kind, reason_kind) = (IssueKind::InvalidChoice, IssueKind::InvalidReason);
-    check(
-        choice_kind,
-        TextField::Choice,
-        &format_args!("{prefix}choice"),
-        choice,
-    );
-    check(
-        reason_kind,
-        TextField::Reason,
-        &format_args!("{prefix}reason"),
-        reason,
-    );
+    check(TextField::Choice, &format_args!("{prefix}choice"), choice);
+    check(TextField::Reason, &format_args!("{prefix}reason"), reason);
     for (index, alternative) in alternatives.iter().enumerate() {
         let key = &format_args!("{prefix}alternatives[{index}]");
-        check(
-            IssueKind::InvalidAlternative,
-            TextField::Alternative,
-            key,
-            alternative,
-        );
+        check(TextField::Alternative, key, alternative);
+    }
+}
+
+/// The issue a graph text that breaks the rule of `field` is; `None` for
+/// the texts no node file holds, a `Session:` trailer and a `[quality]`
+/// message, which a load refuses with `project.toml`.
+const fn issue_kind(field: TextField) -> Option<IssueKind> {
+    match field {
+        TextField::Choice => Some(IssueKind::InvalidChoice),
+        TextField::Reason => Some(IssueKind::InvalidReason),
+        TextField::Alternative => Some(IssueKind::InvalidAlternative),
+        TextField::Tag => Some(IssueKind::InvalidTag),
+        TextField::Origin => Some(IssueKind::InvalidOrigin),
+        TextField::Description => Some(IssueKind::InvalidDescription),
+        TextField::Session | TextField::Message => None,
     }
 }
 
@@ -435,9 +429,8 @@ fn decision_file(name: &str) -> NodeFile {
 }
 
 /// The issues of `after` that `before` does not have, matched on kind and
-/// subject: a message may change while the issue stays the same. This is
-/// the rule every write commits under: it may keep an issue the graph had,
-/// never add one. `carried` maps each node a write renamed, or merged into
+/// subject: a message may change while the issue stays the same.
+/// `carried` maps each node a write renamed, or merged into
 /// another, to the name it has after the write, so an issue of `before`
 /// that the node keeps under its new name is not new.
 pub(super) fn introduced(
@@ -458,8 +451,28 @@ pub(super) fn introduced(
     after
 }
 
+/// The members of a cycle under the names `carried` maps them to, sorted
+/// and each once: two members merged into one are one. The one reading of
+/// a cycle the graph began with under a write's renames and merges, for
+/// [`introduced`] and for the cycle rule of each op of `apply`.
+pub(super) fn carry_members<'m>(
+    members: impl IntoIterator<Item = &'m str>,
+    carried: &'m BTreeMap<String, String>,
+) -> Vec<&'m str> {
+    let members: BTreeSet<&str> = members
+        .into_iter()
+        .map(|name| carried_name(name, carried))
+        .collect();
+    members.into_iter().collect()
+}
+
+/// The name `carried` maps `name` to, or `name`.
+fn carried_name<'n>(name: &'n str, carried: &'n BTreeMap<String, String>) -> &'n str {
+    carried.get(name).map_or(name, String::as_str)
+}
+
 /// `issues` in the order every report gives them: by kind, subject and
-/// message, so the order of the checks never reaches a caller.
+/// message.
 pub(super) fn sort(issues: &mut [Issue]) {
     issues.sort_unstable_by(|a, b| {
         (a.kind, &a.subject, &a.message).cmp(&(b.kind, &b.subject, &b.message))
@@ -654,7 +667,7 @@ mod tests {
         let mut component = sample_component();
         component.description = "Hidden \u{2066}text".into();
         state.components.insert("c".into(), component);
-        // Blank and on many lines, a description is plain prose.
+        // On many lines and with a tab, a description is plain prose.
         let mut plain = sample_component();
         plain.description = "\nTwo lines\n\tand a tab".into();
         state.components.insert("plain".into(), plain);

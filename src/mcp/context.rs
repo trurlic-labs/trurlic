@@ -11,7 +11,7 @@ use crate::store::{self, Anchor, Component, Named, PROJECT_COMPONENT, ProjectSta
 
 /// Controls how much detail `get_context` returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextDepth {
+pub(super) enum ContextDepth {
     /// Decisions with reasoning, related decisions, transitive
     /// dependencies, and the full brief.
     Full,
@@ -24,7 +24,7 @@ pub(crate) enum ContextDepth {
 /// A component's decisions, the project-wide rules, the decisions of
 /// connected components and of what its decisions depend on, and a brief
 /// assembled from them. `depth` is how much of that is returned.
-pub(crate) fn get_context(
+pub(super) fn get_context(
     state: &ProjectState,
     component: &str,
     task: Option<&str>,
@@ -258,7 +258,7 @@ fn push_section(brief: &mut String, title: &str, lines: impl Iterator<Item = imp
 /// on a directory that holds it, by component then name, each with the
 /// anchors that matched. Project-wide rules are left out unless anchored
 /// there: they apply everywhere, and `get_context("project")` lists them.
-pub(crate) fn get_decisions_for_file(state: &ProjectState, file: &str) -> Result<Value, String> {
+pub(super) fn get_decisions_for_file(state: &ProjectState, file: &str) -> Result<Value, String> {
     let path =
         store::normalize_path(file).map_err(|fault| format!("invalid file path: {fault}"))?;
     let decisions: Vec<Value> = state

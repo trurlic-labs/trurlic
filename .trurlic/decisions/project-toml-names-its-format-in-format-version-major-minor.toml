@@ -18,6 +18,6 @@ anchors = [
     { file = "src/store/schema.rs", symbol = "Project" },
     { file = "src/store/version.rs", symbol = "FormatVersion" },
     { file = "src/store/version.rs", symbol = "FormatVersion::parse" },
-    { file = "src/store/version.rs", symbol = "Store::check_version" },
+    { file = "src/store/version.rs", symbol = "Store::read_current_table" },
     { file = "src/store/version.rs", symbol = "standing" },
 ]

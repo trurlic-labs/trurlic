@@ -24,12 +24,30 @@ impl Project {
     /// `init --placement tracked` makes it, committed with the
     /// `.gitignore` it writes.
     pub fn init() -> Self {
+        let project = Self::init_uncommitted();
+        git(project.path(), &["add", "--all"]);
+        git(
+            project.path(),
+            &["commit", "--quiet", "--no-verify", "-m", "init"],
+        );
+        project
+    }
+
+    /// [`init`](Self::init) without the commit: git tracks nothing yet.
+    pub fn init_uncommitted() -> Self {
         let project = Self::without_store();
-        let dir = project.path();
-        git(dir, &["init", "--quiet", "--initial-branch=main"]);
+        git(
+            project.path(),
+            &["init", "--quiet", "--initial-branch=main"],
+        );
         project.run_ok(&["init", "--placement", "tracked"]);
-        git(dir, &["add", "--all"]);
-        git(dir, &["commit", "--quiet", "--no-verify", "-m", "init"]);
+        project
+    }
+
+    /// A directory in no git work tree holding a shared graph `init` made.
+    pub fn shared() -> Self {
+        let project = Self::without_store();
+        project.run_ok(&["init", "--placement", "shared"]);
         project
     }
 
@@ -44,9 +62,14 @@ impl Project {
         self.dir.path()
     }
 
+    /// The graph directory, `.trurlic/`, whether or not it exists.
+    pub fn graph(&self) -> PathBuf {
+        self.path().join(".trurlic")
+    }
+
     /// The path of `file` under `.trurlic/`.
     pub fn node(&self, file: &str) -> PathBuf {
-        self.path().join(".trurlic").join(file)
+        self.graph().join(file)
     }
 
     /// Write `text` to `.trurlic/<file>`, as a hand edit does.
@@ -60,7 +83,7 @@ impl Project {
 
     /// Every graph file: see [`graph_files`].
     pub fn graph_files(&self) -> GraphFiles {
-        graph_files(&self.path().join(".trurlic"))
+        graph_files(&self.graph())
     }
 
     /// Write `batch` to a file in the project and run `trurlic apply` on

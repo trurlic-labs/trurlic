@@ -11,9 +11,9 @@
 
 use std::marker::PhantomData;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
-use super::SchemaWalk;
+use super::{SchemaWalk, schema};
 
 /// A tool's result, or an object nested in it.
 pub(crate) trait Output {
@@ -22,7 +22,7 @@ pub(crate) trait Output {
 
 /// What a result field holds: its schema and how its value is written.
 pub(crate) trait Show {
-    type Value;
+    type Value: ?Sized;
 
     /// The field's JSON Schema, without its description.
     fn schema(&self) -> Map<String, Value>;
@@ -96,14 +96,7 @@ pub(crate) fn output_schema<O: Output>() -> Map<String, Value> {
     O::declare(&mut Shown {
         walk: Walk::Schema(&mut walk),
     });
-    let mut schema = Map::new();
-    schema.insert("type".into(), "object".into());
-    schema.insert("properties".into(), walk.properties.into());
-    if !walk.required.is_empty() {
-        schema.insert("required".into(), walk.required.into());
-    }
-    schema.insert("additionalProperties".into(), false.into());
-    schema
+    walk.into_object_schema()
 }
 
 /// `value` as the JSON object its declaration describes.
@@ -124,14 +117,14 @@ pub(crate) fn to_value<O: Output>(value: &O) -> Value {
 pub(crate) struct Str;
 
 impl Show for Str {
-    type Value = String;
+    type Value = str;
 
     fn schema(&self) -> Map<String, Value> {
-        object(json!({ "type": "string" }))
+        schema([("type", "string".into())])
     }
 
-    fn value(&self, value: &String) -> Value {
-        value.as_str().into()
+    fn value(&self, value: &str) -> Value {
+        value.into()
     }
 }
 
@@ -142,7 +135,7 @@ impl Show for Count {
     type Value = usize;
 
     fn schema(&self) -> Map<String, Value> {
-        object(json!({ "type": "integer", "minimum": 0 }))
+        schema([("type", "integer".into()), ("minimum", 0.into())])
     }
 
     fn value(&self, value: &usize) -> Value {
@@ -161,7 +154,7 @@ impl<E: Copy> Show for Tag<E> {
 
     fn schema(&self) -> Map<String, Value> {
         let names: Vec<&str> = self.all.iter().map(|&each| (self.name)(each)).collect();
-        object(json!({ "type": "string", "enum": names }))
+        schema([("type", "string".into()), ("enum", names.into())])
     }
 
     fn value(&self, value: &E) -> Value {
@@ -174,11 +167,14 @@ pub(crate) struct Items<K> {
     pub item: K,
 }
 
-impl<K: Show> Show for Items<K> {
+impl<K: Show<Value: Sized>> Show for Items<K> {
     type Value = Vec<K::Value>;
 
     fn schema(&self) -> Map<String, Value> {
-        object(json!({ "type": "array", "items": self.item.schema() }))
+        schema([
+            ("type", "array".into()),
+            ("items", self.item.schema().into()),
+        ])
     }
 
     fn value(&self, value: &Vec<K::Value>) -> Value {
@@ -207,17 +203,10 @@ impl<O: Output> Show for Nested<O> {
     }
 }
 
-/// The schema `literal` holds; every kind writes its schema as an object.
-fn object(literal: Value) -> Map<String, Value> {
-    match literal {
-        Value::Object(schema) => schema,
-        // Not taken: every caller passes a `json!` object literal.
-        _ => Map::new(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[derive(Debug, Clone, Copy, PartialEq)]

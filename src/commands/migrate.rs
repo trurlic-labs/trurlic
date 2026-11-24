@@ -271,10 +271,7 @@ fn backup_dir(store: &Store) -> Result<PathBuf> {
         ".trurlic-backup-{:04}{:02}{:02}T{:02}{:02}{:02}",
         now.year, now.month, now.day, now.hour, now.minute, now.second
     );
-    let parent = store
-        .root()
-        .parent()
-        .ok_or_else(|| Error::Validation("store root has no parent directory".into()))?;
+    let (parent, _) = store.parent_and_name()?;
     let mut path = parent.join(&name);
     for suffix in 2..=MAX_BACKUPS_PER_SECOND {
         match fs::create_dir(&path) {
@@ -307,8 +304,9 @@ fn back_up(root: &Path, backup: &Path, lines: &[String]) -> Result<()> {
 }
 
 /// Copy the directory `src` to `dst`, but for `.state/` and the graph's
-/// repository `.git/`, every file flushed. The files of a directory are copied in parallel: each flush
-/// waits on the disk, and a store holds hundreds of files.
+/// repository `.git/`, every file flushed. The files of a directory are
+/// copied in parallel: each flush waits on the disk, and a store holds
+/// hundreds of files.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).map_err(Error::io(dst))?;
     let mut files = Vec::new();

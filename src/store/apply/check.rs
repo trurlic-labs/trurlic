@@ -9,9 +9,9 @@ use super::decision::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, ListEdit};
 use super::refusal::{NodeKind, Rule};
+use crate::store::name::name_fault;
 use crate::store::quality::{DecisionField, Place, element};
 use crate::store::schema::{Anchor, Decision};
-use crate::store::state::name_fault;
 
 /// What an op breaks: the argument within it, `None` for the op as a
 /// whole, and the rule.
@@ -33,7 +33,7 @@ impl Fault {
         }
     }
 
-    pub(super) fn item(field: Field, index: usize, rule: Rule) -> Self {
+    fn item(field: Field, index: usize, rule: Rule) -> Self {
         Self {
             field: Some(format!("{}[{index}]", field.as_str())),
             rule,
@@ -76,7 +76,7 @@ pub(super) fn bar(
     })?;
     let located = hits
         .into_iter()
-        .map(|hit| (sources.path(decision, hit.place), hit.found));
+        .map(|(place, hit)| (sources.path(decision, place), hit));
     context.hits.extend(located);
     Ok(())
 }
@@ -129,15 +129,6 @@ impl Sources {
     }
 }
 
-/// An anchor as the bar reads it: `file::symbol`, or `file`.
-pub(super) fn rendered(input: &AnchorInput) -> String {
-    match &input.symbol {
-        Some(symbol) => format!("{}::{symbol}", input.file),
-        // clone: the rendering owns its text, as a symbol's does.
-        None => input.file.clone(),
-    }
-}
-
 /// The fields of `changed` the bar reads.
 pub(super) fn judged(changed: &[Field]) -> Vec<DecisionField> {
     changed
@@ -148,7 +139,9 @@ pub(super) fn judged(changed: &[Field]) -> Vec<DecisionField> {
             Field::Alternatives => Some(DecisionField::Alternatives),
             Field::Tags => Some(DecisionField::Tags),
             Field::Anchors => Some(DecisionField::Anchors),
-            // The fields no rule of the bar reads: names and edges.
+            // No rule of the bar reads these: the names an op gives, a
+            // decision's component and edges, a component's fields, and the
+            // `add_*` and `remove_*` arguments, which no changed field is.
             Field::Name
             | Field::To
             | Field::Survivor

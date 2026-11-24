@@ -26,7 +26,7 @@ use crate::store::Refusal;
 /// Typed MCP tool-result envelope, serialized once, directly into the
 /// JSON-RPC response; `text` holds the payload serialized once.
 #[derive(Debug, Serialize)]
-pub(crate) struct ToolEnvelope {
+pub(super) struct ToolEnvelope {
     content: [TextBlock; 1],
     /// The text's JSON, for a tool with an `outputSchema`.
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
@@ -45,7 +45,7 @@ struct TextBlock {
 /// Why a tool call was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ErrorKind {
+pub(super) enum ErrorKind {
     /// An argument breaks the tool's spec; `field` names it.
     InvalidArgument,
     /// No `.trurlic/` above the server's directory; `trurlic init` makes one.
@@ -85,7 +85,7 @@ struct OpRef {
 }
 
 impl ToolError {
-    pub(crate) fn refused(message: impl Into<String>) -> Self {
+    pub(super) fn refused(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Refused, None, message.into())
     }
 
@@ -154,7 +154,7 @@ impl From<Refusal> for ToolError {
 }
 
 /// `payload` serialized within [`MAX_TOOL_RESULT_BYTES`]; see [`truncate`].
-pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
+pub(super) fn tool_result(payload: &Value) -> ToolEnvelope {
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",
@@ -165,11 +165,24 @@ pub(crate) fn tool_result(payload: &Value) -> ToolEnvelope {
     }
 }
 
-/// [`tool_result`] with the text's JSON as `structuredContent` too: the
-/// payload as it is, or as it was cut to fit. The text is the serialization
-/// of the value sent as `structuredContent`, so the two cannot differ.
-pub(crate) fn structured_result(payload: Value) -> ToolEnvelope {
-    let (structured, text) = truncate::fit_value(payload, MAX_TOOL_RESULT_BYTES);
+/// The text of a result built on a spec, with the value it serializes:
+/// `payload` as it is, or as it was cut to fit. The call sends both, a CLI
+/// twin prints the text.
+pub(super) fn result_text(payload: Value) -> (Value, String) {
+    truncate::fit_value(payload, MAX_TOOL_RESULT_BYTES)
+}
+
+/// The text of a refusal: `{"error": ...}`, cut like any payload when its
+/// message is long. The call sends it, a CLI twin prints it.
+pub(crate) fn refusal_text(error: &ToolError) -> String {
+    truncate::fit_payload(&json!({ "error": error }), MAX_TOOL_RESULT_BYTES)
+}
+
+/// [`tool_result`] with the text's JSON as `structuredContent` too
+/// ([`result_text`]). The text is the serialization of the value sent as
+/// `structuredContent`, so the two cannot differ.
+pub(super) fn structured_result(payload: Value) -> ToolEnvelope {
+    let (structured, text) = result_text(payload);
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",
@@ -180,12 +193,12 @@ pub(crate) fn structured_result(payload: Value) -> ToolEnvelope {
     }
 }
 
-/// `error` as a refusal, cut like any payload when its message is long.
-pub(crate) fn tool_error(error: &ToolError) -> ToolEnvelope {
+/// `error` as a refusal ([`refusal_text`]).
+pub(super) fn tool_error(error: &ToolError) -> ToolEnvelope {
     ToolEnvelope {
         content: [TextBlock {
             r#type: "text",
-            text: truncate::fit_payload(&json!({ "error": error }), MAX_TOOL_RESULT_BYTES),
+            text: refusal_text(error),
         }],
         structured_content: None,
         is_error: Some(true),
@@ -193,17 +206,17 @@ pub(crate) fn tool_error(error: &ToolError) -> ToolEnvelope {
 }
 
 /// [`tool_error`] for a refusal its tool states as text alone.
-pub(crate) fn refusal(message: &str) -> ToolEnvelope {
+pub(super) fn refusal(message: &str) -> ToolEnvelope {
     tool_error(&ToolError::refused(message))
 }
 
 #[cfg(test)]
 impl ToolEnvelope {
-    pub(crate) fn is_error(&self) -> bool {
+    pub(super) fn is_error(&self) -> bool {
         self.is_error == Some(true)
     }
 
-    pub(crate) fn text(&self) -> &str {
+    pub(super) fn text(&self) -> &str {
         &self.content[0].text
     }
 }

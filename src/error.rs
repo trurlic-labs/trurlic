@@ -1,5 +1,6 @@
-//! The error every module returns. `trurlic install` alone has its own,
-//! `InstallError`, which wraps this one; nothing here names it.
+//! The error every module returns. `trurlic install` returns
+//! `InstallError`, which wraps this one, and a tool's CLI twin the tool's
+//! `ToolError`; nothing here names either.
 //!
 //! A failure that comes from a file names the file: [`Error::Io`] and
 //! [`Error::Toml`] carry the path, and nothing converts a bare
@@ -10,7 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
 use crate::store::{
-    AnchorFault, FormatVersion, PlacementDoubt, Refusal, TextFault, TextField, TimestampError,
+    AnchorFault, FormatVersion, PlacementDoubt, Refusal, StorePathFault, TextFault, TextField,
+    TimestampError,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -37,7 +39,10 @@ pub enum Error {
     /// An I/O call with no file behind it: a standard stream, the working
     /// directory, the path of the running binary. `what` names the call.
     #[error("cannot {what}: {source}")]
-    System { what: String, source: io::Error },
+    System {
+        what: &'static str,
+        source: io::Error,
+    },
 
     /// `path` is the `project.toml` that states `found`.
     #[error(
@@ -72,9 +77,10 @@ pub enum Error {
         expected: FormatVersion,
     },
 
-    /// A file the store reads by a name it did not create (a node file,
-    /// `project.toml`, the journal, the lock) that is no regular file once
-    /// its symlinks are followed, refused before it is opened.
+    /// A file trurlic reads at a fixed name (a node file, `project.toml`, the
+    /// journal, the lock, the graph repository's `info/attributes`) that is
+    /// no regular file once its symlinks are followed, refused before it is
+    /// read.
     #[error(
         "{}: not a regular file (a directory, a FIFO, a device or a socket), so it is not \
          read; replace it with a file or remove it",
@@ -109,12 +115,20 @@ pub enum Error {
         max: usize,
     },
 
-    /// The canonical text of a value for `path` does not read back as it.
-    #[error("{}: the canonical form does not read back as the value written: {detail}", path.display())]
-    RoundTrip { path: PathBuf, detail: String },
+    /// The canonical text of a value for `path` is no TOML of its type.
+    #[error("{}: the canonical form does not read back: {source}", path.display())]
+    CanonicalUnreadable {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+
+    /// The canonical text of a value for `path` reads back as another value.
+    #[error("{}: the canonical form reads back as another value", path.display())]
+    CanonicalDrift { path: PathBuf },
 
     /// A file of an older format that the migration steps left in place,
-    /// which the current format has no place for.
+    /// which the current format has no place for, or a `project.toml` the
+    /// steps left without a placement.
     #[error(
         "{}: the current format has no place for this file, and no migration step removed it",
         path.display()
@@ -147,11 +161,12 @@ pub enum Error {
     #[error("cannot run `git`: it is not installed or not on PATH")]
     GitMissing,
 
-    /// `args` are the arguments after `git -C <dir>`.
+    /// `args` are the caller's arguments, without `-C <dir>` and the options
+    /// every invocation carries.
     #[error("cannot run `git {args}`: {source}")]
     GitSpawn { args: String, source: io::Error },
 
-    /// `stderr` is git's, without its trailing line break.
+    /// `stderr` is git's, without its trailing whitespace.
     #[error("`git {args}` in {} failed ({status}): {stderr}", dir.display())]
     GitFailed {
         dir: PathBuf,
@@ -291,11 +306,16 @@ pub enum Error {
         message: String,
     },
 
+    /// A path the store derived that breaks its own layout: a guard against
+    /// a programming error, never a fault of the graph or of a request.
+    #[error("{}: {fault}", path.display())]
+    StorePath {
+        path: PathBuf,
+        fault: StorePathFault,
+    },
+
     #[error("{0} consistency error(s) found")]
     CheckFailed(usize),
-
-    #[error("{0}")]
-    Validation(String),
 }
 
 impl Error {
@@ -309,11 +329,8 @@ impl Error {
 
     /// The `map_err` adapter for an I/O call that `what` names, such as
     /// "write to stdout".
-    pub(crate) fn system(what: impl Into<String>) -> impl FnOnce(io::Error) -> Self {
-        |source| Self::System {
-            what: what.into(),
-            source,
-        }
+    pub(crate) fn system(what: &'static str) -> impl FnOnce(io::Error) -> Self {
+        move |source| Self::System { what, source }
     }
 
     /// The `map_err` adapter for parsing the TOML read from `path`.

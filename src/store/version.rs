@@ -46,7 +46,7 @@ impl FormatVersion {
     /// `None` unless `text` is exactly the form [`fmt::Display`] writes, so
     /// `0.4`, `0.04.0`, `+0.4.0` and ` 0.4.0` are refused, never read as
     /// some other version.
-    pub(crate) fn parse(text: &str) -> Option<Self> {
+    fn parse(text: &str) -> Option<Self> {
         let mut parts = text.split('.').map(|part| {
             let canonical = part.bytes().all(|byte| byte.is_ascii_digit())
                 && (part == "0" || !part.starts_with('0'));
@@ -173,11 +173,22 @@ impl Store {
         self.root.join(PROJECT_FILE)
     }
 
-    /// Refuse a store whose format is not [`FORMAT_VERSION`], before
-    /// anything else in it is read: an older one names `trurlic migrate`.
-    pub fn check_version(&self) -> Result<()> {
+    /// `project.toml` as a table and its bytes, refused unless it states
+    /// [`FORMAT_VERSION`], before anything else in the store is read: an
+    /// older format names `trurlic migrate`.
+    pub(super) fn read_current_table(&self) -> Result<(toml::Table, Vec<u8>)> {
         let path = self.project_path();
-        ensure_current(&path, &read_table(&path)?.0)
+        let (table, bytes) = read_table(&path)?;
+        ensure_current(&path, &table)?;
+        Ok((table, bytes))
+    }
+
+    /// The `project.toml` table [`read_current_table`] read, as a
+    /// [`Project`].
+    ///
+    /// [`read_current_table`]: Self::read_current_table
+    pub(super) fn project_of(&self, table: toml::Table) -> Result<Project> {
+        table.try_into().map_err(Error::toml(&self.project_path()))
     }
 
     /// The placement `project.toml` states, read as the current format.
@@ -191,11 +202,8 @@ impl Store {
     /// store in another format is refused before the file is parsed as the
     /// current one, so the error names the version, not a missing key.
     pub(super) fn read_current_project(&self) -> Result<(Project, Vec<u8>)> {
-        let path = self.project_path();
-        let (project, bytes) = read_table(&path)?;
-        ensure_current(&path, &project)?;
-        let project = project.try_into().map_err(Error::toml(&path))?;
-        Ok((project, bytes))
+        let (table, bytes) = self.read_current_table()?;
+        Ok((self.project_of(table)?, bytes))
     }
 }
 
@@ -259,7 +267,7 @@ mod tests {
     #[test]
     fn a_store_in_the_current_format_passes() {
         let tmp = TempDir::new().unwrap();
-        setup_store(tmp.path()).check_version().unwrap();
+        setup_store(tmp.path()).read_current_table().unwrap();
     }
 
     #[test]
@@ -268,7 +276,7 @@ mod tests {
         let store = setup_store_with_version(tmp.path(), "0.4.garbage");
 
         for err in [
-            store.check_version().unwrap_err(),
+            store.read_current_table().unwrap_err(),
             store.load_state().map(|_| ()).unwrap_err(),
         ] {
             assert!(
@@ -310,7 +318,7 @@ mod tests {
         let store = setup_store_with_version(tmp.path(), "99.0.0");
 
         for err in [
-            store.check_version().unwrap_err(),
+            store.read_current_table().unwrap_err(),
             store.load_state().map(|_| ()).unwrap_err(),
         ] {
             assert!(
@@ -331,7 +339,7 @@ mod tests {
         let store = setup_store_with_version(tmp.path(), "0.4.1");
 
         for err in [
-            store.check_version().unwrap_err(),
+            store.read_current_table().unwrap_err(),
             store.load_state().map(|_| ()).unwrap_err(),
         ] {
             assert!(
@@ -348,7 +356,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = setup_store_with_version(tmp.path(), "0.3.7");
 
-        let err = store.check_version().unwrap_err();
+        let err = store.read_current_table().unwrap_err();
         assert!(
             matches!(&err, Error::NoMigration { found, expected: FORMAT_VERSION, .. }
                 if *found == FormatVersion::new(0, 3, 7)),

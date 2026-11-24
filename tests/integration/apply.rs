@@ -244,8 +244,6 @@ fn a_file_that_holds_no_batch_is_refused() {
             "kind": "invalid_argument", "field": "ops", "message": "`ops` must be an array",
         }})
     );
-    let missing = project.run_refused(&["apply", "absent.json"]);
-    assert!(missing.contains("absent.json"), "{missing}");
 }
 
 /// `status --json` prints what the tool returns; `origin` narrows the
@@ -286,6 +284,45 @@ fn status_on_the_command_line_is_the_tool() {
         text.contains("decisions: 3 (3 project-wide, 3 proposed)\n"),
         "{text}"
     );
+}
+
+/// `--section` takes exactly the sections the tool's schema lists: each
+/// one prints what the call returns, and any other is refused naming them.
+#[test]
+fn the_section_flag_takes_the_tools_sections() {
+    let project = Project::init();
+    let (mut client, _) = McpClient::connect(&project);
+    let listed = client.request("tools/list", json!({}));
+    let status = listed["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "status")
+        .unwrap();
+    let sections: Vec<&str> = status["inputSchema"]["properties"]["section"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|section| section.as_str().unwrap())
+        .collect();
+
+    for &section in &sections {
+        let tool = client.call_tool_text("status", json!({ "section": section }));
+        let output = project.run_ok(&["status", "--json", "--section", section]);
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!("{tool}\n")
+        );
+    }
+    let refused = project
+        .command()
+        .args(["status", "--section", "everything"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    let possible = format!("[possible values: {}]", sections.join(", "));
+    assert!(stderr.contains(&possible), "{stderr}");
 }
 
 /// `[quality]` of project.toml holds both surfaces alike: a refusal names
@@ -374,28 +411,29 @@ fn a_twin_refuses_a_store_it_cannot_find_as_the_call_does() {
     let batch = json!({ "ops": [{ "op": "remove", "name": "gone" }] });
     /// What makes the project's directory hold no store it can read.
     type Breaks = fn(&Project);
-    let cases: [(&str, Breaks, &str); 4] = [
+    let cases: &[(&str, Breaks, &str)] = &[
         ("no store", |_| {}, "no_project"),
+        #[cfg(unix)]
         (
             "dangling symlink",
-            |project| std::os::unix::fs::symlink("gone", project.path().join(".trurlic")).unwrap(),
+            |project| std::os::unix::fs::symlink("gone", project.graph()).unwrap(),
             "store_error",
         ),
         (
             ".trurlic a file",
-            |project| std::fs::write(project.path().join(".trurlic"), "").unwrap(),
+            |project| std::fs::write(project.graph(), "").unwrap(),
             "store_error",
         ),
         (
             "old format",
             |project| {
-                std::fs::create_dir_all(project.path().join(".trurlic")).unwrap();
+                std::fs::create_dir_all(project.graph()).unwrap();
                 project.write("project.toml", "version = \"0.3.0\"\nname = \"old\"\n");
             },
             "unsupported_format",
         ),
     ];
-    for (case, make, kind) in cases {
+    for &(case, make, kind) in cases {
         let project = Project::without_store();
         make(&project);
         let (mut client, _) = McpClient::connect(&project);

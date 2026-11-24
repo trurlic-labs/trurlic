@@ -3,12 +3,12 @@
 
 use std::collections::BTreeSet;
 
-use super::check::{self, Fault, Sources, anchor_edit, edit_list, new_name, rendered};
+use super::check::{self, Fault, Sources, anchor_edit, edit_list, new_name};
 use super::edit::Edit;
 use super::ops::{Field, ListEdit, Merge, OpKind, Record, Remove, Rename, Revise};
 use super::refusal::{NodeKind, Rule};
 use super::{Done, Warning};
-use crate::store::quality::{Bar, DecisionField, PatternMatch};
+use crate::store::quality::{Bar, DecisionField, Hit};
 use crate::store::schema::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
 use crate::store::time::Timestamp;
 
@@ -20,7 +20,7 @@ pub(super) struct Context<'b> {
     pub(super) bar: &'b Bar,
     /// The `warn` matches of the op running now, each with the argument
     /// it is in.
-    pub(super) hits: Vec<(String, PatternMatch)>,
+    pub(super) hits: Vec<(String, Hit)>,
     /// The batch's warnings so far.
     pub(super) warnings: Vec<Warning>,
 }
@@ -94,8 +94,8 @@ pub(super) fn revise(
 ) -> Result<Done, Fault> {
     // clone: the op is consumed by its revision, and the result names it.
     let name = op.name.clone();
-    let sources = revise_sources(&op);
-    let mut after = revised(edit, op)?;
+    let mut sources = revise_sources(&op);
+    let mut after = revised(edit, op, &mut sources)?;
     let before = existing(edit, &name, Field::Name)?;
     if after == *before {
         return Err(Fault::op(Rule::NoChange));
@@ -117,7 +117,8 @@ pub(super) fn revise(
     })
 }
 
-/// The lists of `op` that bring elements into the decision.
+/// The text lists of `op` that bring elements into the decision; its
+/// anchors join them once they are read as anchors (`revised`).
 fn revise_sources(op: &Revise) -> Sources {
     let mut sources = Sources::default();
     // clone: the sources keep the caller's text beside the revision.
@@ -129,18 +130,13 @@ fn revise_sources(op: &Revise) -> Sources {
         text,
     );
     sources.add_edit(DecisionField::Tags, Field::Tags, &op.tags, text);
-    sources.add_edit(
-        DecisionField::Anchors,
-        Field::Anchors,
-        &op.anchors,
-        rendered,
-    );
     sources
 }
 
 /// The decision `op` names with each field `op` gives, its names and
-/// lists checked; its status is the old one.
-fn revised(edit: &Edit<'_>, op: Revise) -> Result<Decision, Fault> {
+/// lists checked; its status is the old one. Its anchors join `sources`,
+/// as the bar reads them.
+fn revised(edit: &Edit<'_>, op: Revise, sources: &mut Sources) -> Result<Decision, Fault> {
     // clone: the revision is built beside the value it is judged against.
     let mut after = existing(edit, &op.name, Field::Name)?.clone();
     if let Some(component) = op.component
@@ -164,6 +160,8 @@ fn revised(edit: &Edit<'_>, op: Revise) -> Result<Decision, Fault> {
     )?;
     edit_list(&mut after.tags, op.tags, Field::Tags, free)?;
     let anchors = anchor_edit(op.anchors)?;
+    let (field, render) = (DecisionField::Anchors, Anchor::to_string);
+    sources.add_edit(field, Field::Anchors, &anchors, render);
     edit_list(&mut after.anchors, anchors, Field::Anchors, |_| None)?;
     edit_list(
         &mut after.depends_on,
@@ -257,6 +255,7 @@ pub(super) fn remove(edit: &mut Edit<'_>, op: Remove) -> Result<Done, Fault> {
         }
     }
     edit.take_decision(&op.name);
+    edit.end(&op.name);
     let rewrote = repoint_dependents(edit, &op.name, op.repoint_to.as_deref());
     if let Some(heir) = &op.repoint_to
         && rewrote > 0
@@ -364,8 +363,8 @@ fn restatus(before: &Decision, after: &mut Decision) {
     }
     let status = match &before.status {
         Status::Accepted { via } => Status::Proposed {
-            // clone: the accepted text stays beside its revision.
             accepted_text: Some(AcceptedText {
+                // clone: the accepted text stays beside its revision.
                 choice: before.choice.clone(),
                 reason: before.reason.clone(),
                 alternatives: before.alternatives.clone(),

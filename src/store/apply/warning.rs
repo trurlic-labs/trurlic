@@ -7,8 +7,9 @@
 
 use std::collections::BTreeSet;
 
+use super::refusal::argument_path;
 use crate::store::limits::MAX_WARNINGS_PER_OP;
-use crate::store::quality::{Bar, PatternMatch};
+use crate::store::quality::{Bar, Hit};
 
 /// A warning of an applied batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,20 +55,17 @@ pub struct PatternNote {
 /// the patterns, to `warnings`; the count of the others.
 pub(super) fn report(
     op: Option<usize>,
-    hits: &mut Vec<(String, PatternMatch)>,
+    hits: &mut Vec<(String, Hit)>,
     warnings: &mut Vec<Warning>,
 ) -> usize {
     let count = hits.len();
     let listed = hits.drain(..).take(MAX_WARNINGS_PER_OP);
-    warnings.extend(listed.map(|(field, found)| Warning {
-        field: match op {
-            Some(index) => format!("ops[{index}].{field}"),
-            None => field,
-        },
+    warnings.extend(listed.map(|(field, hit)| Warning {
+        field: argument_path(op, Some(&field)),
         op,
         kind: WarningKind::Pattern,
-        pattern: found.index,
-        at: found.at,
+        pattern: hit.pattern,
+        at: hit.at,
     }));
     count.saturating_sub(MAX_WARNINGS_PER_OP)
 }

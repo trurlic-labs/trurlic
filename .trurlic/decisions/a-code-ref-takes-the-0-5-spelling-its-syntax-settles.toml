@@ -15,11 +15,11 @@ tags = [
 status = "proposed"
 created = "2026-11-24T01:30:00Z"
 anchors = [
-    { file = "src/store/migration/anchors.rs", symbol = "anchors" },
-    { file = "src/store/migration/anchors.rs", symbol = "keys" },
-    { file = "src/store/migration/anchors.rs", symbol = "spelling" },
-    { file = "src/store/migration/anchors.rs", symbol = "uncalled" },
     { file = "src/store/migration/format_0_5.rs", symbol = "decision" },
+    { file = "src/store/migration/format_0_5/anchors.rs", symbol = "anchors" },
+    { file = "src/store/migration/format_0_5/anchors.rs", symbol = "keys" },
+    { file = "src/store/migration/format_0_5/anchors.rs", symbol = "spelling" },
+    { file = "src/store/migration/format_0_5/anchors.rs", symbol = "uncalled" },
 ]
 depends_on = [
     "an-anchor-path-has-one-spelling",

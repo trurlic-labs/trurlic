@@ -6,9 +6,8 @@
 //! response, a line that is no message one error (carrying the `id` of a
 //! line with a `method` when one can be read; a line without one would be
 //! a response, whose `id` is the server's), a notification or a response
-//! none. A line longer
-//! than [`MAX_MESSAGE_BYTES`] is read to its end and discarded whole, so
-//! its tail is never taken for a message of its own.
+//! none. A line longer than [`MAX_MESSAGE_BYTES`] is read to its end and
+//! discarded whole, so its tail is never taken for a message of its own.
 
 use std::io::{self, BufRead, Write};
 
@@ -17,15 +16,15 @@ use serde_json::{Map, Value};
 
 // -- Error codes (JSON-RPC 2.0 section 5.1) -------------------------------
 
-pub(crate) const PARSE_ERROR: i32 = -32700;
-pub(crate) const INVALID_REQUEST: i32 = -32600;
-pub(crate) const METHOD_NOT_FOUND: i32 = -32601;
-pub(crate) const INVALID_PARAMS: i32 = -32602;
-pub(crate) const INTERNAL_ERROR: i32 = -32603;
+const PARSE_ERROR: i32 = -32700;
+pub(super) const INVALID_REQUEST: i32 = -32600;
+pub(super) const METHOD_NOT_FOUND: i32 = -32601;
+pub(super) const INVALID_PARAMS: i32 = -32602;
+pub(super) const INTERNAL_ERROR: i32 = -32603;
 /// From the range JSON-RPC leaves to the server (-32000 to -32099): a
 /// request arrived while a tool call waits on the client and the requests
 /// queued behind that call are already at their limit.
-pub(crate) const SERVER_BUSY: i32 = -32000;
+pub(super) const SERVER_BUSY: i32 = -32000;
 
 /// Bytes of one message, and of the document a tool's CLI twin reads.
 pub(crate) const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
@@ -35,34 +34,34 @@ pub(crate) const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
 /// A request: `id` is a string or an integer, never `null` (MCP narrows
 /// JSON-RPC there).
 #[derive(Debug, PartialEq)]
-pub(crate) struct Request {
+pub(super) struct Request {
     pub id: Value,
     pub method: String,
     pub params: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct Notification {
+pub(super) struct Notification {
     pub method: String,
     pub params: Option<Map<String, Value>>,
 }
 
 /// The client's answer to a request the server sent.
 #[derive(Debug, PartialEq)]
-pub(crate) struct Response {
+pub(super) struct Response {
     pub id: Value,
     pub outcome: Result<Value, RpcError>,
 }
 
 /// The `error` member of a response.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RpcError {
+pub(super) struct RpcError {
     pub code: i64,
     pub message: String,
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Message {
+pub(super) enum Message {
     Request(Request),
     Notification(Notification),
     Response(Response),
@@ -70,7 +69,7 @@ pub(crate) enum Message {
 
 /// A line that holds no message, and the error that answers it.
 #[derive(Debug, PartialEq)]
-pub(crate) struct Malformed {
+pub(super) struct Malformed {
     /// The line's `id` when it is a string or an integer, else `null`.
     pub id: Value,
     pub code: i32,
@@ -91,7 +90,7 @@ impl Malformed {
 
 /// The next message on `reader`, skipping blank lines; `Ok(None)` at the
 /// end of the input. An `Err` is a failed read of the stream itself.
-pub(crate) fn read_message(
+pub(super) fn read_message(
     reader: &mut (impl BufRead + ?Sized),
 ) -> io::Result<Option<Result<Message, Malformed>>> {
     loop {
@@ -236,7 +235,7 @@ fn classify_call(method: Value, params: Option<Value>, id: Id) -> Result<Message
 fn classify_response(mut object: Map<String, Value>, id: Id) -> Result<Message, Malformed> {
     let outcome = match (object.remove("result"), object.remove("error")) {
         (Some(result), None) => Some(Ok(result)),
-        (None, Some(error)) => rpc_error(&error).map(Err),
+        (None, Some(error)) => rpc_error(error).map(Err),
         (Some(_), Some(_)) | (None, None) => {
             return Err(Malformed::invalid(
                 Value::Null,
@@ -254,16 +253,20 @@ fn classify_response(mut object: Map<String, Value>, id: Id) -> Result<Message, 
     Ok(Message::Response(Response { id, outcome }))
 }
 
-fn rpc_error(error: &Value) -> Option<RpcError> {
-    Some(RpcError {
-        code: error.get("code").and_then(Value::as_i64)?,
-        message: error.get("message").and_then(Value::as_str)?.to_owned(),
-    })
+fn rpc_error(error: Value) -> Option<RpcError> {
+    let Value::Object(mut error) = error else {
+        return None;
+    };
+    let code = error.get("code").and_then(Value::as_i64)?;
+    let Some(Value::String(message)) = error.remove("message") else {
+        return None;
+    };
+    Some(RpcError { code, message })
 }
 
 // -- Writing ---------------------------------------------------------------
 
-pub(crate) fn write_success(
+pub(super) fn write_success(
     writer: &mut (impl Write + ?Sized),
     id: &Value,
     result: &impl Serialize,
@@ -284,7 +287,7 @@ pub(crate) fn write_success(
     )
 }
 
-pub(crate) fn write_error(
+pub(super) fn write_error(
     writer: &mut (impl Write + ?Sized),
     id: &Value,
     code: i32,
@@ -312,7 +315,7 @@ pub(crate) fn write_error(
 }
 
 /// A request of the server's own, answered by a [`Response`] with `id`.
-pub(crate) fn write_request(
+pub(super) fn write_request(
     writer: &mut (impl Write + ?Sized),
     id: &Value,
     method: &str,

@@ -1,6 +1,6 @@
 //! The decision graph on disk: `.trurlic/` read into a [`ProjectState`],
-//! validated, and written through the journaled commit of a [`Writer`],
-//! which under `shared` placement ends with a commit to the graph's own
+//! validated, and written through a journaled commit, a [`Writer`]'s for
+//! every write but `init` and `migrate`, which under `shared` placement ends with a commit to the graph's own
 //! git repository (`history.rs`).
 
 mod access;
@@ -8,7 +8,7 @@ mod apply;
 mod canonical;
 mod commit;
 #[cfg(any(test, feature = "bench"))]
-pub mod corpus;
+pub(crate) mod corpus;
 mod create;
 mod cycles;
 mod durable;
@@ -19,18 +19,22 @@ pub(crate) mod limits;
 mod load;
 mod lock;
 mod migration;
+mod name;
 mod placement;
 mod quality;
 mod query;
 mod recovery;
-pub mod schema;
+mod schema;
+#[cfg(any(test, feature = "bench"))]
+pub(crate) mod seeded;
 mod state;
-pub(crate) mod text;
+mod text;
 mod time;
 mod validate;
 mod version;
 
-use std::path::{Path, PathBuf};
+use std::fmt;
+use std::path::{self, Path, PathBuf};
 
 use crate::{Error, Result};
 
@@ -47,6 +51,7 @@ pub use migration::PlacementDoubt;
 pub(crate) use migration::{
     Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, PlacementSource,
 };
+pub use name::NameFault;
 pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
 pub use quality::{
     ConfigFault, DecisionField, Level, Limit, Pattern, PatternMatch, Quality, QualityFault,
@@ -58,15 +63,16 @@ pub use schema::{
     Decision, FORMAT_VERSION, PROJECT_COMPONENT, PROJECT_FILE, Placement, Project, STATE_DIR,
     STORE_DIR, Status, StatusName,
 };
-pub use state::{NameFault, NodeFile, ProjectState, has_control_chars, is_valid_kebab_case};
+pub use state::{NodeFile, ProjectState};
 pub use text::{TextFault, TextField};
 pub use time::{Timestamp, TimestampError};
 pub use validate::{Issue, IssueKind};
 pub use version::FormatVersion;
 
 /// Handle to a graph directory and the code root it is read for. It holds
-/// no graph: a read loads one with [`Store::load_state`], and every graph
-/// write goes through the [`Writer`] that [`Store::begin_write`] returns.
+/// no graph: a read loads one with [`Store::load_state`], and every write
+/// to a current-format graph goes through the [`Writer`] that
+/// [`Store::begin_write`] returns.
 ///
 /// The two roots differ when a tree reaches a graph it does not hold: a
 /// symlinked clone, a linked worktree of a shared graph. Anchors resolve
@@ -75,7 +81,7 @@ pub use version::FormatVersion;
 /// lock.
 #[derive(Debug)]
 pub struct Store {
-    pub(super) root: PathBuf,
+    root: PathBuf,
     code_root: PathBuf,
 }
 
@@ -107,15 +113,15 @@ impl Store {
         self.root == self.code_root.join(STORE_DIR)
     }
 
-    pub(crate) fn state_dir(&self) -> PathBuf {
+    fn state_dir(&self) -> PathBuf {
         self.root.join(STATE_DIR)
     }
 
-    pub(crate) fn tmp_dir(&self) -> PathBuf {
+    fn tmp_dir(&self) -> PathBuf {
         self.state_dir().join("tmp")
     }
 
-    pub(crate) fn lock_path(&self) -> PathBuf {
+    fn lock_path(&self) -> PathBuf {
         self.state_dir().join("lock")
     }
 
@@ -127,35 +133,60 @@ impl Store {
         self.root.join(DECISIONS_DIR).join(format!("{name}.toml"))
     }
 
-    /// The path of `file` in this store.
-    pub(crate) fn path_of(&self, file: &NodeFile) -> PathBuf {
+    fn path_of(&self, file: &NodeFile) -> PathBuf {
         self.root.join(file.to_string())
     }
 
-    /// Verify that `path` is inside the store root directory.
-    /// Defense-in-depth: all store paths are derived from `self.root`, so
-    /// this check should never fire in correct code. It guards against
-    /// programming errors that would write or delete files outside `.trurlic/`.
+    /// The directory that holds the graph directory, and the graph
+    /// directory's name in it.
+    pub(crate) fn parent_and_name(&self) -> Result<(&Path, &Path)> {
+        match (self.root.parent(), self.root.file_name()) {
+            (Some(parent), Some(name)) => Ok((parent, Path::new(name))),
+            _ => Err(Error::StorePath {
+                // clone: the error owns the path it names.
+                path: self.root.clone(),
+                fault: StorePathFault::NoParent,
+            }),
+        }
+    }
+
+    /// Refuse `path` unless it is below the graph directory with no `..`
+    /// in it. Every path a write touches is derived from the root, so this
+    /// fires only on a programming error that would write or delete a file
+    /// outside `.trurlic/`. `..` is refused before the prefix test, which
+    /// compares components and would pass `<root>/../elsewhere`.
     fn verify_path(&self, path: &Path) -> Result<()> {
-        // Reject parent-directory components before the prefix check.
-        // `starts_with` on non-canonicalized paths does not prevent
-        // traversal via `..` segments (e.g. `/root/../etc/shadow`).
-        for component in path.components() {
-            if component == std::path::Component::ParentDir {
-                return Err(Error::Validation(format!(
-                    "path contains parent-directory traversal: {}",
-                    path.display()
-                )));
-            }
-        }
-        if path.starts_with(&self.root) {
-            Ok(())
+        let fault = if path.components().any(|c| c == path::Component::ParentDir) {
+            StorePathFault::Traversal
+        } else if path.starts_with(&self.root) {
+            return Ok(());
         } else {
-            Err(Error::Validation(format!(
-                "path escapes store root: {}",
-                path.display()
-            )))
-        }
+            StorePathFault::Outside
+        };
+        Err(Error::StorePath {
+            path: path.to_path_buf(),
+            fault,
+        })
+    }
+}
+
+/// How a path the store derived breaks its layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorePathFault {
+    /// It holds a `..` component.
+    Traversal,
+    /// It is not below the graph directory.
+    Outside,
+    NoParent,
+}
+
+impl fmt::Display for StorePathFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Traversal => "holds a `..` component",
+            Self::Outside => "is outside the graph directory",
+            Self::NoParent => "has no parent directory",
+        })
     }
 }
 
@@ -214,8 +245,8 @@ pub(crate) mod testing {
         String::from_utf8(output.stdout).unwrap()
     }
 
-    /// The messages of the graph's history, newest first, each without
-    /// its final line break.
+    /// The messages of the graph's history, newest first, each trimmed of
+    /// the line breaks around it.
     pub fn graph_log(store: &Store) -> Vec<String> {
         graph_git(store, &["log", "--format=%B%x00"])
             .split('\0')
@@ -328,10 +359,15 @@ mod tests {
         let outside = tmp.path().join("outside.toml");
         assert!(matches!(
             store.verify_path(&outside),
-            Err(Error::Validation(_))
+            Err(Error::StorePath { fault: StorePathFault::Outside, path }) if path == outside
         ));
         let traversal = store.root().join("..").join("escape.toml");
-        let err = store.verify_path(&traversal).unwrap_err();
-        assert!(err.to_string().contains("parent-directory"), "{err}");
+        assert!(matches!(
+            store.verify_path(&traversal),
+            Err(Error::StorePath {
+                fault: StorePathFault::Traversal,
+                ..
+            })
+        ));
     }
 }

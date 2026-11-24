@@ -11,7 +11,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
-use regex::{Regex, RegexBuilder};
+use regex::{Match, Regex, RegexBuilder};
 
 use super::{DecisionField, Level, Limit, PatternMatch, Quality, QualityFault, WordRange, words};
 use crate::store::limits::{MAX_PATTERN_COMPILED_BYTES, MAX_QUOTED_MATCH_BYTES};
@@ -39,9 +39,9 @@ struct Compiled {
 
 /// A pattern that does not compile: its index and regex's message.
 #[derive(Debug)]
-pub(crate) struct PatternFault {
-    pub(crate) index: usize,
-    pub(crate) message: String,
+pub(super) struct PatternFault {
+    pub(super) index: usize,
+    pub(super) message: String,
 }
 
 /// A field of a decision, and the element of a list field by its position
@@ -80,11 +80,12 @@ pub(crate) struct Breach {
     pub(crate) broken: Broken,
 }
 
-/// A `warn` pattern's match, and where.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A `warn` pattern's first match: the pattern's index in `[quality]
+/// patterns` and the byte offset of the match in its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Hit {
-    pub(crate) place: Place,
-    pub(crate) found: PatternMatch,
+    pub(crate) pattern: usize,
+    pub(crate) at: usize,
 }
 
 impl Bar {
@@ -126,25 +127,35 @@ impl Bar {
     }
 
     /// `decision` against the bar in the fields of `held`: the first rule
-    /// it breaks, or the warnings of the `warn` patterns that match.
+    /// it breaks, or the warnings of the `warn` patterns that match, each
+    /// with where it matched.
     pub(crate) fn judge(
         &self,
         decision: &Decision,
         held: &[DecisionField],
-    ) -> Result<Vec<Hit>, Breach> {
+    ) -> Result<Vec<(Place, Hit)>, Breach> {
         for field in DecisionField::IN_FILE_ORDER {
             if held.contains(&field) {
                 self.limits(decision, field)?;
             }
         }
+        if self.patterns.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Built once for every pattern to read: an anchor's text is rendered.
+        let texts: Vec<(Place, Cow<'_, str>)> = DecisionField::IN_FILE_ORDER
+            .into_iter()
+            .filter(|field| held.contains(field))
+            .flat_map(|field| texts(decision, field))
+            .collect();
         let mut hits = Vec::new();
         for (index, pattern) in self.patterns.iter().enumerate() {
-            let texts = DecisionField::IN_FILE_ORDER
-                .into_iter()
-                .filter(|field| held.contains(field) && pattern.fields.contains(field))
-                .flat_map(|field| texts(decision, field));
-            if let Some(hit) = pattern.first_match(index, texts) {
-                pattern.verdict(hit, &mut hits)?;
+            let read = texts
+                .iter()
+                .filter(|(place, _)| pattern.fields.contains(&place.field))
+                .map(|(place, text)| (*place, text.as_ref()));
+            if let Some((place, found)) = pattern.first_match(read) {
+                hits.push((place, pattern.verdict(index, place, &found)?));
             }
         }
         Ok(hits)
@@ -179,8 +190,8 @@ impl Bar {
             if !pattern.fields.contains(&DecisionField::Origin) {
                 continue;
             }
-            if let Some(hit) = pattern.first_match(index, [(place, Cow::Borrowed(origin))]) {
-                pattern.verdict(hit, &mut hits)?;
+            if let Some((place, found)) = pattern.first_match([(place, origin)]) {
+                hits.push(pattern.verdict(index, place, &found)?);
             }
         }
         Ok(hits)
@@ -229,38 +240,34 @@ impl Bar {
 }
 
 impl Compiled {
-    /// The first of `texts` this pattern matches, as a warning would name it.
+    /// The first of `texts` this pattern matches, and its place.
     fn first_match<'t>(
         &self,
-        index: usize,
-        texts: impl IntoIterator<Item = (Place, Cow<'t, str>)>,
-    ) -> Option<Hit> {
-        texts.into_iter().find_map(|(place, text)| {
-            let found = self.regex.find(&text)?;
-            Some(Hit {
+        texts: impl IntoIterator<Item = (Place, &'t str)>,
+    ) -> Option<(Place, Match<'t>)> {
+        texts
+            .into_iter()
+            .find_map(|(place, text)| Some((place, self.regex.find(text)?)))
+    }
+
+    /// The match `found` at `place` of this pattern, the one at `index`:
+    /// the refusal at `refuse`, else the warning.
+    fn verdict(&self, index: usize, place: Place, found: &Match<'_>) -> Result<Hit, Breach> {
+        match self.level {
+            Level::Refuse => Err(Breach {
                 place,
-                found: PatternMatch {
+                broken: Broken::Quality(QualityFault::Pattern(PatternMatch {
                     index,
                     at: found.start(),
                     found: quoted(found.as_str()),
-                    // clone: each match carries the message it reports.
+                    // clone: the refusal carries the message it reports.
                     message: self.message.clone(),
-                },
-            })
-        })
-    }
-
-    /// Refuse for `hit` at `refuse`, else keep it among `hits`.
-    fn verdict(&self, hit: Hit, hits: &mut Vec<Hit>) -> Result<(), Breach> {
-        match self.level {
-            Level::Refuse => Err(Breach {
-                place: hit.place,
-                broken: Broken::Quality(QualityFault::Pattern(hit.found)),
+                })),
             }),
-            Level::Warn => {
-                hits.push(hit);
-                Ok(())
-            }
+            Level::Warn => Ok(Hit {
+                pattern: index,
+                at: found.start(),
+            }),
         }
     }
 }
@@ -415,7 +422,7 @@ mod tests {
         );
         decision.choice = "Then WE lock".into();
         let hits = bar.judge(&decision, &choice).map_err(|b| b.broken).unwrap();
-        assert_eq!(hits[0].found.at, 5);
+        assert_eq!(hits[0].1.at, 5);
     }
 
     #[test]

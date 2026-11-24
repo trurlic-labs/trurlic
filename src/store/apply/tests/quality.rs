@@ -7,9 +7,9 @@ use std::fs;
 
 use tempfile::TempDir;
 
-use super::{anchor, apply, batch, graph, record, refused, revise};
+use super::{anchor, apply, batch, graph, named, record, refused, revise};
 use crate::Error;
-use crate::store::apply::{Applied, Merge, Op, Record, Refusal};
+use crate::store::apply::{Applied, Merge, Op, Record};
 use crate::store::canonical::canonical;
 use crate::store::schema::Anchor;
 use crate::store::state::NodeFile;
@@ -34,11 +34,6 @@ fn store_under(tmp: &TempDir, table: Option<&str>) -> Store {
 
 fn words(count: usize) -> String {
     vec!["word"; count].join(" ")
-}
-
-/// The rule name, the path and the message of `refusal`.
-fn named(refusal: &Refusal) -> (&'static str, String, String) {
-    (refusal.rule.as_str(), refusal.path(), refusal.to_string())
 }
 
 /// `record("expire", "auth")` with `change` applied.

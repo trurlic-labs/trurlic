@@ -230,9 +230,9 @@ pub enum Field {
 }
 
 impl Field {
-    /// The fields a revise reports as changed, in the order of the file's
-    /// keys.
-    pub const CHANGEABLE: [Self; 9] = [
+    /// The fields a `revise` of a decision reports as changed, in the order
+    /// of the decision file's keys.
+    pub const DECISION_CHANGEABLE: [Self; 7] = [
         Self::Component,
         Self::Choice,
         Self::Reason,
@@ -240,9 +240,37 @@ impl Field {
         Self::Tags,
         Self::Anchors,
         Self::DependsOn,
-        Self::Description,
-        Self::ConnectsTo,
     ];
+
+    /// The fields a `revise_component` reports as changed, in the order of
+    /// the component file's keys.
+    pub const COMPONENT_CHANGEABLE: [Self; 2] = [Self::Description, Self::ConnectsTo];
+
+    /// Every field a revise reports as changed: a decision's, then a
+    /// component's.
+    pub const CHANGEABLE: [Self; 9] = {
+        let [
+            component,
+            choice,
+            reason,
+            alternatives,
+            tags,
+            anchors,
+            depends_on,
+        ] = Self::DECISION_CHANGEABLE;
+        let [description, connects_to] = Self::COMPONENT_CHANGEABLE;
+        [
+            component,
+            choice,
+            reason,
+            alternatives,
+            tags,
+            anchors,
+            depends_on,
+            description,
+            connects_to,
+        ]
+    };
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {

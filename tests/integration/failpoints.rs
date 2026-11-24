@@ -67,7 +67,7 @@ fn snapshot(project: &Project) -> GraphFiles {
 
 /// Replace the store's graph files with `files`.
 fn restore(project: &Project, files: &GraphFiles) {
-    let root = project.path().join(".trurlic");
+    let root = project.graph();
     for path in snapshot(project).keys() {
         fs::remove_file(root.join(path)).unwrap();
     }
@@ -246,6 +246,31 @@ fn the_journal_deletion_is_flushed_before_the_write_returns() {
         project.read("components/store.toml"),
         "description = \"Store\"\n"
     );
+}
+
+/// A finished batch whose journal cannot be deleted leaves one that names
+/// no step: the owner re-creates the file the batch removed, and the next
+/// command deletes the journal and removes nothing again.
+#[test]
+fn a_journal_that_cannot_be_deleted_is_left_naming_no_step() {
+    let project = Project::init();
+    graph_and_batch(&project);
+    let old = project.read("decisions/old.toml");
+
+    let output = project
+        .command()
+        .args(["apply", "batch.json"])
+        .env(FAILPOINT, "commit.forget:1")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    assert!(journal_exists(&project));
+    assert_eq!(project.read(".state/txn.toml"), "");
+    project.write("decisions/old.toml", &old);
+    project.run_ok(&["status"]);
+    assert!(!journal_exists(&project));
+    assert_eq!(project.read("decisions/old.toml"), old);
 }
 
 /// A read command runs while another process holds the lock with its files

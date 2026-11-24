@@ -3,9 +3,10 @@
 //! A tool's [`Access`] states what it runs on, and the call takes that
 //! access for it after its arguments parse: a read the graph loaded under
 //! the shared lock, a write a [`Writer`] under the exclusive one. So no
-//! handler loads or locks, and its `readOnlyHint` is the lock it gets. Its
-//! result is an [`Output`], which gives both its `outputSchema` and the
-//! JSON a call returns.
+//! read or write handler loads or locks, and its `readOnlyHint` is the lock
+//! it gets; an interactive handler, which waits on the client, loads or
+//! writes the store itself. Its result is an [`Output`], which gives both
+//! its `outputSchema` and the JSON a call returns.
 
 use serde_json::{Map, Value, json};
 
@@ -166,7 +167,7 @@ mod tests {
     use crate::mcp::spec::kinds::Text;
     use crate::mcp::spec::output::{Count, Str};
 
-    #[derive(Debug, Default)]
+    #[derive(Debug)]
     struct Named {
         name: String,
     }

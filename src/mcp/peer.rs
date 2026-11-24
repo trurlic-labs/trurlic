@@ -23,7 +23,7 @@ const MAX_QUEUED_REQUESTS: usize = 16;
 
 /// The capabilities the server can use, as the client declared them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ClientCapabilities {
+pub(super) struct ClientCapabilities {
     /// `elicitation` declared with `form`, or empty, which means form mode.
     pub elicitation_form: bool,
 }
@@ -31,7 +31,7 @@ pub(crate) struct ClientCapabilities {
 impl ClientCapabilities {
     /// The capabilities in `initialize`'s params. One of another shape than
     /// the protocol defines reads as undeclared.
-    pub(crate) fn declared_in(params: &Map<String, Value>) -> Self {
+    pub(super) fn declared_in(params: &Map<String, Value>) -> Self {
         let elicitation = params
             .get("capabilities")
             .and_then(|capabilities| capabilities.get("elicitation"))
@@ -45,7 +45,7 @@ impl ClientCapabilities {
 
 /// What the session keeps of the client between messages.
 #[derive(Debug, Default)]
-pub(crate) struct Client {
+pub(super) struct Client {
     /// `None` until `initialize`.
     capabilities: Option<ClientCapabilities>,
     /// The id of the server's last request; each one takes the next.
@@ -54,24 +54,31 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    pub(crate) fn initialize(&mut self, capabilities: ClientCapabilities) {
+    pub(super) fn initialize(&mut self, capabilities: ClientCapabilities) {
         self.capabilities = Some(capabilities);
     }
 
-    pub(crate) const fn is_initialized(&self) -> bool {
+    pub(super) const fn is_initialized(&self) -> bool {
         self.capabilities.is_some()
     }
 
     /// The oldest request that arrived while a tool call waited.
-    pub(crate) fn next_queued(&mut self) -> Option<Request> {
+    pub(super) fn next_queued(&mut self) -> Option<Request> {
         self.queued.pop_front()
     }
 }
 
 /// A request the server sends the client.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum ServerMethod {
+pub(super) enum ServerMethod {
     /// `elicitation/create` in form mode: a form the person fills in.
+    #[cfg_attr(
+        not(any(test, feature = "failpoints")),
+        expect(
+            dead_code,
+            reason = "no tool sends the client a form until `accept` asks through one"
+        )
+    )]
     CreateElicitation,
 }
 
@@ -97,7 +104,7 @@ impl ServerMethod {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum PeerError {
+pub(super) enum PeerError {
     #[error(
         "the client did not declare {capability} in `initialize`, so `{method}` cannot be sent"
     )]
@@ -126,7 +133,7 @@ pub(crate) enum PeerError {
 
 /// The client, as one tool call reaches it: the line stream both ways and
 /// the session's record of the client.
-pub(crate) struct Peer<'a> {
+pub(super) struct Peer<'a> {
     reader: &'a mut dyn BufRead,
     writer: &'a mut dyn Write,
     client: &'a mut Client,
@@ -136,7 +143,7 @@ pub(crate) struct Peer<'a> {
 }
 
 impl<'a> Peer<'a> {
-    pub(crate) fn new(
+    pub(super) fn new(
         reader: &'a mut dyn BufRead,
         writer: &'a mut dyn Write,
         client: &'a mut Client,
@@ -152,14 +159,22 @@ impl<'a> Peer<'a> {
     }
 
     /// Whether the client cancelled the call while it waited.
-    pub(crate) const fn cancelled(&self) -> bool {
+    pub(super) const fn cancelled(&self) -> bool {
         self.cancelled
     }
 
     /// Send `method` with `params` and wait for the client's answer, its
     /// `result` on success. Refused without a request when the client did
     /// not declare the capability `method` needs.
-    pub(crate) fn request(
+    #[cfg_attr(
+        not(any(test, feature = "failpoints")),
+        expect(
+            dead_code,
+            reason = "no tool sends the client a request until `accept` asks through an \
+                      elicitation form"
+        )
+    )]
+    pub(super) fn request(
         &mut self,
         method: ServerMethod,
         params: &Value,

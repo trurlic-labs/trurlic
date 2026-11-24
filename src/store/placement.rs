@@ -78,7 +78,7 @@ impl ProjectState {
             )),
             (Placement::Shared, PlacementFacts::NoWorkTree) => {}
             (placement, PlacementFacts::WorkTree(facts)) => {
-                let files: Vec<String> = self.files().iter().map(ToString::to_string).collect();
+                let files = self.files();
                 match placement {
                     Placement::Tracked => tracked_issues(&at, &files, facts, &mut issues),
                     Placement::Shared => shared_issues(&at, &files, facts, &mut issues),
@@ -95,7 +95,10 @@ impl ProjectState {
 /// added yet, such as a new decision, is a change waiting for a commit.
 fn tracked_issues(at: &str, files: &[String], facts: &WorkTreeFacts, issues: &mut Vec<Issue>) {
     let total = files.len();
-    if partition(files, &facts.tracked).0.is_empty() {
+    if partition(files.iter().map(String::as_str), &facts.tracked)
+        .0
+        .is_empty()
+    {
         issues.push(issue(
             IssueKind::TrackedUnversioned,
             at,
@@ -105,7 +108,7 @@ fn tracked_issues(at: &str, files: &[String], facts: &WorkTreeFacts, issues: &mu
             ),
         ));
     }
-    let (ignored, _) = partition(files, &facts.ignored);
+    let (ignored, _) = partition(files.iter().map(String::as_str), &facts.ignored);
     if !ignored.is_empty() {
         issues.push(issue(
             IssueKind::TrackedIgnored,
@@ -123,7 +126,7 @@ fn tracked_issues(at: &str, files: &[String], facts: &WorkTreeFacts, issues: &mu
 /// A shared graph: git tracks no file of it, and it is the main
 /// worktree's, where every linked worktree finds it.
 fn shared_issues(at: &str, files: &[String], facts: &WorkTreeFacts, issues: &mut Vec<Issue>) {
-    let (tracked, _) = partition(files, &facts.tracked);
+    let (tracked, _) = partition(files.iter().map(String::as_str), &facts.tracked);
     if !tracked.is_empty() {
         issues.push(issue(
             IssueKind::SharedVersioned,
@@ -203,21 +206,21 @@ fn second_graphs(at: &str, placement: Placement, main: &MainWorktree, issues: &m
     }
 }
 
-/// `files` split into those `listing` holds and the rest, each in order.
-pub(super) fn partition(
-    files: &[String],
+/// `files` split into those `listing` holds and the rest, each in order;
+/// borrowed or owned as `files` yields them.
+pub(super) fn partition<S: AsRef<str>>(
+    files: impl IntoIterator<Item = S>,
     listing: &BTreeSet<PathBuf>,
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<S>, Vec<S>) {
     files
-        .iter()
-        .cloned()
-        .partition(|file| listing.contains(Path::new(file)))
+        .into_iter()
+        .partition(|file| listing.contains(Path::new(file.as_ref())))
 }
 
 /// `files` comma-separated, the first [`SHOWN_FILES`] named and the rest
 /// counted.
-pub(super) fn listed(files: &[String]) -> String {
-    let shown: Vec<&str> = files.iter().take(SHOWN_FILES).map(String::as_str).collect();
+pub(super) fn listed<S: AsRef<str>>(files: &[S]) -> String {
+    let shown: Vec<&str> = files.iter().take(SHOWN_FILES).map(AsRef::as_ref).collect();
     match files.len().saturating_sub(SHOWN_FILES) {
         0 => shown.join(", "),
         more => format!("{} and {more} more", shown.join(", ")),

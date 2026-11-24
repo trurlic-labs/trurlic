@@ -15,8 +15,8 @@ origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "print" },
-    { file = "src/mcp/apply.rs" },
-    { file = "src/mcp/apply.rs", symbol = "the_longest_result_of_a_full_batch_fits_the_budget" },
+    { file = "src/mcp/apply/result.rs" },
+    { file = "src/mcp/apply/result.rs", symbol = "the_longest_result_of_a_full_batch_fits_the_budget" },
     { file = "src/store/apply/tests/quality.rs", symbol = "a_warn_pattern_warns_once_per_op_at_its_first_match" },
     { file = "src/store/apply/warning.rs", symbol = "Warning" },
     { file = "src/store/apply/warning.rs", symbol = "report" },

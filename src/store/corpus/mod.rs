@@ -3,10 +3,11 @@
 //! Rust source tree that their anchors resolve in.
 //!
 //! The store is written in one journaled commit of canonical files, the
-//! path every write takes, and its tests hold it valid. Draws come from
-//! SplitMix64 rather than `rand`, whose generators may change output between
-//! releases: benches compare commits only while the corpus stays
-//! byte-identical across them.
+//! path every write takes, and its tests hold it valid. Every draw comes
+//! from the seeded generator (`store::seeded`): benches compare commits only
+//! while the corpus stays byte-identical across them.
+
+mod words;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -21,7 +22,9 @@ use super::history::{CommitMessage, History, Tool};
 use super::schema::{
     AcceptedText, AcceptedVia, Anchor, Component, Decision, PROJECT_COMPONENT, Placement, Status,
 };
+use super::seeded::SplitMix64;
 use super::{Store, Timestamp};
+use words::{COMPONENT_WORDS, MODULE_WORDS, SYMBOL_WORDS, TAGS, WORDS};
 
 const DECISIONS_PER_COMPONENT: usize = 40;
 
@@ -73,125 +76,14 @@ fn later(at: Timestamp, offset: Duration) -> Timestamp {
 
 const HOUR: Duration = Duration::from_secs(60 * 60);
 
-/// Prose vocabulary of architecture terms, so text reads like the text of
-/// a production graph.
-const WORDS: &[&str] = &[
-    "the",
-    "store",
-    "writes",
-    "each",
-    "node",
-    "file",
-    "under",
-    "lock",
-    "and",
-    "reads",
-    "it",
-    "back",
-    "before",
-    "commit",
-    "so",
-    "a",
-    "crash",
-    "leaves",
-    "graph",
-    "valid",
-    "token",
-    "auth",
-    "boundary",
-    "error",
-    "retry",
-    "timeout",
-    "cache",
-    "latency",
-    "budget",
-    "hash",
-    "validate",
-    "integrity",
-    "thread",
-    "concurrent",
-    "api",
-    "protocol",
-    "endpoint",
-    "test",
-    "fixture",
-    "config",
-    "default",
-    "module",
-    "layer",
-    "dependency",
-    "log",
-    "metric",
-    "trace",
-    "schema",
-    "format",
-    "migration",
-    "version",
-    "name",
-    "path",
-    "request",
-    "response",
-    "client",
-    "server",
-    "queue",
-    "batch",
-    "index",
-    "memory",
-    "parse",
-    "render",
-    "refuse",
-];
-
-/// Component names; a corpus with more components than these suffixes them.
-const COMPONENT_WORDS: &[&str] = &[
-    "auth",
-    "billing",
-    "catalog",
-    "gateway",
-    "ingest",
-    "ledger",
-    "mailer",
-    "notify",
-    "orders",
-    "pricing",
-    "reports",
-    "search",
-    "session",
-    "storage",
-    "telemetry",
-    "workers",
-];
-
-/// Source file stems inside a component directory.
-const MODULE_WORDS: &[&str] = &[
-    "api", "cache", "client", "config", "error", "handler", "index", "model", "parser", "queue",
-    "render", "schema", "service", "store", "types", "worker",
-];
-
-/// Function name prefixes; one file holds one function per prefix.
-const SYMBOL_WORDS: [&str; SYMBOLS_PER_FILE] = [
-    "build", "check", "load", "parse", "read", "render", "store", "write",
-];
-
-const TAGS: &[&str] = &[
-    "api",
-    "concurrency",
-    "error-handling",
-    "integrity",
-    "performance",
-    "persistence",
-    "security",
-    "testing",
-];
-
 /// The shape of a generated project. The same value writes the same bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Corpus {
     /// Decisions in the store, project-wide ones included.
     pub decisions: usize,
-    /// Share of the source files that code refs name, in percent, rounded
-    /// down per component. It holds exactly while each component's code
-    /// refs outnumber its anchored files, as they do at [`Corpus::SIZES`].
+    /// Share of the source files that anchors name, in percent, rounded
+    /// down per component. It holds exactly while each component's
+    /// anchors outnumber its anchored files, as they do at [`Corpus::SIZES`].
     pub anchored_files_percent: u8,
     /// Seeds every draw; two seeds give two corpora of the same shape.
     pub seed: u64,
@@ -201,7 +93,7 @@ impl Corpus {
     /// The decision counts benches run at.
     pub const SIZES: [usize; 3] = [50, 600, 2000];
 
-    /// About three quarters of a production project's files carry code refs.
+    /// About three quarters of a production project's files carry anchors.
     pub const PRODUCTION_ANCHORED_PERCENT: u8 = 75;
 
     /// A production-shaped corpus of `decisions` decisions.
@@ -234,40 +126,8 @@ impl Corpus {
     }
 }
 
-/// SplitMix64 (Steele, Lea and Flood, 2014): a 64-bit state, full period,
-/// and an output fixed by its definition. The one seeded source for the
-/// corpus and for the crate's property tests.
-pub(crate) struct SplitMix64(u64);
-
+/// The corpus's text, drawn from [`WORDS`].
 impl SplitMix64 {
-    pub(crate) const fn new(seed: u64) -> Self {
-        Self(seed)
-    }
-
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    /// Uniform in `0..n` by multiply-shift, which has no modulo bias.
-    pub(crate) fn below(&mut self, n: usize) -> usize {
-        let bound = u128::try_from(n).unwrap_or(u128::MAX);
-        let draw = (u128::from(self.next()) * bound) >> 64;
-        // `draw < n`, so the conversion holds.
-        usize::try_from(draw).unwrap_or(0)
-    }
-
-    pub(crate) fn within(&mut self, range: &RangeInclusive<usize>) -> usize {
-        range.start() + self.below(range.end() - range.start() + 1)
-    }
-
-    fn one_in(&mut self, n: usize) -> bool {
-        self.below(n) == 0
-    }
-
     fn prose_within(&mut self, bytes: &RangeInclusive<usize>) -> String {
         let length = self.within(bytes);
         self.prose(length)

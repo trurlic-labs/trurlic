@@ -68,7 +68,7 @@ pub(crate) fn tracked(dir: &Path, pathspec: &Path) -> Result<Vec<PathBuf>> {
         "--".as_ref(),
         pathspec.as_os_str(),
     ];
-    Ok(paths(&run(dir, &args)?))
+    Ok(paths(&run(command(dir), dir, &args, None)?))
 }
 
 /// The files under `pathspec` that the index does not hold and an ignore
@@ -85,7 +85,7 @@ pub(crate) fn ignored(dir: &Path, pathspec: &Path) -> Result<Vec<PathBuf>> {
         "--".as_ref(),
         pathspec.as_os_str(),
     ];
-    Ok(paths(&run(dir, &args)?))
+    Ok(paths(&run(command(dir), dir, &args, None)?))
 }
 
 /// Whether an ignore rule matches `path`, relative to `dir`, whether or not
@@ -97,7 +97,7 @@ pub(crate) fn is_ignored(dir: &Path, path: &Path) -> Result<bool> {
         "--".as_ref(),
         path.as_os_str(),
     ];
-    let output = spawn(dir, &args)?;
+    let output = finish(command(dir), &args, None)?;
     match output.status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
@@ -109,7 +109,7 @@ pub(crate) fn is_ignored(dir: &Path, path: &Path) -> Result<bool> {
 /// The first `.git` that git's discovery meets from a directory upward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DotGit {
-    /// None: no work tree holds the directory, and git is not asked.
+    /// None where it was looked for; git is not asked.
     Absent,
     /// A directory: a main worktree, or a repository with no other worktree.
     Directory,
@@ -155,17 +155,16 @@ pub(crate) fn toplevel(dir: &Path) -> Result<Option<PathBuf>> {
     if dot_git(dir)? == DotGit::Absent {
         return Ok(None);
     }
-    let failure = match run(dir, &["rev-parse".as_ref(), "--show-toplevel".as_ref()]) {
+    let args = ["rev-parse".as_ref(), "--show-toplevel".as_ref()];
+    let failure = match run(command(dir), dir, &args, None) {
         Ok(stdout) => return Ok(Some(line_path(stdout))),
         Err(failure @ Error::GitFailed { .. }) => failure,
         Err(e) => return Err(e),
     };
     // `--show-toplevel` fails outside a work tree as it fails for any other
     // reason; `--is-inside-work-tree` answers `false` there instead.
-    let inside = run(
-        dir,
-        &["rev-parse".as_ref(), "--is-inside-work-tree".as_ref()],
-    );
+    let args = ["rev-parse".as_ref(), "--is-inside-work-tree".as_ref()];
+    let inside = run(command(dir), dir, &args, None);
     match inside {
         Ok(answer) if answer == b"false\n" => Ok(None),
         _ => Err(failure),
@@ -178,7 +177,7 @@ pub(crate) fn toplevel(dir: &Path) -> Result<Option<PathBuf>> {
 /// to `dir`.
 pub(crate) fn common_dir(dir: &Path) -> Result<PathBuf> {
     let args = ["rev-parse".as_ref(), "--git-common-dir".as_ref()];
-    let path = line_path(run(dir, &args)?);
+    let path = line_path(run(command(dir), dir, &args, None)?);
     Ok(if path.is_relative() {
         dir.join(path)
     } else {
@@ -215,7 +214,7 @@ pub(crate) fn worktrees(dir: &Path) -> Result<Vec<Worktree>> {
         "--porcelain".as_ref(),
         "-z".as_ref(),
     ];
-    let stdout = run(dir, &args)?;
+    let stdout = run(command(dir), dir, &args, None)?;
     parse_worktrees(&stdout).ok_or_else(|| Error::GitOutput {
         args: shown(&args),
         detail: "a record that does not start with `worktree <path>`",
@@ -253,18 +252,16 @@ fn parse_worktrees(stdout: &[u8]) -> Option<Vec<Worktree>> {
     (!worktrees.is_empty()).then_some(worktrees)
 }
 
-/// The stdout of `git -C <dir> <args>`, which must exit with status 0.
-fn run(dir: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
-    let output = spawn(dir, args)?;
-    if !output.status.success() {
-        return Err(failed(dir, args, &output));
+/// The stdout of `command` with `args` appended and `input` on its stdin,
+/// which must exit with status 0; `dir` is the directory a failure names.
+/// Every git call that needs status 0 runs here.
+fn run(command: Command, dir: &Path, args: &[&OsStr], input: Option<&[u8]>) -> Result<Vec<u8>> {
+    let output = finish(command, args, input)?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(failed(dir, args, &output))
     }
-    Ok(output.stdout)
-}
-
-/// `git -C <dir> <args>` run to its end, whatever its status.
-fn spawn(dir: &Path, args: &[&OsStr]) -> Result<Output> {
-    finish(command(dir), args, None)
 }
 
 /// `git -C <dir>` with [`CLEARED`] removed, for its caller to add to.
@@ -290,7 +287,7 @@ fn finish(mut command: Command, args: &[&OsStr], input: Option<&[u8]>) -> Result
     });
     let not_started = |source: std::io::Error| match source.kind() {
         ErrorKind::NotFound => Error::GitMissing,
-        // Every other reason the process did not start.
+        // Every other failure to start the process or to collect its output.
         _ => Error::GitSpawn {
             args: shown(args),
             source,
@@ -441,8 +438,8 @@ mod tests {
         assert!(err.to_string().contains("not a git repository"), "{err}");
     }
 
-    /// A repository at `dir/main` with one commit, its git directory
-    /// canonical, and a linked worktree at `dir/linked` on branch `side`.
+    /// A repository at `dir/main` with one commit and a linked worktree at
+    /// `dir/linked` on branch `side`, both returned canonical.
     fn main_and_linked(dir: &Path) -> (PathBuf, PathBuf) {
         let main = dir.join("main");
         fs::create_dir(&main).unwrap();

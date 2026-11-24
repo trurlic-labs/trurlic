@@ -51,9 +51,11 @@ pub(crate) fn discover(cwd: &Path) -> Result<Store> {
     Err(not_found())
 }
 
-/// The real path of the graph directory `dir/.trurlic` leads to: itself,
-/// or a symlink's target. `None` when there is no `.trurlic` in `dir`.
-pub(crate) fn graph_in(dir: &Path) -> Result<Option<PathBuf>> {
+/// The graph directory `dir/.trurlic` leads to: the entry itself, spelled
+/// from `dir`, when it is a directory, so it is the real path when `dir`
+/// is; else a symlink's real target. `None` when there is no `.trurlic` in
+/// `dir`.
+fn graph_in(dir: &Path) -> Result<Option<PathBuf>> {
     let entry = dir.join(STORE_DIR);
     let metadata = match fs::symlink_metadata(&entry) {
         Ok(metadata) => metadata,
@@ -66,9 +68,7 @@ pub(crate) fn graph_in(dir: &Path) -> Result<Option<PathBuf>> {
         }
     };
     if metadata.is_dir() {
-        // `dir` is canonical when the walk passes it; a caller with another
-        // spelling gets the real path, as for a symlink.
-        return entry.canonicalize().map(Some).map_err(Error::io(&entry));
+        return Ok(Some(entry));
     }
     if !metadata.is_symlink() {
         return Err(Error::GraphNotDirectory { path: entry });
@@ -89,6 +89,16 @@ pub(crate) fn graph_in(dir: &Path) -> Result<Option<PathBuf>> {
     } else {
         Err(Error::GraphNotDirectory { path: entry })
     }
+}
+
+/// The real path of the graph directory the `.trurlic` of `worktree` leads
+/// to, for a worktree path git names, which need not be canonical. `None`
+/// when there is no `.trurlic` there.
+pub(crate) fn worktree_graph(worktree: &Path) -> Result<Option<PathBuf>> {
+    let Some(graph) = graph_in(worktree)? else {
+        return Ok(None);
+    };
+    graph.canonicalize().map(Some).map_err(Error::io(&graph))
 }
 
 /// The main worktree's graph, when it states `shared`, as it serves the
@@ -119,7 +129,7 @@ fn shared_graph_of(top: &Path) -> Result<Option<Store>> {
     if same_dir(&main.path, top) {
         return Ok(None);
     }
-    let Some(graph) = graph_in(&main.path)? else {
+    let Some(graph) = worktree_graph(&main.path)? else {
         return Ok(None);
     };
     let store = Store::reached_from(graph, top.to_path_buf());

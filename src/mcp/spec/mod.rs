@@ -15,27 +15,27 @@
 //! `maxLength`, which counts characters: every string within the byte
 //! limit meets it, and a non-ASCII string can meet it and still be refused.
 
-pub(crate) mod kinds;
-pub(crate) mod output;
-pub(crate) mod tool;
+pub(super) mod kinds;
+pub(super) mod output;
+pub(super) mod tool;
 
 use std::fmt;
 
 use serde_json::{Map, Value};
 
-pub(crate) use output::{Output, Shown, output_schema, to_value};
-pub(crate) use tool::{TOOLS, find};
+pub(crate) use output::Output;
+pub(super) use output::{Shown, output_schema, to_value};
+pub(super) use tool::{TOOLS, find};
 
 // -- Declarations ---------------------------------------------------------
 
-/// A tool's arguments, or an object nested in them. `Default` is the value
-/// the schema walk builds and drops; no call ever sees it.
-pub(crate) trait Args: Default {
+/// A tool's arguments, or an object nested in them.
+pub(super) trait Args {
     fn declare(fields: &mut Fields<'_, '_>) -> Self;
 }
 
 /// What a field holds: its schema and how a JSON value becomes it.
-pub(crate) trait Kind {
+pub(super) trait Kind {
     /// A required field's kind also gives the `Default` the schema walk
     /// builds; a list's items and an optional field need none.
     type Out;
@@ -48,7 +48,7 @@ pub(crate) trait Kind {
 
 /// The fields of one object, read in the walk that [`input_schema`] or
 /// [`parse`] runs.
-pub(crate) struct Fields<'w, 'a> {
+pub(super) struct Fields<'w, 'a> {
     at: At<'a>,
     walk: Walk<'w, 'a>,
 }
@@ -62,6 +62,29 @@ enum Walk<'w, 'a> {
 struct SchemaWalk {
     properties: Map<String, Value>,
     required: Vec<Value>,
+}
+
+impl SchemaWalk {
+    /// The object schema of the fields the walk recorded, closed to any
+    /// other key; without a required field it has no `required` list.
+    fn into_object_schema(self) -> Map<String, Value> {
+        let mut schema = Map::new();
+        schema.insert("type".into(), "object".into());
+        schema.insert("properties".into(), self.properties.into());
+        if !self.required.is_empty() {
+            schema.insert("required".into(), self.required.into());
+        }
+        schema.insert("additionalProperties".into(), false.into());
+        schema
+    }
+}
+
+/// The schema of one kind, written out key by key.
+fn schema<const N: usize>(entries: [(&str, Value); N]) -> Map<String, Value> {
+    entries
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value))
+        .collect()
 }
 
 struct ParseWalk<'a> {
@@ -78,7 +101,7 @@ enum Presence {
 }
 
 impl Fields<'_, '_> {
-    pub(crate) fn required<K: Kind<Out: Default>>(
+    pub(super) fn required<K: Kind<Out: Default>>(
         &mut self,
         name: &'static str,
         description: &'static str,
@@ -88,7 +111,7 @@ impl Fields<'_, '_> {
             .unwrap_or_default()
     }
 
-    pub(crate) fn optional<K: Kind>(
+    pub(super) fn optional<K: Kind>(
         &mut self,
         name: &'static str,
         description: &'static str,
@@ -136,7 +159,7 @@ impl Fields<'_, '_> {
 
 /// The JSON Schema of `A`: an object of its declared fields, closed to any
 /// other key.
-pub(crate) fn input_schema<A: Args>() -> Map<String, Value> {
+pub(super) fn input_schema<A: Args>() -> Map<String, Value> {
     declared_schema(A::declare, None)
 }
 
@@ -155,19 +178,12 @@ fn declared_schema<T>(
         walk.properties.insert(name.into(), schema);
         walk.required.insert(0, name.into());
     }
-    let mut schema = Map::new();
-    schema.insert("type".into(), "object".into());
-    schema.insert("properties".into(), walk.properties.into());
-    if !walk.required.is_empty() {
-        schema.insert("required".into(), walk.required.into());
-    }
-    schema.insert("additionalProperties".into(), false.into());
-    schema
+    walk.into_object_schema()
 }
 
 /// `object` read as `A`, refused at its first fault in declaration order,
 /// then at its first undeclared key in key order.
-pub(crate) fn parse<A: Args>(
+pub(super) fn parse<A: Args>(
     object: &Map<String, Value>,
     at: At<'_>,
 ) -> Result<A, InvalidArgument> {
@@ -183,6 +199,7 @@ fn read_fields<T>(
 ) -> Result<T, InvalidArgument> {
     let mut walk = ParseWalk {
         object,
+        // clone: the walk adds each field it declares to the names it skips.
         declared: skip.to_vec(),
         fault: None,
     };
@@ -206,7 +223,7 @@ fn read_fields<T>(
 
 /// Where a value sits in a call's arguments, rendered as `ops[2].name`.
 #[derive(Clone, Copy)]
-pub(crate) enum At<'a> {
+pub(super) enum At<'a> {
     Root,
     Field(&'a At<'a>, &'a str),
     Item(&'a At<'a>, usize),
@@ -225,7 +242,7 @@ impl fmt::Display for At<'_> {
 
 /// An argument the spec refuses, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InvalidArgument {
+pub(super) struct InvalidArgument {
     /// The argument's path, `ops[2].name`.
     pub field: String,
     pub fault: Fault,
@@ -247,7 +264,7 @@ impl fmt::Display for InvalidArgument {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Fault {
+pub(super) enum Fault {
     Unknown,
     Missing,
     /// Of another JSON type; names the one the spec holds, "a string".
@@ -261,7 +278,6 @@ pub(crate) enum Fault {
         max_items: usize,
     },
     NotOneOf(Vec<&'static str>),
-    ControlCharacter,
 }
 
 impl fmt::Display for Fault {
@@ -277,9 +293,6 @@ impl fmt::Display for Fault {
                 write!(f, "has {items} items, over the limit of {max_items}")
             }
             Self::NotOneOf(names) => write!(f, "must be one of: {}", names.join(", ")),
-            Self::ControlCharacter => {
-                f.write_str("contains a control character other than tab or a line break")
-            }
         }
     }
 }
@@ -294,7 +307,7 @@ mod tests {
     use super::*;
 
     /// Every field kind, in one spec.
-    #[derive(Debug, Default, PartialEq)]
+    #[derive(Debug, PartialEq)]
     struct Probe {
         name: String,
         depth: Depth,
@@ -311,13 +324,13 @@ mod tests {
         Full,
     }
 
-    #[derive(Debug, Default, PartialEq)]
+    #[derive(Debug, PartialEq)]
     struct Anchor {
         file: String,
         symbol: Option<String>,
     }
 
-    #[derive(Debug, Default, PartialEq)]
+    #[derive(Debug, PartialEq)]
     struct Scope {
         component: String,
     }
@@ -554,12 +567,6 @@ mod tests {
                 },
             ),
             (
-                "text with a control character",
-                with("/name", Some(json!("a\u{7}b"))),
-                "name",
-                Fault::ControlCharacter,
-            ),
-            (
                 "array over its limit",
                 with("/tags", Some(json!(["a", "b", "c"]))),
                 "tags",
@@ -710,7 +717,7 @@ mod tests {
 
     #[test]
     fn a_spec_without_required_fields_has_no_required_list() {
-        #[derive(Debug, Default)]
+        #[derive(Debug)]
         struct Empty;
         impl Args for Empty {
             fn declare(_: &mut Fields<'_, '_>) -> Self {

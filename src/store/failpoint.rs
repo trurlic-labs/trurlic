@@ -19,11 +19,15 @@
 #[cfg(feature = "failpoints")]
 use crate::console::diag;
 
-/// A point where a test may abort, pause, fail or panic the process.
+/// A point where a test may abort or pause the process, fail the call,
+/// panic the thread, or have the caller act in its place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Site {
     /// Files staged and flushed; no journal yet.
     Staged,
+    /// Under `shared`, the staged files written to the graph's repository
+    /// as blobs; no journal yet.
+    Blobs,
     /// Journal in place, so the commit lands; nothing applied yet.
     Journaled,
     /// Before each rename of a staged file; a [`fail`] site.
@@ -34,8 +38,16 @@ pub(crate) enum Site {
     /// The write's files in place and flushed; its history commit, under
     /// `shared`, not made.
     Placed,
+    /// An index of the graph's repository set for a commit not made yet:
+    /// the hand edits staged before the commit point, or the write's
+    /// history commit staged after it.
+    HistoryStaged,
     /// The history commit made; the journal not deleted.
     HistoryCommitted,
+    /// The history commit failed, and the journal is narrowed to it.
+    Narrowed,
+    /// The deletion of the journal of a finished write; a [`fail`] site.
+    Forget,
     /// The journal deleted, before the flush of its directory; a [`fail`]
     /// site.
     Forgotten,
@@ -56,11 +68,15 @@ pub(crate) enum Site {
 impl Site {
     const ALL: &[Self] = &[
         Self::Staged,
+        Self::Blobs,
         Self::Journaled,
         Self::Rename,
         Self::Applied,
         Self::Placed,
+        Self::HistoryStaged,
         Self::HistoryCommitted,
+        Self::Narrowed,
+        Self::Forget,
         Self::Forgotten,
         Self::Finished,
         Self::Loaded,
@@ -72,11 +88,15 @@ impl Site {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Staged => "commit.staged",
+            Self::Blobs => "history.blobs",
             Self::Journaled => "commit.journaled",
             Self::Rename => "commit.rename",
             Self::Applied => "commit.applied",
             Self::Placed => "commit.placed",
+            Self::HistoryStaged => "history.staged",
             Self::HistoryCommitted => "history.committed",
+            Self::Narrowed => "commit.narrowed",
+            Self::Forget => "commit.forget",
             Self::Forgotten => "commit.forgotten",
             Self::Finished => "commit.finished",
             Self::Loaded => "graph.loaded",
@@ -122,7 +142,7 @@ fn reached(site: Site) -> Option<u64> {
 
 /// Abort or pause here if this is the armed hit.
 #[cfg(feature = "failpoints")]
-pub(crate) fn hit(site: Site) {
+pub(super) fn hit(site: Site) {
     let Some(n) = reached(site) else {
         return;
     };
@@ -151,7 +171,7 @@ fn pause(site: Site, n: u64, marker: &std::path::Path) {
 
 /// Return an injected I/O error here if this is the armed hit.
 #[cfg(feature = "failpoints")]
-pub(crate) fn fail(site: Site) -> std::io::Result<()> {
+pub(super) fn fail(site: Site) -> std::io::Result<()> {
     match reached(site) {
         Some(n) => {
             diag!("trurlic: failpoint {}:{n} hit, failing", site.as_str());
@@ -166,7 +186,7 @@ pub(crate) fn fail(site: Site) -> std::io::Result<()> {
 
 /// Panic here if this is the armed hit.
 #[cfg(feature = "failpoints")]
-pub(crate) fn panic(site: Site) {
+pub(super) fn panic(site: Site) {
     if let Some(n) = reached(site) {
         #[expect(
             clippy::panic,
@@ -192,17 +212,17 @@ pub(crate) fn triggers(site: Site) -> bool {
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
 #[inline]
-pub(crate) fn hit(_site: Site) {}
+pub(super) fn hit(_site: Site) {}
 
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
 #[inline]
-pub(crate) fn panic(_site: Site) {}
+pub(super) fn panic(_site: Site) {}
 
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
 #[inline]
-pub(crate) fn fail(_site: Site) -> std::io::Result<()> {
+pub(super) fn fail(_site: Site) -> std::io::Result<()> {
     Ok(())
 }
 

@@ -19,7 +19,7 @@ pub(crate) use query::query_file;
 pub(crate) use serve::serve;
 pub(crate) use status::status;
 
-pub(crate) use crate::mcp::twin::ToolError;
+pub(crate) use crate::mcp::twin::{ToolError, section_names as status_sections};
 
 use std::path::Path;
 
@@ -42,7 +42,7 @@ pub(crate) enum Format {
 /// refusal: `print` for a terminal, the text the call returns under
 /// `--json`, its refusal included. A refusal fails the command either way,
 /// and `cli` prints its message on stderr.
-pub(crate) fn answer<O: Output>(
+fn answer<O: Output>(
     outcome: std::result::Result<O, ToolError>,
     format: Format,
     print: impl FnOnce(&O) -> Result<()>,
@@ -51,7 +51,7 @@ pub(crate) fn answer<O: Output>(
         (Ok(result), Format::Json) => Ok(out!("{}", twin::result_json(&result))?),
         (Ok(result), Format::Text) => Ok(print(&result)?),
         (Err(refusal), Format::Json) => {
-            out!("{}", twin::refusal_json(&refusal))?;
+            out!("{}", twin::refusal_text(&refusal))?;
             Err(refusal)
         }
         (Err(refusal), Format::Text) => Err(refusal),
@@ -67,7 +67,7 @@ pub(crate) enum DryRun {
 
 /// Load the graph for a read-only command and warn when it has issues. The
 /// load waits only while a writer holds the lock.
-pub(crate) fn open_store(cwd: &Path) -> Result<(Store, ProjectState)> {
+fn open_store(cwd: &Path) -> Result<(Store, ProjectState)> {
     let store = discover(cwd)?;
     let state = store.load_state()?;
     let issues = state.validate().len();
@@ -83,7 +83,7 @@ pub(crate) fn open_store(cwd: &Path) -> Result<(Store, ProjectState)> {
 /// The graph directory as a message names it: `.trurlic/` when it is the
 /// code root's own, else its path, since a tree that reaches the graph
 /// through a symlink or a linked worktree holds no such directory.
-pub(crate) fn graph_name(store: &Store) -> String {
+fn graph_name(store: &Store) -> String {
     if store.is_local() {
         format!("{STORE_DIR}/")
     } else {

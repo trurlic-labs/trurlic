@@ -13,8 +13,8 @@ status = "proposed"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
-    { file = "src/mcp/apply.rs", symbol = "ApplyArgs" },
-    { file = "src/mcp/apply.rs", symbol = "tests::the_longest_result_of_a_full_batch_fits_the_budget" },
+    { file = "src/mcp/apply/mod.rs", symbol = "ApplyArgs" },
+    { file = "src/mcp/apply/result.rs", symbol = "tests::the_longest_result_of_a_full_batch_fits_the_budget" },
     { file = "src/store/limits.rs", symbol = "MAX_BATCH_OPS" },
 ]
 depends_on = [

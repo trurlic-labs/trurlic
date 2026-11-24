@@ -1,24 +1,25 @@
 //! The `apply` tool: its arguments declared once for the schema and the
-//! parse, its result declared once for the `outputSchema` and the JSON,
-//! and a handler that hands the batch to the store's one write. Every
-//! rule a batch is held to is the store's.
+//! parse, and a handler that hands the batch to the store's one write.
+//! Every rule a batch is held to is the store's. Its result is declared in
+//! [`result`].
+
+mod result;
 
 use crate::store::limits::{
-    MAX_ALTERNATIVE_BYTES, MAX_BATCH_OPS, MAX_CHOICE_BYTES, MAX_LIST_ITEMS, MAX_NAME_BYTES,
-    MAX_TAG_BYTES, MAX_TEXT_FIELD_BYTES, MAX_TRAILER_BYTES,
+    MAX_ALTERNATIVE_BYTES, MAX_ANCHOR_PATH_BYTES, MAX_ANCHOR_SYMBOL_BYTES, MAX_BATCH_OPS,
+    MAX_CHOICE_BYTES, MAX_LIST_ITEMS, MAX_NAME_BYTES, MAX_TAG_BYTES, MAX_TEXT_FIELD_BYTES,
+    MAX_TRAILER_BYTES,
 };
 use crate::store::{
-    AddComponent, AnchorInput, Applied, Batch, Done, Field, ListEdit, Merge, Op, OpKind,
-    PatternNote, Record, Remove, RemoveComponent, Rename, Revise, ReviseComponent, StatusName,
-    Warning, WarningKind, Writer,
+    AddComponent, AnchorInput, Applied, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
+    RemoveComponent, Rename, Revise, ReviseComponent, Writer,
 };
 
 use super::spec::kinds::{List, Object, Text, Union, Variant};
-use super::spec::output::{Count, Items, Nested, Str, Tag};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
-use super::spec::{Args, Fields, Kind, Output, Shown};
+use super::spec::{Args, Fields, Kind};
 
-pub(crate) static APPLY: ToolSpec<ApplyArgs, Applied> = ToolSpec {
+pub(super) static APPLY: ToolSpec<ApplyArgs, Applied> = ToolSpec {
     name: "apply",
     title: "Apply",
     description: DESCRIPTION,
@@ -56,8 +57,8 @@ the rest, and `patterns` holds each named pattern's message.\n\
 The result names each op's node and what it changed, never the texts.";
 
 /// The arguments of `apply`: what a batch file holds too.
-#[derive(Debug, Default)]
-pub(crate) struct ApplyArgs {
+#[derive(Debug)]
+pub(super) struct ApplyArgs {
     ops: Vec<Op>,
     origin: Option<String>,
 }
@@ -123,7 +124,7 @@ const TAGS: List<Text> = List {
     },
     max_items: MAX_LIST_ITEMS,
 };
-const ANCHORS: List<Object<AnchorArgs>> = List {
+const ANCHORS: List<Object<AnchorInput>> = List {
     item: Object::new(),
     max_items: MAX_LIST_ITEMS,
 };
@@ -174,7 +175,7 @@ fn record(fields: &mut Fields<'_, '_>) -> Op {
             &ALTERNATIVES,
         ),
         tags: list(fields, Field::Tags, "Labels, one line each.", &TAGS),
-        anchors: anchors(list(fields, Field::Anchors, "Where it applies.", &ANCHORS)),
+        anchors: list(fields, Field::Anchors, "Where it applies.", &ANCHORS),
         depends_on: list(fields, Field::DependsOn, "Decisions it depends on.", &NAMES),
     })
 }
@@ -187,7 +188,7 @@ fn revise(fields: &mut Fields<'_, '_>) -> Op {
         reason: fields.optional(Field::Reason.as_str(), "The new reason.", &PROSE),
         alternatives: edit(fields, Field::Alternatives, &ALTERNATIVES),
         tags: edit(fields, Field::Tags, &TAGS),
-        anchors: anchor_edit(edit(fields, Field::Anchors, &ANCHORS)),
+        anchors: edit(fields, Field::Anchors, &ANCHORS),
         depends_on: edit(fields, Field::DependsOn, &NAMES),
     })
 }
@@ -275,169 +276,24 @@ fn edit<K: Kind>(fields: &mut Fields<'_, '_>, field: Field, kind: &List<K>) -> L
 }
 
 /// An anchor as a batch writes it.
-#[derive(Debug, Default)]
-pub(crate) struct AnchorArgs {
-    file: String,
-    symbol: Option<String>,
-}
-
-impl Args for AnchorArgs {
+impl Args for AnchorInput {
     fn declare(fields: &mut Fields<'_, '_>) -> Self {
         Self {
             file: fields.required(
                 "file",
                 "A file or directory, relative to the project root, `/`-separated.",
                 &Text {
-                    max_bytes: crate::store::limits::MAX_ANCHOR_PATH_BYTES,
+                    max_bytes: MAX_ANCHOR_PATH_BYTES,
                 },
             ),
             symbol: fields.optional(
                 "symbol",
                 "A symbol in the file, its `::`-separated path.",
                 &Text {
-                    max_bytes: crate::store::limits::MAX_ANCHOR_SYMBOL_BYTES,
+                    max_bytes: MAX_ANCHOR_SYMBOL_BYTES,
                 },
             ),
         }
-    }
-}
-
-fn anchors(parsed: Vec<AnchorArgs>) -> Vec<AnchorInput> {
-    parsed
-        .into_iter()
-        .map(|anchor| AnchorInput {
-            file: anchor.file,
-            symbol: anchor.symbol,
-        })
-        .collect()
-}
-
-fn anchor_edit(parsed: ListEdit<AnchorArgs>) -> ListEdit<AnchorInput> {
-    ListEdit {
-        whole: parsed.whole.map(anchors),
-        add: parsed.add.map(anchors),
-        remove: parsed.remove.map(anchors),
-    }
-}
-
-// -- Result ----------------------------------------------------------------
-
-impl Output for Applied {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        let ops = Items {
-            item: Nested::<Done>::new(),
-        };
-        fields.required("ops", "What each op did, in order.", &ops, |applied| {
-            &applied.ops
-        });
-        let warnings = Items {
-            item: Nested::<Warning>::new(),
-        };
-        let about = "What the batch wrote but a `warn` pattern of `[quality]` warns of: each \
-                     pattern's first match per op, and the first of the origin's and of each \
-                     op's, in the order of the ops and the patterns; an op's `more_warnings` \
-                     counts the rest.";
-        fields.optional("warnings", about, &warnings, |applied| {
-            (!applied.warnings.is_empty()).then_some(&applied.warnings)
-        });
-        let more = "The origin's warnings not listed.";
-        fields.optional("more_origin_warnings", more, &Count, |applied| {
-            (applied.more_origin_warnings > 0).then_some(&applied.more_origin_warnings)
-        });
-        let patterns = Items {
-            item: Nested::<PatternNote>::new(),
-        };
-        let about = "The message of each pattern a warning names, once.";
-        fields.optional("patterns", about, &patterns, |applied| {
-            (!applied.patterns.is_empty()).then_some(&applied.patterns)
-        });
-        fields.required(
-            "written",
-            "Files written, a rename's new file included.",
-            &Count,
-            |applied| &applied.written,
-        );
-        fields.required(
-            "removed",
-            "Files removed, a rename's old file included.",
-            &Count,
-            |applied| &applied.removed,
-        );
-    }
-}
-
-const OP_KIND: Tag<OpKind> = Tag {
-    all: &OpKind::ALL,
-    name: OpKind::as_str,
-};
-const WARNING_KIND: Tag<WarningKind> = Tag {
-    all: &WarningKind::ALL,
-    name: WarningKind::as_str,
-};
-
-/// A warning: the argument and the rule, as a refusal names them, and the
-/// pattern by its index, whose message `patterns` carries. The op is the
-/// one `ops` names at the index the argument path gives.
-impl Output for Warning {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        let field = "The argument, as `ops[2].reason` or `origin`.";
-        fields.required("field", field, &Str, |warning| &warning.field);
-        fields.required("rule", "The rule's name.", &WARNING_KIND, |warning| {
-            &warning.kind
-        });
-        let pattern = "The pattern's index in `[quality] patterns`.";
-        fields.required("pattern", pattern, &Count, |warning| &warning.pattern);
-        let at = "The byte offset of the match in the argument's text.";
-        fields.required("at", at, &Count, |warning| &warning.at);
-    }
-}
-
-impl Output for PatternNote {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        let index = "The pattern's index in `[quality] patterns`.";
-        fields.required("index", index, &Count, |note| &note.index);
-        fields.required("message", "What the pattern says.", &Str, |note| {
-            &note.message
-        });
-    }
-}
-
-const CHANGED: Items<Tag<Field>> = Items {
-    item: Tag {
-        all: &Field::CHANGEABLE,
-        name: Field::as_str,
-    },
-};
-const STATUS: Tag<StatusName> = Tag {
-    all: &StatusName::ALL,
-    name: StatusName::as_str,
-};
-
-impl Output for Done {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        fields.required("op", "The op's kind.", &OP_KIND, |done| &done.op);
-        let name = "The node it names first; a merge's survivor.";
-        fields.required("name", name, &Str, |done| &done.name);
-        fields.optional("to", "A rename's new name.", &Str, |done| done.to.as_ref());
-        let absorbed = "A merge's removed decision.";
-        fields.optional("absorbed", absorbed, &Str, |done| done.absorbed.as_ref());
-        let heir = "Where a remove pointed the edges to its decision.";
-        fields.optional("repoint_to", heir, &Str, |done| done.repoint_to.as_ref());
-        let changed = "A revise's changed fields.";
-        fields.optional("changed", changed, &CHANGED, |done| {
-            (!done.changed.is_empty()).then_some(&done.changed)
-        });
-        let status = "The decision's new status, when the op changed it.";
-        fields.optional("status", status, &STATUS, |done| done.status.as_ref());
-        let rewrote = "Files of other nodes it rewrote: edges repointed, a component's \
-                       decisions and connections renamed.";
-        fields.optional("rewrote", rewrote, &Count, |done| {
-            (done.rewrote > 0).then_some(&done.rewrote)
-        });
-        let more = "Its warnings not listed in `warnings`.";
-        fields.optional("more_warnings", more, &Count, |done| {
-            (done.more_warnings > 0).then_some(&done.more_warnings)
-        });
     }
 }
 
@@ -446,8 +302,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::budget::MAX_TOOL_RESULT_BYTES;
-    use crate::mcp::spec::{At, parse, to_value};
+    use crate::mcp::spec::{At, parse};
 
     fn ops(arguments: &Value) -> Vec<Op> {
         parse::<ApplyArgs>(arguments.as_object().unwrap(), At::Root)
@@ -561,153 +416,5 @@ mod tests {
         let too_many = json!({ "ops": vec![one; MAX_BATCH_OPS + 1] });
         let refused = parse::<ApplyArgs>(too_many.as_object().unwrap(), At::Root).unwrap_err();
         assert_eq!(refused.field, "ops");
-    }
-
-    /// The longest result a batch can have fits the result budget whole.
-    ///
-    /// The arithmetic. An op's entry is longest for a merge or a rename,
-    /// two names of `MAX_NAME_BYTES` and a count of 20 digits, with the
-    /// count of its warnings not listed: about 350 bytes, 17.5 KB for
-    /// fifty. A `warn` pattern warns once per op, so fifty ops can draw
-    /// 1,600 warnings, which no result lists beside the ops: each op, and
-    /// the batch's origin, lists `MAX_WARNINGS_PER_OP` and counts the
-    /// rest. A listed warning names its argument, the rule, the pattern by
-    /// its index and the offset, at most about 82 bytes: 4.2 KB for fifty
-    /// ops and the origin. The message of each pattern a warning names is
-    /// carried once: 32 frames of about 25 bytes and at most
-    /// `MAX_WARN_MESSAGES_BYTES` of escaped messages, 2.3 KB. About 24.1 KB
-    /// of the 24 KiB.
-    #[test]
-    fn the_longest_result_of_a_full_batch_fits_the_budget() {
-        use crate::store::limits::{
-            MAX_QUALITY_PATTERNS, MAX_WARN_MESSAGES_BYTES, MAX_WARNINGS_PER_OP,
-        };
-
-        let name = || "n".repeat(MAX_NAME_BYTES);
-        let unlisted = MAX_QUALITY_PATTERNS - MAX_WARNINGS_PER_OP;
-        let longest = OpKind::ALL
-            .into_iter()
-            .map(|op| {
-                let mut done = Done {
-                    op,
-                    name: name(),
-                    to: None,
-                    absorbed: None,
-                    repoint_to: None,
-                    changed: Vec::new(),
-                    status: None,
-                    rewrote: usize::MAX,
-                    more_warnings: unlisted,
-                };
-                match op {
-                    OpKind::Rename | OpKind::RenameComponent => done.to = Some(name()),
-                    OpKind::Merge => done.absorbed = Some(name()),
-                    OpKind::Remove => done.repoint_to = Some(name()),
-                    OpKind::Revise => {
-                        done.changed = Field::CHANGEABLE[..7].to_vec();
-                        done.status = Some(StatusName::Proposed);
-                    }
-                    OpKind::ReviseComponent => done.changed = Field::CHANGEABLE[7..].to_vec(),
-                    OpKind::Record | OpKind::AddComponent | OpKind::RemoveComponent => {}
-                }
-                done
-            })
-            .max_by_key(|done| to_value(done).to_string().len())
-            .unwrap();
-        let warning = |op: Option<usize>| Warning {
-            field: match op {
-                Some(index) => format!("ops[{index}].add_alternatives[{}]", MAX_LIST_ITEMS - 1),
-                None => "origin".into(),
-            },
-            op,
-            kind: WarningKind::Pattern,
-            pattern: MAX_QUALITY_PATTERNS - 1,
-            at: MAX_TEXT_FIELD_BYTES,
-        };
-        let listed = (0..MAX_BATCH_OPS).map(Some).chain([None]);
-        // Every `"` is written escaped, two bytes, as the bound counts it.
-        let quotes = MAX_WARN_MESSAGES_BYTES / 2 / MAX_QUALITY_PATTERNS;
-        let applied = Applied {
-            ops: vec![longest; MAX_BATCH_OPS],
-            warnings: listed
-                .flat_map(|op| vec![warning(op); MAX_WARNINGS_PER_OP])
-                .collect(),
-            more_origin_warnings: unlisted,
-            patterns: (0..MAX_QUALITY_PATTERNS)
-                .map(|index| PatternNote {
-                    index,
-                    message: "\"".repeat(quotes),
-                })
-                .collect(),
-            written: usize::MAX,
-            removed: usize::MAX,
-        };
-        let bytes = to_value(&applied).to_string().len();
-        assert!(bytes <= MAX_TOOL_RESULT_BYTES, "{bytes} bytes");
-    }
-
-    /// The longest refusal of every rule whose message a batch bounds fits
-    /// the budget uncut: names of `MAX_NAME_BYTES`, the longest argument
-    /// path, an element and a quoted match at their limits. An issue's
-    /// message lists what `check` names, a cycle every member, and the
-    /// refusal is cut like any long payload.
-    #[test]
-    fn the_longest_refusal_fits_the_budget() {
-        use crate::mcp::result::ToolError;
-        use crate::store::limits::{MAX_PATTERN_MESSAGE_BYTES, MAX_QUOTED_MATCH_BYTES};
-        use crate::store::{
-            NodeFile, NodeKind, OpAt, PatternMatch, QualityFault, Refusal, Rule, TextFault,
-            TextField,
-        };
-
-        let name = || "n".repeat(MAX_NAME_BYTES);
-        let names = || vec![name(); 1_000];
-        let rules = [
-            Rule::NameTaken {
-                name: name(),
-                holder: NodeKind::Component,
-            },
-            Rule::Dependents { names: names() },
-            Rule::InUse {
-                decisions: names(),
-                components: names(),
-            },
-            Rule::Cycle { members: names() },
-            Rule::NotHeld {
-                element: "\"".repeat(MAX_ALTERNATIVE_BYTES),
-            },
-            Rule::Text {
-                field: TextField::Reason,
-                fault: TextFault::ToolMarkup {
-                    found: "</function_calls".into(),
-                    at: MAX_TEXT_FIELD_BYTES,
-                },
-            },
-            Rule::Quality(QualityFault::Pattern(PatternMatch {
-                index: 31,
-                at: MAX_TEXT_FIELD_BYTES,
-                found: format!("{}...", "\"".repeat(MAX_QUOTED_MATCH_BYTES)),
-                message: "\"".repeat(MAX_PATTERN_MESSAGE_BYTES),
-            })),
-            Rule::FileTooLarge {
-                file: NodeFile::Decision(name()),
-                bytes: usize::MAX,
-                max: usize::MAX,
-            },
-        ];
-        for rule in rules {
-            let refusal = Refusal {
-                op: Some(OpAt {
-                    index: MAX_BATCH_OPS - 1,
-                    kind: OpKind::RenameComponent,
-                    target: name(),
-                }),
-                field: Some(format!("add_alternatives[{}]", MAX_LIST_ITEMS - 1)),
-                rule,
-            };
-            let error = ToolError::from(refusal);
-            let bytes = serde_json::json!({ "error": error }).to_string().len();
-            assert!(bytes <= MAX_TOOL_RESULT_BYTES, "{bytes} bytes");
-        }
     }
 }

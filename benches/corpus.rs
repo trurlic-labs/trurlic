@@ -1,6 +1,7 @@
-//! Benches over the seeded corpus at each of `Corpus::SIZES`: loading the
-//! store from disk, validating the loaded graph, through the MCP server in
-//! process every read tool and `apply`, and `trurlic fmt` of one file. The
+//! Benches over the seeded corpus at each of `Corpus::SIZES` (the `fmt` and
+//! `apply` benches skip the smallest): loading the store from disk,
+//! validating the loaded graph, through the MCP server in process every
+//! read tool and `apply`, and `trurlic fmt` of one file. The
 //! server loads the graph on every call, so each tool bench includes a
 //! load. `fmt` is timed under `tracked`, under `shared` with nothing but
 //! its own commit to make, and under `shared` after a hand edit, which is
@@ -10,8 +11,8 @@
 //! whose patterns each batch compiles; `load_state` is timed with that
 //! table too, which a read parses and never compiles.
 //!
-//! Read tools come from `tools/list`, so a new one is benched without editing
-//! this file, and setup panics when no request here fits it.
+//! Read tools come from `tools/list`, so a new one is never skipped: setup
+//! panics until a request here fits it.
 //! Setup also sends each request once and panics on an error response, so no
 //! bench times an error path.
 
@@ -37,8 +38,7 @@ use criterion::{
 };
 use serde_json::{Value, json};
 
-use trurlic::bench::Server;
-use trurlic::store::corpus::Corpus;
+use trurlic::bench::{Corpus, Server};
 use trurlic::store::{Placement, ProjectState, Store};
 
 /// The example `[quality]` table the repository ships.

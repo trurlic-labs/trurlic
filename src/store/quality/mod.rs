@@ -25,7 +25,7 @@ use serde::Deserialize;
 use crate::store::Store;
 use crate::{Error, Result};
 
-pub(crate) use bar::{Bar, Broken, Place, element};
+pub(crate) use bar::{Bar, Broken, Hit, Place, element};
 pub use config::{ConfigFault, Level, Pattern, Quality, WordRange};
 
 /// The fields of a decision the bar reads, and the names a pattern's
@@ -211,7 +211,7 @@ impl fmt::Display for PatternMatch {
 /// The words of `text`: its runs of non-whitespace, split at every Unicode
 /// whitespace character. A hyphenated or slashed run is one word.
 #[must_use]
-pub(crate) fn words(text: &str) -> usize {
+fn words(text: &str) -> usize {
     text.split_whitespace().count()
 }
 

@@ -33,7 +33,7 @@ const CHECKPOINT: usize = 64;
 /// Serialize `payload` within `max_bytes`, cutting it as the module
 /// describes when it does not fit. A payload that is not an object is
 /// wrapped as `{"value": payload}` before it is cut.
-pub(crate) fn fit_payload(payload: &Value, max_bytes: usize) -> String {
+pub(super) fn fit_payload(payload: &Value, max_bytes: usize) -> String {
     match serialize_within(payload, max_bytes) {
         Some(text) => text,
         None => cut(payload, max_bytes).1,
@@ -43,7 +43,7 @@ pub(crate) fn fit_payload(payload: &Value, max_bytes: usize) -> String {
 /// [`fit_payload`] with the value the text serializes: `payload` itself
 /// when it fits, else the cut value. Both come from the one value, so they
 /// cannot differ.
-pub(crate) fn fit_value(payload: Value, max_bytes: usize) -> (Value, String) {
+pub(super) fn fit_value(payload: Value, max_bytes: usize) -> (Value, String) {
     match serialize_within(&payload, max_bytes) {
         Some(text) => (payload, text),
         None => cut(&payload, max_bytes),
@@ -75,7 +75,7 @@ fn cut(payload: &Value, max_bytes: usize) -> (Value, String) {
             text.len()
         );
     }
-    let omitted = omitted_whole(serialized_len(payload, usize::MAX));
+    let omitted = omitted_whole(json_len(payload));
     let text = omitted.to_string();
     (omitted, text)
 }
@@ -162,7 +162,7 @@ fn skeleton_len(value: &Value) -> usize {
     match value {
         Value::Object(map) => object_skeleton_len(map),
         Value::Array(_) | Value::String(_) => 2,
-        Value::Null | Value::Bool(_) | Value::Number(_) => serialized_len(value, usize::MAX),
+        Value::Null | Value::Bool(_) | Value::Number(_) => json_len(value),
     }
 }
 
@@ -203,9 +203,9 @@ fn rebuild<'u>(
     notice: &mut Vec<Value>,
 ) -> Value {
     match value {
-        // clone: the cut payload is built anew; its keys are the original's.
         Value::Object(map) => Value::Object(
             map.iter()
+                // clone: the cut payload is built anew; its keys are the original's.
                 .map(|(key, child)| (key.clone(), rebuild(child, cuts, notice)))
                 .collect(),
         ),
@@ -356,6 +356,7 @@ impl Cut<'_> {
             (Shape::Items { items, .. }, Some(count)) => {
                 let (head, tail) = items.split_at(count.min(items.len()));
                 notice.push(json!({ "at": pointer, "omitted_items": tail.len() }));
+                // clone: the fitted value is built from the one it fits.
                 Value::Array(head.to_vec())
             }
             (Shape::Text { text, .. }, Some(end)) => {
@@ -363,6 +364,7 @@ impl Cut<'_> {
                 notice.push(json!({ "at": pointer, "omitted_bytes": tail.len() }));
                 Value::String(head.to_owned())
             }
+            // clone: the fitted value is built from the one it fits.
             (Shape::Items { items, .. }, None) => Value::Array(items.to_vec()),
             (Shape::Text { text, .. }, None) => Value::String((*text).to_owned()),
         }
@@ -371,7 +373,12 @@ impl Cut<'_> {
 
 /// Bytes of `{"at":<pointer>,"<field>":<count>}` and the comma before it.
 fn note_len(pointer: &str, field: &str, count: usize) -> usize {
-    serialized_len(&json!({ "at": pointer, field: count }), usize::MAX) + 1
+    json_len(&json!({ "at": pointer, field: count })) + 1
+}
+
+/// Bytes of `value` serialized, counted without building the text.
+pub(super) fn json_len(value: &Value) -> usize {
+    serialized_len(value, usize::MAX)
 }
 
 /// Bytes of `value` serialized, or `cap + 1` once they pass `cap`, so a
@@ -425,7 +432,7 @@ impl io::Write for Bounded {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::corpus::SplitMix64;
+    use crate::store::seeded::SplitMix64;
 
     fn fit(payload: &Value, max_bytes: usize) -> Value {
         let text = fit_payload(payload, max_bytes);

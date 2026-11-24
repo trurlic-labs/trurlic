@@ -2,9 +2,9 @@
 //! each read as its type, and nothing else.
 //!
 //! A load fails only when a file cannot be read as its type: it cannot be
-//! read, it is larger than [`MAX_NODE_FILE_BYTES`], it is not TOML, or it
-//! holds a key, a value or a combination of values its type has no place
-//! for. Everything a loaded graph can hold but should not, such as an edge
+//! read, it is no regular file, its name ends in `.toml` but is not UTF-8,
+//! it is larger than [`MAX_NODE_FILE_BYTES`], it is not TOML, or it holds a
+//! key, a value or a combination of values its type has no place for. Everything a loaded graph can hold but should not, such as an edge
 //! to no node or two nodes of one name, is an issue `validate.rs` reports,
 //! so a hand edit that breaks the graph leaves it readable to `check`.
 //!
@@ -13,8 +13,8 @@
 //! commit halfway through its renames.
 
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::Read;
+use std::fs::{self, File, Metadata, ReadDir};
+use std::io::{ErrorKind, Read};
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -26,7 +26,7 @@ use super::Store;
 use super::canonical::{Canonical, is_canonical};
 use super::limits::MAX_NODE_FILE_BYTES;
 use super::schema::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, Project};
-use super::state::{NodeFile, ProjectState, ensure_regular, list_toml_stems};
+use super::state::{NodeFile, ProjectState};
 
 /// One byte past the cap, so a read that fills it proves the file too large.
 const READ_LIMIT: u64 = MAX_NODE_FILE_BYTES as u64 + 1;
@@ -36,11 +36,8 @@ const READ_LIMIT: u64 = MAX_NODE_FILE_BYTES as u64 + 1;
 /// [`MAX_NODE_FILE_BYTES`]: the read stops at the cap, so a file that grows
 /// while it is read costs no more.
 pub(super) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
-    ensure_regular(path)?;
+    let hint = ensure_regular(path)?.len().min(READ_LIMIT);
     let file = File::open(path).map_err(Error::io(path))?;
-    let hint = file
-        .metadata()
-        .map_or(0, |metadata| metadata.len().min(READ_LIMIT));
     let mut bytes = Vec::with_capacity(usize::try_from(hint).unwrap_or(0));
     file.take(READ_LIMIT)
         .read_to_end(&mut bytes)
@@ -52,6 +49,58 @@ pub(super) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
         });
     }
     Ok(bytes)
+}
+
+/// The metadata of `path`, refused unless it is a regular file once its
+/// symlinks are followed: checked before it is opened, so a FIFO never
+/// blocks a read.
+pub(super) fn ensure_regular(path: &Path) -> Result<Metadata> {
+    let metadata = fs::metadata(path).map_err(Error::io(path))?;
+    if metadata.is_file() {
+        Ok(metadata)
+    } else {
+        Err(Error::NotAFile {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+/// The entries of `dir`; `None` when it is gone.
+pub(super) fn read_dir_if_present(dir: &Path) -> Result<Option<ReadDir>> {
+    match fs::read_dir(dir) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(Error::Io {
+            path: dir.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// The stems of the node files in `dir`, sorted; none when `dir` is gone.
+/// A node file is every entry whose name ends in `.toml`, as the history's
+/// pathspecs match them, so none is skipped: a name that is not UTF-8 is
+/// [`Error::NodeFileName`]. A stem that is no node name is listed, and
+/// validation reports it; an entry that is no regular file is refused by
+/// the read of it ([`read_node_bytes`]), which runs in parallel.
+pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
+    let Some(entries) = read_dir_if_present(dir)? else {
+        return Ok(Vec::new());
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(Error::io(dir))?;
+        let name = entry.file_name();
+        if !name.as_encoded_bytes().ends_with(b".toml") {
+            continue;
+        }
+        let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".toml")) else {
+            return Err(Error::NodeFileName { path: entry.path() });
+        };
+        names.push(stem.to_owned());
+    }
+    names.sort_unstable();
+    Ok(names)
 }
 
 /// A node file read as `T`, and whether its bytes are `T`'s canonical form.

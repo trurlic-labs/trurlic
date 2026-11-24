@@ -42,7 +42,7 @@ fn print(report: &Report, origin: Option<&str>) -> Result<()> {
     let (all, wide, proposed) = (counts.decisions, counts.project_wide, counts.proposed);
     out!("decisions{under}: {all} ({wide} project-wide, {proposed} proposed)")?;
     out!("edges: {}", counts.edges)?;
-    out!("quality: {}", quality(&report.quality))?;
+    quality(&report.quality)?;
     if counts.non_canonical > 0 {
         out!("not in canonical form: {}", counts.non_canonical)?;
     }
@@ -68,12 +68,15 @@ fn print(report: &Report, origin: Option<&str>) -> Result<()> {
 }
 
 /// The rules `[quality]` adds, counted, or that it adds none.
-fn quality(counts: &QualityCounts) -> String {
+fn quality(counts: &QualityCounts) -> Result<()> {
     let (limits, refusing, warning) = (counts.limits, counts.refusing, counts.warning);
     if limits + refusing + warning == 0 {
-        return "the built-in rules".to_owned();
+        return out!("quality: the built-in rules");
     }
-    format!("{limits} limit(s), {refusing} refusing and {warning} warning pattern(s) in [quality]")
+    out!(
+        "quality: {limits} limit(s), {refusing} refusing and {warning} warning pattern(s) in \
+         [quality]"
+    )
 }
 
 fn omitted<T>(part: &Part<T>) -> Result<()> {

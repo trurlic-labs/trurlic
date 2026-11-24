@@ -3,30 +3,33 @@
 //! one module that runs git inside a graph directory; discovery and the
 //! placement facts ask git only about the directory that holds a graph.
 //!
-//! Every call names the repository and its work tree (`--git-dir`,
-//! `--work-tree`), so git discovers nothing: a missing `.git` is git's
+//! Every call but `init` names the repository and its work tree
+//! (`--git-dir`, `--work-tree`), so git discovers nothing: a missing `.git` is git's
 //! error, never the project's repository answering in its place. No
 //! configuration of the system's or the user's is read, and the settings
 //! of the repository's own that run code or change bytes are overridden
 //! ([`OVERRIDES`]), so neither a caller nor a configuration can break a
-//! commit or point it elsewhere. Files are staged as the bytes on disk,
-//! through no filter, and committed as [`NAME`] with the dates git reads
-//! from the clock.
+//! commit or point it elsewhere. Commits are made as [`NAME`] with the
+//! dates git reads from the clock.
 //!
-//! Staging is one `update-index` over every path, which writes its objects
-//! in one batched flush ([`OVERRIDES`]); it runs the conversions the
-//! attributes ask for, and the repository's own [`ATTRIBUTES`], checked
-//! before every staging, unset every one of them.
+//! What reaches the index, and every blob of the object store, is `index`'s: files staged
+//! as their bytes on disk, blobs written from a write's staged files, index
+//! entries set from blob ids, every one through no filter.
 
+mod index;
+
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
+use std::fmt;
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
+
+use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
-use super::{command, failed, finish, path, path_bytes, shown};
+use super::{command, failed, finish, path, run, shown};
 
 /// The author and committer of every commit: a program, at an address no
 /// mailbox can have (`.invalid` is reserved for that).
@@ -37,7 +40,8 @@ const EMAIL: &str = "trurlic@trurlic.invalid";
 /// says.
 const BRANCH: &str = "main";
 
-/// The empty file, for a setting that names a file to read.
+/// The empty file, for a setting or a variable that names a file or the
+/// hooks directory.
 #[cfg(unix)]
 const NULL: &str = "/dev/null";
 #[cfg(not(unix))]
@@ -60,8 +64,9 @@ const OVERRIDES: [&str; 9] = [
     "core.autocrlf=false",
     "core.fileMode=false",
     "commit.gpgSign=false",
-    // Objects and refs reach the disk before the journal that would make
-    // the commit again is deleted.
+    // Objects and refs reach the disk before the journal that names them
+    // is written, and before the journal that would make the commit again
+    // is deleted.
     "core.fsync=committed",
     // The loose objects of one `update-index`, and the trees of one
     // commit, reach the device with one hardware flush before any of them
@@ -89,7 +94,7 @@ const DATES: [&str; 2] = ["GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE"];
 
 /// The repository's `info/attributes`, which beats every `.gitattributes`
 /// and `core.attributesFile`: no attribute that converts bytes applies, so
-/// `update-index` stages, and `git status` and `git commit` read, the
+/// `update-index` writes, and `git status` and `git commit` read, the
 /// bytes on disk as they are. With `text` unset, `eol` converts nothing
 /// either; it is unset all the same.
 const ATTRIBUTES: &str = "* -text -eol -filter -ident -working-tree-encoding\n";
@@ -105,12 +110,67 @@ pub(crate) struct Repository {
 /// What `git status` says of the graph's files.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Status {
-    /// Whether the branch has a commit; a new repository's has none.
-    pub(crate) born: bool,
+    /// The branch's commit; `None` in a new repository, which has none.
+    pub(crate) head: Option<Oid>,
     /// The paths the pathspecs matched that differ between the work tree,
     /// the index and the last commit, or that no commit holds: modified,
     /// deleted, untracked and ignored ones alike, in git's order.
     pub(crate) changed: Vec<PathBuf>,
+}
+
+/// A git object name as git prints it: 40 lowercase hex digits, or 64 in
+/// a SHA-256 repository. Checked when read, from git or from a journal,
+/// so a name passed to git is never an option or a revision expression.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub(crate) struct Oid(String);
+
+impl Oid {
+    fn parse(bytes: &[u8]) -> Option<Self> {
+        let hex = std::str::from_utf8(bytes).ok()?;
+        Self::try_from(hex.to_owned()).ok()
+    }
+
+    /// The null name of this one's length, which `--index-info` reads as
+    /// "no such path".
+    pub(crate) fn null(&self) -> Self {
+        Self("0".repeat(self.0.len()))
+    }
+
+    fn is_null(&self) -> bool {
+        self.0.bytes().all(|byte| byte == b'0')
+    }
+
+    fn as_os_str(&self) -> &OsStr {
+        OsStr::new(&self.0)
+    }
+}
+
+impl TryFrom<String> for Oid {
+    type Error = &'static str;
+
+    fn try_from(hex: String) -> std::result::Result<Self, &'static str> {
+        let digits = hex
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+        if digits && matches!(hex.len(), 40 | 64) {
+            Ok(Self(hex))
+        } else {
+            Err("an object name of 40 or 64 lowercase hex digits")
+        }
+    }
+}
+
+impl From<Oid> for String {
+    fn from(oid: Oid) -> Self {
+        oid.0
+    }
+}
+
+impl fmt::Display for Oid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 /// What [`Repository::commit`] did.
@@ -158,7 +218,7 @@ impl Repository {
             "--template=".as_ref(),
             OsStr::new(&branch),
         ];
-        self.check(finish(isolated(&self.work_tree), &args, None)?, &args)?;
+        run(isolated(&self.work_tree), &self.work_tree, &args, None)?;
         let info = self.git_dir.join("info");
         fs::create_dir_all(&info).map_err(Error::io(&info))?;
         let attributes = info.join("attributes");
@@ -194,103 +254,6 @@ impl Repository {
         })
     }
 
-    /// Put `paths`, relative to the work tree, in the index as they are on
-    /// disk: each file's bytes as they are, through no filter or line-end
-    /// conversion; a path with no file is taken out, and one the index
-    /// never held is no error.
-    pub(crate) fn stage(&self, paths: &[PathBuf]) -> Result<()> {
-        self.unset_conversions()?;
-        let mut files = Vec::with_capacity(paths.len());
-        let mut links = Vec::new();
-        for relative in paths {
-            let full = self.work_tree.join(relative);
-            match fs::symlink_metadata(&full) {
-                Ok(metadata) if metadata.file_type().is_symlink() => links.push(relative),
-                Ok(_) => files.push(relative),
-                Err(e) if e.kind() == ErrorKind::NotFound => files.push(relative),
-                Err(source) => return Err(Error::Io { path: full, source }),
-            }
-        }
-        if !files.is_empty() {
-            self.update(&files)?;
-        }
-        if !links.is_empty() {
-            self.add_through(&links)?;
-        }
-        Ok(())
-    }
-
-    /// Write [`ATTRIBUTES`] to the repository's `info/attributes` when it
-    /// holds anything else, so no attribute converts what [`update`]
-    /// stages, whatever a person did to the file.
-    ///
-    /// [`update`]: Self::update
-    fn unset_conversions(&self) -> Result<()> {
-        let attributes = self.git_dir.join("info").join("attributes");
-        // Neither read nor written when it is no regular file: either one
-        // would wait on a FIFO for its other end forever.
-        match fs::metadata(&attributes) {
-            Ok(metadata) if !metadata.is_file() => {
-                return Err(Error::NotAFile { path: attributes });
-            }
-            Ok(_) | Err(_) => {}
-        }
-        match fs::read(&attributes) {
-            Ok(held) if held == ATTRIBUTES.as_bytes() => return Ok(()),
-            Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(Error::Io {
-                    path: attributes,
-                    source,
-                });
-            }
-        }
-        let info = self.git_dir.join("info");
-        fs::create_dir_all(&info).map_err(Error::io(&info))?;
-        fs::write(&attributes, ATTRIBUTES).map_err(Error::io(&attributes))
-    }
-
-    /// Stage the files and the missing paths of `paths` in one process,
-    /// in one object transaction: each file as its bytes, each missing
-    /// path taken out.
-    fn update(&self, paths: &[&PathBuf]) -> Result<()> {
-        let input: Vec<u8> = paths
-            .iter()
-            .flat_map(|path| path_bytes(path).into_iter().chain([0]))
-            .collect();
-        let args = [
-            "update-index".as_ref(),
-            "-z".as_ref(),
-            "--add".as_ref(),
-            "--remove".as_ref(),
-            "--stdin".as_ref(),
-        ];
-        self.run(&args, Some(&input)).map(drop)
-    }
-
-    /// Stage each of `links`, symlinks, as the bytes of the file it leads
-    /// to, which a load reads, through no filter: `update-index` would
-    /// stage the link itself.
-    fn add_through(&self, links: &[&PathBuf]) -> Result<()> {
-        let mut args: Vec<&OsStr> = ["hash-object", "-w", "--no-filters", "--"]
-            .iter()
-            .map(OsStr::new)
-            .collect();
-        args.extend(links.iter().map(|path| path.as_os_str()));
-        let stdout = self.run(&args, None)?;
-        let info = index_info(&stdout, links).ok_or_else(|| Error::GitOutput {
-            args: "hash-object -w --no-filters".into(),
-            detail: "a different number of object names than paths",
-        })?;
-        let args = [
-            "update-index".as_ref(),
-            "-z".as_ref(),
-            "--index-info".as_ref(),
-        ];
-        self.run(&args, Some(&info)).map(drop)
-    }
-
     /// Commit the index with `message`, kept verbatim. An index that
     /// matches the last commit is [`Committed::Nothing`], not a failure.
     pub(crate) fn commit(&self, message: &str) -> Result<Committed> {
@@ -323,29 +286,111 @@ impl Repository {
         }
     }
 
+    /// The branch's commit, which must exist.
+    pub(crate) fn head(&self) -> Result<Oid> {
+        let args = ["rev-parse".as_ref(), "--verify".as_ref(), "HEAD".as_ref()];
+        let stdout = self.run(&args, None)?;
+        Oid::parse(stdout.strip_suffix(b"\n").unwrap_or(&stdout)).ok_or_else(|| Error::GitOutput {
+            args: shown(&args),
+            detail: "no object name",
+        })
+    }
+
+    /// The first commit after `parent` on the first-parent line of the
+    /// branch, oldest first; the line's root when `parent` is `None`.
+    /// `None` when the branch is at `parent`.
+    pub(crate) fn first_after(&self, parent: Option<&Oid>) -> Result<Option<Oid>> {
+        let excluded = parent.map(|parent| format!("^{parent}"));
+        let mut args: Vec<&OsStr> = ["rev-list", "--first-parent", "--reverse", "HEAD"]
+            .iter()
+            .map(OsStr::new)
+            .collect();
+        args.extend(excluded.as_deref().map(OsStr::new));
+        let stdout = self.run(&args, None)?;
+        match stdout.split(|&byte| byte == b'\n').next() {
+            None | Some([]) => Ok(None),
+            Some(line) => Oid::parse(line).map(Some).ok_or_else(|| Error::GitOutput {
+                args: shown(&args),
+                detail: "a line that is no object name",
+            }),
+        }
+    }
+
+    /// Whether the tree of `commit` holds each of `entries` as it names it:
+    /// a path at its blob, and a path at the null name absent.
+    pub(crate) fn holds(&self, commit: &Oid, entries: &[(&Path, &Oid)]) -> Result<bool> {
+        let mut args: Vec<&OsStr> = ["--literal-pathspecs", "ls-tree", "-z", "--full-tree"]
+            .iter()
+            .map(OsStr::new)
+            .collect();
+        args.extend([commit.as_os_str(), OsStr::new("--")]);
+        args.extend(entries.iter().map(|(path, _)| path.as_os_str()));
+        let stdout = self.run(&args, None)?;
+        let held = stdout
+            .split(|&byte| byte == 0)
+            .filter(|record| !record.is_empty())
+            .map(tree_entry)
+            .collect::<Option<Vec<(PathBuf, Oid)>>>()
+            .ok_or_else(|| Error::GitOutput {
+                args: shown(&args),
+                detail: "a tree entry it cannot read",
+            })?;
+        Ok(entries.iter().all(|&(path, blob)| {
+            let at = held.iter().find(|(held, _)| held == path).map(|(_, id)| id);
+            if blob.is_null() {
+                at.is_none()
+            } else {
+                at == Some(blob)
+            }
+        }))
+    }
+
+    /// Those of `oids` the repository holds no object of.
+    pub(crate) fn missing<'o>(&self, oids: &[&'o Oid]) -> Result<BTreeSet<&'o Oid>> {
+        let input: Vec<u8> = oids
+            .iter()
+            .flat_map(|oid| oid.0.bytes().chain(*b"\n"))
+            .collect();
+        let args = ["cat-file".as_ref(), "--batch-check".as_ref()];
+        let stdout = self.run(&args, Some(&input))?;
+        let answers: Vec<&[u8]> = stdout
+            .split(|&byte| byte == b'\n')
+            .filter(|answer| !answer.is_empty())
+            .collect();
+        if answers.len() != oids.len() {
+            return Err(Error::GitOutput {
+                args: shown(&args),
+                detail: "a different number of answers than object names",
+            });
+        }
+        Ok(oids
+            .iter()
+            .zip(answers)
+            .filter(|(_, answer)| answer.ends_with(b" missing"))
+            .map(|(&oid, _)| oid)
+            .collect())
+    }
+
     /// The stdout of `git <args>` in this repository, which must exit with
     /// status 0.
     fn run(&self, args: &[&OsStr], input: Option<&[u8]>) -> Result<Vec<u8>> {
-        let output = finish(self.command(), args, input)?;
-        self.check(output, args)
-    }
-
-    fn check(&self, output: Output, args: &[&OsStr]) -> Result<Vec<u8>> {
-        if output.status.success() {
-            Ok(output.stdout)
-        } else {
-            Err(failed(&self.work_tree, args, &output))
-        }
+        run(self.command(), &self.work_tree, args, input)
     }
 
     /// [`isolated`] git, pointed at this repository and its work tree.
     fn command(&self) -> Command {
-        let mut command = isolated(&self.work_tree);
+        self.command_in(&self.work_tree)
+    }
+
+    /// [`isolated`] git in `dir`, pointed at this repository with `dir` as
+    /// its work tree.
+    fn command_in(&self, dir: &Path) -> Command {
+        let mut command = isolated(dir);
         command
             .arg("--git-dir")
             .arg(&self.git_dir)
             .arg("--work-tree")
-            .arg(&self.work_tree);
+            .arg(dir);
         command
     }
 }
@@ -364,33 +409,19 @@ fn isolated(dir: &Path) -> Command {
     command
 }
 
-/// The `update-index -z --index-info` lines that put each of `paths` at the
-/// object `hash-object` named for it, one name per line in `stdout`;
-/// `None` when the counts differ.
-fn index_info(stdout: &[u8], paths: &[&PathBuf]) -> Option<Vec<u8>> {
-    let oids: Vec<&[u8]> = stdout
-        .split(|&byte| byte == b'\n')
-        .filter(|oid| !oid.is_empty())
-        .collect();
-    if oids.len() != paths.len() {
-        return None;
-    }
-    let mut info = Vec::new();
-    for (oid, path) in oids.into_iter().zip(paths) {
-        info.extend_from_slice(b"100644 ");
-        info.extend_from_slice(oid);
-        info.push(b'\t');
-        info.extend(path_bytes(path));
-        info.push(0);
-    }
-    Some(info)
+/// One record of `ls-tree -z`: `<mode> <type> <object>\t<path>`.
+fn tree_entry(record: &[u8]) -> Option<(PathBuf, Oid)> {
+    let tab = record.iter().position(|&byte| byte == b'\t')?;
+    let (fields, name) = (record.get(..tab)?, record.get(tab + 1..)?);
+    let object = fields.rsplit(|&byte| byte == b' ').next()?;
+    Some((path(name), Oid::parse(object)?))
 }
 
 /// The records of `status --porcelain=v2 --branch -z`; `None` when one is
 /// of a kind or shape this reader does not know.
 fn parse_status(stdout: &[u8]) -> Option<Status> {
     let mut status = Status {
-        born: true,
+        head: None,
         changed: Vec::new(),
     };
     let mut records = stdout.split(|&byte| byte == 0).filter(|r| !r.is_empty());
@@ -398,8 +429,11 @@ fn parse_status(stdout: &[u8]) -> Option<Status> {
         let (kind, rest) = record.split_first()?;
         let changed = match kind {
             b'#' => {
-                if rest == b" branch.oid (initial)" {
-                    status.born = false;
+                if let Some(oid) = rest.strip_prefix(b" branch.oid ") {
+                    status.head = match oid {
+                        b"(initial)" => None,
+                        oid => Some(Oid::parse(oid)?),
+                    };
                 }
                 continue;
             }
@@ -471,7 +505,7 @@ mod tests {
         assert_eq!(
             repository.status(&GRAPH).unwrap(),
             Status {
-                born: false,
+                head: None,
                 changed: vec![]
             }
         );
@@ -503,7 +537,7 @@ mod tests {
 
         let status = repository.status(&GRAPH).unwrap();
 
-        assert!(status.born);
+        assert!(status.head.is_some());
         let mut changed = status.changed;
         changed.sort();
         assert_eq!(
@@ -546,12 +580,40 @@ mod tests {
         assert_eq!(git(&repository, &["cat-file", "blob", ":a.toml"]), bytes);
     }
 
-    /// Each attribute that converts what is staged, asked for by a
-    /// `.gitattributes` in the work tree, and the repository's own
-    /// attributes edited away first: staging restores them and takes the
-    /// bytes on disk. Each case fails when its attribute is not unset.
+    /// The id and the bytes of the blob `write_blobs` writes for one staged
+    /// file of `bytes` in `dir/.state/tmp/`, whose own `.gitattributes`
+    /// holds `attributes`.
+    fn blob_of_staged(
+        repository: &Repository,
+        dir: &Path,
+        attributes: &str,
+        bytes: &[u8],
+    ) -> (Oid, Vec<u8>) {
+        let tmp = dir.join(".state/tmp");
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join(".gitattributes"), attributes).unwrap();
+        fs::write(tmp.join("4242-0"), bytes).unwrap();
+        let index = tmp.join("4242-1");
+
+        let ids = repository
+            .write_blobs(&tmp, &[OsStr::new("4242-0")], &index)
+            .unwrap();
+
+        let [id] = ids.as_slice() else {
+            panic!("{ids:?}");
+        };
+        let args = ["cat-file".as_ref(), "blob".as_ref(), id.as_os_str()];
+        let blob = repository.run(&args, None).unwrap();
+        (id.clone(), blob)
+    }
+
+    /// Each attribute that converts what is staged or written as a blob,
+    /// asked for by a `.gitattributes` in the work tree and in the staging
+    /// directory, and the repository's own attributes edited away first:
+    /// staging and writing a blob restore them and take the bytes on disk.
+    /// Each case fails when its attribute is not unset.
     #[test]
-    fn stage_unsets_every_converting_attribute_whatever_info_attributes_held() {
+    fn stage_and_blobs_unset_every_converting_attribute_whatever_info_attributes_held() {
         let utf16 = b"\xff\xfea\x00\n\x00".as_slice();
         let cases: [(&str, &[u8]); 5] = [
             ("* text\n", b"crlf\r\nline\r\n"),
@@ -579,7 +641,99 @@ mod tests {
                 .unwrap();
             assert_eq!(blob, bytes, "{attributes}");
             assert_eq!(fs::read_to_string(&info).unwrap(), ATTRIBUTES);
+
+            fs::write(&info, "* text ident\n").unwrap();
+            let (_, blob) = blob_of_staged(&repository, dir, attributes, bytes);
+            assert_eq!(blob, bytes, "a blob, {attributes}");
+            assert_eq!(fs::read_to_string(&info).unwrap(), ATTRIBUTES);
         }
+    }
+
+    /// Blobs are written from staged files through no filter, whatever
+    /// filter a `.gitattributes` names, and read back by their ids; the
+    /// repository's index stays as it was.
+    #[test]
+    fn blobs_are_written_through_no_filter_and_leave_the_index_alone() {
+        let (tmp, repository) = created();
+        let dir = tmp.path();
+        converting(&repository, dir);
+        fs::remove_file(repository.git_dir().join("info/attributes")).unwrap();
+        let bytes = b"line one\r\nline two $Id$\n";
+
+        let attributes = "* text eol=lf ident filter=broken\n";
+        let (_, blob) = blob_of_staged(&repository, dir, attributes, bytes);
+
+        assert_eq!(blob, bytes);
+        assert_eq!(git(&repository, &["ls-files"]), "");
+        assert!(!repository.git_dir().join("index").exists());
+    }
+
+    /// An index set from blob ids holds them whatever the work tree holds,
+    /// and the null name takes a path out.
+    #[test]
+    fn set_index_puts_each_path_at_its_blob_and_takes_a_null_one_out() {
+        let (tmp, repository) = created();
+        let dir = tmp.path();
+        fs::write(dir.join("a.toml"), "a").unwrap();
+        fs::write(dir.join("gone.toml"), "gone").unwrap();
+        repository
+            .stage(&["a.toml".into(), "gone.toml".into()])
+            .unwrap();
+        repository.commit("first").unwrap();
+        let parent = repository.head().unwrap();
+        let (id, _) = blob_of_staged(&repository, dir, "", b"the write's bytes");
+        fs::write(dir.join("a.toml"), "a hand edit").unwrap();
+
+        let null = parent.null();
+        let entries = [(Path::new("a.toml"), &id), (Path::new("gone.toml"), &null)];
+        repository.set_index(&entries).unwrap();
+        repository.commit("second").unwrap();
+
+        assert_eq!(
+            git(&repository, &["show", "HEAD:a.toml"]),
+            "the write's bytes"
+        );
+        assert_eq!(
+            git(&repository, &["ls-tree", "--name-only", "HEAD"]),
+            "a.toml\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("a.toml")).unwrap(),
+            "a hand edit"
+        );
+        let second = repository.head().unwrap();
+        assert!(repository.holds(&second, &entries).unwrap());
+        assert!(!repository.holds(&parent, &entries).unwrap());
+        assert_eq!(
+            repository.first_after(Some(&parent)).unwrap(),
+            Some(second.clone())
+        );
+        assert_eq!(repository.first_after(Some(&second)).unwrap(), None);
+        assert_eq!(repository.first_after(None).unwrap(), Some(parent.clone()));
+        let absent = Oid::try_from("1".repeat(40)).unwrap();
+        assert_eq!(
+            repository.missing(&[&id, &absent, &parent]).unwrap(),
+            BTreeSet::from([&absent])
+        );
+    }
+
+    #[test]
+    fn an_object_name_is_40_or_64_lowercase_hex_digits() {
+        for good in ["a".repeat(40), "0123456789abcdef".repeat(4)] {
+            assert!(Oid::try_from(good.clone()).is_ok(), "{good}");
+        }
+        for bad in [
+            "a".repeat(39),
+            "A".repeat(40),
+            "g".repeat(40),
+            format!("-{}", "a".repeat(39)),
+            String::new(),
+        ] {
+            assert!(Oid::try_from(bad.clone()).is_err(), "{bad}");
+        }
+        let oid = Oid::try_from("ab".repeat(20)).unwrap();
+        assert_eq!(oid.null().to_string(), "0".repeat(40));
+        assert!(oid.null().is_null() && !oid.is_null());
     }
 
     /// A symlinked node file is staged as the bytes a load reads through
@@ -706,7 +860,7 @@ mod tests {
         assert_eq!(
             parse_status(stdout).unwrap(),
             Status {
-                born: false,
+                head: None,
                 changed: [
                     "sp ace.toml",
                     "new.toml",
@@ -718,7 +872,13 @@ mod tests {
                 .to_vec(),
             }
         );
-        assert!(parse_status(b"# branch.oid 01ab\0").unwrap().born);
+        let oid = "01ab".repeat(10);
+        let born = format!("# branch.oid {oid}\0");
+        assert_eq!(
+            parse_status(born.as_bytes()).unwrap().head,
+            Some(Oid::try_from(oid).unwrap())
+        );
+        assert_eq!(parse_status(b"# branch.oid 01ab\0"), None);
         assert_eq!(parse_status(b"x what\0"), None);
         assert_eq!(parse_status(b"1 .M short\0"), None);
     }

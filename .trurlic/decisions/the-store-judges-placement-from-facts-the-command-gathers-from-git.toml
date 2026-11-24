@@ -1,8 +1,6 @@
 component = "store"
 choice = "The store judges placement from PlacementFacts that check gathers from git, as the migration takes git's listing; the store asks git nothing about the project's repository"
-reason = """
-The judgement is pure: ProjectState::placement_issues takes the graph directory and PlacementFacts (no work tree, or the tracked and ignored paths and the main worktree: bare, this graph with the other graphs of the linked worktrees, or elsewhere with its shared graph if any) and returns sorted issues, so each rule is a unit test with no repository. commands/placement.rs gathers the facts in the directory that holds the graph, never inside it: git::toplevel, tracked, ignored and worktrees, then discovery::graph_in for each worktree's .trurlic and the placement the main worktree's graph states. The migration's placement is read the same way, through commands/placement.rs tracked and PlacementSource. These are not issues of ProjectState::validate, which every read and every write runs without git. The store runs git only in a shared graph's own repository, through git::graph, for its history.
-"""
+reason = "The judgement is pure: ProjectState::placement_issues takes the graph directory and PlacementFacts (no work tree, or the tracked and ignored paths and the main worktree: bare, this graph with the other graphs of the linked worktrees, or elsewhere with its shared graph if any) and returns sorted issues, so each rule is a unit test with no repository. commands/placement.rs gathers the facts in the directory that holds the graph, never inside it: git::toplevel, tracked, ignored and worktrees, then discovery::worktree_graph for each worktree's .trurlic and the placement the main worktree's graph states. The migration's placement is read the same way, through commands/placement.rs tracked and PlacementSource. These are not issues of ProjectState::validate, which every read and every write runs without git. The store runs git only in a shared graph's own repository, through git::graph, for its history."
 alternatives = [
     "Ask the project's git from the store: rejected because the command can hand the store the answer, and the store's one use of git is the graph's own repository",
     "Judge in commands: rejected because the counting rule is shared with the migration, which lives in the store",
@@ -18,6 +16,7 @@ created = "2026-11-24T03:00:00Z"
 anchors = [
     { file = "src/commands/placement.rs", symbol = "facts" },
     { file = "src/commands/placement.rs", symbol = "main_worktree" },
+    { file = "src/discovery.rs", symbol = "worktree_graph" },
     { file = "src/store/placement.rs", symbol = "MainWorktree" },
     { file = "src/store/placement.rs", symbol = "PlacementFacts" },
 ]

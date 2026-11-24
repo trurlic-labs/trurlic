@@ -16,17 +16,6 @@ use crate::harness::{Project, decision, git, graph_git, graph_log, record};
 /// out of order: `trurlic fmt` rewrites it.
 const EDITED: &str = "decisions/sign-tokens.toml";
 
-/// A directory in no git work tree holding a shared graph `init` made.
-fn shared() -> Project {
-    let project = Project::without_store();
-    project.run_ok(&["init", "--placement", "shared"]);
-    project
-}
-
-fn graph(project: &Project) -> PathBuf {
-    project.path().join(".trurlic")
-}
-
 fn hand_edit(project: &Project) -> String {
     let text = decision("project", "Sign tokens", "tags = [\"b\", \"a\"]\n");
     project.write(EDITED, &text);
@@ -36,16 +25,16 @@ fn hand_edit(project: &Project) -> String {
 /// The bytes the commit `rev` of the graph's history holds for `file`.
 fn committed(project: &Project, rev: &str, file: &str) -> String {
     graph_git(
-        &graph(project),
+        &project.graph(),
         &["cat-file", "blob", &format!("{rev}:{file}")],
     )
 }
 
 #[test]
 fn init_makes_the_graph_a_repository_whose_first_commit_is_init() {
-    let project = shared();
+    let project = Project::shared();
 
-    assert_eq!(graph_log(&graph(&project)), ["init"]);
+    assert_eq!(graph_log(&project.graph()), ["init"]);
     assert_eq!(
         committed(&project, "HEAD", "project.toml"),
         project.read("project.toml")
@@ -54,7 +43,7 @@ fn init_makes_the_graph_a_repository_whose_first_commit_is_init() {
     assert!(project.node(".state/lock").exists());
     assert_eq!(
         graph_git(
-            &graph(&project),
+            &project.graph(),
             &["status", "--porcelain", "--untracked-files=all"]
         ),
         ""
@@ -67,24 +56,24 @@ fn init_makes_the_graph_a_repository_whose_first_commit_is_init() {
 /// write with nothing to do makes no commit.
 #[test]
 fn a_hand_edit_followed_by_a_write_is_two_commits() {
-    let project = shared();
+    let project = Project::shared();
     let edited = hand_edit(&project);
 
     project.run_ok(&["fmt"]);
 
-    assert_eq!(graph_log(&graph(&project)), ["fmt", "hand edit", "init"]);
+    assert_eq!(graph_log(&project.graph()), ["fmt", "hand edit", "init"]);
     assert_eq!(committed(&project, "HEAD~1", EDITED), edited);
     assert_eq!(committed(&project, "HEAD", EDITED), project.read(EDITED));
     assert_ne!(project.read(EDITED), edited);
     project.run_ok(&["fmt"]);
-    assert_eq!(graph_log(&graph(&project)).len(), 3);
+    assert_eq!(graph_log(&project.graph()).len(), 3);
 }
 
 /// A canonical hand edit leaves `fmt` nothing to rewrite, and it commits
 /// the hand edit, so `check` finds the history settled.
 #[test]
 fn fmt_commits_a_hand_edit_it_has_nothing_to_rewrite_for() {
-    let project = shared();
+    let project = Project::shared();
     project.write("components/auth.toml", "description = \"Auth\"\n");
     let stderr = String::from_utf8(project.run_ok(&["check"]).stderr).unwrap();
     assert!(
@@ -98,7 +87,7 @@ fn fmt_commits_a_hand_edit_it_has_nothing_to_rewrite_for() {
 
     project.run_ok(&["fmt"]);
 
-    assert_eq!(graph_log(&graph(&project)), ["hand edit", "init"]);
+    assert_eq!(graph_log(&project.graph()), ["hand edit", "init"]);
     let stdout = String::from_utf8(project.run_ok(&["check"]).stdout).unwrap();
     assert_eq!(stdout, ".trurlic/ is consistent\n");
 }
@@ -114,7 +103,7 @@ fn under_tracked_no_commit_is_made() {
 
     project.run_ok(&["fmt"]);
 
-    assert!(!graph(&project).join(".git").exists());
+    assert!(!project.graph().join(".git").exists());
     assert_eq!(graph_git(project.path(), &["rev-parse", "HEAD"]), before);
     let status = String::from_utf8(project.run_ok(&["status"]).stdout).unwrap();
     assert!(!status.contains("history"), "{status}");
@@ -125,7 +114,7 @@ fn under_tracked_no_commit_is_made() {
 /// alone, and the other one's history and index are as they were.
 #[test]
 fn a_write_with_git_dir_set_to_another_repository_commits_only_to_the_graph() {
-    let project = shared();
+    let project = Project::shared();
     hand_edit(&project);
     let other = TempDir::new().unwrap();
     git(other.path(), &["init", "--quiet", "--initial-branch=main"]);
@@ -146,16 +135,16 @@ fn a_write_with_git_dir_set_to_another_repository_commits_only_to_the_graph() {
         .unwrap();
 
     assert!(output.status.success(), "{output:?}");
-    assert_eq!(graph_log(&graph(&project)), ["fmt", "hand edit", "init"]);
+    assert_eq!(graph_log(&project.graph()), ["fmt", "hand edit", "init"]);
     assert_eq!(graph_log(other.path()), ["other"]);
     assert_eq!(fs::read(other_git.join("index")).unwrap(), index);
 }
 
 #[test]
 fn a_write_while_git_holds_the_index_is_refused_and_writes_nothing() {
-    let project = shared();
+    let project = Project::shared();
     let edited = hand_edit(&project);
-    let lock = graph(&project).join(".git/index.lock");
+    let lock = project.graph().join(".git/index.lock");
     fs::write(&lock, "").unwrap();
 
     let stderr = project.run_refused(&["fmt"]);
@@ -170,7 +159,7 @@ fn a_write_while_git_holds_the_index_is_refused_and_writes_nothing() {
     assert!(stderr.contains("the write is refused"), "{stderr}");
     assert_eq!(project.read(EDITED), edited);
     assert!(!project.node(".state/txn.toml").exists());
-    assert_eq!(graph_log(&graph(&project)), ["init"]);
+    assert_eq!(graph_log(&project.graph()), ["init"]);
 }
 
 /// `check` fails on a leftover index lock and warns about files the
@@ -178,11 +167,11 @@ fn a_write_while_git_holds_the_index_is_refused_and_writes_nothing() {
 /// repository: the index keeps its bytes.
 #[test]
 fn check_and_status_report_an_uncommitted_tree_and_a_leftover_index_lock() {
-    let project = shared();
+    let project = Project::shared();
     hand_edit(&project);
-    let lock = graph(&project).join(".git/index.lock");
+    let lock = project.graph().join(".git/index.lock");
     fs::write(&lock, "").unwrap();
-    let index = graph(&project).join(".git/index");
+    let index = project.graph().join(".git/index");
     let before = fs::read(&index).unwrap();
 
     let stderr = project.run_refused(&["check"]);
@@ -190,7 +179,7 @@ fn check_and_status_report_an_uncommitted_tree_and_a_leftover_index_lock() {
 
     let uncommitted = format!(
         "{}: 1 file(s) differ from the last commit of the graph's history: {EDITED};",
-        graph(&project).display()
+        project.graph().display()
     );
     let locked = format!(
         "{}: git holds the index of the graph's repository, or a git process that stopped \
@@ -234,7 +223,7 @@ fn a_missing_git_is_refused_at_init_and_at_a_write() {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("error: cannot run `git`"), "{stderr}");
-    assert!(!graph(&project).exists());
+    assert!(!project.graph().exists());
 
     project.run_ok(&["init", "--placement", "shared"]);
     let edited = hand_edit(&project);
@@ -266,7 +255,7 @@ fn no_configuration_or_environment_breaks_or_redirects_a_commit() {
         assert!(output.status.success(), "trurlic {args:?}: {output:?}");
     };
     run(&["init", "--placement", "shared"]);
-    let config = graph(&project).join(".git/config");
+    let config = project.graph().join(".git/config");
     let local = fs::read_to_string(&config).unwrap();
     fs::write(&config, format!("{local}{}", hostile.settings())).unwrap();
     project.write(".gitattributes", "* text eol=crlf ident filter=broken\n");
@@ -275,7 +264,7 @@ fn no_configuration_or_environment_breaks_or_redirects_a_commit() {
 
     run(&["fmt"]);
 
-    let graph = graph(&project);
+    let graph = project.graph();
     assert_eq!(graph_log(&graph), ["fmt", "hand edit", "init"]);
     let identities = graph_git(&graph, &["log", "--format=%an <%ae> %cn <%ce> %at %ct"]);
     for line in identities.lines() {
@@ -417,7 +406,8 @@ impl Hostile {
 }
 
 /// The stop of a write at each step after its commit point: its files in
-/// place, its history commit made, its journal deleted. The next opener
+/// place, its history index staged, its history commit made, its journal
+/// deleted. The next opener
 /// finishes it, and the history holds its commit once.
 #[cfg(feature = "failpoints")]
 #[test]
@@ -426,10 +416,11 @@ fn a_write_stopped_after_its_commit_point_is_committed_once_by_the_next_opener()
 
     for spec in [
         "commit.placed:1",
+        "history.staged:2",
         "history.committed:1",
         "commit.finished:1",
     ] {
-        let project = shared();
+        let project = Project::shared();
         hand_edit(&project);
         let output = project
             .command()
@@ -451,7 +442,7 @@ fn a_write_stopped_after_its_commit_point_is_committed_once_by_the_next_opener()
         );
         assert!(!project.node(".state/txn.toml").exists(), "{spec}");
         assert_eq!(
-            graph_log(&graph(&project)),
+            graph_log(&project.graph()),
             ["fmt", "hand edit", "init"],
             "{spec}"
         );
@@ -467,7 +458,7 @@ fn a_write_stopped_after_its_commit_point_is_committed_once_by_the_next_opener()
 fn a_history_commit_that_fails_is_made_by_the_next_writer() {
     use crate::harness::Pause;
 
-    let project = shared();
+    let project = Project::shared();
     hand_edit(&project);
     let pause = Pause::arm(&project, "commit.placed:1");
     let writer = project
@@ -478,7 +469,7 @@ fn a_history_commit_that_fails_is_made_by_the_next_writer() {
         .spawn()
         .unwrap();
     pause.wait();
-    let lock = graph(&project).join(".git/index.lock");
+    let lock = project.graph().join(".git/index.lock");
     fs::write(&lock, "").unwrap();
     pause.resume();
     let writer = writer.wait_with_output().unwrap();
@@ -498,7 +489,102 @@ fn a_history_commit_that_fails_is_made_by_the_next_writer() {
     project.run_ok(&["fmt"]);
 
     assert!(!project.node(".state/txn.toml").exists());
-    assert_eq!(graph_log(&graph(&project)), ["fmt", "hand edit", "init"]);
+    assert_eq!(graph_log(&project.graph()), ["fmt", "hand edit", "init"]);
+}
+
+/// A write stopped with its hand edits staged and not committed, before
+/// its commit point: the graph is as it was, and the next write makes the
+/// `hand edit` commit and its own, nothing more.
+#[cfg(feature = "failpoints")]
+#[test]
+fn a_write_stopped_with_its_hand_edits_staged_leaves_them_to_the_next_write() {
+    let project = Project::shared();
+    let text = hand_edit(&project);
+    let output = project
+        .command()
+        .arg("fmt")
+        .env("TRURLIC_FAILPOINT", "history.staged:1")
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{output:?}");
+    assert_eq!(project.read(EDITED), text);
+    assert_eq!(graph_log(&project.graph()), ["init"]);
+
+    project.run_ok(&["fmt"]);
+
+    assert_eq!(graph_log(&project.graph()), ["fmt", "hand edit", "init"]);
+    assert_eq!(committed(&project, "HEAD~1", EDITED), text);
+    assert_eq!(committed(&project, "HEAD", EDITED), project.read(EDITED));
+}
+
+/// A write with removals whose history commit fails once its files are in
+/// place, its journal narrowed to that commit and the reader stopped
+/// there: the owner re-creates the removed file and edits a written one.
+/// No later read removes the file again, and the commit the next opener
+/// makes holds the write's own bytes and removal; both edits are left for
+/// the next `hand edit` commit.
+#[cfg(feature = "failpoints")]
+#[test]
+fn a_stopped_write_is_committed_as_it_was_and_removes_no_file_twice() {
+    let project = Project::shared();
+    assert!(project.apply(&batch("row 1", "auth"), &[]).status.success());
+    let removed = "decisions/auth-two.toml";
+    let kept = project.read(removed);
+    let removals = serde_json::json!({ "origin": "row 2", "ops": [
+        { "op": "rename", "name": "auth-one", "to": "auth-first" },
+        { "op": "remove", "name": "auth-two" },
+    ]});
+    let file = project.path().join("removals.json");
+    fs::write(&file, removals.to_string()).unwrap();
+    let stopped = |args: &[&str], spec: &str| {
+        let output = project
+            .command()
+            .args(args)
+            .env("TRURLIC_FAILPOINT", spec)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{spec}: {output:?}");
+    };
+    stopped(&["apply", file.to_str().unwrap()], "commit.placed:1");
+    let lock = project.graph().join(".git/index.lock");
+    fs::write(&lock, "").unwrap();
+    stopped(&["status"], "commit.narrowed:1");
+    let journal: toml::Table = project.read(".state/txn.toml").parse().unwrap();
+    assert_eq!(journal.keys().collect::<Vec<_>>(), ["history"], "{journal}");
+
+    let written = project.read("decisions/auth-first.toml");
+    project.write(removed, &kept);
+    let edited = written.replace("A rule of auth", "A rule of auth, edited");
+    project.write("decisions/auth-first.toml", &edited);
+    project.run_ok(&["status"]);
+    project.run_ok(&["status"]);
+    assert_eq!(project.read(removed), kept);
+    fs::remove_file(&lock).unwrap();
+    project.run_ok(&["status"]);
+
+    assert!(!project.node(".state/txn.toml").exists());
+    let log = graph_log(&project.graph());
+    assert_eq!(
+        log[..2],
+        ["apply\n\nOrigin: row 2", "apply\n\nOrigin: row 1"]
+    );
+    assert_eq!(
+        committed(&project, "HEAD", "decisions/auth-first.toml"),
+        written
+    );
+    let tree = graph_git(&project.graph(), &["ls-tree", "--name-only", "-r", "HEAD"]);
+    assert!(!tree.contains(removed), "{tree}");
+    assert_eq!(project.read(removed), kept);
+    project.run_ok(&["fmt"]);
+    assert_eq!(graph_log(&project.graph())[0], "hand edit");
+    let changed = graph_git(
+        &project.graph(),
+        &["show", "--name-only", "--format=", "HEAD"],
+    );
+    assert_eq!(
+        changed,
+        "decisions/auth-first.toml\ndecisions/auth-two.toml\n"
+    );
 }
 
 /// A batch that records two decisions of a new component.
@@ -519,13 +605,13 @@ fn batch(origin: &str, component: &str) -> serde_json::Value {
 fn each_apply_is_one_commit_with_its_origin() {
     use crate::harness::McpClient;
 
-    let project = shared();
+    let project = Project::shared();
     let (mut client, _) = McpClient::connect(&project);
     client.call_tool("apply", batch("task 18", "auth"));
     client.call_tool("apply", batch("task 19", "billing"));
 
     assert_eq!(
-        graph_log(&graph(&project)),
+        graph_log(&project.graph()),
         [
             "apply\n\nOrigin: task 19",
             "apply\n\nOrigin: task 18",
@@ -533,7 +619,7 @@ fn each_apply_is_one_commit_with_its_origin() {
         ]
     );
     let changed = graph_git(
-        &graph(&project),
+        &project.graph(),
         &["show", "--name-only", "--format=", "HEAD"],
     );
     assert_eq!(
@@ -546,7 +632,7 @@ fn each_apply_is_one_commit_with_its_origin() {
     let (mut client, _) = McpClient::connect(&tracked);
     client.call_tool("apply", batch("task 18", "auth"));
     assert_eq!(graph_git(tracked.path(), &["rev-parse", "HEAD"]), before);
-    assert!(!graph(&tracked).join(".git").exists());
+    assert!(!tracked.graph().join(".git").exists());
 }
 
 /// A batch with removals stopped at each step of its commit under
@@ -564,13 +650,15 @@ fn a_stopped_batch_is_finished_by_the_next_opener_with_one_commit() {
     ]});
     for (spec, lands) in [
         ("commit.staged:1", false),
+        ("history.blobs:1", false),
         ("commit.journaled:1", true),
         ("commit.applied:2", true),
         ("commit.placed:1", true),
+        ("history.staged:1", true),
         ("history.committed:1", true),
         ("commit.finished:1", true),
     ] {
-        let project = shared();
+        let project = Project::shared();
         assert!(project.apply(&batch("row 1", "auth"), &[]).status.success());
         let file = project.path().join("removals.json");
         fs::write(&file, removals.to_string()).unwrap();
@@ -587,7 +675,7 @@ fn a_stopped_batch_is_finished_by_the_next_opener_with_one_commit() {
             trurlic_ok(project.path(), &["check"]),
             ".trurlic/ is consistent\n"
         );
-        let log = graph_log(&graph(&project));
+        let log = graph_log(&project.graph());
         let names: Vec<String> = project.graph_files().into_keys().collect();
         if lands {
             assert_eq!(log[0], "apply\n\nOrigin: row 2", "{spec}");
@@ -644,7 +732,7 @@ fn fsyncs(project: &Project, args: &[&str]) -> (u64, u64) {
 /// per object, so the flushes do not grow with the files.
 #[test]
 fn a_commit_flushes_its_objects_in_one_batch_however_many_files_it_holds() {
-    let project = shared();
+    let project = Project::shared();
     let ops: Vec<serde_json::Value> = (0..30)
         .map(|i| record(&format!("rule-{i}"), "project", &format!("Rule {i}")))
         .collect();
@@ -655,7 +743,7 @@ fn a_commit_flushes_its_objects_in_one_batch_however_many_files_it_holds() {
     assert!(writeouts >= 30, "{writeouts} writeouts");
     assert!(flushes < 10, "{flushes} hardware flushes for 30 objects");
 
-    fs::remove_dir_all(graph(&project).join(".git")).unwrap();
+    fs::remove_dir_all(project.graph().join(".git")).unwrap();
     hand_edit(&project);
     let (flushes, writeouts) = fsyncs(&project, &["fmt"]);
     assert!(writeouts >= 32, "{writeouts} writeouts");
@@ -663,9 +751,9 @@ fn a_commit_flushes_its_objects_in_one_batch_however_many_files_it_holds() {
         flushes < 10,
         "{flushes} hardware flushes for the first commit"
     );
-    assert_eq!(graph_log(&graph(&project)), ["fmt"]);
+    assert_eq!(graph_log(&project.graph()), ["fmt"]);
     assert_eq!(
-        graph_git(&graph(&project), &["ls-files"]).lines().count(),
+        graph_git(&project.graph(), &["ls-files"]).lines().count(),
         32
     );
 }

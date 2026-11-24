@@ -39,20 +39,20 @@ fn read(file: &Path) -> std::result::Result<Vec<u8>, ToolError> {
     } else {
         File::open(file).and_then(|opened| opened.take(limit).read_to_end(&mut document))
     };
-    let shown = || match file.to_str() {
-        Some("-") => "stdin".to_owned(),
-        _ => file.display().to_string(),
-    };
+    let shown = if file == Path::new("-") {
+        Path::new("stdin")
+    } else {
+        file
+    }
+    .display();
     if let Err(e) = read {
         return Err(ToolError::bad_document(format!(
-            "{}: cannot read the batch: {e}",
-            shown()
+            "{shown}: cannot read the batch: {e}"
         )));
     }
     if document.len() > MAX_DOCUMENT_BYTES {
         return Err(ToolError::bad_document(format!(
-            "{}: a batch is at most {MAX_DOCUMENT_BYTES} bytes",
-            shown()
+            "{shown}: a batch is at most {MAX_DOCUMENT_BYTES} bytes"
         )));
     }
     Ok(document)

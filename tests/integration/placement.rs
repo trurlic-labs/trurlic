@@ -14,7 +14,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use crate::harness::{
-    McpClient, decision, git, graph_log, record, trurlic, trurlic_ok, trurlic_refused,
+    McpClient, Project, decision, git, graph_log, record, trurlic, trurlic_ok, trurlic_refused,
 };
 
 /// A main worktree at `main` with a graph holding the component `auth`
@@ -279,44 +279,30 @@ fn a_repository_inside_a_project_does_not_reach_its_graph() {
 
 // -- check refuses what git contradicts -------------------------------------
 
-/// A git repository on branch `main` with one commit and a tracked graph
-/// `init` made, committed or not.
-fn tracked_repository(commit: bool) -> TempDir {
-    let tmp = TempDir::new().unwrap();
-    git(tmp.path(), &["init", "--quiet", "--initial-branch=main"]);
-    trurlic_ok(tmp.path(), &["init", "--placement", "tracked"]);
-    if commit {
-        git(tmp.path(), &["add", "--all"]);
-        git(tmp.path(), &["commit", "--quiet", "-m", "init"]);
-    }
-    tmp
-}
-
 #[test]
 fn check_refuses_a_tracked_graph_git_tracks_none_of() {
-    let tmp = tracked_repository(false);
+    let project = Project::init_uncommitted();
 
-    let stderr = trurlic_refused(tmp.path(), &["check"]);
+    let stderr = project.run_refused(&["check"]);
 
     assert!(
         stderr.contains("placement = \"tracked\", but git tracks none of its 1 files"),
         "{stderr}"
     );
-    git(tmp.path(), &["add", ".trurlic"]);
-    trurlic_ok(tmp.path(), &["check"]);
+    git(project.path(), &["add", ".trurlic"]);
+    project.run_ok(&["check"]);
 }
 
 #[test]
 fn check_refuses_a_tracked_graph_git_ignores_a_file_of() {
-    let tmp = tracked_repository(true);
-    fs::write(tmp.path().join(".gitignore"), ".trurlic/decisions/\n").unwrap();
-    fs::write(
-        tmp.path().join(".trurlic/decisions/sign-tokens.toml"),
-        decision("project", "Sign tokens", ""),
-    )
-    .unwrap();
+    let project = Project::init();
+    fs::write(project.path().join(".gitignore"), ".trurlic/decisions/\n").unwrap();
+    project.write(
+        "decisions/sign-tokens.toml",
+        &decision("project", "Sign tokens", ""),
+    );
 
-    let stderr = trurlic_refused(tmp.path(), &["check"]);
+    let stderr = project.run_refused(&["check"]);
 
     assert!(
         stderr.contains("git ignores 1 of its 2 files: decisions/sign-tokens.toml;"),
@@ -326,13 +312,11 @@ fn check_refuses_a_tracked_graph_git_ignores_a_file_of() {
 
 #[test]
 fn check_refuses_a_tracked_graph_in_no_work_tree() {
-    let tmp = TempDir::new().unwrap();
-    trurlic_ok(tmp.path(), &["init", "--placement", "shared"]);
-    let manifest = tmp.path().join(".trurlic/project.toml");
-    let text = fs::read_to_string(&manifest).unwrap();
-    fs::write(&manifest, text.replace("\"shared\"", "\"tracked\"")).unwrap();
+    let project = Project::shared();
+    let text = project.read("project.toml");
+    project.write("project.toml", &text.replace("\"shared\"", "\"tracked\""));
 
-    let stderr = trurlic_refused(tmp.path(), &["check"]);
+    let stderr = project.run_refused(&["check"]);
 
     assert!(
         stderr.contains("placement = \"tracked\", but no git work tree holds it"),
@@ -415,11 +399,10 @@ fn check_refuses_a_second_graph_beside_a_shared_one_from_both_sides() {
 #[test]
 fn check_refuses_a_shared_graph_off_the_top_of_the_main_worktree() {
     let trees = Trees::repository();
-    let made = TempDir::new().unwrap();
-    trurlic_ok(made.path(), &["init", "--placement", "shared"]);
+    let made = Project::shared();
     let sub = trees.main.join("sub");
     fs::create_dir_all(&sub).unwrap();
-    fs::rename(made.path().join(".trurlic"), sub.join(".trurlic")).unwrap();
+    fs::rename(made.graph(), sub.join(".trurlic")).unwrap();
 
     let stderr = trurlic_refused(&sub, &["check"]);
 

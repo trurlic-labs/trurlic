@@ -2,9 +2,10 @@
 //!
 //! Every graph write runs under the exclusive lock on `.state/lock`, and
 //! [`StoreLock`] is the proof a write method takes. The holder writes its PID
-//! into the lock file so a timed-out waiter can name it. Every read loads
-//! under the shared lock, which keeps writers out without excluding other
-//! readers.
+//! into the lock file so a timed-out waiter can name it. A read loads under
+//! the shared lock, which keeps writers out without excluding other
+//! readers, or under the exclusive lock when it first finishes an
+//! interrupted write.
 //!
 //! Locks are std's `File::try_lock` and `try_lock_shared`, polled until
 //! [`LOCK_TIMEOUT`]: the blocking calls have no timeout, so a hung holder
@@ -25,7 +26,7 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Proof that this process holds the store's exclusive file lock: every
-/// function that changes a file under `.trurlic/` takes `&StoreLock`, and a
+/// entry point that changes a file under `.trurlic/` takes `&StoreLock`, and a
 /// [`Writer`](super::Writer) owns one. Dropping it releases the lock.
 #[derive(Debug)]
 #[must_use = "dropping the lock immediately releases it"]

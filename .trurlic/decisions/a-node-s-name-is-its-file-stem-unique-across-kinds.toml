@@ -15,9 +15,9 @@ status = "proposed"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/store/limits.rs", symbol = "MAX_NAME_BYTES" },
+    { file = "src/store/name.rs", symbol = "is_valid_kebab_case" },
+    { file = "src/store/name.rs", symbol = "name_fault" },
     { file = "src/store/schema.rs", symbol = "PROJECT_COMPONENT" },
-    { file = "src/store/state.rs", symbol = "is_valid_kebab_case" },
-    { file = "src/store/state.rs", symbol = "name_fault" },
     { file = "src/store/validate.rs", symbol = "ProjectState::check_names" },
 ]
 depends_on = [

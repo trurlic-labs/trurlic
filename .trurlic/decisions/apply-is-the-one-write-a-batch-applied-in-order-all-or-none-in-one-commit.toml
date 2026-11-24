@@ -15,7 +15,7 @@ origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "apply" },
-    { file = "src/mcp/apply.rs", symbol = "APPLY" },
+    { file = "src/mcp/apply/mod.rs", symbol = "APPLY" },
     { file = "src/store/apply/edit.rs", symbol = "Edit" },
     { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
     { file = "src/store/apply/ops.rs", symbol = "Batch" },

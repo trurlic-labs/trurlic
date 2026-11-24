@@ -5,7 +5,8 @@
 //! is written sorted, one element per line with a trailing comma, so two
 //! branches that each add an element at a different place merge without
 //! a conflict; an empty set or list is left out. A string holding a line
-//! break is a `"""` string, every other one a basic `"..."` string.
+//! break is a `"""` string, a `[quality]` pattern a `'...'` literal when it
+//! can be one, every other one a basic `"..."` string.
 //!
 //! The form is defined here, not by the TOML library's printer, so a
 //! dependency update never changes the bytes of a file nobody edited. Every
@@ -19,12 +20,12 @@ use super::schema::{AcceptedVia, Anchor, Component, Decision, Project, Status};
 
 /// A file type with a canonical form.
 pub(crate) trait Canonical {
-    /// Write the canonical text of `self` to `out`.
+    /// Fails only when `out` does: never into a `String`, at the first byte
+    /// that differs into a comparison.
     fn emit<W: Write>(&self, out: &mut Emitter<W>) -> fmt::Result;
 }
 
-/// The canonical text of `value`.
-pub(crate) fn canonical<T: Canonical>(value: &T) -> String {
+pub(super) fn canonical<T: Canonical>(value: &T) -> String {
     let mut out = Emitter(String::with_capacity(1024));
     // Writing to a `String` cannot fail.
     let _ = value.emit(&mut out);
@@ -33,7 +34,7 @@ pub(crate) fn canonical<T: Canonical>(value: &T) -> String {
 
 /// Whether `bytes` are the canonical text of `value`. Compares as it
 /// writes, so it allocates nothing and stops at the first difference.
-pub(crate) fn is_canonical<T: Canonical>(value: &T, bytes: &[u8]) -> bool {
+pub(super) fn is_canonical<T: Canonical>(value: &T, bytes: &[u8]) -> bool {
     let mut out = Emitter(Compare { rest: bytes });
     value.emit(&mut out).is_ok() && out.0.rest.is_empty()
 }
@@ -64,6 +65,13 @@ impl<W: Write> Emitter<W> {
         write!(self.0, "{key} = ")?;
         self.text(value)?;
         self.0.write_char('\n')
+    }
+
+    /// `value` as a basic string, written as it displays: for a value
+    /// whose display holds no character a string escapes, such as a
+    /// timestamp or a format version.
+    fn display(&mut self, key: &str, value: &impl fmt::Display) -> fmt::Result {
+        writeln!(self.0, "{key} = \"{value}\"")
     }
 
     fn optional(&mut self, key: &str, value: Option<&str>) -> fmt::Result {
@@ -130,14 +138,18 @@ impl<W: Write> Emitter<W> {
 
     /// A range as an inline table of the bounds it has; nothing for none.
     fn range(&mut self, key: &str, range: WordRange) -> fmt::Result {
-        let bounds: Vec<String> = [("min", range.min), ("max", range.max)]
+        let bounds = [("min", range.min), ("max", range.max)];
+        let mut bounds = bounds
             .into_iter()
-            .filter_map(|(name, bound)| bound.map(|bound| format!("{name} = {bound}")))
-            .collect();
-        if bounds.is_empty() {
+            .filter_map(|(name, bound)| bound.map(|bound| (name, bound)));
+        let Some((name, bound)) = bounds.next() else {
             return Ok(());
+        };
+        write!(self.0, "{key} = {{ {name} = {bound}")?;
+        for (name, bound) in bounds {
+            write!(self.0, ", {name} = {bound}")?;
         }
-        writeln!(self.0, "{key} = {{ {} }}", bounds.join(", "))
+        self.0.write_str(" }\n")
     }
 
     /// A regular expression as a `'...'` literal string, which holds its
@@ -186,8 +198,9 @@ impl<W: Write> Emitter<W> {
     }
 }
 
-/// Whether `c` is written as an escape: a quote, a backslash, and every
-/// control character but tab, and a line break outside a `"""` string.
+/// Whether `c` is written as an escape: a quote, a backslash, every control
+/// character but tab and line break, and a line break outside a `"""`
+/// string.
 fn needs_escape(c: char, multiline: bool) -> bool {
     match c {
         '"' | '\\' => true,
@@ -199,7 +212,7 @@ fn needs_escape(c: char, multiline: bool) -> bool {
 
 impl Canonical for Project {
     fn emit<W: Write>(&self, out: &mut Emitter<W>) -> fmt::Result {
-        out.string("format_version", &self.format_version.to_string())?;
+        out.display("format_version", &self.format_version)?;
         out.string("name", &self.name)?;
         out.string("description", &self.description)?;
         out.string("placement", self.placement.as_str())?;
@@ -260,7 +273,7 @@ impl Canonical for Decision {
         };
         out.optional("accepted_via", via)?;
         out.optional("origin", self.origin.as_deref())?;
-        out.string("created", &self.created.to_string())?;
+        out.display("created", &self.created)?;
         out.array("anchors", &self.anchors, Emitter::anchor)?;
         out.strings("depends_on", &self.depends_on)?;
         if let Status::Proposed {

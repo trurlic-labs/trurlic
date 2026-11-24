@@ -78,7 +78,7 @@ impl Store {
             }
         };
         let files: Vec<String> = files.iter().map(ToString::to_string).collect();
-        let (tracked, untracked) = partition(&files, &tracked);
+        let (tracked, untracked) = partition(files, &tracked);
         match (tracked.len(), untracked.len()) {
             (files, 0) => Ok((Placement::Tracked, PlacementBasis::AllTracked { files })),
             (0, files) => Ok((Placement::Shared, PlacementBasis::NoneTracked { files })),

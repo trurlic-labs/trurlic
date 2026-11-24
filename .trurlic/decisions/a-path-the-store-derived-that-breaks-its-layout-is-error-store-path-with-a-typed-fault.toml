@@ -1,0 +1,22 @@
+component = "store"
+choice = "A path the store derived that breaks its own layout is Error::StorePath with a typed StorePathFault, never a formatted string"
+reason = "Six places reported a path outside the store, a path with a parent-directory component, or a store root with no parent as Error::Validation(String), the variant meant for messages the validator formats, each with its own wording and nothing a caller could match. Every one of them guards a programming error: each path is derived from the root, so none fires in correct code. Error::StorePath { path, fault } names the path and one of Traversal, Outside or NoParent, so verify_path, the journal's relative paths, write_atomic and Store::parent_and_name, which placement and migrate use for the directory that holds the graph, refuse alike, and Error::Validation is gone."
+alternatives = [
+    "One variant per fault: rejected because the three are one concept, a derived path that breaks the layout, and only the fault differs",
+    "Keep Validation(String) for them: rejected because its message is free text no caller or test can match and it duplicates the validator's variant",
+]
+tags = [
+    "errors",
+]
+status = "proposed"
+origin = "review findings of the stateless-server landing"
+created = "2026-11-24T07:46:56.158310508Z"
+anchors = [
+    { file = "src/error.rs", symbol = "Error::StorePath" },
+    { file = "src/store/mod.rs", symbol = "Store::parent_and_name" },
+    { file = "src/store/mod.rs", symbol = "Store::verify_path" },
+    { file = "src/store/mod.rs", symbol = "StorePathFault" },
+]
+depends_on = [
+    "path-traversal-defense-with-verify-path-rejecting-parent",
+]

@@ -6,26 +6,34 @@
 //!
 //! Before a write reaches its commit point, the graph files the last commit
 //! does not hold as they are on disk are committed as `hand edit`, so the
-//! write's commit holds the write alone; the first commit of a repository
-//! holds every graph file. The message travels in the journal, so the
-//! opener that finishes an interrupted write makes its commit. A commit is
-//! made by content: the write's files are staged as they are on disk, and
-//! an index that then matches the last commit means the commit is in the
-//! history already, made before the stop or by hand since, and none is made
-//! again.
+//! write's commit holds the write alone, and the write's staged files are
+//! written to the repository as blobs. The journal carries a
+//! [`HistoryStep`]: the message, the commit the write's goes on, and the id
+//! of each blob. The commit's index is set from those ids, so it holds the
+//! write's bytes whatever the files hold by the time it is made: a hand
+//! edit made between a stopped write and the opener that finishes it is
+//! left uncommitted, for the next `hand edit` commit. The first commit of a
+//! repository holds every graph file as well.
+//!
+//! An opener that finishes a stopped write looks for its commit first: the
+//! commit after the step's parent on the branch's first-parent line, when
+//! it holds the write's blobs, is the write's, made before the stop, and
+//! reworded, amended, packed or followed by others since.
 
-use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fmt;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::console::diag;
-use crate::git::graph::{Committed, Repository, Status};
+use crate::git::graph::{Committed, Oid, Repository, Status};
 use crate::{Error, Result};
 
 use super::Store;
+use super::failpoint::{self, Site};
 use super::lock::StoreLock;
 use super::placement::listed;
 use super::schema::{COMPONENTS_DIR, DECISIONS_DIR, PROJECT_FILE, Placement, STATE_DIR};
@@ -148,15 +156,94 @@ impl<'m> History<'m> {
     }
 }
 
-/// The repository's branch, as the history step found it before the
-/// commit point.
+/// The repository's branch, as the history step found it.
 #[derive(Debug)]
 pub(super) enum Head {
-    Born,
-    /// No commit yet: `files` are the graph files on disk then, which the
-    /// first commit holds with the write's.
-    Unborn {
-        files: Vec<PathBuf>,
+    /// The commit the write's goes on.
+    Born { parent: Oid },
+    /// No commit yet: `files` are the graph files on disk, which the first
+    /// commit holds with the write's.
+    Unborn { files: Vec<PathBuf> },
+}
+
+impl Head {
+    fn parent(&self) -> Option<&Oid> {
+        match self {
+            Self::Born { parent } => Some(parent),
+            Self::Unborn { .. } => None,
+        }
+    }
+}
+
+/// A write's history commit as its journal carries it: everything the
+/// commit needs once the files are in place, so a journal that names only
+/// this step finishes the write without touching a file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct HistoryStep {
+    message: CommitMessage,
+    /// The branch's commit before the write's; `None` when it had none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent: Option<Oid>,
+    /// Each file the write puts in place, at the blob of its bytes.
+    #[serde(default, rename = "blob", skip_serializing_if = "Vec::is_empty")]
+    blobs: Vec<Blob>,
+    /// The files the write removes.
+    #[serde(default, rename = "remove", skip_serializing_if = "Vec::is_empty")]
+    removes: Vec<PathBuf>,
+}
+
+/// A file of a write and the blob of its bytes, relative to the graph
+/// directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Blob {
+    path: PathBuf,
+    id: Oid,
+}
+
+impl HistoryStep {
+    /// The step of a write of `message` on `head` that puts each file of
+    /// `blobs` in place at its blob and removes `removes`.
+    pub(super) fn new(
+        message: &CommitMessage,
+        head: &Head,
+        blobs: impl IntoIterator<Item = (PathBuf, Oid)>,
+        removes: &[PathBuf],
+    ) -> Self {
+        Self {
+            // clone: the journal owns its copy of the message.
+            message: message.clone(),
+            // clone: the journal owns its copy; the writer keeps the head.
+            parent: head.parent().cloned(),
+            blobs: blobs
+                .into_iter()
+                .map(|(path, id)| Blob { path, id })
+                .collect(),
+            // clone: the step keeps its own list of the removals, which a
+            // journal narrowed to the step holds without the file step.
+            removes: removes.to_vec(),
+        }
+    }
+
+    /// Every path the step names: its blobs', then its removals.
+    pub(super) fn paths(&self) -> impl Iterator<Item = &Path> {
+        self.blobs
+            .iter()
+            .map(|blob| blob.path.as_path())
+            .chain(self.removes.iter().map(PathBuf::as_path))
+    }
+}
+
+/// What an opener that finishes a stopped write finds in the repository.
+enum Found<'s> {
+    /// The write's commit, made before the stop.
+    Made,
+    /// No commit of the write yet; `missing` are the step's blobs and
+    /// parent the repository lost since, to a gc or a repository made again.
+    Waits {
+        head: Head,
+        missing: BTreeSet<&'s Oid>,
     },
 }
 
@@ -202,7 +289,7 @@ impl fmt::Display for HistoryFinding {
                 lock.display()
             ),
             Self::Uncommitted { graph, files } => {
-                let names: Vec<String> = files.iter().map(|f| f.display().to_string()).collect();
+                let names: Vec<_> = files.iter().map(|file| file.to_string_lossy()).collect();
                 write!(
                     f,
                     "{}: {} file(s) differ from the last commit of the graph's history: {}; \
@@ -214,6 +301,55 @@ impl fmt::Display for HistoryFinding {
             }
         }
     }
+}
+
+/// Set the index of `repository` for the commit of `step` on `head`: each
+/// blob at its path and each removal taken out. A blob in `missing`, lost
+/// since the step was written, is staged from its file as it is on disk,
+/// and so is every other graph file of a first commit.
+fn set_index(
+    repository: &Repository,
+    step: &HistoryStep,
+    head: &Head,
+    missing: &BTreeSet<&Oid>,
+) -> Result<()> {
+    let mut from_disk = BTreeSet::new();
+    let mut entries = Vec::with_capacity(step.blobs.len() + step.removes.len());
+    for blob in &step.blobs {
+        if missing.contains(&blob.id) {
+            diag!(
+                "warning: {}: the graph's repository lost the bytes an interrupted write staged \
+                 for this file; its history commit holds the file as it is",
+                blob.path.display()
+            );
+            from_disk.insert(blob.path.as_path());
+        } else {
+            entries.push((blob.path.as_path(), &blob.id));
+        }
+    }
+    let null = match head {
+        Head::Born { parent } => Some(parent.null()),
+        // No commit holds a removed file, and the files on disk no
+        // longer include it.
+        Head::Unborn { files } => {
+            let ours: BTreeSet<&Path> = entries.iter().map(|(path, _)| *path).collect();
+            from_disk.extend(
+                files
+                    .iter()
+                    .map(PathBuf::as_path)
+                    .filter(|f| !ours.contains(f)),
+            );
+            None
+        }
+    };
+    if let Some(null) = &null {
+        entries.extend(step.removes.iter().map(|path| (path.as_path(), null)));
+    }
+    if !from_disk.is_empty() {
+        let from_disk: Vec<PathBuf> = from_disk.into_iter().map(Path::to_path_buf).collect();
+        repository.stage(&from_disk)?;
+    }
+    repository.set_index(&entries)
 }
 
 /// The graph's files as pathspecs relative to the graph directory, one
@@ -286,57 +422,105 @@ impl Store {
             return Err(Error::GraphIndexLocked { lock: index_lock });
         }
         let status = graph_status(&repository)?;
-        if !status.born {
+        let Some(parent) = status.head else {
             return Ok(Head::Unborn {
                 files: status.changed,
             });
+        };
+        if status.changed.is_empty() {
+            return Ok(Head::Born { parent });
         }
-        if !status.changed.is_empty() {
-            repository.stage(&status.changed)?;
-            repository.commit(&format!("{HAND_EDIT}\n"))?;
-        }
-        Ok(Head::Born)
+        repository.stage(&status.changed)?;
+        failpoint::hit(Site::HistoryStaged);
+        let parent = match repository.commit(&format!("{HAND_EDIT}\n"))? {
+            Committed::Made => repository.head()?,
+            Committed::Nothing => parent,
+        };
+        Ok(Head::Born { parent })
     }
 
-    /// The history step after the files are in place: `paths`, relative to
-    /// the graph directory, committed with `message`. `head` is what
+    /// Write the staged files `staged`, each in `.state/tmp/`, to the graph's
+    /// repository as blobs, in one batch, and return their ids in order.
+    pub(super) fn write_blobs(&self, _lock: &StoreLock, staged: &[&Path]) -> Result<Vec<Oid>> {
+        let names: Vec<&OsStr> = staged.iter().filter_map(|path| path.file_name()).collect();
+        let index = self.temp_path();
+        let written = self
+            .repository()
+            .write_blobs(&self.tmp_dir(), &names, &index);
+        // A scratch index left by a failure is a temp file recovery removes.
+        let _ = fs::remove_file(&index);
+        written
+    }
+
+    /// The history step after the files are in place: the index set to the
+    /// step's blobs and removals, then the commit. `head` is what
     /// [`prepare_history`](Self::prepare_history) found, or `None` when an
-    /// opener finishes a stopped write, which asks the repository again.
+    /// opener finishes a stopped write, which asks the repository again and
+    /// makes no commit the history already holds.
     pub(super) fn commit_history(
         &self,
         lock: &StoreLock,
-        message: &CommitMessage,
-        paths: &[PathBuf],
+        step: &HistoryStep,
         head: Option<Head>,
     ) -> Result<Committed> {
         let repository = self.repository();
-        let head = match head {
-            Some(head) => head,
-            None => self.head_now(lock, &repository)?,
+        let (head, missing) = match head {
+            Some(head) => (head, BTreeSet::new()),
+            None => match self.look_for_commit(lock, &repository, step)? {
+                Found::Made => return Ok(Committed::Nothing),
+                Found::Waits { head, missing } => (head, missing),
+            },
         };
-        let staged: Cow<'_, [PathBuf]> = match head {
-            Head::Born => Cow::Borrowed(paths),
-            Head::Unborn { files } => {
-                // clone: the first commit's set owns the write's paths too.
-                let all: BTreeSet<PathBuf> =
-                    files.into_iter().chain(paths.iter().cloned()).collect();
-                Cow::Owned(all.into_iter().collect())
-            }
-        };
-        repository.stage(&staged)?;
-        repository.commit(&message.render())
+        set_index(&repository, step, &head, &missing)?;
+        failpoint::hit(Site::HistoryStaged);
+        repository.commit(&step.message.render())
     }
 
-    /// The branch as it is, for an opener that finishes a stopped write.
-    fn head_now(&self, lock: &StoreLock, repository: &Repository) -> Result<Head> {
+    /// The repository as it is, for an opener that finishes a stopped
+    /// write: its commit already made, or the head the commit goes on.
+    fn look_for_commit<'s>(
+        &self,
+        lock: &StoreLock,
+        repository: &Repository,
+        step: &'s HistoryStep,
+    ) -> Result<Found<'s>> {
         self.make_again(lock, repository)?;
         let status = graph_status(repository)?;
-        Ok(if status.born {
-            Head::Born
-        } else {
-            Head::Unborn {
+        let asked: Vec<&Oid> = step
+            .blobs
+            .iter()
+            .map(|blob| &blob.id)
+            .chain(step.parent.as_ref())
+            .collect();
+        let missing = repository.missing(&asked)?;
+        let Some(head) = status.head else {
+            let head = Head::Unborn {
                 files: status.changed,
+            };
+            return Ok(Found::Waits { head, missing });
+        };
+        // Past the parent, a commit by hand or the write's own; past a
+        // parent the repository lost, it was made again since, and holds no
+        // commit of the write.
+        let parent_lost = step.parent.as_ref().is_some_and(|p| missing.contains(p));
+        if step.parent.as_ref() != Some(&head)
+            && !parent_lost
+            && let Some(next) = repository.first_after(step.parent.as_ref())?
+        {
+            let null = head.null();
+            let entries: Vec<(&Path, &Oid)> = step
+                .blobs
+                .iter()
+                .map(|blob| (blob.path.as_path(), &blob.id))
+                .chain(step.removes.iter().map(|path| (path.as_path(), &null)))
+                .collect();
+            if repository.holds(&next, &entries)? {
+                return Ok(Found::Made);
             }
+        }
+        Ok(Found::Waits {
+            head: Head::Born { parent: head },
+            missing,
         })
     }
 
@@ -390,8 +574,6 @@ mod tests {
         CommitMessage::new(Tool::Fmt, Some(origin.into()), Some(session.into())).unwrap()
     }
 
-    /// Write the sample component as `name` through a writer, with
-    /// `message`.
     fn write_component(store: &Store, name: &str, message: &CommitMessage) -> Result<()> {
         let writer = store.begin_write()?;
         let write = store.prepare_write(&store.component_path(name), &sample_component())?;

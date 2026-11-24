@@ -1,9 +1,6 @@
 component = "store"
 choice = "Benches and property tests draw from a seeded corpus written as canonical files in one journaled commit"
-reason = """
-store::corpus writes a store shaped like a large real graph (reasons of 600 to 1200 bytes, up to 20 anchors, one decision in ten proposed and a quarter of those carrying accepted_text, one in sixteen project-wide, about one in two depending on an earlier one, a component per 40 decisions connecting to the next two) plus a Rust source tree its anchors resolve in, with the share of anchored files a parameter. Every node goes through prepare_write and one commit_batch, the path every write takes, and its tests hold the graph valid, every file canonical, and every node's bytes a fixpoint of read and write.
-Draws come from an inline SplitMix64 and timestamps are a fixed epoch plus offsets, so the same Corpus value writes the same bytes on any machine, rand release or day: benches compare commits only while the corpus is byte-identical. The same SplitMix64 (pub(crate) in store::corpus) is the one seeded source of the crate's unit property tests, such as the random payloads of mcp::truncate, so no test carries a second PRNG or a rand dependency. It compiles under cfg(test) and the bench feature only, so release builds carry neither the corpus nor the generator.
-"""
+reason = "store::corpus writes a store shaped like a large real graph (reasons of 600 to 1200 bytes, up to 20 anchors, one decision in ten proposed and a quarter of those carrying accepted_text, one in sixteen project-wide, about one in two depending on an earlier one, a component per 40 decisions connecting to the next two) plus a Rust source tree its anchors resolve in, with the share of anchored files a parameter. Every node goes through prepare_write and one commit_batch, the path every write takes, and its tests hold the graph valid, every file canonical, and every node's bytes a fixpoint of read and write. Draws come from SplitMix64 in store::seeded and timestamps are a fixed epoch plus offsets, so the same Corpus value writes the same bytes on any machine, rand release or day: benches compare commits only while the corpus is byte-identical. The same generator is the one seeded source of the crate's unit property tests, such as the timestamps of store::time and the random payloads of mcp::truncate, so no test carries a second PRNG or a rand dependency. The corpus is crate-private and reaches benches as trurlic::bench::Corpus; both compile under cfg(test) and the bench feature only, so release builds carry neither the corpus nor the generator, and the store's public surface is the same with the feature."
 alternatives = [
     "rand's StdRng: rejected because its algorithm is not guaranteed stable across releases, which would move every bench baseline on a dependency bump",
     "One commit per decision: rejected because thousands of journaled commits take minutes and stamp wall-clock times",
@@ -16,9 +13,10 @@ tags = [
 status = "proposed"
 created = "2026-10-03T13:55:20.745975078Z"
 anchors = [
+    { file = "src/lib.rs", symbol = "bench" },
     { file = "src/mcp/truncate.rs" },
     { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
-    { file = "src/store/corpus.rs", symbol = "Corpus" },
-    { file = "src/store/corpus.rs", symbol = "Corpus::write" },
-    { file = "src/store/corpus.rs", symbol = "SplitMix64" },
+    { file = "src/store/corpus/mod.rs", symbol = "Corpus" },
+    { file = "src/store/corpus/mod.rs", symbol = "Corpus::write" },
+    { file = "src/store/seeded.rs", symbol = "SplitMix64" },
 ]

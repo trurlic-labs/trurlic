@@ -8,12 +8,12 @@ use serde_json::{Map, Value, json};
 
 use super::{
     Args, At, Fault, Fields, InvalidArgument, Kind, declared_schema, input_schema, parse,
-    read_fields,
+    read_fields, schema,
 };
-use crate::store::has_control_chars;
 
-/// A string of at most `max_bytes`, with no control character but tab and
-/// line breaks.
+/// A string of at most `max_bytes`. Its characters are the store's to judge:
+/// every text an op writes is held to `store::text`, a name to the name
+/// rule and an anchor to its own, so a refusal names the rule it breaks.
 pub(crate) struct Text {
     pub max_bytes: usize,
 }
@@ -22,7 +22,10 @@ impl Kind for Text {
     type Out = String;
 
     fn schema(&self) -> Map<String, Value> {
-        schema(json!({ "type": "string", "maxLength": self.max_bytes }))
+        schema([
+            ("type", "string".into()),
+            ("maxLength", self.max_bytes.into()),
+        ])
     }
 
     fn parse(&self, value: &Value, at: At<'_>) -> Result<String, InvalidArgument> {
@@ -38,9 +41,6 @@ impl Kind for Text {
                 },
             ));
         }
-        if has_control_chars(text) {
-            return Err(InvalidArgument::new(at, Fault::ControlCharacter));
-        }
         Ok(text.to_owned())
     }
 }
@@ -55,7 +55,7 @@ impl<T: Copy> Kind for Choice<T> {
 
     fn schema(&self) -> Map<String, Value> {
         let names: Vec<&str> = self.values.iter().map(|(name, _)| *name).collect();
-        schema(json!({ "type": "string", "enum": names }))
+        schema([("type", "string".into()), ("enum", names.into())])
     }
 
     fn parse(&self, value: &Value, at: At<'_>) -> Result<T, InvalidArgument> {
@@ -83,11 +83,11 @@ impl<K: Kind> Kind for List<K> {
     type Out = Vec<K::Out>;
 
     fn schema(&self) -> Map<String, Value> {
-        schema(json!({
-            "type": "array",
-            "items": self.item.schema(),
-            "maxItems": self.max_items,
-        }))
+        schema([
+            ("type", "array".into()),
+            ("items", self.item.schema().into()),
+            ("maxItems", self.max_items.into()),
+        ])
     }
 
     fn parse(&self, value: &Value, at: At<'_>) -> Result<Vec<K::Out>, InvalidArgument> {
@@ -160,7 +160,7 @@ impl<T> Kind for Union<T> {
                 Value::Object(declared_schema(variant.declare, Some((self.tag, tag))))
             })
             .collect();
-        schema(json!({ "type": "object", "oneOf": shapes }))
+        schema([("type", "object".into()), ("oneOf", shapes.into())])
     }
 
     fn parse(&self, value: &Value, at: At<'_>) -> Result<T, InvalidArgument> {
@@ -182,14 +182,5 @@ impl<T> Kind for Union<T> {
                 InvalidArgument::new(tag_at, Fault::NotOneOf(names))
             })?;
         read_fields(object, at, &[self.tag], variant.declare)
-    }
-}
-
-/// The schema `literal` holds; every kind writes its schema as an object.
-fn schema(literal: Value) -> Map<String, Value> {
-    match literal {
-        Value::Object(schema) => schema,
-        // Not taken: every caller passes a `json!` object literal.
-        _ => Map::new(),
     }
 }
