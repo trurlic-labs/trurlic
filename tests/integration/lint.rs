@@ -420,7 +420,7 @@ fn the_default_call_judges_the_limits_alone() {
         json!({
             "judged": 0, "unjudged": DECISIONS, "why": "not_asked",
             "more": "the call judges the limits alone; `section: \"lint\"` judges the \
-                     patterns too, within a work limit",
+                     patterns too, within a bound on the bytes they read",
         })
     );
     let terminal = String::from_utf8(project.run_ok(&["status"]).stdout).unwrap();
@@ -463,17 +463,24 @@ fn a_pattern_that_does_not_compile_leaves_the_limits_judged() {
     assert!(stderr.contains("does not compile"), "{stderr}");
 }
 
-/// A walk from `next` to `next` judges every decision of a graph whose
-/// patterns' work passes the section's limit. The graph holds seventy
-/// decisions of ten thousand bytes, every tenth ending in `zzq`, read by a
-/// pattern of thousands of states that runs fast. The terminal names the
-/// flag that reads on.
+/// A walk from `next` to `next` lists every quality finding exactly once,
+/// over a graph whose pages end where the result's room ends. The graph
+/// holds seventy decisions of ten thousand bytes, every tenth ending in
+/// `zzq`, and thirty patterns that match every choice. The terminal names
+/// the flag that reads on.
 #[test]
-fn from_reads_on_where_the_work_limit_stopped() {
+fn a_walk_from_next_to_next_lists_every_finding_once() {
     let project = Project::init();
     let header = project.read("project.toml");
-    let table = "[quality]\n\n[[quality.patterns]]\npattern = '\\w{0,20}zzq'\n\
-                 fields = [\"reason\"]\nlevel = \"warn\"\nmessage = \"No zzq.\"\n";
+    let mut table = "[quality]\n\n[[quality.patterns]]\npattern = '(?:^|\\W)zzq(?:\\W|$)'\n\
+                     fields = [\"reason\"]\nlevel = \"warn\"\nmessage = \"No zzq.\"\n"
+        .to_owned();
+    for _ in 0..30 {
+        table.push_str(
+            "\n[[quality.patterns]]\npattern = '^Keep'\nfields = [\"choice\"]\n\
+             level = \"warn\"\nmessage = \"Keep.\"\n",
+        );
+    }
     project.write("project.toml", &format!("{header}\n{table}"));
     let words = "each decision keeps its reason in the graph ".repeat(225);
     for index in 0..70 {
@@ -486,7 +493,7 @@ fn from_reads_on_where_the_work_limit_stopped() {
     }
     let (mut client, _) = McpClient::connect(&project);
 
-    let (mut from, mut pages, mut judged, mut matched) = (None::<String>, 0, 0, Vec::new());
+    let (mut from, mut judged, mut listed, mut whys) = (None::<String>, 0, Vec::new(), Vec::new());
     loop {
         let mut arguments = json!({ "section": "lint" });
         if let Some(from) = &from {
@@ -494,12 +501,11 @@ fn from_reads_on_where_the_work_limit_stopped() {
         }
         let status = client.call_tool("status", arguments);
         let patterns = &status["counts"]["lint"]["patterns"];
-        pages += 1;
         judged += patterns["judged"].as_u64().unwrap();
-        matched.extend(findings(&status).into_iter().map(|row| row.0));
+        listed.extend(findings(&status));
         match patterns["next"].as_str() {
             Some(next) => {
-                assert_eq!(patterns["why"], "work_limit", "{patterns}");
+                whys.push(patterns["why"].as_str().unwrap().to_owned());
                 assert!(from.as_deref().is_none_or(|from| next > from), "{patterns}");
                 from = Some(next.to_owned());
             }
@@ -507,14 +513,53 @@ fn from_reads_on_where_the_work_limit_stopped() {
         }
     }
 
-    assert!(pages > 1, "{pages}");
     assert_eq!(judged, 70);
+    let mut once = listed.clone();
+    once.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    once.dedup();
+    assert_eq!(once.len(), listed.len(), "a finding listed twice");
+    assert_eq!(listed.len(), 70 * 30 + 7);
+    let zzq: Vec<&str> = listed
+        .iter()
+        .filter(|row| row.1 == "reason")
+        .map(|row| row.0.as_str())
+        .collect();
     let every_tenth: Vec<String> = (0..70).step_by(10).map(|i| format!("d{i:02}")).collect();
-    assert_eq!(matched, every_tenth);
+    assert_eq!(zzq, every_tenth);
+    assert!(whys.iter().any(|why| why == "page"), "{whys:?}");
     let terminal = String::from_utf8(project.run_ok(&["status", "--section", "lint"]).stdout);
     let terminal = terminal.unwrap();
     assert!(
         terminal.contains("`trurlic status --section lint --from d"),
         "{terminal}"
     );
+}
+
+/// A decision whose findings alone pass what one page lists: hundreds of
+/// alternatives, each over the word limit. The page lists those that fit
+/// and moves on, so a walk from `next` ends.
+#[test]
+fn a_decision_past_a_whole_page_is_listed_in_part_and_passed() {
+    let project = Project::init();
+    let header = project.read("project.toml");
+    let table = "[quality]\nalternative_words_max = 1\n\n[[quality.patterns]]\n\
+                 pattern = 'zz'\nfields = [\"choice\"]\nlevel = \"warn\"\nmessage = \"No zz.\"\n";
+    project.write("project.toml", &format!("{header}\n{table}"));
+    let alternatives: Vec<String> = (0..400).map(|index| format!("Plain way {index}")).collect();
+    let alternatives: Vec<&str> = alternatives.iter().map(String::as_str).collect();
+    let many = Fields {
+        alternatives: &alternatives,
+        ..CLEAN
+    };
+    project.write("decisions/a.toml", &text(&many));
+    project.write("decisions/b.toml", &text(&CLEAN));
+    let (mut client, _) = McpClient::connect(&project);
+
+    let status = client.call_tool("status", json!({ "section": "lint" }));
+
+    let listed = findings(&status);
+    assert!(!listed.is_empty() && listed.iter().all(|row| row.0 == "a"));
+    assert!(listed.len() < 400, "{}", listed.len());
+    let next = &status["counts"]["lint"]["patterns"]["next"];
+    assert_eq!(next, &json!("b"), "{}", status["counts"]);
 }

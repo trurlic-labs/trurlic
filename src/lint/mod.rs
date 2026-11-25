@@ -13,14 +13,17 @@ mod tests {
     use crate::code::{AllowList, faults};
 
     /// What `lint` may name: the code index's facts, the graph's value
-    /// types, a path as a value, and the thread pool.
+    /// types, the bar and the cache in memory its patterns search over, a
+    /// path as a value, and the thread pool.
     const LINT: AllowList = AllowList {
         modules: &["lint", "code"],
         store_items: &[
             "Anchor",
             "Bar",
             "Decision",
+            "PatternCache",
             "ProjectState",
+            "QualityFault",
             "Shortfall",
             "Status",
         ],

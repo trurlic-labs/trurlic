@@ -1,12 +1,12 @@
 component = "lint"
-choice = "The lint section judges the [quality] patterns over the decisions by name while their work, bytes read times NFA states, stays within MAX_PATTERN_WORK, and names where it stopped"
-reason = "A pattern's cost per byte runs from about a nanosecond on the lazy DFA to over a hundred microseconds on the PikeVM, which walks the states of the pattern's Thompson NFA for each byte, so bytes alone bound no time. Bar::pattern_work charges each pattern the bytes of every text it reads, one more per search, times its NFA's state count, so the work bounds the time of the slowest engine and needs no clock: the same cut on every machine. The worst rate measured on one core is about 7 ns per state-byte, for a counted repetition at the compile limit over ASCII text and for a word boundary of a few states over CJK text. So the bound of 2e9 state-bytes costs a call at most about 14 s of CPU. It admits the shipped table over the seeded corpus at 600 decisions whole and cuts it near half at 2000. The decisions are read in name order while the sum stays within the bound; one whose own work passes it is counted in too_costly and passed over; the first that would take the sum past it is named next, and a call with from set to it reads on, so a caller walks every decision but the too costly. The limits run no regex and are judged for every decision in one bounded fold. The patterns run one task per pattern over the decisions in order, so a compiled regex keeps one cache whatever the threads, and the parts merge by decision and rule, so the answer does not depend on the threads."
+choice = "The lint section judges the [quality] patterns by decision name while their bytes fit MAX_REPORT_PATTERN_BYTES, no cache gives up and the page has room; next names where it ended"
+reason = "On the lazy DFA alone a pattern's time is the bytes it reads and at most one fill of its cache per direction, so plain bytes bound a call: Bar::pattern_bytes charges each pattern the texts it reads, one byte more per text, as a write charges them. The section holds no lock. The patterns read the decisions in name order while the sum stays within the bound, the first whatever its bytes, so a walk advances. Each pattern keeps one cache for the page. A cache that gives up on a decision ends the page before it, so the next page judges it first over fresh caches. When a fresh cache gives up on the first decision of a page, the give-up is a finding of that decision, pattern_gave_up at refuse, as a write of it is refused, and the page ends after it. So a page fills each cache at most once. The patterns read in runs that double, and stop once the findings before the next run pass what a page lists. A page lists whole the quality findings of the decisions before next, the limits' included; next is the first decision the bytes, a give-up or the result's room left. A call with from set to next reads on, so a walk from next to next lists every finding once. A decision whose findings alone pass a page lists those that fit, counts the rest and the page moves on. The patterns run one task per pattern, so a cache belongs to one thread, and the parts merge by decision and rule."
 alternatives = [
     "A wall-clock deadline: rejected because the answer would depend on the machine and its load, and lint reads no clock",
-    "A bound on the bytes read: rejected because a pattern near the compile limit costs a hundred thousand times what the lazy DFA does per byte, so one bound either cuts a fast table early or lets one call run an hour",
-    "Nothing judged past the bound: rejected because a graph just past it would show no pattern finding, where a page by name shows them all in turn",
+    "Charge bytes times weighed NFA states: rejected because on the lazy DFA alone the cost per byte belongs to the engine, so the weights only overstate an ordinary table",
+    "Two cursors, one for the bytes and one for the listing: rejected because a walk following one skips the findings the other left out",
+    "Reset a cache that gave up and retry the decision a few times a page, naming in a list apart the decisions a fresh cache gives up on: rejected because ending the page bounds it with less, and a give-up is a finding like any other",
     "Every pattern over every decision on the whole pool: rejected because each thread keeps its own cache of each pattern, so memory grows with the threads",
-    "Charge what the lazy DFA actually did, falling back to states only when it gives up: rejected for now because it needs the search engines run by hand, where one state count per pattern holds the bound",
 ]
 tags = [
     "performance",
@@ -16,15 +16,15 @@ status = "proposed"
 origin = "quality findings: bounded pattern judging"
 created = "2026-11-25T15:38:56.432762268Z"
 anchors = [
+    { file = "src/lint/quality.rs", symbol = "pattern_runs" },
     { file = "src/lint/quality.rs", symbol = "reach" },
     { file = "src/lint/quality.rs", symbol = "shortfalls" },
-    { file = "src/lint/quality.rs", symbol = "tests::a_pattern_of_more_states_reads_fewer_decisions_within_one_limit" },
-    { file = "src/lint/quality.rs", symbol = "tests::a_walk_from_next_to_next_reads_every_decision_it_can" },
-    { file = "src/mcp/status/lint/patterns.rs", symbol = "Patterns::of" },
-    { file = "src/mcp/status/lint/patterns.rs", symbol = "pattern_counts" },
-    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_WORK" },
-    { file = "src/store/quality/bar/work.rs", symbol = "Bar::pattern_work" },
-    { file = "tests/integration/lint.rs", symbol = "from_reads_on_where_the_work_limit_stopped" },
+    { file = "src/lint/quality.rs", symbol = "tests::a_give_up_ends_the_page_and_a_walk_lists_each_finding_once" },
+    { file = "src/mcp/status/lint.rs", symbol = "Page::end" },
+    { file = "src/mcp/status/lint/patterns.rs", symbol = "Reading::counts" },
+    { file = "src/store/limits.rs", symbol = "MAX_REPORT_PATTERN_BYTES" },
+    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::pattern_bytes" },
+    { file = "tests/integration/lint.rs", symbol = "a_walk_from_next_to_next_lists_every_finding_once" },
 ]
 depends_on = [
     "quality-patterns-are-regexes-compiled-by-a-write-by-check-and-by-the-lint-section",

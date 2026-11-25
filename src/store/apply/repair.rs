@@ -7,10 +7,10 @@
 //! A repair replaces an anchor, or drops it when the decision holds the new
 //! one already, so a decision's count of anchors never grows: the limits on
 //! the whole list are not judged, since a field the op leaves as it was
-//! keeps what it held. The patterns of the bar judge, once every op has
-//! run, the anchors each decision gained, a repair to an anchor it held
-//! already gaining none; a refusal names that decision, and the repair
-//! when one was listed. A change of anchors leaves the status alone.
+//! keeps what it held. The patterns of the bar judge the anchors each
+//! decision gained, a repair to an anchor it held already gaining none; a
+//! refusal names that decision, and the repair when one was listed. A
+//! change of anchors leaves the status alone.
 
 use std::collections::BTreeMap;
 
@@ -18,10 +18,9 @@ use super::check::{Fault, Sources};
 use super::decision::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, OpKind, Repair, RepairAnchors};
-use super::patterns::Pending;
 use super::refusal::{NodeKind, Rule};
 use super::{Done, Repaired};
-use crate::store::quality::DecisionField;
+use crate::store::quality::{DecisionField, texts};
 use crate::store::schema::Anchor;
 
 /// One anchor replaced, and whether its decision gained the new anchor,
@@ -31,8 +30,8 @@ struct Change {
     gained: bool,
 }
 
-/// Replace the anchors `op` names, keeping what each decision changed
-/// gained for the patterns.
+/// Replace the anchors `op` names, each decision changed held to the
+/// patterns in the anchors it gained.
 pub(super) fn repair_anchors(
     edit: &mut Edit<'_>,
     op: RepairAnchors,
@@ -46,7 +45,7 @@ pub(super) fn repair_anchors(
         }
         RepairAnchors::Every(map) => (every(edit, &map), Vec::new()),
     };
-    keep_gained(edit, &changes, &given, context);
+    judge_gained(edit, &changes, given, context)?;
     let mut decisions: Vec<&str> = changes
         .iter()
         .map(|change| change.repaired.decision.as_str())
@@ -88,9 +87,8 @@ fn listed(edit: &mut Edit<'_>, repairs: Vec<Repair>) -> Result<Vec<Change>, Faul
 /// Replace `repair.from` by `repair.to` in its decision, the repair at
 /// `index` of the op.
 fn replace(edit: &mut Edit<'_>, index: usize, repair: Repair) -> Result<Change, Fault> {
-    let at = |part: &str, rule| Fault {
-        field: Some(format!("{}[{index}].{part}", Field::Repairs.as_str())),
-        rule,
+    let at = |part: &str, rule| {
+        Fault::named(format!("{}[{index}].{part}", Field::Repairs.as_str()), rule)
     };
     let Repair { decision, from, to } = repair;
     let from = anchor(from).map_err(|rule| at("from", rule))?;
@@ -162,36 +160,48 @@ fn every(edit: &mut Edit<'_>, map: &BTreeMap<Anchor, Anchor>) -> Vec<Change> {
     changes
 }
 
-/// Keep, for the patterns, each decision `changes` changed with only the
-/// anchors it gained; an anchor a listed repair brought is named by its
-/// index in `given`, the caller's list of new anchors.
-fn keep_gained(edit: &Edit<'_>, changes: &[Change], given: &[String], context: &mut Context<'_>) {
-    if context.bar.pattern_count() == 0 {
-        return;
-    }
-    let mut gained: BTreeMap<&str, Vec<&Anchor>> = BTreeMap::new();
+/// Hold each decision `changes` changed to the patterns in the anchors it
+/// gained, by name, its warnings joining the op's. An anchor a listed
+/// repair brought is named by its index in `given`, the caller's list of
+/// new anchors; a refusal names the decision at fault.
+fn judge_gained(
+    edit: &Edit<'_>,
+    changes: &[Change],
+    given: Vec<String>,
+    context: &mut Context<'_>,
+) -> Result<(), Fault> {
+    let mut gained: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for change in changes.iter().filter(|change| change.gained) {
         let Repaired { decision, to, .. } = &change.repaired;
-        gained.entry(decision.as_str()).or_default().push(to);
+        gained
+            .entry(decision.as_str())
+            .or_default()
+            .push(to.to_string());
     }
-    for (name, anchors) in gained {
-        let Some(held) = edit.state().decisions.get(name) else {
-            continue;
-        };
-        // clone: what the patterns judge outlives the ops that follow.
-        let mut decision = held.clone();
-        decision.anchors = anchors.into_iter().cloned().collect();
-        let mut sources = Sources::default();
-        // clone: each decision's verdict names the caller's whole list.
-        sources.add(DecisionField::Anchors, Field::Repairs, given.to_vec());
-        context.pending.push(Pending {
-            op: context.op,
-            decision,
-            held: vec![DecisionField::Anchors],
-            sources,
-            about: Some(name.to_owned()),
+    let mut sources = Sources::default();
+    sources.add(DecisionField::Anchors, Field::Repairs, given);
+    let changed = edit
+        .state()
+        .decisions
+        .iter()
+        .filter_map(|(name, decision)| {
+            let anchors = gained.get(name.as_str())?;
+            Some((name, decision, anchors))
         });
+    for (name, decision, anchors) in changed {
+        let mut read = texts(decision, DecisionField::Anchors);
+        read.retain(|(_, text)| anchors.iter().any(|anchor| anchor.as_str() == text));
+        let hits = context.bar.judge_patterns(&read, &mut context.scan);
+        let hits = hits.map_err(|breach| Fault {
+            target: Some(name.to_owned()),
+            ..sources.fault(decision, breach)
+        })?;
+        let located = hits
+            .into_iter()
+            .map(|(place, hit)| (sources.path(decision, place), hit));
+        context.hits.extend(located);
     }
+    Ok(())
 }
 
 /// `input` as an anchor, or the rule it breaks.

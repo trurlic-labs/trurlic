@@ -13,7 +13,10 @@ use super::{anchor, apply, files, graph, named, refused};
 use crate::store::apply::{Op, OpKind, Rename, Repair, RepairAnchors};
 use crate::store::schema::{Anchor, Status};
 use crate::store::state::NodeFile;
-use crate::store::testing::{changed_in, graph_log, sample_decision, shared_store, write_node};
+use crate::store::testing::{
+    OUTGROWS_ITS_CACHE, changed_in, coin_flips, graph_log, sample_decision, shared_store,
+    write_node,
+};
 use crate::store::{AnchorInput, Field, Store};
 
 /// `sign` holds `src/old.rs::sign` and `src/kept.rs`, accepted; `rotate`
@@ -318,4 +321,46 @@ fn a_repair_is_judged_on_the_anchors_it_brings_and_names_its_decision() {
     let target = refusal.op.as_ref().map(|op| op.target.as_str());
     assert_eq!(target, Some("b"), "{message}");
     assert_eq!(anchors(&store, "a"), ["src/new.rs::kept"]);
+}
+
+/// The anchors a repair brings are read over the batch's caches: a map
+/// that repairs decisions to anchors of random letters, each of which fits
+/// a pattern's cache alone but not together, is refused as
+/// `pattern_gave_up` at the decision where the cache filled, and nothing
+/// is written.
+#[test]
+fn a_repair_whose_pattern_cache_fills_names_the_decision() {
+    let tmp = TempDir::new().unwrap();
+    let store = graph(tmp.path());
+    let path = store.project_path();
+    let text = fs::read_to_string(&path).unwrap();
+    let table = format!(
+        "[quality]\n[[quality.patterns]]\npattern = '{OUTGROWS_ITS_CACHE}'\n\
+         fields = [\"anchors\"]\nlevel = \"warn\"\nmessage = \"Random.\""
+    );
+    fs::write(&path, format!("{text}\n{table}\n")).unwrap();
+    let map: Vec<(String, String)> = (0..4)
+        .map(|index| {
+            let from = format!("src/old{index}.rs");
+            let to = format!("src/{}.rs", coin_flips(480, index));
+            let mut decision = sample_decision("project");
+            decision.anchors = [held(&from)].into();
+            write_node(&store, &NodeFile::Decision(format!("d{index}")), &decision);
+            (from, to)
+        })
+        .collect();
+    let map: Vec<(&str, &str)> = map.iter().map(|(f, t)| (f.as_str(), t.as_str())).collect();
+    let before = files(&store);
+
+    let refusal = refused(&store, vec![every(&map)]);
+
+    let (name, at, message) = named(&refusal);
+    assert_eq!(
+        (name, at.as_str()),
+        ("pattern_gave_up", "ops[0].anchors"),
+        "{message}"
+    );
+    let target = refusal.op.as_ref().map(|op| op.target.as_str());
+    assert!(target.is_some_and(|name| name > "d0"), "{message}");
+    assert_eq!(files(&store), before);
 }

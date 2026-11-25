@@ -6,23 +6,23 @@
 //! them the limits come first, field by field in the order of the file's
 //! keys, then the patterns in the order `[quality]` lists them; the first
 //! rule broken refuses the decision. A `warn` pattern gives one warning at
-//! its first match and never refuses.
+//! its first match and never refuses. The patterns of one write share one
+//! [`Scan`]: a bound on the bytes they read, and a cache per pattern.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
 
-use regex::{Match, Regex, RegexBuilder};
-use regex_automata::nfa::thompson;
-
-use super::{DecisionField, Level, Limit, PatternMatch, Quality, QualityFault, WordRange, words};
-use crate::store::limits::{MAX_PATTERN_COMPILED_BYTES, MAX_QUOTED_MATCH_BYTES};
-use crate::store::schema::Decision;
+use super::{DecisionField, Limit, Quality, QualityFault, WordRange, words};
+use crate::store::limits::MAX_QUOTED_MATCH_BYTES;
+use crate::store::schema::{Anchor, Decision};
 use crate::store::text::{TextFault, TextField, fault};
 
 mod audit;
-mod work;
+mod pattern;
 
 pub use audit::Shortfall;
+pub(crate) use pattern::Scan;
+use pattern::{Compiled, searched};
+pub(crate) use regex_automata::hybrid::regex::Cache as PatternCache;
 
 /// The rules of one `[quality]` table, its patterns compiled.
 #[derive(Debug)]
@@ -35,18 +35,7 @@ pub(crate) struct Bar {
     patterns: Vec<Compiled>,
 }
 
-#[derive(Debug)]
-struct Compiled {
-    regex: Regex,
-    /// The states of the pattern's Thompson NFA: what its slowest engine
-    /// walks per byte, at worst.
-    states: usize,
-    fields: BTreeSet<DecisionField>,
-    level: Level,
-    message: String,
-}
-
-/// A pattern that does not compile: its index and regex's message.
+/// A pattern the lazy DFA does not run: its index and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatternFault {
     pub index: usize,
@@ -75,21 +64,19 @@ impl Place {
     }
 }
 
-/// A rule a decision breaks: a text rule or one of the bar.
+/// What stops a write's judgement: a text rule or a rule of the bar the
+/// decision breaks, or the bytes its patterns may read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Broken {
-    Text { field: TextField, fault: TextFault },
+    Text {
+        field: TextField,
+        fault: TextFault,
+    },
     Quality(QualityFault),
-}
-
-/// The rule, as a refusal of the field it is broken in says it.
-impl std::fmt::Display for Broken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Text { fault, .. } => write!(f, "{fault}"),
-            Self::Quality(fault) => write!(f, "{fault}"),
-        }
-    }
+    /// The patterns would read past `bound` bytes over the write.
+    Work {
+        bound: usize,
+    },
 }
 
 /// The first rule a judged decision breaks, and where.
@@ -108,31 +95,15 @@ pub(crate) struct Hit {
 }
 
 impl Bar {
-    /// `quality` with each pattern compiled within
-    /// [`MAX_PATTERN_COMPILED_BYTES`], or the first that does not compile.
+    /// `quality` with each pattern compiled for the lazy DFA, or the first
+    /// that does not run on it ([`Compiled::new`]).
     pub(super) fn compile(quality: &Quality) -> Result<Self, PatternFault> {
         let patterns = quality
             .patterns
             .iter()
             .enumerate()
             .map(|(index, pattern)| {
-                let fault = |message: String| PatternFault { index, message };
-                let regex = RegexBuilder::new(&pattern.pattern)
-                    .size_limit(MAX_PATTERN_COMPILED_BYTES)
-                    .dfa_size_limit(MAX_PATTERN_COMPILED_BYTES)
-                    .build()
-                    .map_err(|e| fault(e.to_string()))?;
-                let states = nfa_states(&pattern.pattern).map_err(fault)?;
-                // clone: the bar outlives the borrow of the graph a batch
-                // changes, so it owns each pattern's fields and message.
-                let (fields, message) = (pattern.fields.clone(), pattern.message.clone());
-                Ok(Compiled {
-                    regex,
-                    states,
-                    fields,
-                    level: pattern.level,
-                    message,
-                })
+                Compiled::new(pattern).map_err(|message| PatternFault { index, message })
             })
             .collect::<Result<_, _>>()?;
         Ok(Self {
@@ -154,64 +125,118 @@ impl Bar {
         }
     }
 
+    /// An empty cache for each pattern, in their order.
+    pub(crate) fn caches(&self) -> Vec<PatternCache> {
+        self.patterns.iter().map(Compiled::cache).collect()
+    }
+
+    /// What one write's patterns may read and build: `bound` bytes, an
+    /// empty cache for each, and `cache_bound` bytes the caches may grow by
+    /// together.
+    pub(crate) fn scan(&self, bound: usize, cache_bound: usize) -> Scan {
+        Scan {
+            caches: self.caches(),
+            left: bound,
+            bound,
+            cache_left: cache_bound,
+        }
+    }
+
     /// `decision` against the bar in the fields of `held`: the first rule
     /// it breaks, or the warnings of the `warn` patterns that match, each
-    /// with where it matched. A write judges the two parts apart, the
-    /// patterns once their work is charged.
-    #[cfg(test)]
+    /// with where it matched. The text rules and the limits come first, in
+    /// the order of the file's keys, then the patterns over `scan`.
     pub(crate) fn judge(
         &self,
         decision: &Decision,
         held: &[DecisionField],
+        scan: &mut Scan,
     ) -> Result<Vec<(Place, Hit)>, Breach> {
-        self.judge_limits(decision, held)?;
-        self.judge_patterns(decision, held)
+        let fields = || {
+            DecisionField::IN_FILE_ORDER
+                .into_iter()
+                .filter(|field| held.contains(field))
+        };
+        fields()
+            .flat_map(|field| self.checks(decision, field))
+            .collect::<Result<(), _>>()?;
+        let texts: Vec<_> = fields().flat_map(|field| texts(decision, field)).collect();
+        self.judge_patterns(&texts, scan)
     }
 
-    /// `decision` against the text rules and the limits in the fields of
-    /// `held`, in the order of the file's keys: the first it breaks.
-    pub(crate) fn judge_limits(
-        &self,
-        decision: &Decision,
-        held: &[DecisionField],
-    ) -> Result<(), Breach> {
-        for field in DecisionField::IN_FILE_ORDER {
-            if held.contains(&field) {
-                self.limits(decision, field)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// `decision` against the patterns in the fields of `held`, in their
-    /// order: the first `refuse` match, or the `warn` matches, each with
-    /// where it matched. The batch's origin is judged apart
-    /// ([`Bar::judge_origin`]).
+    /// The patterns, in their order, each over those of `texts` in the
+    /// fields it reads: the first `refuse` match, or the `warn` matches,
+    /// each with where it matched. Each pattern charges `scan` the bytes it
+    /// would read before it reads them, and searches over its cache there.
+    /// Past the bound the write is refused, as it is when a cache gives up
+    /// or the growth of the caches passes their total: then at most one
+    /// pattern's two caches past it.
     pub(crate) fn judge_patterns(
         &self,
-        decision: &Decision,
-        held: &[DecisionField],
+        texts: &[(Place, Cow<'_, str>)],
+        scan: &mut Scan,
     ) -> Result<Vec<(Place, Hit)>, Breach> {
-        if self.patterns.is_empty() {
-            return Ok(Vec::new());
-        }
-        // Built once for every pattern to read: an anchor's text is rendered.
-        let texts: Vec<(Place, Cow<'_, str>)> = DecisionField::IN_FILE_ORDER
-            .into_iter()
-            .filter(|field| held.contains(field))
-            .flat_map(|field| texts(decision, field))
-            .collect();
+        let Scan {
+            caches,
+            left,
+            bound,
+            cache_left,
+        } = scan;
         let mut hits = Vec::new();
-        for (index, pattern) in self.patterns.iter().enumerate() {
-            let read = texts
+        for (index, (pattern, cache)) in self.patterns.iter().zip(caches).enumerate() {
+            let read: Vec<(Place, &str)> = texts
                 .iter()
                 .filter(|(place, _)| pattern.fields.contains(&place.field))
-                .map(|(place, text)| (*place, text.as_ref()));
-            if let Some((place, found)) = pattern.first_match(read) {
+                .map(|(place, text)| (*place, text.as_ref()))
+                .collect();
+            let (Some(&(first, _)), Some(&(last, _))) = (read.first(), read.last()) else {
+                continue;
+            };
+            let bytes = searched(read.iter().map(|&(_, text)| text));
+            *left = left.checked_sub(bytes).ok_or(Breach {
+                place: first,
+                broken: Broken::Work { bound: *bound },
+            })?;
+            let before = cache.memory_usage();
+            let found = pattern
+                .first_match(cache, read)
+                .map_err(|place| gave_up(index, place))?;
+            let grown = cache.memory_usage().saturating_sub(before);
+            let read_to = found.as_ref().map_or(last, |&(place, _)| place);
+            *cache_left = (cache_left.checked_sub(grown)).ok_or(gave_up(index, read_to))?;
+            if let Some((place, found)) = found {
                 hits.push((place, pattern.verdict(index, place, &found)?));
             }
         }
         Ok(hits)
+    }
+
+    /// The batch's `origin` against the patterns that read it, over `scan`:
+    /// the first `refuse` match, or the `warn` matches.
+    pub(crate) fn judge_origin(
+        &self,
+        origin: Option<&str>,
+        scan: &mut Scan,
+    ) -> Result<Vec<Hit>, Breach> {
+        let texts: Vec<_> = origin
+            .map(|origin| (Place::whole(DecisionField::Origin), Cow::Borrowed(origin)))
+            .into_iter()
+            .collect();
+        let hits = self.judge_patterns(&texts, scan)?;
+        Ok(hits.into_iter().map(|(_, hit)| hit).collect())
+    }
+
+    /// `anchor` against the patterns, as the anchors field of a decision
+    /// that holds it alone, over `scan`: the first `refuse` match, or the
+    /// `warn` matches.
+    pub(crate) fn judge_anchor(
+        &self,
+        anchor: &Anchor,
+        scan: &mut Scan,
+    ) -> Result<Vec<Hit>, Breach> {
+        let place = Place::element(DecisionField::Anchors, 0);
+        let hits = self.judge_patterns(&[(place, Cow::Owned(anchor.to_string()))], scan)?;
+        Ok(hits.into_iter().map(|(_, hit)| hit).collect())
     }
 
     /// The message of the pattern at `index` of `[quality] patterns`.
@@ -237,121 +262,77 @@ impl Bar {
         Ok(())
     }
 
-    /// The batch's `origin` against the patterns that read it: the first
-    /// `refuse` match, or the `warn` matches.
-    pub(crate) fn judge_origin(&self, origin: Option<&str>) -> Result<Vec<Hit>, Breach> {
-        let place = Place::whole(DecisionField::Origin);
-        let Some(origin) = origin else {
-            return Ok(Vec::new());
-        };
-        let mut hits = Vec::new();
-        for (index, pattern) in self.patterns.iter().enumerate() {
-            if !pattern.fields.contains(&DecisionField::Origin) {
-                continue;
-            }
-            if let Some((place, found)) = pattern.first_match([(place, origin)]) {
-                hits.push(pattern.verdict(index, place, &found)?);
-            }
-        }
-        Ok(hits)
-    }
-
-    /// The text rules and the limits of `field`.
-    fn limits(&self, decision: &Decision, field: DecisionField) -> Result<(), Breach> {
+    /// The text rules and the limits of `field` held to `decision`, in the
+    /// order a write reads them: a breach of each it breaks. An
+    /// alternative's text rule comes before its word count.
+    fn checks(&self, decision: &Decision, field: DecisionField) -> Vec<Result<(), Breach>> {
         let place = Place::whole(field);
         match field {
-            DecisionField::Choice => text(place, TextField::Choice, &decision.choice),
+            DecisionField::Choice => vec![text(place, TextField::Choice, &decision.choice)],
             DecisionField::Reason => {
-                text(place, TextField::Reason, &decision.reason)?;
                 let measured = words(&decision.reason);
                 let WordRange { min, max } = self.reason_words;
-                at_least(place, Limit::ReasonWordsMin, measured, min)?;
-                at_most(place, Limit::ReasonWordsMax, measured, max)
+                vec![
+                    text(place, TextField::Reason, &decision.reason),
+                    at_least(place, Limit::ReasonWordsMin, measured, min),
+                    at_most(place, Limit::ReasonWordsMax, measured, max),
+                ]
             }
-            DecisionField::Alternatives => {
-                let count = decision.alternatives.len();
-                at_least(place, Limit::AlternativeRequired, count, Some(1))?;
-                at_most(place, Limit::AlternativesMax, count, self.alternatives_max)?;
-                for (index, alternative) in decision.alternatives.iter().enumerate() {
-                    let place = Place::element(field, index);
-                    text(place, TextField::Alternative, alternative)?;
-                    let (limit, bound) = (Limit::AlternativeWordsMax, self.alternative_words_max);
-                    at_most(place, limit, words(alternative), bound)?;
-                }
-                Ok(())
-            }
+            DecisionField::Alternatives => self.alternative_checks(decision),
             DecisionField::Anchors => {
                 let count = decision.anchors.len();
-                at_least(place, Limit::AnchorRequired, count, Some(1))?;
-                at_most(place, Limit::AnchorsMax, count, self.anchors_max)
+                vec![
+                    at_least(place, Limit::AnchorRequired, count, Some(1)),
+                    at_most(place, Limit::AnchorsMax, count, self.anchors_max),
+                ]
             }
             DecisionField::Tags => {
-                for (index, tag) in decision.tags.iter().enumerate() {
-                    text(Place::element(field, index), TextField::Tag, tag)?;
-                }
-                Ok(())
+                let each = decision.tags.iter().enumerate();
+                each.map(|(index, tag)| text(Place::element(field, index), TextField::Tag, tag))
+                    .collect()
             }
             // The origin is the batch's, judged once (`judge_origin`) and
             // held to the text rules with the batch's trailers.
-            DecisionField::Origin => Ok(()),
+            DecisionField::Origin => Vec::new(),
         }
+    }
+
+    /// The count of `decision`'s alternatives, then each one's text rule
+    /// and word count.
+    fn alternative_checks(&self, decision: &Decision) -> Vec<Result<(), Breach>> {
+        let field = DecisionField::Alternatives;
+        let place = Place::whole(field);
+        let count = decision.alternatives.len();
+        let (limit, bound) = (Limit::AlternativeWordsMax, self.alternative_words_max);
+        let each = decision.alternatives.iter().enumerate();
+        let elements = each.flat_map(|(index, alternative)| {
+            let place = Place::element(field, index);
+            [
+                text(place, TextField::Alternative, alternative),
+                at_most(place, limit, words(alternative), bound),
+            ]
+        });
+        [
+            at_least(place, Limit::AlternativeRequired, count, Some(1)),
+            at_most(place, Limit::AlternativesMax, count, self.alternatives_max),
+        ]
+        .into_iter()
+        .chain(elements)
+        .collect()
     }
 }
 
-impl Compiled {
-    /// The match `found` of this pattern, the one at `index`, as a fault
-    /// names it.
-    fn matched(&self, index: usize, found: &Match<'_>) -> PatternMatch {
-        PatternMatch {
-            index,
-            at: found.start(),
-            found: quoted(found.as_str()),
-            // clone: the fault carries the message it reports.
-            message: self.message.clone(),
-        }
+/// The breach of the pattern at `index` whose cache gave up at `place`.
+const fn gave_up(index: usize, place: Place) -> Breach {
+    Breach {
+        place,
+        broken: Broken::Quality(QualityFault::GaveUp { index }),
     }
-
-    /// The first of `texts` this pattern matches, and its place.
-    fn first_match<'t>(
-        &self,
-        texts: impl IntoIterator<Item = (Place, &'t str)>,
-    ) -> Option<(Place, Match<'t>)> {
-        texts
-            .into_iter()
-            .find_map(|(place, text)| Some((place, self.regex.find(text)?)))
-    }
-
-    /// The match `found` at `place` of this pattern, the one at `index`:
-    /// the refusal at `refuse`, else the warning.
-    fn verdict(&self, index: usize, place: Place, found: &Match<'_>) -> Result<Hit, Breach> {
-        match self.level {
-            Level::Refuse => Err(Breach {
-                place,
-                broken: Broken::Quality(QualityFault::Pattern(self.matched(index, found))),
-            }),
-            Level::Warn => Ok(Hit {
-                pattern: index,
-                at: found.start(),
-            }),
-        }
-    }
-}
-
-/// The states of the Thompson NFA of `pattern`, built as the `regex` crate
-/// builds its own (the same syntax, Unicode on, within the same size), or
-/// why it does not build.
-fn nfa_states(pattern: &str) -> Result<usize, String> {
-    let config = thompson::Config::new().nfa_size_limit(Some(MAX_PATTERN_COMPILED_BYTES));
-    let nfa = thompson::Compiler::new()
-        .configure(config)
-        .build(pattern)
-        .map_err(|e| e.to_string())?;
-    Ok(nfa.states().len())
 }
 
 /// The texts of `field` a pattern reads, each with its place: an anchor
-/// as `file::symbol`.
-fn texts(decision: &Decision, field: DecisionField) -> Vec<(Place, Cow<'_, str>)> {
+/// as `file::symbol`. None of the origin, which is the batch's.
+pub(crate) fn texts(decision: &Decision, field: DecisionField) -> Vec<(Place, Cow<'_, str>)> {
     let each = |(index, text)| (Place::element(field, index), text);
     match field {
         DecisionField::Choice => vec![(Place::whole(field), Cow::Borrowed(&*decision.choice))],
@@ -452,7 +433,9 @@ fn quoted(found: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::quality::Pattern;
+    use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_COMPILED_BYTES};
+    use crate::store::quality::{Level, Pattern};
+    use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision};
 
     fn quality(patterns: &[&str]) -> Quality {
         Quality {
@@ -460,7 +443,7 @@ mod tests {
                 .iter()
                 .map(|&pattern| Pattern {
                     pattern: pattern.into(),
-                    fields: [DecisionField::Choice].into(),
+                    fields: [DecisionField::Choice, DecisionField::Reason].into(),
                     level: Level::Warn,
                     message: "M".into(),
                 })
@@ -469,37 +452,97 @@ mod tests {
         }
     }
 
-    /// A short pattern can ask for a large automaton: it is refused at the
-    /// stated size, with its index, before it costs a write more.
-    #[test]
-    fn a_pattern_past_its_compiled_size_is_refused_with_its_index() {
-        let fault = Bar::compile(&quality(&["ok", r"\w{50}"])).unwrap_err();
-        assert_eq!(fault.index, 1);
-        assert!(
-            fault
-                .message
-                .contains(&format!("size limit of {MAX_PATTERN_COMPILED_BYTES} bytes")),
-            "{}",
-            fault.message
-        );
-        assert!(Bar::compile(&quality(&[r"\w{5}"])).is_ok());
+    /// `decision` judged in its choice and reason under `bar`, which may
+    /// read `bound` bytes.
+    fn judged(bar: &Bar, decision: &Decision, bound: usize) -> Result<Vec<(Place, Hit)>, Broken> {
+        let held = [DecisionField::Choice, DecisionField::Reason];
+        let mut scan = bar.scan(bound, usize::MAX);
+        bar.judge(decision, &held, &mut scan).map_err(|b| b.broken)
     }
 
-    /// Word classes and case folding are Unicode's: `\b` does not split a
-    /// word at a letter outside ASCII.
+    /// Each pattern the lazy DFA cannot run is refused at compile with its
+    /// index: a syntax error and an NFA past its size with the engine's
+    /// message, a Unicode word boundary and an automaton that cannot start
+    /// within its cache with the rewrite that runs.
+    #[test]
+    fn a_pattern_the_lazy_dfa_cannot_run_is_refused_with_its_index() {
+        let refused = |pattern: &str| Bar::compile(&quality(&["ok", pattern])).unwrap_err();
+        for (pattern, said) in [
+            ("(zz", "unclosed group".to_owned()),
+            (
+                r"\w{100}",
+                format!("exceeded limit of {MAX_PATTERN_COMPILED_BYTES}"),
+            ),
+            (r"(?i)\bwe\b", r"`(?:^|\W)word(?:\W|$)`".to_owned()),
+            (r"x\B", r"`(?-u:\b)`".to_owned()),
+            (
+                r"\w{8}",
+                format!("given cache capacity ({MAX_PATTERN_CACHE_BYTES})"),
+            ),
+        ] {
+            let fault = refused(pattern);
+            assert_eq!(fault.index, 1, "{pattern}");
+            assert!(
+                fault.message.contains(&said),
+                "{pattern}: {}",
+                fault.message
+            );
+        }
+        let ascii = Bar::compile(&quality(&[r"(?-u:\b)we(?-u:\b)", r"\w{3}y"]));
+        assert!(ascii.is_ok());
+    }
+
+    /// Word classes and case folding are Unicode's: a whole word written
+    /// with `\W` is not split at a letter outside ASCII.
     #[test]
     fn patterns_read_text_in_any_script() {
-        let bar = Bar::compile(&quality(&[r"(?i)\bwe\b"])).unwrap();
-        let mut decision = crate::store::testing::sample_decision("project");
-        let choice = [DecisionField::Choice];
+        let bar = Bar::compile(&quality(&[r"(?i)(?:^|\W)we(?:\W|$)"])).unwrap();
+        let mut decision = sample_decision("project");
         decision.choice = "Bierzemy we\u{17a}miemy".into();
-        assert_eq!(
-            bar.judge(&decision, &choice).map_err(|b| b.broken),
-            Ok(vec![])
-        );
+        assert_eq!(judged(&bar, &decision, usize::MAX), Ok(vec![]));
         decision.choice = "Then WE lock".into();
-        let hits = bar.judge(&decision, &choice).map_err(|b| b.broken).unwrap();
-        assert_eq!(hits[0].1.at, 5);
+        let hits = judged(&bar, &decision, usize::MAX).unwrap();
+        assert_eq!(hits[0].1.at, 4);
+    }
+
+    /// A pattern charges the bytes of each text it would read, one more per
+    /// text, before it reads them: a write that may read exactly that
+    /// passes, one byte less is refused at the pattern's first text.
+    #[test]
+    fn a_pattern_charges_its_texts_before_it_reads_them() {
+        let bar = Bar::compile(&quality(&["zz", "yy"])).unwrap();
+        let mut decision = sample_decision("project");
+        decision.choice = "Keep zz".into();
+        decision.reason = "Because it holds.".into();
+        let bytes = 2 * ("Keep zz".len() + 1 + "Because it holds.".len() + 1);
+
+        let hits = judged(&bar, &decision, bytes).unwrap();
+        let refused = judged(&bar, &decision, bytes - 1);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(refused, Err(Broken::Work { bound: bytes - 1 }));
+    }
+
+    /// A search whose automaton outgrows its cache gives up instead of
+    /// clearing it, and the write is refused at the text, naming the
+    /// pattern. A fresh cache judges a short text.
+    #[test]
+    fn a_pattern_whose_cache_fills_gives_up_naming_its_index() {
+        let bar = Bar::compile(&quality(&["ok", OUTGROWS_ITS_CACHE])).unwrap();
+        let mut decision = sample_decision("project");
+        decision.reason = coin_flips(4_000, 7);
+        let mut scan = bar.scan(usize::MAX, usize::MAX);
+        let held = [DecisionField::Reason];
+
+        let breach = bar.judge(&decision, &held, &mut scan).unwrap_err();
+        decision.reason = "ab".repeat(10);
+
+        assert_eq!(breach.place, Place::whole(DecisionField::Reason));
+        assert_eq!(
+            breach.broken,
+            Broken::Quality(QualityFault::GaveUp { index: 1 })
+        );
+        assert_eq!(judged(&bar, &decision, usize::MAX), Ok(vec![]));
     }
 
     #[test]

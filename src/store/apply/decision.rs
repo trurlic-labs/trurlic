@@ -6,24 +6,25 @@ use std::collections::BTreeSet;
 use super::check::{self, Fault, Sources, anchor_edit, edit_list, new_name};
 use super::edit::Edit;
 use super::ops::{Field, ListEdit, Merge, OpKind, Record, Remove, Rename, Revise};
-use super::patterns::Pending;
 use super::refusal::{NodeKind, Rule};
-use super::{Done, Repaired};
-use crate::store::quality::{Bar, DecisionField};
+use super::{Done, Repaired, Warning};
+use crate::store::quality::{Bar, DecisionField, Hit, Scan};
 use crate::store::schema::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
 use crate::store::time::Timestamp;
 
 /// What the ops of one batch share: what every record carries, the bar
-/// each written decision meets, what the patterns judge once every op has
-/// run, and what the repairs did.
+/// each written decision meets and what its patterns may still read, the
+/// warnings, and what the repairs did.
 pub(super) struct Context<'b> {
     pub(super) origin: Option<&'b str>,
     pub(super) created: Timestamp,
     pub(super) bar: &'b Bar,
-    /// The index of the op running now.
-    pub(super) op: usize,
-    /// Each decision an op wrote, kept for the patterns, in op order.
-    pub(super) pending: Vec<Pending>,
+    pub(super) scan: Scan,
+    /// The `warn` matches of the op running now, each with the argument
+    /// it is in.
+    pub(super) hits: Vec<(String, Hit)>,
+    /// The batch's warnings so far.
+    pub(super) warnings: Vec<Warning>,
     /// The anchors the batch's repairs replaced so far.
     pub(super) repaired: Vec<Repaired>,
 }
@@ -61,7 +62,7 @@ pub(super) fn record(
         anchors: anchors.into_iter().collect(),
         depends_on,
     };
-    check::bar(batch, &decision, &DecisionField::IN_FILE_ORDER, sources)?;
+    check::bar(batch, &decision, &DecisionField::IN_FILE_ORDER, &sources)?;
     // clone: the graph keys the node by its name, and the result names it.
     edit.put_decision(op.name.clone(), decision);
     // A dangling edge a hand edit left can point at the new name.
@@ -104,7 +105,7 @@ pub(super) fn revise(
         return Err(Fault::op(Rule::NoChange));
     }
     let changed = changed(before, &after);
-    check::bar(batch, &after, &check::judged(&changed), sources)?;
+    check::bar(batch, &after, &check::judged(&changed), &sources)?;
     restatus(before, &mut after);
     let gains_edges = !after.depends_on.is_subset(&before.depends_on);
     let status = (after.status.kind() != before.status.kind()).then(|| after.status.kind());
@@ -230,7 +231,7 @@ pub(super) fn merge(
             .filter_map(|(field, grew)| grew.then_some(field))
             .collect();
         // A merge brings no argument's elements: a fault names the field.
-        check::bar(batch, survivor, &held, Sources::default())?;
+        check::bar(batch, survivor, &held, &Sources::default())?;
     }
     let rewrote = repoint_dependents(edit, &op.absorbed, Some(&op.survivor));
     closes_no_cycle(edit, &op.survivor, Field::Absorbed)?;

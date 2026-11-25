@@ -145,10 +145,14 @@ fn finding(item: &LintItem) -> String {
                     "{}, {} {} against {}",
                     found.rule, limit.measured, limit.unit, limit.bound
                 ),
-                (None, Some(matched)) => {
-                    let (index, at) = (matched.index, matched.at);
-                    format!("matches `[quality] patterns[{index}]` at byte {at}")
-                }
+                (None, Some(matched)) => match (matched.index, matched.at) {
+                    (index, Some(at)) => {
+                        format!("matches `[quality] patterns[{index}]` at byte {at}")
+                    }
+                    (index, None) => {
+                        format!("`[quality] patterns[{index}]` gave up: its cache filled")
+                    }
+                },
                 (None, None) => found.rule.to_owned(),
             };
             format!("`{decision}` `{field}`: {what} ({level})")
@@ -172,28 +176,46 @@ fn unjudged(patterns: &PatternCounts, quality: &QualityCounts) -> Result<()> {
         ),
         Some(Cut::WorkLimit(work)) => {
             out!(
-                "lint: the [quality] patterns read {} of {} decision(s), by name, within a work \
-                 of {} state-bytes of the {} they would do",
+                "lint: the [quality] patterns read {} of {} decision(s), by name, within {} \
+                 bytes of the {} they would read",
                 patterns.judged,
                 patterns.judged + patterns.unjudged,
                 work.bound,
                 work.measured
             )?;
-            if let Some(next) = &work.next {
-                out!("  `trurlic status --section lint --from {next}` reads on from `{next}`")?;
-            }
-            match work.too_costly {
-                0 => Ok(()),
-                costly => {
-                    out!("  {costly} decision(s) pass the bound alone, so no call reads them")
-                }
-            }
+            next_page(patterns)
+        }
+        Some(Cut::GaveUp) => {
+            out!(
+                "lint: the [quality] patterns read {} decision(s), by name, until a pattern's \
+                 cache filled",
+                patterns.judged
+            )?;
+            next_page(patterns)
+        }
+        Some(Cut::Page) => {
+            out!(
+                "lint: this page lists the quality findings of {} decision(s) the [quality] \
+                 patterns read, by name",
+                patterns.judged
+            )?;
+            next_page(patterns)
         }
         Some(Cut::Uncompiled(uncompiled)) => out!(
             "lint: `[quality] patterns[{}]` does not compile, so no pattern was judged: {}",
             uncompiled.index,
             uncompiled.message
         ),
+    }
+}
+
+/// Where the next page of quality findings starts.
+fn next_page(patterns: &PatternCounts) -> Result<()> {
+    match &patterns.next {
+        Some(next) => {
+            out!("  `trurlic status --section lint --from {next}` reads on from `{next}`")
+        }
+        None => Ok(()),
     }
 }
 

@@ -58,28 +58,42 @@ pub(crate) const MAX_QUALITY_PATTERNS: usize = 32;
 /// Maximum byte length of one `[quality]` pattern's text.
 pub(super) const MAX_PATTERN_BYTES: usize = 500;
 
-/// Maximum bytes one compiled pattern and its lazy DFA's cache may take;
-/// a pattern that compiles past it is refused. A short text can still ask
-/// for a large automaton: `\w{50}` over Unicode needs about 2.5 MB.
+/// Maximum bytes the Thompson NFA of one pattern, forward or reverse, may
+/// take to compile; a pattern past it is refused. A short text can still
+/// ask for a large automaton: `\w{100}` over Unicode passes it.
 pub(super) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
 
-/// The work the `[quality]` patterns may do in one call, a `status` lint
-/// section or an `apply` batch, in state-bytes. A pattern does, for each
-/// text it reads, the text's bytes and one more, times the states of its
-/// Thompson NFA (`Bar::pattern_work`, `Bar::judge_work`). A pattern's
-/// slowest engine, the PikeVM, walks at most every state per byte, so a
-/// search's time is linear in this work whatever the pattern. The worst
-/// rate measured on one core of the development machine is about 7 ns per
-/// state-byte. It holds for a pattern near the compile limit over ASCII
-/// text (`[\x00-\x7f]{0,4000}q`), and for a word boundary of a few states
-/// over CJK text (`\bq`), where the lazy DFA gives up on every byte. So a
-/// call at the bound costs at most about 14 s of CPU. The lint section
-/// reads the decisions by name while their work stays within it and names
-/// the first it left, where a call with `from` reads on; the default call
-/// judges no pattern. A batch is charged over the origin and each
-/// decision its ops write, in op order, before any pattern runs, and
-/// refused at the op where the sum passes the bound.
-pub(crate) const MAX_PATTERN_WORK: usize = 2_000_000_000;
+/// Bytes of cache the lazy DFA of one pattern may fill in each direction
+/// over one call. Each state the search builds takes room, so the cap
+/// bounds the construction a call pays for, whatever the pattern. A
+/// pattern whose automaton cannot start within it is refused when
+/// compiled (`\w{8}`, `\p{L}{0,10}`); a search that would outgrow it gives
+/// up instead of clearing it.
+pub(super) const MAX_PATTERN_CACHE_BYTES: usize = 128 * 1024;
+
+/// Bytes the `[quality]` patterns may read over what one `apply` batch
+/// writes: each pattern charges the bytes of each text it searches, one
+/// more per search, before it runs. A write judges under the exclusive
+/// lock, which another reader or writer waits for at most `LOCK_TIMEOUT`
+/// (5 s), so the bound is the write's own and lower than a report's; with
+/// [`MAX_WRITE_PATTERN_CACHE_BYTES`] it bounds what the patterns cost a
+/// write.
+pub(crate) const MAX_WRITE_PATTERN_BYTES: usize = 100_000_000;
+
+/// Bytes the caches of all the `[quality]` patterns, both directions, may
+/// grow by over one `apply` batch: what building their states costs, which
+/// the bytes read do not count. The growth is read from each pattern's
+/// caches after its search of an op, so it may pass the total by one
+/// pattern's two caches; past it the batch is refused as when one cache
+/// gives up. Four times what `examples/quality.toml` grows over a batch at
+/// its limits.
+pub(crate) const MAX_WRITE_PATTERN_CACHE_BYTES: usize = 800 * 1024;
+
+/// Bytes the `[quality]` patterns may read in one `status` lint section,
+/// counted as a write counts them. The section holds no lock; it reads
+/// the decisions by name while their bytes stay within the bound, and
+/// names the first it left in `next`.
+pub(crate) const MAX_REPORT_PATTERN_BYTES: usize = 2_500_000_000;
 
 /// Maximum byte length of a `[quality]` pattern's message, one line.
 pub(crate) const MAX_PATTERN_MESSAGE_BYTES: usize = 200;

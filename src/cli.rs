@@ -126,8 +126,8 @@ pub enum ToolCommand {
         origin: Option<String>,
 
         /// With `--section lint`: the quality findings of the decisions
-        /// named this or after, where a call the work limit cut said to
-        /// read on.
+        /// named this or after, where a call whose page ended said to read
+        /// on.
         #[arg(long)]
         from: Option<String>,
 

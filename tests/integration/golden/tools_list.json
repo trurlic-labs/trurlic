@@ -880,7 +880,7 @@
         "readOnlyHint": true,
         "title": "Status"
       },
-      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason of 0.5 or more), each rule of the quality bar a stored decision breaks, and the decisions whose anchors all name a file and no symbol, counted by kind. The call judges the bar's limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over the decisions by name within a work limit: `counts.lint.patterns` says how many decisions they read and names in `next` the first left unread, and the same call with `from` set to it reads on from there. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts and the findings to the decisions recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are malformed, ambiguous, of a file no resolver reads (unverified), or are one name, not the whole path of what it names, that ten or more files define (weak). Where the graph sits in the project's git is reported by `trurlic check`.",
+      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason of 0.5 or more), each rule of the quality bar a stored decision breaks, and the decisions whose anchors all name a file and no symbol, counted by kind. The call judges the bar's limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over the decisions by name within a bound on the bytes they read: `counts.lint.patterns` says how many decisions they read and names in `next` the first left unread, and the same call with `from` set to it reads on from there. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts and the findings to the decisions recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are malformed, ambiguous, of a file no resolver reads (unverified), or are one name, not the whole path of what it names, that ten or more files define (weak). Where the graph sits in the project's git is reported by `trurlic check`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1116,7 +1116,7 @@
                     "description": "How far the `[quality]` patterns were judged, when it has any.",
                     "properties": {
                       "judged": {
-                        "description": "Decisions the patterns read, by name.",
+                        "description": "Decisions the patterns read on this page, by name.",
                         "minimum": 0,
                         "type": "integer"
                       },
@@ -1125,13 +1125,8 @@
                         "type": "string"
                       },
                       "next": {
-                        "description": "The first decision the bound left unread: `from` set to it reads on.",
+                        "description": "The first decision whose findings this page did not list wholly: `from` set to it reads on.",
                         "type": "string"
-                      },
-                      "too_costly": {
-                        "description": "Decisions whose own work passes the bound, which no call reads.",
-                        "minimum": 0,
-                        "type": "integer"
                       },
                       "uncompiled": {
                         "additionalProperties": false,
@@ -1154,30 +1149,32 @@
                         "type": "object"
                       },
                       "unjudged": {
-                        "description": "Decisions they did not read.",
+                        "description": "Decisions they did not read on it.",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "why": {
-                        "description": "Why some went unjudged: `not_asked`, the call judged the limits alone; `work_limit`, the patterns' work reached the bound; `uncompiled`, a pattern does not compile.",
+                        "description": "Why some went unjudged: `not_asked`, the call judged the limits alone; `work_limit`, the bytes the patterns read reached the bound; `gave_up`, a pattern's cache filled over the page before `next`; `page`, the result's room ended the listing; `uncompiled`, a pattern does not compile.",
                         "enum": [
                           "not_asked",
                           "work_limit",
+                          "gave_up",
+                          "page",
                           "uncompiled"
                         ],
                         "type": "string"
                       },
                       "work": {
                         "additionalProperties": false,
-                        "description": "The patterns' work over every decision and the bound, in state-bytes: the bytes each pattern reads times its NFA's states.",
+                        "description": "The bytes the patterns would read over every decision and the bound: each pattern the texts of the fields it reads, one more per text.",
                         "properties": {
                           "bound": {
-                            "description": "The most one call does.",
+                            "description": "The most one call reads.",
                             "minimum": 0,
                             "type": "integer"
                           },
                           "measured": {
-                            "description": "The patterns' work over every decision.",
+                            "description": "The bytes the patterns would read over every decision.",
                             "minimum": 0,
                             "type": "integer"
                           }
@@ -1391,7 +1388,7 @@
                       "type": "string"
                     },
                     "level": {
-                      "description": "`refuse` for a limit and a `refuse` pattern, `warn` for a `warn` one.",
+                      "description": "`refuse` for a limit, a give-up and a `refuse` pattern, `warn` for a `warn` one.",
                       "enum": [
                         "refuse",
                         "warn"
@@ -1434,7 +1431,7 @@
                       "type": "integer"
                     },
                     "rule": {
-                      "description": "The rule as a refusal names it: a limit's, or `pattern`.",
+                      "description": "The rule as a refusal names it: a limit's, `pattern`, or `pattern_gave_up` where the pattern's cache filled before it could judge the field, which a write of it refuses.",
                       "type": "string"
                     },
                     "score": {

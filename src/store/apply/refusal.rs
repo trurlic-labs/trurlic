@@ -138,14 +138,10 @@ pub enum Rule {
     NoRepair,
     /// A rule of the quality bar, built in or of `[quality]`.
     Quality(QualityFault),
-    /// The `[quality]` patterns would do `work` state-bytes over what the
-    /// batch writes up to this op, past `bound`. When this op passes the
-    /// bound by itself, `work` is its own and `costliest` the index of the
-    /// pattern that costs it the most.
+    /// The `[quality]` patterns would read more than `bound` bytes over
+    /// what the batch writes, reading this argument.
     PatternWork {
-        work: usize,
         bound: usize,
-        costliest: Option<usize>,
     },
     /// An issue the resulting graph has and the loaded one lacks, which
     /// no rule above refused.
@@ -164,6 +160,7 @@ impl From<Broken> for Rule {
         match broken {
             Broken::Text { field, fault } => Self::Text { field, fault },
             Broken::Quality(fault) => Self::Quality(fault),
+            Broken::Work { bound } => Self::PatternWork { bound },
         }
     }
 }
@@ -245,26 +242,11 @@ impl fmt::Display for Rule {
             }
             Self::NoRepair => f.write_str("gives no repair: the list is empty"),
             Self::Quality(fault) => write!(f, "{fault}"),
-            Self::PatternWork {
-                work,
-                bound,
-                costliest: None,
-            } => write!(
+            Self::PatternWork { bound } => write!(
                 f,
-                "the `[quality]` patterns would do {work} state-bytes of work over the batch \
-                 to here, past the {bound} one batch may (each pattern's bytes read times its \
-                 NFA's states); split the batch into batches of fewer ops"
-            ),
-            Self::PatternWork {
-                work,
-                bound,
-                costliest: Some(index),
-            } => write!(
-                f,
-                "the `[quality]` patterns would do {work} state-bytes of work over this alone, \
-                 past the {bound} one batch may (each pattern's bytes read times its NFA's \
-                 states): the project's patterns cost too much for this text, \
-                 `[quality] patterns[{index}]` the most; simplify it or write less text"
+                "the `[quality]` patterns would read more than the {bound} bytes one batch may \
+                 (each pattern the texts of the fields it reads); split the batch into batches \
+                 of fewer ops"
             ),
             Self::Issue(issue) => write!(f, "the graph would gain an issue: {}", issue.message),
             Self::FileTooLarge { file, bytes, max } => write!(

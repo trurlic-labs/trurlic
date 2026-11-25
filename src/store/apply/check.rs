@@ -8,36 +8,44 @@ use std::fmt::Display;
 use super::decision::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, ListEdit};
-use super::patterns::Pending;
 use super::refusal::{NodeKind, Rule};
 use crate::store::name::name_fault;
-use crate::store::quality::{DecisionField, Place, element};
+use crate::store::quality::{Breach, DecisionField, Place, element};
 use crate::store::schema::{Anchor, Decision};
 
 /// What an op breaks: the argument within it, `None` for the op as a
-/// whole, and the rule.
+/// whole, the rule, and the decision at fault when it is not the node the
+/// op names first: one a repair changed.
 #[derive(Debug)]
 pub(super) struct Fault {
     pub(super) field: Option<String>,
     pub(super) rule: Rule,
+    pub(super) target: Option<String>,
 }
 
 impl Fault {
     pub(super) const fn op(rule: Rule) -> Self {
-        Self { field: None, rule }
-    }
-
-    pub(super) fn at(field: Field, rule: Rule) -> Self {
         Self {
-            field: Some(field.as_str().to_owned()),
+            field: None,
             rule,
+            target: None,
         }
     }
 
+    pub(super) fn at(field: Field, rule: Rule) -> Self {
+        Self::named(field.as_str().to_owned(), rule)
+    }
+
     fn item(field: Field, index: usize, rule: Rule) -> Self {
+        Self::named(format!("{}[{index}]", field.as_str()), rule)
+    }
+
+    /// The fault of the argument at `path` within the op.
+    pub(super) const fn named(path: String, rule: Rule) -> Self {
         Self {
-            field: Some(format!("{}[{index}]", field.as_str())),
+            field: Some(path),
             rule,
+            target: None,
         }
     }
 }
@@ -63,34 +71,20 @@ pub(super) fn new_name(edit: &Edit<'_>, name: &str, field: Field) -> Result<(), 
     ))
 }
 
-/// `decision` meets the text rules and the limits in the fields of
-/// `held`, refused naming the argument at fault as `sources` place it; it
-/// is kept for the patterns, which judge it once every op has run
-/// (`patterns::judge`).
+/// `decision` meets the bar in the fields of `held`, refused naming the
+/// argument at fault as `sources` place it; the warnings join the op's.
 pub(super) fn bar(
     context: &mut Context<'_>,
     decision: &Decision,
     held: &[DecisionField],
-    sources: Sources,
+    sources: &Sources,
 ) -> Result<(), Fault> {
-    context
-        .bar
-        .judge_limits(decision, held)
-        .map_err(|breach| Fault {
-            field: Some(sources.path(decision, breach.place)),
-            rule: breach.broken.into(),
-        })?;
-    if context.bar.pattern_count() > 0 {
-        context.pending.push(Pending {
-            op: context.op,
-            // clone: later ops of the batch may change the decision before
-            // the patterns judge what this op wrote.
-            decision: decision.clone(),
-            held: held.to_vec(),
-            sources,
-            about: None,
-        });
-    }
+    let hits = context.bar.judge(decision, held, &mut context.scan);
+    let hits = hits.map_err(|breach| sources.fault(decision, breach))?;
+    let located = hits
+        .into_iter()
+        .map(|(place, hit)| (sources.path(decision, place), hit));
+    context.hits.extend(located);
     Ok(())
 }
 
@@ -125,6 +119,11 @@ impl Sources {
                 self.add(field, argument, given.iter().map(&render).collect());
             }
         }
+    }
+
+    /// The fault of `breach` in `decision`, at its argument path.
+    pub(super) fn fault(&self, decision: &Decision, breach: Breach) -> Fault {
+        Fault::named(self.path(decision, breach.place), breach.broken.into())
     }
 
     /// The argument path of `place` in `decision`: `add_tags[0]`, or the

@@ -25,7 +25,7 @@ mod report;
 pub(crate) use anchors::AnchorCounts;
 use anchors::{AnchorItem, anchor_section};
 pub(crate) use lint::{Cut, LintItem, PAIRS_MORE, PatternCounts};
-use lint::{LINT_MORE, LintKind, Patterns};
+use lint::{LINT_MORE, LintItems, LintKind, Patterns};
 use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
 pub(crate) use report::{Part, QualityCounts, Report};
 
@@ -44,7 +44,7 @@ it holds, what a shared graph's history lacks, the decisions of each component, 
 of 0.5 or more), each rule of the quality bar a stored decision breaks, and the decisions \
 whose anchors all name a file and no symbol, counted by kind. The call judges the bar's \
 limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over \
-the decisions by name within a work limit: `counts.lint.patterns` says how many decisions \
+the decisions by name within a bound on the bytes they read: `counts.lint.patterns` says how many decisions \
 they read and names in `next` the first left unread, and the same call with `from` set to \
 it reads on from there. Each section fits the \
 result budget; one that leaves items out gives \
@@ -165,7 +165,7 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
     let lint_items = shown(Section::Lint).then(|| {
         let gathered = lint::gather(state, origin, patterns);
         counts.lint = Some(gathered.counts);
-        gathered.kinds
+        gathered.items
     });
     // Asked for alone: it reads every source file of the tree.
     let anchor_items = (section == Some(Section::Anchors)).then(|| {
@@ -186,7 +186,7 @@ fn status(store: &Store, state: &ProjectState, arguments: StatusArgs) -> Outcome
 }
 
 /// The report of `items` with no item shown: what [`fill`] measures.
-fn frame(store: &Store, state: &ProjectState, counts: Counts, items: &Items) -> Report {
+fn frame(store: &Store, state: &ProjectState, counts: Counts, items: &Items<'_>) -> Report {
     let local = store.is_local();
     Report {
         // clone: the report outlives the state it reads.
@@ -199,7 +199,7 @@ fn frame(store: &Store, state: &ProjectState, counts: Counts, items: &Items) -> 
         issues: items.issues.as_ref().map(Listed::frame),
         history: items.history.as_ref().map(Listed::frame),
         components: items.components.as_ref().map(Listed::frame),
-        lint: items.lint.as_deref().map(lint_frame),
+        lint: items.lint.as_ref().map(|lint| lint_frame(&lint.kinds)),
         anchors: items.anchors.as_ref().map(Listed::frame),
     }
 }
@@ -253,17 +253,17 @@ fn lint_frame(kinds: &[(LintKind, Listed<LintItem>)]) -> Part<LintItem> {
 /// The items of each section asked for, before the budget cuts them; the
 /// `lint` section's by kind, each kind fitted on its own, so a long kind
 /// does not crowd out a short one.
-struct Items {
+struct Items<'s> {
     issues: Option<Listed<IssueItem>>,
     history: Option<Listed<HistoryItem>>,
     components: Option<Listed<ComponentItem>>,
-    lint: Option<Vec<(LintKind, Listed<LintItem>)>>,
+    lint: Option<LintItems<'s>>,
     anchors: Option<Listed<AnchorItem>>,
 }
 
 /// Put into `report`, whose sections hold no item yet, each section's
 /// leading items that fit the budget beside the rest of it.
-fn fill(report: &mut Report, items: Items) {
+fn fill(report: &mut Report, items: Items<'_>) {
     let sizes = sizes(&items);
     let Items {
         issues,
@@ -272,29 +272,22 @@ fn fill(report: &mut Report, items: Items) {
         lint,
         anchors,
     } = items;
-    let fixed = json_len(&to_value(&*report)) + NOTICE_BYTES;
+    let reserve = lint.as_ref().map_or(0, LintItems::reserve);
+    let fixed = json_len(&to_value(&*report)) + NOTICE_BYTES + reserve;
     let level = budget::level(&sizes, fixed, MAX_TOOL_RESULT_BYTES).unwrap_or(0);
     report.issues = issues.map(|items| Sizes::part(&sizes, Slot::Issues, items, level));
     report.history = history.map(|items| Sizes::part(&sizes, Slot::History, items, level));
     report.components = components.map(|items| Sizes::part(&sizes, Slot::Components, items, level));
     report.anchors = anchors.map(|items| Sizes::part(&sizes, Slot::Anchors, items, level));
-    report.lint = lint.map(|kinds| {
-        let parts = kinds
-            .into_iter()
-            .map(|(kind, listed)| Sizes::part(&sizes, Slot::Lint(kind), listed, level));
-        parts.fold(lint_frame(&[]), |mut lint, part| {
-            lint.total += part.total;
-            lint.omitted += part.omitted;
-            lint.items.extend(part.items);
-            lint.more = lint.more.or(part.more);
-            lint
-        })
+    report.lint = lint.map(|lint| {
+        let fit = |kind, listed| Sizes::part(&sizes, Slot::Lint(kind), listed, level);
+        lint::fitted(lint, fit, report.counts.lint.as_mut())
     });
 }
 
 /// The sizes of each section `items` holds, a kind of the `lint` section
 /// each apart.
-fn sizes(items: &Items) -> Vec<Sizes> {
+fn sizes(items: &Items<'_>) -> Vec<Sizes> {
     let mut sizes: Vec<Sizes> = [
         items.issues.as_ref().map(|l| Sizes::of(Slot::Issues, l)),
         items.history.as_ref().map(|l| Sizes::of(Slot::History, l)),
@@ -307,7 +300,7 @@ fn sizes(items: &Items) -> Vec<Sizes> {
     .into_iter()
     .flatten()
     .collect();
-    let kinds = items.lint.iter().flatten();
+    let kinds = items.lint.iter().flat_map(|lint| &lint.kinds);
     sizes.extend(kinds.map(|(kind, listed)| Sizes::of(Slot::Lint(*kind), listed)));
     sizes
 }

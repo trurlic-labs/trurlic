@@ -8,7 +8,7 @@ use std::process::Stdio;
 
 use serde_json::{Value, json};
 
-use crate::harness::{GraphFiles, McpClient, Project, record};
+use crate::harness::{GraphFiles, McpClient, Project, decision, record};
 
 /// Every op kind, each building on the ones before it.
 fn every_op() -> Value {
@@ -492,22 +492,29 @@ fn the_quality_table_holds_both_surfaces_alike() {
     assert_eq!(refusal["kind"], "store_error", "{refusal}");
 }
 
-/// A batch whose `[quality]` patterns would do more work than one batch
-/// may is refused alike over both surfaces, at the op where the sum
-/// passes the bound, and writes nothing.
+/// A batch whose `[quality]` patterns would read more bytes than one
+/// batch may is refused alike over both surfaces, at the op where the sum
+/// passes the bound, and writes nothing. Each op adds an alternative to a
+/// decision that holds hundreds of them, written by hand, and the most
+/// patterns read every alternative of it.
 #[test]
 fn a_batch_past_the_pattern_work_is_refused_alike_over_both_surfaces() {
     let project = Project::init();
     let header = project.read("project.toml");
-    let costly = "\n[[quality.patterns]]\npattern = '[\\x00-\\x7f]{0,9343}q'\n\
-                  fields = [\"reason\"]\nlevel = \"warn\"\nmessage = \"Costly.\"\n";
-    project.write("project.toml", &format!("{header}\n[quality]\n{costly}"));
-    let ops: Vec<Value> = (0..8)
-        .map(|index| {
-            let mut op = record(&format!("costly-{index}"), "project", "A rule");
-            op["reason"] = json!(format!("{} done.", "x".repeat(20_000)));
-            op
-        })
+    let wide = "\n[[quality.patterns]]\npattern = 'zz'\nfields = [\"alternatives\"]\n\
+                level = \"warn\"\nmessage = \"Wide.\"\n";
+    project.write(
+        "project.toml",
+        &format!("{header}\n[quality]\n{}", wide.repeat(32)),
+    );
+    let alternatives: Vec<String> = (0..900).map(|n| format!("{n:x<1000}")).collect();
+    let extra = format!("alternatives = {alternatives:?}\n");
+    project.write(
+        "decisions/wide.toml",
+        &decision("project", "A rule", &extra),
+    );
+    let ops: Vec<Value> = (0..12)
+        .map(|index| json!({ "op": "revise", "name": "wide", "add_alternatives": [format!("Way {index}")] }))
         .collect();
     let batch = json!({ "origin": "row 1", "ops": ops });
     let before = project.graph_files();
@@ -517,10 +524,12 @@ fn a_batch_past_the_pattern_work_is_refused_alike_over_both_surfaces() {
     let output = project.apply(&batch, &[]);
 
     assert_eq!(
-        (&refusal["kind"], &refusal["rule"], &refusal["op"]["index"]),
-        (&json!("batch_refused"), &json!("pattern_work"), &json!(5)),
+        (&refusal["kind"], &refusal["rule"]),
+        (&json!("batch_refused"), &json!("pattern_work")),
         "{refusal}"
     );
+    let at = refusal["op"]["index"].as_u64().unwrap();
+    assert!((1..12).contains(&at), "{refusal}");
     let message = refusal["message"].as_str().unwrap();
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),

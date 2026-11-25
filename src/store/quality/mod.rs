@@ -10,10 +10,8 @@
 //! anchor, and the project's limits and patterns. A graph migrated or edited
 //! by hand below it loads, passes `check` and stays revisable, since an op
 //! is held to the bar only in the fields it writes. A write holds each
-//! decision an op writes to the text rules and the limits as the op runs
-//! ([`Bar::judge_limits`], field by field in one order), and to the
-//! patterns once their work over the batch is charged
-//! ([`Bar::judge_patterns`]).
+//! decision an op writes to the text rules, the limits and the patterns as
+//! the op runs, in one order ([`Bar::judge`]).
 //!
 //! Words are counted one way everywhere: the runs of non-whitespace
 //! between Unicode whitespace ([`words`]). Bytes are bytes of UTF-8.
@@ -26,9 +24,10 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::store::Store;
+use crate::store::limits::MAX_PATTERN_CACHE_BYTES;
 use crate::{Error, Result};
 
-pub(crate) use bar::{Bar, Broken, Hit, Place, element};
+pub(crate) use bar::{Bar, Breach, Broken, Hit, PatternCache, Place, Scan, element, texts};
 pub use bar::{PatternFault, Shortfall};
 pub use config::{ConfigFault, Level, Pattern, Quality, WordRange};
 
@@ -144,6 +143,11 @@ pub enum QualityFault {
     },
     /// A `refuse` pattern matched.
     Pattern(PatternMatch),
+    /// The pattern at `index` of `[quality] patterns` gave up: its
+    /// automaton outgrew its cache, or a write's automata their total, over
+    /// the texts the call read, so it judged no text after this one.
+    /// Whatever its level.
+    GaveUp { index: usize },
     /// The batch records a decision without an `origin`, and
     /// `require_origin` is set.
     OriginRequired,
@@ -156,6 +160,7 @@ impl QualityFault {
         match self {
             Self::Limit { limit, .. } => limit.as_str(),
             Self::Pattern(_) => "pattern",
+            Self::GaveUp { .. } => "pattern_gave_up",
             Self::OriginRequired => "origin_required",
         }
     }
@@ -182,6 +187,13 @@ impl fmt::Display for QualityFault {
                 )
             }
             Self::Pattern(found) => write!(f, "{found}"),
+            Self::GaveUp { index } => write!(
+                f,
+                "`[quality] patterns[{index}]` gave up here: over the texts read with this one, \
+                 its automaton outgrew the {MAX_PATTERN_CACHE_BYTES} bytes of cache a pattern \
+                 may fill, or the patterns' automata their total; judge fewer texts at once \
+                 (split the batch), or simplify the pattern"
+            ),
             Self::OriginRequired => f.write_str(
                 "is required: the batch records a decision, and `[quality] require_origin` \
                  is set",
@@ -222,8 +234,8 @@ fn words(text: &str) -> usize {
 
 impl Store {
     /// The rules of `quality` compiled for a write: every pattern, once per
-    /// batch. A pattern that does not compile, or compiles past
-    /// `MAX_PATTERN_COMPILED_BYTES`, is [`Error::QualityPattern`].
+    /// batch. A pattern the lazy DFA does not run is
+    /// [`Error::QualityPattern`].
     pub(crate) fn bar(&self, quality: &Quality) -> Result<Bar> {
         Bar::compile(quality).map_err(|fault| Error::QualityPattern {
             path: self.project_path(),
@@ -278,13 +290,18 @@ mod tests {
         assert!(quality.require_origin);
         let bar = store.bar(quality).unwrap();
         let all = DecisionField::IN_FILE_ORDER;
-        assert_eq!(
-            bar.judge(&at_the_bar(), &all).map_err(|b| b.broken),
-            Ok(vec![])
-        );
+        let judged = |decision: &Decision| {
+            let mut scan = bar.scan(usize::MAX, usize::MAX);
+            bar.judge(decision, &all, &mut scan).map_err(|b| b.broken)
+        };
+        assert_eq!(judged(&at_the_bar()), Ok(vec![]));
         let mut we = at_the_bar();
         we.choice = "We take the file lock".into();
-        assert!(bar.judge(&we, &all).is_err());
+        let refused = judged(&we).unwrap_err();
+        assert!(
+            matches!(&refused, Broken::Quality(QualityFault::Pattern(found)) if found.index == 0),
+            "{refused:?}"
+        );
 
         let written = canonical(&state.project);
         assert!(!is_canonical(&state.project, header.as_bytes()));
@@ -292,7 +309,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), written);
         assert_eq!(store.load_state().unwrap().project, state.project);
         assert!(
-            written.contains("pattern = '(?i)\\b(?:we|our)\\b'\n"),
+            written.contains("pattern = '(?i)(?:^|\\W)(?:we|our)(?:\\W|$)'\n"),
             "{written}"
         );
     }

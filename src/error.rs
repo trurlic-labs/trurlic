@@ -294,8 +294,9 @@ pub enum Error {
     #[error("{0}")]
     Refused(Box<Refusal>),
 
-    /// A `[quality]` pattern of the `project.toml` at `path` that does not
-    /// compile, or compiles past its size limit; `message` is regex's.
+    /// A `[quality]` pattern of the `project.toml` at `path` the lazy DFA
+    /// does not run: a syntax error, an automaton past its limits, a
+    /// Unicode word boundary. `message` says which, and the rewrite.
     #[error(
         "{}: `[quality] patterns[{index}].pattern` does not compile: {message}",
         path.display()

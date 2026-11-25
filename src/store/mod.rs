@@ -54,7 +54,7 @@ pub(crate) use migration::{
 };
 pub use name::NameFault;
 pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
-pub(crate) use quality::Bar;
+pub(crate) use quality::{Bar, Breach, Broken, PatternCache};
 pub use quality::{
     ConfigFault, DecisionField, Level, Limit, Pattern, PatternFault, PatternMatch, Quality,
     QualityFault, Shortfall, WordRange,
@@ -299,6 +299,24 @@ pub(crate) mod testing {
             anchors: std::collections::BTreeSet::new(),
             depends_on: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// A `[quality]` pattern no cache holds over [`coin_flips`]: its lazy
+    /// DFA tracks where the last twenty-one letters hold an `a`.
+    pub const OUTGROWS_ITS_CACHE: &str = "(?:a|b)*a(?:a|b){20}$";
+
+    /// `len` letters `a` and `b` in an order fixed by `seed`, with no
+    /// pattern to them a short window repeats.
+    pub fn coin_flips(len: usize, seed: u64) -> String {
+        let mut state = seed;
+        (0..len)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                if state >> 63 == 0 { 'a' } else { 'b' }
+            })
+            .collect()
     }
 
     /// [`sample_decision`] anchored at each of `files`.

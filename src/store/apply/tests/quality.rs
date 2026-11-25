@@ -11,11 +11,11 @@ use super::{anchor, apply, batch, graph, named, record, refused, revise};
 use crate::Error;
 use crate::store::apply::{Applied, Merge, Op, Record};
 use crate::store::canonical::canonical;
-use crate::store::limits::MAX_PATTERN_WORK;
+use crate::store::limits::{MAX_QUALITY_PATTERNS, MAX_WRITE_PATTERN_BYTES};
 use crate::store::schema::Anchor;
 use crate::store::state::NodeFile;
-use crate::store::testing::{sample_decision, write_node};
-use crate::store::{ListEdit, PatternNote, Rule, Store, Warning, WarningKind};
+use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision, write_node};
+use crate::store::{ListEdit, PatternNote, QualityFault, Rule, Store, Warning, WarningKind};
 
 /// `table` appended to `project.toml` as its `[quality]`.
 fn with_quality(store: &Store, table: &str) {
@@ -397,7 +397,7 @@ fn a_merge_that_takes_the_survivor_past_a_limit_is_refused() {
 }
 
 /// The batch is refused before any op when a pattern does not compile,
-/// naming `project.toml`, the pattern's index and regex's message.
+/// naming `project.toml`, the pattern's index and the engine's message.
 #[test]
 fn a_pattern_that_does_not_compile_refuses_every_batch() {
     let tmp = TempDir::new().unwrap();
@@ -635,80 +635,133 @@ fn a_text_fault_in_an_element_names_its_argument() {
     );
 }
 
-/// A pattern of the most states a pattern compiles to, over `field`.
-fn costly(index: usize, count: usize, field: &str, level: &str) -> String {
-    format!(
-        "[[quality.patterns]]\npattern = '[\\x00-\\x7f]{{0,{count}}}q'\nfields = [\"{field}\"]\n\
-         level = \"{level}\"\nmessage = \"Costly {index}.\"\n"
-    )
-}
-
-/// A batch whose patterns' work passes the bound is refused at the op
-/// where the sum does, before any pattern runs. Op 0 holds a match of a
-/// `refuse` pattern, which refuses the batch cut to its first op; past the
-/// bound that pattern never runs.
-#[test]
-fn a_batch_past_the_pattern_work_is_refused_before_any_pattern_runs() {
-    let tmp = TempDir::new().unwrap();
+/// A table of a `refuse` pattern for `zz` over `choice` and the most
+/// patterns more over `alternatives`, and the decision `sign` holding
+/// alternatives of nearly a node file's bytes, written by hand. Each op
+/// adds `sign` an alternative, so its patterns read all of them: the
+/// batch's bytes pass the write bound within a few ops. The first op
+/// holds `zz` in its choice when `zz_first`.
+fn past_the_write_bytes(tmp: &TempDir) -> (Store, impl Fn(bool) -> Vec<Op>) {
     let zz = "[[quality.patterns]]\npattern = 'zz'\nfields = [\"choice\"]\nlevel = \"refuse\"\n\
               message = \"No zz.\"\n";
-    let store = store_under(
-        &tmp,
-        Some(&format!("{zz}\n{}", costly(1, 9343, "reason", "warn"))),
-    );
-    let ops = |count: usize| -> Vec<Op> {
+    let wide = "[[quality.patterns]]\npattern = 'zz'\nfields = [\"alternatives\"]\n\
+                level = \"warn\"\nmessage = \"Wide.\"\n";
+    let table = format!("{zz}\n{}", vec![wide; MAX_QUALITY_PATTERNS - 1].join("\n"));
+    let store = store_under(tmp, Some(&table));
+    let mut sign = store
+        .load_state()
+        .unwrap()
+        .decisions
+        .remove("sign")
+        .unwrap();
+    sign.alternatives = (0..900).map(|n| format!("{n:x<1000}")).collect();
+    write_node(&store, &NodeFile::Decision("sign".into()), &sign);
+    let bar = store
+        .bar(&store.load_state().unwrap().project.quality)
+        .unwrap();
+    let count = MAX_WRITE_PATTERN_BYTES / bar.pattern_bytes(&sign) + 2;
+    let ops = move |zz_first: bool| -> Vec<Op> {
         (0..count)
             .map(|index| {
-                let mut op = record(&format!("costly-{index}"), "auth");
-                op.reason = format!("{} done.", "x".repeat(20_000));
-                if index == 0 {
-                    op.choice = "Choice zz".into();
+                let mut op = revise("sign");
+                op.alternatives = super::add(&[&format!("Way {index}")]);
+                if index == 0 && zz_first {
+                    op.choice = Some("Choice zz".into());
                 }
-                Op::Record(op)
+                Op::Revise(op)
             })
             .collect()
     };
-    let (rule, at, _) = named(&refused(&store, ops(1)));
-    assert_eq!((rule, at.as_str()), ("pattern", "ops[0].choice"));
-
-    let refusal = refused(&store, ops(10));
-
-    assert_eq!(refusal.path(), "ops[5]");
-    let Rule::PatternWork {
-        work,
-        bound,
-        costliest: None,
-    } = refusal.rule
-    else {
-        panic!("{refusal}")
-    };
-    assert_eq!(bound, MAX_PATTERN_WORK);
-    assert!(work > bound && work < bound + bound / 4, "{work}");
+    (store, ops)
 }
 
-/// An op whose work alone passes the bound is refused at it, naming the
-/// pattern that costs it the most, the first of the costliest.
+/// A batch whose patterns would read past the write bound is refused at
+/// the op where the sum does, before the pattern that would pass it reads
+/// a byte, after the patterns of the ops before it found nothing to
+/// refuse; nothing is written.
 #[test]
-fn an_op_past_the_pattern_work_alone_names_the_costliest_pattern() {
+fn a_batch_past_the_write_bytes_is_refused_at_the_op_where_the_sum_passes() {
     let tmp = TempDir::new().unwrap();
-    let table: String = [(0, 9000), (1, 9343), (2, 9343), (3, 100)]
-        .iter()
-        .map(|&(index, count)| costly(index, count, "reason", "warn"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let (store, ops) = past_the_write_bytes(&tmp);
+    let before = super::files(&store);
+
+    let refusal = refused(&store, ops(false));
+
+    let at = refusal.op.as_ref().map_or(0, |op| op.index);
+    assert!(at > 0, "{refusal}");
+    assert_eq!(refusal.path(), format!("ops[{at}].alternatives"));
+    assert_eq!(
+        refusal.rule,
+        Rule::PatternWork {
+            bound: MAX_WRITE_PATTERN_BYTES
+        }
+    );
+    assert_eq!(super::files(&store), before);
+}
+
+/// A batch is refused at its first op at fault: a `refuse` match in an op
+/// before the one where the bytes pass the bound refuses it there.
+#[test]
+fn a_refusal_before_the_op_past_the_bytes_bound_comes_first() {
+    let tmp = TempDir::new().unwrap();
+    let (store, ops) = past_the_write_bytes(&tmp);
+
+    let (rule, at, message) = named(&refused(&store, ops(true)));
+
+    assert_eq!(
+        (rule, at.as_str()),
+        ("pattern", "ops[0].choice"),
+        "{message}"
+    );
+}
+
+/// A pattern's refusal in an op comes before the fault of a later op.
+#[test]
+fn a_pattern_refusal_comes_before_a_later_op_fault() {
+    let tmp = TempDir::new().unwrap();
+    let (store, _) = under_pattern(&tmp, "choice", "refuse");
+    let mut zz = record("zz", "auth");
+    zz.choice = "Choice zz".into();
+    let mut ghost = revise("ghost");
+    ghost.choice = Some("Another choice".into());
+
+    let (rule, at, message) = named(&refused(&store, vec![Op::Record(zz), Op::Revise(ghost)]));
+
+    assert_eq!(
+        (rule, at.as_str()),
+        ("pattern", "ops[0].choice"),
+        "{message}"
+    );
+}
+
+/// The caches of a batch's patterns are the batch's: two records whose
+/// reasons each fit a pattern's cache, but not together, are refused at
+/// the second as `pattern_gave_up`, naming the pattern whatever its
+/// level, and each alone is written.
+#[test]
+fn a_pattern_whose_cache_fills_over_the_batch_refuses_it_at_that_op() {
+    let tmp = TempDir::new().unwrap();
+    let table = format!(
+        "[[quality.patterns]]\npattern = '{OUTGROWS_ITS_CACHE}'\nfields = [\"reason\"]\n\
+         level = \"warn\"\nmessage = \"Random.\""
+    );
     let store = store_under(&tmp, Some(&table));
-    let ops = expire(|op| op.reason = format!("{} done.", "x".repeat(49_000)));
+    let ops: Vec<Op> = (0..2)
+        .map(|index| {
+            let mut op = record(&format!("random-{index}"), "auth");
+            op.reason = coin_flips(1_000, index);
+            Op::Record(op)
+        })
+        .collect();
 
-    let refusal = refused(&store, ops);
+    let refusal = refused(&store, ops.clone());
 
-    assert_eq!(refusal.path(), "ops[0]");
-    let Rule::PatternWork {
-        work,
-        bound: MAX_PATTERN_WORK,
-        costliest: Some(1),
-    } = refusal.rule
-    else {
-        panic!("{refusal}")
-    };
-    assert!(work > MAX_PATTERN_WORK, "{work}");
+    assert_eq!(refusal.path(), "ops[1].reason");
+    assert_eq!(
+        refusal.rule,
+        Rule::Quality(QualityFault::GaveUp { index: 0 })
+    );
+    for op in ops {
+        apply(&store, vec![op]).unwrap();
+    }
 }

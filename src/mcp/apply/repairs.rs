@@ -13,20 +13,20 @@
 //! repair repairs nothing and refuses nothing. The caller wrote none of
 //! these repairs, so none may refuse the batch: a repair a `refuse` pattern
 //! of `[quality]` matches on the anchors field, the one the store judges a
-//! repair on, is taken out of the map and left, with the pattern as its
-//! cause. The result lists the repairs the store made and the stale
+//! repair on, or a pattern gives up on, is taken out of the map and left,
+//! with the rule as its cause. The result lists the repairs the store made and the stale
 //! anchors left, as many as the budget holds beside the rest of the
 //! result, and counts the others: `trurlic check` lists every stale anchor.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::lint::anchors::{Checked, Kind};
 use crate::mcp::result::ToolError;
 use crate::mcp::spec::output::{Count, Items, Nested, Str};
 use crate::mcp::spec::{Output, Shown as Fields};
 use crate::sources;
-use crate::store::limits::MAX_PATTERN_WORK;
-use crate::store::{Anchor, Bar, DecisionField, Op, ProjectState, RepairAnchors, Store};
+use crate::store::limits::{MAX_WRITE_PATTERN_BYTES, MAX_WRITE_PATTERN_CACHE_BYTES};
+use crate::store::{Anchor, Bar, Breach, Broken, Op, ProjectState, RepairAnchors, Rule, Store};
 
 use super::result::Answer;
 
@@ -62,7 +62,8 @@ pub(crate) struct Left {
 }
 
 /// Fill each op of `ops` with no `repairs` with the repairs the tree shows,
-/// read as `check` reads them, less those a `refuse` pattern matches; give
+/// read as `check` reads them, less those a `refuse` pattern matches or a
+/// pattern gives up on; give
 /// the stale anchors left without a repair, with why. Nothing is read when
 /// no op is such.
 pub(super) fn fill(store: &Store, ops: &mut [Op]) -> Result<Unrepaired, ToolError> {
@@ -74,7 +75,7 @@ pub(super) fn fill(store: &Store, ops: &mut [Op]) -> Result<Unrepaired, ToolErro
     let state = store.load_state()?;
     let bar = store.bar(&state.project.quality)?;
     let (mut repairs, mut unrepaired) = shown(store, &state);
-    sift(&bar, &state, &mut repairs, &mut unrepaired);
+    sift(&bar, &mut repairs, &mut unrepaired);
     for op in ops {
         if let Op::RepairAnchors(RepairAnchors::Every(map)) = op {
             // clone: each op with no `repairs` applies the whole map.
@@ -109,39 +110,27 @@ fn shown(store: &Store, state: &ProjectState) -> (BTreeMap<Anchor, Anchor>, Unre
 
 /// Move out of `repairs` to `unrepaired` each repair a `refuse` pattern of
 /// `bar` matches on the anchors field, which holds it alone, as the store
-/// judges the anchors a repair brings. The work is charged first: once it
-/// passes [`MAX_PATTERN_WORK`] the rest stay for the write, which judges
-/// every repair it makes and refuses a batch that costs too much.
-fn sift(
-    bar: &Bar,
-    state: &ProjectState,
-    repairs: &mut BTreeMap<Anchor, Anchor>,
-    unrepaired: &mut Unrepaired,
-) {
-    let Some(held) = state.decisions.values().next() else {
-        return;
-    };
-    if bar.pattern_count() == 0 {
-        return;
-    }
-    // clone: the probe holds one repair's anchor at a time.
-    let mut probe = held.clone();
-    let field = [DecisionField::Anchors];
-    let mut spent = 0usize;
+/// judges the anchors a repair brings, or that a pattern gives up on: a
+/// write would refuse both, and the caller wrote neither. The patterns
+/// read as a write's do, over one [`Scan`] with the write's bounds: once
+/// their bytes pass [`MAX_WRITE_PATTERN_BYTES`] the rest stay for the
+/// write, which judges every repair it makes and refuses a batch that
+/// reads too much.
+fn sift(bar: &Bar, repairs: &mut BTreeMap<Anchor, Anchor>, unrepaired: &mut Unrepaired) {
+    let mut scan = bar.scan(MAX_WRITE_PATTERN_BYTES, MAX_WRITE_PATTERN_CACHE_BYTES);
     repairs.retain(|from, to| {
-        // clone: as above.
-        probe.anchors = BTreeSet::from([to.clone()]);
-        let work = bar.judge_work(&probe, &field).into_iter();
-        spent = spent.saturating_add(work.fold(0, usize::saturating_add));
-        if spent > MAX_PATTERN_WORK {
-            return true;
-        }
-        let Err(breach) = bar.judge_patterns(&probe, &field) else {
-            return true;
+        let broken = match bar.judge_anchor(to, &mut scan) {
+            Ok(_)
+            | Err(Breach {
+                broken: Broken::Work { .. },
+                ..
+            }) => return true,
+            // A `refuse` match or a give-up: an anchor breaks no text rule.
+            Err(Breach { broken, .. }) => broken,
         };
-        let cause = format!("its repair `{to}` {}", breach.broken);
+        let rule = Rule::from(broken);
         // clone: the map left outlives the one sifted.
-        unrepaired.insert(from.clone(), cause);
+        unrepaired.insert(from.clone(), format!("its repair `{to}` {rule}"));
         false
     });
 }
@@ -217,5 +206,47 @@ impl Output for Left {
         fields.required("anchor", anchor, &Str, |item| &item.anchor);
         let cause = "Why it names nothing, or why its repair was not written.";
         fields.required("cause", cause, &Str, |item| &item.cause);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips};
+    use crate::store::{DecisionField, Level, Pattern, Quality};
+
+    /// A repair a pattern gives up on is left, the give-up its cause, as
+    /// one a `refuse` pattern matches is: the caller wrote neither, so
+    /// neither may refuse the batch. Four repairs to paths of random
+    /// letters, each within a cache alone, fill it together.
+    #[test]
+    fn a_repair_a_pattern_gives_up_on_is_left_with_the_give_up_as_its_cause() {
+        let quality = Quality {
+            patterns: vec![Pattern {
+                pattern: OUTGROWS_ITS_CACHE.into(),
+                fields: [DecisionField::Anchors].into(),
+                level: Level::Warn,
+                message: "Random.".into(),
+            }],
+            ..Quality::default()
+        };
+        let (bar, _) = Bar::for_report(&quality);
+        let anchor = |file: String| Anchor::new(file, None).unwrap();
+        let mut repairs: BTreeMap<Anchor, Anchor> = (0..4)
+            .map(|index| {
+                let to = format!("src/{}.rs", coin_flips(480, index));
+                (anchor(format!("src/old{index}.rs")), anchor(to))
+            })
+            .collect();
+        let mut unrepaired = Unrepaired::new();
+
+        sift(&bar, &mut repairs, &mut unrepaired);
+
+        assert!(!repairs.is_empty(), "{unrepaired:?}");
+        assert!(!unrepaired.is_empty(), "{repairs:?}");
+        assert_eq!(repairs.len() + unrepaired.len(), 4);
+        for cause in unrepaired.values() {
+            assert!(cause.contains("`[quality] patterns[0]` gave up"), "{cause}");
+        }
     }
 }

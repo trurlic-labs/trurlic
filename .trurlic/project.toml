@@ -21,7 +21,7 @@ level = "refuse"
 message = "A decision file is .toml prose of this repository: ASCII only."
 
 [[quality.patterns]]
-pattern = '(?i)\b(?:simply|basically|essentially|leverages?|leveraged|utili[sz]e[sd]?|robust|comprehensive|seamless|powerful|elegant)\b'
+pattern = '(?i)(?:^|\W)(?:simply|basically|essentially|leverages?|leveraged|utili[sz]e[sd]?|robust|comprehensive|seamless|powerful|elegant)(?:\W|$)'
 fields = [
     "alternatives",
     "choice",

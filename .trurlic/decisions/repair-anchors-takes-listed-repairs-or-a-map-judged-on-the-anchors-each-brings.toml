@@ -1,10 +1,10 @@
 component = "store"
 choice = "repair_anchors takes listed repairs, each checked in order, or a map from stale anchor to repair; the patterns judge the anchors a repair brings, a refusal naming the decision; the store reads no code"
-reason = "The store imports no code index and runs no project git, so which anchor repairs which is the caller's. A listed repair is held to what every op is held to: the decision exists, it holds from, from and to are anchors by the anchor rules, and to differs from from, each refusal naming repairs[j] and the part at fault; an empty list is no_repair. A map is applied where the op runs to every decision ever accepted that holds a key, so a planned anchor is never moved, and a key no decision holds is passed over. A repair to an anchor the decision holds already drops the stale one rather than refusing. A repair never grows a decision's list, so the limits on the whole list are not judged. Each decision a repair changed is kept for the patterns with the anchors it gained alone, and judged with every other write once the ops have run and the batch's pattern work is charged. A refusal names that decision as the op's node, and the repair that brought the anchor when the caller listed it, else the anchors field. A change of anchors leaves the status alone. Applied::repaired lists each anchor replaced."
+reason = "The store imports no code index and runs no project git, so which anchor repairs which is the caller's. A listed repair is held to what every op is held to: the decision exists, it holds from, from and to are anchors by the anchor rules, and to differs from from, each refusal naming repairs[j] and the part at fault; an empty list is no_repair. A map is applied where the op runs to every decision ever accepted that holds a key, so a planned anchor is never moved, and a key no decision holds is passed over. A repair to an anchor the decision holds already drops the stale one rather than refusing. A repair never grows a decision's list, so the limits on the whole list are not judged. Each decision a repair changed is held to the patterns in the anchors it gained alone, as the op runs, over the caches and the bytes of the batch. A refusal names that decision as the op's node, and the repair that brought the anchor when the caller listed it, else the anchors field. A change of anchors leaves the status alone. Applied::repaired lists each anchor replaced."
 alternatives = [
     "Refuse a repair to an anchor the decision holds already: rejected because every repair the tree shows would then fail on a decision that held both",
     "Judge a repaired decision on its whole list: rejected because one decision already past anchors_max, or one holding an anchor a pattern refuses, would block every repair of the tree",
-    "Withhold in the store a map's repair the bar refuses and write the rest: rejected because the verdict is needed while the ops run, before the batch's pattern work is charged",
+    "Withhold in the store a map's repair the bar refuses and write the rest: rejected because the batch would land in part, and the caller would not learn which repair was dropped; the handler sifts the map before the lock instead",
     "Let the store compute the repairs: rejected because store imports only error, console and git for its own repository",
 ]
 tags = [
@@ -17,9 +17,8 @@ created = "2026-11-24T11:34:48.414739583Z"
 anchors = [
     { file = "src/store/apply/ops.rs", symbol = "Repair" },
     { file = "src/store/apply/ops.rs", symbol = "RepairAnchors" },
-    { file = "src/store/apply/patterns.rs", symbol = "Pending" },
     { file = "src/store/apply/repair.rs", symbol = "every" },
-    { file = "src/store/apply/repair.rs", symbol = "keep_gained" },
+    { file = "src/store/apply/repair.rs", symbol = "judge_gained" },
     { file = "src/store/apply/repair.rs", symbol = "repair_anchors" },
     { file = "src/store/apply/tests/repair.rs", symbol = "a_map_of_repairs_applies_where_its_op_runs" },
     { file = "src/store/apply/tests/repair.rs", symbol = "a_repair_is_judged_on_the_anchors_it_brings_and_names_its_decision" },

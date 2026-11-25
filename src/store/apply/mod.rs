@@ -17,7 +17,6 @@ mod component;
 mod decision;
 mod edit;
 mod ops;
-mod patterns;
 mod refusal;
 mod repair;
 mod warning;
@@ -30,7 +29,8 @@ use serde::de::DeserializeOwned;
 use crate::store::canonical::Canonical;
 use crate::store::commit::PendingWrite;
 use crate::store::history::{CommitMessage, Tool};
-use crate::store::quality::{Bar, DecisionField};
+use crate::store::limits::{MAX_WRITE_PATTERN_BYTES, MAX_WRITE_PATTERN_CACHE_BYTES};
+use crate::store::quality::{Bar, DecisionField, Hit, Scan};
 use crate::store::schema::{Anchor, StatusName};
 use crate::store::state::NodeFile;
 use crate::store::time::Timestamp;
@@ -40,7 +40,6 @@ use crate::{Error, Result};
 use check::Fault;
 use decision::Context;
 use edit::{Before, Edit};
-use patterns::Judged;
 
 pub use ops::{
     AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
@@ -136,17 +135,20 @@ impl Writer<'_> {
     pub fn apply(&mut self, batch: Batch) -> Result<Applied> {
         let message = commit_message(&batch)?;
         let bar = self.store.bar(&self.state.project.quality)?;
-        check_batch(&batch, &bar)?;
+        let mut scan = bar.scan(MAX_WRITE_PATTERN_BYTES, MAX_WRITE_PATTERN_CACHE_BYTES);
+        let hits = origin_hits(&batch, &bar, &mut scan)?;
         let mut context = Context {
             origin: batch.origin.as_deref(),
             created: Timestamp::now()?,
             bar: &bar,
-            op: 0,
-            pending: Vec::new(),
+            scan,
+            hits,
+            warnings: Vec::new(),
             repaired: Vec::new(),
         };
+        let more_origin_warnings = warning::report(None, &mut context.hits, &mut context.warnings);
         let mut edit = Edit::new(&mut self.state);
-        let (done, named, judged) = match run(&mut edit, batch.ops, &mut context) {
+        let (done, named) = match run(&mut edit, batch.ops, &mut context) {
             Ok(ran) => ran,
             Err(refusal) => {
                 edit.undo();
@@ -159,9 +161,9 @@ impl Writer<'_> {
         Ok(Applied {
             ops: done,
             repaired: context.repaired,
-            patterns: warning::notes(&judged.warnings, &bar),
-            warnings: judged.warnings,
-            more_origin_warnings: judged.more_origin,
+            patterns: warning::notes(&context.warnings, &bar),
+            warnings: context.warnings,
+            more_origin_warnings,
             written,
             removed,
         })
@@ -297,76 +299,65 @@ impl Files<'_, '_> {
     }
 }
 
-/// The batch's own faults, before any op runs: no op, and no origin where
-/// the bar requires one. Its patterns judge the origin with the ops'.
-fn check_batch(batch: &Batch, bar: &Bar) -> Result<()> {
+/// The batch's own faults, before any op runs: no op, no origin where the
+/// bar requires one, and an origin a pattern refuses; else the origin's
+/// `warn` matches, judged over `scan` before any op's.
+fn origin_hits(batch: &Batch, bar: &Bar, scan: &mut Scan) -> Result<Vec<(String, Hit)>> {
     if batch.ops.is_empty() {
         return Err(refused(None, Some("ops".to_owned()), Rule::EmptyBatch));
     }
+    let field = || DecisionField::Origin.as_str().to_owned();
     let records = batch.ops.iter().any(|op| matches!(op, Op::Record(_)));
-    bar.origin_required(batch.origin.as_deref(), records)
-        .map_err(|breach| {
-            let field = Some(DecisionField::Origin.as_str().to_owned());
-            refused(None, field, breach.broken.into())
-        })
+    let origin = batch.origin.as_deref();
+    let hits = bar
+        .origin_required(origin, records)
+        .and_then(|()| bar.judge_origin(origin, scan))
+        .map_err(|breach| refused(None, Some(field()), breach.broken.into()))?;
+    Ok(hits.into_iter().map(|hit| (field(), hit)).collect())
 }
 
-/// Each op's outcome, each op as a refusal names it, and what the patterns
-/// found. The ops run in order to the first fault. Then the patterns judge
-/// what the ops wrote (`patterns::judge`), and a refusal of theirs comes
-/// first; then the op's fault; then the check of the resulting graph.
+/// Run each op in order, refusing at the first fault, then the check of
+/// the resulting graph: each op's outcome, with its warnings listed in
+/// `context`, and each op as a refusal names it.
 fn run(
     edit: &mut Edit<'_>,
     ops: Vec<Op>,
     context: &mut Context<'_>,
-) -> Result<(Vec<Done>, Vec<OpAt>, Judged)> {
+) -> Result<(Vec<Done>, Vec<OpAt>)> {
     let mut done = Vec::with_capacity(ops.len());
     let mut named = Vec::with_capacity(ops.len());
-    let mut fault = None;
     for (index, op) in ops.into_iter().enumerate() {
         edit.begin(index);
-        context.op = index;
-        named.push(OpAt {
+        let at = OpAt {
             index,
             kind: op.kind(),
             target: op.target().to_owned(),
-        });
+        };
         match apply_op(edit, op, context) {
-            Ok(outcome) => done.push(outcome),
-            Err(at_fault) => {
-                fault = Some(at_fault);
-                break;
+            Ok(mut outcome) => {
+                let (hits, warnings) = (&mut context.hits, &mut context.warnings);
+                outcome.more_warnings = warning::report(Some(index), hits, warnings);
+                done.push(outcome);
+            }
+            Err(Fault {
+                field,
+                rule,
+                target,
+            }) => {
+                let at = OpAt {
+                    target: target.unwrap_or(at.target),
+                    ..at
+                };
+                return Err(refused(Some(at), field, rule));
             }
         }
-    }
-    let judged = patterns::judge(context.bar, context.origin, &context.pending)
-        .map_err(|refusal| refused_by_patterns(*refusal, &named))?;
-    if let Some(Fault { field, rule }) = fault {
-        return Err(refused(named.pop(), field, rule));
+        named.push(at);
     }
     if let Some((index, issue)) = edit.first_introduced() {
         let at = named.into_iter().nth(index);
         return Err(refused(at, None, Rule::Issue(issue)));
     }
-    for (&index, &more) in &judged.more {
-        if let Some(outcome) = done.get_mut(index) {
-            outcome.more_warnings = more;
-        }
-    }
-    Ok((done, named, judged))
-}
-
-/// The refusal of the patterns `refusal`, at the op `named` holds at its
-/// index; a verdict on a decision other than the op's first names it.
-fn refused_by_patterns(refusal: (Option<usize>, Option<String>, Fault), named: &[OpAt]) -> Error {
-    let (op, about, Fault { field, rule }) = refusal;
-    // clone: the refusal owns the op it names.
-    let at = op.and_then(|index| named.get(index).cloned());
-    let at = at.map(|at| OpAt {
-        target: about.unwrap_or(at.target),
-        ..at
-    });
-    refused(at, field, rule)
+    Ok((done, named))
 }
 
 /// One op on the graph `edit` holds.
