@@ -96,13 +96,13 @@ impl<'i> Crates<'i> {
             outside: outside.keys().copied().collect(),
         };
         for (&path, (_, index)) in files {
-            if !index.macros.is_empty() {
+            if !index.rust.macros.is_empty() {
                 let owner = crates.crate_of(path);
                 crates
                     .macros
                     .entry(owner)
                     .or_default()
-                    .extend(&index.macros);
+                    .extend(&index.rust.macros);
             }
         }
         crates

@@ -216,6 +216,56 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     ("loose/single.rs", "Visible", SYMBOL),
 ];
 
+const SHELF: &str = "python/shelf.py";
+
+/// One case per Python construct and outcome.
+const PYTHON_CASES: &[(&str, &str, &str)] = &[
+    (SHELF, "CAPACITY", SYMBOL),
+    (SHELF, "LABEL", SYMBOL),
+    (SHELF, "DEPTH", SYMBOL),
+    (SHELF, "REST", SYMBOL),
+    (SHELF, "_REGISTRY", SYMBOL),
+    (SHELF, "Shelves", SYMBOL),
+    (SHELF, "Path", TWO),
+    (SHELF, "loads", SYMBOL),
+    (SHELF, "json", MISSING),
+    (SHELF, "os", MISSING),
+    (SHELF, "open_shelf", SYMBOL),
+    (SHELF, "open_shelf()", SYMBOL),
+    (SHELF, "open_shelf::check", SYMBOL),
+    (SHELF, "found", MISSING),
+    (SHELF, "fetch", SYMBOL),
+    (SHELF, "width", "3 definitions"),
+    (SHELF, "Shelf", SYMBOL),
+    (SHELF, "Shelf::limit", SYMBOL),
+    (SHELF, "Shelf::limit()", MISSING),
+    (SHELF, "Shelf::size", TWO),
+    (SHELF, "Shelf::path", MISSING),
+    (SHELF, "Shelf::__init__", SYMBOL),
+    (SHELF, "Shelf::_tidy::sort_key", SYMBOL),
+    (SHELF, "Slot::take", SYMBOL),
+    (SHELF, "Shelf.blank", MISSING),
+    (SHELF, "index", SYMBOL),
+    (SHELF, "Book::pages", SYMBOL),
+    (
+        SHELF,
+        "take(x)",
+        "its symbol holds something between the parentheses of its `()`",
+    ),
+    ("python/shelf.pyi", "Shelf::size", SYMBOL),
+    ("python/shelf.pyi", "open_shelf()", SYMBOL),
+    ("python/conftest.py", "make_shelf", SYMBOL),
+    ("python/checks.py", "AuditCase::setUp", SYMBOL),
+    ("bounds/deep.py", "m", SYMBOL),
+    ("bounds/deeper.py", "m", DEEPER),
+    ("bounds/wide.py", "x", SYMBOL),
+    (
+        "bounds/wider.py",
+        "x",
+        "its file starts its lines at more than 256 indentation widths",
+    ),
+];
+
 const OTHER_CASES: &[(&str, &str, &str)] = &[
     ("Cargo.toml", "workspace", SYMBOL),
     ("Cargo.toml", "workspace::lints", SYMBOL),
@@ -283,6 +333,7 @@ fn each_construct_of_the_fixture_corpus_resolves_as_stated() {
     let (_tmp, store) = fixture_tree();
 
     assert_eq!(resolve_all(&store, RUST_CASES), expected(RUST_CASES));
+    assert_eq!(resolve_all(&store, PYTHON_CASES), expected(PYTHON_CASES));
     assert_eq!(resolve_all(&store, OTHER_CASES), expected(OTHER_CASES));
 }
 
@@ -546,7 +597,9 @@ fn statements(facts: &CodeFacts) -> Vec<String> {
 /// per kind of definition, the tests of each mark (`#[test]`,
 /// `#[tokio::test]`, `#[bench]`, a `cfg` that holds only under `test`, an
 /// inner `#![cfg(test)]`, a `proptest!` case, a file a `#[cfg(test)] mod`
-/// declares, a file under `tests/`) and each visibility.
+/// declares, a file under `tests/`; a `test_*` function, a `Test*` class
+/// and a `TestCase` subclass with what they hold, `conftest.py`,
+/// `test_*.py` and a Python file under `tests/`) and each visibility.
 const STATEMENTS: &[&str] = &[
     "Cargo.toml workspace Key Code -",
     "Cargo.toml workspace::members Key Code -",
@@ -733,6 +786,64 @@ const STATEMENTS: &[&str] = &[
     "loose/single.rs Alone Enum Code -",
     "loose/single.rs Visible Struct Code -",
     "loose/single.rs Visible::get Method Code -",
+    "python/checks.py test_in_a_code_file Function Test Public",
+    "python/checks.py test_in_a_code_file::inner Function Test Public",
+    "python/checks.py TestAudit Class Test Public",
+    "python/checks.py TestAudit::compare Method Test Public",
+    "python/checks.py AuditCase Class Test Public",
+    "python/checks.py AuditCase::setUp Method Test Public",
+    "python/checks.py tested Function Code Public",
+    "python/conftest.py shelf Function Test Public",
+    "python/conftest.py make_shelf Function Test Public",
+    "python/shelf.py CAPACITY Variable Code Public",
+    "python/shelf.py LABEL Variable Code Public",
+    "python/shelf.py WIDTH Variable Code Public",
+    "python/shelf.py DEPTH Variable Code Public",
+    "python/shelf.py FIRST Variable Code Public",
+    "python/shelf.py SECOND Variable Code Public",
+    "python/shelf.py THIRD Variable Code Public",
+    "python/shelf.py REST Variable Code Public",
+    "python/shelf.py _REGISTRY Variable Code Private",
+    "python/shelf.py __all__ Variable Code Public",
+    "python/shelf.py Shelves TypeAlias Code Public",
+    "python/shelf.py Path Variable Code Public",
+    "python/shelf.py Path Variable Code Public",
+    "python/shelf.py loads Function Code Public",
+    "python/shelf.py open_shelf Function Code Public",
+    "python/shelf.py open_shelf::check Function Code Public",
+    "python/shelf.py fetch Function Code Public",
+    "python/shelf.py _cached Function Code Private",
+    "python/shelf.py width Function Code Public",
+    "python/shelf.py width Function Code Public",
+    "python/shelf.py width Function Code Public",
+    "python/shelf.py Shelf Class Code Public",
+    "python/shelf.py Shelf::limit Variable Code Public",
+    "python/shelf.py Shelf::label Variable Code Public",
+    "python/shelf.py Shelf::_hidden Variable Code Private",
+    "python/shelf.py Shelf::__init__ Method Code Public",
+    "python/shelf.py Shelf::size Method Code Public",
+    "python/shelf.py Shelf::size Method Code Public",
+    "python/shelf.py Shelf::blank Method Code Public",
+    "python/shelf.py Shelf::_tidy Method Code Private",
+    "python/shelf.py Shelf::_tidy::sort_key Function Code Public",
+    "python/shelf.py Shelf::Slot Class Code Public",
+    "python/shelf.py Shelf::Slot::index Variable Code Public",
+    "python/shelf.py Shelf::Slot::take Method Code Public",
+    "python/shelf.py Book Class Code Public",
+    "python/shelf.py Book::title Variable Code Public",
+    "python/shelf.py Book::pages Variable Code Public",
+    "python/shelf.pyi CAPACITY Variable Code Public",
+    "python/shelf.pyi open_shelf Function Code Public",
+    "python/shelf.pyi Shelf Class Code Public",
+    "python/shelf.pyi Shelf::limit Variable Code Public",
+    "python/shelf.pyi Shelf::__init__ Method Code Public",
+    "python/shelf.pyi Shelf::size Method Code Public",
+    "python/test_shelf.py test_opens Function Test Public",
+    "python/test_shelf.py TestShelf Class Test Public",
+    "python/test_shelf.py TestShelf::test_size Method Test Public",
+    "python/test_shelf.py TestShelf::stack Method Test Public",
+    "python/test_shelf.py shared_setup Function Test Public",
+    "python/tests/builders.py build_shelf Function Test Public",
     "settings.json stages Key Code -",
     "settings.json stages::order Key Code -",
     "settings.json stages::parallel Key Code -",

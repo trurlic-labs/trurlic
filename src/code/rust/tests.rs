@@ -80,7 +80,7 @@ fn an_item_an_invocation_spells_spans_its_attributes_to_its_body() {
 #[test]
 fn a_type_macro_keeps_each_arms_words_what_follows_the_name_and_what_each_rule_spells() {
     let text = "#[macro_export]\nmacro_rules! id {\n    ($(#[$m:meta])* ordered $name:ident) => { pub enum $name { A } impl $name { fn rank() {} } };\n    ($name:ident, $t:ty) => { pub type $name = $t; };\n    (@inner $name:ident) => {};\n    ($vis:vis struct $name:ident) => { $vis struct $name; };\n}\nmacro_rules! call { ($x:ident) => { let _ = $x; } }\n";
-    let macros = index(text).macros;
+    let macros = index(text).rust.macros;
     let [found] = macros.as_slice() else {
         panic!("{macros:?}");
     };
@@ -120,7 +120,7 @@ fn a_type_macro_keeps_each_arms_words_what_follows_the_name_and_what_each_rule_s
 #[test]
 fn an_invocation_keeps_its_first_tokens_past_its_attributes() {
     let text = "mod m {\n    ids::id! {\n        /// Doc.\n        #[allow(dead_code)]\n        ordered Rank(u8), \"a b\"\n    }\n}\nfn f() { id! { ordered Local(u8) } }\n";
-    let invocations = index(text).invocations;
+    let invocations = index(text).rust.invocations;
 
     assert_eq!(invocations.len(), 1);
     let invocation = &invocations[0];
@@ -179,7 +179,7 @@ fn a_macro_of_many_arms_is_read_within_the_budget() {
         .collect();
     let text = format!("macro_rules! many {{\n{arms}}}\n");
 
-    assert_eq!(index(&text).macros[0].arms.len(), 20_000);
+    assert_eq!(index(&text).rust.macros[0].arms.len(), 20_000);
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn an_item_in_a_discriminant_has_its_own_visibility() {
 #[test]
 fn a_type_macros_members_are_its_impl_blocks_items_and_the_rest_its_containers() {
     let text = "macro_rules! def {\n    ($name:ident) => {\n        pub struct $name;\n        pub fn make() -> $name { $name }\n        pub mod helpers {}\n        impl $name { pub fn get(&self) {} }\n        impl Other { fn not_its() {} }\n    };\n}\n";
-    let found = &index(text).macros[0];
+    let found = &index(text).rust.macros[0];
     let named = |named: &[(std::sync::Arc<Segment>, DefinitionKind)]| -> Vec<String> {
         named
             .iter()
@@ -262,7 +262,7 @@ fn a_type_macros_members_are_its_impl_blocks_items_and_the_rest_its_containers()
 #[test]
 fn a_rule_that_hands_its_name_to_a_macro_keeps_the_arguments_up_to_it() {
     let text = "macro_rules! entity {\n    (record $name:ident) => { declare!([] $name); };\n    (quiet $name:ident) => { let _ = $name; };\n    (moved $name:ident) => { $crate::path::declare! { $name } };\n}\n";
-    let macros = index(text).macros;
+    let macros = index(text).rust.macros;
     let hand_offs: Vec<Vec<HandOff>> = macros[0]
         .rules
         .iter()

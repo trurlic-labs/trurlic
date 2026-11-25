@@ -10,13 +10,11 @@
 
 use std::ops::Range;
 
-use tree_sitter::Tree;
-
 use super::index::{Definition, FileIndex, IndexFault, Invocation, ModuleFile, TypeMacro};
 use super::kinds::What;
 use super::scope::{ScopeId, ScopeTree};
 use super::span::{Lines, Span, SpanHash};
-use super::syntax::{Leaves, Lexicon};
+use super::syntax::Leaves;
 use super::work::{SCAN_WORK_PER_BYTE, Work};
 
 /// The hash a definition or invocation holds until the end of the walk.
@@ -30,21 +28,21 @@ pub(super) struct TreeIndex<'t> {
     /// The budget of the resolver's scans of token trees and texts.
     pub(super) work: Work,
     index: FileIndex,
-    /// The bytes of each definition, then of each invocation, in the
+    /// The units of each definition, then of each invocation, in the
     /// order they were added.
     ranges: Vec<Range<usize>>,
     invocation_ranges: Vec<Range<usize>>,
 }
 
 impl<'t> TreeIndex<'t> {
-    /// The builder of `text`'s index, parsed as `tree` by a grammar of
-    /// `lexicon`.
-    pub(super) fn new(text: &'t str, tree: &Tree, lexicon: &Lexicon) -> Self {
+    /// The builder of `text`'s index, whose tree's units are `leaves`,
+    /// over `scopes`, the scopes entered so far.
+    pub(super) fn new(text: &'t str, leaves: Leaves, scopes: ScopeTree) -> Self {
         Self {
             text,
-            leaves: Leaves::of(tree, text, lexicon),
+            leaves,
             lines: Lines::of(text.as_bytes()),
-            scopes: ScopeTree::for_file(text.len()),
+            scopes,
             work: Work::of(text.len(), SCAN_WORK_PER_BYTE),
             index: FileIndex::default(),
             ranges: Vec::new(),
@@ -57,24 +55,38 @@ impl<'t> TreeIndex<'t> {
         self.lines.span(range.start, range.end)
     }
 
-    /// Define `scope` over bytes `range` as `what` says.
+    /// Define `scope` over bytes `range` as `what` says, its hash over
+    /// the tokens within them.
     pub(super) fn define(
         &mut self,
         scope: ScopeId,
         range: Range<usize>,
         what: What,
     ) -> Result<(), IndexFault> {
+        let units = self.leaves.within(&range);
+        self.define_units(scope, &range, units, what)
+    }
+
+    /// Define `scope` over bytes `bytes` as `what` says, its hash over
+    /// `units`, the units of a marked tree its span node holds.
+    pub(super) fn define_units(
+        &mut self,
+        scope: ScopeId,
+        bytes: &Range<usize>,
+        units: Range<usize>,
+        what: What,
+    ) -> Result<(), IndexFault> {
         let definition = Definition {
             scope,
             kind: what.kind,
-            span: self.span(&range),
+            span: self.span(bytes),
             hash: UNHASHED,
             role: what.role,
             visibility: what.visibility,
         };
         self.scopes.admit_definition(&definition)?;
         self.index.definitions.push(definition);
-        self.ranges.push(range);
+        self.ranges.push(units);
         Ok(())
     }
 
@@ -85,20 +97,20 @@ impl<'t> TreeIndex<'t> {
         range: Range<usize>,
     ) -> Result<(), IndexFault> {
         self.scopes.admit_invocation(&invocation)?;
-        self.index.invocations.push(invocation);
-        self.invocation_ranges.push(range);
+        self.index.rust.invocations.push(invocation);
+        self.invocation_ranges.push(self.leaves.within(&range));
         Ok(())
     }
 
     pub(super) fn add_macro(&mut self, found: TypeMacro) -> Result<(), IndexFault> {
         self.scopes.admit_macro(&found)?;
-        self.index.macros.push(found);
+        self.index.rust.macros.push(found);
         Ok(())
     }
 
     pub(super) fn add_module_file(&mut self, module: ModuleFile) -> Result<(), IndexFault> {
         self.scopes.admit_module_file(&module)?;
-        self.index.module_files.push(module);
+        self.index.rust.module_files.push(module);
         Ok(())
     }
 
@@ -125,7 +137,7 @@ impl<'t> TreeIndex<'t> {
         for (definition, hash) in index.definitions.iter_mut().zip(own) {
             definition.hash = *hash;
         }
-        for (invocation, hash) in index.invocations.iter_mut().zip(invoked) {
+        for (invocation, hash) in index.rust.invocations.iter_mut().zip(invoked) {
             invocation.hash = *hash;
         }
         index.scopes = scopes.into_scopes();

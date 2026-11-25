@@ -1,0 +1,24 @@
+component = "code"
+choice = "A Python span hash groups each statement and block, takes a string's text and a format specifier as one token, and leaves out docstrings and a ; between statements"
+reason = "Python's NEWLINE, INDENT and DEDENT are tokens of no width in no node, so the tokens of if a: b c with c in the block and with c after it are the same, as are return x and return then x. The query marks each statement of a module or a block and each block a group, whose marks enter the hash, so moving a statement into or out of a block, or splitting one in two, moves it, while a re-indented block, a block on its header's line and two statements joined by ; do not. A string's text and a format specifier are one token each with their spaces, so a b and a  b differ, and a string's prefix is its own token. A docstring, the first statement of a module, class or function that is a string with no f, t or b prefix, documents the definition and is left out, as a Rust doc comment is."
+alternatives = [
+    "Hash the leaves alone, as for Rust: rejected because a statement moved out of its block would leave the hash as it was",
+    "Hash every node's extent: rejected because a grammar's inner nodes would make the hash move on edits that change no meaning",
+    "Hash docstrings: rejected because a documentation edit would read as a change to the code",
+]
+tags = [
+    "anchors",
+    "python",
+]
+status = "proposed"
+origin = "languages as query files"
+created = "2026-11-25T16:53:23.387185487Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_reformat_a_comment_or_a_docstring_leaves_the_hash" },
+    { file = "src/code/general/tests.rs", symbol = "a_statement_moved_out_of_its_block_or_split_moves_the_hash" },
+    { file = "src/code/general/tests.rs", symbol = "a_strings_spaces_and_prefix_move_the_hash" },
+    { file = "src/code/language/python.scm" },
+]
+depends_on = [
+    "a-span-hash-is-t1-over-the-tokens-without-comments",
+]

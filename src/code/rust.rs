@@ -36,9 +36,9 @@ use tree_sitter::Node;
 
 use super::index::{FileIndex, IndexFault, ModuleFile};
 use super::kinds::{DefinitionKind, Role, Visibility, What};
-use super::scope::ScopeId;
+use super::scope::{ScopeId, ScopeTree};
 use super::symbol::Segment;
-use super::syntax::{self, Lexicon, text_of};
+use super::syntax::{self, Leaves, Lexicon, text_of};
 use super::tree::TreeIndex;
 
 use items::{Item, Within};
@@ -71,7 +71,11 @@ pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
     let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
     let mut walk = Walk {
         text,
-        build: TreeIndex::new(text, &tree, &LEXICON),
+        build: TreeIndex::new(
+            text,
+            Leaves::of(&tree, text, &LEXICON),
+            ScopeTree::for_file(text.len()),
+        ),
         reexports: Vec::new(),
     };
     walk.run(tree.root_node())?;

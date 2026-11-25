@@ -1,17 +1,21 @@
 //! Which files are the tree's sources, and what is at an anchor's path.
 //!
-//! The walk goes down from the code root and takes every Rust file and
+//! The walk goes down from the code root and takes every source file of a
+//! language the index reads ([`FileKind::is_code`]) and every
 //! `Cargo.toml`: a Rust file's definitions can come from any crate's
-//! macros, so the tree's facts hold all of them. It never leaves the tree
-//! the call comes from: it passes over every entry whose name starts with
-//! `.` (`.git`, `.trurlic`, editor and tool state), every directory at the
-//! top of another work tree (one holding `.git`: a submodule, a nested
-//! clone, a linked worktree placed inside this one, whose definitions
-//! would count twice), every directory tagged a cache (`CACHEDIR.TAG`,
-//! which cargo writes into each target directory), and every symlink to a
-//! directory, so a symlink loop cannot hold it. It asks git nothing, so a
-//! tree with no git is walked by the same rule and a call spawns no
-//! process. An anchor's own path is looked at wherever it is.
+//! macros, and a count of the tree's definitions needs every one, so the
+//! tree's facts hold all of them. A data or prose file is read when an
+//! anchor names it. The walk never leaves the tree the call comes from,
+//! and passes over what no one writes source in, each by a stated rule:
+//! every entry whose name starts with `.` (`.git`, `.trurlic`, `.venv`,
+//! editor and tool state), every directory a language's tools fill by a
+//! fixed name ([`SKIPPED_NAMES`]), every directory a marker file names
+//! ([`SKIPPED_MARKERS`]: the top of another work tree, whose definitions
+//! would count twice, a cache, which cargo tags its target directories,
+//! and a Python virtual environment), and every symlink, so a symlink
+//! loop cannot hold it. It runs no git, so a tree with no git is
+//! walked by the same rule and a call spawns no process. An anchor's own
+//! path is looked at wherever it is.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -22,10 +26,19 @@ use crate::code::{FileKind, MANIFEST};
 /// A file the walk takes: its path from the root and its kind.
 pub(super) type Source = (String, FileKind);
 
-/// The marker files of a directory the walk passes over.
-const SKIPPED_MARKERS: [&str; 2] = [".git", "CACHEDIR.TAG"];
+/// The directories the walk passes over by name: each holds what a
+/// language's tool installs or compiles, never a file a person wrote
+/// (npm's packages, CPython's bytecode).
+const SKIPPED_NAMES: [&str; 2] = ["node_modules", "__pycache__"];
 
-/// The Rust files and manifests under `root`, by the rule above. A
+/// The marker files of a directory the walk passes over: `.git` at the
+/// top of another work tree (a submodule, a nested clone, a linked
+/// worktree placed inside this one), `CACHEDIR.TAG` in a cache or build
+/// directory (cargo writes it into each target directory), and
+/// `pyvenv.cfg` at the top of a Python virtual environment (PEP 405).
+const SKIPPED_MARKERS: [&str; 3] = [".git", "CACHEDIR.TAG", "pyvenv.cfg"];
+
+/// The source files and manifests under `root`, by the rule above. A
 /// directory that cannot be listed is passed over, as one that vanished.
 pub(super) fn tree_sources(root: &Path) -> Vec<Source> {
     let mut found = Vec::new();
@@ -56,10 +69,11 @@ pub(super) fn tree_sources(root: &Path) -> Vec<Source> {
             }
             if file_type.is_dir() {
                 let inner = entry.path();
-                if !SKIPPED_MARKERS
-                    .iter()
-                    .any(|marker| inner.join(marker).exists())
-                {
+                let skipped = SKIPPED_NAMES.contains(&name_of(&path))
+                    || SKIPPED_MARKERS
+                        .iter()
+                        .any(|marker| inner.join(marker).exists());
+                if !skipped {
                     pending.push((inner, path));
                 }
             } else if let Some(kind) = kind {
@@ -70,13 +84,15 @@ pub(super) fn tree_sources(root: &Path) -> Vec<Source> {
     found
 }
 
-/// The kind of a file the tree's facts hold whoever anchors it.
+/// The kind of a file the tree's facts hold whoever anchors it: source
+/// code, and a crate's manifest.
 fn tree_wide_kind(name: &str) -> Option<FileKind> {
-    match FileKind::of(name) {
-        Some(FileKind::Rust) => Some(FileKind::Rust),
-        Some(FileKind::Toml) if name == MANIFEST => Some(FileKind::Toml),
-        Some(FileKind::Toml | FileKind::Json | FileKind::Make | FileKind::Markdown) | None => None,
-    }
+    FileKind::of(name).filter(|kind| kind.is_code() || name == MANIFEST)
+}
+
+/// The last segment of `path`.
+fn name_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 /// Each `Cargo.toml` of a directory above `path` under `root`, the root's
@@ -131,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn the_walk_takes_the_trees_rust_files_and_manifests_by_its_rule() {
+    fn the_walk_takes_the_trees_sources_and_manifests_by_its_rule() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         for path in [
@@ -147,6 +163,16 @@ mod tests {
             "target/debug/build/out.rs",
             "nested/.git",
             "nested/src/lib.rs",
+            "tools/run.py",
+            "tools/types.pyi",
+            "tools/tests/test_run.py",
+            "tools/__pycache__/run.py",
+            "web/node_modules/gyp/build.py",
+            "venv/pyvenv.cfg",
+            "venv/lib/site.py",
+            ".venv/lib/site.py",
+            "src/target/mod.rs",
+            "build/lib/copied.py",
         ] {
             write(root, path);
         }
@@ -166,9 +192,14 @@ mod tests {
             found,
             [
                 ("Cargo.toml".to_owned(), FileKind::Toml),
+                ("build/lib/copied.py".to_owned(), FileKind::Python),
                 ("crates/x/Cargo.toml".to_owned(), FileKind::Toml),
                 ("src/a/b.rs".to_owned(), FileKind::Rust),
                 ("src/lib.rs".to_owned(), FileKind::Rust),
+                ("src/target/mod.rs".to_owned(), FileKind::Rust),
+                ("tools/run.py".to_owned(), FileKind::Python),
+                ("tools/tests/test_run.py".to_owned(), FileKind::Python),
+                ("tools/types.pyi".to_owned(), FileKind::Python),
             ]
         );
     }

@@ -4,11 +4,13 @@
 //! scheme ([`HASH_SCHEME`]), fixed from its first release. A change of
 //! the normalization is a new scheme, so two hashes of different schemes
 //! are never compared as equal. Under `t1` a tree-sitter span hashes its
-//! tokens (`syntax.rs`), each with its length, each definition nested in
-//! it by its own hash instead. So reformatting the span or editing a
-//! comment in it changes nothing. A lexical span hashes its text with
-//! every run of whitespace made one space and the ends trimmed. The
-//! definitions of one path a symbol names hash as one
+//! tokens (`syntax.rs`), each with its length, and in a language whose
+//! layout is syntax the marks that open and close each group its query
+//! names (a statement, a block), each definition nested in it by its own
+//! hash instead. So reformatting the span or editing a comment in it
+//! changes nothing. A lexical span hashes its text with every run of
+//! whitespace made one space and the ends trimmed. The definitions of
+//! one path a symbol names hash as one
 //! ([`SpanHash::of_members`]): one alone by its own hash, several by the
 //! hash of their hashes in the order of the hashes.
 
@@ -21,6 +23,11 @@ pub(crate) const HASH_SCHEME: &str = "t1";
 /// The mark before a nested definition's hash among a definition's
 /// units: a length no token has.
 pub(super) const NESTED_MARK: [u8; 8] = u64::MAX.to_le_bytes();
+
+/// The units that open and close a group of a marked tree (a statement, a
+/// block) in a hash: lengths no token has, nor [`NESTED_MARK`].
+pub(super) const OPEN_MARK: [u8; 8] = (u64::MAX - 1).to_le_bytes();
+pub(super) const CLOSE_MARK: [u8; 8] = (u64::MAX - 2).to_le_bytes();
 
 /// A definition's place in its file: bytes `start..end`, on lines
 /// `first_line..=last_line`, counted from 1.

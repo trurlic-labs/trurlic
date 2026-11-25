@@ -155,13 +155,13 @@ fn expand_outside(
     let mut tables: BTreeMap<&str, Arms<'_>> = BTreeMap::new();
     let mut expanded = BTreeMap::new();
     for (&path, (kind, index)) in outside {
-        if *kind != FileKind::Rust || index.invocations.is_empty() {
+        if *kind != FileKind::Rust || index.rust.invocations.is_empty() {
             continue;
         }
         let owner = crates.crate_of(path);
         let shared = tables.entry(owner).or_insert_with(|| crates.arms_of(path));
         let mut own = Arms::default();
-        for found in &index.macros {
+        for found in &index.rust.macros {
             own.add(Held {
                 found,
                 owner,
@@ -176,7 +176,7 @@ fn expand_outside(
             }
         });
         let lookup = Lookup {
-            own: (!index.macros.is_empty()).then_some(&own),
+            own: (!index.rust.macros.is_empty()).then_some(&own),
             shared,
         };
         let expansion = expand_file(index, lookup);

@@ -50,6 +50,8 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Likely duplicates (scoring, pair index) | `lint/duplicates/` |
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
 | Work charged before `[quality]` patterns run | `store/quality/bar/work.rs`, `store/apply/patterns.rs` |
+| A language beyond Rust: grammar, query, test places | `code/language.rs`, `code/language/<name>.scm` |
+| Query contract / general resolver | `code/query.rs` / `code/general.rs` |
 | Failpoint sites | `store/failpoint.rs` |
 
 ### Invariants

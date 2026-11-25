@@ -1,0 +1,24 @@
+component = "code"
+choice = "A Python def is a function, a method directly in a class; a class a class; a name a module or class binds by assignment a variable; type a type alias; an import, a local and self.x define nothing"
+reason = "An anchor names what a reader looks for in a Python file: its functions, its classes and the names its modules and classes bind. A def in a class body, under an if or a try included, is a method; one in a function is a function under that function's path. Each target of an assignment at module or class level is one variable spanning the statement, annotated or not, each of a = b = 1 and of a, (b, [c, *d]) = ... included. A name a function binds is a local, and self.x is an attribute of an instance the class never states, so neither is a definition; an import names what another file defines, which its anchor names there. Definitions of one path, an overload's signatures and its implementation, a property and its setter, the two arms of if TYPE_CHECKING, resolve together. A test_ function, a Test class and a unittest TestCase subclass, with all they hold, are test code, as pytest and unittest collect them."
+alternatives = [
+    "Instance attributes from self.x in __init__: rejected because which assignments a class's instances get is a runtime question no statement of the class answers",
+    "Imports as definitions: rejected because the name is defined in another file, which an anchor names instead",
+    "Every test prefix pytest collects (test, not test_): rejected because a helper named testing_support would be counted as a test",
+]
+tags = [
+    "anchors",
+    "python",
+]
+status = "proposed"
+origin = "languages as query files"
+created = "2026-11-25T16:53:23.387185487Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_test_function_a_test_class_and_what_they_hold_are_test_code" },
+    { file = "src/code/language/python.scm" },
+    { file = "src/sources/tests.rs", symbol = "PYTHON_CASES" },
+    { file = "src/sources/tests.rs", symbol = "STATEMENTS" },
+]
+depends_on = [
+    "a-query-s-definition-is-placed-under-the-container-whose-span-holds-it",
+]

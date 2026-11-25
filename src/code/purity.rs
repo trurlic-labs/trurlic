@@ -13,6 +13,9 @@
 //! only when it is one of [`CRATES`]. Refused outright: a glob or an
 //! alias of such a root, `extern crate`, `#[path]`, and the prelude macros
 //! of [`MACROS`], which read files or the environment or write a stream.
+//! The one include admitted is `include_str!` of a plain string literal,
+//! a relative path that stays inside the checked directory: a language's
+//! query file, source of the index as its Rust files are.
 //!
 //! What can still reach the outside: a macro the crate root defines
 //! before `code` in textual scope (it has none), what an allowed crate's
@@ -55,7 +58,13 @@ const STORE_ITEMS: [&str; 1] = ["Anchor"];
 
 /// The crates the index may name: its parser, its grammar, its hash and
 /// the TOML reader.
-const CRATES: [&str; 4] = ["tree_sitter", "tree_sitter_rust", "blake3", "toml"];
+const CRATES: [&str; 5] = [
+    "tree_sitter",
+    "tree_sitter_rust",
+    "tree_sitter_python",
+    "blake3",
+    "toml",
+];
 
 /// The prelude's macros that read a file or the environment, or write a
 /// standard stream.
@@ -97,8 +106,9 @@ pub(super) fn faults(root: &Path, dir: &str) -> Vec<String> {
         }
         let depth = module_depth(path);
         let tokens = tokens_outside_tests(text, indexed);
+        let place = Place { path, dir };
         found.extend(
-            file_faults(&tokens, depth, &dependencies)
+            file_faults(&tokens, depth, &dependencies, place)
                 .into_iter()
                 .map(|(line, what)| format!("{path}:{line}: {what}")),
         );
@@ -196,12 +206,21 @@ fn tokens_outside_tests(text: &str, indexed: &FileIndex) -> Vec<(usize, String)>
     found
 }
 
+/// Where a checked file is: its path from the crate's directory, and the
+/// checked directory, which holds it.
+#[derive(Clone, Copy)]
+struct Place<'a> {
+    path: &'a str,
+    dir: &'a str,
+}
+
 /// The faults of one file's `tokens`, a file `depth` modules below the
-/// crate root, whose dependencies are `dependencies`.
+/// crate root at `place`, whose dependencies are `dependencies`.
 fn file_faults(
     tokens: &[(usize, String)],
     depth: usize,
     dependencies: &[String],
+    place: Place<'_>,
 ) -> Vec<(usize, String)> {
     let spelled = |at: usize| tokens.get(at).map_or("", |(_, token)| token.as_str());
     let mut found = Vec::new();
@@ -210,6 +229,7 @@ fn file_faults(
         match (spelled(at), spelled(at + 1), spelled(at + 2)) {
             ("extern", "crate", _) => found.push((line, "extern crate".to_owned())),
             ("#", "[", "path") => found.push((line, "#[path]".to_owned())),
+            ("include_str", "!", _) if is_admitted_include(tokens, at, place) => {}
             (name, "!", _) if MACROS.contains(&name) => found.push((line, format!("{name}!"))),
             _ => {}
         }
@@ -224,6 +244,39 @@ fn file_faults(
         }
     }
     found
+}
+
+/// Whether the `include_str!` at `at` reads a file `place`'s directory
+/// holds: its argument one plain string literal, a relative path with no
+/// escape, which stays inside the directory once each `..` is taken.
+fn is_admitted_include(tokens: &[(usize, String)], at: usize, place: Place<'_>) -> bool {
+    let spelled = |n: usize| tokens.get(n).map_or("", |(_, token)| token.as_str());
+    let literal = spelled(at + 3);
+    let Some(relative) = literal
+        .strip_prefix('"')
+        .and_then(|inside| inside.strip_suffix('"'))
+        .filter(|inside| !inside.is_empty() && !inside.contains(['\\', '"']))
+    else {
+        return false;
+    };
+    if spelled(at + 2) != "(" || spelled(at + 4) != ")" || relative.starts_with('/') {
+        return false;
+    }
+    let mut segments: Vec<&str> = place.path.split('/').collect();
+    segments.pop();
+    for segment in relative.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if segments.pop().is_none() {
+                    return false;
+                }
+            }
+            segment => segments.push(segment),
+        }
+    }
+    let dir_depth = place.dir.split('/').count();
+    segments.len() > dir_depth && segments.join("/").starts_with(&format!("{}/", place.dir))
 }
 
 /// Whether a path starts at `at`: a word or `$crate` that no `::` or `.`

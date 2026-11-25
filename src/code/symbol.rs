@@ -11,11 +11,12 @@
 //! is `<Display>`. A definition's own last segment is never left out:
 //! `Table` names the type, not its `Table::<Display>` impl. Among several
 //! definitions a symbol names, the one whose whole path it is wins, so a
-//! module-level `open` is named as `open` beside a `Store::open`. A Rust
-//! symbol whose last segment ends in `()` names a function or method
-//! alone (`Store::code_root()` beside the field `Store::code_root`). Other
-//! kinds split on `::` alone, so a Markdown heading may hold `<`, `>` and
-//! parentheses.
+//! module-level `open` is named as `open` beside a `Store::open`. In a
+//! language, a symbol whose last segment ends in `()` names a function or
+//! method alone (`Store::code_root()` beside the field `Store::code_root`).
+//! A language the general resolver reads, Python, splits on `::` alone;
+//! so does a data or prose file, whose segments may hold `<`, `>` and
+//! parentheses as text (a Markdown heading).
 
 use std::fmt;
 
@@ -87,9 +88,13 @@ impl fmt::Display for Segment {
 /// How a kind of file spells its symbols.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Syntax {
-    /// `::` outside angle brackets separates, and `<Trait>` is a segment.
+    /// `::` outside angle brackets separates, `<Trait>` is a segment, and
+    /// a last segment may end in `()`.
     Rust,
-    /// `::` separates, and every segment is a name.
+    /// `::` separates, every segment is a name, and a last segment may end
+    /// in `()`: a language the general resolver reads.
+    Code,
+    /// `::` separates, and every segment is a name: a data or prose file.
     Plain,
 }
 
@@ -138,17 +143,18 @@ pub(crate) struct Symbol {
 }
 
 impl Symbol {
-    /// A symbol of a file of `syntax`. In Rust a last segment may end in
-    /// `()`, whitespace before it allowed as within a name (`open ()` is
-    /// `open()`); `(..)` holding anything is refused, as is `()` after a
-    /// trait segment. Other kinds take parentheses as text.
+    /// A symbol of a file of `syntax`. In a language a last segment may
+    /// end in `()`, whitespace before it allowed as within a name (`open
+    /// ()` is `open()`); `(..)` holding anything is refused, as is `()`
+    /// after a trait segment. A data or prose file takes parentheses as
+    /// text.
     pub(crate) fn parse(text: &str, syntax: Syntax) -> Result<Self, SymbolFault> {
         let (text, call) = match syntax {
             Syntax::Plain => (text, Call::Any),
-            Syntax::Rust => call_suffix(text)?,
+            Syntax::Rust | Syntax::Code => call_suffix(text)?,
         };
         let parts = match syntax {
-            Syntax::Plain => text.split("::").collect(),
+            Syntax::Plain | Syntax::Code => text.split("::").collect(),
             Syntax::Rust => split_outside_brackets(text)?,
         };
         let segments: Vec<Segment> = parts
@@ -386,6 +392,17 @@ mod tests {
         ] {
             assert_eq!(Symbol::parse(text, syntax), Err(fault), "{text:?}");
         }
+        let python = Symbol::parse("Store::open()", Syntax::Code).unwrap();
+        assert_eq!(python.segments, rust("Store::open").segments);
+        assert!(!python.admits(DefinitionKind::Variable));
+        assert_eq!(
+            Symbol::parse("open(x)", Syntax::Code),
+            Err(SymbolFault::CallArguments)
+        );
+        assert_eq!(
+            Symbol::parse("A::<B>", Syntax::Code).unwrap().segments,
+            [Segment::name("A"), Segment::name("<B>")]
+        );
         for heading in ["Calling run()", "Install (Linux)", "g(x)"] {
             let plain = Symbol::parse(heading, Syntax::Plain).unwrap();
             assert_eq!(plain.segments, [Segment::name(heading)], "{heading:?}");

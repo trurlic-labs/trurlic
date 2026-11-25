@@ -1,10 +1,14 @@
 //! What a definition is, beside where: its kind, whether it is test code,
 //! and its visibility. A resolver states each from the file's bytes; the
-//! second step adds what the tree says of a whole file (`roles.rs`).
+//! second step adds what the tree says of a whole file (`roles.rs`). The
+//! kinds and visibilities are every language's: a query file names them
+//! by [`DefinitionKind::name`] and [`Visibility::name`], and a language
+//! uses those its source can state.
 
 /// The kind of a definition. A kind is a different thing in the source,
-/// never a guess: a `static` is no constant, a `union` no struct, and a
-/// `pub use` leaf a re-export of something defined elsewhere.
+/// never a guess: a `static` is no constant, a `union` no struct, a
+/// `pub use` leaf a re-export of something defined elsewhere, and a
+/// Python `class` no struct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DefinitionKind {
     /// A `mod`, inline or declared.
@@ -40,6 +44,11 @@ pub(crate) enum DefinitionKind {
     Target,
     /// A Markdown heading.
     Heading,
+    /// A class: Python's `class`.
+    Class,
+    /// A name a module or a class binds by assignment, not a function's
+    /// local: Python's `x = 1`, `x: int`.
+    Variable,
 }
 
 impl DefinitionKind {
@@ -63,12 +72,46 @@ impl DefinitionKind {
             | Self::Reexport
             | Self::Key
             | Self::Target
-            | Self::Heading => false,
+            | Self::Heading
+            | Self::Class
+            | Self::Variable => false,
         }
     }
 
+    /// The kind's name in a query file.
+    pub(super) const fn name(self) -> &'static str {
+        match self {
+            Self::Module => "module",
+            Self::Struct => "struct",
+            Self::Union => "union",
+            Self::Enum => "enum",
+            Self::Trait => "trait",
+            Self::Impl => "impl",
+            Self::Function => "function",
+            Self::Method => "method",
+            Self::Field => "field",
+            Self::Variant => "variant",
+            Self::Constant => "constant",
+            Self::Static => "static",
+            Self::TypeAlias => "type_alias",
+            Self::AssociatedType => "associated_type",
+            Self::Macro => "macro",
+            Self::Reexport => "reexport",
+            Self::Key => "key",
+            Self::Target => "target",
+            Self::Heading => "heading",
+            Self::Class => "class",
+            Self::Variable => "variable",
+        }
+    }
+
+    /// The kind a query file names `name`.
+    pub(super) fn of_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.name() == name)
+    }
+
     /// Every kind, in the order of their codes in a cache entry.
-    pub(super) const ALL: [Self; 19] = [
+    pub(super) const ALL: [Self; 21] = [
         Self::Module,
         Self::Struct,
         Self::Union,
@@ -88,6 +131,8 @@ impl DefinitionKind {
         Self::Key,
         Self::Target,
         Self::Heading,
+        Self::Class,
+        Self::Variable,
     ];
 
     /// The kind of the item a Rust keyword opens (`fn`, `struct`, ...),
@@ -145,8 +190,9 @@ impl Role {
     }
 }
 
-/// Who may name a Rust definition, as its source states it. A
-/// `pub(in path)` keeps no path: no reader asks which.
+/// Who may name a definition, as its source states it: Rust's modifiers,
+/// or a language's rule (a Python name with a leading underscore is
+/// private). A `pub(in path)` keeps no path: no reader needs which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Visibility {
     /// No modifier, or `pub(self)`.
@@ -169,6 +215,24 @@ impl Visibility {
         Self::InPath,
         Self::Public,
     ];
+
+    /// The visibility's name in a query file.
+    pub(super) const fn name(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Crate => "crate",
+            Self::Super => "super",
+            Self::InPath => "in_path",
+            Self::Public => "public",
+        }
+    }
+
+    /// The visibility a query file names `name`.
+    pub(super) fn of_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|visibility| visibility.name() == name)
+    }
 
     /// The visibility a modifier's text states (`pub`, `pub ( crate )`);
     /// `None` for a text that is no modifier.

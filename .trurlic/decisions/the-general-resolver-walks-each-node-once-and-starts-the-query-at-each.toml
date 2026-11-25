@@ -1,0 +1,28 @@
+component = "code"
+choice = "The general resolver walks each node once with a frame per ancestor, starts the query at each named node at depth 0, and refuses a hit match limit or predicates past budget"
+reason = "A query cursor run once over a whole tree walks invisible ancestors at every node, which goes quadratic on the deep error trees of hostile input; started at each named node with a start depth of 0, it matches each pattern only where the pattern is rooted, in linear work and with the same matches on real code. Node::parent and prev_sibling descend from the root, so each costs the node's depth: the walk keeps a frame per ancestor instead, built from its parent's (its kind and span, whether a test mark holds it, the innermost visibility mark, and how far each span growth and wrap reaches from it). A capture names a node at or below its match's root, which the preorder walk reaches then or later, so what it captures waits by node id until then. A match limit that is hit drops matches without a sign, so it refuses the file; the text predicates read goes through a provider that charges it to SCAN_WORK_PER_BYTE, so a predicate over a large node at every level of a deep tree is refused, never quadratic."
+alternatives = [
+    "One cursor over the whole tree with a progress callback: rejected because the ancestor walks it goes quadratic on are work its counter does not see",
+    "Node::parent in span growth: rejected because each call descends from the root, quadratic on a deep tree",
+    "Keep the matches found before the limit: rejected because the index would be partial with no fault to report",
+]
+tags = [
+    "performance",
+    "reliability",
+]
+status = "proposed"
+origin = "languages as query files"
+created = "2026-11-25T16:53:23.387185487Z"
+anchors = [
+    { file = "src/code/general.rs", symbol = "MATCH_LIMIT" },
+    { file = "src/code/general.rs", symbol = "Matches::record_at" },
+    { file = "src/code/general.rs", symbol = "Walk::enter" },
+    { file = "src/code/general.rs", symbol = "Walk::push_reach" },
+    { file = "src/code/general.rs", symbol = "collect" },
+    { file = "src/code/general/tests.rs", symbol = "a_match_limit_that_is_hit_is_a_fault_not_a_dropped_match" },
+    { file = "src/code/general/tests.rs", symbol = "hostile_python_is_refused_or_read_in_linear_work" },
+    { file = "src/code/general/tests.rs", symbol = "the_text_a_predicate_reads_is_charged_to_the_budget" },
+]
+depends_on = [
+    "a-language-beyond-rust-is-a-grammar-and-a-query-file",
+]

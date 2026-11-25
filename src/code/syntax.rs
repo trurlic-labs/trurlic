@@ -1,6 +1,6 @@
 //! Parsing a file with a tree-sitter grammar, within a budget of work,
 //! the tokens of its tree, and the span hashes of its definitions. Every
-//! tree-sitter resolver (`rust.rs`) stands on these.
+//! tree-sitter resolver (`rust.rs`, `general.rs`) stands on these.
 //!
 //! A tree-sitter parse recovers from any input, and on hostile input its
 //! error recovery can take many parser steps per byte, and its lexer can
@@ -17,23 +17,31 @@
 //! (a string's prefix and delimiters, which a grammar may hide, are in
 //! it), and each run of bytes the grammar keeps in no node (a
 //! `macro_rules!` repetition's separator, what error recovery passes
-//! over). A definition's hash is over its tokens, each nested
-//! definition's tokens replaced by that definition's hash, so each token
-//! is hashed once however deep the definitions nest ([`Leaves::hash_each`]).
+//! over). A grammar whose layout carries syntax that no byte holds (the
+//! statements and blocks of Python, whose NEWLINE, INDENT and DEDENT are
+//! tokens of no width in no node) marks the nodes whose extent is part of
+//! the hash: each such group opens and closes with a mark no token's bytes
+//! give ([`Leaves::of_marked`]). A definition's hash is over its tokens,
+//! each nested definition's tokens replaced by that definition's hash, so
+//! each token is hashed once however deep the definitions nest
+//! ([`Leaves::hash_each`]).
 
+use std::collections::BTreeMap;
 use std::ops::{ControlFlow, Range};
 
 use tree_sitter::{Language, Node, ParseOptions, Parser, Tree};
 
 use super::index::IndexFault;
-use super::span::{NESTED_MARK, SpanHash};
+use super::span::{CLOSE_MARK, NESTED_MARK, OPEN_MARK, SpanHash};
 use super::work::{PARSE_WORK_PER_BYTE, Work};
 
 /// The steps between two of the parser's progress reports.
 pub(super) const STEPS_PER_REPORT: usize = 100;
 
-/// The bytes the lexer is handed at a time.
-pub(super) const CHUNK_BYTES: usize = 1024;
+/// The bytes the lexer is handed at a time. The lexer reads again within
+/// the chunk it holds without asking for it, so a rescan inside one chunk
+/// is uncounted: a small chunk keeps that uncounted rescan short.
+pub(super) const CHUNK_BYTES: usize = 64;
 
 /// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
 /// the parse runs past its budget.
@@ -78,22 +86,38 @@ fn parse_within(
     }
 }
 
-/// One token of a tree: a leaf or a literal whole, or a run of bytes the
-/// grammar keeps in no node.
+/// One event of a walk of a tree's tokens: a leaf or a node taken whole,
+/// a run of bytes the grammar keeps in no node, or the walk entering or
+/// leaving a node it does not leave out.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Token<'n> {
     Node(Node<'n>),
     Gap { start: usize, end: usize },
+    Enter(Node<'n>),
+    Leave(Node<'n>),
 }
 
 impl Token<'_> {
-    /// The byte it starts at.
-    fn start(&self) -> usize {
+    /// The byte a token of bytes starts at; `None` for an entry or a
+    /// leaving, which holds none.
+    fn start(&self) -> Option<usize> {
         match self {
-            Self::Node(node) => node.start_byte(),
-            Self::Gap { start, .. } => *start,
+            Self::Node(node) => Some(node.start_byte()),
+            Self::Gap { start, .. } => Some(*start),
+            Self::Enter(_) | Self::Leave(_) => None,
         }
     }
+}
+
+/// How a walk of the tokens takes a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Take {
+    /// Its children are walked; a leaf is a token.
+    Walk,
+    /// It is one token, whatever it holds.
+    Whole,
+    /// It is left out, as a comment is.
+    Skip,
 }
 
 /// Each token of `node`, in order, until `each` breaks: its leaves, each
@@ -101,12 +125,27 @@ impl Token<'_> {
 /// between a node's children that no child holds. Whitespace and the
 /// comments `lexicon` delimits are left out. So are comments and every
 /// other extra but an error ([`is_comment`]), and tokens of no width (the
-/// parser's inserted missing tokens). One cursor walk: each node and each
-/// byte is visited once.
+/// parser's inserted missing tokens).
 pub(super) fn tokens<'n>(
     node: Node<'n>,
     text: &str,
     lexicon: &Lexicon,
+    each: impl FnMut(Token<'n>) -> ControlFlow<()>,
+) {
+    let take = |node: Node<'_>| match lexicon.literals.contains(&node.kind()) {
+        true => Take::Whole,
+        false => Take::Walk,
+    };
+    walk_tokens(node, (text, lexicon), take, each);
+}
+
+/// The walk of [`tokens`], each node taken as `take` says, and each node
+/// it does not leave out entered and left. One cursor walk: each node and
+/// each byte is visited once.
+pub(super) fn walk_tokens<'n>(
+    node: Node<'n>,
+    (text, lexicon): (&str, &Lexicon),
+    take: impl Fn(Node<'n>) -> Take,
     each: impl FnMut(Token<'n>) -> ControlFlow<()>,
 ) {
     let mut cursor = node.walk();
@@ -123,16 +162,22 @@ pub(super) fn tokens<'n>(
                 return;
             }
         }
-        let unit = current.child_count() == 0 || lexicon.literals.contains(&current.kind());
-        if !is_comment(current) {
-            if !unit && cursor.goto_first_child() {
+        let taken = match is_comment(current) {
+            true => Take::Skip,
+            false => take(current),
+        };
+        if taken != Take::Skip {
+            if each(Token::Enter(current)).is_break() {
+                return;
+            }
+            if taken == Take::Walk && cursor.goto_first_child() {
                 ends.push(current.start_byte());
                 continue;
             }
-            if unit
-                && current.end_byte() > current.start_byte()
-                && each(Token::Node(current)).is_break()
-            {
+            if current.end_byte() > current.start_byte() && each(Token::Node(current)).is_break() {
+                return;
+            }
+            if each(Token::Leave(current)).is_break() {
                 return;
             }
         }
@@ -153,7 +198,9 @@ fn without_comments<'n>(
 ) -> impl FnMut(Token<'n>) -> ControlFlow<()> {
     let mut comment_end = 0;
     move |token: Token<'n>| {
-        let start = token.start();
+        let Some(start) = token.start() else {
+            return each(token);
+        };
         if start < comment_end {
             return ControlFlow::Continue(());
         }
@@ -168,8 +215,8 @@ fn without_comments<'n>(
 }
 
 /// Move `cursor` to the next node of `top`'s walk: a sibling, or the next
-/// of an ancestor once the gap after its last child is out. Breaks at the
-/// walk's end, or when `each` does.
+/// of an ancestor once the gap after its last child is out and the
+/// ancestor is left. Breaks at the walk's end, or when `each` does.
 fn climb<'n>(
     cursor: &mut tree_sitter::TreeCursor<'n>,
     top: Node<'n>,
@@ -190,6 +237,7 @@ fn climb<'n>(
         let parent = cursor.node();
         let last = ends.pop().unwrap_or(parent.end_byte());
         gaps(text, (last, parent.end_byte()), lexicon, each)?;
+        each(Token::Leave(parent))?;
     }
 }
 
@@ -298,9 +346,56 @@ fn gaps<'n>(
     }
 }
 
-/// The byte ranges of a tree's tokens, in order.
+/// The units of a tree's span hashes, in order: each token's bytes, and
+/// the marks that open and close a group of a marked tree.
 pub(super) struct Leaves {
-    ranges: Vec<(usize, usize)>,
+    units: Vec<Unit>,
+}
+
+/// One unit of a span hash: a token over bytes `from..to`, or a group's
+/// mark, which holds no byte (`from` and `to` are where it stands).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Unit {
+    from: usize,
+    to: usize,
+    mark: Mark,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Text,
+    Open,
+    Close,
+}
+
+/// How the walk of a marked tree takes one node, by the general
+/// resolver's query: the facts of a node no query names are all `false`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct NodeMarks {
+    /// One token whole, unless a definition's span starts inside it.
+    pub(super) whole: bool,
+    /// Left out of every hash.
+    pub(super) skip: bool,
+    /// Its extent is part of the hash: a mark opens and closes it.
+    pub(super) group: bool,
+    /// A definition's span: the units it holds are recorded.
+    pub(super) span: bool,
+}
+
+impl NodeMarks {
+    /// How the walk takes `node`, so marked; a node marked whole that one
+    /// of `span_starts` falls inside is walked.
+    fn take(self, node: Node<'_>, span_starts: &[usize]) -> Take {
+        let held = span_starts
+            .get(span_starts.partition_point(|&at| at <= node.start_byte())..)
+            .and_then(|after| after.first())
+            .is_some_and(|&at| at < node.end_byte());
+        match (self.skip, self.whole && !held) {
+            (true, _) => Take::Skip,
+            (false, true) => Take::Whole,
+            (false, false) => Take::Walk,
+        }
+    }
 }
 
 /// A definition whose hash is being built: where it ends, the units of
@@ -313,7 +408,7 @@ struct Open {
 }
 
 /// One pass of [`Leaves::hash_each`]: the hashes open from the outermost
-/// in, the hash of each range found so far, and the next token to feed.
+/// in, the hash of each range found so far, and the next unit to feed.
 struct Hashing<'a> {
     leaves: &'a Leaves,
     text: &'a str,
@@ -325,37 +420,70 @@ struct Hashing<'a> {
 impl Leaves {
     /// The tokens of `tree`, of a grammar of `lexicon`.
     pub(super) fn of(tree: &Tree, text: &str, lexicon: &Lexicon) -> Self {
-        let mut ranges = Vec::new();
+        let mut units = Vec::new();
         tokens(tree.root_node(), text, lexicon, |token| {
-            let (from, to) = match token {
-                Token::Node(node) => (node.start_byte(), node.end_byte()),
-                Token::Gap { start, end } => (start, end),
-            };
-            let glued = match token {
-                Token::Node(node) => lexicon
-                    .glued
-                    .iter()
-                    .find(|(kind, _)| *kind == node.kind())
-                    .map(|(_, first)| from + first)
-                    .filter(|split| *split < to),
-                Token::Gap { .. } => None,
-            };
-            match glued {
-                Some(split) => ranges.extend([(from, split), (split, to)]),
-                None => ranges.push((from, to)),
+            push_text(&mut units, token, lexicon);
+            ControlFlow::Continue(())
+        });
+        Self { units }
+    }
+
+    /// The units of `tree`, each node taken as `marks` says by its id, and
+    /// the range of units each node marked a span holds, by its id. A
+    /// node marked whole that a span starts inside is walked: a token
+    /// never hides a definition. `span_starts` is sorted.
+    pub(super) fn of_marked(
+        tree: &Tree,
+        (text, lexicon): (&str, &Lexicon),
+        marks: &BTreeMap<usize, NodeMarks>,
+        span_starts: &[usize],
+    ) -> (Self, BTreeMap<usize, Range<usize>>) {
+        let mut units = Vec::new();
+        let mut spans: BTreeMap<usize, Range<usize>> = BTreeMap::new();
+        let marks_of = |node: Node<'_>| marks.get(&node.id()).copied().unwrap_or_default();
+        let take = |node: Node<'_>| marks_of(node).take(node, span_starts);
+        walk_tokens(tree.root_node(), (text, lexicon), take, |token| {
+            match token {
+                Token::Node(_) | Token::Gap { .. } => push_text(&mut units, token, lexicon),
+                Token::Enter(node) => {
+                    let marked = marks_of(node);
+                    if marked.span {
+                        spans.insert(node.id(), units.len()..units.len());
+                    }
+                    if marked.group {
+                        units.push(Unit::mark(node.start_byte(), Mark::Open));
+                    }
+                }
+                Token::Leave(node) => {
+                    let marked = marks_of(node);
+                    if marked.group {
+                        units.push(Unit::mark(node.end_byte(), Mark::Close));
+                    }
+                    if let Some(range) = spans.get_mut(&node.id()).filter(|_| marked.span) {
+                        range.end = units.len();
+                    }
+                }
             }
             ControlFlow::Continue(())
         });
-        Self { ranges }
+        (Self { units }, spans)
     }
 
-    /// The hash of each of `ranges`, a definition's bytes in `text`: over
-    /// the tokens within it, in order, each with its length, where each
-    /// range within it comes in as its own hash instead of its tokens. A
-    /// range the same as another is hashed alike; one that starts within
-    /// another and ends past it is hashed as if it ended where that one
-    /// does. Each token goes into one hash, so the work is linear in the
-    /// tokens and the ranges.
+    /// The units within bytes `bytes`: each token wholly inside them. Read
+    /// only of a tree with no marks, whose units hold bytes.
+    pub(super) fn within(&self, bytes: &Range<usize>) -> Range<usize> {
+        let first = self.units.partition_point(|unit| unit.from < bytes.start);
+        let last = self.units.partition_point(|unit| unit.to <= bytes.end);
+        first..last.max(first)
+    }
+
+    /// The hash of each of `ranges`, each a definition's units: over the
+    /// units within it, in order, each token after its length and each
+    /// mark as a length no token has, where each range within it comes in
+    /// as its own hash instead of its units. A range the same as another
+    /// is hashed alike; one that starts within another and ends past it
+    /// is hashed as if it ended where that one does. Each unit goes into
+    /// one hash, so the work is linear in the units and the ranges.
     pub(super) fn hash_each(&self, text: &str, ranges: &[Range<usize>]) -> Vec<SpanHash> {
         let mut order: Vec<(usize, &Range<usize>)> = ranges.iter().enumerate().collect();
         order.sort_by_key(|(at, range)| (range.start, std::cmp::Reverse(range.end), *at));
@@ -377,9 +505,50 @@ impl Leaves {
     }
 }
 
+/// Push the units of `token`, a token of bytes: one, or two for a glued
+/// kind of `lexicon`.
+fn push_text(units: &mut Vec<Unit>, token: Token<'_>, lexicon: &Lexicon) {
+    let (from, to) = match token {
+        Token::Node(node) => (node.start_byte(), node.end_byte()),
+        Token::Gap { start, end } => (start, end),
+        Token::Enter(_) | Token::Leave(_) => return,
+    };
+    let glued = match token {
+        Token::Node(node) => lexicon
+            .glued
+            .iter()
+            .find(|(kind, _)| *kind == node.kind())
+            .map(|(_, first)| from + first)
+            .filter(|split| *split < to),
+        Token::Gap { .. } | Token::Enter(_) | Token::Leave(_) => None,
+    };
+    match glued {
+        Some(split) => units.extend([Unit::text(from, split), Unit::text(split, to)]),
+        None => units.push(Unit::text(from, to)),
+    }
+}
+
+impl Unit {
+    const fn text(from: usize, to: usize) -> Self {
+        Self {
+            from,
+            to,
+            mark: Mark::Text,
+        }
+    }
+
+    const fn mark(at: usize, mark: Mark) -> Self {
+        Self {
+            from: at,
+            to: at,
+            mark,
+        }
+    }
+}
+
 impl Hashing<'_> {
     /// Open the hash of range `at`, `range`, within the innermost open one:
-    /// the same one again when it has the same bytes.
+    /// the same one again when it holds the same units.
     fn open(&mut self, at: usize, range: &Range<usize>) {
         let end = self
             .open
@@ -396,29 +565,34 @@ impl Hashing<'_> {
         }
     }
 
-    /// Feed the tokens that start before `limit` into the innermost open
-    /// hash that holds them, closing each that ends before a token does.
+    /// Feed the units before unit `limit` into the innermost open hash
+    /// that holds each, closing each that ends before it.
     fn feed_before(&mut self, limit: usize) {
-        while let Some(&(from, to)) = self
+        while let Some(unit) = self
             .leaves
-            .ranges
+            .units
             .get(self.next)
-            .filter(|(from, _)| *from < limit)
+            .filter(|_| self.next < limit)
         {
-            while self.open.last().is_some_and(|top| top.end < to) {
-                self.close();
-            }
+            self.close_ended(self.next);
             if let Some(top) = self.open.last_mut() {
-                let token = self.text.as_bytes().get(from..to).unwrap_or_default();
-                top.units
-                    .extend_from_slice(&(token.len() as u64).to_le_bytes());
-                top.units.extend_from_slice(token);
+                match unit.mark {
+                    Mark::Text => {
+                        let token = self.text.as_bytes().get(unit.from..unit.to);
+                        let token = token.unwrap_or_default();
+                        top.units
+                            .extend_from_slice(&(token.len() as u64).to_le_bytes());
+                        top.units.extend_from_slice(token);
+                    }
+                    Mark::Open => top.units.extend_from_slice(&OPEN_MARK),
+                    Mark::Close => top.units.extend_from_slice(&CLOSE_MARK),
+                }
             }
             self.next += 1;
         }
     }
 
-    /// Close every open hash that ends at or before `at`.
+    /// Close every open hash that ends at or before unit `at`.
     fn close_ended(&mut self, at: usize) {
         while self.open.last().is_some_and(|top| top.end <= at) {
             self.close();
@@ -485,7 +659,8 @@ mod tests {
     /// The hash of the whole of `text`, a Rust file.
     fn hash(text: &str) -> SpanHash {
         let leaves = Leaves::of(&rust_tree(text), text, &LEXICON);
-        leaves.hash_each(text, std::slice::from_ref(&(0..text.len())))[0]
+        let units = leaves.within(&(0..text.len()));
+        leaves.hash_each(text, std::slice::from_ref(&units))[0]
     }
 
     #[test]
@@ -592,7 +767,8 @@ mod tests {
         for (file, text) in token_corpus() {
             let tree = rust_tree(&text);
             let mut covered = vec![false; text.len()];
-            for &(from, to) in &Leaves::of(&tree, &text, &LEXICON).ranges {
+            for unit in &Leaves::of(&tree, &text, &LEXICON).units {
+                let (from, to) = (unit.from, unit.to);
                 for byte in &mut covered[from..to] {
                     assert!(!*byte, "{file}: byte {from} in two tokens");
                     *byte = true;
@@ -627,14 +803,15 @@ mod tests {
     fn a_nested_definition_enters_its_parents_hash_by_its_own() {
         let text = "mod a { fn b() { 1 } }\nmod a { fn b() { 2 } }\n";
         let leaves = Leaves::of(&rust_tree(text), text, &LEXICON);
-        let hashes = leaves.hash_each(text, &[0..22, 8..20, 23..45, 31..43, 8..20]);
+        let ranges = [0..22, 8..20, 23..45, 31..43, 8..20].map(|bytes| leaves.within(&bytes));
+        let hashes = leaves.hash_each(text, &ranges);
 
         assert_ne!(hashes[0], hashes[2], "an edit inside moves the parent");
         assert_ne!(hashes[1], hashes[3]);
         assert_eq!(hashes[1], hashes[4], "a range given twice hashes alike");
         let alone = "fn b() { 1 }";
-        let own = Leaves::of(&rust_tree(alone), alone, &LEXICON)
-            .hash_each(alone, std::slice::from_ref(&(0..12)));
+        let alone_leaves = Leaves::of(&rust_tree(alone), alone, &LEXICON);
+        let own = alone_leaves.hash_each(alone, &[alone_leaves.within(&(0..12))]);
         assert_eq!(
             hashes[1], own[0],
             "a hash is of its own tokens wherever it is"

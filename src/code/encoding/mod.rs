@@ -75,6 +75,8 @@ pub(super) const fn kind_code(kind: DefinitionKind) -> u8 {
         DefinitionKind::Key => 16,
         DefinitionKind::Target => 17,
         DefinitionKind::Heading => 18,
+        DefinitionKind::Class => 19,
+        DefinitionKind::Variable => 20,
     }
 }
 
@@ -125,6 +127,7 @@ mod tests {
                 "tests/fixtures/code/crates/ledger/src/books/mod.rs",
                 FileKind::Rust,
             ),
+            ("tests/fixtures/code/python/shelf.py", FileKind::Python),
             ("tests/fixtures/code/settings.json", FileKind::Json),
             ("tests/fixtures/code/Makefile", FileKind::Make),
             ("tests/fixtures/code/docs/guide.md", FileKind::Markdown),
@@ -144,6 +147,7 @@ mod tests {
             IndexFault::TooComplex,
             IndexFault::TooDeep,
             IndexFault::Grammar,
+            IndexFault::TooManyIndentations { max: 256 },
             IndexFault::TooLarge {
                 bytes: 5_000_000,
                 max: 1 << 20,
@@ -203,13 +207,20 @@ mod tests {
                 .iter()
                 .map(Measure::definition)
                 .sum::<usize>()
-            + index.macros.iter().map(Measure::type_macro).sum::<usize>()
             + index
+                .rust
+                .macros
+                .iter()
+                .map(Measure::type_macro)
+                .sum::<usize>()
+            + index
+                .rust
                 .invocations
                 .iter()
                 .map(Measure::invocation)
                 .sum::<usize>()
             + index
+                .rust
                 .module_files
                 .iter()
                 .map(Measure::module_file)
@@ -251,6 +262,8 @@ mod tests {
         let keys = format!("{{{}\"z\":0}}", "\"a\":0,".repeat(20_000));
         let tables: String = (0..10_000).map(|n| format!("[a{n}]\nb=0\n")).collect();
         let nested = format!("{}{}", "mod m{".repeat(60), "}".repeat(60));
+        let names = format!("{}z = 0\n", "a,".repeat(50_000));
+        let lines = "x=1\n".repeat(50_000);
         let reexported = format!(
             "pub use {}::{{{}}};",
             "a".repeat(100_000),
@@ -265,6 +278,8 @@ mod tests {
             (FileKind::Markdown, headings.as_str()),
             (FileKind::Json, keys.as_str()),
             (FileKind::Toml, tables.as_str()),
+            (FileKind::Python, names.as_str()),
+            (FileKind::Python, lines.as_str()),
             (FileKind::Rust, ""),
         ] {
             let bytes = encode(&index(kind, text.as_bytes()));

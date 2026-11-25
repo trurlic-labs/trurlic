@@ -36,6 +36,10 @@ pub(crate) fn encode(indexed: &Indexed) -> Vec<u8> {
             out.number(*bytes);
             out.number(*max);
         }
+        Err(IndexFault::TooManyIndentations { max }) => {
+            out.byte(7);
+            out.number(*max);
+        }
     }
     out.0
 }
@@ -144,16 +148,16 @@ impl<S: Sink> Writer<S> {
             self.definition(definition, previous);
             previous = Some(definition.span);
         }
-        self.number(index.macros.len());
-        for found in &index.macros {
+        self.number(index.rust.macros.len());
+        for found in &index.rust.macros {
             self.type_macro(found);
         }
-        self.number(index.invocations.len());
-        for invocation in &index.invocations {
+        self.number(index.rust.invocations.len());
+        for invocation in &index.rust.invocations {
             self.invocation(invocation);
         }
-        self.number(index.module_files.len());
-        for module in &index.module_files {
+        self.number(index.rust.module_files.len());
+        for module in &index.rust.module_files {
             self.module_file(module);
         }
     }

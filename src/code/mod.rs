@@ -3,30 +3,37 @@
 //! and bytes, or the facts a shell gathered (`sources`), and its output is
 //! values; it reads no file and no clock.
 //!
-//! Rust is read with tree-sitter (`rust.rs`, over `syntax.rs` and the
-//! builder every tree-sitter resolver shares, `tree.rs`); TOML, JSON,
-//! Makefiles and Markdown with lexical resolvers of their own (over
+//! Rust is read with tree-sitter by a module of its own (`rust.rs`, over
+//! `syntax.rs` and the builder every tree-sitter resolver shares,
+//! `tree.rs`), since its macros need code. Every other language is a
+//! grammar and a query file, a row of `language.rs` read by the general
+//! resolver (`general.rs`, under the contract of `query.rs`). TOML, JSON,
+//! Makefiles and Markdown have lexical resolvers of their own (over
 //! `lexical.rs`). A file's index is a function of its kind and bytes
 //! ([`index`]): its paths a tree of scopes (`scope.rs`), which charges all
 //! an index holds to the file's room, its work under budgets per byte
-//! (`work.rs`), its cache entry a compact encoding (`encoding.rs`). What needs the whole tree is a second step over the
-//! indexes: the types macro invocations define (`expand.rs`) and the files
-//! that are test code whole (`roles.rs`). A tree-sitter grammar is one
-//! file beside `rust.rs` and one row of [`FileKind`].
+//! (`work.rs`), its cache entry a compact encoding (`encoding.rs`). What
+//! needs the whole tree is a second step over the indexes: the types
+//! macro invocations define (`expand.rs`) and the files that are test
+//! code whole (`roles.rs`).
 
 mod crates;
 mod definitions;
 mod encoding;
 mod expand;
 mod facts;
+mod general;
+mod indentation;
 mod index;
 mod json;
 mod kinds;
+mod language;
 mod lexical;
 mod make;
 mod markdown;
 #[cfg(test)]
 mod purity;
+mod query;
 mod roles;
 mod rust;
 mod scope;
@@ -68,7 +75,7 @@ mod tests {
     const SEEDED: &[(&str, &str)] = &[
         (
             "pure",
-            "use std::collections::BTreeMap;\nuse std::io::ErrorKind;\nuse crate::store::Anchor;\nuse super::index::FileKind;\nuse tree_sitter::Node;\nfn f() -> core::fmt::Result { Ok(()) }\n",
+            "use std::collections::BTreeMap;\nuse std::io::ErrorKind;\nuse crate::store::Anchor;\nuse super::index::FileKind;\nuse tree_sitter::Node;\nfn f() -> core::fmt::Result { Ok(()) }\nconst Q: &str = include_str!(\"queries/q.scm\");\nconst R: &str = include_str!(\"./queries/../q.scm\");\n",
         ),
         ("fs", "fn f() { let _ = std::fs::read(\"/x\"); }\n"),
         ("listed", "use std::{fs, collections};\n"),
@@ -122,6 +129,23 @@ mod tests {
             "#[path = \"../../outside.rs\"]\nmod outside;\n",
         ),
         ("include", "const X: &str = include_str!(\"../lib.rs\");\n"),
+        (
+            "include_absolute",
+            "const X: &str = include_str!(\"/etc/hosts\");\n",
+        ),
+        (
+            "include_escaping",
+            "const X: &str = include_str!(\"queries/../../lib.rs\");\n",
+        ),
+        (
+            "include_computed",
+            "const X: &str = include_str!(concat!(\"q\", \".scm\"));\n",
+        ),
+        ("include_raw", "const X: &str = include_str!(r\"q.scm\");\n"),
+        (
+            "include_bytes",
+            "const X: &[u8] = include_bytes!(\"q.scm\");\n",
+        ),
         (
             "environment",
             "const X: Option<&str> = option_env!(\"HOME\");\n",

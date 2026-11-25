@@ -1,6 +1,6 @@
 //! A file's index: the scopes of its paths, the definitions it holds,
 //! each with its scope, what it is, its span and span hash, and for Rust
-//! the facts a second step expands macros from. An index is a function
+//! the facts a second step expands macros from and follows modules by. An index is a function
 //! of the file's kind and bytes alone, so a cache keyed by the two holds
 //! it whatever path or tree the bytes are under.
 
@@ -8,15 +8,16 @@ use std::fmt;
 use std::sync::{Arc, LazyLock};
 
 use super::kinds::{DefinitionKind, Role, Visibility};
+use super::language::{Language, PYTHON};
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
 use super::symbol::{Segment, Syntax};
-use super::{encoding, json, make, markdown, rust, syntax, toml, work};
+use super::{encoding, general, indentation, json, make, markdown, rust, syntax, toml, work};
 
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 6;
+pub(crate) const INDEX_FORMAT: u32 = 7;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -31,7 +32,7 @@ const LEXICAL_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// key, so an index built under other bounds is never read as one of
 /// these, whatever the fixture corpus shows of them. The expansion's
 /// budget is no part of it: an expansion is never cached.
-pub(crate) const BOUNDS: [(&str, usize); 13] = [
+pub(crate) const BOUNDS: [(&str, usize); 15] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
     ("parse_work_per_byte", work::PARSE_WORK_PER_BYTE),
@@ -48,6 +49,8 @@ pub(crate) const BOUNDS: [(&str, usize); 13] = [
     ("entry_overhead_bytes", encoding::ENTRY_OVERHEAD_BYTES),
     ("max_arm_words", rust::MAX_ARM_WORDS),
     ("max_invocation_tokens", rust::MAX_INVOCATION_TOKENS),
+    ("max_indentations", indentation::MAX_INDENTATIONS),
+    ("match_limit", general::MATCH_LIMIT as usize),
 ];
 
 /// The largest file of any kind the index reads.
@@ -65,10 +68,13 @@ static RUST_GRAMMAR: LazyLock<[u8; 32]> = LazyLock::new(|| {
     )
 });
 
-/// A kind of file the index has a resolver for.
+/// A kind of file the index has a resolver for: Rust's own, a language
+/// the general resolver reads by its row in `language.rs`, or a lexical
+/// kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum FileKind {
     Rust,
+    Python,
     Toml,
     Json,
     Make,
@@ -84,6 +90,7 @@ impl FileKind {
         match (name, extension) {
             ("Makefile" | "makefile" | "GNUmakefile", _) | (_, Some("mk")) => Some(Self::Make),
             (_, Some("rs")) => Some(Self::Rust),
+            (_, Some("py" | "pyi")) => Some(Self::Python),
             (_, Some("toml")) => Some(Self::Toml),
             (_, Some("json")) => Some(Self::Json),
             (_, Some("md")) => Some(Self::Markdown),
@@ -91,10 +98,30 @@ impl FileKind {
         }
     }
 
+    /// The language the general resolver reads a file of this kind as;
+    /// `None` for Rust and the lexical kinds.
+    pub(super) const fn language(self) -> Option<&'static Language> {
+        match self {
+            Self::Python => Some(&PYTHON),
+            Self::Rust | Self::Toml | Self::Json | Self::Make | Self::Markdown => None,
+        }
+    }
+
+    /// Whether a file of this kind is source code, which the tree's facts
+    /// hold whoever anchors it, rather than data or prose, read when an
+    /// anchor names it.
+    pub(crate) const fn is_code(self) -> bool {
+        match self {
+            Self::Rust | Self::Python => true,
+            Self::Toml | Self::Json | Self::Make | Self::Markdown => false,
+        }
+    }
+
     /// How a symbol on a file of this kind is spelled.
     pub(crate) const fn syntax(self) -> Syntax {
         match self {
             Self::Rust => Syntax::Rust,
+            Self::Python => Syntax::Code,
             Self::Toml | Self::Json | Self::Make | Self::Markdown => Syntax::Plain,
         }
     }
@@ -103,10 +130,12 @@ impl FileKind {
     /// key: a grammar's new version may parse the same bytes into
     /// another tree, which no fixture of the index need show. A lexical
     /// kind's rules are the index's own, so its identity is
-    /// [`INDEX_FORMAT`]'s.
+    /// [`INDEX_FORMAT`]'s. A language the general resolver reads adds
+    /// its query file, whose patterns are rules of its index.
     pub(crate) fn grammar(self) -> [u8; 32] {
         match self {
             Self::Rust => *RUST_GRAMMAR,
+            Self::Python => PYTHON.identity(),
             Self::Toml | Self::Json | Self::Make | Self::Markdown => [0; 32],
         }
     }
@@ -114,7 +143,7 @@ impl FileKind {
     /// The largest file of the kind the index reads.
     pub(crate) const fn max_bytes(self) -> usize {
         match self {
-            Self::Rust => TREE_SITTER_MAX_BYTES,
+            Self::Rust | Self::Python => TREE_SITTER_MAX_BYTES,
             Self::Toml | Self::Json | Self::Make | Self::Markdown => LEXICAL_MAX_BYTES,
         }
     }
@@ -123,6 +152,7 @@ impl FileKind {
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Rust => "rust",
+            Self::Python => PYTHON.name,
             Self::Toml => "toml",
             Self::Json => "json",
             Self::Make => "make",
@@ -295,6 +325,15 @@ pub(crate) struct FileIndex {
     pub(crate) scopes: Vec<Scope>,
     /// Sorted by span, then scope.
     pub(crate) definitions: Vec<Definition>,
+    /// Empty for every kind but Rust.
+    pub(crate) rust: RustFacts,
+}
+
+/// What a Rust file holds for the second step over its crate: the
+/// macros that can define a type, the invocations they expand, and the
+/// modules declared to be in files of their own.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RustFacts {
     pub(crate) macros: Vec<TypeMacro>,
     /// Sorted by span.
     pub(crate) invocations: Vec<Invocation>,
@@ -316,8 +355,12 @@ pub(crate) enum IndexFault {
     TooLarge { bytes: usize, max: usize },
     /// A path of more than [`MAX_NESTING`] segments.
     TooDeep,
-    /// The grammar is of an ABI the parser does not read.
+    /// The grammar is of an ABI the parser does not read, or its query
+    /// does not compile.
     Grammar,
+    /// A Python file whose lines start at more than `max` widths, past
+    /// which its grammar's scanner aborts the process.
+    TooManyIndentations { max: usize },
 }
 
 impl fmt::Display for IndexFault {
@@ -333,7 +376,10 @@ impl fmt::Display for IndexFault {
                 )
             }
             Self::TooDeep => write!(f, "nests a path deeper than {MAX_NESTING} segments"),
-            Self::Grammar => f.write_str("has a grammar of an ABI the parser does not read"),
+            Self::Grammar => f.write_str("has a grammar or query the parser does not load"),
+            Self::TooManyIndentations { max } => {
+                write!(f, "starts its lines at more than {max} indentation widths")
+            }
         }
     }
 }
@@ -352,6 +398,7 @@ pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Result<FileIndex, IndexFaul
     })?;
     let mut index = match kind {
         FileKind::Rust => rust::index(text)?,
+        FileKind::Python => general::index(&PYTHON, text)?,
         FileKind::Toml => toml::index(text)?,
         FileKind::Json => json::index(text)?,
         FileKind::Make => make::index(text)?,
@@ -361,6 +408,7 @@ pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Result<FileIndex, IndexFaul
         .definitions
         .sort_unstable_by_key(|definition| (definition.span, definition.scope));
     index
+        .rust
         .invocations
         .sort_unstable_by_key(|invocation| invocation.span);
     Ok(index)
@@ -374,6 +422,8 @@ mod tests {
     fn a_file_kind_is_read_from_its_name() {
         for (path, kind) in [
             ("src/lib.rs", Some(FileKind::Rust)),
+            ("tools/run.py", Some(FileKind::Python)),
+            ("pkg/__init__.pyi", Some(FileKind::Python)),
             ("Cargo.toml", Some(FileKind::Toml)),
             ("a/b.json", Some(FileKind::Json)),
             ("Makefile", Some(FileKind::Make)),
@@ -393,7 +443,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 6] = [
+    const FINGERPRINTS: [(u32, &str); 7] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -417,6 +467,10 @@ mod tests {
         (
             6,
             "2311aee02372c269a380b0faaef22e11a092ac4a92922d9baca6d4433da4af92",
+        ),
+        (
+            7,
+            "18663a405b363c0ff6b43db6ec7cdb3db0d421b0ff7ebeaa82af7a241e13b183",
         ),
     ];
 
@@ -466,8 +520,13 @@ mod tests {
                 max: TREE_SITTER_MAX_BYTES,
             })
         );
+        assert_eq!(
+            index(FileKind::Python, &over).err(),
+            index(FileKind::Rust, &over).err()
+        );
         assert!(index(FileKind::Markdown, &over).is_ok());
         assert!(index(FileKind::Rust, &over[1..]).is_ok());
+        assert!(index(FileKind::Python, &over[1..]).is_ok());
     }
 
     #[test]

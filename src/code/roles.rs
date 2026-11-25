@@ -1,7 +1,10 @@
-//! Test code a Rust file's bytes cannot state, read from the tree: a file
-//! under its crate's `tests/` directory, and a module file that only test
-//! code declares. It is a step over the tree, like the macro expansion,
-//! so a file's cached index stays a function of its bytes.
+//! Test code a file's bytes cannot state, read from the tree, so a file's
+//! cached index stays a function of its bytes. A file of a language the
+//! general resolver reads is test code whole in a test place its
+//! language's row names (`tests/`, `test_*.py`, `conftest.py`). A Rust
+//! file is test code under its crate's `tests/` directory, or as a module
+//! file that only test code declares, a step over the crates like the
+//! macro expansion.
 //!
 //! The walk goes forward from each crate's targets as cargo finds them
 //! without a manifest table: `src/lib.rs`, `src/main.rs`, `build.rs`, and
@@ -37,10 +40,30 @@ const ROOT_FILES: [&str; 3] = ["src/lib.rs", "src/main.rs", "build.rs"];
 /// The directories each of whose files is a target's root.
 const ROOT_DIRS: [&str; 4] = ["src/bin", "tests", "benches", "examples"];
 
-/// The Rust files of `files` and `outside` that are test code whole;
-/// `crates` is of the same files. The declarations of `outside`'s files,
+/// The files of `files` and `outside` that are test code whole; `crates`
+/// is of the same files. The declarations of `outside`'s Rust files,
 /// those no walk took, are not followed.
 pub(super) fn test_files<'i>(
+    files: &Files<'i>,
+    outside: &Files<'i>,
+    crates: &Crates<'i>,
+) -> BTreeSet<&'i str> {
+    let mut found = rust_test_files(files, outside, crates);
+    found.extend(
+        files
+            .iter()
+            .chain(outside)
+            .filter(|(path, (kind, _))| {
+                kind.language()
+                    .is_some_and(|language| language.is_test_place(path))
+            })
+            .map(|(&path, _)| path),
+    );
+    found
+}
+
+/// The Rust files of `files` and `outside` that are test code whole.
+fn rust_test_files<'i>(
     files: &Files<'i>,
     outside: &Files<'i>,
     crates: &Crates<'i>,
@@ -96,7 +119,7 @@ fn walk_forward<'i>(
             index,
             modules: &modules,
         };
-        for module in &index.module_files {
+        for module in &index.rust.module_files {
             let target = declaring.module_file(module, |candidate| {
                 files
                     .get_key_value(candidate)
@@ -279,7 +302,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_is_test_code_under_tests_or_reached_by_test_code_alone() {
+    fn a_file_is_test_code_in_a_test_place_or_reached_by_test_code_alone() {
         let files = [
             ("Cargo.toml", "[package]\n"),
             (
@@ -313,6 +336,12 @@ mod tests {
             ("crates/x/src/imp.rs", ""),
             ("crates/x/tests/it.rs", ""),
             ("loose/tests/alone.rs", ""),
+            ("tools/conftest.py", ""),
+            ("tools/run.py", ""),
+            ("tools/tests/helpers.py", ""),
+            ("tools/test_run.py", ""),
+            ("tools/run_test.py", ""),
+            ("tools/stubs.pyi", ""),
         ];
 
         assert_eq!(
@@ -328,6 +357,10 @@ mod tests {
                 "src/tests/deeper/deepest/mod.rs",
                 "tests/common/mod.rs",
                 "tests/flow.rs",
+                "tools/conftest.py",
+                "tools/run_test.py",
+                "tools/test_run.py",
+                "tools/tests/helpers.py",
             ]
         );
     }

@@ -78,6 +78,13 @@ regex = { version = "1.13", default-features = false, features = ["std", "unicod
 # literal optimizations, which no query of ours needs.
 tree-sitter = { version = "0.27", default-features = false }
 tree-sitter-rust = "0.24"
+# Python's grammar for the general resolver, which reads a language from
+# its grammar and a query file (src/code/language/python.scm): no Rust
+# module per language. Its C parser and scanner are compiled into the
+# binary (about 0.5 MB), since a grammar loaded at run time needs `unsafe`
+# or a runtime of its own. 0.25 is the newest release, and its ABI 15 is
+# one tree-sitter 0.27 reads.
+tree-sitter-python = "0.25"
 
 # The size of a `[quality]` pattern's Thompson NFA, its state count, which
 # bounds what the pattern costs per byte it reads: `status` charges its

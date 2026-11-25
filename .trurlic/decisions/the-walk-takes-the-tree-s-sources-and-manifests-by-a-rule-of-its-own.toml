@@ -1,0 +1,24 @@
+component = "sources"
+choice = "The walk takes every source file of a language and every Cargo.toml, passing over dot entries, node_modules, __pycache__, directories holding .git, CACHEDIR.TAG or pyvenv.cfg, and symlinks"
+reason = "A Rust file's definitions can come from any crate's macros, and a count of the tree's definitions needs every one, so the facts hold every source file of a language and every manifest; a data or prose file is read when an anchor names it, since none counts as code and a tree's JSON and Markdown can run to megabytes. An anchor's own path is looked at wherever it is, a dot directory or an ignored file included. The rule says what the tree's sources are without asking git, each part a fact a tool states: a dot entry is tool or editor state, the graph, .git and .venv among them; node_modules and __pycache__ are the fixed names npm and CPython install and compile into; a directory holding .git is the top of another work tree, whose definitions would count twice; CACHEDIR.TAG marks a cache, which cargo writes into its target directories; pyvenv.cfg marks a Python virtual environment, whatever its name; a symlink is never followed, so a loop cannot hold the walk. A directory named build or target holds source in some trees, so neither name is passed over: setuptools' build copies cost counted definitions twice, never a wrong anchor, since an anchor names its path. status is called often and spawns no process on a tree that holds its graph."
+alternatives = [
+    "git ls-files with --others --exclude-standard: rejected because it spawns a process on every call, and a tree with no git would need a second rule",
+    "Parse .gitignore files: rejected because git's ignore rules have many layers (global, info/exclude, negation) that a partial copy would get wrong",
+    "Pass over target, build and dist by name: rejected because a module or package of those names holds source, and the tools that fill them mark them or are marked otherwise",
+    "Walk the data and prose files too: rejected because they are no code a count of definitions measures, and a lockfile of megabytes would be read on every call",
+]
+tags = [
+    "performance",
+    "placement",
+]
+status = "proposed"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/index.rs", symbol = "FileKind::is_code" },
+    { file = "src/sources/walk.rs", symbol = "SKIPPED_MARKERS" },
+    { file = "src/sources/walk.rs", symbol = "SKIPPED_NAMES" },
+    { file = "src/sources/walk.rs", symbol = "manifests_above" },
+    { file = "src/sources/walk.rs", symbol = "the_walk_takes_the_trees_sources_and_manifests_by_its_rule" },
+    { file = "src/sources/walk.rs", symbol = "tree_sources" },
+]

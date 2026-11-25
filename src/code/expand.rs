@@ -71,7 +71,7 @@ pub(super) fn expand<'i>(
     let mut tables: BTreeMap<&str, Arms<'i>> = BTreeMap::new();
     let mut expanded = BTreeMap::new();
     for (&path, (kind, index)) in files {
-        if *kind != FileKind::Rust || index.invocations.is_empty() {
+        if *kind != FileKind::Rust || index.rust.invocations.is_empty() {
             continue;
         }
         let shared = tables
@@ -91,7 +91,7 @@ pub(super) fn expand_file(
     index: &FileIndex,
     lookup: Lookup<'_, '_>,
 ) -> Result<Option<Expansion>, IndexFault> {
-    if index.invocations.is_empty() {
+    if index.rust.invocations.is_empty() {
         return Ok(None);
     }
     // An invocation that spells the item it defines (`m! { struct X }`)
@@ -105,6 +105,7 @@ pub(super) fn expand_file(
         }
     }
     let spanned = index
+        .rust
         .invocations
         .iter()
         .map(|invocation| invocation.span.end - invocation.span.start)
@@ -117,7 +118,7 @@ pub(super) fn expand_file(
         this_invocation: BTreeMap::new(),
         work: Work::expansion(spanned),
     };
-    for invocation in &index.invocations {
+    for invocation in &index.rust.invocations {
         if let Some(defined) = lookup.defined_by(invocation) {
             adding.define(invocation, &defined)?;
         }

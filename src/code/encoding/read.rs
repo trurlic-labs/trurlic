@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::code::index::{
     After, Definition, Element, FileIndex, HandOff, IndexFault, Invocation, ModuleFile, Receives,
-    Rule, TypeArm, TypeImpl, TypeMacro,
+    Rule, RustFacts, TypeArm, TypeImpl, TypeMacro,
 };
 use crate::code::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::rust::MAX_OPENING;
@@ -43,6 +43,9 @@ pub(crate) fn decode(bytes: &[u8], source_bytes: usize) -> Option<Indexed> {
         5 => Err(IndexFault::Grammar),
         6 => Err(IndexFault::TooLarge {
             bytes: reader.number()?,
+            max: reader.number()?,
+        }),
+        7 => Err(IndexFault::TooManyIndentations {
             max: reader.number()?,
         }),
         _ => return None,
@@ -144,9 +147,11 @@ impl Reader<'_> {
         Some(FileIndex {
             scopes,
             definitions,
-            macros,
-            invocations,
-            module_files,
+            rust: RustFacts {
+                macros,
+                invocations,
+                module_files,
+            },
         })
     }
 
