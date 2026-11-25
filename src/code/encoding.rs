@@ -15,7 +15,7 @@
 //! index.
 
 use super::index::{
-    Definition, FileIndex, IndexFault, Invocation, Member, ModuleFile, TypeArm, TypeMacro,
+    Defines, Definition, FileIndex, IndexFault, Invocation, Member, ModuleFile, TypeArm, TypeMacro,
 };
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::scope::{MAX_NESTING, Scope, ScopeId};
@@ -327,7 +327,14 @@ impl<S: Sink> Writer<S> {
             for word in &arm.words {
                 self.text(word);
             }
-            self.byte(kind_code(arm.kind));
+            self.defines(&arm.defines);
+        }
+        match &found.defines {
+            None => self.byte(0),
+            Some(defines) => {
+                self.byte(1);
+                self.defines(defines);
+            }
         }
         self.number(found.members.len());
         for member in &found.members {
@@ -348,6 +355,19 @@ impl<S: Sink> Writer<S> {
         for (name, kind) in &found.items {
             self.text(name);
             self.byte(kind_code(*kind));
+        }
+    }
+
+    fn defines(&mut self, defines: &Defines) {
+        match defines {
+            Defines::Kind(kind) => {
+                self.byte(0);
+                self.byte(kind_code(*kind));
+            }
+            Defines::HandedTo(name) => {
+                self.byte(1);
+                self.text(name);
+            }
         }
     }
 
@@ -555,9 +575,14 @@ impl Reader<'_> {
             }
             arms.push(TypeArm {
                 words,
-                kind: self.kind()?,
+                defines: self.defines()?,
             });
         }
+        let defines = match self.byte()? {
+            0 => None,
+            1 => Some(self.defines()?),
+            _ => return None,
+        };
         let mut members = Vec::new();
         for _ in 0..self.count()? {
             members.push(self.member()?);
@@ -570,8 +595,17 @@ impl Reader<'_> {
             name,
             exported,
             arms,
+            defines,
             members,
             items,
+        })
+    }
+
+    fn defines(&mut self) -> Option<Defines> {
+        Some(match self.byte()? {
+            0 => Defines::Kind(self.kind()?),
+            1 => Defines::HandedTo(self.text()?),
+            _ => return None,
         })
     }
 

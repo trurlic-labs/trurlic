@@ -9,8 +9,10 @@
 //! table. An invocation sees each `macro_rules!` macro of its crate, and
 //! each `#[macro_export]` one of its workspace that the crate does not
 //! shadow with one of the same name. It defines the name after the words
-//! of the first arm it opens with, under the container it is in, and
-//! that type holds the members the macro's `impl`s of it give, a trait
+//! of the first arm it opens with, under the container it is in, of the
+//! kind the arm defines it as, following each hand-off to the macro of
+//! that name the crate sees (`rust/arms.rs`); that type holds the members
+//! the `impl`s of it give in every macro the name went through, a trait
 //! impl's under `Name::<Trait>`.
 //!
 //! The arms a crate sees are a table by macro name and words, built once
@@ -22,7 +24,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::index::{Definition, FileIndex, FileKind, IndexFault, Invocation, TypeMacro};
+use super::index::{
+    Defines, Definition, FileIndex, FileKind, IndexFault, Invocation, Member, TypeMacro,
+};
 use super::kinds::DefinitionKind;
 use super::rust::{MAX_ARM_WORDS, is_word};
 use super::scope::{MAX_NESTING, Scope, ScopeId, Scopes};
@@ -218,25 +222,33 @@ fn has_workspace_table(index: &FileIndex) -> bool {
     })
 }
 
-/// The type one arm defines: its kind, and the members and container
-/// items of its macro.
+/// The hand-offs a name may go through from the arm an invocation opens
+/// to the macro that spells its type; a chain longer is no type, as a
+/// cycle of macros handing a name round is not.
+const MAX_HAND_OFFS: usize = 8;
+
+/// An arm an invocation can open: what it defines its name as, and its
+/// macro.
 #[derive(Clone, Copy)]
 struct Arm<'i> {
-    kind: DefinitionKind,
+    defines: &'i Defines,
     found: &'i TypeMacro,
 }
 
 /// The arms invocations of one crate see, by macro name and words, each
 /// with its place in the order a scan would meet it: the first arm an
-/// invocation opens with is the one of least place.
+/// invocation opens with is the one of least place. Each macro is held by
+/// its name too, the first of a name, which a hand-off reaches.
 #[derive(Default)]
 pub(super) struct Arms<'i> {
     by_words: BTreeMap<(&'i str, &'i [String]), (usize, Arm<'i>)>,
+    by_name: BTreeMap<&'i str, &'i TypeMacro>,
     added: usize,
 }
 
 impl<'i> Arms<'i> {
     fn add(&mut self, found: &'i TypeMacro) {
+        self.by_name.entry(found.name.as_str()).or_insert(found);
         for arm in &found.arms {
             let place = self.added;
             self.added += 1;
@@ -245,7 +257,7 @@ impl<'i> Arms<'i> {
                 .or_insert((
                     place,
                     Arm {
-                        kind: arm.kind,
+                        defines: &arm.defines,
                         found,
                     },
                 ));
@@ -254,11 +266,11 @@ impl<'i> Arms<'i> {
 
     /// The names of the macros held.
     fn names(&self) -> BTreeSet<&'i str> {
-        self.by_words.keys().map(|(name, _)| *name).collect()
+        self.by_name.keys().copied().collect()
     }
 
     /// The name `invocation` defines with an arm held here, or with a
-    /// foreign macro: the name, and the arm.
+    /// foreign macro: the name, its kind and the macros it went through.
     fn defined_by<'a>(&self, invocation: &'a Invocation) -> Option<Defined<'a, 'i>> {
         let tokens = &invocation.tokens;
         let opened = (0..=MAX_ARM_WORDS.min(tokens.len()))
@@ -270,11 +282,8 @@ impl<'i> Arms<'i> {
             })
             .min_by_key(|(place, ..)| *place);
         if let Some((_, name, arm)) = opened {
-            return Some(Defined {
-                name,
-                kind: arm.kind,
-                found: Some(arm.found),
-            });
+            let (kind, macros) = self.follow(arm)?;
+            return Some(Defined { name, kind, macros });
         }
         let (_, position, kind) = FOREIGN_TYPE_MACROS
             .iter()
@@ -282,17 +291,38 @@ impl<'i> Arms<'i> {
         argument(tokens, *position).map(|name| Defined {
             name,
             kind: *kind,
-            found: None,
+            macros: Vec::new(),
         })
+    }
+
+    /// The kind `arm` defines its name as, following each hand-off to the
+    /// macro held by its name, and the macros the name went through, each
+    /// once; `None` past [`MAX_HAND_OFFS`] or at a macro that defines
+    /// nothing.
+    fn follow(&self, arm: Arm<'i>) -> Option<(DefinitionKind, Vec<&'i TypeMacro>)> {
+        let mut macros = vec![arm.found];
+        let mut defines = arm.defines;
+        for _ in 0..=MAX_HAND_OFFS {
+            let name = match defines {
+                Defines::Kind(kind) => return Some((*kind, macros)),
+                Defines::HandedTo(name) => name,
+            };
+            let next = *self.by_name.get(name.as_str())?;
+            if !macros.iter().any(|seen| std::ptr::eq(*seen, next)) {
+                macros.push(next);
+            }
+            defines = next.defines.as_ref()?;
+        }
+        None
     }
 }
 
-/// What an invocation defines: the type's name and kind, and the macro
-/// whose members and items it holds; `None` for a foreign macro.
+/// What an invocation defines: the type's name and kind, and the macros
+/// whose members and items it holds, none for a foreign macro.
 struct Defined<'a, 'i> {
     name: &'a String,
     kind: DefinitionKind,
-    found: Option<&'i TypeMacro>,
+    macros: Vec<&'i TypeMacro>,
 }
 
 /// The types a file's invocations define, being added to its expansion.
@@ -318,9 +348,16 @@ impl Adding<'_, '_> {
         defined: &Defined<'_, '_>,
     ) -> Result<(), IndexFault> {
         let container = invocation.container;
-        let (members, items) = defined.found.map_or((&[][..], &[][..]), |found| {
-            (&found.members[..], &found.items[..])
-        });
+        let members: BTreeSet<&Member> = defined
+            .macros
+            .iter()
+            .flat_map(|found| &found.members)
+            .collect();
+        let items: BTreeSet<&(String, DefinitionKind)> = defined
+            .macros
+            .iter()
+            .flat_map(|found| &found.items)
+            .collect();
         for (item, kind) in items {
             self.scope(invocation, container, Segment::name(item), *kind)?;
         }
@@ -330,6 +367,17 @@ impl Adding<'_, '_> {
             Segment::name(defined.name),
             defined.kind,
         )?;
+        self.members(invocation, (type_scope, defined.name), members)
+    }
+
+    /// Define each of `members` under the type `name` of scope
+    /// `type_scope`, a trait impl's under the trait's segment.
+    fn members(
+        &mut self,
+        invocation: &Invocation,
+        (type_scope, name): (ScopeId, &str),
+        members: BTreeSet<&Member>,
+    ) -> Result<(), IndexFault> {
         let mut traits: BTreeMap<&[String], ScopeId> = BTreeMap::new();
         for member in members {
             let parent = match &member.trait_tokens {
@@ -337,7 +385,7 @@ impl Adding<'_, '_> {
                 Some(tokens) => match traits.get(tokens.as_slice()) {
                     Some(scope) => *scope,
                     None => {
-                        let segment = Segment::of_trait(&trait_text(tokens, defined.name));
+                        let segment = Segment::of_trait(&trait_text(tokens, name));
                         let scope = self.scope(
                             invocation,
                             Some(type_scope),

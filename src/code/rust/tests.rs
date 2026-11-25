@@ -1,5 +1,5 @@
 use super::*;
-use crate::code::index::{FileKind, Member, TypeArm, TypeMacro, index as index_file};
+use crate::code::index::{Defines, FileKind, Member, TypeArm, TypeMacro, index as index_file};
 use crate::code::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::scope::{MAX_NESTING, Scopes};
 use crate::code::testing;
@@ -88,13 +88,14 @@ fn a_type_macro_keeps_the_words_of_each_arm_that_defines_a_type() {
             arms: vec![
                 TypeArm {
                     words: vec!["ordered".into()],
-                    kind: DefinitionKind::Enum,
+                    defines: Defines::Kind(DefinitionKind::Enum),
                 },
                 TypeArm {
                     words: vec![],
-                    kind: DefinitionKind::TypeAlias,
+                    defines: Defines::Kind(DefinitionKind::TypeAlias),
                 },
             ],
+            defines: Some(Defines::Kind(DefinitionKind::Enum)),
             members: vec![Member {
                 trait_tokens: None,
                 name: "rank".into(),
@@ -241,6 +242,30 @@ fn a_type_macros_members_are_its_impl_blocks_items_and_the_rest_its_containers()
         [
             ("helpers".to_owned(), DefinitionKind::Module),
             ("make".to_owned(), DefinitionKind::Function)
+        ]
+    );
+}
+
+#[test]
+fn an_arm_that_hands_its_name_to_a_macro_defines_it_as_that_macro_does() {
+    let text = "macro_rules! entity {\n    (record $name:ident) => { declare!([] $name); };\n    (quiet $name:ident) => { let _ = $name; };\n}\nmacro_rules! declare {\n    ([$($doc:tt)*] $name:ident) => { pub struct $name; };\n}\nmacro_rules! relay {\n    ([$($doc:tt)*] $other:ident) => { declare!([] $other); };\n}\n";
+    let macros = index(text).macros;
+    let facts: Vec<(&str, Vec<&Defines>, Option<&Defines>)> = macros
+        .iter()
+        .map(|found| {
+            let arms = found.arms.iter().map(|arm| &arm.defines).collect();
+            (found.name.as_str(), arms, found.defines.as_ref())
+        })
+        .collect();
+    let declare = Defines::HandedTo("declare".to_owned());
+    let strukt = Defines::Kind(DefinitionKind::Struct);
+
+    assert_eq!(
+        facts,
+        [
+            ("relay", vec![], Some(&declare)),
+            ("declare", vec![], Some(&strukt)),
+            ("entity", vec![&declare], Some(&declare)),
         ]
     );
 }

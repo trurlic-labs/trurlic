@@ -62,3 +62,41 @@ fn scoped() {
     #[cfg(test)]
     mod in_body;
 }
+
+#[cfg(unix)]
+pub fn flush() {}
+
+#[cfg(not(unix))]
+pub fn flush() {}
+
+#[cfg(unix)]
+owned!(Twin);
+#[cfg(not(unix))]
+owned!(Twin);
+
+macro_rules! declare {
+    ([$($doc:tt)*] $mode:ident $name:ident) => {
+        pub struct $name;
+        impl $name {
+            pub fn declared(&self) {}
+        }
+    };
+}
+
+macro_rules! relay {
+    ([$($doc:tt)*] $name:ident) => {
+        declare!([] plain $name);
+    };
+}
+
+macro_rules! entity {
+    (record $name:ident at $place:literal) => {
+        declare!([$place] plain $name);
+    };
+    ($name:ident relayed) => {
+        relay!([] $name);
+    };
+}
+
+entity!(record Recorded at "here");
+entity!(Relayed relayed);

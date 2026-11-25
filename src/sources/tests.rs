@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 use super::*;
+use crate::code::{SpanHash, Target};
 use crate::store::testing::setup_store;
 
 /// The per-construct fixture corpus, `tests/fixtures/code/`. Its manifests
@@ -37,11 +38,17 @@ fn anchor(file: &str, symbol: &str) -> Anchor {
     .unwrap()
 }
 
-/// What `resolution` is, without its span and hash.
+/// What `resolution` is, without its spans and hash: `symbol` for one
+/// definition, `n definitions` for the set of one path.
 fn outcome(resolution: &Resolution) -> String {
     match resolution.to_string() {
-        text if text.starts_with("resolves to lines") => "symbol".to_owned(),
-        text => text,
+        text if text.starts_with("resolves to lines") => SYMBOL.to_owned(),
+        text => match text.strip_prefix("resolves to ") {
+            Some(set) if set.contains(" definitions: ") => {
+                set.split(':').next().unwrap_or_default().to_owned()
+            }
+            Some(_) | None => text,
+        },
     }
 }
 
@@ -63,6 +70,9 @@ fn expected(cases: &[(&str, &str, &str)]) -> Vec<String> {
 }
 
 const SYMBOL: &str = "symbol";
+/// The two definitions of one path a symbol names.
+const TWO: &str = "2 definitions";
+const TWO_PATHS: &str = "its symbol names definitions of 2 paths";
 const DEEPER: &str = "its file nests a path deeper than 64 segments";
 const MISSING: &str = "its file defines nothing its symbol names";
 const LEDGER: &str = "crates/ledger/src/lib.rs";
@@ -80,7 +90,7 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (LEDGER, "Book", SYMBOL),
     (LEDGER, "archive::Book", SYMBOL),
     (LEDGER, "Book::title", SYMBOL),
-    (LEDGER, "Book::pages", "its symbol names 2 definitions"),
+    (LEDGER, "Book::pages", TWO),
     (LEDGER, "Book::pages()", SYMBOL),
     (LEDGER, "Book::title()", MISSING),
     (
@@ -106,30 +116,26 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (LEDGER, "Entry::Blank", SYMBOL),
     (LEDGER, "Amount", SYMBOL),
     (LEDGER, "Entry::Transfer::from", SYMBOL),
-    (LEDGER, "from", "its symbol names 3 definitions"),
+    (LEDGER, "from", "its symbol names definitions of 3 paths"),
     (LEDGER, "Book::<Display>::fmt", SYMBOL),
     (LEDGER, "Book::<fmt::Display>::fmt", SYMBOL),
     (LEDGER, "Book::fmt", SYMBOL),
-    (LEDGER, "fmt", "its symbol names 2 definitions"),
+    (LEDGER, "fmt", TWO_PATHS),
     (LEDGER, "Book::<Display>", SYMBOL),
     (LEDGER, "Weight::<Debug>", SYMBOL),
     (LEDGER, "Book::<From<Entry>>::from", SYMBOL),
     (LEDGER, "Book::<From<Entry>>", SYMBOL),
     (LEDGER, "<From<Weight>>", SYMBOL),
-    (
-        LEDGER,
-        "Book::<From>::from",
-        "its symbol names 2 definitions",
-    ),
-    (LEDGER, "Book::from", "its symbol names 2 definitions"),
+    (LEDGER, "Book::<From>::from", TWO_PATHS),
+    (LEDGER, "Book::from", TWO_PATHS),
     (LEDGER, "From<Entry>", MISSING),
     (LEDGER, "Book::<Audit>::audit", SYMBOL),
     (LEDGER, "Book::<Audit>::Report", SYMBOL),
     (LEDGER, "Audit::audit", SYMBOL),
-    (LEDGER, "audit", "its symbol names 2 definitions"),
+    (LEDGER, "audit", TWO_PATHS),
     (LEDGER, "Audit::Report", SYMBOL),
     (LEDGER, "Audit::summary", SYMBOL),
-    (LEDGER, "DEPTH", "its symbol names 2 definitions"),
+    (LEDGER, "DEPTH", TWO_PATHS),
     (LEDGER, "Audit::DEPTH", SYMBOL),
     (LEDGER, "books", SYMBOL),
     (LEDGER, "archive", SYMBOL),
@@ -181,6 +187,14 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (RULES, "Named", MISSING),
     (RULES, "commented::helper", SYMBOL),
     (RULES, "Listed", SYMBOL),
+    (RULES, "flush", TWO),
+    (RULES, "flush()", TWO),
+    (RULES, "Twin", TWO),
+    (RULES, "Twin::get", TWO),
+    (RULES, "Recorded", SYMBOL),
+    (RULES, "Recorded::declared", SYMBOL),
+    (RULES, "Relayed", SYMBOL),
+    (RULES, "Relayed::declared", SYMBOL),
     ("loose/single.rs", "Alone", SYMBOL),
     ("loose/single.rs", "Visible", SYMBOL),
 ];
@@ -191,19 +205,12 @@ const OTHER_CASES: &[(&str, &str, &str)] = &[
     ("Cargo.toml", "lints::clippy::unwrap_used", SYMBOL),
     ("Cargo.toml", "clippy::expect_used", MISSING),
     ("Cargo.toml", "profile::release::panic", SYMBOL),
-    (
-        "Cargo.toml",
-        "bench::name",
-        "its symbol names 2 definitions",
-    ),
+    ("Cargo.toml", "bench::name", TWO),
     ("Cargo.toml", "bench", SYMBOL),
     ("settings.json", "stages::order", SYMBOL),
     ("settings.json", "parallel", SYMBOL),
-    (
-        "settings.json",
-        "rules::name",
-        "its symbol names 2 definitions",
-    ),
+    ("settings.json", "dup", TWO),
+    ("settings.json", "rules::name", TWO),
     ("settings.json", "order::stages", MISSING),
     (
         "broken.json",
@@ -211,6 +218,8 @@ const OTHER_CASES: &[(&str, &str, &str)] = &[
         "its file does not parse, near byte 0",
     ),
     ("Makefile", "ci", SYMBOL),
+    ("Makefile", "install", TWO),
+    ("Makefile", "twice", SYMBOL),
     ("Makefile", "check-format", SYMBOL),
     ("Makefile", ".PHONY", SYMBOL),
     ("Makefile", "VERSION", MISSING),
@@ -220,6 +229,7 @@ const OTHER_CASES: &[(&str, &str, &str)] = &[
     ("Makefile", "TEMPLATE", MISSING),
     ("docs/guide.md", "Install::From source", SYMBOL),
     ("docs/guide.md", "Guide::Use", SYMBOL),
+    ("docs/guide.md", "Notes", TWO),
     ("docs/guide.md", "Not a heading", MISSING),
     ("docs/guide.md", "source", MISSING),
     ("docs/guide.md", "Hidden by tildes", MISSING),
@@ -282,7 +292,7 @@ fn a_resolved_symbol_carries_the_span_and_hash_of_its_definition() {
         "        // Every entry weighs one.\n        let _ =   entry;   1\n",
     );
     fs::write(&path, &reformatted).unwrap();
-    let hash = |resolution: Resolution| {
+    let hash = |resolution: &Resolution| {
         resolution
             .to_string()
             .rsplit(", ")
@@ -291,10 +301,56 @@ fn a_resolved_symbol_carries_the_span_and_hash_of_its_definition() {
             .to_owned()
     };
     let after = gather(&store, [LEDGER].into_iter()).resolve(&weigh);
-    assert_eq!(hash(after), hash(resolution));
+    assert_eq!(hash(&after), hash(&resolution));
     fs::write(&path, reformatted.replace("1\n", "2\n")).unwrap();
     let changed = gather(&store, [LEDGER].into_iter()).resolve(&weigh);
-    assert_ne!(hash(changed), hash(resolution));
+    assert_ne!(hash(&changed), hash(&resolution));
+}
+
+/// The spans and the hash `resolution` names, when it is a symbol's.
+fn named_set(resolution: &Resolution) -> (Vec<usize>, SpanHash) {
+    match resolution {
+        Resolution::Resolved(Target::Symbol(set)) => (
+            set.spans().map(|span| span.first_line).collect(),
+            set.hash(),
+        ),
+        other => panic!("{other}"),
+    }
+}
+
+#[test]
+fn a_symbol_of_one_path_resolves_to_each_of_its_definitions_with_one_hash() {
+    let (tmp, store) = fixture_tree();
+    let flush = anchor(RULES, "flush");
+    let resolve = |anchor: &Anchor| gather(&store, [RULES].into_iter()).resolve(anchor);
+    let text = fs::read_to_string(tmp.path().join(RULES)).unwrap();
+    let lines: Vec<usize> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("pub fn flush"))
+        .map(|(at, _)| at)
+        .collect();
+
+    let (spans, hash) = named_set(&resolve(&flush));
+    assert_eq!(
+        spans, lines,
+        "each twin, its attribute first, in file order"
+    );
+
+    // An edit to either twin moves the set's hash.
+    let path = tmp.path().join(RULES);
+    fs::write(
+        &path,
+        text.replacen("pub fn flush() {}", "pub fn flush() { 1; }", 1),
+    )
+    .unwrap();
+    assert_ne!(named_set(&resolve(&flush)).1, hash);
+    fs::write(
+        &path,
+        text.replace("pub fn flush() {}", "pub fn flush() { 2; }"),
+    )
+    .unwrap();
+    assert_ne!(named_set(&resolve(&flush)).1, hash);
 }
 
 #[test]
@@ -426,7 +482,7 @@ anchors = [
         resolved,
         [
             format!("{LEDGER}::Book::new -> {SYMBOL}"),
-            format!("{LEDGER}::Book::pages -> its symbol names 2 definitions"),
+            format!("{LEDGER}::Book::pages -> {TWO}"),
             "docs -> resolves to the directory".to_owned(),
         ]
     );
@@ -493,6 +549,10 @@ const STATEMENTS: &[&str] = &[
     "Makefile ci Target Code -",
     "Makefile test Target Code -",
     "Makefile check-format Target Code -",
+    "Makefile install Target Code -",
+    "Makefile install Target Code -",
+    "Makefile twice Target Code -",
+    "Makefile twice Target Code -",
     "crates/ids/Cargo.toml package Key Code -",
     "crates/ids/Cargo.toml package::name Key Code -",
     "crates/ids/src/lib.rs numbered_id Macro Code Public",
@@ -593,12 +653,29 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs absolute Module Test Private",
     "crates/ledger/src/rules.rs scoped Function Code Private",
     "crates/ledger/src/rules.rs scoped::in_body Module Test Private",
+    "crates/ledger/src/rules.rs flush Function Code Public",
+    "crates/ledger/src/rules.rs flush Function Code Public",
+    "crates/ledger/src/rules.rs declare Macro Code Private",
+    "crates/ledger/src/rules.rs relay Macro Code Private",
+    "crates/ledger/src/rules.rs entity Macro Code Private",
     "crates/ledger/src/rules.rs Eight Struct Code -",
     "crates/ledger/src/rules.rs i Struct Code -",
     "crates/ledger/src/rules.rs Owned Struct Code -",
     "crates/ledger/src/rules.rs Owned::get Method Code -",
     "crates/ledger/src/rules.rs Owned::<Display> Impl Code -",
     "crates/ledger/src/rules.rs Owned::<Display>::fmt Method Code -",
+    "crates/ledger/src/rules.rs Twin Struct Code -",
+    "crates/ledger/src/rules.rs Twin::get Method Code -",
+    "crates/ledger/src/rules.rs Twin::<Display> Impl Code -",
+    "crates/ledger/src/rules.rs Twin::<Display>::fmt Method Code -",
+    "crates/ledger/src/rules.rs Twin Struct Code -",
+    "crates/ledger/src/rules.rs Twin::get Method Code -",
+    "crates/ledger/src/rules.rs Twin::<Display> Impl Code -",
+    "crates/ledger/src/rules.rs Twin::<Display>::fmt Method Code -",
+    "crates/ledger/src/rules.rs Recorded Struct Code -",
+    "crates/ledger/src/rules.rs Recorded::declared Method Code -",
+    "crates/ledger/src/rules.rs Relayed Struct Code -",
+    "crates/ledger/src/rules.rs Relayed::declared Method Code -",
     "crates/ledger/src/rules/in_body.rs reached_by_test Function Test Public",
     "crates/ledger/tests/flow.rs opened_book Function Test Private",
     "crates/ledger/tests/flow.rs a_book_opens Function Test Private",
@@ -615,6 +692,8 @@ const STATEMENTS: &[&str] = &[
     "docs/guide.md Guide::Store::open Heading Code -",
     "docs/guide.md Guide::Calling run() Heading Code -",
     "docs/guide.md Guide::Install (Linux) Heading Code -",
+    "docs/guide.md Guide::Notes Heading Code -",
+    "docs/guide.md Guide::Notes Heading Code -",
     "loose/single.rs solo Macro Code Private",
     "loose/single.rs Alone Enum Code -",
     "loose/single.rs Visible Struct Code -",
@@ -629,6 +708,8 @@ const STATEMENTS: &[&str] = &[
     "settings.json caf\u{e9} Key Code -",
     "settings.json f() Key Code -",
     "settings.json g(x) Key Code -",
+    "settings.json dup Key Code -",
+    "settings.json dup Key Code -",
 ];
 
 #[test]

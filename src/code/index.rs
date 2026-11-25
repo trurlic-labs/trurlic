@@ -16,7 +16,7 @@ use super::{json, make, markdown, rust, syntax, toml};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 4;
+pub(crate) const INDEX_FORMAT: u32 = 5;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -126,8 +126,9 @@ pub(crate) struct Definition {
 }
 
 /// A `macro_rules!` macro whose invocations can define a type: the arms
-/// that do, the items its body's `impl`s of the type hold, members of
-/// the type, and the other items its body names.
+/// that do, what its bodies define a name as, the items its body's
+/// `impl`s of the type hold, members of the type, and the other items its
+/// body names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeMacro {
     pub(crate) name: String,
@@ -135,10 +136,24 @@ pub(crate) struct TypeMacro {
     /// alone.
     pub(crate) exported: bool,
     pub(crate) arms: Vec<TypeArm>,
+    /// What a name another macro hands this one is defined as: the first
+    /// type keyword before a metavariable in any body, or else the macro
+    /// the first body to hand a name on hands it to.
+    pub(crate) defines: Option<Defines>,
     pub(crate) members: Vec<Member>,
     /// The other items its body names, items of the invocation's
     /// container.
     pub(crate) items: Vec<(String, DefinitionKind)>,
+}
+
+/// What an arm, or a macro, defines the name it is given as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Defines {
+    /// A type of this kind, which a body spells (`struct $name`).
+    Kind(DefinitionKind),
+    /// What the macro of this name defines it as: the body hands the name
+    /// on (`record!([] $name)`), its own body spelling no type of it.
+    HandedTo(String),
 }
 
 /// An item of an `impl` of the type a [`TypeMacro`] defines.
@@ -152,11 +167,11 @@ pub(crate) struct Member {
 }
 
 /// An arm of a [`TypeMacro`]: the literal words it opens with before the
-/// `$name:ident` its body defines a type of, and that type's kind.
+/// `$name:ident` it defines a type of, and what it defines it as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeArm {
     pub(crate) words: Vec<String>,
-    pub(crate) kind: DefinitionKind,
+    pub(crate) defines: Defines,
 }
 
 /// A macro invocation in item position: what a type-defining macro of
@@ -290,7 +305,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 4] = [
+    const FINGERPRINTS: [(u32, &str); 5] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -306,6 +321,10 @@ mod tests {
         (
             4,
             "271d34c72dc4f8397e78ebeeffbb9a1b34c70b2cc03aff2a9d28ab4a553546b2",
+        ),
+        (
+            5,
+            "e90e33a198c4c8499706082d7e8ae1410f8e9929f8c3f22c309803611c6144f9",
         ),
     ];
 

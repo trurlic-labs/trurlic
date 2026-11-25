@@ -42,6 +42,8 @@ pub(crate) use expand::MANIFEST;
 pub(crate) use facts::{CodeFacts, Entry, FileFault, ReadFault, Resolution};
 pub(crate) use index::{FileKind, INDEX_FORMAT, MAX_SOURCE_BYTES, index};
 pub(crate) use span::HASH_SCHEME;
+#[cfg(test)]
+pub(crate) use {facts::Target, span::SpanHash};
 
 #[cfg(test)]
 mod tests {

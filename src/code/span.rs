@@ -9,13 +9,20 @@
 //! each definition nested in it by its own hash instead, so reformatting
 //! the span or editing a comment in it changes nothing; a lexical span
 //! hashes its text with every run of whitespace made one space and the
-//! ends trimmed.
+//! ends trimmed. The definitions of one path a symbol names hash as one
+//! ([`SpanHash::of_members`]): one alone by its own hash, several by the
+//! hash of their hashes in span order, each after the mark a nested
+//! definition's hash takes.
 
 use std::fmt;
 use std::str::FromStr;
 
 /// The normalization a [`SpanHash`] was computed under.
 pub(crate) const HASH_SCHEME: &str = "t1";
+
+/// The mark before a nested definition's hash among a definition's
+/// units: a length no token has.
+pub(super) const NESTED_MARK: [u8; 8] = u64::MAX.to_le_bytes();
 
 /// A definition's place in its file: bytes `start..end`, on lines
 /// `first_line..=last_line`, counted from 1.
@@ -79,6 +86,25 @@ impl SpanHash {
     /// apart.
     pub(super) fn of_units(units: &[u8]) -> Self {
         Self(*blake3::hash(units).as_bytes())
+    }
+
+    /// The hash of the definitions of one path, `members` in span order:
+    /// one alone is its own; several are hashed as a definition's units
+    /// would be that held them and no token of its own, each hash after
+    /// [`NESTED_MARK`], so no single definition's hash, which holds its
+    /// tokens, is one of a set's.
+    pub(super) fn of_members(members: &[Self]) -> Self {
+        match members {
+            [one] => *one,
+            several => {
+                let mut units = Vec::with_capacity(several.len() * 40);
+                for member in several {
+                    units.extend_from_slice(&NESTED_MARK);
+                    units.extend_from_slice(&member.0);
+                }
+                Self::of_units(&units)
+            }
+        }
     }
 
     /// The hash its 32 bytes are.
@@ -173,6 +199,21 @@ mod tests {
             }
         );
         assert_eq!(lines.span(6, 6).last_line, 4);
+    }
+
+    #[test]
+    fn a_set_of_one_is_its_member_and_of_several_is_none_of_them() {
+        let (a, b) = (SpanHash::of_text("a"), SpanHash::of_text("b"));
+        let both = SpanHash::of_members(&[a, b]);
+
+        assert_eq!(SpanHash::of_members(&[a]), a);
+        assert_ne!(both, a);
+        assert_ne!(both, b);
+        assert_ne!(
+            both,
+            SpanHash::of_members(&[b, a]),
+            "the span order is part of it"
+        );
     }
 
     #[test]

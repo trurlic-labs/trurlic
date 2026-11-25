@@ -1,10 +1,11 @@
 component = "code"
 choice = "An invocation defines the type a type-defining macro gives the name after an arm's words, with the items of the macro's impls of that type, and every item its own tokens spell"
-reason = "tree-sitter leaves a macro invocation's tokens unparsed, and real code defines types and functions through macros, so two lexical rules read them. First, a macro_rules! macro whose arm opens, after an optional attribute repetition, with at most eight literal words and a $name:ident a body defines a type of, defines that type where it is invoked with those words, its kind the keyword of the arm's own body or of the arm that body hands the name to; the macro is the crate's own or a #[macro_export] one of the workspace. An impl in any body whose self type is a metavariable some arm binds as an ident gives the type its items, a trait impl under Name::<Trait>, which is an Impl, the trait's metavariables read as the name; an impl of any other type, From<$name> for String, gives it nothing. The other items at a body's top level are items of the invocation's container; an item reached only through a recursive call's tokens is not seen. An invocation finds its arm in a table by macro name and words, built once per crate, and what a file's invocations add is spent from a budget of the bytes they span, every path held to MAX_NESTING. pyo3's create_exception! and import_exception! are listed by argument position. Second, an item keyword followed by a name, not a path, in an invocation where an item or statement stands is a definition under its container, spanning to its body or the next item, with the fields and variants its braces hold."
+reason = "tree-sitter leaves a macro invocation's tokens unparsed, and real code defines types and functions through macros, so two lexical rules read them. First, a macro_rules! macro whose arm opens, after an optional attribute repetition, with at most eight literal words and a $name:ident defines that type where it is invoked with those words; the macro is the crate's own or a #[macro_export] one of the workspace. The arm's kind is the type keyword before $name in its own body, or in any body when a recursive call reaches another arm; or, when its own body hands $name to another macro (record!([..] $name)), what that macro, found by name among those the crate sees, defines a name as: the first type keyword before a metavariable in its bodies, or the macro it hands one to in turn, through at most eight hand-offs. The items of each impl, in any macro the name went through, whose self type is a metavariable bound as an ident are the type's members, a trait impl's under Name::<Trait>; an impl of another type gives it nothing. The other items at a body's top level are items of the invocation's container. An invocation finds its arm in a table by macro name and words built once per crate, and what a file's invocations add is spent from a budget of the bytes they span. pyo3's create_exception! and import_exception! are listed by argument position. Second, an item keyword followed by a name, not a path, in an invocation is a definition under its container, with the fields and variants its braces hold."
 alternatives = [
     "Expand macros fully: rejected because it needs a Rust compiler's name resolution and macro engine, far past what an anchor asks",
     "Give the type the items of every impl that names a metavariable: rejected because impl From<$name> for String is no impl of the type",
-    "Scan every arm of every visible macro per invocation: rejected because thousands of arms times thousands of invocations took seconds",
+    "Follow only hand-offs to arms of the same macro: rejected because a crate's front macro often hands the name to a helper macro that spells the struct",
+    "Match a hand-off's argument position against the helper's arms: rejected because the helper's arms open with groups and bindings no invocation table keys, and every arm of one helper defined one kind",
     "Only the spelled-item rule: rejected because id! { OrderId(u32) } spells no keyword, so the type it defines would be missing",
 ]
 tags = [
@@ -16,14 +17,14 @@ status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/expand.rs", symbol = "Arms" },
+    { file = "src/code/expand.rs", symbol = "Arms::follow" },
     { file = "src/code/expand.rs", symbol = "Crates::arms_of" },
     { file = "src/code/expand.rs", symbol = "FOREIGN_TYPE_MACROS" },
     { file = "src/code/expand.rs", symbol = "a_type_holds_the_items_of_impls_of_its_name_and_a_trait_impls_under_the_trait" },
-    { file = "src/code/expand.rs", symbol = "expand_file" },
     { file = "src/code/expand.rs", symbol = "what_invocations_add_is_bounded_by_the_bytes_they_span" },
-    { file = "src/code/rust/invocations.rs", symbol = "Walk::read_invocation" },
+    { file = "src/code/rust/arms.rs", symbol = "defined" },
+    { file = "src/code/rust/arms.rs", symbol = "hand_off" },
     { file = "src/code/rust/macros.rs", symbol = "impl_of_name" },
-    { file = "src/code/rust/macros.rs", symbol = "type_macro" },
     { file = "src/code/rust/spelled.rs", symbol = "spelled_items" },
+    { file = "src/code/rust/tests.rs", symbol = "an_arm_that_hands_its_name_to_a_macro_defines_it_as_that_macro_does" },
 ]

@@ -17,3 +17,11 @@ endef
 
 check-format:
 	cargo fmt --check
+
+install: build
+	cp target/tool bin/
+
+install: docs
+	cp -r docs share/
+
+twice twice: once

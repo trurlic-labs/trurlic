@@ -26,7 +26,7 @@ use std::ops::{ControlFlow, Range};
 use tree_sitter::{Language, Node, ParseOptions, Parser, Tree};
 
 use super::index::IndexFault;
-use super::span::SpanHash;
+use super::span::{NESTED_MARK, SpanHash};
 use super::work::{PARSE_WORK_PER_BYTE, Work};
 
 /// The steps between two of the parser's progress reports.
@@ -317,7 +317,7 @@ impl Hashing<'_> {
             }
         }
         if let Some(around) = self.open.last_mut() {
-            around.units.extend_from_slice(&u64::MAX.to_le_bytes());
+            around.units.extend_from_slice(&NESTED_MARK);
             around.units.extend_from_slice(hash.as_bytes());
         }
     }

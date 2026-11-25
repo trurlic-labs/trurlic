@@ -12,39 +12,30 @@
 //! a trait impl's under the trait's segment; an `impl` of any other type
 //! (`impl From<$name> for String`) gives the type nothing.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 
 use tree_sitter::Node;
 
-use crate::code::index::{IndexFault, Member, TypeArm, TypeMacro};
+use crate::code::index::{IndexFault, Member, TypeMacro};
 use crate::code::kinds::{Container, DefinitionKind};
 use crate::code::syntax::{self, Token, text_of};
 use crate::code::work::Work;
 
-use super::LITERALS;
+use super::{LITERALS, arms};
 
-/// The literal words an arm may open with; an arm with more defines
-/// nothing.
-pub(crate) const MAX_ARM_WORDS: usize = 8;
-
-/// The tokens an invocation keeps: [`MAX_ARM_WORDS`] words, the name, and
+/// The tokens an invocation keeps: [`arms::MAX_ARM_WORDS`] words, the name, and
 /// room for the arguments a foreign macro's name is among.
 const MAX_INVOCATION_TOKENS: usize = 16;
 
 /// Names a macro's body gives items, each with its kind.
 type Named = Vec<(String, DefinitionKind)>;
 
-/// A keyword whose next token in a macro body is a type's name.
-const TYPE_KEYWORDS: [&str; 5] = ["struct", "enum", "union", "trait", "type"];
-
 /// The type-defining facts of `definition`, a `macro_definition`; `None`
-/// when no arm of it can define a type. An arm's type and its kind are
-/// the arm's own: its body's type keyword before its `$name`, or, when its
-/// body hands the name to another arm (`m!(@methods $name)`), the first
-/// such keyword of any body. What else the bodies define is the macro's,
-/// so the arm a recursive call reaches gives its items (`body_items`).
-/// Each body's tokens are read a few times at most and spent from `work`.
+/// when it neither has an arm that defines a type nor defines a name it
+/// is handed (`arms.rs`). What else the bodies define is the macro's, so
+/// the arm a recursive call reaches gives its items (`body_items`). Each
+/// body's tokens are read a few times at most and spent from `work`.
 pub(super) fn type_macro(
     definition: Node<'_>,
     text: &str,
@@ -63,86 +54,20 @@ pub(super) fn type_macro(
         .iter()
         .filter_map(|rule| rule.child_by_field_name("right"))
         .collect();
-    let arms = type_arms(&rules, text, work)?;
-    if arms.is_empty() {
+    let names = arms::ident_variables(&rules, text, work)?;
+    let defined = arms::defined(&rules, &names, text, work)?;
+    if defined.arms.is_empty() && defined.defines.is_none() {
         return Ok(None);
     }
-    let names = ident_variables(&rules, text, work)?;
     let (members, items) = body_items(&trees, &names, text, work)?;
     Ok(Some(TypeMacro {
         name: text_of(name, text).to_owned(),
         exported,
-        arms,
+        arms: defined.arms,
+        defines: defined.defines,
         members,
         items,
     }))
-}
-
-/// The arms of `rules` that define a type, each with its words and the
-/// type's kind.
-fn type_arms(rules: &[Node<'_>], text: &str, work: &mut Work) -> Result<Vec<TypeArm>, IndexFault> {
-    let mut bodies: Vec<Vec<Node<'_>>> = Vec::with_capacity(rules.len());
-    for rule in rules {
-        let body = rule
-            .child_by_field_name("right")
-            .map(|body| tokens_of(body, text, usize::MAX))
-            .unwrap_or_default();
-        work.spend(body.len())?;
-        bodies.push(body);
-    }
-    let any_body = type_kinds(&bodies, text);
-    let mut arms: Vec<TypeArm> = Vec::new();
-    for (rule, own) in rules.iter().zip(&bodies) {
-        // Each arm reads its own body once more: twice the macro in all.
-        work.spend(own.len())?;
-        let Some(pattern) = rule.child_by_field_name("left") else {
-            continue;
-        };
-        let Some((words, variable)) = arm_opening(pattern, text) else {
-            continue;
-        };
-        let own_kinds = type_kinds(std::slice::from_ref(own), text);
-        let kind = own_kinds
-            .get(variable.as_str())
-            .or_else(|| any_body.get(variable.as_str()));
-        if let Some(kind) = kind {
-            arms.push(TypeArm { words, kind: *kind });
-        }
-    }
-    Ok(arms)
-}
-
-/// The metavariables the patterns of `rules` bind as an `ident`
-/// (`$name:ident`), at any depth of a repetition.
-fn ident_variables<'t>(
-    rules: &[Node<'_>],
-    text: &'t str,
-    work: &mut Work,
-) -> Result<BTreeSet<&'t str>, IndexFault> {
-    let mut names = BTreeSet::new();
-    for pattern in rules
-        .iter()
-        .filter_map(|rule| rule.child_by_field_name("left"))
-    {
-        let mut pending = vec![pattern];
-        while let Some(node) = pending.pop() {
-            work.spend(1)?;
-            let ident = node.kind() == "token_binding_pattern"
-                && node
-                    .child_by_field_name("type")
-                    .is_some_and(|fragment| text_of(fragment, text) == "ident");
-            match (ident, node.child_by_field_name("name")) {
-                (true, Some(variable)) => {
-                    names.insert(text_of(variable, text));
-                }
-                (true, None) | (false, _) => {
-                    let mut cursor = node.walk();
-                    pending.extend(node.named_children(&mut cursor));
-                }
-            }
-        }
-    }
-    Ok(names)
 }
 
 /// What the macro's bodies define with a name they spell: each item an
@@ -304,63 +229,6 @@ pub(super) fn invocation_tokens(invocation: Node<'_>, text: &str) -> Option<(Str
         }
     }
     Some((text_of(name, text).to_owned(), tokens))
-}
-
-/// The words an arm's pattern opens with and the `$name` of the `ident`
-/// that follows them; `None` for an arm that opens otherwise.
-fn arm_opening(pattern: Node<'_>, text: &str) -> Option<(Vec<String>, String)> {
-    let inside = inner_children(pattern);
-    let mut rest = inside.iter().peekable();
-    if rest
-        .peek()
-        .is_some_and(|first| is_attribute_repetition(**first, text))
-    {
-        rest.next();
-    }
-    let mut words = Vec::new();
-    for node in rest {
-        if node.kind() == "token_binding_pattern" {
-            let fragment = node.child_by_field_name("type")?;
-            let variable = node.child_by_field_name("name")?;
-            return (text_of(fragment, text) == "ident")
-                .then(|| (words, text_of(variable, text).to_owned()));
-        }
-        let word = text_of(*node, text);
-        if node.child_count() > 0 || !is_word(word) || words.len() == MAX_ARM_WORDS {
-            return None;
-        }
-        words.push(word.to_owned());
-    }
-    None
-}
-
-/// Whether `node` is `$(#[$meta:meta])*`, the attributes an invocation
-/// may open with.
-fn is_attribute_repetition(node: Node<'_>, text: &str) -> bool {
-    let spelled: String = text_of(node, text)
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    node.kind() == "token_repetition_pattern"
-        && spelled.starts_with("$(#[$")
-        && spelled.ends_with(":meta])*")
-}
-
-/// The kind of the type each metavariable names in `bodies`: the first
-/// type keyword before it; one pass over the tokens.
-fn type_kinds<'t>(bodies: &[Vec<Node<'_>>], text: &'t str) -> BTreeMap<&'t str, DefinitionKind> {
-    let mut kinds = BTreeMap::new();
-    for pair in bodies.iter().flat_map(|tokens| tokens.windows(2)) {
-        if let [keyword, name] = pair
-            && name.kind() == "metavariable"
-            && TYPE_KEYWORDS.contains(&text_of(*keyword, text))
-            && let Some(kind) =
-                DefinitionKind::of_keyword(text_of(*keyword, text), Container::Items)
-        {
-            kinds.entry(text_of(*name, text)).or_insert(kind);
-        }
-    }
-    kinds
 }
 
 /// The children of a token tree or pattern between its delimiters,

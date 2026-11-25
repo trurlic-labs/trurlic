@@ -21,6 +21,7 @@
 //! invocation's container, and the invocation is kept for the expansion of
 //! the crate's type-defining macros (`expand.rs`).
 
+mod arms;
 mod invocations;
 mod items;
 mod macros;
@@ -28,7 +29,8 @@ mod marks;
 mod reexports;
 mod spelled;
 
-pub(super) use macros::{MAX_ARM_WORDS, is_word};
+pub(super) use arms::MAX_ARM_WORDS;
+pub(super) use macros::is_word;
 
 use tree_sitter::Node;
 

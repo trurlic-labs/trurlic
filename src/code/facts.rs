@@ -13,7 +13,7 @@ use super::kinds::Role;
 use super::roles::test_files;
 use super::scope::Scopes;
 use super::span::{Span, SpanHash};
-use super::symbol::{Symbol, SymbolFault};
+use super::symbol::{Segment, Symbol, SymbolFault};
 
 /// Why the shell has no bytes of a file it found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,14 +70,14 @@ impl fmt::Display for FileFault {
 }
 
 /// Where a resolved anchor points.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Target {
     /// A file-only anchor on a file: no span, no hash.
     File,
     /// A file-only anchor on a directory.
     Directory,
-    /// The one definition the symbol names.
-    Symbol { span: Span, hash: SpanHash },
+    /// The definitions of the one path the symbol names.
+    Symbol(Definitions),
 }
 
 impl fmt::Display for Target {
@@ -85,20 +85,88 @@ impl fmt::Display for Target {
         match self {
             Self::File => f.write_str("the file"),
             Self::Directory => f.write_str("the directory"),
-            Self::Symbol { span, hash } => write!(f, "{span}, {hash}"),
+            Self::Symbol(definitions) => definitions.fmt(f),
         }
     }
 }
 
+/// The definitions of one path, one at least: their spans in file order,
+/// a span two of them share listed once, and one hash over them
+/// ([`SpanHash::of_members`]). The cfg twins of an item, a field and its
+/// getter of one name, a key an array's elements each hold: each is one
+/// thing an anchor names, whose every span a change may touch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Definitions {
+    first: Span,
+    /// The spans after the first, in file order.
+    more: Vec<Span>,
+    hash: SpanHash,
+}
+
+impl Definitions {
+    /// The set of `members`, each a definition's span and hash; `None`
+    /// for none.
+    fn of(members: impl Iterator<Item = (Span, SpanHash)>) -> Option<Self> {
+        let mut members: Vec<(Span, SpanHash)> = members.collect();
+        members.sort_unstable();
+        members.dedup_by_key(|(span, _)| *span);
+        let hashes: Vec<SpanHash> = members.iter().map(|(_, hash)| *hash).collect();
+        let mut spans = members.into_iter().map(|(span, _)| span);
+        Some(Self {
+            first: spans.next()?,
+            more: spans.collect(),
+            hash: SpanHash::of_members(&hashes),
+        })
+    }
+
+    /// Each span, in file order.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the anchor findings and the diff review are the first callers"
+        )
+    )]
+    pub(crate) fn spans(&self) -> impl Iterator<Item = &Span> {
+        std::iter::once(&self.first).chain(&self.more)
+    }
+
+    /// The hash of the set: one definition's own, or that of several.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the anchor findings and the diff review are the first callers"
+        )
+    )]
+    pub(crate) const fn hash(&self) -> SpanHash {
+        self.hash
+    }
+}
+
+impl fmt::Display for Definitions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.more.is_empty() {
+            write!(f, "{} definitions: ", self.more.len() + 1)?;
+        }
+        write!(f, "{}", self.first)?;
+        for span in &self.more {
+            write!(f, "; {span}")?;
+        }
+        write!(f, ", {}", self.hash)
+    }
+}
+
 /// What an anchor names in a tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Resolution {
     Resolved(Target),
     /// Nothing at the anchor's path.
     FileMissing,
     /// The file defines nothing the symbol names.
     SymbolMissing,
-    /// The file defines this many things the symbol names.
+    /// The symbol names definitions of this many paths, two or more,
+    /// which a fuller spelling tells apart.
     Ambiguous(usize),
     /// A symbol on a directory, which defines nothing.
     SymbolOnDirectory,
@@ -116,7 +184,7 @@ impl fmt::Display for Resolution {
             Self::Resolved(target) => write!(f, "resolves to {target}"),
             Self::FileMissing => f.write_str("nothing is at its path"),
             Self::SymbolMissing => f.write_str("its file defines nothing its symbol names"),
-            Self::Ambiguous(count) => write!(f, "its symbol names {count} definitions"),
+            Self::Ambiguous(paths) => write!(f, "its symbol names definitions of {paths} paths"),
             Self::SymbolOnDirectory => f.write_str("its symbol is on a directory"),
             Self::NoResolver => f.write_str("its symbol is on a kind of file no resolver reads"),
             Self::Unindexable(fault) => write!(f, "its file {fault}"),
@@ -300,8 +368,9 @@ impl CodeFacts {
         }
     }
 
-    /// The one definition of `file` that `symbol` names: the one it names,
-    /// or among several the one whose whole path it is.
+    /// The definitions of `file` that `symbol` names: those of the one
+    /// path among them, its whole path winning over paths it ends; with
+    /// definitions of several paths, `Ambiguous`.
     fn find(&self, file: &str, index: &FileIndex, symbol: &Symbol) -> Resolution {
         let expansion = match self.expanded.get(file) {
             Some(Err(fault)) => return Resolution::Unindexable(FileFault::Index(*fault)),
@@ -317,17 +386,28 @@ impl CodeFacts {
             .filter(|definition| symbol.admits(definition.kind))
             .filter(|definition| symbol.names(scopes.path_from_end(definition.scope)))
             .collect();
-        let mut whole = named
+        let whole: Vec<&Definition> = named
             .iter()
-            .filter(|d| symbol.is_path_of(scopes.path_from_end(d.scope)));
-        let found = match (named.as_slice(), whole.next(), whole.next()) {
-            ([], _, _) => return Resolution::SymbolMissing,
-            ([one], _, _) | (_, Some(one), None) => one,
-            (several, _, _) => return Resolution::Ambiguous(several.len()),
+            .copied()
+            .filter(|d| symbol.is_path_of(scopes.path_from_end(d.scope)))
+            .collect();
+        let chosen = match whole.is_empty() {
+            true => named,
+            false => whole,
         };
-        Resolution::Resolved(Target::Symbol {
-            span: found.span,
-            hash: found.hash,
-        })
+        let mut paths: BTreeMap<Vec<&Segment>, Vec<&Definition>> = BTreeMap::new();
+        for definition in chosen {
+            let path = scopes.path_from_end(definition.scope).collect();
+            paths.entry(path).or_default().push(definition);
+        }
+        let mut sets = paths.into_values();
+        match (sets.next(), sets.len()) {
+            (None, _) => Resolution::SymbolMissing,
+            (Some(set), 0) => Definitions::of(set.iter().map(|d| (d.span, d.hash)))
+                .map_or(Resolution::SymbolMissing, |found| {
+                    Resolution::Resolved(Target::Symbol(found))
+                }),
+            (Some(_), others) => Resolution::Ambiguous(others + 1),
+        }
     }
 }
