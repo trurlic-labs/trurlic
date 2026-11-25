@@ -56,9 +56,9 @@ fn outcome(resolution: &Resolution) -> String {
 /// takes and what is at each of `anchored`, the cache filled as a call
 /// fills it.
 fn gather<'a>(store: &Store, anchored: impl Iterator<Item = &'a str>) -> CodeFacts {
-    let mut fill = CacheFill::default();
-    let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, &mut fill);
-    fill.write(store);
+    let mut reads = Reads::new();
+    let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, &mut reads);
+    reads.write(store);
     CodeFacts::new(entries, &walked)
 }
 
@@ -687,14 +687,31 @@ fn a_read_of_another_tree_prunes_no_entry_of_the_calling_tree() {
         fs::write(dir.join(SymbolsKey::new(key).to_string()), b"").unwrap();
     }
 
-    let mut fill = CacheFill::default();
+    let mut reads = Reads::new();
     let here = RUST_CASES.iter().map(|(file, _, _)| *file);
-    read_tree(&store, store.code_root(), Scope::Tree, here, &mut fill);
+    read_tree(&store, store.code_root(), Scope::Tree, here, &mut reads);
     let there = BTreeSet::from(["lib.rs".to_owned()]);
-    read_paths(&store, other.path(), there, &mut fill);
-    fill.write(&store);
+    read_paths(&store, other.path(), there, &mut reads);
+    reads.write(&store);
 
     assert!(entries(&store).is_superset(&written));
+}
+
+#[test]
+fn a_file_at_the_cap_whose_parse_recurses_deep_is_indexed_on_a_stack_it_fits() {
+    let tmp = TempDir::new().unwrap();
+    let store = setup_store(tmp.path());
+    // Past 200 KB, this aborted the process on a 2 MiB stack.
+    let cap = FileKind::TypeScript.max_bytes();
+    let text = format!(
+        "export const x = 1;\ny={}",
+        "a?(b):c=>".repeat((cap - 22) / 9)
+    );
+    fs::write(tmp.path().join("deep.ts"), &text).unwrap();
+
+    let facts = gather(&store, std::iter::empty());
+
+    assert_eq!(outcome(&facts.resolve(&anchor("deep.ts", "x"))), SYMBOL);
 }
 
 #[test]
@@ -1079,7 +1096,7 @@ const STATEMENTS: &[&str] = &[
     "typescript/shelf.ts Color::Red Variant Code Public",
     "typescript/shelf.ts Color::Green Variant Code Public",
     "typescript/shelf.ts Color::Blue-ish Variant Code Public",
-    "typescript/shelf.ts shelf.config Module Code Private",
+    "typescript/shelf.ts shelf.config Module Code Public",
     "typescript/shelf.ts shelf.config::load Function Code Public",
     "typescript/shelf.ts Index::Pages Module Code Private",
     "typescript/shelf.ts Index::Pages::find Function Code Public",

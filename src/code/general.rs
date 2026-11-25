@@ -10,18 +10,18 @@
 //! predicates and the names read is charged to a budget per byte. The
 //! walk keeps its own frame for each ancestor of the node it is at (its
 //! kind, its span, whether a test mark holds it, the innermost visibility
-//! mark, how far each span growth and wrap reaches from it, and the run
-//! of siblings of each preceding set right before it), so no parent or
-//! sibling is read through tree-sitter, which finds one by a descent from
-//! the root. A capture names a node at or below the match's root, which
+//! mark of each form, how far each span growth and wrap reaches from it,
+//! and the run of siblings of each preceding set right before it), so no
+//! parent or sibling is read through tree-sitter, which finds one by a
+//! descent from the root. A capture names a node at or below the match's root, which
 //! the walk reaches later or now: what it captures waits by node until
 //! then. Every match that captures a node as its `@definition` is
 //! recorded by the time the walk reaches the node, so an exclusive
 //! pattern's claim on it is settled there, whatever the patterns' order.
 //!
-//! The sweep (`general/place.rs`) places the definitions by span. A
-//! definition's path is its container's and its name's segments
-//! (`general/name.rs`).
+//! The sweep (`general/place.rs`) places the definitions and the unnamed
+//! scopes by the nodes they captured. A definition's path is its
+//! container's and its name's segments (`general/name.rs`).
 
 mod name;
 mod place;
@@ -87,6 +87,21 @@ struct SpanNode {
     end: usize,
 }
 
+impl SpanNode {
+    fn of(node: Node<'_>) -> Self {
+        Self {
+            id: node.id(),
+            start: node.start_byte(),
+            end: node.end_byte(),
+        }
+    }
+
+    /// Whether its bytes hold `other`'s.
+    const fn holds(&self, other: Self) -> bool {
+        self.start <= other.start && other.end <= self.end
+    }
+}
+
 /// A definition's span: from node `first`'s start to node `last`'s end,
 /// one node, or a run of siblings its node closes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,13 +129,15 @@ struct VisibilityMark {
 }
 
 /// What the walk found of a definition's name node: the text of each of
-/// its segments, whether a test mark holds it, and the innermost
-/// visibility mark that holds it.
+/// its segments, whether a test mark holds it, the innermost visibility
+/// mark that holds it, and the visibility of the innermost
+/// `@visibility.within` mark that does.
 #[derive(Debug, Clone)]
 struct NameNode {
     parts: Vec<String>,
     test: bool,
     visibility: Option<VisibilityMark>,
+    within: Option<Visibility>,
 }
 
 impl NameNode {
@@ -133,12 +150,20 @@ impl NameNode {
     }
 }
 
+/// Where a definition stands: the node its pattern captured, which
+/// places it, and its span.
+#[derive(Debug, Clone, Copy)]
+struct Site {
+    node: SpanNode,
+    span: Extent,
+}
+
 /// A definition pattern's match, completed as the walk reaches the
 /// nodes it captured.
 #[derive(Debug, Clone)]
 struct Candidate<'r> {
     definer: &'r Definer,
-    span: Option<Extent>,
+    site: Option<Site>,
     name: Option<NameNode>,
 }
 
@@ -149,6 +174,7 @@ enum Waiting {
     Name(usize),
     Test,
     Visibility(Visibility),
+    Within(Visibility),
 }
 
 impl Waiting {
@@ -156,7 +182,7 @@ impl Waiting {
     const fn definition(&self) -> Option<usize> {
         match self {
             Self::Definition(at) => Some(*at),
-            Self::Name(_) | Self::Test | Self::Visibility(_) => None,
+            Self::Name(_) | Self::Test | Self::Visibility(_) | Self::Within(_) => None,
         }
     }
 }
@@ -168,29 +194,26 @@ struct Frame {
     node: SpanNode,
     test: bool,
     visibility: Option<VisibilityMark>,
+    within: Option<Visibility>,
 }
 
-/// What the walk found: the candidates, how the hash takes each marked
-/// node, by its id, and the names an `@export.name` capture spells.
+/// What the walk found: the candidates, the nodes captured as unnamed
+/// scopes, how the hash takes each marked node, by its id, and the names
+/// an `@export.name` capture spells.
 struct Found<'r, 't> {
     candidates: Vec<Candidate<'r>>,
+    unnamed: Vec<SpanNode>,
     marks: BTreeMap<usize, NodeMarks>,
     exported: BTreeSet<&'t str>,
 }
 
 impl<'r> Found<'r, '_> {
-    /// The span, name and definer of each candidate the walk completed,
-    /// by span start, the widest first, then in the order matched.
-    fn complete(&self) -> Vec<(Extent, &NameNode, &'r Definer)> {
-        let mut complete: Vec<(Extent, &NameNode, &Definer)> = self
-            .candidates
-            .iter()
-            .filter_map(|candidate| {
-                Some((candidate.span?, candidate.name.as_ref()?, candidate.definer))
-            })
-            .collect();
-        complete.sort_by_key(|(span, _, _)| (span.start, std::cmp::Reverse(span.end)));
-        complete
+    /// The site, name and definer of each candidate the walk completed,
+    /// in the order matched.
+    fn complete(&self) -> impl Iterator<Item = (Site, &NameNode, &'r Definer)> {
+        self.candidates.iter().filter_map(|candidate| {
+            Some((candidate.site?, candidate.name.as_ref()?, candidate.definer))
+        })
     }
 
     /// Whether an `@export.name` capture spells the name of one segment
@@ -235,6 +258,7 @@ fn collect<'r, 't>(
         waiting: BTreeMap::new(),
         found: Found {
             candidates: Vec::new(),
+            unnamed: Vec::new(),
             marks: BTreeMap::new(),
             exported: BTreeSet::new(),
         },
@@ -317,6 +341,8 @@ impl Walk<'_, '_> {
                 Capture::Name => name = Some(id),
                 Capture::Test => wait(Waiting::Test),
                 Capture::Visibility(visibility) => wait(Waiting::Visibility(visibility)),
+                Capture::Within(visibility) => wait(Waiting::Within(visibility)),
+                Capture::Unnamed => self.found.unnamed.push(SpanNode::of(capture.node)),
                 Capture::Export => {
                     if let Some(spelled) = self.text.get(capture.node.byte_range()) {
                         self.found.exported.insert(spelled);
@@ -334,7 +360,7 @@ impl Walk<'_, '_> {
             let at = self.found.candidates.len();
             self.found.candidates.push(Candidate {
                 definer,
-                span: None,
+                site: None,
                 name: None,
             });
             let mut wait = |id, waiting| self.waiting.entry(id).or_default().push(waiting);
@@ -366,7 +392,7 @@ impl Walk<'_, '_> {
                     }
                 }
                 Waiting::Name(at) => self.complete_name(at, node, frame, work)?,
-                Waiting::Test | Waiting::Visibility(_) => {}
+                Waiting::Test | Waiting::Visibility(_) | Waiting::Within(_) => {}
             }
         }
         Ok(())
@@ -438,9 +464,9 @@ impl Walk<'_, '_> {
         self.reach.get(depth * width + at).copied().flatten()
     }
 
-    /// Complete candidate `at`'s span: the node the walk is at, grown,
-    /// wrapped and preceded as its pattern says; none when its growth
-    /// reaches nothing.
+    /// Complete candidate `at`'s site: the node the walk is at, and its
+    /// span, that node grown, wrapped and preceded as its pattern says;
+    /// none when its growth reaches nothing.
     fn complete_span(&mut self, at: usize) {
         let Some(definer) = self
             .found
@@ -450,14 +476,14 @@ impl Walk<'_, '_> {
         else {
             return;
         };
-        let Some(depth) = self.frames.len().checked_sub(1) else {
+        let Some(frame) = self.frames.last().copied() else {
             return;
         };
+        let depth = self.frames.len() - 1;
         let grown = match definer.growth {
             None => Some(depth),
-            Some(growth) => self.frames.get(depth).and_then(|frame| {
-                let to = &self.rules.growths.get(growth)?.to;
-                match to.contains(&frame.kind) {
+            Some(growth) => self.rules.growths.get(growth).and_then(|reached| {
+                match reached.to.contains(&frame.kind) {
                     true => Some(depth),
                     false => self.reach_of(depth.checked_sub(1)?, growth),
                 }
@@ -472,7 +498,10 @@ impl Walk<'_, '_> {
         });
         let span = wrapped.and_then(|depth| self.extent_at(depth, definer));
         if let Some(candidate) = self.found.candidates.get_mut(at) {
-            candidate.span = span;
+            candidate.site = span.map(|span| Site {
+                node: frame.node,
+                span,
+            });
         }
     }
 
@@ -514,6 +543,7 @@ impl Walk<'_, '_> {
             parts,
             test: frame.test,
             visibility: frame.visibility,
+            within: frame.within,
         });
         Ok(())
     }
@@ -531,19 +561,16 @@ impl Walk<'_, '_> {
 }
 
 /// The frame of `node` under `parent`: test code when its parent is or a
-/// test mark waited for it, and under its own visibility mark or else its
-/// parent's innermost.
+/// test mark waited for it, and under its own visibility marks of each
+/// form or else its parent's innermost.
 fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame {
-    let span = SpanNode {
-        id: node.id(),
-        start: node.start_byte(),
-        end: node.end_byte(),
-    };
+    let span = SpanNode::of(node);
     let mut frame = Frame {
         kind: node.kind_id(),
         node: span,
         test: parent.is_some_and(|parent| parent.test),
         visibility: parent.and_then(|parent| parent.visibility),
+        within: parent.and_then(|parent| parent.within),
     };
     for waited in waiting {
         match *waited {
@@ -555,6 +582,7 @@ fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame
                     visibility,
                 });
             }
+            Waiting::Within(visibility) => frame.within = Some(visibility),
             Waiting::Definition(_) | Waiting::Name(_) => {}
         }
     }

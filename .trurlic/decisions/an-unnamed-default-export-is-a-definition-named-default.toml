@@ -1,6 +1,6 @@
 component = "code"
-choice = "An unnamed default export is a definition named default, its members under default::; a function or class is of that kind, any other value but a single token a variable"
-reason = "export default function () {} and export default class {} have no name of their own, so without one their members would land at the module's top beside its named definitions. The module's own name for the export is default, which an import names, so the definition takes it, and its methods are default::render. A function expression, arrow function or generator is a function, a class expression a class; an object, a call or any other value of more than one token is a variable, and an object's methods are its own as a top-level const's are. A default export of a single token (export default x) names a definition the module already holds, which the export makes public, so it defines nothing."
+choice = "An unnamed default export is a definition named default, its members under default::; a function or class is of that kind, any other value of more than one leaf a variable"
+reason = "export default function () {} and export default class {} have no name of their own, so without one their members would land at the module's top beside its named definitions. The module's own name for the export is default, which an import names, so the definition takes it, and its methods are default::render. A function expression, arrow function or generator is a function, a class expression a class; an object, a call, a string or any other value of more than one leaf of the tree is a variable, and an object's methods are its own as a top-level const's are. A default export of a single leaf defines nothing: export default x names a definition the module already holds, which the export makes public, and export default 42 a number no reader looks up."
 alternatives = [
     "No definition for an unnamed default export: rejected because its members would then stand at the top beside the module's named definitions",
     "A definition named default for export default x too: rejected because x is already defined, and its span holds its body",
@@ -9,7 +9,7 @@ tags = [
     "anchors",
     "typescript",
 ]
-status = "accepted"
+status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
@@ -18,4 +18,12 @@ anchors = [
 ]
 depends_on = [
     "what-a-typescript-file-defines",
+]
+
+[accepted_text]
+choice = "An unnamed default export is a definition named default, its members under default::; a function or class is of that kind, any other value but a single token a variable"
+reason = "export default function () {} and export default class {} have no name of their own, so without one their members would land at the module's top beside its named definitions. The module's own name for the export is default, which an import names, so the definition takes it, and its methods are default::render. A function expression, arrow function or generator is a function, a class expression a class; an object, a call or any other value of more than one token is a variable, and an object's methods are its own as a top-level const's are. A default export of a single token (export default x) names a definition the module already holds, which the export makes public, so it defines nothing."
+alternatives = [
+    "No definition for an unnamed default export: rejected because its members would then stand at the top beside the module's named definitions",
+    "A definition named default for export default x too: rejected because x is already defined, and its span holds its body",
 ]

@@ -16,7 +16,7 @@ use super::roles::{role_of_place, target_of, test_files};
 use super::scope::Scopes;
 use super::symbol::{Segment, Symbol, SymbolFault};
 
-/// Why the shell has no bytes of a file it found.
+/// Why the shell has no bytes of a file it found, or no index of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadFault {
     /// Larger than a source file may be; `bytes` is its size when found.
@@ -26,6 +26,8 @@ pub(crate) enum ReadFault {
     NotAFile,
     /// The read failed: no permission, a symlink loop, an I/O error.
     Unreadable(ErrorKind),
+    /// The system started no thread to index it on.
+    NoThread(ErrorKind),
 }
 
 impl fmt::Display for ReadFault {
@@ -36,6 +38,10 @@ impl fmt::Display for ReadFault {
             }
             Self::NotAFile => f.write_str("is not a regular file"),
             Self::Unreadable(kind) => write!(f, "cannot be read: {kind}"),
+            Self::NoThread(kind) => write!(
+                f,
+                "is not indexed: no thread to index it on started: {kind}"
+            ),
         }
     }
 }

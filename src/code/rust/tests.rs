@@ -326,3 +326,27 @@ fn a_rule_keeps_each_distinct_hand_off_of_a_binding_with_its_arguments() {
         ]
     );
 }
+
+#[test]
+fn hostile_rust_is_refused_or_read_in_linear_work() {
+    let mib = 1024 * 1024;
+    let body = |unit: &str| format!("fn f() {{ let x = {}", unit.repeat((mib - 20) / unit.len()));
+    let cases = [
+        ("unclosed brackets", body("(")),
+        ("closures", body("|a| ")),
+        ("generic calls", body("a<b>(c)<")),
+        ("comparisons", body("a < b > ")),
+        ("references", body("&")),
+        (
+            "macro repetitions",
+            format!("m!{{{}", "$($".repeat((mib - 4) / 3)),
+        ),
+    ];
+    for (case, text) in cases {
+        assert!(text.len() <= mib, "{case}");
+        match testing::on_parse_stack(|| index_file(FileKind::Rust, text.as_bytes())) {
+            Ok(_) | Err(IndexFault::TooComplex) => {}
+            Err(other) => panic!("{case}: {other}"),
+        }
+    }
+}

@@ -11,13 +11,16 @@
 //!
 //! A file is read in one bounded read, refused past
 //! [`MAX_SOURCE_FILE_BYTES`] and when it is no regular file, and indexed
-//! from the cache when an entry holds its key. Indexing runs in parallel;
-//! a file that vanishes between the walk and the read is absent. The
-//! misses of every tree a call reads are written to the cache once, after
+//! from the cache when an entry holds its key. Indexing runs in parallel,
+//! each index on a thread of its own (`indexer.rs`) whose stack holds a
+//! parse at the size cap; a file that vanishes between the walk and the
+//! read is absent. The misses of every tree a call reads are written to
+//! the cache once, after
 //! the call's own work, under the exclusive lock when it is free: a busy
 //! lock skips the write, since the cache is never authoritative.
 
 mod cache;
+mod indexer;
 mod renames;
 mod walk;
 mod worktrees;
@@ -29,8 +32,6 @@ use std::fs::{self, File};
 use std::io::{ErrorKind, Read};
 use std::path::Path;
 
-use rayon::prelude::*;
-
 use crate::code::{self, CodeFacts, Entry, FileFault, FileKind, Indexed, ReadFault};
 use crate::console::diag;
 use crate::git;
@@ -39,6 +40,7 @@ use crate::lint::anchors::{
 };
 use crate::store::{Anchor, Decision, Store, SymbolsKey};
 
+use indexer::{Indexer, Worker};
 use walk::Probe;
 
 /// The largest source file the shell reads: the largest of any kind the
@@ -66,14 +68,14 @@ pub(crate) fn checked_findings<'s>(
     if decisions.is_empty() {
         return CheckedFindings::default();
     }
-    let mut fill = CacheFill::default();
-    let facts = calling_tree(store, &decisions, &mut fill);
+    let mut reads = Reads::new();
+    let facts = calling_tree(store, &decisions, &mut reads);
     let here = Here::of(&decisions, &facts);
     let unresolved = here.unresolved(&decisions);
-    let (elsewhere, unread) = elsewhere(store, &facts, &unresolved, &mut fill);
+    let (elsewhere, unread) = elsewhere(store, &facts, &unresolved, &mut reads);
     let asked = Asked::of(&unresolved, &elsewhere);
-    let asked = with_history(store, &facts, &here, asked, &mut fill);
-    fill.write(store);
+    let asked = with_history(store, &facts, &here, asked, &mut reads);
+    reads.write(store);
     CheckedFindings {
         findings: anchors::findings(&decisions, &here, &asked),
         unread,
@@ -91,9 +93,9 @@ pub(crate) fn tree_findings<'s>(
     if decisions.is_empty() {
         return Vec::new();
     }
-    let mut fill = CacheFill::default();
-    let facts = calling_tree(store, &decisions, &mut fill);
-    fill.write(store);
+    let mut reads = Reads::new();
+    let facts = calling_tree(store, &decisions, &mut reads);
+    reads.write(store);
     anchors::unasked(&decisions, &Here::of(&decisions, &facts))
 }
 
@@ -110,12 +112,12 @@ fn anchored<'s>(
 
 /// The facts of the calling tree: every source the walk takes, and the
 /// paths `decisions` anchor.
-fn calling_tree(store: &Store, decisions: &Decisions<'_>, fill: &mut CacheFill) -> CodeFacts {
+fn calling_tree(store: &Store, decisions: &Decisions<'_>, reads: &mut Reads) -> CodeFacts {
     let anchored = decisions
         .iter()
         .flat_map(|(_, decision)| &decision.anchors)
         .map(Anchor::file);
-    let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, fill);
+    let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, reads);
     CodeFacts::new(entries, &walked)
 }
 
@@ -128,10 +130,10 @@ fn with_history<'s, 'w>(
     facts: &CodeFacts,
     here: &Here<'s, '_>,
     asked: Asked<'s, 'w>,
-    fill: &mut CacheFill,
+    reads: &mut Reads,
 ) -> Asked<'s, 'w> {
     let root = store.code_root();
-    let renames = renames(store, facts, &asked.gone(here), fill);
+    let renames = renames(store, facts, &asked.gone(here), reads);
     let before: BTreeSet<(String, String)> = renames
         .to
         .iter()
@@ -139,7 +141,9 @@ fn with_history<'s, 'w>(
         // clone: the reads are keyed by revision and path apart from the map.
         .map(|(from, renamed)| (renamed.before.clone(), from.clone()))
         .collect();
-    let asked = asked.with_renames(renames).with_prior(prior(root, &before));
+    let asked = asked
+        .with_renames(renames)
+        .with_prior(prior(root, &reads.indexer, &before));
     let searched = asked.searched(here);
     if searched.is_empty() {
         return asked;
@@ -155,7 +159,7 @@ fn with_history<'s, 'w>(
             wanted.insert((revision.clone(), search.target.clone()));
         }
     }
-    let mut evidence = prior(root, &wanted);
+    let mut evidence = prior(root, &reads.indexer, &wanted);
     for (file, revision) in revisions {
         evidence.judge_at(file, revision);
     }
@@ -165,26 +169,21 @@ fn with_history<'s, 'w>(
 /// Where git says each of `gone`, the files of stale anchors with nothing
 /// at their path, was renamed to, and the facts of those paths beside
 /// `here`, the calling tree's, read as an anchor's path is.
-fn renames(
-    store: &Store,
-    here: &CodeFacts,
-    gone: &BTreeSet<&str>,
-    fill: &mut CacheFill,
-) -> Renames {
+fn renames(store: &Store, here: &CodeFacts, gone: &BTreeSet<&str>, reads: &mut Reads) -> Renames {
     let to = renames::renamed(store.code_root(), gone);
     if to.is_empty() {
         return Renames::none();
     }
     // clone: the paths are read apart from the map that keeps them.
     let paths = to.values().map(|renamed| renamed.to.clone()).collect();
-    let facts = here.beside(&read_paths(store, store.code_root(), paths, fill));
+    let facts = here.beside(&read_paths(store, store.code_root(), paths, reads));
     Renames { to, facts }
 }
 
 /// What git's history held of each of `files`, a revision and a path, each
-/// read in a bounded read and indexed; a file git holds no blob of there,
-/// or any failure of git, leaves it out.
-fn prior(root: &Path, files: &BTreeSet<(String, String)>) -> Prior {
+/// read in a bounded read and indexed by `indexer`; a file git holds no
+/// blob of there, or any failure of git, leaves it out.
+fn prior(root: &Path, indexer: &Indexer, files: &BTreeSet<(String, String)>) -> Prior {
     let mut prior = Prior::default();
     if files.is_empty() {
         return prior;
@@ -194,11 +193,19 @@ fn prior(root: &Path, files: &BTreeSet<(String, String)>) -> Prior {
     let Ok(blobs) = git::renames::blobs(root, &asked, MAX_SOURCE_FILE_BYTES) else {
         return prior;
     };
-    for ((revision, path), bytes) in blobs {
-        let Some(kind) = FileKind::of(&path) else {
-            continue;
-        };
-        let index = code::index(kind, &bytes).map_err(FileFault::Index);
+    let blobs: Vec<(FileKind, String, String, Vec<u8>)> = blobs
+        .into_iter()
+        .filter_map(|((revision, path), bytes)| Some((FileKind::of(&path)?, revision, path, bytes)))
+        .collect();
+    let indexed = indexer.map(&blobs, |worker, (kind, _, _, bytes)| {
+        match worker.index(*kind, bytes) {
+            Ok(indexed) => indexed.map_err(FileFault::Index),
+            Err(fault) => Err(FileFault::Read(fault)),
+        }
+    });
+    let indexed =
+        indexed.unwrap_or_else(|fault| blobs.iter().map(|_| Err(FileFault::Read(fault))).collect());
+    for ((kind, revision, path, _), index) in blobs.into_iter().zip(indexed) {
         prior.insert(revision, path, Entry::File { kind, index });
     }
     prior
@@ -215,7 +222,7 @@ fn elsewhere(
     store: &Store,
     here: &CodeFacts,
     missing: &BTreeSet<&Anchor>,
-    fill: &mut CacheFill,
+    reads: &mut Reads,
 ) -> (Vec<Elsewhere>, Vec<UnreadWorktree>) {
     if missing.is_empty() {
         return (Vec::new(), Vec::new());
@@ -241,7 +248,7 @@ fn elsewhere(
                 continue;
             }
         };
-        let facts = here.beside(&read_paths(store, &forked.worktree.path, changed, fill));
+        let facts = here.beside(&read_paths(store, &forked.worktree.path, changed, reads));
         let tree = Elsewhere {
             worktree: forked.worktree,
             facts,
@@ -258,10 +265,10 @@ fn read_paths(
     store: &Store,
     root: &Path,
     paths: BTreeSet<String>,
-    fill: &mut CacheFill,
+    reads: &mut Reads,
 ) -> BTreeMap<String, Option<Entry>> {
     let anchored = paths.iter().map(String::as_str);
-    let (mut found, _) = read_tree(store, root, Scope::Anchored, anchored, fill);
+    let (mut found, _) = read_tree(store, root, Scope::Anchored, anchored, reads);
     paths
         .into_iter()
         .map(|path| {
@@ -282,13 +289,13 @@ enum Scope {
 }
 
 /// What is in the tree at `root` by `scope`, by path, and which paths the
-/// walk took. Its cache misses and the keys it read go to `fill`.
+/// walk took. Its cache misses and the keys it read go to `reads`.
 fn read_tree<'a>(
     store: &Store,
     root: &Path,
     scope: Scope,
     anchored: impl Iterator<Item = &'a str>,
-    fill: &mut CacheFill,
+    reads: &mut Reads,
 ) -> (BTreeMap<String, Entry>, BTreeSet<String>) {
     let walked: BTreeMap<String, FileKind> = match scope {
         Scope::Tree => walk::tree_sources(root).into_iter().collect(),
@@ -300,19 +307,22 @@ fn read_tree<'a>(
     let walked_paths: BTreeSet<String> = walked.keys().cloned().collect();
     let mut to_read = walked;
     to_read.extend(anchored);
-    let read: Vec<(String, FileKind, Option<Sourced>)> = to_read
-        .into_par_iter()
-        .map(|(path, kind)| {
-            let read = read_and_index(store, &root.join(&path), kind);
-            (path, kind, read)
-        })
-        .collect();
-    for (path, kind, read) in read {
+    let to_read: Vec<(String, FileKind)> = to_read.into_iter().collect();
+    let read = reads.indexer.map(&to_read, |worker, (path, kind)| {
+        read_and_index(store, worker, &root.join(path), *kind)
+    });
+    let read = read.unwrap_or_else(|fault| {
+        to_read
+            .iter()
+            .map(|_| Some(Sourced::Fault(fault)))
+            .collect()
+    });
+    for ((path, kind), read) in to_read.into_iter().zip(read) {
         let index = match read {
             None => continue,
             Some(Sourced::Fault(fault)) => Err(FileFault::Read(fault)),
             Some(Sourced::Indexed { key, indexed, miss }) => {
-                fill.note(key, miss);
+                reads.note(key, miss);
                 indexed.map_err(FileFault::Index)
             }
         };
@@ -368,7 +378,12 @@ enum Sourced {
 
 /// Read the file at `path` and index it, from the cache when it holds the
 /// index; `None` when the file is gone.
-fn read_and_index(store: &Store, path: &Path, kind: FileKind) -> Option<Sourced> {
+fn read_and_index(
+    store: &Store,
+    worker: &Worker<'_>,
+    path: &Path,
+    kind: FileKind,
+) -> Option<Sourced> {
     let bytes = match read_source(path) {
         Ok(bytes) => bytes,
         Err(Gone) => return None,
@@ -384,11 +399,13 @@ fn read_and_index(store: &Store, path: &Path, kind: FileKind) -> Option<Sourced>
             indexed,
             miss: None,
         },
-        None => {
-            let indexed = code::index(kind, &bytes);
-            let miss = Some(cache::encode(key, &indexed));
-            Sourced::Indexed { key, indexed, miss }
-        }
+        None => match worker.index(kind, &bytes) {
+            Ok(indexed) => {
+                let miss = Some(cache::encode(key, &indexed));
+                Sourced::Indexed { key, indexed, miss }
+            }
+            Err(fault) => Sourced::Fault(fault),
+        },
     })
 }
 
@@ -433,18 +450,27 @@ fn read_source(path: &Path) -> Result<Vec<u8>, Unread> {
     }
 }
 
-/// What a call's reads give the cache: the entries it lacked, by key, so
+/// What a call's reads share: the indexer its files are indexed through,
+/// and what the reads give the cache, the entries it lacked, by key, so
 /// two files of one content are one entry, and every key read, which
 /// bounds the cache. One call fills it once, with the keys of every tree
 /// it read, so a few paths of another worktree never prune the entries of
 /// the calling tree.
-#[derive(Debug, Default)]
-struct CacheFill {
+struct Reads {
+    indexer: Indexer,
     misses: BTreeMap<SymbolsKey, Vec<u8>>,
     live: BTreeSet<SymbolsKey>,
 }
 
-impl CacheFill {
+impl Reads {
+    fn new() -> Self {
+        Self {
+            indexer: Indexer::new(),
+            misses: BTreeMap::new(),
+            live: BTreeSet::new(),
+        }
+    }
+
     fn note(&mut self, key: SymbolsKey, miss: Option<Vec<u8>>) {
         self.live.insert(key);
         if let Some(bytes) = miss {

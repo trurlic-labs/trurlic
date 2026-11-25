@@ -1,9 +1,10 @@
 component = "code"
-choice = "A call of describe, it, test or their kin, with .only, .skip or .each, is a definition of kind test named by its first argument when that is a string, quotes dropped, under the tests around it"
-reason = "A JavaScript test is a call, not a named function, and a proof names the test it ran by the strings of the calls that hold it. So a call of describe, context, suite, it, test, specify, bench or their jasmine forms, directly, through a member (it.only) or through a call (describe.each(table)), is a definition of kind test whose segment is its first argument as written, a string's or a template literal's text without its quotes, its interpolations and .each placeholders kept. A test nested in another's callback is under it by span, so describe(\"Store\") with it(\"opens\") is Store::opens. A name whose argument is no string literal (describe(Foo.name)) defines nothing, and so does an empty one. A test and everything its callback defines are test code; the call has no visibility. The functions the list names are the test runners' own; a project's helper of another name is not read as a test."
+choice = "A call of describe, it, test or their kin, plain, with a runner's modifier (.only, .skip, .describe) or through .each(..), is a test named by its first argument when that is a string"
+reason = "A JavaScript test is a call, not a named function, and a proof names the test it ran by the strings of the calls that hold it. So a call of describe, context, suite, it, test, specify, bench or their jasmine forms, directly, through one of the runners' modifiers (it.only, describe.skip, test.todo, it.concurrent, test.failing, Playwright's test.describe) or through .each (describe.each(table)), is a definition of kind test whose segment is its first argument as written, a string's or a template literal's text without its quotes, its interpolations and .each placeholders kept. A call of any other member of such a name is no test: context, test and suite are common names of variables, and context.clip(\"evenodd\") or test.set(\"Content-Type\") is a call on one. A test nested in another's callback is under it, so describe(\"Store\") with it(\"opens\") is Store::opens. A name whose argument is no string literal (describe(Foo.name)) defines nothing, and so does an empty one. A test and everything its callback defines are test code; the call has no visibility. The functions the list names are the test runners' own; a project's helper of another name is not read as a test."
 alternatives = [
     "Test calls as no definitions: rejected because a proof could then name no test of a JavaScript project",
     "Every call whose first argument is a string: rejected because a call of any function would become a test",
+    "Any member of a runner's name: rejected because a variable named context or test would make its every call a test",
     "The template literal with its interpolations evaluated: rejected because the index reads no value a program computes",
 ]
 tags = [
@@ -15,6 +16,7 @@ status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_call_of_another_member_of_a_test_runners_name_is_no_test" },
     { file = "src/code/general/tests.rs", symbol = "a_test_call_is_named_by_its_strings_as_written" },
     { file = "src/code/kinds.rs", symbol = "DefinitionKind::Test" },
     { file = "src/code/language/typescript.scm" },

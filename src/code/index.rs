@@ -18,7 +18,7 @@ use super::{encoding, expand, general, json, make, markdown, rust, syntax, toml,
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 10;
+pub(crate) const INDEX_FORMAT: u32 = 11;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -29,12 +29,47 @@ const TREE_SITTER_MAX_BYTES: usize = 1024 * 1024;
 /// The largest file a lexical resolver indexes.
 const LEXICAL_MAX_BYTES: usize = 4 * 1024 * 1024;
 
+/// The stack a parse may take per byte of its file. tree-sitter releases
+/// the stack of an ambiguous parse recursively, as deep as the ambiguity
+/// runs: a chain of `a?(b):c=>` takes about 11 bytes a byte, which this
+/// covers about three times.
+const STACK_BYTES_PER_SOURCE_BYTE: usize = 32;
+
+/// The stack of a thread that indexes a file of any size: a parse of a
+/// file at the tree-sitter cap fits in it.
+pub(crate) const PARSE_STACK_BYTES: usize = TREE_SITTER_MAX_BYTES * STACK_BYTES_PER_SOURCE_BYTE;
+
+/// The largest file a worker that indexes many files indexes itself; a
+/// larger one is indexed on a thread of its own. A thread keeps the memory
+/// its parses freed until it ends, up to about 900 bytes per byte of its
+/// largest file, so this bounds what each worker keeps to about 30 MB.
+pub(crate) const MAX_BYTES_INDEXED_BY_A_WORKER: usize = 32 * 1024;
+
+/// The stack of a worker: a parse of a file of
+/// [`MAX_BYTES_INDEXED_BY_A_WORKER`] takes a quarter of it, and the index's
+/// own frames the rest.
+pub(crate) const WORKER_STACK_BYTES: usize =
+    4 * MAX_BYTES_INDEXED_BY_A_WORKER * STACK_BYTES_PER_SOURCE_BYTE;
+
+/// The bytes of the files indexed at once, between them. A parse holds
+/// memory in proportion to its file, up to about 900 bytes a byte on
+/// error-dense input, so this bounds what the parses under way hold to
+/// about 2 GB; a file larger than it is indexed alone.
+pub(crate) const MAX_BYTES_INDEXED_AT_ONCE: usize = 2 * TREE_SITTER_MAX_BYTES;
+
 /// Every bound an index and its expansion are built within, by name and
 /// value: in a cache key, so an index built under other bounds is never
 /// read as one of these, whatever the fixture corpus shows of them.
-pub(crate) const BOUNDS: [(&str, usize); 27] = [
+pub(crate) const BOUNDS: [(&str, usize); 31] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
+    ("parse_stack_bytes", PARSE_STACK_BYTES),
+    (
+        "max_bytes_indexed_by_a_worker",
+        MAX_BYTES_INDEXED_BY_A_WORKER,
+    ),
+    ("worker_stack_bytes", WORKER_STACK_BYTES),
+    ("max_bytes_indexed_at_once", MAX_BYTES_INDEXED_AT_ONCE),
     ("parse_work_per_byte", work::PARSE_WORK_PER_BYTE),
     ("scan_work_per_byte", work::SCAN_WORK_PER_BYTE),
     ("lexical_work_per_byte", work::LEXICAL_WORK_PER_BYTE),
@@ -139,19 +174,12 @@ impl FileKind {
     /// How a symbol on a file of this kind is spelled: a language's by
     /// its row.
     pub(crate) const fn syntax(self) -> Syntax {
-        match (self, self.language()) {
-            (_, Some(language)) => language.syntax,
-            (Self::Rust, None) => Syntax::Rust,
-            (
-                Self::Python
-                | Self::TypeScript
-                | Self::Tsx
-                | Self::Toml
-                | Self::Json
-                | Self::Make
-                | Self::Markdown,
-                None,
-            ) => Syntax::Plain,
+        match self {
+            Self::Rust => Syntax::Rust,
+            Self::Python => PYTHON.syntax,
+            Self::TypeScript => TYPESCRIPT.syntax,
+            Self::Tsx => TSX.syntax,
+            Self::Toml | Self::Json | Self::Make | Self::Markdown => Syntax::Plain,
         }
     }
 
@@ -504,7 +532,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 10] = [
+    const FINGERPRINTS: [(u32, &str); 11] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -544,6 +572,10 @@ mod tests {
         (
             10,
             "023fc1d422d4a842d67f26e6dda6a703ca0fd97b41d400ecf0f62c7dea1bca1b",
+        ),
+        (
+            11,
+            "bc0087ec4045b9e204a4c2ce352ca9833f40e3b7806b08d32b7b574a8194c238",
         ),
     ];
 

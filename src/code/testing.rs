@@ -1,9 +1,23 @@
 //! What the resolvers' tests read an index through: each definition's
-//! path and the text of its span.
+//! path and the text of its span; and the stack they parse a file at the
+//! size cap on.
 
-use super::index::{FileKind, index};
+use super::index::{FileKind, PARSE_STACK_BYTES, index};
 use super::scope::{ScopeId, Scopes};
 use super::symbol::Symbol;
+
+/// What `work` gives, run on a thread of the stack the shell indexes
+/// files on, where a parse of a file at the size cap fits.
+pub(crate) fn on_parse_stack<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(PARSE_STACK_BYTES)
+            .spawn_scoped(scope, work)
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}
 
 /// Each definition of `text`, a file of `kind`, as its path joined by
 /// `::` and the text of its span, in the index's order.

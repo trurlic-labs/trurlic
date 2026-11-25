@@ -27,13 +27,24 @@
 //! - A mark pattern captures any of `@role.test` (a definition whose name
 //!   lies inside is test code), `@visibility.<name>` (a definition whose
 //!   span holds the node, and the node its name, has that visibility; the
-//!   innermost such mark wins), `@export.name` (a definition at the
-//!   file's top named as the node's text is public when no mark holds its
-//!   name), `@hash.unit` (one token whole), `@hash.words` (one token per
-//!   run of text between ASCII whitespace), `@hash.skip` (left out of
-//!   every hash) and `@hash.group` (a statement or block, whose extent the
-//!   hash holds), and sets no property. A definition pattern may capture
-//!   these too.
+//!   innermost such mark wins), `@visibility.within.<name>` (a definition
+//!   whose name lies inside has that visibility when no mark of the first
+//!   form states one; the innermost wins), `@export.name` (a definition at
+//!   the file's top named as the node's text is public when no mark holds
+//!   its name), `@scope.unnamed` (a scope no name stands for: see below),
+//!   `@hash.unit` (one token whole), `@hash.words` (one token per run of
+//!   text between ASCII whitespace), `@hash.skip` (left out of every hash)
+//!   and `@hash.group` (a statement or block, whose extent the hash
+//!   holds), and sets no property. A definition pattern may capture these
+//!   too.
+//!
+//! A definition is under the innermost definition or unnamed scope whose
+//! captured node holds its own `@definition` node. An unnamed scope that a
+//! definition captures as its `@definition` is that definition's. Any
+//! other is a container of its own that `within` never admits, whose path
+//! is the definition around it: a function's locals stay locals, and a
+//! function in a callback is under the definition that holds the callback.
+//! What an unnamed scope holds that no definition holds defines nothing.
 //!
 //! A name is the text of its node's leaves, comments left out, one space
 //! where bytes lie between two leaves; a name written as a string literal
@@ -58,7 +69,9 @@ pub(super) enum Capture {
     Name,
     Test,
     Visibility(Visibility),
+    Within(Visibility),
     Export,
+    Unnamed,
     Unit,
     Words,
     Skip,
@@ -67,12 +80,13 @@ pub(super) enum Capture {
     Predicate,
 }
 
-/// Where a definition may stand: at the file's top, or in a container of
-/// a kind.
+/// Where a definition may stand: at the file's top, in a container of a
+/// kind, or in an unnamed scope, which no `within` names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Container {
     Top,
     Kind(DefinitionKind),
+    Unnamed,
 }
 
 /// How a definition pattern makes a definition of what it captures.
@@ -387,7 +401,7 @@ impl Rules {
                 .iter()
                 .flatten()
                 .filter_map(|container| match container {
-                    Container::Top => None,
+                    Container::Top | Container::Unnamed => None,
                     Container::Kind(kind) => Some(*kind),
                 })
                 .chain(definer.kind_in.iter().map(|(outer, _)| *outer));
@@ -510,18 +524,20 @@ fn capture_of(name: &str) -> Result<Capture, QueryFault> {
         "name" => Capture::Name,
         "role.test" => Capture::Test,
         "export.name" => Capture::Export,
+        "scope.unnamed" => Capture::Unnamed,
         "hash.unit" => Capture::Unit,
         "hash.words" => Capture::Words,
         "hash.skip" => Capture::Skip,
         "hash.group" => Capture::Group,
         _ if name.starts_with('_') => Capture::Predicate,
-        _ => match name
-            .strip_prefix("visibility.")
-            .and_then(Visibility::of_name)
-        {
-            Some(visibility) => Capture::Visibility(visibility),
-            None => return Err(QueryFault::UnknownCapture(name.to_owned())),
-        },
+        _ => match name.strip_prefix("visibility.within.") {
+            Some(within) => Visibility::of_name(within).map(Capture::Within),
+            None => name
+                .strip_prefix("visibility.")
+                .and_then(Visibility::of_name)
+                .map(Capture::Visibility),
+        }
+        .ok_or_else(|| QueryFault::UnknownCapture(name.to_owned()))?,
     })
 }
 
@@ -568,6 +584,14 @@ mod tests {
             (
                 "(identifier) @visibility.secret".to_owned(),
                 QueryFault::UnknownCapture("visibility.secret".to_owned()),
+            ),
+            (
+                "(identifier) @visibility.within.secret".to_owned(),
+                QueryFault::UnknownCapture("visibility.within.secret".to_owned()),
+            ),
+            (
+                "(identifier) @scope.named".to_owned(),
+                QueryFault::UnknownCapture("scope.named".to_owned()),
             ),
             (
                 "((identifier) @_n (#frobnicate! @_n))".to_owned(),
@@ -696,7 +720,8 @@ mod tests {
              ((class_definition name: (_) @name) @definition (#set! kind \"class\") \
              (#set! exclusive \"true\") (#set! name.separator \".\") \
              (#set! definition.preceding \"decorator comment\"))\n\
-             ([(identifier) @export.name (string) @hash.words])\n"
+             ([(identifier) @export.name (string) @hash.words])\n\
+             ([(lambda) @scope.unnamed (block) @visibility.within.public])\n"
         );
         let rules = Rules::compile(python(), &source).unwrap();
 
@@ -721,6 +746,12 @@ mod tests {
         assert_eq!(rules.precedings[0].len(), 2);
         assert!(rules.captures.contains(&Capture::Export));
         assert!(rules.captures.contains(&Capture::Words));
+        assert!(rules.captures.contains(&Capture::Unnamed));
+        assert!(
+            rules
+                .captures
+                .contains(&Capture::Within(Visibility::Public))
+        );
         assert!(
             rules
                 .captures

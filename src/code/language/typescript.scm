@@ -3,8 +3,9 @@
 ;
 ; A declaration's span grows over the `export`, `declare` or statement
 ; around it. A declaration at a module's or a namespace's top is private
-; unless an `export` holds it or an export list names it; a member is
-; public unless `private`, `protected` or `#` says otherwise.
+; unless an `export` holds it, an export list names it or an ambient
+; module or namespace holds it; a member is public unless `private`,
+; `protected` or `#` says otherwise.
 
 ; Functions: declared, an overload's or an ambient one's signature, and an
 ; arrow function, function expression or class expression a `const`,
@@ -32,6 +33,13 @@
   (#set! definition.wrap "export_statement ambient_declaration")
   (#set! visibility "private"))
 
+; A named class expression an assignment binds (`module.exports = class
+; A {}`, `X.Y = class Y {}`) is that class; an unnamed one defines
+; nothing, nor do its members.
+((assignment_expression right: (class name: (type_identifier) @name) @definition)
+  (#set! kind "class")
+  (#set! visibility "private"))
+
 ; Any other name a module or a namespace binds: each of `const a = 1, b`,
 ; and each name a destructuring binds. A function's locals define nothing.
 ((variable_declarator name: (identifier) @name) @definition
@@ -41,12 +49,12 @@
   (#set! definition.wrap "export_statement ambient_declaration")
   (#set! visibility "private"))
 
-([(object_pattern (shorthand_property_identifier_pattern) @name)
-  (pair_pattern value: (identifier) @name)
-  (array_pattern (identifier) @name)
-  (rest_pattern (identifier) @name)
-  (object_assignment_pattern left: (shorthand_property_identifier_pattern) @name)
-  (assignment_pattern left: (identifier) @name)] @definition
+([(object_pattern (shorthand_property_identifier_pattern) @name @definition)
+  (pair_pattern value: (identifier) @name @definition)
+  (array_pattern (identifier) @name @definition)
+  (rest_pattern (identifier) @name @definition)
+  (object_assignment_pattern left: (shorthand_property_identifier_pattern) @name @definition)
+  (assignment_pattern left: (identifier) @name @definition)]
   (#set! kind "variable")
   (#set! within "top module")
   (#set! definition.via "object_pattern array_pattern pair_pattern rest_pattern object_assignment_pattern assignment_pattern variable_declarator")
@@ -148,21 +156,39 @@
   (#set! visibility "public"))
 
 ; Tests are calls: `describe`, `it`, `test` and their kin, with `.only`,
-; `.skip`, `.each(..)` and the like, named by their first argument when it
-; is a string, under the tests whose callbacks hold them.
+; `.skip`, `.todo`, `.concurrent`, `.failing`, `.describe` (Playwright's
+; `test.describe`) or `.each(..)`, named by their first argument when it
+; is a string, under the tests whose callbacks hold them. A call of
+; another member (`context.clip("x")`) is no test.
 ((call_expression
    function: [(identifier) @_test
-              (member_expression object: (identifier) @_test)
-              (call_expression function: (member_expression object: (identifier) @_test))]
+              (member_expression object: (identifier) @_test property: (property_identifier) @_modifier)
+              (call_expression function: (member_expression object: (identifier) @_test property: (property_identifier) @_each))]
    arguments: (arguments . [(string) (template_string)] @name)) @definition @role.test
   (#any-of? @_test "describe" "context" "suite" "it" "test" "specify" "bench" "fdescribe" "xdescribe" "fit" "xit")
+  (#any-of? @_modifier "only" "skip" "todo" "concurrent" "failing" "describe")
+  (#eq? @_each "each")
   (#set! kind "test"))
+
+; Unnamed scopes: a function, method or class no pattern names. Its
+; locals define nothing; a function in it is under the definition around
+; it (`describe("a", () => { function f() {} })` is `a::f`), or defines
+; nothing when no definition is (`module.exports = () => { ... }`).
+[(arrow_function) (function_expression) (generator_function) (method_definition) (class)] @scope.unnamed
 
 ; Visibility: an `export` holds its declaration; an export list, a default
 ; export of a name and `export =` name a declaration of the module's top;
-; `module.exports` names one in CommonJS. A re-export (`export { a } from`)
-; names nothing here.
+; `module.exports` names one in CommonJS, or is a class. A re-export
+; (`export { a } from`) names nothing here. What an ambient module, an
+; ambient namespace or `declare global` holds is exported at any depth
+; unless a mark says otherwise, and `declare module "x"` is public.
 (export_statement) @visibility.public
+
+(ambient_declaration [(module body: (statement_block) @visibility.within.public)
+                      (internal_module body: (statement_block) @visibility.within.public)
+                      (statement_block) @visibility.within.public])
+
+(ambient_declaration (module name: (string)) @visibility.public)
 
 ((export_statement (export_clause (export_specifier name: (identifier) @export.name)) !source))
 ((export_statement value: (identifier) @export.name))
@@ -171,7 +197,8 @@
    left: (member_expression object: (identifier) @_module property: (property_identifier) @_exports)
    right: [(identifier) @export.name
            (object [(shorthand_property_identifier) @export.name
-                    (pair value: (identifier) @export.name)])])
+                    (pair value: (identifier) @export.name)])
+           (class) @visibility.public])
   (#eq? @_module "module")
   (#eq? @_exports "exports"))
 

@@ -1,0 +1,31 @@
+component = "sources"
+choice = "The shell indexes on workers it starts per call, a file past 32 KiB on a thread of its own with a 32 MiB stack, the files indexed at once holding at most 2 MiB between them"
+reason = "tree-sitter releases the stack of an ambiguous parse recursively, as deep as the ambiguity runs: a chain of a?(b):c=> keeps an arrow's and a conditional's readings alive and takes about 11 bytes of stack per byte, so a file of about 200 KB overflowed a 2 MiB thread and aborted the process, which no catch_unwind answers. Stack is stated at 32 bytes per byte, about three times that. A parse also holds memory in proportion to its file, about 900 bytes a byte on error-dense input, and a thread's allocator keeps what the thread freed until it ends: on a pool, eight such files of 1 MiB held about 6 GB after their parses. So Indexer::map runs a call's reads on workers it starts and ends, one a core, of WORKER_STACK_BYTES. A worker indexes a file up to MAX_BYTES_INDEXED_BY_A_WORKER itself, keeping about 30 MB at most, and starts a thread of PARSE_STACK_BYTES, which a parse at the cap fits in, for a larger one, whose memory goes back as it ends. Each index first waits until the room of MAX_BYTES_INDEXED_AT_ONCE holds its bytes, so the parses under way hold about 2 GB at most; a file past the room is indexed alone. Worker::index is the shell's one call of code::index, and only Indexer::map hands out a Worker, so no read parses on a stack no bound states. A system that starts no thread gives ReadFault::NoThread. The bounds are in BOUNDS: code states them and the shell starts the threads, so code stays pure."
+alternatives = [
+    "One pool of threads with a 32 MiB stack: rejected because each keeps the memory its largest parse freed until the pool ends",
+    "A thread of its own for every file: rejected because starting a thread costs more than parsing most files, and a cold index of many small files ran markedly slower",
+    "A lower size cap: rejected because the overflow starts near 200 KB, below many generated and bundled files",
+    "Fewer threads for less memory: rejected because a tree of small files would lose the parallelism large ones cost",
+]
+tags = [
+    "reliability",
+    "security",
+]
+status = "proposed"
+origin = "typescript review fixes"
+created = "2026-11-25T22:06:05.133337210Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "hostile_typescript_is_refused_or_read_in_linear_work" },
+    { file = "src/code/index.rs", symbol = "MAX_BYTES_INDEXED_AT_ONCE" },
+    { file = "src/code/index.rs", symbol = "MAX_BYTES_INDEXED_BY_A_WORKER" },
+    { file = "src/code/index.rs", symbol = "PARSE_STACK_BYTES" },
+    { file = "src/code/index.rs", symbol = "WORKER_STACK_BYTES" },
+    { file = "src/code/testing.rs", symbol = "on_parse_stack" },
+    { file = "src/sources/indexer.rs", symbol = "Indexer::map" },
+    { file = "src/sources/indexer.rs", symbol = "Worker::index" },
+    { file = "src/sources/indexer.rs", symbol = "bytes_the_room_lacks_wait_and_a_file_past_the_room_takes_all_of_it" },
+    { file = "src/sources/tests.rs", symbol = "a_file_at_the_cap_whose_parse_recurses_deep_is_indexed_on_a_stack_it_fits" },
+]
+depends_on = [
+    "a-tree-sitter-file-is-capped-at-1-mib-and-a-lexical-one-at-4-mib",
+]

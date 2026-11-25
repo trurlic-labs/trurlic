@@ -3,7 +3,7 @@ use crate::code::index::{FileKind, index as index_of};
 use crate::code::language::python::{MAX_CONTINUATIONS, MAX_INDENTATIONS};
 use crate::code::scope::Scopes;
 use crate::code::span::SpanHash;
-use crate::code::testing::{defined, path};
+use crate::code::testing::{defined, on_parse_stack, path};
 
 /// Each definition of `text`, a Python file, as `path kind role
 /// visibility` and the text of its span.
@@ -287,7 +287,7 @@ fn hostile_python_is_refused_or_read_in_linear_work() {
     ];
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");
-        match index_of(FileKind::Python, text.as_bytes()) {
+        match on_parse_stack(|| index_of(FileKind::Python, text.as_bytes())) {
             Ok(_) | Err(IndexFault::TooComplex) => {}
             Err(other) => panic!("{case}: {other}"),
         }
@@ -483,11 +483,31 @@ fn an_exclusive_pattern_claims_its_node_from_the_others() {
 }
 
 #[test]
-fn two_definitions_of_one_span_are_siblings() {
-    assert_eq!(
-        typescript("const a = 1, f = () => 2;\n"),
-        ["a Variable Code Private", "f Function Code Private"]
-    );
+fn each_declarator_of_a_statement_holds_what_its_own_node_holds() {
+    for (text, expected) in [
+        (
+            "const a = 1, f = () => 2;\n",
+            &["a Variable Code Private", "f Function Code Private"][..],
+        ),
+        (
+            "export const f = () => { function inner() {} }, a = 1;\n",
+            &[
+                "f Function Code Public",
+                "a Variable Code Public",
+                "f::inner Function Code Private",
+            ][..],
+        ),
+        (
+            "const g = () => { const h = () => 1; }, k = () => {};\n",
+            &[
+                "g Function Code Private",
+                "k Function Code Private",
+                "g::h Function Code Private",
+            ][..],
+        ),
+    ] {
+        assert_eq!(typescript(text), expected, "{text}");
+    }
 }
 
 #[test]
@@ -522,7 +542,7 @@ fn a_name_splits_at_its_separator_and_drops_a_string_literals_quotes() {
         [
             "A::B Module Code Private",
             "A::B::f Function Code Private",
-            "pkg.name Module Code Private",
+            "pkg.name Module Code Public",
             "E Enum Code Private",
             "E::a b Variant Code Public",
         ]
@@ -531,19 +551,25 @@ fn a_name_splits_at_its_separator_and_drops_a_string_literals_quotes() {
 
 #[test]
 fn a_test_call_is_named_by_its_strings_as_written() {
-    let text = "describe('Store', () => {\n  it(`opens ${kind}`, () => {});\n  test.each([1])(\"a::b %s\", () => {});\n  it(name, () => {});\n  it('', () => {});\n});\n";
+    let text = "describe('Store', () => {\n  it(`opens ${kind}`, () => {});\n  test.each([1])(\"a::b %s\", () => {});\n  it.skip('later', () => {});\n  test.describe('nested', () => {});\n  it(name, () => {});\n  it('', () => {});\n});\n";
 
     assert_eq!(
-        statements_of(FileKind::TypeScript, text)
-            .into_iter()
-            .map(|(statement, _)| statement)
-            .collect::<Vec<_>>(),
+        typescript(text),
         [
             "Store Test Test -",
             "Store::opens ${kind} Test Test -",
             "Store::a::b %s Test Test -",
+            "Store::later Test Test -",
+            "Store::nested Test Test -",
         ]
     );
+}
+
+#[test]
+fn a_call_of_another_member_of_a_test_runners_name_is_no_test() {
+    let text = "function draw(context, test) {\n  context.clip('evenodd', () => {});\n  test.set('Content-Type', () => {});\n  it.each('x', () => {});\n}\n";
+
+    assert_eq!(typescript(text), ["draw Function Code Private"]);
 }
 
 #[test]
@@ -580,6 +606,28 @@ fn an_export_states_what_its_module_makes_public() {
 }
 
 #[test]
+fn an_ambient_module_or_namespace_exports_what_it_holds_at_any_depth() {
+    let text = "declare module \"foo\" { function f(): void; interface I { a: number } }\ndeclare namespace NS { function g(): void; namespace B { function h(): void; } }\ndeclare global { interface Window { x: 1 } }\ndeclare function local(): void;\n";
+
+    assert_eq!(
+        typescript(text),
+        [
+            "foo Module Code Public",
+            "foo::f Function Code Public",
+            "foo::I Interface Code Public",
+            "foo::I::a Field Code Public",
+            "NS Module Code Private",
+            "NS::g Function Code Public",
+            "NS::B Module Code Public",
+            "NS::B::h Function Code Public",
+            "Window Interface Code Public",
+            "Window::x Field Code Public",
+            "local Function Code Private",
+        ]
+    );
+}
+
+#[test]
 fn an_unnamed_default_export_is_named_default() {
     for (text, expected) in [
         (
@@ -606,6 +654,11 @@ fn an_unnamed_default_export_is_named_default() {
             "const x = 1;\nexport default x;\n",
             &["x Variable Code Public"][..],
         ),
+        (
+            "export default 'text';\n",
+            &["default Variable Code Public"][..],
+        ),
+        ("export default 42;\n", &[][..]),
     ] {
         assert_eq!(typescript(text), expected, "{text}");
     }
@@ -625,6 +678,62 @@ fn an_object_literals_methods_are_defined_only_under_a_top_level_const() {
             "outer Variable Code Private",
         ]
     );
+}
+
+#[test]
+fn what_an_unnamed_function_holds_is_under_the_definition_around_it_or_nothing() {
+    for (text, expected) in [
+        (
+            "module.exports = (compiler) => { const { a } = compiler; let css = false; function helper() {} };\n",
+            &[][..],
+        ),
+        (
+            "jest.mock('a', () => { const original = 1; });\njest.mock('b', () => { const original = 2; });\n",
+            &[][..],
+        ),
+        (
+            "module.exports = { create(context) { const x = 1; function f() {} } };\n",
+            &[][..],
+        ),
+        (
+            "namespace N { run(() => { const x = 1; }); }\n",
+            &["N Module Code Private"][..],
+        ),
+        (
+            "describe('a', () => { const x = 1; function f() {} });\n",
+            &["a Test Test -", "a::f Function Test Private"][..],
+        ),
+    ] {
+        assert_eq!(typescript(text), expected, "{text}");
+    }
+}
+
+#[test]
+fn a_class_expression_is_a_class_where_a_name_holds_it() {
+    for (text, expected) in [
+        (
+            "module.exports = class Compiler { run() {} };\n",
+            &[
+                "Compiler Class Code Public",
+                "Compiler::run Method Code Public",
+            ][..],
+        ),
+        (
+            "X.Template = class XTemplate { apply() {} };\n",
+            &[
+                "XTemplate Class Code Private",
+                "XTemplate::apply Method Code Public",
+            ][..],
+        ),
+        (
+            "const C = class D { m() {} };\n",
+            &["C Class Code Private", "C::m Method Code Public"][..],
+        ),
+        ("module.exports = class { n() {} };\n", &[][..]),
+        ("register(class Local { n() {} });\n", &[][..]),
+    ] {
+        assert_eq!(typescript(text), expected, "{text}");
+    }
 }
 
 /// The hash of `f`, a TypeScript function whose body is `body`.
@@ -668,6 +777,12 @@ fn a_reformat_a_comment_or_a_semicolon_leaves_a_typescript_hash() {
         members("{ a: string; b(): void }"),
         members("{\n  a: string\n  b(): void\n}")
     );
+    assert_eq!(jsx("<div>{/* c */}</div>"), jsx("<div></div>"));
+    assert_eq!(
+        jsx("<div>{/* a */}{/* b */}</div>"),
+        jsx("<div>{/* a */}</div>")
+    );
+    assert_ne!(jsx("<p>{a}</p>"), jsx("<p>a</p>"));
 }
 
 #[test]
@@ -713,7 +828,18 @@ fn jsx_text_is_hashed_by_its_words() {
 #[test]
 fn hostile_typescript_is_refused_or_read_in_linear_work() {
     let mib = 1024 * 1024;
-    let cases: [(&str, String); 7] = [
+    let cases: [(&str, String); 9] = [
+        // Each keeps an arrow's and a conditional's readings alive, whose
+        // stack the parser releases recursively: past 200 KB this aborted
+        // the process on a 2 MiB stack.
+        (
+            "conditional arrows",
+            format!("x={}", "a?(b):c=>".repeat((mib - 2) / 9)),
+        ),
+        (
+            "spaced conditional arrows",
+            format!("x={}", "a ? (b) : c => ".repeat((mib - 2) / 15)),
+        ),
         ("unclosed brackets", "(".repeat(mib)),
         ("unclosed template strings", "`${".repeat(mib / 3)),
         (
@@ -734,7 +860,7 @@ fn hostile_typescript_is_refused_or_read_in_linear_work() {
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");
         for kind in [FileKind::TypeScript, FileKind::Tsx] {
-            match index_of(kind, text.as_bytes()) {
+            match on_parse_stack(|| index_of(kind, text.as_bytes())) {
                 Ok(_) | Err(IndexFault::TooComplex) => {}
                 Err(other) => panic!("{case}: {other}"),
             }

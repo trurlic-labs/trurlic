@@ -24,6 +24,6 @@ anchors = [
     { file = "src/code/index.rs", symbol = "BOUNDS" },
     { file = "src/code/index.rs", symbol = "INDEX_FORMAT" },
     { file = "src/sources/cache.rs", symbol = "key" },
-    { file = "src/sources/mod.rs", symbol = "CacheFill::write" },
+    { file = "src/sources/mod.rs", symbol = "Reads::write" },
     { file = "src/store/symbols.rs", symbol = "Store::write_symbols" },
 ]
