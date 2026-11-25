@@ -111,17 +111,27 @@ fn lint(report: &Report) -> Result<()> {
     if let Some(patterns) = lint_counts.and_then(|counts| counts.patterns.as_ref()) {
         unjudged(patterns, &report.quality)?;
     }
+    if let Some(work) = lint_counts.and_then(|counts| counts.uncompared.as_ref()) {
+        out!(
+            "lint: likely duplicates not compared: their pass would do {} units of work, past \
+             the {} one call does; `--origin` compares only the pairs of its decisions",
+            work.measured,
+            work.bound
+        )?;
+    }
     let (Some(lint), Some(counts)) = (report.lint.as_ref(), report.counts.lint.as_ref()) else {
         return Ok(());
     };
     if lint.total == 0 {
         return Ok(());
     }
+    let duplicates = counts.duplicates.map_or_else(
+        || "likely duplicates not compared".to_owned(),
+        |count| format!("{count} likely duplicate pair(s)"),
+    );
     out!(
-        "lint: {} ({} likely duplicate pair(s), {} quality finding(s), {} decision(s) with \
-         only file anchors)",
+        "lint: {} ({duplicates}, {} quality finding(s), {} decision(s) with only file anchors)",
         lint.total,
-        counts.duplicates,
         counts.quality,
         counts.file_anchors_only
     )?;

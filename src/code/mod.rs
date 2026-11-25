@@ -69,7 +69,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::purity::{INDEX, faults};
+    use super::purity::{AllowList, INDEX, faults};
 
     #[test]
     fn the_index_names_nothing_but_what_its_allow_list_holds() {
@@ -83,8 +83,26 @@ mod tests {
     const SEEDED: &[(&str, &str)] = &[
         (
             "pure",
-            "use std::collections::BTreeMap;\nuse std::io::ErrorKind;\nuse crate::store::Anchor;\nuse super::index::FileKind;\nuse tree_sitter::Node;\nfn f() -> core::fmt::Result { Ok(()) }\nconst Q: &str = include_str!(\"queries/q.scm\");\nconst R: &str = include_str!(\"./queries/../q.scm\");\n",
+            "use std::collections::BTreeMap;\nuse std::io::ErrorKind;\nuse crate::store::Anchor;\nuse super::index::FileKind;\nuse tree_sitter::Node;\nfn f() -> core::fmt::Result { Ok(()) }\nconst Q: &str = include_str!(\"queries/q.scm\");\nconst R: &str = include_str!(\"./queries/../q.scm\");\nuse std::path::PathBuf;\nuse rayon::prelude::*;\nfn g(path: &PathBuf) -> bool { path.has_root() }\n",
         ),
+        (
+            "path_method",
+            "fn f(path: &std::path::PathBuf) -> bool { path.exists() }\n",
+        ),
+        (
+            "path_function",
+            "use std::path::PathBuf;\nfn f(path: &PathBuf) -> bool { PathBuf::is_file(path) }\n",
+        ),
+        (
+            "random_state",
+            "fn f() { let _ = std::collections::hash_map::RandomState::new(); }\n",
+        ),
+        ("hash_map", "use std::collections::{BTreeMap, HashMap};\n"),
+        (
+            "crate_item",
+            "fn f() -> usize { rayon::current_num_threads() }\n",
+        ),
+        ("crate_item_glob", "use rayon::*;\n"),
         ("fs", "fn f() { let _ = std::fs::read(\"/x\"); }\n"),
         ("listed", "use std::{fs, collections};\n"),
         ("aliased", "use std::fs as disk;\n"),
@@ -200,7 +218,13 @@ mod tests {
         for (name, text) in SEEDED {
             write(&format!("src/index/{name}.rs"), text);
         }
-        let found = faults(root, "src/index", &INDEX);
+        // The index's list, with a path type and the thread pool's prelude.
+        let listed = AllowList {
+            std_items: &[("io", "ErrorKind"), ("path", "PathBuf")],
+            crate_items: &[("rayon", "prelude")],
+            ..INDEX
+        };
+        let found = faults(root, "src/index", &listed);
         let files: std::collections::BTreeSet<&str> = found
             .iter()
             .map(|fault| fault.split(':').next().unwrap())

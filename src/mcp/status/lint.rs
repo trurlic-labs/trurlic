@@ -8,12 +8,12 @@
 //! (`patterns`).
 
 use crate::budget::MAX_TOOL_RESULT_BYTES;
-use crate::lint::duplicates::{Score, Similarity};
+use crate::lint::duplicates::{Among, Score, Similarity};
 use crate::lint::quality;
 use crate::mcp::spec::output::{Count, Nested, Str, Tag};
 use crate::mcp::spec::{Output, Shown, to_value};
 use crate::mcp::truncate::json_len;
-use crate::store::limits::MAX_NAME_BYTES;
+use crate::store::limits::{MAX_DUPLICATE_WORK, MAX_NAME_BYTES};
 use crate::store::{Decision, Level, ProjectState, QualityFault, Shortfall};
 
 use super::{Listed, Part};
@@ -117,12 +117,27 @@ impl LintItem {
 /// How many findings of each kind there are, and how far the `[quality]`
 /// patterns were judged.
 pub(crate) struct LintCounts {
-    pub(crate) duplicates: usize,
+    /// `None` when the pairs were not compared.
+    pub(crate) duplicates: Option<usize>,
+    /// The work that kept the pairs from being compared, when it did.
+    pub(crate) uncompared: Option<PairWork>,
     pub(crate) quality: usize,
     pub(crate) file_anchors_only: usize,
     /// When `[quality]` has patterns.
     pub(crate) patterns: Option<PatternCounts>,
 }
+
+/// The work comparing the pairs would do, past the most one call does: no
+/// pair was compared.
+pub(crate) struct PairWork {
+    pub(crate) measured: usize,
+    pub(crate) bound: usize,
+}
+
+/// How the pairs a call left uncompared come to be compared.
+pub(crate) const UNCOMPARED_MORE: &str = "the pairs are compared when their pass's work, the \
+     posting entries it reads and eight for each pair it may test, stays within `bound`; \
+     `origin` compares only the pairs of the decisions recorded under it, for less work";
 
 /// The findings of each kind, in the section's order, and their counts.
 pub(super) struct Gathered<'s> {
@@ -164,11 +179,8 @@ pub(super) fn gather<'s>(
     origin: Option<&str>,
     patterns: Patterns<'_>,
 ) -> Gathered<'s> {
-    let under = |decision: &Decision| {
-        origin.is_none_or(|origin| decision.origin.as_deref() == Some(origin))
-    };
-    let touching = |name: &str| state.decisions.get(name).is_some_and(under);
-    let pairs = Similarity::of(state).pairs(lint_limit(LintKind::Duplicate), touching);
+    let under = |decision: &Decision| is_under(origin, decision);
+    let pairs = duplicates(state, origin, MAX_DUPLICATE_WORK);
     let limit = lint_limit(LintKind::Quality);
     let wanted = |name: &str, decision: &Decision| patterns.reads(name) && under(decision);
     let (mut shortfalls, reading) = patterns::shortfalls(state, patterns, limit, wanted);
@@ -176,15 +188,11 @@ pub(super) fn gather<'s>(
     let files = quality::file_anchors_only(state, lint_limit(LintKind::FileAnchorsOnly), under);
     let counts = LintCounts {
         duplicates: pairs.total,
+        uncompared: pairs.uncompared,
         quality: shortfalls.total,
         file_anchors_only: files.total,
         patterns: page.as_ref().map(Page::counts),
     };
-    let duplicates = pairs.best.into_iter().map(|pair| LintItem::Duplicate {
-        decision: pair.first.to_owned(),
-        other: pair.second.to_owned(),
-        score: pair.score.to_string(),
-    });
     let quality = shortfalls
         .first
         .into_iter()
@@ -196,7 +204,10 @@ pub(super) fn gather<'s>(
             decision: name.to_owned(),
         });
     let kinds = vec![
-        (LintKind::Duplicate, Listed::of(pairs.total, duplicates)),
+        (
+            LintKind::Duplicate,
+            Listed::of(pairs.total.unwrap_or(0), pairs.items),
+        ),
         (LintKind::Quality, Listed::of(shortfalls.total, quality)),
         (LintKind::FileAnchorsOnly, Listed::of(files.total, anchored)),
     ];
@@ -277,6 +288,60 @@ impl<'s> Page<'s> {
         part.items.truncate(whole);
         part.omitted = part.total.saturating_sub(part.items.len());
         Some(listed_to)
+    }
+}
+
+/// Whether `decision` is recorded under `origin`: every one when `None`.
+fn is_under(origin: Option<&str>, decision: &Decision) -> bool {
+    origin.is_none_or(|origin| decision.origin.as_deref() == Some(origin))
+}
+
+/// The likely duplicate pairs of a call, or the work that kept them from
+/// being compared.
+struct Duplicates {
+    /// `None` when they were not compared.
+    total: Option<usize>,
+    uncompared: Option<PairWork>,
+    /// The best, as many as one result can show.
+    items: Vec<LintItem>,
+}
+
+/// The pairs of `state`, those touching a decision recorded under
+/// `origin` when one is given, compared when their work is within `bound`.
+fn duplicates(state: &ProjectState, origin: Option<&str>, bound: usize) -> Duplicates {
+    let named: Vec<&str> = state
+        .decisions
+        .iter()
+        .filter(|(_, decision)| is_under(origin, decision))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let among = match origin {
+        Some(_) => Among::Touching(&named),
+        None => Among::Every,
+    };
+    let limit = lint_limit(LintKind::Duplicate);
+    match Similarity::of(state).pairs(among, limit, bound) {
+        Ok(ranked) => Duplicates {
+            total: Some(ranked.total),
+            uncompared: None,
+            items: ranked
+                .best
+                .into_iter()
+                .map(|pair| LintItem::Duplicate {
+                    decision: pair.first.to_owned(),
+                    other: pair.second.to_owned(),
+                    score: pair.score.to_string(),
+                })
+                .collect(),
+        },
+        Err(past) => Duplicates {
+            total: None,
+            uncompared: Some(PairWork {
+                measured: past.work,
+                bound,
+            }),
+            items: Vec::new(),
+        },
     }
 }
 
@@ -448,10 +513,25 @@ impl Output for Measure {
     }
 }
 
+impl Output for PairWork {
+    fn declare(fields: &mut Shown<'_, Self>) {
+        let measured = "The work the pass would do: the posting entries it reads and eight \
+                        for each pair it may test.";
+        fields.required("measured", measured, &Count, |w| &w.measured);
+        fields.required("bound", "The most one call does.", &Count, |w| &w.bound);
+        let more = "How the pairs come to be compared.";
+        fields.required("more", more, &Str, |_| UNCOMPARED_MORE);
+    }
+}
+
 impl Output for LintCounts {
     fn declare(fields: &mut Shown<'_, Self>) {
-        let duplicates = "Likely duplicate pairs.";
-        fields.required("duplicates", duplicates, &Count, |c| &c.duplicates);
+        let duplicates = "Likely duplicate pairs, when they were compared.";
+        fields.optional("duplicates", duplicates, &Count, |c| c.duplicates.as_ref());
+        let uncompared = "When the pairs were not compared: the work their pass would do and \
+                          the most one call does.";
+        let work = Nested::<PairWork>::new();
+        fields.optional("uncompared", uncompared, &work, |c| c.uncompared.as_ref());
         let quality = "Rules of the bar the stored decisions break: every limit's, and the \
                        patterns' in the decisions `patterns` says they read.";
         fields.required("quality", quality, &Count, |c| &c.quality);
@@ -466,6 +546,40 @@ impl Output for LintCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two decisions of one text: a pair whose work is above zero. Past
+    /// the bound no pair is compared, and the counts say so with the work,
+    /// the bound and how to compare them, beside no count of pairs.
+    #[test]
+    fn past_the_bound_the_counts_name_the_uncompared_pairs_instead_of_a_count() {
+        use crate::store::testing::{empty_state, sample_decision};
+
+        let mut state = empty_state();
+        for name in ["copy", "original"] {
+            let mut decision = sample_decision("project");
+            decision.choice = "Retry with backoff".into();
+            state.decisions.insert(name.into(), decision);
+        }
+        let compared = duplicates(&state, None, usize::MAX);
+        assert_eq!((compared.total, compared.items.len()), (Some(1), 1));
+
+        let cut = duplicates(&state, None, 0);
+        let counts = LintCounts {
+            duplicates: cut.total,
+            uncompared: cut.uncompared,
+            quality: 0,
+            file_anchors_only: 0,
+            patterns: None,
+        };
+        let value = to_value(&counts);
+
+        assert!(cut.items.is_empty());
+        assert!(value.get("duplicates").is_none(), "{value}");
+        let uncompared = &value["uncompared"];
+        assert!(uncompared["measured"].as_u64().unwrap() > 0, "{value}");
+        assert_eq!(uncompared["bound"], 0);
+        assert_eq!(uncompared["more"], UNCOMPARED_MORE);
+    }
 
     /// Each kind is gathered to as many of its smallest findings as one
     /// result holds with their commas, and no more: a kind with larger

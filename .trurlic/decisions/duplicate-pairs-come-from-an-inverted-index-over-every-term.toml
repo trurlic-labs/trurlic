@@ -1,4 +1,35 @@
 component = "lint"
+choice = "Duplicate pairs come from an inverted index over every term, the pass's work counted from the postings and charged against MAX_DUPLICATE_WORK before it runs"
+reason = "The postings list, per term, the decisions that hold it in order, with the term's weight there. Each decision probed reads the postings of its terms, adds the products of the weights into a scratch row sized to the graph, and puts each decision it touched to the exact threshold test with that sum, their exact dot product. A pair that shares no term is never visited, and no pair allocates. A term most decisions hold, the usual case in prose, makes the pass visit and test nearly every pair, so its cost grows with the square of the decisions. That work is known before the pass runs: the posting entries it reads, df (df - 1) / 2 per term, and PAIR_WORK for each pair it may test, at most one per entry and one per pair, the weight measured against an entry. status charges it against MAX_DUPLICATE_WORK; past it the section compares no pair and counts.lint.uncompared names the work and the bound, never a silent drop. Under an origin only the decisions recorded there are probed, each against every other decision. A test holds the pairs to the exact test over every pair on drawn graphs, and one holds the charge."
+alternatives = [
+    "A dot product for every pair: rejected because it merges the term lists of pairs that share nothing, many times the work of the index on the seeded corpus",
+    "A prefix filter leaving each decision's commonest terms unindexed, with a Cauchy-Schwarz bound: it saved most of the pass on a graph sharing common terms, but was removed for its size, a second order, cursors and a bound on two comparisons; the charge bounds it now",
+    "No bound on the pass: rejected because tens of thousands of decisions that share a few terms cost one status call minutes of CPU",
+    "Locality-sensitive hashing: rejected because it can miss a pair, and the list must be the exact one",
+    "A cache under .state: rejected because a read would then depend on state beside the files",
+]
+tags = [
+    "performance",
+]
+status = "proposed"
+origin = "likely duplicates"
+created = "2026-11-24T09:53:20.687376285Z"
+anchors = [
+    { file = "benches/corpus.rs", symbol = "bench_duplicates" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "PAIR_WORK" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Scratch::dots" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::pairs" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::work" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "the_index_finds_every_pair_the_exact_test_over_all_pairs_finds" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "the_pass_runs_only_when_its_work_is_within_the_bound" },
+    { file = "src/mcp/status/lint.rs", symbol = "duplicates" },
+    { file = "src/store/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
+]
+depends_on = [
+    "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
+]
+
+[accepted_text]
 choice = "Duplicate pairs come from an inverted index over every term: a decision sums its exact dot product with each earlier one sharing a term, then takes the exact test"
 reason = "status computes every section when none is asked for and is called often, so the pass must not compute a dot product for every pair of decisions. The postings list, per term, the decisions that hold it in order, with the term's weight there. Each decision reads the postings of its terms up to itself, adds the products of the weights into a scratch row sized to the graph, and puts each decision it touched to the exact threshold test with that sum, which is their exact dot product. A pair that shares no term is never visited, and no pair allocates. The probes run on the thread pool, each task with its own scratch and selection. A prefix filter that left each decision's most common terms out of the index, with a Cauchy-Schwarz bound to prune candidates, ran within a small factor of this on the seeded corpus, and both are quadratic when every text is the same, so its second order, cursors and bound did not earn their code. The vocabulary that names the terms is a BTreeMap, as every map of the crate. A test holds the pairs to the exact test over every pair on drawn graphs."
 alternatives = [
@@ -7,20 +38,4 @@ alternatives = [
     "A HashMap vocabulary, the one exception to the BTree rule: rejected because it saved a fraction of the vector build for an exception every reader must check is never iterated",
     "Locality-sensitive hashing: rejected because it can miss a pair, and the list must be the exact one",
     "A cache under .state: rejected because a read would then depend on state beside the files",
-]
-tags = [
-    "performance",
-]
-status = "accepted"
-origin = "likely duplicates"
-created = "2026-11-24T09:53:20.687376285Z"
-anchors = [
-    { file = "benches/corpus.rs", symbol = "bench_duplicates" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Scratch::dots" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::of" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::pairs" },
-    { file = "src/lint/duplicates/tests.rs", symbol = "the_index_finds_every_pair_the_exact_test_over_all_pairs_finds" },
-]
-depends_on = [
-    "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
 ]

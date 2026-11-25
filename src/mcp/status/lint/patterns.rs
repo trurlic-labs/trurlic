@@ -450,7 +450,8 @@ mod tests {
             }),
         };
         let mut counts = LintCounts {
-            duplicates: 0,
+            duplicates: Some(0),
+            uncompared: None,
             quality: total,
             file_anchors_only: 0,
             patterns: None,

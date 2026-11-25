@@ -13,7 +13,7 @@ status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
-    { file = "src/lint/duplicates/mod.rs", symbol = "THRESHOLD" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Score::THRESHOLD" },
     { file = "src/lint/duplicates/terms.rs", symbol = "each_term" },
     { file = "src/lint/duplicates/terms.rs", symbol = "is_stop_word" },
     { file = "src/lint/duplicates/tests.rs", symbol = "the_pairs_at_the_threshold_are_the_reference_cosines_best_first" },

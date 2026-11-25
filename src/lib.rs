@@ -34,11 +34,12 @@ pub mod bench {
     }
 
     /// The likely duplicate pairs of `state`, the pass over every pair
-    /// that `status` makes: how many there are.
+    /// that `status` makes, unbounded: how many there are.
     #[must_use]
     pub fn likely_duplicates(state: &ProjectState) -> usize {
-        crate::lint::duplicates::Similarity::of(state)
-            .pairs(usize::MAX, |_| true)
-            .total
+        use crate::lint::duplicates::{Among, Similarity};
+        Similarity::of(state)
+            .pairs(Among::Every, usize::MAX, usize::MAX)
+            .map_or(0, |ranked| ranked.total)
     }
 }

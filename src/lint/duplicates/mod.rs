@@ -4,8 +4,8 @@
 //! A decision's vector weighs each of its terms (`terms`) by its count
 //! times the smoothed inverse document frequency ln((1 + n) / (1 + df)) +
 //! 1, over the n decisions of the graph, df of which hold the term. A pair
-//! at a cosine of at least [`THRESHOLD`] is a likely duplicate: a pair to
-//! read, which no rule refuses.
+//! at a cosine of at least [`Score::THRESHOLD`], 1/2, is a likely
+//! duplicate: a pair to read, which no rule refuses.
 //!
 //! Integer throughout, so a score is a function of the files alone: the
 //! inverse frequency in Q32 from the fixed-point logarithm (`fixed`),
@@ -19,11 +19,15 @@
 //! cosine.
 //!
 //! The pairs come from an inverted index over every term: each decision
-//! reads the postings of its terms for the decisions before it, adding up
-//! its exact dot product with each, and every decision it shares a term
+//! probed reads the postings of its terms, adding up its exact dot product
+//! with each decision it meets there, and every decision it shares a term
 //! with is put to the threshold test. No pair is visited that shares no
 //! term, and none allocates: the pass counts every pair and keeps only the
-//! best it is asked for (`best`), however many there are.
+//! best it is asked for (`best`), however many there are. A term held by
+//! most decisions makes the pass visit most pairs, so its work, the posting
+//! entries it will read and the pairs it may test, is counted from the
+//! postings before it runs and charged against a bound the caller gives
+//! ([`Similarity::pairs`]).
 
 mod best;
 mod fixed;
@@ -39,21 +43,15 @@ use crate::store::ProjectState;
 use best::Best;
 use vectors::Vector;
 
-/// The cosine at or above which two decisions are likely duplicates: 1/2.
-const THRESHOLD: Ratio = Ratio {
-    numerator: 1,
-    denominator: 2,
-};
-
-/// A cosine bound as a ratio of integers, so the threshold test is exact.
-struct Ratio {
-    numerator: u128,
-    denominator: u128,
-}
-
 /// One in Q32, the fixed point of the inverse frequencies and of a
 /// [`Score`].
 const ONE_Q32: u64 = 1 << 32;
+
+/// The work charged for a pair the pass may test, in posting entries: its
+/// threshold test, 256-bit products and selection cost about as much as
+/// this many entries read, measured on the seeded corpus and on graphs
+/// where every pair shares one term or five.
+const PAIR_WORK: usize = 8;
 
 /// The fewest decisions one task of the thread pool takes, so a small
 /// graph runs as one task rather than paying for threads it cannot use.
@@ -64,7 +62,7 @@ const PER_TASK: usize = 32;
 pub(crate) struct Score(u64);
 
 impl Score {
-    /// The score at the threshold, the least a likely duplicate has.
+    /// The score at the threshold, 1/2: the least a likely duplicate has.
     pub(crate) const THRESHOLD: Self = Self(ONE_Q32 / 2);
 }
 
@@ -97,6 +95,23 @@ pub(crate) struct Neighbour<'s> {
 pub(crate) struct Ranked<'s> {
     pub(crate) total: usize,
     pub(crate) best: Vec<Pair<'s>>,
+}
+
+/// The pairs a pass looks for.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Among<'n> {
+    /// Every pair of the graph.
+    Every,
+    /// The pairs that hold one of these decisions, by name, sorted; a name
+    /// the graph lacks holds none.
+    Touching(&'n [&'n str]),
+}
+
+/// A pass that did not run: the work it would do, past the bound it was
+/// given ([`Similarity::pairs`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PastBound {
+    pub(crate) work: usize,
 }
 
 /// A pair as the selection orders it: the higher score first, then the
@@ -133,23 +148,41 @@ impl<'s> Similarity<'s> {
         }
     }
 
-    /// The count of likely duplicate pairs that touch a decision `touching`
-    /// admits, by name, and the best `limit` of them: the pass holds no
-    /// more than `limit` pairs per task of the thread pool, however many
-    /// there are.
+    /// The count of likely duplicate pairs `among` and the best `limit` of
+    /// them, or, when the pass's work passes `bound`, that work and no
+    /// pass. The pass holds no more than `limit` pairs per task of the
+    /// thread pool, however many there are.
     ///
-    /// Each decision probes those before it. The probes run on the thread
-    /// pool, and the kept pairs are the smallest keys of a total order, so
-    /// they do not depend on the threads.
-    pub(crate) fn pairs(&self, limit: usize, touching: impl Fn(&str) -> bool + Sync) -> Ranked<'s> {
+    /// Over every pair each decision probes those before it, reading each
+    /// term's df (df - 1) / 2 posting entries. Over the pairs touching some
+    /// decisions only those are probed, each against every other decision
+    /// but an earlier probe, reading the df - 1 entries of each of their
+    /// terms. The work is those entries and [`PAIR_WORK`] for each pair
+    /// tested, at most one per entry and one per pair reached. The probes
+    /// run on the thread pool, and the kept pairs are the
+    /// smallest keys of a total order, so they do not depend on the threads.
+    pub(crate) fn pairs(
+        &self,
+        among: Among<'_>,
+        limit: usize,
+        bound: usize,
+    ) -> Result<Ranked<'s>, PastBound> {
         let decisions = self.vectors.len();
-        let best = (0..decisions)
-            .into_par_iter()
+        let probed = self.probed(among);
+        let work = self.work(probed.as_deref());
+        if work > bound {
+            return Err(PastBound { work });
+        }
+        let probes: Vec<usize> = (0..decisions)
+            .filter(|&decision| is_probed(probed.as_deref(), decision))
+            .collect();
+        let best = probes
+            .par_iter()
             .with_min_len(PER_TASK)
             .fold(
                 || Task::new(decisions, limit),
-                |mut task, probe| {
-                    self.probe(probe, &mut task, &touching);
+                |mut task, &probe| {
+                    self.probe(probe, probed.as_deref(), &mut task);
                     task
                 },
             )
@@ -166,28 +199,90 @@ impl<'s> Similarity<'s> {
                 })
             })
             .collect();
-        Ranked { total, best }
+        Ok(Ranked { total, best })
+    }
+
+    /// Per decision, whether it is probed: `None` over every pair.
+    fn probed(&self, among: Among<'_>) -> Option<Vec<bool>> {
+        let Among::Touching(names) = among else {
+            return None;
+        };
+        let mut probed = vec![false; self.vectors.len()];
+        for name in names {
+            if let Some(slot) = self
+                .names
+                .binary_search(name)
+                .ok()
+                .and_then(|decision| probed.get_mut(decision))
+            {
+                *slot = true;
+            }
+        }
+        Some(probed)
+    }
+
+    /// The work of the probes of `probed`: the posting entries they read,
+    /// and [`PAIR_WORK`] for each pair they may test, no more than one per
+    /// entry and one per pair they reach.
+    fn work(&self, probed: Option<&[bool]>) -> usize {
+        let decisions = self.vectors.len();
+        let held = |term: usize| self.postings.get(term).map_or(0, Vec::len);
+        let (entries, reached) = match probed {
+            None => {
+                let pairs = |count: usize| count.saturating_mul(count.saturating_sub(1)) / 2;
+                let entries = (0..self.postings.len())
+                    .map(|term| pairs(held(term)))
+                    .fold(0, usize::saturating_add);
+                (entries, pairs(decisions))
+            }
+            Some(probed) => {
+                let probes = self
+                    .vectors
+                    .iter()
+                    .zip(probed)
+                    .filter(|&(_, &probed)| probed);
+                let start: (usize, usize) = (0, 0);
+                let (entries, count) = probes.fold(start, |(entries, count), (vector, _)| {
+                    let read = vector
+                        .terms
+                        .iter()
+                        .map(|&(term, _)| held(term).saturating_sub(1));
+                    let entries = read.fold(entries, usize::saturating_add);
+                    (entries, count + 1)
+                });
+                (entries, count.saturating_mul(decisions.saturating_sub(1)))
+            }
+        };
+        let tested = entries.min(reached).saturating_mul(PAIR_WORK);
+        entries.saturating_add(tested)
     }
 
     /// Offer to the task's selection each likely duplicate of the decision
-    /// `probe` among those before it.
-    fn probe(&self, probe: usize, task: &mut Task, touching: &(impl Fn(&str) -> bool + Sync)) {
+    /// `probe`: among those before it over every pair, else among every
+    /// other decision but a probed one before it, which offers that pair.
+    fn probe(&self, probe: usize, probed: Option<&[bool]>, task: &mut Task) {
         let Task { scratch, best } = task;
         let Some(vector) = self.vectors.get(probe) else {
             return;
         };
-        scratch.dots(&self.postings, vector, probe, |other, dot| {
-            let Some(score) = self
+        let before = if probed.is_some() {
+            self.vectors.len()
+        } else {
+            probe
+        };
+        let offered_by = |other: usize| {
+            other < probe && probed.is_some_and(|probed| probed.get(other) == Some(&true))
+        };
+        scratch.dots(&self.postings, vector, before, |other, dot| {
+            if other == probe || offered_by(other) {
+                return;
+            }
+            if let Some(score) = self
                 .vectors
                 .get(other)
                 .and_then(|held| likely(vector, held, dot))
-            else {
-                return;
-            };
-            let named =
-                |decision: usize| self.names.get(decision).is_some_and(|&name| touching(name));
-            if named(other) || named(probe) {
-                best.offer((Reverse(score), other, probe));
+            {
+                best.offer((Reverse(score), other.min(probe), other.max(probe)));
             }
         });
     }
@@ -234,16 +329,20 @@ impl<'s> Similarity<'s> {
     }
 }
 
+/// Whether `decision` is probed: every one when `probed` is `None`.
+fn is_probed(probed: Option<&[bool]>, decision: usize) -> bool {
+    probed.is_none_or(|probed| probed.get(decision) == Some(&true))
+}
+
 /// The score of `a` and `b`, whose dot product is `dot`, when they share a
-/// term and their cosine is at the threshold or above: `(denominator
-/// dot)^2 >= numerator^2 |a|^2 |b|^2`, exact in 256 bits.
+/// term and their cosine is [`Score::THRESHOLD`], 1/2, or above: `(2
+/// dot)^2 >= |a|^2 |b|^2`, exact in 256 bits.
 fn likely(a: &Vector, b: &Vector, dot: u128) -> Option<Score> {
     if dot == 0 {
         return None;
     }
-    let scaled = THRESHOLD.denominator.saturating_mul(dot);
-    let bound = THRESHOLD.numerator.pow(2).saturating_mul(a.square);
-    if fixed::wide(scaled, scaled) < fixed::wide(bound, b.square) {
+    let doubled = dot.saturating_mul(2);
+    if fixed::wide(doubled, doubled) < fixed::wide(a.square, b.square) {
         return None;
     }
     // A shared term puts a weight of at least 2^32 in each vector, so both

@@ -14,7 +14,8 @@ mod tests {
 
     /// What `lint` may name: the code index's facts, the graph's value
     /// types, the bar and the cache in memory its patterns search over, a
-    /// path as a value, and the thread pool.
+    /// path as a value whose file system methods it never calls, and the
+    /// thread pool's parallel iterators.
     const LINT: AllowList = AllowList {
         modules: &["lint", "code"],
         store_items: &[
@@ -28,16 +29,17 @@ mod tests {
             "Status",
         ],
         std_items: &[("path", "PathBuf")],
-        crates: &["rayon"],
+        crates: &[],
+        crate_items: &[("rayon", "prelude")],
     };
 
     #[test]
     fn the_lint_module_names_nothing_but_what_its_allow_list_holds() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        // Without `rayon`, the check faults the passes' thread pool: it
-        // reads lint's files.
+        // Without the parallel iterators, the check faults the passes'
+        // thread pool: it reads lint's files.
         let without = AllowList {
-            crates: &[],
+            crate_items: &[],
             ..LINT
         };
         assert_ne!(faults(root, "src/lint", &without), Vec::<String>::new());

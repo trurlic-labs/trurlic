@@ -61,9 +61,14 @@ fn graph(decisions: &[(&str, &str, &str)]) -> ProjectState {
     state
 }
 
+/// The pass over `among`, keeping `limit` pairs, with no bound on its work.
+fn pairs_of<'s>(similarity: &Similarity<'s>, among: Among<'_>, limit: usize) -> Ranked<'s> {
+    similarity.pairs(among, limit, usize::MAX).unwrap()
+}
+
 /// Every likely duplicate pair: the selection bounded by nothing.
 fn every<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
-    let ranked = similarity.pairs(usize::MAX, |_| true);
+    let ranked = pairs_of(similarity, Among::Every, usize::MAX);
     assert_eq!(ranked.total, ranked.best.len());
     ranked.best
 }
@@ -154,12 +159,12 @@ fn the_pass_keeps_the_best_it_is_asked_for_and_counts_every_pair() {
     let similarity = Similarity::of(&state);
     let whole = every(&similarity);
 
-    let ranked = similarity.pairs(7, |_| true);
+    let ranked = pairs_of(&similarity, Among::Every, 7);
 
     assert_eq!(whole.len(), 60 * 59 / 2);
     assert_eq!(ranked.total, whole.len());
     assert_eq!(ranked.best, whole[..7]);
-    let none = similarity.pairs(0, |_| true);
+    let none = pairs_of(&similarity, Among::Every, 0);
     assert_eq!((none.total, none.best.len()), (whole.len(), 0));
 }
 
@@ -235,32 +240,42 @@ fn nearest_lists_the_likely_duplicates_best_first_up_to_its_count() {
     assert_eq!(both[0], []);
 }
 
-/// The index loses no pair. The graphs are drawn from a small vocabulary,
-/// so many pairs sit near the threshold, and some texts are empty or stop
-/// words alone. The index finds exactly the pairs the exact test over
-/// every pair finds, and each decision's nearest are its pairs.
-#[test]
-fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
+/// Texts of 2 to 9 words drawn from a small vocabulary, so many pairs sit
+/// near the threshold: forty decisions, the first empty and the second stop
+/// words alone.
+fn drawn(rng: &mut SplitMix64) -> Vec<(String, String)> {
     const WORDS: [&str; 14] = [
         "lock", "read", "write", "commit", "journal", "cache", "node", "file", "graph", "store",
         "batch", "retry", "the", "of",
     ];
+    let mut texts: Vec<(String, String)> = (0..40)
+        .map(|index| {
+            let words = 2 + rng.below(8);
+            let text: Vec<&str> = (0..words).map(|_| WORDS[rng.below(WORDS.len())]).collect();
+            (format!("d{index:02}"), text.join(" "))
+        })
+        .collect();
+    texts[0].1 = String::new();
+    texts[1].1 = "The of the.".into();
+    texts
+}
+
+fn graph_of(texts: &[(String, String)]) -> ProjectState {
+    let decisions: Vec<(&str, &str, &str)> = texts
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str(), ""))
+        .collect();
+    graph(&decisions)
+}
+
+/// The index loses no pair. On drawn graphs, the index finds exactly the
+/// pairs the exact test over every pair finds, and each decision's nearest
+/// are its pairs.
+#[test]
+fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
     let mut rng = SplitMix64::new(11);
     for _ in 0..20 {
-        let mut texts: Vec<(String, String)> = (0..40)
-            .map(|index| {
-                let words = 2 + rng.below(8);
-                let text: Vec<&str> = (0..words).map(|_| WORDS[rng.below(WORDS.len())]).collect();
-                (format!("d{index:02}"), text.join(" "))
-            })
-            .collect();
-        texts[0].1 = String::new();
-        texts[1].1 = "The of the.".into();
-        let decisions: Vec<(&str, &str, &str)> = texts
-            .iter()
-            .map(|(name, text)| (name.as_str(), text.as_str(), ""))
-            .collect();
-        let state = graph(&decisions);
+        let state = graph_of(&drawn(&mut rng));
         let similarity = Similarity::of(&state);
 
         let found = every(&similarity);
@@ -285,6 +300,79 @@ fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
             nearest.sort_unstable();
             assert_eq!(nearest, paired, "{name}");
         }
+    }
+}
+
+/// A pair touches the decisions named when either is one of them: each of
+/// the cache pair's decisions alone lists it, a decision in no pair lists
+/// none. On drawn graphs and a third of their decisions drawn, the pass
+/// lists exactly the pairs of every pair that hold one, each once.
+#[test]
+fn the_pairs_touching_some_decisions_are_those_that_hold_one_of_them() {
+    let state = graph(&FIXTURE);
+    let similarity = Similarity::of(&state);
+    let touching = |names: &[&str]| {
+        let ranked = pairs_of(&similarity, Among::Touching(names), usize::MAX);
+        let pairs: Vec<(&str, &str)> = ranked.best.iter().map(|p| (p.first, p.second)).collect();
+        (ranked.total, pairs)
+    };
+    let cache = (1, vec![("cache-node-reads", "cache-reads")]);
+    assert_eq!(touching(&["cache-node-reads"]), cache);
+    assert_eq!(touching(&["cache-reads"]), cache);
+    assert_eq!(touching(&["silent"]), (0, vec![]));
+    assert_eq!(touching(&["absent"]), (0, vec![]));
+
+    let mut rng = SplitMix64::new(5);
+    for _ in 0..20 {
+        let state = graph_of(&drawn(&mut rng));
+        let similarity = Similarity::of(&state);
+        let named: Vec<&str> = similarity
+            .names
+            .iter()
+            .copied()
+            .filter(|_| rng.below(3) == 0)
+            .collect();
+        let holds = |pair: &Pair<'_>| named.contains(&pair.first) || named.contains(&pair.second);
+        let expected: Vec<Pair<'_>> = every_pair(&similarity).into_iter().filter(holds).collect();
+
+        let ranked = pairs_of(&similarity, Among::Touching(&named), usize::MAX);
+
+        assert!(!expected.is_empty());
+        assert_eq!((ranked.total, ranked.best), (expected.len(), expected));
+    }
+}
+
+/// The work is the posting entries the pass reads and `PAIR_WORK` for each
+/// pair it may test, counted from the terms: `alpha`, held by three
+/// decisions, and `beta`, by two. Over every pair, 3 entries for `alpha`
+/// and 1 for `beta`, and the 3 pairs; touching `c`, its `alpha` against two
+/// others, 2 entries and 2 pairs; touching `a` and `b`, three entries each,
+/// and each against the two others. A bound below the work runs no pass;
+/// one at it runs the pass.
+#[test]
+fn the_pass_runs_only_when_its_work_is_within_the_bound() {
+    let state = graph(&[
+        ("a", "alpha beta", ""),
+        ("b", "alpha beta", ""),
+        ("c", "alpha", ""),
+    ]);
+    let similarity = Similarity::of(&state);
+    let cases: [(Among<'_>, usize); 3] = [
+        (Among::Every, 4 + 3 * PAIR_WORK),
+        (Among::Touching(&["c"]), 2 + 2 * PAIR_WORK),
+        (Among::Touching(&["a", "b"]), 6 + 4 * PAIR_WORK),
+    ];
+
+    for (among, work) in cases {
+        assert_eq!(
+            similarity.pairs(among, usize::MAX, work - 1),
+            Err(PastBound { work }),
+            "{among:?}"
+        );
+        assert!(
+            similarity.pairs(among, usize::MAX, work).is_ok(),
+            "{among:?}"
+        );
     }
 }
 
@@ -380,7 +468,7 @@ fn the_pairs_are_the_same_on_any_number_of_threads() {
             .build()
             .unwrap();
         pool.install(|| {
-            let ranked = Similarity::of(&state).pairs(40, |_| true);
+            let ranked = pairs_of(&Similarity::of(&state), Among::Every, 40);
             (ranked.total, ranked.best)
         })
     };

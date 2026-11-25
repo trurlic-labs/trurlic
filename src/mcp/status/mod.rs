@@ -41,7 +41,8 @@ const DESCRIPTION: &str = "The decision graph at a glance: its counts, the write
 `[quality]` in project.toml adds to the built-in ones (counted), the validation issues \
 it holds, what a shared graph's history lacks, the decisions of each component, and \
 `lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason \
-of 0.5 or more), each rule of the quality bar a stored decision breaks, and the decisions \
+of 0.5 or more, compared within a work limit: past it `counts.lint.uncompared` says so), \
+each rule of the quality bar a stored decision breaks, and the decisions \
 whose anchors all name a file and no symbol, counted by kind. The call judges the bar's \
 limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over \
 the decisions by name within a bound on the bytes they read: `counts.lint.patterns` says how many decisions \

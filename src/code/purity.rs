@@ -13,7 +13,9 @@
 //! the modules of [`STD_MODULES`] and the items of the list. The crate
 //! (`crate`, `$crate`, or as many `super`s as reach its root) goes only to
 //! the list's modules and store items. A dependency is named only when the
-//! list holds it. Refused outright: a glob or an
+//! list holds it or the item named. The hashed collections, whose hasher
+//! reads entropy, are refused, and so are the file system methods of a
+//! path where the list admits a path type. Refused outright: a glob or an
 //! alias of such a root, `extern crate`, an attribute that names a `path`
 //! (`#[path = ..]`, `#[cfg_attr(.., path = ..)]`), and the prelude macros
 //! of [`MACROS`], which read files or the environment or write a stream.
@@ -22,11 +24,13 @@
 //! query file, source of the index as its Rust files are.
 //!
 //! What can still reach the outside, a list complete for what the check
-//! reads (paths, macros and attributes): a macro the crate root defines
-//! before `code` in textual scope (it has none); what an allowed crate's
-//! own functions do with a handle `code` cannot name; what a caller hands
-//! in (a closure, a value whose `Drop` or trait impl does I/O); and the
-//! runtime's own messages to stderr, a panic's or a failed allocation's.
+//! reads (paths, macros, attributes and the path methods): a macro the
+//! crate root defines before the checked module in textual scope (it has
+//! none); what an allowed crate's or item's own functions and methods do,
+//! with a handle the module cannot name or a value it holds; what a caller
+//! hands in (a closure, a value whose `Drop` or trait impl does I/O); and
+//! the runtime's own messages to stderr, a panic's or a failed
+//! allocation's.
 
 use std::path::Path;
 
@@ -38,8 +42,9 @@ use tree_sitter::Node;
 use super::index::{FileKind, index};
 use super::syntax::{self, Token, text_of};
 
-/// The modules of `std`, `core` and `alloc` the index may name: none
-/// reads or writes outside the process's memory.
+/// The modules of `std`, `core` and `alloc` a pure module may name: none
+/// reads or writes outside the process's memory, but for the hashed
+/// collections of [`STD_REFUSED`].
 const STD_MODULES: [&str; 18] = [
     "borrow",
     "char",
@@ -59,6 +64,31 @@ const STD_MODULES: [&str; 18] = [
     "string",
     "sync",
     "vec",
+];
+
+/// The items of [`STD_MODULES`] refused: the hashed collections, whose
+/// default hasher's keys are read from the operating system's entropy.
+const STD_REFUSED: [(&str, &str); 4] = [
+    ("collections", "HashMap"),
+    ("collections", "HashSet"),
+    ("collections", "hash_map"),
+    ("collections", "hash_set"),
+];
+
+/// The methods of `std::path`'s `Path` and `PathBuf` that read the file
+/// system, refused after a `.` or a `::` in a module whose list admits an
+/// item of `std::path`.
+const PATH_IO_METHODS: [&str; 10] = [
+    "canonicalize",
+    "exists",
+    "is_dir",
+    "is_file",
+    "is_symlink",
+    "metadata",
+    "read_dir",
+    "read_link",
+    "symlink_metadata",
+    "try_exists",
 ];
 
 /// The store's items the index may name: its value types.
@@ -83,10 +113,13 @@ pub(crate) struct AllowList {
     /// The store's items: its value types.
     pub(crate) store_items: &'static [&'static str],
     /// Items of `std`, `core` and `alloc` outside those modules, as
-    /// (module, item).
+    /// (module, item). An item of `path` also refuses the module every
+    /// method of [`PATH_IO_METHODS`].
     pub(crate) std_items: &'static [(&'static str, &'static str)],
-    /// The dependencies.
+    /// The dependencies it may name whole.
     pub(crate) crates: &'static [&'static str],
+    /// The items of a dependency it may name, as (crate, item).
+    pub(crate) crate_items: &'static [(&'static str, &'static str)],
 }
 
 /// What the code index may name.
@@ -95,6 +128,7 @@ pub(super) const INDEX: AllowList = AllowList {
     store_items: &STORE_ITEMS,
     std_items: &[("io", "ErrorKind")],
     crates: &CRATES,
+    crate_items: &[],
 };
 
 /// The prelude's macros that read a file or the environment, or write a
@@ -370,11 +404,21 @@ fn file_faults(
     allowed: &AllowList,
 ) -> Vec<(usize, String)> {
     let spelled = |at: usize| tokens.get(at).map_or("", |(_, token)| token.as_str());
+    let paths = allowed
+        .std_items
+        .iter()
+        .any(|&(module, _)| module == "path");
     let mut found = Vec::new();
     for at in 0..tokens.len() {
         let line = tokens.get(at).map_or(0, |(line, _)| *line);
         match (spelled(at), spelled(at + 1), spelled(at + 2)) {
             ("extern", "crate", _) => found.push((line, "extern crate".to_owned())),
+            ("." | "::", method, _) if paths && PATH_IO_METHODS.contains(&method) => {
+                found.push((
+                    line,
+                    format!("calls `{method}`, which reads the file system"),
+                ));
+            }
             ("#", "[" | "!", _) if names_a_path(tokens, at) => {
                 found.push((line, "#[path]".to_owned()));
             }
@@ -539,6 +583,7 @@ fn path_fault(
     let refuse = || Some(format!("names `{spelled}`"));
     match root {
         "std" | "core" | "alloc" => match rest {
+            [module, item, ..] if STD_REFUSED.contains(&(*module, *item)) => refuse(),
             [module, ..] if STD_MODULES.contains(module) => None,
             [module, item, ..] if allowed.std_items.contains(&(*module, *item)) => None,
             _ => refuse(),
@@ -549,6 +594,12 @@ fn path_fault(
             _ => refuse(),
         },
         name if allowed.crates.contains(&name) => None,
+        name if rest
+            .first()
+            .is_some_and(|item| allowed.crate_items.contains(&(name, *item))) =>
+        {
+            None
+        }
         name if dependencies.iter().any(|dependency| dependency == name) => refuse(),
         _ => None,
     }
