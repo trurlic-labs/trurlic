@@ -53,6 +53,8 @@ pub(crate) use encoding::{
 pub(crate) use facts::Target;
 pub(crate) use facts::{CodeFacts, Entry, FileFault, Namesakes, ReadFault, Resolution};
 pub(crate) use index::{BOUNDS, FileKind, INDEX_FORMAT, MAX_SOURCE_BYTES, index};
+#[cfg(test)]
+pub(crate) use purity::{AllowList, faults};
 pub(crate) use span::HASH_SCHEME;
 #[cfg(test)]
 pub(crate) use span::SpanHash;
@@ -62,11 +64,11 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::purity::faults;
+    use super::purity::{INDEX, faults};
 
     #[test]
     fn the_index_names_nothing_but_what_its_allow_list_holds() {
-        let found = faults(Path::new(env!("CARGO_MANIFEST_DIR")), "src/code");
+        let found = faults(Path::new(env!("CARGO_MANIFEST_DIR")), "src/code", &INDEX);
 
         assert_eq!(found, Vec::<String>::new());
     }
@@ -179,7 +181,7 @@ mod tests {
         for (name, text) in SEEDED {
             write(&format!("src/index/{name}.rs"), text);
         }
-        let found = faults(root, "src/index");
+        let found = faults(root, "src/index", &INDEX);
         let files: std::collections::BTreeSet<&str> = found
             .iter()
             .map(|fault| fault.split(':').next().unwrap())

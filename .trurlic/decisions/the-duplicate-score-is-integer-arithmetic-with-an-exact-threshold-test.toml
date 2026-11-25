@@ -17,5 +17,5 @@ anchors = [
     { file = "src/lint/duplicates/fixed.rs", symbol = "wide" },
     { file = "src/lint/duplicates/mod.rs", symbol = "Score" },
     { file = "src/lint/duplicates/mod.rs", symbol = "likely" },
-    { file = "src/lint/duplicates/tests.rs", symbol = "a_pair_whose_cosine_is_exactly_the_threshold_is_listed" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "a_pair_at_exactly_the_threshold_is_listed_and_one_a_unit_below_is_not" },
 ]

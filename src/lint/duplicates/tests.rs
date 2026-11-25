@@ -5,9 +5,11 @@ use crate::store::seeded::SplitMix64;
 use crate::store::testing::{empty_state, sample_decision};
 
 /// Eight decisions: two pairs at the threshold or above, one a little below,
-/// and one with no term at all. The script's scores, to nine decimals:
-/// 0.643889186 for the cache pair, 0.519110087 for the lock pair and
-/// 0.489697192 for the journal pair.
+/// and one with no term at all. The reference cosines, the rule of the
+/// module doc in double precision (Python's `re.findall` for the terms,
+/// `math.log` for the inverse frequencies, `math.fsum` for the sums), to
+/// nine decimals: 0.643889186 for the cache pair, 0.519110087 for the lock
+/// pair and 0.489697192 for the journal pair.
 const FIXTURE: [(&str, &str, &str); 8] = [
     (
         "cache-node-reads",
@@ -79,7 +81,7 @@ fn nanos(score: Score) -> u128 {
 }
 
 #[test]
-fn the_pairs_at_the_threshold_are_the_scripts_best_first() {
+fn the_pairs_at_the_threshold_are_the_reference_cosines_best_first() {
     let state = graph(&FIXTURE);
 
     assert_eq!(
@@ -94,31 +96,41 @@ fn the_pairs_at_the_threshold_are_the_scripts_best_first() {
         .map(|pair| nanos(pair.score))
         .collect();
     // Within 2^-29 (1.9 billionths) of the real-valued cosine, cut to whole
-    // billionths, and the script's rounded to them: at most three apart.
-    for (score, script) in scores.into_iter().zip([643_889_186, 519_110_087]) {
-        assert!(score.abs_diff(script) <= 3, "{score} against {script}");
+    // billionths, and the reference rounded to them: at most three apart.
+    for (score, reference) in scores.into_iter().zip([643_889_186, 519_110_087]) {
+        assert!(
+            score.abs_diff(reference) <= 3,
+            "{score} against {reference}"
+        );
     }
 }
 
-/// Three terms each two decisions hold, so all three idfs are equal and
-/// each pair's cosine is exactly 1/2: listed, as `>=` reads.
+/// Four terms each two decisions hold, so all four weights are equal: `a0`
+/// holds the four, each other decision one of them. Each pair of `a0` and
+/// another has a cosine of exactly 1/2, with norms of one and two weights:
+/// listed, as `>=` reads. One unit less of dot product is below it.
 #[test]
-fn a_pair_whose_cosine_is_exactly_the_threshold_is_listed() {
+fn a_pair_at_exactly_the_threshold_is_listed_and_one_a_unit_below_is_not() {
     let state = graph(&[
-        ("a", "alpha beta", ""),
-        ("b", "alpha gamma", ""),
-        ("c", "beta gamma", ""),
+        ("a0", "alpha beta gamma delta", ""),
+        ("a1", "alpha", ""),
+        ("a2", "beta", ""),
+        ("a3", "delta", ""),
+        ("a4", "gamma", ""),
     ]);
+    let similarity = Similarity::of(&state);
+    // `a1`'s one term is `a0`'s at the same weight: their dot product is
+    // `a1`'s square.
+    let (all, one) = (&similarity.vectors[0], &similarity.vectors[1]);
 
     let half = "0.500000".to_owned();
     assert_eq!(
         listed(&state),
-        [
-            ("a", "b", half.clone()),
-            ("a", "c", half.clone()),
-            ("b", "c", half)
-        ]
+        ["a1", "a2", "a3", "a4"].map(|other| ("a0", other, half.clone()))
     );
+    let score = |dot| likely(all, one, dot).map(|score| score.to_string());
+    assert_eq!(score(one.square), Some(half));
+    assert_eq!(score(one.square - 1), None);
 }
 
 /// The pass holds no more pairs than it is asked for, however many there
@@ -223,10 +235,10 @@ fn nearest_lists_the_likely_duplicates_best_first_up_to_its_count() {
     assert_eq!(both[0], []);
 }
 
-/// The prefix filter loses no pair. The graphs are drawn from a small
-/// vocabulary, so many pairs sit near the threshold, and some texts are
-/// empty or stop words alone. The index finds exactly the pairs the exact
-/// test over every pair finds, and each decision's nearest are its pairs.
+/// The index loses no pair. The graphs are drawn from a small vocabulary,
+/// so many pairs sit near the threshold, and some texts are empty or stop
+/// words alone. The index finds exactly the pairs the exact test over
+/// every pair finds, and each decision's nearest are its pairs.
 #[test]
 fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
     const WORDS: [&str; 14] = [
@@ -255,13 +267,6 @@ fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
         let exact = every_pair(&similarity);
         assert!(!exact.is_empty());
         assert!(similarity.vectors.iter().any(|vector| vector.square == 0));
-        let filtered = similarity.vectors.iter();
-        assert!(
-            filtered
-                .filter(|vector| vector.indexed().len() < vector.terms().len())
-                .count()
-                > 10
-        );
         assert_eq!(found, exact);
         for &name in &similarity.names {
             let mut paired: Vec<&str> = found
@@ -283,13 +288,13 @@ fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
     }
 }
 
-/// Every pair the exact test passes, tried one by one, best first; each
-/// dot product checked against one summed over a map of the weights.
+/// Every pair the exact test passes, tried one by one with its dot
+/// product summed over a map of the weights, best first.
 fn every_pair<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
-    let weights: Vec<BTreeMap<usize, u64>> = similarity
-        .vectors
+    let (vectors, names) = (&similarity.vectors, &similarity.names);
+    let weights: Vec<BTreeMap<usize, u64>> = vectors
         .iter()
-        .map(|vector| vector.terms().iter().copied().collect())
+        .map(|vector| vector.terms.iter().copied().collect())
         .collect();
     let mut pairs = Vec::new();
     for (a, first) in weights.iter().enumerate() {
@@ -300,8 +305,14 @@ fn every_pair<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
                     Some(u128::from(weight) * u128::from(*second.get(term)?))
                 })
                 .sum();
-            assert_eq!(similarity.vectors[a].dot(&similarity.vectors[b]), dot);
-            pairs.extend(similarity.pair(a, b));
+            if let Some(score) = likely(&vectors[a], &vectors[b], dot) {
+                let (first, second) = (names[a], names[b]);
+                pairs.push(Pair {
+                    first,
+                    second,
+                    score,
+                });
+            }
         }
     }
     pairs.sort_by(|x, y| {

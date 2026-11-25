@@ -1,16 +1,17 @@
-//! The check that the code index reaches no file system, process,
-//! environment, thread, clock, network or console: an allow list, closed
-//! by construction, of what its non-test code may name.
+//! The check that a pure module (the code index, `lint`) reaches no file
+//! system, process, environment, thread, clock, network or console: an
+//! allow list per module ([`AllowList`]), closed by construction, of what
+//! its non-test code may name.
 //!
 //! Every token of every Rust file under the checked directory is read,
 //! macro arguments and bodies included. Test code is left out as the
 //! index's own roles mark it: a definition of the test role, a file the
 //! crate's tree makes test code whole. A path's first segment says where
 //! it goes, a `use` list read whole. `std`, `core` and `alloc` go only to
-//! the modules of [`STD_MODULES`], and `io` only to its `ErrorKind`. The
-//! crate (`crate`, `$crate`, or as many `super`s as reach its root) goes
-//! only to `code` and the store's [`STORE_ITEMS`]. A dependency is named
-//! only when it is one of [`CRATES`]. Refused outright: a glob or an
+//! the modules of [`STD_MODULES`] and the items of the list. The crate
+//! (`crate`, `$crate`, or as many `super`s as reach its root) goes only to
+//! the list's modules and store items. A dependency is named only when the
+//! list holds it. Refused outright: a glob or an
 //! alias of such a root, `extern crate`, `#[path]`, and the prelude macros
 //! of [`MACROS`], which read files or the environment or write a stream.
 //! The one include admitted is `include_str!` of a plain string literal,
@@ -67,6 +68,28 @@ const CRATES: [&str; 6] = [
     "toml",
 ];
 
+/// What a pure module's non-test code may name beyond the modules of
+/// [`STD_MODULES`].
+pub(crate) struct AllowList {
+    /// The crate's modules: the checked one and the pure ones it reads.
+    pub(crate) modules: &'static [&'static str],
+    /// The store's items: its value types.
+    pub(crate) store_items: &'static [&'static str],
+    /// Items of `std`, `core` and `alloc` outside those modules, as
+    /// (module, item).
+    pub(crate) std_items: &'static [(&'static str, &'static str)],
+    /// The dependencies.
+    pub(crate) crates: &'static [&'static str],
+}
+
+/// What the code index may name.
+pub(super) const INDEX: AllowList = AllowList {
+    modules: &["code"],
+    store_items: &STORE_ITEMS,
+    std_items: &[("io", "ErrorKind")],
+    crates: &CRATES,
+};
+
 /// The prelude's macros that read a file or the environment, or write a
 /// standard stream.
 const MACROS: [&str; 10] = [
@@ -82,9 +105,9 @@ const MACROS: [&str; 10] = [
     "dbg",
 ];
 
-/// Each fault of the Rust files under `root/dir`, `root` a crate's
-/// directory, as `file:line: what`, files sorted.
-pub(super) fn faults(root: &Path, dir: &str) -> Vec<String> {
+/// Each fault of the Rust files under `root/dir` against `allowed`, `root`
+/// a crate's directory, as `file:line: what`, files sorted.
+pub(crate) fn faults(root: &Path, dir: &str, allowed: &AllowList) -> Vec<String> {
     let texts = sources(root);
     let indexes: Vec<(&str, FileKind, FileIndex)> = texts
         .iter()
@@ -109,7 +132,7 @@ pub(super) fn faults(root: &Path, dir: &str) -> Vec<String> {
         let tokens = tokens_outside_tests(text, indexed);
         let place = Place { path, dir };
         found.extend(
-            file_faults(&tokens, depth, &dependencies, place)
+            file_faults(&tokens, depth, &dependencies, place, allowed)
                 .into_iter()
                 .map(|(line, what)| format!("{path}:{line}: {what}")),
         );
@@ -216,12 +239,14 @@ struct Place<'a> {
 }
 
 /// The faults of one file's `tokens`, a file `depth` modules below the
-/// crate root at `place`, whose dependencies are `dependencies`.
+/// crate root at `place`, whose dependencies are `dependencies`, against
+/// `allowed`.
 fn file_faults(
     tokens: &[(usize, String)],
     depth: usize,
     dependencies: &[String],
     place: Place<'_>,
+    allowed: &AllowList,
 ) -> Vec<(usize, String)> {
     let spelled = |at: usize| tokens.get(at).map_or("", |(_, token)| token.as_str());
     let mut found = Vec::new();
@@ -239,7 +264,7 @@ fn file_faults(
         }
         let mut next = at;
         for path in read_path(tokens, &mut next, Vec::new()) {
-            if let Some(fault) = path_fault(&path, depth, dependencies) {
+            if let Some(fault) = path_fault(&path, depth, dependencies, allowed) {
                 found.push((line, fault));
             }
         }
@@ -342,8 +367,13 @@ fn read_path(tokens: &[(usize, String)], at: &mut usize, prefix: Vec<String>) ->
 }
 
 /// Why `path`, in a file `depth` modules below the crate root, reaches
-/// outside what the index may name; `None` when it does not.
-fn path_fault(path: &[String], depth: usize, dependencies: &[String]) -> Option<String> {
+/// outside what `allowed` holds; `None` when it does not.
+fn path_fault(
+    path: &[String],
+    depth: usize,
+    dependencies: &[String],
+    allowed: &AllowList,
+) -> Option<String> {
     let segments: Vec<&str> = path
         .iter()
         .map(String::as_str)
@@ -363,16 +393,16 @@ fn path_fault(path: &[String], depth: usize, dependencies: &[String]) -> Option<
     let refuse = || Some(format!("names `{spelled}`"));
     match root {
         "std" | "core" | "alloc" => match rest {
-            ["io", "ErrorKind", ..] => None,
             [module, ..] if STD_MODULES.contains(module) => None,
+            [module, item, ..] if allowed.std_items.contains(&(*module, *item)) => None,
             _ => refuse(),
         },
         "crate" | "$crate" => match rest {
-            ["code", ..] => None,
-            ["store", item, ..] if STORE_ITEMS.contains(item) => None,
+            [module, ..] if allowed.modules.contains(module) => None,
+            ["store", item, ..] if allowed.store_items.contains(item) => None,
             _ => refuse(),
         },
-        name if CRATES.contains(&name) => None,
+        name if allowed.crates.contains(&name) => None,
         name if dependencies.iter().any(|dependency| dependency == name) => refuse(),
         _ => None,
     }

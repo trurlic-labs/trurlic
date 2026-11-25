@@ -92,9 +92,9 @@ mod tests {
         terms
     }
 
-    /// The script's 35 stop words, and none beside them.
+    /// The 35 listed stop words, and none beside them.
     #[test]
-    fn the_stop_words_are_the_scripts() {
+    fn the_stop_words_are_the_35_listed() {
         let listed = "a an and are as at be been by can each for from has have in is it its \
                       not of on or that the their there these they this to was were which with";
         let dropped = listed.split(' ').filter(|word| is_stop_word(word)).count();

@@ -20,5 +20,5 @@ anchors = [
     { file = "src/mcp/status/lint.rs", symbol = "lint_limit" },
 ]
 depends_on = [
-    "duplicate-pairs-come-from-a-prefix-filtered-inverted-index",
+    "duplicate-pairs-come-from-an-inverted-index-over-every-term",
 ]

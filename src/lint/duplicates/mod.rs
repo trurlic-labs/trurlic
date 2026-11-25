@@ -18,15 +18,12 @@
 //! square roots, off by at most 2^-30 more: within 2^-29 of the real-valued
 //! cosine.
 //!
-//! The pairs come from an inverted index over the terms (all-pairs with a
-//! prefix filter). Terms are ranked most common first, and the leading
-//! terms of a decision whose norm is under the threshold's share of its
-//! whole stay out of the index: a pair at the threshold shares a term both
-//! index. A candidate's dot product over those shared terms bounds what it
-//! can reach on the others (`vectors::may_reach`), and only one that can
-//! reach the threshold is scored whole. No pair is visited that shares no
-//! indexed term, and none allocates: the pass counts every pair and keeps
-//! only the best it is asked for (`best`), however many there are.
+//! The pairs come from an inverted index over every term: each decision
+//! reads the postings of its terms for the decisions before it, adding up
+//! its exact dot product with each, and every decision it shares a term
+//! with is put to the threshold test. No pair is visited that shares no
+//! term, and none allocates: the pass counts every pair and keeps only the
+//! best it is asked for (`best`), however many there are.
 
 mod best;
 mod fixed;
@@ -106,52 +103,53 @@ pub(crate) struct Ranked<'s> {
 /// first decision, then the second, by index, which is name order.
 type PairKey = (Reverse<Score>, usize, usize);
 
-/// The weight vectors of a graph's decisions.
+/// The weight vectors of a graph's decisions, and the inverted index over
+/// their terms.
 pub(crate) struct Similarity<'s> {
     /// The decisions' names, sorted; a decision is its index here.
     names: Vec<&'s str>,
     vectors: Vec<Vector>,
-    /// The terms of the graph: the ranks run below it.
-    terms: usize,
+    /// Per term, by id, the decisions that hold it, in order, with its
+    /// weight there.
+    postings: Vec<Vec<(usize, u64)>>,
 }
 
 impl<'s> Similarity<'s> {
-    /// The vectors of every decision of `state`.
+    /// The vectors of every decision of `state`, and their index.
     pub(crate) fn of(state: &'s ProjectState) -> Self {
         let (vectors, terms) = vectors::of(state);
+        let mut postings = vec![Vec::new(); terms];
+        for (decision, vector) in vectors.iter().enumerate() {
+            for &(term, weight) in &vector.terms {
+                if let Some(posting) = postings.get_mut(term) {
+                    posting.push((decision, weight));
+                }
+            }
+        }
         Self {
             names: state.decisions.keys().map(String::as_str).collect(),
             vectors,
-            terms,
+            postings,
         }
     }
 
     /// The count of likely duplicate pairs that touch a decision `touching`
-    /// admits, by name, and the best `limit` of them:
-    /// the pass holds no more than `limit` pairs per thread, however many
+    /// admits, by name, and the best `limit` of them: the pass holds no
+    /// more than `limit` pairs per task of the thread pool, however many
     /// there are.
     ///
-    /// The decisions are put in the order of their boundaries, and each
-    /// probes those before it, so the later boundary of every pair is the
-    /// probe's and the probe's squares below it are its unindexed ones.
-    /// The probes run on the thread pool, each task over a run of places in
-    /// order, so the cursors it keeps into the earlier decisions' squares
-    /// only move forward. The kept pairs are the smallest keys of a total
-    /// order, so they do not depend on the threads.
+    /// Each decision probes those before it. The probes run on the thread
+    /// pool, and the kept pairs are the smallest keys of a total order, so
+    /// they do not depend on the threads.
     pub(crate) fn pairs(&self, limit: usize, touching: impl Fn(&str) -> bool + Sync) -> Ranked<'s> {
-        let mut order: Vec<usize> = (0..self.vectors.len()).collect();
-        order.sort_unstable_by_key(|&decision| {
-            (self.vectors.get(decision).map(|v| v.boundary), decision)
-        });
-        let index = Index::of(&self.vectors, order, self.terms);
         let decisions = self.vectors.len();
         let best = (0..decisions)
             .into_par_iter()
             .with_min_len(PER_TASK)
             .fold(
                 || Task::new(decisions, limit),
-                |mut task, place| {
-                    self.probe(&index, place, &mut task, &touching);
+                |mut task, probe| {
+                    self.probe(probe, &mut task, &touching);
                     task
                 },
             )
@@ -171,47 +169,25 @@ impl<'s> Similarity<'s> {
         Ranked { total, best }
     }
 
-    /// Offer to `best` each likely duplicate of the decision at `place` in
-    /// `index` among those before it.
-    fn probe(
-        &self,
-        index: &Index,
-        place: usize,
-        task: &mut Task,
-        touching: &(impl Fn(&str) -> bool + Sync),
-    ) {
-        let Task {
-            scratch,
-            cursors,
-            best,
-        } = task;
-        let Some(probe) = index.member(place) else {
-            return;
-        };
+    /// Offer to the task's selection each likely duplicate of the decision
+    /// `probe` among those before it.
+    fn probe(&self, probe: usize, task: &mut Task, touching: &(impl Fn(&str) -> bool + Sync)) {
+        let Task { scratch, best } = task;
         let Some(vector) = self.vectors.get(probe) else {
             return;
         };
-        let read = Places {
-            before: place,
-            skip: usize::MAX,
-        };
-        scratch.candidates(index, vector, read, |other, partial| {
-            let (Some(held), Some(cursor)) = (self.vectors.get(other), cursors.get_mut(other))
+        scratch.dots(&self.postings, vector, probe, |other, dot| {
+            let Some(score) = self
+                .vectors
+                .get(other)
+                .and_then(|held| likely(vector, held, dot))
             else {
                 return;
             };
-            let rests = (
-                vector.unindexed,
-                held.square_below_from(cursor, vector.boundary),
-            );
-            if vectors::may_reach(vector, held, partial, rests)
-                && let Some(score) = likely(vector, held)
-            {
-                let named =
-                    |decision: usize| self.names.get(decision).is_some_and(|&name| touching(name));
-                if named(probe) || named(other) {
-                    best.offer((Reverse(score), probe.min(other), probe.max(other)));
-                }
+            let named =
+                |decision: usize| self.names.get(decision).is_some_and(|&name| touching(name));
+            if named(other) || named(probe) {
+                best.offer((Reverse(score), other, probe));
             }
         });
     }
@@ -220,25 +196,15 @@ impl<'s> Similarity<'s> {
     /// best first, then by name, at most `count`; none for a name the graph
     /// lacks.
     pub(crate) fn nearest(&self, names: &[&str], count: usize) -> Vec<Vec<Neighbour<'s>>> {
-        let decisions = self.vectors.len();
-        // Every decision at the place of its own index.
-        let index = Index::of(&self.vectors, (0..decisions).collect(), self.terms);
-        let mut scratch = Scratch::new(decisions);
+        let mut scratch = Scratch::new(self.vectors.len());
         names
             .iter()
-            .map(|name| self.nearest_in(&index, &mut scratch, name, count))
+            .map(|name| self.nearest_to(&mut scratch, name, count))
             .collect()
     }
 
-    /// The likely duplicates of `name` in `index`, which holds every
-    /// decision at the place of its own index.
-    fn nearest_in(
-        &self,
-        index: &Index,
-        scratch: &mut Scratch,
-        name: &str,
-        count: usize,
-    ) -> Vec<Neighbour<'s>> {
+    /// The likely duplicates of `name`, best first, at most `count`.
+    fn nearest_to(&self, scratch: &mut Scratch, name: &str, count: usize) -> Vec<Neighbour<'s>> {
         let Ok(decision) = self.names.binary_search(&name) else {
             return Vec::new();
         };
@@ -246,18 +212,14 @@ impl<'s> Similarity<'s> {
             return Vec::new();
         };
         let mut best: Best<(Reverse<Score>, usize)> = Best::new(count);
-        let everyone = Places {
-            before: self.vectors.len(),
-            skip: decision,
-        };
-        scratch.candidates(index, vector, everyone, |other, partial| {
-            let Some(held) = self.vectors.get(other) else {
+        scratch.dots(&self.postings, vector, self.vectors.len(), |other, dot| {
+            if other == decision {
                 return;
-            };
-            let boundary = vector.boundary.max(held.boundary);
-            let rests = (vector.square_below(boundary), held.square_below(boundary));
-            if vectors::may_reach(vector, held, partial, rests)
-                && let Some(score) = likely(vector, held)
+            }
+            if let Some(score) = self
+                .vectors
+                .get(other)
+                .and_then(|held| likely(vector, held, dot))
             {
                 best.offer((Reverse(score), other));
             }
@@ -270,25 +232,12 @@ impl<'s> Similarity<'s> {
             })
             .collect()
     }
-
-    /// The decisions `first` and `second` as a pair, when they are likely
-    /// duplicates: what the pass finds, decided one pair at a time.
-    #[cfg(test)]
-    fn pair(&self, first: usize, second: usize) -> Option<Pair<'s>> {
-        let score = likely(self.vectors.get(first)?, self.vectors.get(second)?)?;
-        Some(Pair {
-            first: self.names.get(first)?,
-            second: self.names.get(second)?,
-            score,
-        })
-    }
 }
 
-/// The score of `a` and `b` when they share a term and their cosine is at
-/// the threshold or above: `(denominator dot)^2 >= numerator^2 |a|^2
-/// |b|^2`, exact in 256 bits.
-fn likely(a: &Vector, b: &Vector) -> Option<Score> {
-    let dot = a.dot(b);
+/// The score of `a` and `b`, whose dot product is `dot`, when they share a
+/// term and their cosine is at the threshold or above: `(denominator
+/// dot)^2 >= numerator^2 |a|^2 |b|^2`, exact in 256 bits.
+fn likely(a: &Vector, b: &Vector, dot: u128) -> Option<Score> {
     if dot == 0 {
         return None;
     }
@@ -305,42 +254,9 @@ fn likely(a: &Vector, b: &Vector) -> Option<Score> {
     Some(Score(u64::try_from(cosine).unwrap_or(ONE_Q32)))
 }
 
-/// An inverted index over the indexed terms of the decisions of `members`,
-/// each by its place there.
-struct Index {
-    /// The decision at each place.
-    members: Vec<usize>,
-    /// Per term, by rank, the places of the decisions that index it, in
-    /// order, with its weight there.
-    postings: Vec<Vec<(usize, u64)>>,
-}
-
-impl Index {
-    fn of(vectors: &[Vector], members: Vec<usize>, terms: usize) -> Self {
-        let mut postings = vec![Vec::new(); terms];
-        for (place, &decision) in members.iter().enumerate() {
-            let indexed = vectors.get(decision).map_or(&[][..], Vector::indexed);
-            for &(term, weight) in indexed {
-                if let Some(posting) = postings.get_mut(term) {
-                    posting.push((place, weight));
-                }
-            }
-        }
-        Self { members, postings }
-    }
-
-    fn member(&self, place: usize) -> Option<usize> {
-        self.members.get(place).copied()
-    }
-}
-
 /// What one task of the pairs pass holds over its run of probes.
 struct Task {
     scratch: Scratch,
-    /// Per decision, how many of its terms rank below the boundary of the
-    /// task's last probe. A cursor that stood further on would make the
-    /// bound of `may_reach` looser, never wrong.
-    cursors: Vec<usize>,
     best: Best<PairKey>,
 }
 
@@ -348,7 +264,6 @@ impl Task {
     fn new(decisions: usize, limit: usize) -> Self {
         Self {
             scratch: Scratch::new(decisions),
-            cursors: vec![0; decisions],
             best: Best::new(limit),
         }
     }
@@ -357,57 +272,46 @@ impl Task {
 /// The dot products of one probe: sized to the graph once and cleared
 /// after each probe, so no pair allocates.
 struct Scratch {
-    /// Per place, its decision's dot product with the probe so far.
+    /// Per decision, its dot product with the probe so far.
     partial: Vec<u128>,
-    /// The places whose `partial` is above zero.
+    /// The decisions whose `partial` is above zero.
     touched: Vec<usize>,
 }
 
-/// The places a probe reads in an index: those before `before`, but the
-/// one at `skip`.
-#[derive(Debug, Clone, Copy)]
-struct Places {
-    before: usize,
-    skip: usize,
-}
-
 impl Scratch {
-    fn new(places: usize) -> Self {
+    fn new(decisions: usize) -> Self {
         Self {
-            partial: vec![0; places],
+            partial: vec![0; decisions],
             touched: Vec::new(),
         }
     }
 
-    /// Call `each` with every decision of `places` in `index` that shares
-    /// a term with `probe` both index, and their dot product over the terms
-    /// both index: every decision whose cosine with it can reach the
-    /// threshold. Leaves the scratch clear.
-    fn candidates(
+    /// Call `each` with every decision before `before` in `postings` that
+    /// shares a term with `probe`, and their dot product. Leaves the
+    /// scratch clear.
+    fn dots(
         &mut self,
-        index: &Index,
+        postings: &[Vec<(usize, u64)>],
         probe: &Vector,
-        places: Places,
+        before: usize,
         mut each: impl FnMut(usize, u128),
     ) {
-        let Places { before, skip } = places;
-        for &(term, weight) in probe.indexed() {
-            let posting = index.postings.get(term).map_or(&[][..], Vec::as_slice);
-            // A posting is in place order: the first at `before` ends it.
-            for &(place, held) in posting.iter().take_while(|&&(place, _)| place < before) {
-                let Some(partial) = self.partial.get_mut(place).filter(|_| place != skip) else {
+        for &(term, weight) in &probe.terms {
+            let posting = postings.get(term).map_or(&[][..], Vec::as_slice);
+            // A posting is in decision order: the first at `before` ends it.
+            for &(other, held) in posting.iter().take_while(|&&(other, _)| other < before) {
+                let Some(partial) = self.partial.get_mut(other) else {
                     continue;
                 };
                 if *partial == 0 {
-                    self.touched.push(place);
+                    self.touched.push(other);
                 }
                 // Weights are at least 2^32, so a product is above zero.
                 *partial = partial.saturating_add(u128::from(weight) * u128::from(held));
             }
         }
-        for place in self.touched.drain(..) {
-            if let (Some(partial), Some(other)) = (self.partial.get_mut(place), index.member(place))
-            {
+        for other in self.touched.drain(..) {
+            if let Some(partial) = self.partial.get_mut(other) {
                 each(other, std::mem::take(partial));
             }
         }
