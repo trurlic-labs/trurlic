@@ -167,7 +167,7 @@ impl fmt::Display for QueryFault {
             ),
             Self::UnknownNodeKind { pattern, name } => write!(
                 f,
-                "pattern {pattern} names `{name}`, which is no node kind of the grammar"
+                "pattern {pattern} names `{name}`, which is no kind of a node of the grammar's trees"
             ),
             Self::UnknownContainer { pattern, name } => write!(
                 f,
@@ -391,6 +391,13 @@ impl Properties<'_> {
         self.settings.get(key).map(|value| value.split_whitespace())
     }
 
+    fn unknown_kind(&self, name: &str) -> QueryFault {
+        QueryFault::UnknownNodeKind {
+            pattern: self.pattern,
+            name: name.to_owned(),
+        }
+    }
+
     /// The definition kind `key` names.
     fn kind(&self, key: &str) -> Result<Option<DefinitionKind>, QueryFault> {
         self.settings
@@ -406,13 +413,11 @@ impl Properties<'_> {
         };
         let mut kinds = Vec::new();
         for name in words {
+            // A supertype (`expression`) names a class of kinds; no node of
+            // a tree is of it, so a growth to it would reach nothing.
             match grammar.id_for_node_kind(name, true) {
-                0 => {
-                    return Err(QueryFault::UnknownNodeKind {
-                        pattern: self.pattern,
-                        name: name.to_owned(),
-                    });
-                }
+                0 => return Err(self.unknown_kind(name)),
+                id if grammar.node_kind_is_supertype(id) => return Err(self.unknown_kind(name)),
                 id => kinds.push(id),
             }
         }
@@ -562,6 +567,13 @@ mod tests {
                 QueryFault::UnknownNodeKind {
                     pattern: 0,
                     name: "decorated".to_owned(),
+                },
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! definition.to \"expression\"))"),
+                QueryFault::UnknownNodeKind {
+                    pattern: 0,
+                    name: "expression".to_owned(),
                 },
             ),
             (

@@ -1,7 +1,9 @@
-//! The bound on a Python file's indentations, checked before the parse:
-//! tree-sitter-python's scanner aborts the process past it. It is the one
-//! rule of a language the general resolver reads that is code, not its
-//! query: no query runs before the parse.
+//! What tree-sitter-python's scanner and parser need checked before a
+//! parse, since no budget stops them during it: the indentation widths,
+//! past which the scanner aborts the process, and the line continuations
+//! of one logical line, past which error recovery runs quadratic. They are
+//! the only rules of a language the general resolver reads that are code,
+//! not its query: no query runs before the parse.
 //!
 //! The scanner keeps the indentations of the open blocks on a stack and,
 //! after each token it makes, writes them two bytes each after the open
@@ -14,21 +16,31 @@
 //! distinct widths the file's lines start at, counted as the scanner
 //! counts them. A file with more than [`MAX_INDENTATIONS`] is refused:
 //! that many entries and every delimiter fit the buffer with room.
+//!
+//! Error recovery summarizes the stack of `line_continuation` extras of
+//! the logical line it is in, at a cost no step it reports counts: a run
+//! of continuations inside a parse error costs the square of its length.
+//! A file with a run of more than [`MAX_CONTINUATIONS`] is refused.
 
 use std::collections::BTreeSet;
 
-use super::index::IndexFault;
+use crate::code::index::IndexFault;
 
 /// The distinct widths a Python file's lines may start at.
-pub(super) const MAX_INDENTATIONS: usize = 256;
+pub(in crate::code) const MAX_INDENTATIONS: usize = 256;
+
+/// The line continuations one logical line may hold.
+pub(in crate::code) const MAX_CONTINUATIONS: usize = 64;
 
 /// Refuse `text` when its lines start at more than [`MAX_INDENTATIONS`]
 /// widths. A width is what the scanner measures: from a line feed,
 /// carriage return, form feed or NUL, a space counts 1 and a tab 8 in 16
-/// bits that wrap, and a backslash before a line break continues the
-/// run. Every line counts, a line inside a string or brackets too, so the
-/// widths the scanner can push are among the ones counted.
-pub(super) fn within_bound(text: &str) -> Result<(), IndexFault> {
+/// bits that wrap. A backslash before a line break continues a width
+/// that is open; after any other byte (a comment's last, `# \`) the line
+/// break starts one, as the scanner sees it. Every line counts, a line
+/// inside a string or brackets too, so the widths the scanner can push
+/// are among the ones counted.
+pub(in crate::code) fn check_indentations(text: &str) -> Result<(), IndexFault> {
     let bytes = text.as_bytes();
     let mut widths = BTreeSet::new();
     // The file's start is a line's.
@@ -36,11 +48,12 @@ pub(super) fn within_bound(text: &str) -> Result<(), IndexFault> {
     let mut at = 0;
     while let Some(&byte) = bytes.get(at) {
         at += 1;
+        let open = width.is_some();
         let continued = match (byte, bytes.get(at), bytes.get(at + 1)) {
             (b' ', ..) => Some(1),
             (b'\t', ..) => Some(8),
-            (b'\\', Some(b'\n'), _) | (b'\\', None, _) => Some(0).inspect(|_| at += 1),
-            (b'\\', Some(b'\r'), Some(b'\n')) => Some(0).inspect(|_| at += 2),
+            (b'\\', Some(b'\n'), _) | (b'\\', None, _) if open => Some(0).inspect(|_| at += 1),
+            (b'\\', Some(b'\r'), Some(b'\n')) if open => Some(0).inspect(|_| at += 2),
             _ => None,
         };
         match continued {
@@ -65,6 +78,42 @@ pub(super) fn within_bound(text: &str) -> Result<(), IndexFault> {
     Ok(())
 }
 
+/// Refuse `text` when a run of more than [`MAX_CONTINUATIONS`] line
+/// continuations, each a backslash right before a line break, holds no
+/// other line break. Every backslash so placed counts, one that ends a
+/// comment or stands in a string too: a run that long is generated, never
+/// written.
+pub(in crate::code) fn check_continuations(text: &str) -> Result<(), IndexFault> {
+    let bytes = text.as_bytes();
+    let mut run = 0;
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        let ending = match (byte, bytes.get(at + 1), bytes.get(at + 2)) {
+            (b'\\', Some(b'\n'), _) => Some(2),
+            (b'\\', Some(b'\r'), Some(b'\n')) => Some(3),
+            _ => None,
+        };
+        match ending {
+            Some(length) => {
+                run += 1;
+                if run > MAX_CONTINUATIONS {
+                    return Err(IndexFault::TooManyContinuations {
+                        max: MAX_CONTINUATIONS,
+                    });
+                }
+                at += length;
+            }
+            None => {
+                if byte == b'\n' {
+                    run = 0;
+                }
+                at += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,9 +127,9 @@ mod tests {
 
     #[test]
     fn a_file_past_the_bound_of_distinct_indentations_is_refused() {
-        assert_eq!(within_bound(&widths(MAX_INDENTATIONS)), Ok(()));
+        assert_eq!(check_indentations(&widths(MAX_INDENTATIONS)), Ok(()));
         assert_eq!(
-            within_bound(&widths(MAX_INDENTATIONS + 1)),
+            check_indentations(&widths(MAX_INDENTATIONS + 1)),
             Err(IndexFault::TooManyIndentations {
                 max: MAX_INDENTATIONS
             })
@@ -97,7 +146,7 @@ mod tests {
                 found.push_str(&format!("{}x\n", " ".repeat(n + 1000)));
             }
             found.push_str(text);
-            within_bound(&found)
+            check_indentations(&found)
         };
 
         assert_eq!(
@@ -125,5 +174,45 @@ mod tests {
                 max: MAX_INDENTATIONS
             })
         );
+    }
+
+    #[test]
+    fn a_line_break_after_a_comment_ending_in_a_backslash_starts_a_width() {
+        let lines: String = (1..=MAX_INDENTATIONS + 1)
+            .map(|n| format!("{}x = 1  # \\\n", " ".repeat(n)))
+            .collect();
+
+        assert_eq!(
+            check_indentations(&lines),
+            Err(IndexFault::TooManyIndentations {
+                max: MAX_INDENTATIONS
+            })
+        );
+        assert_eq!(
+            check_indentations(&lines.replace("  # \\", "")),
+            check_indentations(&lines)
+        );
+    }
+
+    #[test]
+    fn a_run_of_continuations_past_the_bound_is_refused() {
+        let run = |count: usize, line_break: &str| {
+            format!("x = {}1\n", format!("1 + \\{line_break}").repeat(count))
+        };
+
+        for line_break in ["\n", "\r\n"] {
+            assert_eq!(
+                check_continuations(&run(MAX_CONTINUATIONS, line_break)),
+                Ok(())
+            );
+            assert_eq!(
+                check_continuations(&run(MAX_CONTINUATIONS + 1, line_break)),
+                Err(IndexFault::TooManyContinuations {
+                    max: MAX_CONTINUATIONS
+                })
+            );
+        }
+        let separate = run(MAX_CONTINUATIONS, "\n").repeat(10);
+        assert_eq!(check_continuations(&separate), Ok(()));
     }
 }

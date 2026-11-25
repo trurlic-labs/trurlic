@@ -1,9 +1,8 @@
 component = "code"
-choice = "A Python definition whose name starts with an underscore is private, unless it is a dunder name such as __init__, which is public like every other name"
-reason = "A count of definitions with and without the private ones needs each definition's visibility, and Python has no modifier: a leading underscore is the language's own convention for a name a module or a class keeps to itself, which PEP 8 states and import * and name mangling honour. A dunder name such as __init__ or __all__ is a protocol the language reads from outside, so it is public, as is every name without the underscore. The rule is the query's: a visibility.private mark on each identifier that matches ^_ and not ^__.*__$, and the visibility public on each definition pattern, so it holds alike for a def, a class and a name a module or a class binds."
+choice = "A Python definition whose name starts with an underscore is private"
+reason = "A count of definitions with and without the private ones needs each definition's visibility, and Python has no modifier: a leading underscore is the language's own convention for a name a module or a class keeps to itself, which PEP 8 states and import * and name mangling honour. The rule is the query's, a visibility.private mark on each identifier whose name starts with an underscore, so it holds alike for a def, a class and a name a module or a class binds. Which underscored names are public all the same is a decision of its own (a-python-dunder-name-and-every-name-without-an-underscore-is-public)."
 alternatives = [
     "No visibility for Python: rejected because the underscore is how Python states privacy, and a count could not leave private helpers out",
-    "A dunder name private too: rejected because __init__ and __all__ are read from outside the class or module",
 ]
 tags = [
     "anchors",

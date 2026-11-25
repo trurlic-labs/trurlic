@@ -15,9 +15,8 @@
 //! walk reaches later or now: what it captures waits by node until then.
 //!
 //! The sweep places the definitions by span: sorted by start, the widest
-//! first, each is under the innermost open container whose span holds it,
-//! and two of one span (the names of one statement) are siblings. A
-//! definition's path is its container's and its name.
+//! first, each is under the innermost open container whose span holds it.
+//! A definition's path is its container's and its name.
 
 use std::collections::BTreeMap;
 use std::iter;
@@ -30,8 +29,9 @@ use super::language::Language;
 use super::query::{Capture, Container, Definer, Rules};
 use super::scope::{ScopeId, ScopeTree};
 use super::symbol::Segment;
-use super::syntax::{self, Leaves, NodeMarks};
+use super::syntax;
 use super::tree::TreeIndex;
+use super::units::{Leaves, NodeMarks};
 use super::work::{SCAN_WORK_PER_BYTE, Work};
 
 /// The matches a query may have in progress at once. A file that needs
@@ -40,7 +40,7 @@ pub(super) const MATCH_LIMIT: u32 = 256;
 
 /// The index of `text`, a file of `language`.
 pub(super) fn index(language: &Language, text: &str) -> Result<FileIndex, IndexFault> {
-    if let Some(bound) = language.before_parse {
+    for bound in language.before_parse {
         bound(text)?;
     }
     // Each language's query is compiled against the contract in its
@@ -54,13 +54,10 @@ pub(super) fn index(language: &Language, text: &str) -> Result<FileIndex, IndexF
     let mut scopes = ScopeTree::for_file(text.len());
     let placed = place(&found, text, &mut scopes)?;
     let mut marks = found.marks;
-    let mut starts = Vec::with_capacity(placed.len());
     for definition in &placed {
         marks.entry(definition.span.id).or_default().span = true;
-        starts.push(definition.span.start);
     }
-    starts.sort_unstable();
-    let (leaves, units) = Leaves::of_marked(&tree, (text, &language.lexicon), &marks, &starts);
+    let (leaves, units) = Leaves::of_marked(&tree, (text, &language.lexicon), &marks);
     let mut build = TreeIndex::new(text, leaves, scopes);
     for definition in placed {
         let span = definition.span;
@@ -91,23 +88,14 @@ impl SpanNode {
     }
 }
 
-/// A node a `@visibility.<name>` capture marks: its bytes and the
-/// visibility.
-#[derive(Debug, Clone, Copy)]
-struct VisibilityMark {
-    start: usize,
-    end: usize,
-    visibility: Visibility,
-}
-
 /// What the walk found of a definition's name node.
 #[derive(Debug, Clone, Copy)]
 struct NameNode {
     start: usize,
     end: usize,
     test: bool,
-    /// The innermost visibility mark that holds it.
-    visibility: Option<VisibilityMark>,
+    /// What the innermost visibility mark that holds it states.
+    visibility: Option<Visibility>,
 }
 
 /// A definition pattern's match, completed as the walk reaches the
@@ -134,7 +122,7 @@ struct Frame {
     kind: u16,
     node: SpanNode,
     test: bool,
-    visibility: Option<VisibilityMark>,
+    visibility: Option<Visibility>,
 }
 
 /// What the walk found: the candidates, and how the hash takes each
@@ -413,13 +401,7 @@ fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame
     for waited in waiting {
         match *waited {
             Waiting::Test => frame.test = true,
-            Waiting::Visibility(visibility) => {
-                frame.visibility = Some(VisibilityMark {
-                    start: span.start,
-                    end: span.end,
-                    visibility,
-                });
-            }
+            Waiting::Visibility(visibility) => frame.visibility = Some(visibility),
             Waiting::Definition(_) | Waiting::Name(_) => {}
         }
     }
@@ -432,14 +414,6 @@ struct Placed {
     scope: ScopeId,
     span: SpanNode,
     what: What,
-}
-
-/// The visibility the innermost mark that holds `name` states, when
-/// `span` holds the mark.
-fn visibility_of(name: &NameNode, span: SpanNode) -> Option<Visibility> {
-    name.visibility
-        .filter(|mark| span.holds(mark.start, mark.end))
-        .map(|mark| mark.visibility)
 }
 
 /// A container open in the sweep: its span, kind and scope.
@@ -455,11 +429,10 @@ fn place(found: &Found<'_>, text: &str, scopes: &mut ScopeTree) -> Result<Vec<Pl
     let mut open: Vec<Open> = Vec::new();
     let mut placed = Vec::new();
     for (span, name, definer) in found.complete() {
-        // Two definitions of one span are siblings.
-        while open.last().is_some_and(|top| {
-            !top.span.holds(span.start, span.end)
-                || (top.span.start, top.span.end) == (span.start, span.end)
-        }) {
+        while open
+            .last()
+            .is_some_and(|top| !top.span.holds(span.start, span.end))
+        {
             open.pop();
         }
         let container = open.last().map_or(Container::Top, |top| top.container);
@@ -480,7 +453,7 @@ fn place(found: &Found<'_>, text: &str, scopes: &mut ScopeTree) -> Result<Vec<Pl
         let what = What {
             kind,
             role: name.role(),
-            visibility: visibility_of(&name, span).or(definer.visibility),
+            visibility: name.visibility.or(definer.visibility),
         };
         placed.push(Placed { scope, span, what });
     }

@@ -15,13 +15,13 @@ origin = "code index review fixes"
 created = "2026-11-25T17:10:51.306704636Z"
 anchors = [
     { file = "src/code/rust.rs", symbol = "LEXICON" },
-    { file = "src/code/syntax.rs", symbol = "Leaves::of" },
     { file = "src/code/syntax.rs", symbol = "Lexicon" },
     { file = "src/code/syntax.rs", symbol = "Lexicon::comment" },
-    { file = "src/code/syntax.rs", symbol = "a_byte_no_node_holds_is_a_token" },
-    { file = "src/code/syntax.rs", symbol = "a_comment_among_bytes_no_node_holds_moves_no_hash" },
     { file = "src/code/syntax.rs", symbol = "every_byte_but_comments_and_whitespace_is_in_one_token" },
     { file = "src/code/syntax.rs", symbol = "gaps" },
+    { file = "src/code/units.rs", symbol = "Leaves::of" },
+    { file = "src/code/units.rs", symbol = "a_byte_no_node_holds_is_a_token" },
+    { file = "src/code/units.rs", symbol = "a_comment_among_bytes_no_node_holds_moves_no_hash" },
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",

@@ -1,15 +1,16 @@
 //! The languages the general resolver reads, each a row of data: its
 //! grammar, its query file (`language/<name>.scm`, compiled into the
 //! binary by `include_str!`, the one include the index's purity admits),
-//! the bound its grammar's scanner needs checked before a
-//! parse, and the places of a tree that hold its test code. Adding a
-//! language is a grammar crate, a query file, a row here and a fixture
-//! corpus.
+//! the bounds its grammar needs checked before a parse
+//! (`language/<name>.rs`, for a grammar that has any), and the places of
+//! a tree that hold its test code. Adding a language is a grammar crate,
+//! a query file, a row here and a fixture corpus.
 
 use std::sync::OnceLock;
 
-use super::indentation;
 use super::index::IndexFault;
+
+pub(super) mod python;
 use super::query::{QueryFault, Rules};
 use super::syntax::{Lexicon, grammar_identity};
 
@@ -28,9 +29,9 @@ pub(super) struct Language {
     /// one its grammar leaves among tokens, which a grammar that lexes
     /// every comment as an extra has none of.
     pub(super) lexicon: Lexicon,
-    /// A bound the bytes must meet before the parse, past which the
-    /// grammar's scanner would abort the process.
-    pub(super) before_parse: Option<Bound>,
+    /// The bounds the bytes must meet before the parse, each a cost of the
+    /// grammar no budget stops during it.
+    pub(super) before_parse: &'static [Bound],
     /// The places of a tree whose files of the language are test code
     /// whole: `dir/` a directory of that name anywhere above the file, any
     /// other a file name, where one `*` stands for any run of characters.
@@ -54,7 +55,7 @@ pub(super) static PYTHON: Language = Language {
         nested_blocks: false,
         glued: &[],
     },
-    before_parse: Some(indentation::within_bound),
+    before_parse: &[python::check_indentations, python::check_continuations],
     test_places: &["tests/", "test_*.py", "*_test.py", "conftest.py"],
     rules: OnceLock::new(),
     identity: OnceLock::new(),

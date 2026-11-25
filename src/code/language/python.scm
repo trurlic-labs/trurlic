@@ -36,7 +36,8 @@
   (#set! definition.to "expression_statement")
   (#set! visibility "public"))
 
-((type_alias_statement left: (type (identifier) @name)) @definition
+((type_alias_statement
+  left: (type [(identifier) @name (generic_type (identifier) @name)])) @definition
   (#set! kind "type_alias")
   (#set! container "false")
   (#set! within "top class")
@@ -48,7 +49,8 @@
   (#not-match? @visibility.private "^__.*__$"))
 
 ; Tests as pytest and unittest collect them: a `test_*` function, a
-; `Test*` class and a `TestCase` subclass, and all they hold.
+; `Test*` class and a `TestCase` subclass (`TestCase[int]` too), and all
+; they hold.
 ((function_definition name: (identifier) @_name) @role.test
   (#match? @_name "^test_"))
 
@@ -58,16 +60,20 @@
 ((class_definition
   superclasses: (argument_list
     [(identifier) @_base
-     (attribute attribute: (identifier) @_base)])) @role.test
+     (attribute attribute: (identifier) @_base)
+     (subscript value: [(identifier) @_base
+                        (attribute attribute: (identifier) @_base)])])) @role.test
   (#match? @_base "TestCase$"))
 
-; The hash: a string's text and a format specifier are one token each,
-; spaces kept; each statement and each block is a group, so a statement
-; moved into or out of a block, or split in two, moves it, and a `;`
-; between statements is a statement's end. A docstring, the first
-; statement of a module, class or function that is a plain string, is
-; left out, as a comment is.
+; The hash: a string's text, a format specifier and an interpolation
+; with the `=` specifier, whose spaces the output keeps, are one token
+; each, spaces kept; each statement and each block is a group, so a
+; statement moved into or out of a block, or split in two, moves it, and
+; a `;` between statements is a statement's end. A docstring, the first
+; statement of a module, class or function whose one child is a plain
+; string, is left out, as a comment is.
 [(string_content) (format_specifier)] @hash.unit
+((interpolation "=") @hash.unit)
 
 (block) @hash.group
 (block (_) @hash.group)
@@ -75,9 +81,9 @@
 (block ";" @hash.skip)
 (module ";" @hash.skip)
 
-(module . (expression_statement (string (string_start) @_start)) @hash.skip
+(module . (expression_statement . (string (string_start) @_start) .) @hash.skip
   (#not-match? @_start "[fFtTbB]"))
-(class_definition body: (block . (expression_statement (string (string_start) @_start)) @hash.skip)
+(class_definition body: (block . (expression_statement . (string (string_start) @_start) .) @hash.skip)
   (#not-match? @_start "[fFtTbB]"))
-(function_definition body: (block . (expression_statement (string (string_start) @_start)) @hash.skip)
+(function_definition body: (block . (expression_statement . (string (string_start) @_start) .) @hash.skip)
   (#not-match? @_start "[fFtTbB]"))

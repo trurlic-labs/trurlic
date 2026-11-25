@@ -28,15 +28,16 @@ pub(super) type Source = (String, FileKind);
 
 /// The directories the walk passes over by name: each holds what a
 /// language's tool installs or compiles, never a file a person wrote
-/// (npm's packages, CPython's bytecode).
-const SKIPPED_NAMES: [&str; 2] = ["node_modules", "__pycache__"];
+/// (npm's packages, CPython's bytecode, PDM's packages).
+const SKIPPED_NAMES: [&str; 3] = ["node_modules", "__pycache__", "__pypackages__"];
 
 /// The marker files of a directory the walk passes over: `.git` at the
 /// top of another work tree (a submodule, a nested clone, a linked
 /// worktree placed inside this one), `CACHEDIR.TAG` in a cache or build
-/// directory (cargo writes it into each target directory), and
-/// `pyvenv.cfg` at the top of a Python virtual environment (PEP 405).
-const SKIPPED_MARKERS: [&str; 3] = [".git", "CACHEDIR.TAG", "pyvenv.cfg"];
+/// directory (cargo writes it into each target directory), `pyvenv.cfg`
+/// at the top of a Python virtual environment (PEP 405), and
+/// `conda-meta` at the top of a conda environment.
+const SKIPPED_MARKERS: [&str; 4] = [".git", "CACHEDIR.TAG", "pyvenv.cfg", "conda-meta"];
 
 /// The source files and manifests under `root`, by the rule above. A
 /// directory that cannot be listed is passed over, as one that vanished.
@@ -170,6 +171,10 @@ mod tests {
             "web/node_modules/gyp/build.py",
             "venv/pyvenv.cfg",
             "venv/lib/site.py",
+            "env/conda-meta/history",
+            "env/lib/site.py",
+            "__pypackages__/3.12/lib/pkg.py",
+            "tools/gui.pyw",
             ".venv/lib/site.py",
             "src/target/mod.rs",
             "build/lib/copied.py",
@@ -197,6 +202,7 @@ mod tests {
                 ("src/a/b.rs".to_owned(), FileKind::Rust),
                 ("src/lib.rs".to_owned(), FileKind::Rust),
                 ("src/target/mod.rs".to_owned(), FileKind::Rust),
+                ("tools/gui.pyw".to_owned(), FileKind::Python),
                 ("tools/run.py".to_owned(), FileKind::Python),
                 ("tools/tests/test_run.py".to_owned(), FileKind::Python),
                 ("tools/types.pyi".to_owned(), FileKind::Python),

@@ -55,7 +55,8 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/renames.rs`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
 | Work charged before `[quality]` patterns run | `store/quality/bar/work.rs`, `store/apply/patterns.rs` |
-| A language beyond Rust: grammar, query, test places | `code/language.rs`, `code/language/<name>.scm` |
+| A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/language.rs`, `code/language/<name>.scm`, `code/language/<name>.rs` |
+| Span-hash units and hashing | `code/units.rs` |
 | Query contract / general resolver | `code/query.rs` / `code/general.rs` |
 | Failpoint sites | `store/failpoint.rs` |
 

@@ -48,6 +48,9 @@ pub(crate) fn decode(bytes: &[u8], source_bytes: usize) -> Option<Indexed> {
         7 => Err(IndexFault::TooManyIndentations {
             max: reader.number()?,
         }),
+        8 => Err(IndexFault::TooManyContinuations {
+            max: reader.number()?,
+        }),
         _ => return None,
     };
     (reader.at == bytes.len()).then_some(indexed)

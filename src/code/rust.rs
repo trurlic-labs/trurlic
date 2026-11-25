@@ -38,8 +38,9 @@ use super::index::{FileIndex, IndexFault, ModuleFile};
 use super::kinds::{DefinitionKind, Role, Visibility, What};
 use super::scope::{ScopeId, ScopeTree};
 use super::symbol::Segment;
-use super::syntax::{self, Leaves, Lexicon, text_of};
+use super::syntax::{self, Lexicon, text_of};
 use super::tree::TreeIndex;
+use super::units::Leaves;
 
 use items::{Item, Within};
 use marks::Marks;

@@ -1,7 +1,7 @@
 //! The code index: what each source file defines, with spans and span
 //! hashes, and what an anchor names in a tree. Pure: its input is a path
 //! and bytes, or the facts a shell gathered (`sources`), and its output is
-//! values; it reads no file and no clock.
+//! values; at run time it reads no file and no clock.
 //!
 //! Rust is read with tree-sitter by a module of its own (`rust.rs`, over
 //! `syntax.rs` and the builder every tree-sitter resolver shares,
@@ -23,7 +23,6 @@ mod encoding;
 mod expand;
 mod facts;
 mod general;
-mod indentation;
 mod index;
 mod json;
 mod kinds;
@@ -44,6 +43,7 @@ mod syntax;
 pub(crate) mod testing;
 mod toml;
 mod tree;
+mod units;
 mod work;
 
 pub(crate) use crates::MANIFEST;

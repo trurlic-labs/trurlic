@@ -8,16 +8,17 @@ use std::fmt;
 use std::sync::{Arc, LazyLock};
 
 use super::kinds::{DefinitionKind, Role, Visibility};
+use super::language::python;
 use super::language::{Language, PYTHON};
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
 use super::symbol::{Segment, Syntax};
-use super::{encoding, general, indentation, json, make, markdown, rust, syntax, toml, work};
+use super::{encoding, general, json, make, markdown, rust, syntax, toml, work};
 
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 7;
+pub(crate) const INDEX_FORMAT: u32 = 8;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -32,7 +33,7 @@ const LEXICAL_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// key, so an index built under other bounds is never read as one of
 /// these, whatever the fixture corpus shows of them. The expansion's
 /// budget is no part of it: an expansion is never cached.
-pub(crate) const BOUNDS: [(&str, usize); 15] = [
+pub(crate) const BOUNDS: [(&str, usize); 16] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
     ("parse_work_per_byte", work::PARSE_WORK_PER_BYTE),
@@ -49,7 +50,8 @@ pub(crate) const BOUNDS: [(&str, usize); 15] = [
     ("entry_overhead_bytes", encoding::ENTRY_OVERHEAD_BYTES),
     ("max_arm_words", rust::MAX_ARM_WORDS),
     ("max_invocation_tokens", rust::MAX_INVOCATION_TOKENS),
-    ("max_indentations", indentation::MAX_INDENTATIONS),
+    ("max_indentations", python::MAX_INDENTATIONS),
+    ("max_continuations", python::MAX_CONTINUATIONS),
     ("match_limit", general::MATCH_LIMIT as usize),
 ];
 
@@ -90,7 +92,7 @@ impl FileKind {
         match (name, extension) {
             ("Makefile" | "makefile" | "GNUmakefile", _) | (_, Some("mk")) => Some(Self::Make),
             (_, Some("rs")) => Some(Self::Rust),
-            (_, Some("py" | "pyi")) => Some(Self::Python),
+            (_, Some("py" | "pyi" | "pyw")) => Some(Self::Python),
             (_, Some("toml")) => Some(Self::Toml),
             (_, Some("json")) => Some(Self::Json),
             (_, Some("md")) => Some(Self::Markdown),
@@ -361,6 +363,10 @@ pub(crate) enum IndexFault {
     /// A Python file whose lines start at more than `max` widths, past
     /// which its grammar's scanner aborts the process.
     TooManyIndentations { max: usize },
+    /// A Python file with a run of more than `max` line continuations in
+    /// one logical line, past which its grammar's error recovery runs
+    /// quadratic.
+    TooManyContinuations { max: usize },
 }
 
 impl fmt::Display for IndexFault {
@@ -379,6 +385,9 @@ impl fmt::Display for IndexFault {
             Self::Grammar => f.write_str("has a grammar or query the parser does not load"),
             Self::TooManyIndentations { max } => {
                 write!(f, "starts its lines at more than {max} indentation widths")
+            }
+            Self::TooManyContinuations { max } => {
+                write!(f, "continues one line more than {max} times")
             }
         }
     }
@@ -424,6 +433,7 @@ mod tests {
             ("src/lib.rs", Some(FileKind::Rust)),
             ("tools/run.py", Some(FileKind::Python)),
             ("pkg/__init__.pyi", Some(FileKind::Python)),
+            ("tools/gui.pyw", Some(FileKind::Python)),
             ("Cargo.toml", Some(FileKind::Toml)),
             ("a/b.json", Some(FileKind::Json)),
             ("Makefile", Some(FileKind::Make)),
@@ -443,7 +453,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 7] = [
+    const FINGERPRINTS: [(u32, &str); 8] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -471,6 +481,10 @@ mod tests {
         (
             7,
             "18663a405b363c0ff6b43db6ec7cdb3db0d421b0ff7ebeaa82af7a241e13b183",
+        ),
+        (
+            8,
+            "102cfbc72d9beba458820443d3193fe8074dc29b42390c0c5b9c04ba1683c179",
         ),
     ];
 

@@ -12,6 +12,7 @@ FIRST, (SECOND, [THIRD, *REST]) = 1, (2, [3, 4, 5])
 _REGISTRY: dict = {}
 __all__ = ["Shelf", "open_shelf"]
 type Shelves = list[Shelf]
+type Pair[T] = tuple[T, T]
 
 if TYPE_CHECKING:
     Path = os.PathLike
@@ -49,7 +50,11 @@ def width(book: int) -> int: ...
 @overload
 def width(book: str) -> int: ...
 def width(book):
-    return len(f"{book: >4}")
+    return len(f"{book: >4}{book = }")
+
+
+def tupled():
+    "a", width(1)
 
 
 class Shelf:

@@ -14,7 +14,7 @@ use super::index::{Definition, FileIndex, IndexFault, Invocation, ModuleFile, Ty
 use super::kinds::What;
 use super::scope::{ScopeId, ScopeTree};
 use super::span::{Lines, Span, SpanHash};
-use super::syntax::Leaves;
+use super::units::Leaves;
 use super::work::{SCAN_WORK_PER_BYTE, Work};
 
 /// The hash a definition or invocation holds until the end of the walk.

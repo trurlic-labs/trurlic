@@ -18,5 +18,10 @@ class AuditCase(unittest.TestCase):
         self.value = 1
 
 
+class TypedCase(unittest.TestCase[int]):
+    def check(self):
+        return 3
+
+
 def tested():
     return 2

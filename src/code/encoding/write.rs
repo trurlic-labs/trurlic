@@ -40,6 +40,10 @@ pub(crate) fn encode(indexed: &Indexed) -> Vec<u8> {
             out.byte(7);
             out.number(*max);
         }
+        Err(IndexFault::TooManyContinuations { max }) => {
+            out.byte(8);
+            out.number(*max);
+        }
     }
     out.0
 }

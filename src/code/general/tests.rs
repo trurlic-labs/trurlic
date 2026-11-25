@@ -1,7 +1,7 @@
 use super::*;
-use crate::code::indentation::MAX_INDENTATIONS;
 use crate::code::index::{FileKind, index as index_of};
 use crate::code::language::PYTHON;
+use crate::code::language::python::{MAX_CONTINUATIONS, MAX_INDENTATIONS};
 use crate::code::scope::Scopes;
 use crate::code::span::SpanHash;
 use crate::code::testing::{defined, path};
@@ -159,6 +159,19 @@ fn a_reformat_a_comment_or_a_docstring_leaves_the_hash() {
         block("  \"\"\"Doc.\"\"\"\n  return 1\n"),
         block("  '''Another doc.'''\n  return 1\n")
     );
+    assert_eq!(block("  s = f'{ x }'\n"), block("  s = f'{x}'\n"));
+}
+
+#[test]
+fn a_statement_that_only_starts_with_a_string_is_no_docstring() {
+    let class = |body: &str| hash_of(&format!("class A:\n{body}"), "A");
+
+    assert_ne!(body_hash("  \"a\", g()\n"), body_hash("  \"a\", h()\n"));
+    assert_ne!(class("  \"a\", g()\n"), class("  \"a\", h()\n"));
+    assert_eq!(
+        class("  \"Doc.\"\n  x = 1\n"),
+        class("  \"Other.\"\n  x = 1\n")
+    );
 }
 
 #[test]
@@ -169,6 +182,8 @@ fn a_strings_spaces_and_prefix_move_the_hash() {
         ("  s = f'{x: >4}'\n", "  s = f'{x:>4}'\n"),
         ("  s = rb'a'\n", "  s = b'a'\n"),
         ("  s = '#a'\n", "  s = '#b'\n"),
+        ("  s = f'{x=}'\n", "  s = f'{x =}'\n"),
+        ("  s = f'{x =}'\n", "  s = f'{x = }'\n"),
     ] {
         assert_ne!(body_hash(one), body_hash(other), "{one:?}");
     }
@@ -186,16 +201,10 @@ fn a_definitions_hash_is_its_own_whatever_follows_it_or_holds_it() {
 }
 
 #[test]
-fn a_string_whole_never_hides_a_definition_and_a_name_is_none_without_text() {
-    // An f-string is one token for its text, its expressions are walked:
-    // no definition stands in one, and a name tree-sitter inserts as
-    // missing defines nothing.
-    let text = "x = f'{1 + 2}'\ndef (): pass\n";
+fn a_name_the_parser_inserted_as_missing_defines_nothing() {
+    let text = "x = 1\ndef (): pass\n";
 
-    assert_eq!(
-        defined(FileKind::Python, text),
-        [("x".to_owned(), "x = f'{1 + 2}'")]
-    );
+    assert_eq!(defined(FileKind::Python, text), [("x".to_owned(), "x = 1")]);
 }
 
 /// A file whose blocks nest `depth` deep, each one space deeper, whose
@@ -208,6 +217,26 @@ fn nested_ifs(depth: usize) -> String {
     }
     text.push_str(&format!("{}y = f\"{{z}}\"\n", " ".repeat(depth)));
     text
+}
+
+/// [`nested_ifs`], each `if` line ending in a comment that ends in a
+/// backslash, after a newline or a CR and a newline.
+fn commented_ifs(depth: usize, line_break: &str) -> String {
+    nested_ifs(depth).replace("if x:\n", &format!("if x:  # \\{line_break}"))
+}
+
+#[test]
+fn a_comment_ending_in_a_backslash_continues_no_width_the_bound_counts() {
+    let refused = Err(IndexFault::TooManyIndentations {
+        max: MAX_INDENTATIONS,
+    });
+
+    for line_break in ["\n", "\r\n"] {
+        let text = commented_ifs(600, line_break);
+        assert_eq!(index_of(FileKind::Python, text.as_bytes()), refused);
+    }
+    let own_line = nested_ifs(600).replace("if x:\n", "if x:\n# \\\n");
+    assert_eq!(index_of(FileKind::Python, own_line.as_bytes()), refused);
 }
 
 #[test]
@@ -240,8 +269,8 @@ fn hostile_python_is_refused_or_read_in_linear_work() {
         ),
         ("chained assignments", "a = ".repeat(mib / 4 - 1) + "1\n"),
         (
-            "continued lines",
-            format!("{}x\n", "\\\n".repeat(500)).repeat(mib / 1010),
+            "continued lines in an error",
+            continued(MAX_CONTINUATIONS).repeat(mib / continued(MAX_CONTINUATIONS).len()),
         ),
         ("unclosed strings", "\"x\n".repeat(mib / 3)),
     ];
@@ -254,6 +283,32 @@ fn hostile_python_is_refused_or_read_in_linear_work() {
     }
     let chain = "a = ".repeat(10_000) + "1\n";
     assert_eq!(defined(FileKind::Python, &chain).len(), 10_000);
+}
+
+/// A logical line of `count` line continuations, each followed by a name
+/// the line before it does not expect: a run of them in a parse error.
+fn continued(count: usize) -> String {
+    format!("{}\n", "\\\nx".repeat(count))
+}
+
+#[test]
+fn a_run_of_continuations_past_the_bound_is_refused_before_the_parse() {
+    let refused = Err(IndexFault::TooManyContinuations {
+        max: MAX_CONTINUATIONS,
+    });
+    // Unbounded, runs of 256 take seconds a MiB, and one run of a MiB an
+    // hour, in work no budget of the parse counts.
+    let hostile = continued(256).repeat((1 << 20) / continued(256).len());
+
+    assert_eq!(index_of(FileKind::Python, hostile.as_bytes()), refused);
+    assert_eq!(
+        index_of(
+            FileKind::Python,
+            continued(MAX_CONTINUATIONS + 1).as_bytes()
+        ),
+        refused
+    );
+    assert!(index_of(FileKind::Python, continued(MAX_CONTINUATIONS).as_bytes()).is_ok());
 }
 
 #[test]
