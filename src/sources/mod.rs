@@ -31,8 +31,9 @@ use crate::store::{Anchor, ProjectState, Store, SymbolsKey};
 
 use walk::Probe;
 
-/// The largest source file the index reads.
-pub(crate) const MAX_SOURCE_FILE_BYTES: u64 = 4 * 1024 * 1024;
+/// The largest source file the shell reads: the largest of any kind the
+/// index reads (`FileKind::max_bytes`), which refuses one over its kind's.
+pub(crate) const MAX_SOURCE_FILE_BYTES: u64 = code::MAX_SOURCE_BYTES as u64;
 
 /// What each anchor of `state`'s decisions names in the tree at `store`'s
 /// code root.
@@ -151,7 +152,7 @@ fn read_and_index(store: &Store, path: &Path, kind: FileKind) -> Option<Sourced>
     };
     let key = cache::key(kind, &bytes);
     let cached = store
-        .read_symbols(key)
+        .read_symbols(key, cache::max_entry_bytes(bytes.len()))
         .and_then(|entry| cache::decode(key, &entry));
     Some(match cached {
         Some(indexed) => Sourced::Indexed {

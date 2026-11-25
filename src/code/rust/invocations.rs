@@ -8,8 +8,11 @@ use crate::code::index::{IndexFault, Invocation};
 use crate::code::kinds::DefinitionKind;
 use crate::code::scope::ScopeId;
 use crate::code::symbol::Segment;
+use crate::code::tree::UNHASHED;
 
-use super::items::{What, Within};
+use crate::code::kinds::What;
+
+use super::items::Within;
 use super::spelled::{self, Spelled, SpelledItem};
 use super::{Context, Visit, Walk, macros};
 
@@ -26,7 +29,7 @@ impl Walk<'_> {
             return Ok(());
         }
         let (node, context) = (invocation.node, invocation.context);
-        for spelled in spelled::spelled_items(node, self.text, &mut self.work)? {
+        for spelled in spelled::spelled_items(node, self.text, &mut self.build.work)? {
             self.define_spelled_item(context, &spelled)?;
         }
         // A type-defining macro is invoked where an item stands.
@@ -36,17 +39,16 @@ impl Walk<'_> {
         let Some((macro_name, tokens)) = macros::invocation_tokens(node, self.text) else {
             return Ok(());
         };
-        let (start, end) = (outer.start, outer.node.end_byte());
-        let hash = self.hash(start..end)?;
-        self.index.invocations.push(Invocation {
+        let range = outer.start..outer.node.end_byte();
+        let invocation = Invocation {
             macro_name,
             container: context.scope,
-            span: self.lines.span(start, end),
-            hash,
+            span: self.build.span(&range),
+            hash: UNHASHED,
             tokens,
             role: context.role,
-        });
-        Ok(())
+        };
+        self.build.invoke(invocation, range)
     }
 
     /// Define an item an invocation in `context` spells, and its fields
@@ -99,9 +101,10 @@ impl Walk<'_> {
         what: What,
     ) -> Result<ScopeId, IndexFault> {
         let scope = self
+            .build
             .scopes
             .enter(parent, vec![Segment::name(spelled.name)])?;
-        self.define(scope, spelled.start..spelled.end, what)?;
+        self.build.define(scope, spelled.start..spelled.end, what)?;
         Ok(scope)
     }
 }

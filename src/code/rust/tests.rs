@@ -1,5 +1,5 @@
 use super::*;
-use crate::code::index::{FileKind, TypeArm, TypeMacro, index as index_file};
+use crate::code::index::{FileKind, Member, TypeArm, TypeMacro, index as index_file};
 use crate::code::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::scope::{MAX_NESTING, Scopes};
 use crate::code::testing;
@@ -95,7 +95,11 @@ fn a_type_macro_keeps_the_words_of_each_arm_that_defines_a_type() {
                     kind: DefinitionKind::TypeAlias,
                 },
             ],
-            members: vec![("rank".into(), DefinitionKind::Method)],
+            members: vec![Member {
+                trait_tokens: None,
+                name: "rank".into(),
+                kind: DefinitionKind::Method,
+            }],
             items: vec![],
         }]
     );
@@ -167,17 +171,22 @@ fn a_macro_of_many_arms_is_read_within_the_budget() {
 }
 
 #[test]
-fn spelled_items_nested_past_the_budget_are_refused() {
+fn spelled_items_nested_deep_are_each_hashed_by_what_they_hold() {
     let depth = 20_000;
     let text = format!(
         "m! {{ {}{} }}\n",
         "fn a { ".repeat(depth),
         "}".repeat(depth)
     );
+    let indexed = index(&text);
+    let hashes: std::collections::BTreeSet<_> =
+        indexed.definitions.iter().map(|d| d.hash).collect();
 
+    assert_eq!(indexed.definitions.len(), depth);
     assert_eq!(
-        index_file(FileKind::Rust, text.as_bytes()),
-        Err(IndexFault::TooComplex)
+        hashes.len(),
+        depth,
+        "each holds one more than the one inside it"
     );
 }
 
@@ -219,7 +228,14 @@ fn a_type_macros_members_are_its_impl_blocks_items_and_the_rest_its_containers()
     let text = "macro_rules! def {\n    ($name:ident) => {\n        pub struct $name;\n        pub fn make() -> $name { $name }\n        pub mod helpers {}\n        impl $name { pub fn get(&self) {} }\n        impl Other { fn not_its() {} }\n    };\n}\n";
     let found = &index(text).macros[0];
 
-    assert_eq!(found.members, [("get".to_owned(), DefinitionKind::Method)]);
+    assert_eq!(
+        found.members,
+        [Member {
+            trait_tokens: None,
+            name: "get".to_owned(),
+            kind: DefinitionKind::Method,
+        }]
+    );
     assert_eq!(
         found.items,
         [

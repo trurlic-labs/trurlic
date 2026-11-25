@@ -137,7 +137,7 @@ impl Scanner<'_> {
                     if let Some((scope, start)) = member.take() {
                         let hash = self.lexical.hash(start..end)?;
                         self.lexical
-                            .define(scope, DefinitionKind::Key, start..end, hash);
+                            .define(scope, DefinitionKind::Key, start..end, hash)?;
                     }
                     b'}'
                 }
@@ -374,6 +374,6 @@ mod tests {
 
         assert_eq!(indexed(nested(MAX_NESTING)), Ok(MAX_NESTING));
         assert_eq!(indexed(nested(MAX_NESTING + 1)), Err(IndexFault::TooDeep));
-        assert_eq!(indexed(nested(1_000_000)), Err(IndexFault::TooDeep));
+        assert_eq!(indexed(nested(500_000)), Err(IndexFault::TooDeep));
     }
 }

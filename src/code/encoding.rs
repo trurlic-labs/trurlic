@@ -1,17 +1,22 @@
 //! The bytes of a file's index in the cache, and back: a compact binary
-//! form, whose size is linear in the file it indexes.
+//! form, whose size is bounded by the file it indexes.
 //!
 //! Numbers are LEB128 varints, texts a length and UTF-8 bytes, a hash its
 //! 32 bytes. A definition whose span is its predecessor's (the targets of
-//! one Makefile rule) keeps one byte for it, so an entry is at most
+//! one Makefile rule) keeps one byte for it. An entry is at most
 //! [`MAX_ENTRY_BYTES_PER_SOURCE_BYTE`] times its file and
-//! [`ENTRY_OVERHEAD_BYTES`] besides (`tests::an_entry_is_linear_in_its_file`).
+//! [`ENTRY_OVERHEAD_BYTES`] besides by construction: every resolver adds
+//! what an entry holds through the scope tree, which charges each scope,
+//! definition, macro, invocation and module file its bytes here
+//! ([`room_of`], [`Measure`]) and refuses the file past its room.
 //! A read takes nothing on trust: every count is bounded by the bytes left,
 //! every id by what it names, every parent by its child (so a path's walk
 //! ends), and a path by [`MAX_NESTING`]; bytes that break any of it are no
 //! index.
 
-use super::index::{Definition, FileIndex, IndexFault, Invocation, ModuleFile, TypeArm, TypeMacro};
+use super::index::{
+    Definition, FileIndex, IndexFault, Invocation, Member, ModuleFile, TypeArm, TypeMacro,
+};
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
@@ -20,11 +25,29 @@ use super::symbol::Segment;
 /// The bytes an entry may take per byte of its file: a definition of two
 /// bytes (an enum variant `A,`) costs its scope, its span and its 32-byte
 /// hash.
-pub(crate) const MAX_ENTRY_BYTES_PER_SOURCE_BYTE: usize = 32;
+const MAX_ENTRY_BYTES_PER_SOURCE_BYTE: usize = 32;
 
 /// The bytes an entry may take past [`MAX_ENTRY_BYTES_PER_SOURCE_BYTE`]
 /// times its file: the counts of an empty index, and room besides.
-pub(crate) const ENTRY_OVERHEAD_BYTES: usize = 64;
+const ENTRY_OVERHEAD_BYTES: usize = 64;
+
+/// The bytes of an index's outcome tag and its five counts, each a count
+/// of at most `u32::MAX` items.
+const COUNTS_BYTES: usize = 1 + 5 * 5;
+
+/// The largest entry of a file of `bytes` bytes.
+pub(crate) const fn max_entry_bytes(bytes: usize) -> usize {
+    bytes
+        .saturating_mul(MAX_ENTRY_BYTES_PER_SOURCE_BYTE)
+        .saturating_add(ENTRY_OVERHEAD_BYTES)
+}
+
+/// The bytes the scopes, definitions, macros, invocations and module
+/// files of the index of a file of `bytes` bytes may take: an entry of
+/// them, its counts added, is within [`max_entry_bytes`].
+pub(super) const fn room_of(bytes: usize) -> usize {
+    max_entry_bytes(bytes) - COUNTS_BYTES
+}
 
 /// What indexing a file's bytes gave.
 pub(crate) type Indexed = Result<FileIndex, IndexFault>;
@@ -48,8 +71,49 @@ pub(crate) fn encode(indexed: &Indexed) -> Vec<u8> {
         Err(IndexFault::TooComplex) => out.byte(3),
         Err(IndexFault::TooDeep) => out.byte(4),
         Err(IndexFault::Grammar) => out.byte(5),
+        Err(IndexFault::TooLarge { bytes, max }) => {
+            out.byte(6);
+            out.number(*bytes);
+            out.number(*max);
+        }
     }
     out.0
+}
+
+/// The bytes each part of an index takes in an entry, as [`encode`]
+/// writes it; a definition's span is counted whole, shared or not.
+pub(super) struct Measure;
+
+impl Measure {
+    pub(super) fn scope(parent: Option<ScopeId>, name: &[Segment]) -> usize {
+        let mut out = Writer(Count(0));
+        out.scope_entry(parent, name);
+        out.0.0
+    }
+
+    pub(super) fn definition(definition: &Definition) -> usize {
+        let mut out = Writer(Count(0));
+        out.definition(definition, None);
+        out.0.0
+    }
+
+    pub(super) fn type_macro(found: &TypeMacro) -> usize {
+        let mut out = Writer(Count(0));
+        out.type_macro(found);
+        out.0.0
+    }
+
+    pub(super) fn invocation(invocation: &Invocation) -> usize {
+        let mut out = Writer(Count(0));
+        out.invocation(invocation);
+        out.0.0
+    }
+
+    pub(super) fn module_file(module: &ModuleFile) -> usize {
+        let mut out = Writer(Count(0));
+        out.module_file(module);
+        out.0.0
+    }
 }
 
 /// The index `bytes` hold; `None` when they are no encoding of one.
@@ -66,6 +130,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Indexed> {
         3 => Err(IndexFault::TooComplex),
         4 => Err(IndexFault::TooDeep),
         5 => Err(IndexFault::Grammar),
+        6 => Err(IndexFault::TooLarge {
+            bytes: reader.number()?,
+            max: reader.number()?,
+        }),
         _ => return None,
     };
     (reader.at == bytes.len()).then_some(indexed)
@@ -114,11 +182,31 @@ const fn role_code(role: Role) -> u8 {
     }
 }
 
-struct Writer(Vec<u8>);
+/// Where a [`Writer`] puts its bytes: an entry, or a count of them.
+trait Sink {
+    fn put(&mut self, bytes: &[u8]);
+}
 
-impl Writer {
+impl Sink for Vec<u8> {
+    fn put(&mut self, bytes: &[u8]) {
+        self.extend_from_slice(bytes);
+    }
+}
+
+/// A count of the bytes an entry would take.
+struct Count(usize);
+
+impl Sink for Count {
+    fn put(&mut self, bytes: &[u8]) {
+        self.0 += bytes.len();
+    }
+}
+
+struct Writer<S>(S);
+
+impl<S: Sink> Writer<S> {
     fn byte(&mut self, byte: u8) {
-        self.0.push(byte);
+        self.0.put(&[byte]);
     }
 
     fn number(&mut self, mut number: usize) {
@@ -135,7 +223,7 @@ impl Writer {
 
     fn text(&mut self, text: &str) {
         self.number(text.len());
-        self.0.extend_from_slice(text.as_bytes());
+        self.0.put(text.as_bytes());
     }
 
     /// An optional scope: 0 for none, else its id and one.
@@ -148,19 +236,20 @@ impl Writer {
         self.number(span.end - span.start);
         self.number(span.first_line);
         self.number(span.last_line - span.first_line);
-        self.0.extend_from_slice(hash.as_bytes());
+        self.0.put(hash.as_bytes());
     }
 
     fn index(&mut self, index: &FileIndex) {
         self.number(index.scopes.len());
         for scope in &index.scopes {
-            self.scope(scope.parent);
-            self.number(scope.name.len());
-            for segment in &scope.name {
-                self.segment(segment);
-            }
+            self.scope_entry(scope.parent, &scope.name);
         }
-        self.definitions(&index.definitions);
+        self.number(index.definitions.len());
+        let mut previous: Option<Span> = None;
+        for definition in &index.definitions {
+            self.definition(definition, previous);
+            previous = Some(definition.span);
+        }
         self.number(index.macros.len());
         for found in &index.macros {
             self.type_macro(found);
@@ -171,34 +260,41 @@ impl Writer {
         }
         self.number(index.module_files.len());
         for module in &index.module_files {
-            self.number(module.scope.at());
-            self.byte(role_code(module.role));
-            match &module.path {
-                None => self.byte(0),
-                Some(path) => {
-                    self.byte(1);
-                    self.text(path);
-                }
+            self.module_file(module);
+        }
+    }
+
+    fn scope_entry(&mut self, parent: Option<ScopeId>, name: &[Segment]) {
+        self.scope(parent);
+        self.number(name.len());
+        for segment in name {
+            self.segment(segment);
+        }
+    }
+
+    /// A definition, its span written as one byte when it is `previous`.
+    fn definition(&mut self, definition: &Definition, previous: Option<Span>) {
+        self.number(definition.scope.at());
+        self.byte(kind_code(definition.kind));
+        self.byte(role_code(definition.role) | visibility_code(definition.visibility) << 1);
+        match previous == Some(definition.span) {
+            true => self.byte(1),
+            false => {
+                self.byte(0);
+                self.span(definition.span, definition.hash);
             }
         }
     }
 
-    /// The definitions, a span its predecessor shares written as one byte.
-    fn definitions(&mut self, definitions: &[Definition]) {
-        self.number(definitions.len());
-        let mut previous: Option<Span> = None;
-        for definition in definitions {
-            self.number(definition.scope.at());
-            self.byte(kind_code(definition.kind));
-            self.byte(role_code(definition.role) | visibility_code(definition.visibility) << 1);
-            match previous == Some(definition.span) {
-                true => self.byte(1),
-                false => {
-                    self.byte(0);
-                    self.span(definition.span, definition.hash);
-                }
+    fn module_file(&mut self, module: &ModuleFile) {
+        self.number(module.scope.at());
+        self.byte(role_code(module.role));
+        match &module.path {
+            None => self.byte(0),
+            Some(path) => {
+                self.byte(1);
+                self.text(path);
             }
-            previous = Some(definition.span);
         }
     }
 
@@ -233,12 +329,25 @@ impl Writer {
             }
             self.byte(kind_code(arm.kind));
         }
-        for named in [&found.members, &found.items] {
-            self.number(named.len());
-            for (name, kind) in named {
-                self.text(name);
-                self.byte(kind_code(*kind));
+        self.number(found.members.len());
+        for member in &found.members {
+            match &member.trait_tokens {
+                None => self.byte(0),
+                Some(tokens) => {
+                    self.byte(1);
+                    self.number(tokens.len());
+                    for token in tokens {
+                        self.text(token);
+                    }
+                }
             }
+            self.text(&member.name);
+            self.byte(kind_code(member.kind));
+        }
+        self.number(found.items.len());
+        for (name, kind) in &found.items {
+            self.text(name);
+            self.byte(kind_code(*kind));
         }
     }
 
@@ -358,16 +467,19 @@ impl Reader<'_> {
         Some(ModuleFile { scope, role, path })
     }
 
-    /// The scopes, each parent below its child, each path within
-    /// [`MAX_NESTING`].
+    /// The scopes, each parent below its child, of one segment at least,
+    /// each path within [`MAX_NESTING`].
     fn scopes(&mut self) -> Option<Vec<Scope>> {
         let count = self.count()?;
         let mut scopes = Vec::with_capacity(count);
         let mut depths: Vec<usize> = Vec::with_capacity(count);
         for own in 0..count {
             let parent = self.scope(own)?;
+            // Every scope adds a segment: a forged entry cannot make
+            // scopes of no bytes.
+            let segments = self.count().filter(|count| *count > 0)?;
             let mut name = Vec::new();
-            for _ in 0..self.count()? {
+            for _ in 0..segments {
                 name.push(self.segment()?);
             }
             let above = parent.map_or(Some(0), |id| depths.get(id.at()).copied())?;
@@ -446,19 +558,39 @@ impl Reader<'_> {
                 kind: self.kind()?,
             });
         }
-        let mut named = [Vec::new(), Vec::new()];
-        for found in &mut named {
-            for _ in 0..self.count()? {
-                found.push((self.text()?, self.kind()?));
-            }
+        let mut members = Vec::new();
+        for _ in 0..self.count()? {
+            members.push(self.member()?);
         }
-        let [members, items] = named;
+        let mut items = Vec::new();
+        for _ in 0..self.count()? {
+            items.push((self.text()?, self.kind()?));
+        }
         Some(TypeMacro {
             name,
             exported,
             arms,
             members,
             items,
+        })
+    }
+
+    fn member(&mut self) -> Option<Member> {
+        let trait_tokens = match self.byte()? {
+            0 => None,
+            1 => {
+                let mut tokens = Vec::new();
+                for _ in 0..self.count()? {
+                    tokens.push(self.text()?);
+                }
+                Some(tokens)
+            }
+            _ => return None,
+        };
+        Some(Member {
+            trait_tokens,
+            name: self.text()?,
+            kind: self.kind()?,
         })
     }
 
@@ -525,6 +657,10 @@ mod tests {
             IndexFault::TooComplex,
             IndexFault::TooDeep,
             IndexFault::Grammar,
+            IndexFault::TooLarge {
+                bytes: 5_000_000,
+                max: 1 << 20,
+            },
         ] {
             assert_eq!(decode(&encode(&Err(fault))), Some(Err(fault)));
         }
@@ -541,14 +677,69 @@ mod tests {
         let mut longer = bytes.clone();
         longer.push(0);
         assert_eq!(decode(&longer), None);
-        // A scope whose parent is itself, and a count past the bytes.
+        // A scope whose parent is itself, one of no segment, and a count
+        // past the bytes.
         assert_eq!(decode(&[0, 1, 1, 0, 0, 0, 0]), None);
+        assert_eq!(decode(&[0, 1, 0, 0, 0, 0, 0, 0]), None);
         assert_eq!(decode(&[0, 0x80, 0x80, 0x80, 0x80, 0x01]), None);
         assert_eq!(decode(&[9]), None);
     }
 
+    /// The bytes [`Measure`] charges for what `index` holds, its counts
+    /// added: what the scope tree spent of the room.
+    fn measured(index: &FileIndex) -> usize {
+        COUNTS_BYTES
+            + index
+                .scopes
+                .iter()
+                .map(|scope| Measure::scope(scope.parent, &scope.name))
+                .sum::<usize>()
+            + index
+                .definitions
+                .iter()
+                .map(Measure::definition)
+                .sum::<usize>()
+            + index.macros.iter().map(Measure::type_macro).sum::<usize>()
+            + index
+                .invocations
+                .iter()
+                .map(Measure::invocation)
+                .sum::<usize>()
+            + index
+                .module_files
+                .iter()
+                .map(Measure::module_file)
+                .sum::<usize>()
+    }
+
     #[test]
-    fn an_entry_is_linear_in_its_file() {
+    fn an_entry_takes_no_more_than_its_parts_were_charged() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut pending = vec![root.join("tests/fixtures/code"), root.join("src/code")];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                let name = path.to_str().unwrap().trim_end_matches(".fixture");
+                let Some(kind) = FileKind::of(name) else {
+                    continue;
+                };
+                let bytes = std::fs::read(&path).unwrap();
+                let Ok(indexed) = index(kind, &bytes) else {
+                    continue;
+                };
+                let entry = encode(&Ok(indexed.clone())).len();
+                assert!(entry <= measured(&indexed), "{name}");
+                assert!(entry <= max_entry_bytes(bytes.len()), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
         let variants = format!("enum E {{ {} }}", "A,".repeat(50_000));
         let fields = format!("struct S {{ {} }}", "a:u8,".repeat(20_000));
         let targets = format!("{}: x\n", "t ".repeat(50_000));
@@ -556,10 +747,16 @@ mod tests {
         let keys = format!("{{{}\"z\":0}}", "\"a\":0,".repeat(20_000));
         let tables: String = (0..10_000).map(|n| format!("[a{n}]\nb=0\n")).collect();
         let nested = format!("{}{}", "mod m{".repeat(60), "}".repeat(60));
+        let reexported = format!(
+            "pub use {}::{{{}}};",
+            "a".repeat(100_000),
+            "self,".repeat(20_000)
+        );
         for (kind, text) in [
             (FileKind::Rust, variants.as_str()),
             (FileKind::Rust, fields.as_str()),
             (FileKind::Rust, nested.as_str()),
+            (FileKind::Rust, reexported.as_str()),
             (FileKind::Make, targets.as_str()),
             (FileKind::Markdown, headings.as_str()),
             (FileKind::Json, keys.as_str()),
@@ -567,7 +764,7 @@ mod tests {
             (FileKind::Rust, ""),
         ] {
             let bytes = encode(&index(kind, text.as_bytes()));
-            let bound = text.len() * MAX_ENTRY_BYTES_PER_SOURCE_BYTE + ENTRY_OVERHEAD_BYTES;
+            let bound = max_entry_bytes(text.len());
             assert!(
                 bytes.len() <= bound,
                 "{kind:?} of {} bytes: {} bytes, over {bound}",

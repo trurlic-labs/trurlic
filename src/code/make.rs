@@ -46,7 +46,7 @@ fn define(
     let hash = lexical.hash(start..end)?;
     for target in targets {
         let scope = lexical.scope(None, target)?;
-        lexical.define(scope, DefinitionKind::Target, start..end, hash);
+        lexical.define(scope, DefinitionKind::Target, start..end, hash)?;
     }
     Ok(())
 }

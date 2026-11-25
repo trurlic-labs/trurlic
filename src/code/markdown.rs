@@ -63,7 +63,7 @@ impl Sections<'_> {
             let end = start + section.trim_end().len();
             let hash = self.lexical.hash(start..end)?;
             self.lexical
-                .define(scope, DefinitionKind::Heading, start..end, hash);
+                .define(scope, DefinitionKind::Heading, start..end, hash)?;
         }
         Ok(())
     }

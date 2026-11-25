@@ -57,7 +57,7 @@ impl Keys<'_> {
             if let Some(span) = &span {
                 let hash = self.lexical.hash(span.start..span.end)?;
                 self.lexical
-                    .define(scope, DefinitionKind::Key, span.start..span.end, hash);
+                    .define(scope, DefinitionKind::Key, span.start..span.end, hash)?;
             }
             covered = join(covered, span);
         }

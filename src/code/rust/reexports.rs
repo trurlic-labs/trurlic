@@ -1,7 +1,12 @@
 //! The leaves of a `pub use`: each name it brings in is a re-export of
 //! the module it stands in, unless the file defines that path itself
-//! (`pub(crate) use name;` after `macro_rules! name`), which only the end
-//! of the walk knows.
+//! (`pub(crate) use name;` after `macro_rules! name`), which is known once
+//! the walk has found every item.
+//!
+//! A leaf is held as the bytes of its name, never a copy, and a name one
+//! module re-exports twice (`{self, self}`, `{a, a}`) is defined once,
+//! at its first leaf: what an index holds of the `pub use`s is at most
+//! one scope per distinct name, each charged to the file's room.
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -9,19 +14,18 @@ use std::ops::Range;
 use tree_sitter::Node;
 
 use crate::code::index::IndexFault;
-use crate::code::kinds::{DefinitionKind, Visibility};
+use crate::code::kinds::{DefinitionKind, Visibility, What};
 use crate::code::scope::ScopeId;
 use crate::code::symbol::Segment;
 use crate::code::syntax::text_of;
 
-use super::items::What;
 use super::{Visit, Walk, marks};
 
-/// A leaf of a `pub use`: its container, its name, its bytes and what it
-/// is.
+/// A leaf of a `pub use`: its container, the bytes of its name, its own
+/// bytes and what it is.
 pub(super) struct Reexport {
     container: Option<ScopeId>,
-    name: Segment,
+    name: Range<usize>,
     range: Range<usize>,
     what: What,
 }
@@ -38,37 +42,60 @@ impl Walk<'_> {
         else {
             return;
         };
+        let what = What {
+            kind: DefinitionKind::Reexport,
+            role: context.role,
+            visibility: Some(visibility),
+        };
         for (name, leaf) in use_leaves(argument, self.text) {
             self.reexports.push(Reexport {
                 container: context.scope,
-                name: Segment::name(&name),
-                range: leaf.start_byte()..leaf.end_byte(),
-                what: What {
-                    kind: DefinitionKind::Reexport,
-                    role: context.role,
-                    visibility: Some(visibility),
-                },
+                name: name.byte_range(),
+                range: leaf.byte_range(),
+                what,
             });
         }
     }
 
-    /// Define each `pub use` leaf whose path the file does not define
-    /// itself (`pub(crate) use name;` after `macro_rules! name`).
+    /// Define each `pub use` leaf, once per container and name, whose path
+    /// the file does not define itself.
     pub(super) fn define_reexports(&mut self) -> Result<(), IndexFault> {
+        let text = self.text;
+        let mut leaves = std::mem::take(&mut self.reexports);
+        leaves.sort_by_key(|leaf| leaf.range.start);
+        // The same name node, a `self` list's module, first; then the
+        // texts of the names left, each read once.
+        let mut nodes = BTreeSet::new();
+        let mut names: BTreeSet<(Option<ScopeId>, &str)> = BTreeSet::new();
+        let distinct: Vec<Reexport> = leaves
+            .into_iter()
+            .filter(|leaf| nodes.insert((leaf.container, leaf.name.start, leaf.name.end)))
+            .filter(|leaf| {
+                names.insert((
+                    leaf.container,
+                    text.get(leaf.name.start..leaf.name.end).unwrap_or_default(),
+                ))
+            })
+            .collect();
         let defined: BTreeSet<(Option<ScopeId>, &[Segment])> = self
-            .index
-            .definitions
+            .build
+            .definitions()
             .iter()
-            .filter_map(|d| self.scopes.get(d.scope))
+            .filter_map(|d| self.build.scopes.get(d.scope))
             .map(|scope| (scope.parent, scope.name.as_slice()))
             .collect();
-        let new: Vec<Reexport> = std::mem::take(&mut self.reexports)
+        let new: Vec<(Reexport, Segment)> = distinct
             .into_iter()
-            .filter(|leaf| !defined.contains(&(leaf.container, std::slice::from_ref(&leaf.name))))
+            .map(|leaf| {
+                let name =
+                    Segment::name(text.get(leaf.name.start..leaf.name.end).unwrap_or_default());
+                (leaf, name)
+            })
+            .filter(|(leaf, name)| !defined.contains(&(leaf.container, std::slice::from_ref(name))))
             .collect();
-        for leaf in new {
-            let scope = self.scopes.enter(leaf.container, vec![leaf.name])?;
-            self.define(scope, leaf.range, leaf.what)?;
+        for (leaf, name) in new {
+            let scope = self.build.scopes.enter(leaf.container, vec![name])?;
+            self.build.define(scope, leaf.range, leaf.what)?;
         }
         Ok(())
     }
@@ -76,22 +103,23 @@ impl Walk<'_> {
 
 /// The names a `use` tree brings in, each with the node it is spelled at:
 /// a path's last name, an alias, and the module of a `self` in a list;
-/// not a glob, nor an alias `_`.
-fn use_leaves<'n>(argument: Node<'n>, text: &str) -> Vec<(String, Node<'n>)> {
+/// not a glob, nor an alias `_`. A list's entries carry its module as a
+/// node, never a copy of its text.
+fn use_leaves<'n>(argument: Node<'n>, text: &str) -> Vec<(Node<'n>, Node<'n>)> {
     let mut found = Vec::new();
-    let mut stack = vec![(argument, None)];
+    let mut stack: Vec<(Node<'n>, Option<Node<'n>>)> = vec![(argument, None)];
     while let Some((node, module)) = stack.pop() {
         let field = |name| node.child_by_field_name(name);
         match node.kind() {
-            "identifier" => found.push((text_of(node, text).to_owned(), node)),
+            "identifier" => found.push((node, node)),
             "scoped_identifier" => {
                 if let Some(name) = field("name") {
-                    found.push((text_of(name, text).to_owned(), node));
+                    found.push((name, node));
                 }
             }
             "use_as_clause" => {
                 if let Some(alias) = field("alias").filter(|a| text_of(*a, text) != "_") {
-                    found.push((text_of(alias, text).to_owned(), node));
+                    found.push((alias, node));
                 }
             }
             "self" => {
@@ -100,7 +128,7 @@ fn use_leaves<'n>(argument: Node<'n>, text: &str) -> Vec<(String, Node<'n>)> {
                 }
             }
             "scoped_use_list" => {
-                let module = field("path").map(|path| last_name(path, text));
+                let module = field("path").map(last_name);
                 if let Some(list) = field("list") {
                     stack.push((list, module));
                 }
@@ -108,8 +136,7 @@ fn use_leaves<'n>(argument: Node<'n>, text: &str) -> Vec<(String, Node<'n>)> {
             "use_list" => {
                 let mut cursor = node.walk();
                 for child in node.named_children(&mut cursor) {
-                    // clone: each entry of the list may be a `self`.
-                    stack.push((child, module.clone()));
+                    stack.push((child, module));
                 }
             }
             _ => {}
@@ -118,8 +145,7 @@ fn use_leaves<'n>(argument: Node<'n>, text: &str) -> Vec<(String, Node<'n>)> {
     found
 }
 
-/// The last name of a path (`b` of `a::b`).
-fn last_name(path: Node<'_>, text: &str) -> String {
-    let name = path.child_by_field_name("name").unwrap_or(path);
-    text_of(name, text).to_owned()
+/// The node of the last name of a path (`b` of `a::b`).
+fn last_name(path: Node<'_>) -> Node<'_> {
+    path.child_by_field_name("name").unwrap_or(path)
 }

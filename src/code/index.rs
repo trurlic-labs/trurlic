@@ -16,7 +16,23 @@ use super::{json, make, markdown, rust, syntax, toml};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 3;
+pub(crate) const INDEX_FORMAT: u32 = 4;
+
+/// The largest file a tree-sitter grammar indexes. tree-sitter's error
+/// recovery takes a few microseconds a byte on hostile input, past what
+/// its own count of steps shows, so the bound on its time is the bound
+/// on the file's size.
+const TREE_SITTER_MAX_BYTES: usize = 1024 * 1024;
+
+/// The largest file a lexical resolver indexes.
+const LEXICAL_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// The largest file of any kind the index reads.
+pub(crate) const MAX_SOURCE_BYTES: usize = if TREE_SITTER_MAX_BYTES > LEXICAL_MAX_BYTES {
+    TREE_SITTER_MAX_BYTES
+} else {
+    LEXICAL_MAX_BYTES
+};
 
 /// The identity of tree-sitter-rust, computed once.
 static RUST_GRAMMAR: LazyLock<[u8; 32]> = LazyLock::new(|| {
@@ -72,6 +88,14 @@ impl FileKind {
         }
     }
 
+    /// The largest file of the kind the index reads.
+    pub(crate) const fn max_bytes(self) -> usize {
+        match self {
+            Self::Rust => TREE_SITTER_MAX_BYTES,
+            Self::Toml | Self::Json | Self::Make | Self::Markdown => LEXICAL_MAX_BYTES,
+        }
+    }
+
     /// The kind's name in a cache key.
     pub(crate) const fn name(self) -> &'static str {
         match self {
@@ -102,7 +126,7 @@ pub(crate) struct Definition {
 }
 
 /// A `macro_rules!` macro whose invocations can define a type: the arms
-/// that do, the items its body's `impl`s over the type hold, members of
+/// that do, the items its body's `impl`s of the type hold, members of
 /// the type, and the other items its body names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeMacro {
@@ -111,10 +135,20 @@ pub(crate) struct TypeMacro {
     /// alone.
     pub(crate) exported: bool,
     pub(crate) arms: Vec<TypeArm>,
-    pub(crate) members: Vec<(String, DefinitionKind)>,
+    pub(crate) members: Vec<Member>,
     /// The other items its body names, items of the invocation's
     /// container.
     pub(crate) items: Vec<(String, DefinitionKind)>,
+}
+
+/// An item of an `impl` of the type a [`TypeMacro`] defines.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Member {
+    /// For a trait impl, the trait's tokens, each metavariable that names
+    /// the type written `$` (`From < $ >`); `None` for an inherent impl.
+    pub(crate) trait_tokens: Option<Vec<String>>,
+    pub(crate) name: String,
+    pub(crate) kind: DefinitionKind,
 }
 
 /// An arm of a [`TypeMacro`]: the literal words it opens with before the
@@ -172,9 +206,11 @@ pub(crate) enum IndexFault {
     NotUtf8 { at: usize },
     /// A TOML or JSON file that does not parse, from about byte `at`.
     Syntax { at: usize },
-    /// The parse, or the work after it, ran past its budget for the
-    /// file's size.
+    /// The parse, the work after it, or the entry it gives ran past its
+    /// budget for the file's size.
     TooComplex,
+    /// The file is `bytes` long, over the `max` its kind indexes.
+    TooLarge { bytes: usize, max: usize },
     /// A path of more than [`MAX_NESTING`] segments.
     TooDeep,
     /// The grammar is of an ABI the parser does not read.
@@ -186,7 +222,13 @@ impl fmt::Display for IndexFault {
         match self {
             Self::NotUtf8 { at } => write!(f, "is not UTF-8 from byte {at}"),
             Self::Syntax { at } => write!(f, "does not parse, near byte {at}"),
-            Self::TooComplex => f.write_str("takes the index past its budget of work"),
+            Self::TooComplex => f.write_str("takes the index past its budget of work or size"),
+            Self::TooLarge { bytes, max } => {
+                write!(
+                    f,
+                    "is {bytes} bytes, over the {max} its kind is indexed within"
+                )
+            }
             Self::TooDeep => write!(f, "nests a path deeper than {MAX_NESTING} segments"),
             Self::Grammar => f.write_str("has a grammar of an ABI the parser does not read"),
         }
@@ -195,6 +237,13 @@ impl fmt::Display for IndexFault {
 
 /// The index of `bytes`, a file of `kind`.
 pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Result<FileIndex, IndexFault> {
+    let max = kind.max_bytes();
+    if bytes.len() > max {
+        return Err(IndexFault::TooLarge {
+            bytes: bytes.len(),
+            max,
+        });
+    }
     let text = std::str::from_utf8(bytes).map_err(|e| IndexFault::NotUtf8 {
         at: e.valid_up_to(),
     })?;
@@ -241,7 +290,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 3] = [
+    const FINGERPRINTS: [(u32, &str); 4] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -253,6 +302,10 @@ mod tests {
         (
             3,
             "6c4d79be6239ca763d78d5599795a7168c467dbaa482c60f38d8b4dd6e9dbd55",
+        ),
+        (
+            4,
+            "271d34c72dc4f8397e78ebeeffbb9a1b34c70b2cc03aff2a9d28ab4a553546b2",
         ),
     ];
 
@@ -289,6 +342,21 @@ mod tests {
             Some(&(INDEX_FORMAT, fingerprint.as_str())),
             "the index of the fixture corpus changed: raise INDEX_FORMAT and append its fingerprint"
         );
+    }
+
+    #[test]
+    fn a_file_past_its_kinds_size_is_refused_naming_the_bound() {
+        let over = vec![b'\n'; TREE_SITTER_MAX_BYTES + 1];
+
+        assert_eq!(
+            index(FileKind::Rust, &over),
+            Err(IndexFault::TooLarge {
+                bytes: TREE_SITTER_MAX_BYTES + 1,
+                max: TREE_SITTER_MAX_BYTES,
+            })
+        );
+        assert!(index(FileKind::Markdown, &over).is_ok());
+        assert!(index(FileKind::Rust, &over[1..]).is_ok());
     }
 
     #[test]

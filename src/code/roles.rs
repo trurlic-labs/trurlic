@@ -9,18 +9,25 @@
 //! `x/main.rs`); a target a manifest's `path =` names elsewhere is not
 //! read. From each file it follows the `mod name;` declarations the file
 //! records, to `name.rs` or `name/mod.rs` in the module's directory, or
-//! to the file a `#[path]` names. A file is test code when it is under
+//! to the file a relative `#[path]` names (an absolute one names no file
+//! of the tree); the module's directory takes a segment for each inline
+//! `mod` around the declaration, none for a function or any other item
+//! it stands in. A file is test code when it is under
 //! its crate's `tests/`, or when every declaration that reaches it is test
 //! code, or in a file only test code reaches; a file no target reaches
 //! keeps what its own bytes say. Each file is visited at most twice, once
 //! as code and once as test, so the walk is linear in the tree.
+//!
+//! A file an anchor brings in from outside the walk is a root or a
+//! module like any other, but the walk does not follow its own
+//! declarations: what it declares is read for no other file.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-use super::expand::{Crates, file_name, parent};
+use super::expand::{Crates, Files, file_name, parent};
 use super::index::{FileIndex, FileKind, ModuleFile};
-use super::kinds::Role;
-use super::scope::Scopes;
+use super::kinds::{DefinitionKind, Role};
+use super::scope::ScopeId;
 use super::symbol::Segment;
 
 /// The files of a target's root in a crate, by their directory.
@@ -29,13 +36,43 @@ const ROOT_FILES: [&str; 3] = ["src/lib.rs", "src/main.rs", "build.rs"];
 /// The directories each of whose files is a target's root.
 const ROOT_DIRS: [&str; 4] = ["src/bin", "tests", "benches", "examples"];
 
-/// The Rust files of `files` that are test code whole; `crates` is of
-/// the same files.
+/// The Rust files of `files` and `outside` that are test code whole;
+/// `crates` is of the same files. The declarations of `outside`'s files,
+/// those no walk took, are not followed.
 pub(super) fn test_files<'i>(
-    files: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>,
+    files: &Files<'i>,
+    outside: &Files<'i>,
     crates: &Crates<'i>,
 ) -> BTreeSet<&'i str> {
-    let roots = target_roots(files, crates);
+    let rust = || {
+        files
+            .iter()
+            .chain(outside)
+            .filter(|(_, (kind, _))| *kind == FileKind::Rust)
+            .map(|(&path, (_, index))| (path, *index))
+    };
+    let roots: BTreeSet<&str> = rust()
+        .map(|(path, _)| path)
+        .filter(|path| relative_to_crate(path, crates).is_some_and(is_target_root))
+        .collect();
+    let (reached, reached_as_code) = walk_forward(files, outside, crates, &roots);
+    rust()
+        .map(|(path, _)| path)
+        .filter(|path| {
+            role_of_place(path, crates) == Role::Test
+                || (reached.contains(path) && !reached_as_code.contains(path))
+        })
+        .collect()
+}
+
+/// The files the walk from `roots` reaches, and those it reaches as
+/// code; the declarations of the files of `outside` are not followed.
+fn walk_forward<'i>(
+    files: &Files<'i>,
+    outside: &Files<'i>,
+    crates: &Crates<'i>,
+    roots: &BTreeSet<&'i str>,
+) -> (BTreeSet<&'i str>, BTreeSet<&'i str>) {
     let mut reached_as_code = BTreeSet::new();
     let mut reached = BTreeSet::new();
     let mut pending: Vec<(&str, Role)> = roots
@@ -48,41 +85,39 @@ pub(super) fn test_files<'i>(
             Role::Test => reached.insert(path),
         };
         reached.insert(path);
-        if !first {
-            continue;
-        }
-        let Some((_, index)) = files.get(path) else {
+        let Some((_, index)) = files.get(path).filter(|_| first) else {
             continue;
         };
-        let is_root = roots.contains(path);
+        let modules = module_scopes(index);
+        let declaring = Declaring {
+            path,
+            is_root: roots.contains(path),
+            index,
+            modules: &modules,
+        };
         for module in &index.module_files {
-            if let Some(target) = module_file(path, is_root, index, module, files) {
+            let target = declaring.module_file(module, |candidate| {
+                files
+                    .get_key_value(candidate)
+                    .or_else(|| outside.get_key_value(candidate))
+                    .map(|(&found, _)| found)
+            });
+            if let Some(target) = target {
                 pending.push((target, role.or(module.role)));
             }
         }
     }
-    files
-        .iter()
-        .filter(|(_, (kind, _))| *kind == FileKind::Rust)
-        .map(|(&path, _)| path)
-        .filter(|path| {
-            role_of_place(path, crates) == Role::Test
-                || (reached.contains(path) && !reached_as_code.contains(path))
-        })
-        .collect()
+    (reached, reached_as_code)
 }
 
-/// The root files of the targets of every crate of `crates` that `files`
-/// holds: each file whose place in its crate is a target's root.
-fn target_roots<'i>(
-    files: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>,
-    crates: &Crates<'i>,
-) -> BTreeSet<&'i str> {
-    files
+/// The scopes of `index` that are modules: the directories of a module
+/// file declared inside them.
+fn module_scopes(index: &FileIndex) -> BTreeSet<ScopeId> {
+    index
+        .definitions
         .iter()
-        .filter(|(_, (kind, _))| *kind == FileKind::Rust)
-        .map(|(&path, _)| path)
-        .filter(|path| relative_to_crate(path, crates).is_some_and(is_target_root))
+        .filter(|definition| definition.kind == DefinitionKind::Module)
+        .map(|definition| definition.scope)
         .collect()
 }
 
@@ -114,65 +149,84 @@ fn relative_to_crate<'p>(path: &'p str, crates: &Crates<'_>) -> Option<&'p str> 
 
 /// `Test` for a file under its crate's `tests/` directory.
 fn role_of_place(path: &str, crates: &Crates<'_>) -> Role {
-    let root = crates.crate_of(path);
-    let relative = match root {
-        _ if root == path => None,
-        "" => Some(path),
-        root => path
-            .strip_prefix(root)
-            .and_then(|rest| rest.strip_prefix('/')),
-    };
-    match relative.is_some_and(|relative| relative.starts_with("tests/")) {
+    match relative_to_crate(path, crates).is_some_and(|relative| relative.starts_with("tests/")) {
         true => Role::Test,
         false => Role::Code,
     }
 }
 
-/// The file of `files` that `module`, declared in the file at `path`,
-/// names; `None` when there is none.
-fn module_file<'i>(
-    path: &str,
+/// A file whose module declarations are followed.
+struct Declaring<'a> {
+    path: &'a str,
     is_root: bool,
-    index: &FileIndex,
-    module: &ModuleFile,
-    files: &BTreeMap<&'i str, (FileKind, &'i FileIndex)>,
-) -> Option<&'i str> {
-    let scopes = Scopes {
-        file: &index.scopes,
-        added: &[],
-    };
-    let mut names: Vec<&str> = scopes
-        .path_from_end(module.scope)
-        .map(|segment| match segment {
-            Segment::Name(name) => name.as_str(),
-            Segment::Impl { name, .. } => name.as_str(),
-        })
-        .collect();
-    names.reverse();
-    let (name, inline) = names.split_last()?;
-    // A crate's root and a `mod.rs` hold their modules beside them; any
-    // other `x.rs` holds them in `x/`.
-    let mut dir = parent(path).to_owned();
-    if !is_root && file_name(path) != "mod.rs" {
-        dir = join(&dir, file_name(path).strip_suffix(".rs")?);
-    }
-    let candidates = match &module.path {
-        Some(named) if inline.is_empty() => vec![join(parent(path), named)],
-        Some(named) => vec![join(&join(&dir, &inline.join("/")), named)],
-        None => {
-            let dir = inline.iter().fold(dir, |dir, module| join(&dir, module));
-            vec![
-                join(&dir, &format!("{name}.rs")),
-                join(&dir, &format!("{name}/mod.rs")),
-            ]
+    index: &'a FileIndex,
+    /// Its scopes that are inline modules.
+    modules: &'a BTreeSet<ScopeId>,
+}
+
+impl Declaring<'_> {
+    /// The file `module`, declared here, names, as `find` finds it by
+    /// its path; `None` when there is none.
+    fn module_file<'i>(
+        &self,
+        module: &ModuleFile,
+        find: impl Fn(&str) -> Option<&'i str>,
+    ) -> Option<&'i str> {
+        let name = self.name_of(module.scope)?;
+        let inline = self.inline_modules(module.scope);
+        // A crate's root and a `mod.rs` hold their modules beside them; any
+        // other `x.rs` holds them in `x/`.
+        let mut dir = parent(self.path).to_owned();
+        if !self.is_root && file_name(self.path) != "mod.rs" {
+            dir = join(&dir, file_name(self.path).strip_suffix(".rs")?);
         }
-    };
-    candidates.into_iter().find_map(|candidate| {
-        let normal = normalize(&candidate)?;
-        files
-            .get_key_value(normal.as_str())
-            .map(|(&found, _)| found)
-    })
+        let candidates = match &module.path {
+            Some(named) if named.starts_with('/') => return None,
+            Some(named) if inline.is_empty() => vec![join(parent(self.path), named)],
+            Some(named) => vec![join(&join(&dir, &inline.join("/")), named)],
+            None => {
+                let dir = inline.iter().fold(dir, |dir, module| join(&dir, module));
+                vec![
+                    join(&dir, &format!("{name}.rs")),
+                    join(&dir, &format!("{name}/mod.rs")),
+                ]
+            }
+        };
+        candidates
+            .into_iter()
+            .find_map(|candidate| find(&normalize(&candidate)?))
+    }
+
+    /// The last name of the scope `id`.
+    fn name_of(&self, id: ScopeId) -> Option<&str> {
+        match self.index.scopes.get(id.at())?.name.last()? {
+            Segment::Name(name) | Segment::Impl { name, .. } => Some(name),
+        }
+    }
+
+    /// The names of the inline modules around the scope `id`, outermost
+    /// first. A parent's id is below its child's, so the walk ends.
+    fn inline_modules(&self, id: ScopeId) -> Vec<&str> {
+        let mut names = Vec::new();
+        let mut next = self
+            .index
+            .scopes
+            .get(id.at())
+            .and_then(|scope| scope.parent);
+        while let Some(current) = next.filter(|current| *current < id) {
+            if self.modules.contains(&current) {
+                names.extend(self.name_of(current));
+            }
+            next = self
+                .index
+                .scopes
+                .get(current.at())
+                .and_then(|scope| scope.parent)
+                .filter(|parent| *parent < current);
+        }
+        names.reverse();
+        names
+    }
 }
 
 /// `dir` and `rest` joined by a `/`; `rest` alone at the root.
@@ -216,8 +270,8 @@ mod tests {
             .iter()
             .map(|(path, kind, index)| (*path, (*kind, index)))
             .collect();
-        let crates = Crates::of(&tree);
-        test_files(&tree, &crates)
+        let crates = Crates::of(&tree, &Files::new());
+        test_files(&tree, &Files::new(), &crates)
             .into_iter()
             .map(str::to_owned)
             .collect()

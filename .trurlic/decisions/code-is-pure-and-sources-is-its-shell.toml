@@ -1,10 +1,11 @@
 component = "code"
 choice = "code takes a file's kind and bytes, or the gathered facts of a tree, and returns values; sources walks, reads and caches, and is the one way a command reaches the index"
-reason = "The index is pure so its rules are tested on bytes alone, and the same function serves a file on disk now and a blob at a git revision when a diff review compares two revisions. A file's index is a function of its kind and bytes, which is what lets a cache key it by content; what depends on other files, the types a crate's macros define and the files that are test code whole, is a second pure step over the indexes of the whole tree. The shell gathers those facts once per call: it walks the code root, reads each file within a bound, reads and fills the cache through the Store, and hands code a map of entries, every anchored path among them, so a path absent from the map is missing. Its entry point is sources::resolve_anchors, which no command calls yet but the benchmark; mcp and commands will both read it, so it is a module of its own that neither owns, and code never imports it. A test parses each file of code with the crate's own grammar and refuses any path, a use tree's alias or list included, that reaches the file system, processes, the environment, the clock or the shell modules outside test code."
+reason = "The index is pure so its rules are tested on bytes alone, and the same function serves a file on disk now and a blob at a git revision when a diff review compares two revisions. A file's index is a function of its kind and bytes, which is what lets a cache key it by content; what depends on other files, the types a crate's macros define and the files that are test code whole, is a second pure step over the indexes of the whole tree. The shell gathers those facts once per call: it walks the code root, reads each file within a bound, reads and fills the cache through the Store, and hands code a map of entries, every anchored path among them, so a path absent from the map is missing. Its entry point is sources::resolve_anchors, which no command calls yet but the benchmark; mcp and commands will both read it, so it is a module of its own that neither owns, and code never imports it. The compiler holds the rule: clippy runs over the library with tests/pure/clippy.toml, which names std's file system, environment, processes, threads, clock, network and standard streams, the store's types that read and write and the console, and a test refuses every finding in src/code/, at its span or at a macro call that expands to it, test code left out as the build leaves it, one seeded evasion per form proving it. A second test refuses every token of code's non-test code that names a shell module of the crate. A crate macro or function wrapping I/O under another name, and a dependency's own I/O, are not seen."
 alternatives = [
     "Let code read files as it resolves: rejected because the rules could then be tested only on a tree on disk, and a git blob would need a second path",
     "Put the shell in commands: rejected because the status tool in mcp needs it too, and mcp does not import commands",
-    "Expand macros inside each file's index: rejected because the index would depend on other files, and a cache keyed by one file's content would hold stale types",
+    "A parser of the source that matches shell paths: rejected because an alias, a glob, a macro argument or a method call evaded it",
+    "Compile code as a no_std crate in a test: rejected because every file would need alloc paths and code uses tree-sitter's std API",
 ]
 tags = [
     "architecture",
@@ -17,7 +18,10 @@ anchors = [
     { file = "src/code/expand.rs", symbol = "expand" },
     { file = "src/code/facts.rs", symbol = "CodeFacts::new" },
     { file = "src/code/mod.rs" },
-    { file = "src/code/mod.rs", symbol = "a_shell_path_is_found_however_it_is_spelled" },
-    { file = "src/code/testing.rs", symbol = "shell_paths_of" },
+    { file = "src/code/mod.rs", symbol = "a_shell_module_is_found_however_it_is_spelled" },
+    { file = "src/code/testing.rs", symbol = "shell_names_of" },
     { file = "src/sources/mod.rs", symbol = "gather" },
+    { file = "tests/lints.rs", symbol = "the_code_index_reaches_nothing_the_purity_configuration_names" },
+    { file = "tests/lints.rs", symbol = "the_purity_configuration_finds_each_evasion_of_its_seeded_crate" },
+    { file = "tests/pure/clippy.toml", symbol = "disallowed-methods" },
 ]

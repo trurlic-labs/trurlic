@@ -28,56 +28,53 @@ mod marks;
 mod reexports;
 mod spelled;
 
-pub(super) use macros::is_word;
-
-use std::ops::Range;
+pub(super) use macros::{MAX_ARM_WORDS, is_word};
 
 use tree_sitter::Node;
 
-use super::index::{Definition, FileIndex, IndexFault, ModuleFile};
-use super::kinds::{DefinitionKind, Role, Visibility};
-use super::scope::{ScopeId, ScopeTree};
-use super::span::Lines;
+use super::index::{FileIndex, IndexFault, ModuleFile};
+use super::kinds::{DefinitionKind, Role, Visibility, What};
+use super::scope::ScopeId;
 use super::symbol::Segment;
-use super::syntax::{self, Leaves, text_of};
-use super::work::Work;
+use super::syntax::{self, text_of};
+use super::tree::TreeIndex;
 
-use items::{Item, What, Within};
+use items::{Item, Within};
 use marks::Marks;
+
+/// tree-sitter-rust's lexical literals, each one token whole: its
+/// prefix, delimiters and suffix hashed with its content. A
+/// `negative_literal` is no lexical token: `-1` and `- 1` are one
+/// expression.
+pub(super) const LITERALS: [&str; 5] = [
+    "string_literal",
+    "raw_string_literal",
+    "char_literal",
+    "integer_literal",
+    "float_literal",
+];
 
 /// The index of `text`, a Rust file.
 pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
     let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
     let mut walk = Walk {
         text,
-        leaves: Leaves::of(&tree),
-        lines: Lines::of(text.as_bytes()),
-        scopes: ScopeTree::default(),
-        index: FileIndex::default(),
+        build: TreeIndex::new(text, &tree, &LITERALS),
         reexports: Vec::new(),
-        work: Work::of(text.len()),
     };
     walk.run(tree.root_node())?;
     walk.define_reexports()?;
-    let mut index = walk.index;
-    index.scopes = walk.scopes.into_scopes();
-    Ok(index)
+    Ok(walk.build.finish())
 }
 
 /// One walk of a tree, which visits each node once, from an explicit
 /// stack: a nesting as deep as the file allows costs no call stack.
 struct Walk<'t> {
     text: &'t str,
-    leaves: Leaves,
-    lines: Lines,
-    scopes: ScopeTree,
-    /// The definitions, macros and invocations found; its scopes are
-    /// [`Walk::scopes`] until the walk ends.
-    index: FileIndex,
+    build: TreeIndex<'t>,
     /// The leaves of the `pub use`s, defined after the walk, once the
     /// paths of the file's items are all found.
     reexports: Vec<reexports::Reexport>,
-    work: Work,
 }
 
 /// Nodes whose tokens are no items: an attribute's, a macro body's, a
@@ -200,6 +197,7 @@ impl Walk<'_> {
         };
         let name = text_of(name, self.text);
         let scope = self
+            .build
             .scopes
             .enter(context.scope, vec![Segment::name(name)])?;
         if name != "_" {
@@ -208,17 +206,18 @@ impl Walk<'_> {
                 role: context.role,
                 visibility: context.within.visibility(own),
             };
-            self.define(scope, visit.start..node.end_byte(), what)?;
+            self.build
+                .define(scope, visit.start..node.end_byte(), what)?;
         }
         if item == Item::Module && node.child_by_field_name("body").is_none() {
-            self.index.module_files.push(ModuleFile {
+            self.build.add_module_file(ModuleFile {
                 scope,
                 role: context.role,
                 path: visit
                     .marks
                     .path
                     .map(|literal| string_value(literal, self.text)),
-            });
+            })?;
         }
         Ok(Context {
             scope: Some(scope),
@@ -235,7 +234,7 @@ impl Walk<'_> {
             return Ok(());
         };
         let name = vec![Segment::name(text_of(name, self.text))];
-        let scope = self.scopes.enter(visit.context.scope, name)?;
+        let scope = self.build.scopes.enter(visit.context.scope, name)?;
         let what = What {
             kind: DefinitionKind::Macro,
             role: visit.context.role,
@@ -244,11 +243,14 @@ impl Walk<'_> {
                 false => Visibility::Private,
             }),
         };
-        self.define(scope, visit.start..visit.node.end_byte(), what)?;
+        self.build
+            .define(scope, visit.start..visit.node.end_byte(), what)?;
         let exported = visit.marks.macro_export;
-        let found = macros::type_macro(visit.node, self.text, exported, &mut self.work)?;
-        self.index.macros.extend(found);
-        Ok(())
+        let found = macros::type_macro(visit.node, self.text, exported, &mut self.build.work)?;
+        match found {
+            Some(found) => self.build.add_macro(found),
+            None => Ok(()),
+        }
     }
 
     /// An `impl`'s context: the type's segment, then the trait's for a
@@ -268,6 +270,7 @@ impl Walk<'_> {
             Some(trait_node) => {
                 let trait_segment = Segment::of_trait(text_of(trait_node, self.text));
                 let scope = self
+                    .build
                     .scopes
                     .enter(context.scope, vec![type_segment, trait_segment])?;
                 let what = What {
@@ -275,7 +278,7 @@ impl Walk<'_> {
                     role: context.role,
                     visibility: None,
                 };
-                self.define(scope, start..node.end_byte(), what)?;
+                self.build.define(scope, start..node.end_byte(), what)?;
                 Context {
                     scope: Some(scope),
                     within: Within::TraitImpl,
@@ -283,39 +286,11 @@ impl Walk<'_> {
                 }
             }
             None => Context {
-                scope: Some(self.scopes.enter(context.scope, vec![type_segment])?),
+                scope: Some(self.build.scopes.enter(context.scope, vec![type_segment])?),
                 within: Within::Impl,
                 role: context.role,
             },
         })
-    }
-
-    /// Define `scope` over bytes `range` as `what` says, its hash's tokens
-    /// spent from the budget.
-    fn define(
-        &mut self,
-        scope: ScopeId,
-        range: Range<usize>,
-        what: What,
-    ) -> Result<(), IndexFault> {
-        let hash = self.hash(range.start..range.end)?;
-        self.index.definitions.push(Definition {
-            scope,
-            kind: what.kind,
-            span: self.lines.span(range.start, range.end),
-            hash,
-            role: what.role,
-            visibility: what.visibility,
-        });
-        Ok(())
-    }
-
-    /// The hash of the tokens within bytes `range`, each spent from the
-    /// budget.
-    fn hash(&mut self, range: Range<usize>) -> Result<super::span::SpanHash, IndexFault> {
-        let (hash, tokens) = self.leaves.hash(self.text, range.start, range.end);
-        self.work.spend(tokens)?;
-        Ok(hash)
     }
 }
 

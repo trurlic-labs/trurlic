@@ -298,7 +298,7 @@ fn prefix_visibility(prefix: &[Node<'_>], text: &str) -> Visibility {
     let group: Vec<&str> = prefix
         .get(at + 1)
         .filter(|group| text_of(**group, text).starts_with('('))
-        .map(|group| tokens_of(*group, usize::MAX))
+        .map(|group| tokens_of(*group, text, usize::MAX))
         .unwrap_or_default()
         .into_iter()
         .map(|token| text_of(token, text))
@@ -313,7 +313,7 @@ fn prefix_role(prefix: &[Node<'_>], text: &str) -> Role {
         .filter(|pair| matches!(pair, [hash, _] if text_of(*hash, text) == "#"))
         .filter_map(|pair| pair.get(1))
         .map(|group| {
-            let tokens: Vec<&str> = tokens_of(*group, usize::MAX)
+            let tokens: Vec<&str> = tokens_of(*group, text, usize::MAX)
                 .into_iter()
                 .map(|token| text_of(token, text))
                 .collect();

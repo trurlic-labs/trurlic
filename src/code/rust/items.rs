@@ -1,7 +1,7 @@
 //! What a Rust item is, from its node and the container it stands in:
 //! its kind, and whose visibility it and its members have.
 
-use crate::code::kinds::{Container, DefinitionKind, Role, Visibility};
+use crate::code::kinds::{Container, DefinitionKind, Visibility};
 
 /// The container a node stands in, as far as what it defines is
 /// concerned: whether a `fn` is a method, and whose visibility a member
@@ -38,14 +38,6 @@ impl Within {
             Self::Trait(inherited) | Self::Enum(inherited) => Some(inherited),
         }
     }
-}
-
-/// What a definition is, beside where.
-#[derive(Clone, Copy)]
-pub(super) struct What {
-    pub(super) kind: DefinitionKind,
-    pub(super) role: Role,
-    pub(super) visibility: Option<Visibility>,
 }
 
 /// A node that defines its `name`: an item, a variant, a named field.

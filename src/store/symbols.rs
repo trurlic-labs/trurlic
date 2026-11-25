@@ -25,11 +25,6 @@ use super::{Store, StoreLock};
 /// The directory of the cache, in `.state/`.
 const SYMBOLS_DIR: &str = "symbols";
 
-/// The largest entry a read takes; a larger one is a miss. The index
-/// writes no larger one: an entry is linear in its file, and the files
-/// it reads are bounded (`sources::cache`).
-pub(crate) const MAX_SYMBOLS_ENTRY_BYTES: usize = 160 * 1024 * 1024;
-
 /// The entries the directory may hold for each one of the live set a
 /// write is given, past [`PRUNE_SLACK`], before the rest are removed.
 const PRUNE_FACTOR: usize = 2;
@@ -72,12 +67,12 @@ impl Store {
     }
 
     /// The bytes of the entry `key` names; `None` when there is none, or
-    /// it is no regular file, is over [`MAX_SYMBOLS_ENTRY_BYTES`] or cannot
-    /// be read.
-    pub(crate) fn read_symbols(&self, key: SymbolsKey) -> Option<Vec<u8>> {
+    /// it is no regular file, is over `max_bytes` (the largest entry the
+    /// caller's file can have) or cannot be read.
+    pub(crate) fn read_symbols(&self, key: SymbolsKey, max_bytes: usize) -> Option<Vec<u8>> {
         let path = self.symbols_dir().join(key.to_string());
         let metadata = fs::metadata(&path).ok()?;
-        let cap = MAX_SYMBOLS_ENTRY_BYTES as u64;
+        let cap = max_bytes as u64;
         if !metadata.is_file() || metadata.len() > cap {
             return None;
         }
@@ -87,7 +82,7 @@ impl Store {
             .take(cap + 1)
             .read_to_end(&mut bytes)
             .ok()?;
-        (bytes.len() <= MAX_SYMBOLS_ENTRY_BYTES).then_some(bytes)
+        (bytes.len() <= max_bytes).then_some(bytes)
     }
 
     /// Write each of `entries` over its key's name, and remove everything
@@ -213,8 +208,8 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(store.read_symbols(key(1)), Some(b"one".to_vec()));
-        assert_eq!(store.read_symbols(key(2)), None);
+        assert_eq!(store.read_symbols(key(1), 64), Some(b"one".to_vec()));
+        assert_eq!(store.read_symbols(key(2), 64), None);
     }
 
     #[test]
@@ -229,16 +224,16 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_that_is_no_file_or_over_the_cap_is_a_miss() {
+    fn an_entry_that_is_no_file_or_over_the_callers_cap_is_a_miss() {
         let tmp = TempDir::new().unwrap();
         let store = setup_store(tmp.path());
         let dir = store.symbols_dir();
         fs::create_dir_all(dir.join(key(1).to_string())).unwrap();
-        let large = File::create(dir.join(key(2).to_string())).unwrap();
-        large.set_len(MAX_SYMBOLS_ENTRY_BYTES as u64 + 1).unwrap();
+        fs::write(dir.join(key(2).to_string()), [0; 65]).unwrap();
 
-        assert_eq!(store.read_symbols(key(1)), None);
-        assert_eq!(store.read_symbols(key(2)), None);
+        assert_eq!(store.read_symbols(key(1), 64), None);
+        assert_eq!(store.read_symbols(key(2), 64), None);
+        assert_eq!(store.read_symbols(key(2), 65), Some(vec![0; 65]));
     }
 
     #[test]
@@ -258,8 +253,8 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(store.read_symbols(key(1)), Some(b"one".to_vec()));
-        assert_eq!(store.read_symbols(key(2)), Some(b"two".to_vec()));
+        assert_eq!(store.read_symbols(key(1), 64), Some(b"one".to_vec()));
+        assert_eq!(store.read_symbols(key(2), 64), Some(b"two".to_vec()));
         assert!(!dir.join("stray-dir").exists());
     }
 
@@ -296,6 +291,6 @@ mod tests {
             .write_symbols(&lock, &entries(at_bound + 1), &live)
             .unwrap();
         assert_eq!(count(), 1);
-        assert_eq!(store.read_symbols(first), Some(Vec::new()));
+        assert_eq!(store.read_symbols(first, 64), Some(Vec::new()));
     }
 }

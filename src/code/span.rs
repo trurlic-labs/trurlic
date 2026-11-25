@@ -1,12 +1,15 @@
 //! Where a definition is in its file, and the hash of what it holds.
 //!
 //! A [`SpanHash`] is the hash of a span's normalized text, named by its
-//! scheme ([`HASH_SCHEME`]): a change of the normalization is a new
-//! scheme, so two hashes of different schemes are never compared as
-//! equal. Under `t1` a tree-sitter span hashes its leaf tokens, comments
-//! dropped, each with its length, so reformatting the span or editing a
-//! comment in it changes nothing; a lexical span hashes its text with
-//! every run of whitespace made one space and the ends trimmed.
+//! scheme ([`HASH_SCHEME`]), fixed from its first release: a change of
+//! the normalization is a new scheme, so two hashes of different schemes
+//! are never compared as equal. Under `t1` a tree-sitter span hashes its
+//! tokens (`syntax.rs`: every byte but comments and whitespace in one,
+//! a literal of the lexical literal kinds whole), each with its length,
+//! each definition nested in it by its own hash instead, so reformatting
+//! the span or editing a comment in it changes nothing; a lexical span
+//! hashes its text with every run of whitespace made one space and the
+//! ends trimmed.
 
 use std::fmt;
 use std::str::FromStr;
@@ -71,16 +74,11 @@ impl Lines {
 pub(crate) struct SpanHash([u8; 32]);
 
 impl SpanHash {
-    /// The hash of `tokens`, each a leaf token of a parse tree with the
-    /// comments left out, in order.
-    pub(super) fn of_tokens<'a>(tokens: impl Iterator<Item = &'a [u8]>) -> Self {
-        let mut hasher = blake3::Hasher::new();
-        for token in tokens {
-            // A length before each token: `a b` and `ab` hash apart.
-            hasher.update(&(token.len() as u64).to_le_bytes());
-            hasher.update(token);
-        }
-        Self(*hasher.finalize().as_bytes())
+    /// The hash of `units`, a definition's tokens and nested hashes, each
+    /// after its length mark (`Leaves::hash_each`), so `a b` and `ab` hash
+    /// apart.
+    pub(super) fn of_units(units: &[u8]) -> Self {
+        Self(*blake3::hash(units).as_bytes())
     }
 
     /// The hash its 32 bytes are.
@@ -175,14 +173,6 @@ mod tests {
             }
         );
         assert_eq!(lines.span(6, 6).last_line, 4);
-    }
-
-    #[test]
-    fn a_token_hash_sees_each_token_boundary() {
-        let split = SpanHash::of_tokens([&b"a"[..], b"b"].into_iter());
-        let joined = SpanHash::of_tokens([&b"ab"[..]].into_iter());
-
-        assert_ne!(split, joined);
     }
 
     #[test]

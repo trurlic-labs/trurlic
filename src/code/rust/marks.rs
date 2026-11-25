@@ -53,7 +53,7 @@ pub(super) fn attribute_item_marks<'n>(attribute: Node<'n>, text: &str) -> Marks
             path: None,
         };
     };
-    let nodes = tokens_of(inner, usize::MAX);
+    let nodes = tokens_of(inner, text, usize::MAX);
     let tokens: Vec<&str> = nodes.iter().map(|token| text_of(*token, text)).collect();
     let macro_export = match tokens.as_slice() {
         ["macro_export", ..] => true,
@@ -178,7 +178,7 @@ pub(super) fn visibility_of(item: Node<'_>, text: &str) -> Visibility {
     else {
         return Visibility::Private;
     };
-    let tokens: Vec<&str> = tokens_of(modifier, usize::MAX)
+    let tokens: Vec<&str> = tokens_of(modifier, text, usize::MAX)
         .into_iter()
         .map(|token| text_of(token, text))
         .collect();

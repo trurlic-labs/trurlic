@@ -67,6 +67,7 @@ const DEEPER: &str = "its file nests a path deeper than 64 segments";
 const MISSING: &str = "its file defines nothing its symbol names";
 const LEDGER: &str = "crates/ledger/src/lib.rs";
 const BOOKS: &str = "crates/ledger/src/books/mod.rs";
+const RULES: &str = "crates/ledger/src/rules.rs";
 
 /// One case per construct: the anchor's file and symbol, and what it
 /// resolves to.
@@ -169,6 +170,17 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     ("crates/shelf/src/lib.rs", "PyException", MISSING),
     ("crates/ids/src/lib.rs", "Local", SYMBOL),
     ("crates/ids/src/lib.rs", "numbered_id", SYMBOL),
+    (RULES, "sign", SYMBOL),
+    (RULES, "Eight", SYMBOL),
+    (RULES, "Nine", MISSING),
+    (RULES, "Owned", SYMBOL),
+    (RULES, "Owned::get", SYMBOL),
+    (RULES, "Owned::<Display>::fmt", SYMBOL),
+    (RULES, "Owned::fmt", SYMBOL),
+    (RULES, "Owned::from", MISSING),
+    (RULES, "Named", MISSING),
+    (RULES, "commented::helper", SYMBOL),
+    (RULES, "Listed", SYMBOL),
     ("loose/single.rs", "Alone", SYMBOL),
     ("loose/single.rs", "Visible", SYMBOL),
 ];
@@ -488,6 +500,7 @@ const STATEMENTS: &[&str] = &[
     "crates/ids/src/lib.rs Local Struct Code -",
     "crates/ledger/Cargo.toml package Key Code -",
     "crates/ledger/Cargo.toml package::name Key Code -",
+    "crates/ledger/src/abs.rs not_reached Function Code Public",
     "crates/ledger/src/books/mod.rs book_id Macro Code Private",
     "crates/ledger/src/books/mod.rs Catalog Struct Code Public",
     "crates/ledger/src/books/mod.rs Shelf Struct Code Public",
@@ -543,6 +556,7 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/lib.rs Book::close Method Code Public",
     "crates/ledger/src/lib.rs books Module Code Public",
     "crates/ledger/src/lib.rs marks Module Code Private",
+    "crates/ledger/src/lib.rs rules Module Code Private",
     "crates/ledger/src/lib.rs checks Module Test Private",
     "crates/ledger/src/lib.rs archive Module Code Private",
     "crates/ledger/src/lib.rs archive::seal Function Code Public",
@@ -569,6 +583,23 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/marks.rs holds_for_any Function Test Private",
     "crates/ledger/src/marks.rs nested Module Test Crate",
     "crates/ledger/src/marks.rs nested::inside_a_test_module Function Test Public",
+    "crates/ledger/src/rules.rs sign Function Code Public",
+    "crates/ledger/src/rules.rs listed Macro Code Private",
+    "crates/ledger/src/rules.rs worded Macro Code Private",
+    "crates/ledger/src/rules.rs owned Macro Code Private",
+    "crates/ledger/src/rules.rs commented Module Test Private",
+    "crates/ledger/src/rules.rs commented::helper Function Test Private",
+    "crates/ledger/src/rules.rs Listed Reexport Code Public",
+    "crates/ledger/src/rules.rs absolute Module Test Private",
+    "crates/ledger/src/rules.rs scoped Function Code Private",
+    "crates/ledger/src/rules.rs scoped::in_body Module Test Private",
+    "crates/ledger/src/rules.rs Eight Struct Code -",
+    "crates/ledger/src/rules.rs i Struct Code -",
+    "crates/ledger/src/rules.rs Owned Struct Code -",
+    "crates/ledger/src/rules.rs Owned::get Method Code -",
+    "crates/ledger/src/rules.rs Owned::<Display> Impl Code -",
+    "crates/ledger/src/rules.rs Owned::<Display>::fmt Method Code -",
+    "crates/ledger/src/rules/in_body.rs reached_by_test Function Test Public",
     "crates/ledger/tests/flow.rs opened_book Function Test Private",
     "crates/ledger/tests/flow.rs a_book_opens Function Test Private",
     "crates/shelf/Cargo.toml package Key Code -",

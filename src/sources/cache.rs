@@ -6,29 +6,25 @@
 //!
 //! An entry is the BLAKE3 of the rest, then its key, then the index in
 //! `code`'s compact encoding. One whose sum, key or encoding does not hold
-//! is a miss and is written again, as is one the store refuses to read.
-//! An entry is linear in its file, and the store reads one of any file
-//! the index reads (`ENTRY_FITS_THE_STORE`), so no entry is written that a
-//! read would refuse.
+//! is a miss and is written again. The index of a file is bounded by the
+//! file by construction (`code::max_entry_bytes`), and a read takes no
+//! entry larger than that bound of the file it is read for
+//! ([`max_entry_bytes`]): no entry is written that a read would refuse,
+//! and a forged one costs a decode in proportion to the file.
 
 use crate::code::{
-    ENTRY_OVERHEAD_BYTES, FileKind, HASH_SCHEME, INDEX_FORMAT, Indexed,
-    MAX_ENTRY_BYTES_PER_SOURCE_BYTE, decode_index, encode_index,
+    FileKind, HASH_SCHEME, INDEX_FORMAT, Indexed, decode_index, encode_index,
+    max_entry_bytes as max_index_bytes,
 };
-use crate::store::{MAX_SYMBOLS_ENTRY_BYTES, SymbolsKey};
-
-use super::MAX_SOURCE_FILE_BYTES;
+use crate::store::SymbolsKey;
 
 /// The bytes before the index: its sum and its key.
 const HEADER_BYTES: usize = 64;
 
-// The largest entry of a file the index reads fits what the store reads.
-const _: () = {
-    let per_byte = MAX_ENTRY_BYTES_PER_SOURCE_BYTE as u64;
-    let besides = (ENTRY_OVERHEAD_BYTES + HEADER_BYTES) as u64;
-    let entry = MAX_SOURCE_FILE_BYTES * per_byte + besides;
-    assert!(entry <= MAX_SYMBOLS_ENTRY_BYTES as u64);
-};
+/// The largest entry of a file of `source_bytes` bytes.
+pub(super) const fn max_entry_bytes(source_bytes: usize) -> usize {
+    max_index_bytes(source_bytes).saturating_add(HEADER_BYTES)
+}
 
 /// The key of the index of `bytes`, a file of `kind`.
 pub(super) fn key(kind: FileKind, bytes: &[u8]) -> SymbolsKey {
@@ -80,6 +76,7 @@ mod tests {
         let entry = encode(key, &indexed);
 
         assert_eq!(decode(key, &entry), Some(indexed));
+        assert!(entry.len() <= max_entry_bytes(bytes.len()));
         assert_eq!(decode(super::key(FileKind::Rust, b"other"), &entry), None);
     }
 

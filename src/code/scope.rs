@@ -8,8 +8,15 @@
 //! children, so a parent's id is below its child's and a walk up ends.
 //! Every segment counts toward [`MAX_NESTING`], those of a key or heading
 //! split at `::` included.
+//!
+//! The tree is also the one way into an index: every resolver enters
+//! its scopes and admits its definitions, macros, invocations and module
+//! files through it, and it charges each the bytes its entry takes
+//! against the room of the file ([`encoding::room_of`]), so no rule of any
+//! resolver can make an index outgrow its file.
 
-use super::index::IndexFault;
+use super::encoding::{self, Measure};
+use super::index::{Definition, IndexFault, Invocation, ModuleFile, TypeMacro};
 use super::symbol::Segment;
 
 /// The segments a path may hold. A file that nests one deeper has no
@@ -40,16 +47,26 @@ pub(crate) struct Scope {
     pub(crate) name: Vec<Segment>,
 }
 
-/// The scopes of a file as a resolver makes them, each with its depth.
-#[derive(Default)]
+/// The scopes of a file as a resolver makes them, each with its depth,
+/// and the bytes the file's entry has left.
 pub(super) struct ScopeTree {
     scopes: Vec<Scope>,
     depths: Vec<usize>,
+    room: usize,
 }
 
 impl ScopeTree {
+    /// The tree of a file of `bytes` bytes.
+    pub(super) fn for_file(bytes: usize) -> Self {
+        Self {
+            scopes: Vec::new(),
+            depths: Vec::new(),
+            room: encoding::room_of(bytes),
+        }
+    }
+
     /// The scope `name` under `parent`; [`IndexFault::TooDeep`] past
-    /// [`MAX_NESTING`] segments.
+    /// [`MAX_NESTING`] segments, [`IndexFault::TooComplex`] past the room.
     pub(super) fn enter(
         &mut self,
         parent: Option<ScopeId>,
@@ -61,9 +78,33 @@ impl ScopeTree {
         if depth > MAX_NESTING {
             return Err(IndexFault::TooDeep);
         }
+        self.charge(Measure::scope(parent, &name))?;
         self.scopes.push(Scope { parent, name });
         self.depths.push(depth);
         Ok(id)
+    }
+
+    /// Charge `definition` its bytes; [`IndexFault::TooComplex`] past the
+    /// room.
+    pub(super) fn admit_definition(&mut self, definition: &Definition) -> Result<(), IndexFault> {
+        self.charge(Measure::definition(definition))
+    }
+
+    pub(super) fn admit_macro(&mut self, found: &TypeMacro) -> Result<(), IndexFault> {
+        self.charge(Measure::type_macro(found))
+    }
+
+    pub(super) fn admit_invocation(&mut self, invocation: &Invocation) -> Result<(), IndexFault> {
+        self.charge(Measure::invocation(invocation))
+    }
+
+    pub(super) fn admit_module_file(&mut self, module: &ModuleFile) -> Result<(), IndexFault> {
+        self.charge(Measure::module_file(module))
+    }
+
+    fn charge(&mut self, bytes: usize) -> Result<(), IndexFault> {
+        self.room = self.room.checked_sub(bytes).ok_or(IndexFault::TooComplex)?;
+        Ok(())
     }
 
     pub(super) fn get(&self, id: ScopeId) -> Option<&Scope> {
@@ -112,7 +153,7 @@ mod tests {
 
     #[test]
     fn a_path_is_walked_through_its_parents_and_past_the_bound_is_refused() {
-        let mut tree = ScopeTree::default();
+        let mut tree = ScopeTree::for_file(64);
         let outer = tree.enter(None, vec![Segment::name("a")]).unwrap();
         let inner = tree
             .enter(Some(outer), vec![Segment::name("b"), Segment::name("c")])
@@ -126,12 +167,24 @@ mod tests {
 
         assert_eq!(spelled, ["c", "b", "a"]);
 
-        let mut tree = ScopeTree::default();
+        let mut tree = ScopeTree::for_file(4096);
         let wide: Vec<Segment> = (0..MAX_NESTING).map(|_| Segment::name("x")).collect();
         let full = tree.enter(None, wide).unwrap();
         assert_eq!(
             tree.enter(Some(full), vec![Segment::name("y")]),
             Err(IndexFault::TooDeep)
         );
+    }
+
+    #[test]
+    fn a_scope_past_the_files_room_is_refused() {
+        let mut tree = ScopeTree::for_file(1);
+        let name = "n".repeat(encoding::room_of(1));
+
+        assert_eq!(
+            tree.enter(None, vec![Segment::name(&name)]),
+            Err(IndexFault::TooComplex)
+        );
+        assert!(tree.enter(None, vec![Segment::name("n")]).is_ok());
     }
 }

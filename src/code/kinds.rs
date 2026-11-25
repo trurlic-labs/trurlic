@@ -112,6 +112,14 @@ impl DefinitionKind {
     }
 }
 
+/// What a definition is, beside where.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct What {
+    pub(super) kind: DefinitionKind,
+    pub(super) role: Role,
+    pub(super) visibility: Option<Visibility>,
+}
+
 /// Whether an item's keyword opens a member of a type (an `impl`, a
 /// trait) or an item of a module or a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

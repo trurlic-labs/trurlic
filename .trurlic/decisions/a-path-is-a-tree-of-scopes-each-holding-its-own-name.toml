@@ -1,9 +1,10 @@
 component = "code"
-choice = "A file's index holds its paths as a tree of scopes, each its own name segments and its parent; a definition names its scope, and every segment counts toward the 64 of a path"
-reason = "A path copied into every definition makes an index grow with its file times its nesting: a TOML header of sixty segments over hundreds of thousands of keys, or a Markdown heading split at :: above thousands of sections, took gigabytes in memory and hundreds of megabytes in the cache. A scope stores only the segments its own name adds (a key, a heading split at ::, a Rust item's name, an impl's type and trait) and the id of its parent, created before it, so a path is walked from its last segment up and the walk ends; a symbol is matched against that walk. A container that is no definition, an inherent impl's type, is a scope too. Every resolver enters scopes through one builder that refuses a path of more than MAX_NESTING segments, the split segments of a key or heading included, with TooDeep. A macro expansion adds its scopes past the file's own. The index is then linear in its file by construction, which the cache's encoding states as a bound."
+choice = "A file's index holds its paths as a tree of scopes, each its own segments and its parent; the tree charges all an index holds to its file's room, and every path counts toward 64 segments"
+reason = "A path copied into every definition makes an index grow with its file times its nesting: a TOML header of sixty segments over hundreds of thousands of keys, or a Markdown heading split at :: above thousands of sections, took gigabytes in memory and hundreds of megabytes in the cache. A scope stores only the segments its own name adds (a key, a heading split at ::, a Rust item's name, an impl's type and trait) and the id of its parent, created before it, so a path is walked from its last segment up and the walk ends; a symbol is matched against that walk. A container that is no definition, an inherent impl's type, is a scope too. A rule that copies text per entry can still outgrow its file, as a pub use list of twenty thousand selfs under a long module name once did, so every resolver enters its scopes and adds its definitions, macros, invocations and module files through the one tree, which charges each the bytes its cache entry takes and refuses the file past its room, thirty-two times its size and a little besides, as TooComplex, and refuses a path of more than MAX_NESTING segments as TooDeep. A macro expansion adds its scopes past the file's own and holds them to MAX_NESTING alike. The index is then bounded by its file by construction, whatever a rule does."
 alternatives = [
     "Keep an owned path per definition and cap the definitions: rejected because a cap that happens to hold today is no bound, and the waste stays",
     "Intern the path segments in a table: rejected because the copies of a path, not of its segments, are what grew",
+    "Bound the entry by a test over the densest inputs found: rejected because the next rule's input is not among them",
 ]
 tags = [
     "anchors",
@@ -14,9 +15,14 @@ status = "proposed"
 origin = "code index review"
 created = "2026-11-24T11:27:16.681896640Z"
 anchors = [
-    { file = "src/code/index.rs", symbol = "Definition" },
+    { file = "src/code/encoding.rs", symbol = "Measure" },
+    { file = "src/code/encoding.rs", symbol = "an_entry_takes_no_more_than_its_parts_were_charged" },
+    { file = "src/code/encoding.rs", symbol = "room_of" },
+    { file = "src/code/expand.rs", symbol = "a_type_an_invocation_defines_is_held_to_the_bound_of_segments" },
     { file = "src/code/lexical.rs", symbol = "Lexical" },
     { file = "src/code/scope.rs", symbol = "MAX_NESTING" },
+    { file = "src/code/scope.rs", symbol = "ScopeTree::admit_definition" },
     { file = "src/code/scope.rs", symbol = "ScopeTree::enter" },
     { file = "src/code/scope.rs", symbol = "Scopes::path_from_end" },
+    { file = "src/code/tree.rs", symbol = "TreeIndex" },
 ]

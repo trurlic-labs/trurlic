@@ -6,21 +6,27 @@
 //! A macro can define a type when one of its arms opens, after an optional
 //! `$(#[$meta:meta])*`, with literal words and then a `$name:ident` its
 //! body defines a type of (`struct $name`): an invocation that opens with
-//! those words and a name defines that type, and the type holds each item
-//! the macro's body names (`fn new`).
+//! those words and a name defines that type. The type holds the items of
+//! each `impl` in a body whose self type is a metavariable an arm binds
+//! as an `ident` (`impl $name { fn new() }`, `impl Display for $name`),
+//! a trait impl's under the trait's segment; an `impl` of any other type
+//! (`impl From<$name> for String`) gives the type nothing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::ControlFlow;
 
 use tree_sitter::Node;
 
-use crate::code::index::{IndexFault, TypeArm, TypeMacro};
+use crate::code::index::{IndexFault, Member, TypeArm, TypeMacro};
 use crate::code::kinds::{Container, DefinitionKind};
-use crate::code::syntax::text_of;
+use crate::code::syntax::{self, Token, text_of};
 use crate::code::work::Work;
+
+use super::LITERALS;
 
 /// The literal words an arm may open with; an arm with more defines
 /// nothing.
-const MAX_ARM_WORDS: usize = 8;
+pub(crate) const MAX_ARM_WORDS: usize = 8;
 
 /// The tokens an invocation keeps: [`MAX_ARM_WORDS`] words, the name, and
 /// room for the arguments a foreign macro's name is among.
@@ -38,7 +44,7 @@ const TYPE_KEYWORDS: [&str; 5] = ["struct", "enum", "union", "trait", "type"];
 /// body hands the name to another arm (`m!(@methods $name)`), the first
 /// such keyword of any body. What else the bodies define is the macro's,
 /// so the arm a recursive call reaches gives its items (`body_items`).
-/// Each body's tokens are read twice at most and spent from `work`.
+/// Each body's tokens are read a few times at most and spent from `work`.
 pub(super) fn type_macro(
     definition: Node<'_>,
     text: &str,
@@ -61,7 +67,8 @@ pub(super) fn type_macro(
     if arms.is_empty() {
         return Ok(None);
     }
-    let (members, items) = body_items(&trees, text, work)?;
+    let names = ident_variables(&rules, text, work)?;
+    let (members, items) = body_items(&trees, &names, text, work)?;
     Ok(Some(TypeMacro {
         name: text_of(name, text).to_owned(),
         exported,
@@ -78,7 +85,7 @@ fn type_arms(rules: &[Node<'_>], text: &str, work: &mut Work) -> Result<Vec<Type
     for rule in rules {
         let body = rule
             .child_by_field_name("right")
-            .map(|body| tokens_of(body, usize::MAX))
+            .map(|body| tokens_of(body, text, usize::MAX))
             .unwrap_or_default();
         work.spend(body.len())?;
         bodies.push(body);
@@ -105,16 +112,50 @@ fn type_arms(rules: &[Node<'_>], text: &str, work: &mut Work) -> Result<Vec<Type
     Ok(arms)
 }
 
+/// The metavariables the patterns of `rules` bind as an `ident`
+/// (`$name:ident`), at any depth of a repetition.
+fn ident_variables<'t>(
+    rules: &[Node<'_>],
+    text: &'t str,
+    work: &mut Work,
+) -> Result<BTreeSet<&'t str>, IndexFault> {
+    let mut names = BTreeSet::new();
+    for pattern in rules
+        .iter()
+        .filter_map(|rule| rule.child_by_field_name("left"))
+    {
+        let mut pending = vec![pattern];
+        while let Some(node) = pending.pop() {
+            work.spend(1)?;
+            let ident = node.kind() == "token_binding_pattern"
+                && node
+                    .child_by_field_name("type")
+                    .is_some_and(|fragment| text_of(fragment, text) == "ident");
+            match (ident, node.child_by_field_name("name")) {
+                (true, Some(variable)) => {
+                    names.insert(text_of(variable, text));
+                }
+                (true, None) | (false, _) => {
+                    let mut cursor = node.walk();
+                    pending.extend(node.named_children(&mut cursor));
+                }
+            }
+        }
+    }
+    Ok(names)
+}
+
 /// What the macro's bodies define with a name they spell: each item an
-/// `impl` over a metavariable holds (`impl $name { fn new() }`), a member
-/// of the type, with the kind its keyword opens as one; and each other
-/// item at a body's top level (`pub fn make()`), an item of the
-/// invocation's container. Both sorted.
+/// `impl` of a metavariable of `names` holds, a member of the type, with
+/// the kind its keyword opens as one; and each other item at a body's top
+/// level (`pub fn make()`), an item of the invocation's container. Both
+/// sorted.
 fn body_items(
     bodies: &[Node<'_>],
+    names: &BTreeSet<&str>,
     text: &str,
     work: &mut Work,
-) -> Result<(Named, Named), IndexFault> {
+) -> Result<(Vec<Member>, Named), IndexFault> {
     let mut members = Vec::new();
     let mut items = Vec::new();
     for body in bodies {
@@ -133,12 +174,8 @@ fn body_items(
                     break;
                 };
                 let header = top.get(at..at + open).unwrap_or_default();
-                if let Some(block) = top.get(at + open)
-                    && header.iter().any(|t| t.kind() == "metavariable")
-                {
-                    let inside = inner_children(*block);
-                    work.spend(inside.len())?;
-                    members.extend(named_items(&inside, Container::Type, text));
+                if let Some(block) = top.get(at + open) {
+                    members.extend(impl_members(header, *block, names, text, work)?);
                 }
                 at += open + 1;
                 continue;
@@ -147,11 +184,82 @@ fn body_items(
             items.extend(named_items(&pair, Container::Items, text));
         }
     }
-    for found in [&mut members, &mut items] {
-        found.sort_unstable();
-        found.dedup();
-    }
+    members.sort_unstable();
+    members.dedup();
+    items.sort_unstable();
+    items.dedup();
     Ok((members, items))
+}
+
+/// The members of the type an `impl` with `header` gives in its `block`:
+/// none unless its self type is a metavariable of `names`.
+fn impl_members(
+    header: &[Node<'_>],
+    block: Node<'_>,
+    names: &BTreeSet<&str>,
+    text: &str,
+    work: &mut Work,
+) -> Result<Vec<Member>, IndexFault> {
+    let Some(trait_tokens) = impl_of_name(header, names, text) else {
+        return Ok(Vec::new());
+    };
+    let inside = inner_children(block);
+    work.spend(inside.len())?;
+    Ok(named_items(&inside, Container::Type, text)
+        .into_iter()
+        .map(|(name, kind)| Member {
+            // clone: each member of a trait impl names its trait.
+            trait_tokens: trait_tokens.clone(),
+            name,
+            kind,
+        })
+        .collect())
+}
+
+/// For an `impl` whose `header` (its tokens between `impl` and its block)
+/// names as its self type one metavariable of `names`: `Some(None)` for
+/// an inherent impl, `Some(Some(trait))` for a trait impl, the trait's
+/// tokens with each metavariable of `names` written `$`. `None` for an
+/// impl of any other type.
+fn impl_of_name(
+    header: &[Node<'_>],
+    names: &BTreeSet<&str>,
+    text: &str,
+) -> Option<Option<Vec<String>>> {
+    let spelled = |node: &Node<'_>| text_of(*node, text);
+    // Generics after `impl` first: their angle brackets balanced.
+    let mut depth = 0_usize;
+    let mut rest = header;
+    if rest.first().is_some_and(|first| spelled(first) == "<") {
+        let close = rest.iter().position(|token| {
+            let token = spelled(token);
+            depth += token.matches('<').count();
+            depth = depth.saturating_sub(token.matches('>').count());
+            depth == 0
+        })?;
+        rest = rest.get(close + 1..)?;
+    }
+    let before_where = rest
+        .iter()
+        .position(|token| spelled(token) == "where")
+        .map_or(rest, |at| rest.get(..at).unwrap_or_default());
+    let (trait_tokens, self_type) = match before_where.iter().position(|t| spelled(t) == "for") {
+        Some(at) => (Some(before_where.get(..at)?), before_where.get(at + 1..)?),
+        None => (None, before_where),
+    };
+    match self_type {
+        [only] if only.kind() == "metavariable" && names.contains(spelled(only)) => {}
+        _ => return None,
+    }
+    Some(trait_tokens.map(|tokens| {
+        tokens
+            .iter()
+            .map(|token| match names.contains(spelled(token)) {
+                true => "$".to_owned(),
+                false => spelled(token).to_owned(),
+            })
+            .collect()
+    }))
 }
 
 /// Each item keyword of `tokens` followed by an identifier: its name, and
@@ -187,7 +295,7 @@ pub(super) fn invocation_tokens(invocation: Node<'_>, text: &str) -> Option<(Str
     for child in skip_attributes(&inside, text) {
         let room = MAX_INVOCATION_TOKENS - tokens.len();
         tokens.extend(
-            tokens_of(*child, room)
+            tokens_of(*child, text, room)
                 .into_iter()
                 .map(|token| text_of(token, text).to_owned()),
         );
@@ -292,30 +400,20 @@ fn skip_attributes<'a, 'n>(children: &'a [Node<'n>], text: &str) -> &'a [Node<'n
     }
 }
 
-/// The tokens of `node`, in order, at most `limit`: its leaves, a literal
-/// as one token, comments left out.
-pub(super) fn tokens_of(node: Node<'_>, limit: usize) -> Vec<Node<'_>> {
-    let mut tokens = Vec::new();
-    let mut cursor = node.walk();
-    'walk: while tokens.len() < limit {
-        let current = cursor.node();
-        let unit = current.child_count() == 0 || current.kind().ends_with("_literal");
-        if !current.is_extra() {
-            if unit {
-                if current.end_byte() > current.start_byte() {
-                    tokens.push(current);
-                }
-            } else if cursor.goto_first_child() {
-                continue;
-            }
+/// The nodes of the tokens of `node`, in order, at most `limit`: its
+/// leaves, a literal as one token, comments left out (`syntax::tokens`).
+pub(super) fn tokens_of<'n>(node: Node<'n>, text: &str, limit: usize) -> Vec<Node<'n>> {
+    let mut found = Vec::new();
+    syntax::tokens(node, text, &LITERALS, |token| {
+        if let Token::Node(node) = token {
+            found.push(node);
         }
-        while !cursor.goto_next_sibling() {
-            if !cursor.goto_parent() || cursor.node() == node {
-                break 'walk;
-            }
+        match found.len() < limit {
+            true => ControlFlow::Continue(()),
+            false => ControlFlow::Break(()),
         }
-    }
-    tokens
+    });
+    found
 }
 
 /// A run of letters, digits and underscores: an identifier or a keyword.
