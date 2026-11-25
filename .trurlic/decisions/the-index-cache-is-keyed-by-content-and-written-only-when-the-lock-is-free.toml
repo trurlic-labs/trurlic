@@ -1,6 +1,6 @@
 component = "sources"
 choice = "Each file's index is cached in .state/symbols/ in a compact encoding under the hash of its kind, grammar, versions and bytes; a read writes its misses when the exclusive lock is free"
-reason = "Parsing every Rust file of a large tree on each status call costs more than reading cached indexes, and the gap grows with the tree. The key is by content, with the file's kind, the identity of the kind's tree-sitter grammar, the span hash scheme, INDEX_FORMAT and every bound the index is built within (BOUNDS). So an entry is never read under other rules or bounds, and the trees of one shared graph share entries. A fingerprint test of the fixture corpus, a case per rule and per nesting bound, makes a change to how a file is indexed raise INDEX_FORMAT. An entry is a sum, its key and a binary encoding; it is at most 32 times its file by construction. A read takes no entry over that bound of the file it is read for, within its kind's size. Its decode holds no more items than the file has bytes and 64 besides, so a forged entry costs a decode in proportion to the file. A read takes no lock to read entries, which are renamed over their names. After its own work a read tries the exclusive lock without waiting and skips the write when it is busy: the cache is never authoritative. A torn, swapped or unreadable entry is a miss, and one entry that fails to write stops no other. The directory is bounded without a clock: past twice the call's live set and 256, every entry outside the set goes."
+reason = "Parsing every Rust file of a large tree on each status call costs more than reading cached indexes, and the gap grows with the tree. The key is by content, with the file's kind, the identity of the kind's tree-sitter grammar, the span hash scheme, INDEX_FORMAT and every bound the index and its expansion are built within (BOUNDS). So an entry is never read under other rules or bounds, and the trees of one shared graph share entries. A fingerprint test of the fixture corpus, a case per rule and per bound, makes a change to how a file is indexed raise INDEX_FORMAT. An entry is a sum, its key and a binary encoding. Its cost is its bytes and the weight of each value it holds, at least the memory the value takes once read. The cost is at most 64 times its file and 64 MiB, by construction. A read charges an entry the same before it allocates, within the room of the file it is read for, a fault's alone past the kind's size. So every entry a write makes reads back, and a forged one and its decode take no more memory than that room. A read takes no lock to read entries, which are renamed over their names. After its own work a read tries the exclusive lock without waiting and skips the write when it is busy: the cache is never authoritative. A torn, swapped or unreadable entry is a miss, and one entry that fails to write stops no other. The directory is bounded without a clock: past twice the call's live set and 256, every entry outside the set goes."
 alternatives = [
     "No cache: rejected because each status call would parse the whole tree, which grows with the project",
     "Key by path and modification time: rejected because a checkout can keep a time, and the trees of a shared graph would not share",
@@ -17,13 +17,13 @@ origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_code_index" },
-    { file = "src/code/encoding/mod.rs", symbol = "MAX_ENTRY_BYTES_PER_SOURCE_BYTE" },
+    { file = "src/code/encoding/mod.rs", symbol = "MAX_ENTRY_BYTES" },
+    { file = "src/code/encoding/mod.rs", symbol = "each_weight_holds_its_value" },
+    { file = "src/code/encoding/mod.rs", symbol = "no_entry_is_read_past_64_mib_whatever_its_file" },
     { file = "src/code/encoding/read.rs", symbol = "decode" },
     { file = "src/code/index.rs", symbol = "BOUNDS" },
     { file = "src/code/index.rs", symbol = "INDEX_FORMAT" },
     { file = "src/sources/cache.rs", symbol = "key" },
-    { file = "src/sources/cache.rs", symbol = "max_entry_bytes" },
     { file = "src/sources/mod.rs", symbol = "CacheFill::write" },
-    { file = "src/store/symbols.rs", symbol = "Store::read_symbols" },
     { file = "src/store/symbols.rs", symbol = "Store::write_symbols" },
 ]

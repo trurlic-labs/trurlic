@@ -204,6 +204,23 @@ unsafe_code = 'forbid'
     }
 
     #[test]
+    fn the_bytes_hashed_are_held_to_128_a_byte_of_the_file() {
+        // Each table spans to its sub-table, past every header between, so
+        // 600 interleaved tables hash their headers hundreds of times over.
+        // A key hashed once before them dilutes that: one byte shorter it
+        // is past the bound, and with that byte it is within.
+        let headers: String = (0..600).map(|n| format!("[x{n}]\n")).collect();
+        let below: String = (0..600).map(|n| format!("[x{n}.z]\n")).collect();
+        let text = |value: usize| format!("p = \"{}\"\n{headers}{below}", "a".repeat(value));
+
+        assert!(index(FileKind::Toml, text(12_766).as_bytes()).is_ok());
+        assert_eq!(
+            index(FileKind::Toml, text(12_765).as_bytes()),
+            Err(IndexFault::TooComplex)
+        );
+    }
+
+    #[test]
     fn a_document_that_does_not_parse_has_no_index() {
         assert!(matches!(
             index(FileKind::Toml, b"a = 1\na = 2\n"),

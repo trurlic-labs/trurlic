@@ -3,14 +3,15 @@
 //! tree-sitter resolver (`rust.rs`, `general.rs`) stands on these.
 //!
 //! A tree-sitter parse recovers from any input, and on hostile input its
-//! error recovery can take many parser steps per byte, and its lexer can
-//! scan the rest of the file again from each byte (an unclosed raw string
-//! repeated). Both are counted: the parser reports every hundred steps,
-//! and the lexer reads the text in chunks of [`CHUNK_BYTES`] through a
-//! callback, so the bytes it scans are the bytes the callback serves. A
-//! parse past [`PARSE_WORK_PER_BYTE`] steps, or bytes served, per byte of
-//! the file is stopped and the file has no index. The bounds count work,
-//! not time, so a file is refused on every machine or on none.
+//! lexer can scan the rest of the file again from each byte (an unclosed
+//! raw string repeated). The lexer reads the text in chunks of
+//! [`CHUNK_BYTES`] through a callback, so the bytes it scans are the bytes
+//! the callback serves. A parse past [`PARSE_WORK_PER_BYTE`] bytes served
+//! per byte of the file is stopped and the file has no index. The bound
+//! counts work, not time, so a file is refused on every machine or on
+//! none. The parser's own steps are not counted: tree-sitter keeps a
+//! bounded number of stack versions, so its steps grow with the tokens,
+//! and the time its error recovery takes is bounded by the size cap.
 //!
 //! A tree's tokens cover every byte of its file but comments and
 //! whitespace: each leaf, each node of the grammar's literal kinds whole
@@ -21,13 +22,10 @@
 
 use std::ops::ControlFlow;
 
-use tree_sitter::{Language, Node, ParseOptions, Parser, Tree};
+use tree_sitter::{Language, Node, Parser, Tree};
 
 use super::index::IndexFault;
 use super::work::{PARSE_WORK_PER_BYTE, Work};
-
-/// The steps between two of the parser's progress reports.
-pub(super) const STEPS_PER_REPORT: usize = 100;
 
 /// The bytes the lexer is handed at a time. The lexer reads again within
 /// the chunk it holds without asking for it, so a rescan inside one chunk
@@ -37,28 +35,17 @@ pub(super) const CHUNK_BYTES: usize = 64;
 /// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
 /// the parse runs past its budget.
 pub(super) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault> {
-    let budget = || Work::of(text.len(), PARSE_WORK_PER_BYTE);
-    parse_within(text, language, budget(), budget())
+    parse_within(text, language, Work::of(text.len(), PARSE_WORK_PER_BYTE))
 }
 
-/// The tree of `text`, within the parser steps of `steps` and the bytes
-/// scanned of `scanned`.
-fn parse_within(
-    text: &str,
-    language: &Language,
-    mut steps: Work,
-    mut scanned: Work,
-) -> Result<Tree, IndexFault> {
+/// The tree of `text`, within the bytes its lexer is served of `scanned`.
+fn parse_within(text: &str, language: &Language, mut scanned: Work) -> Result<Tree, IndexFault> {
     let mut parser = Parser::new();
     // The one refusal is a grammar of an ABI this tree-sitter does not
     // read, and the grammars are pinned crates: it fails in a test or never.
     if parser.set_language(language).is_err() {
         return Err(IndexFault::Grammar);
     }
-    let mut progress = |_: &_| match steps.spend(STEPS_PER_REPORT) {
-        Ok(()) => ControlFlow::Continue(()),
-        Err(_) => ControlFlow::Break(()),
-    };
     let bytes = text.as_bytes();
     let mut within = true;
     // Past the budget the lexer is told the file has ended, so the parse
@@ -69,8 +56,7 @@ fn parse_within(
         within &= scanned.spend(chunk.len()).is_ok();
         if within { chunk } else { &[] }
     };
-    let options = ParseOptions::new().progress_callback(&mut progress);
-    let tree = parser.parse_with_options(&mut read, None, Some(options));
+    let tree = parser.parse_with_options(&mut read, None, None);
     match tree {
         Some(tree) if within => Ok(tree),
         Some(_) | None => Err(IndexFault::TooComplex),
@@ -442,18 +428,19 @@ mod tests {
     }
 
     #[test]
-    fn a_parse_past_its_budget_gives_no_tree() {
-        let rust = tree_sitter_rust::LANGUAGE.into();
-        let text = "fn f() {}\n".repeat(1_000);
-        let budget = Work::units;
+    fn a_parse_is_held_to_64_bytes_served_a_byte_of_its_file() {
+        // Each line continuation of a run of 200 makes the scanner read to
+        // the run's end, past the 64-byte chunk it holds, so the bytes
+        // served are counted. A comment read once before them dilutes
+        // that: one byte shorter it is past the bound, and with that byte
+        // it is within.
+        let python = tree_sitter_python::LANGUAGE.into();
+        let hostile = format!("{}x\n", "\\\n".repeat(200)).repeat(40);
+        let text = |comment: usize| format!("# {}\n{hostile}", "p".repeat(comment));
 
-        assert!(parse_within(&text, &rust, budget(text.len() * 4), budget(text.len() * 4)).is_ok());
+        assert!(parse(&text(12_743), &python).is_ok());
         assert_eq!(
-            parse_within(&text, &rust, budget(text.len() / 2), budget(text.len() * 4)).err(),
-            Some(IndexFault::TooComplex)
-        );
-        assert_eq!(
-            parse_within(&text, &rust, budget(text.len() * 4), budget(text.len() / 2)).err(),
+            parse(&text(12_742), &python).err(),
             Some(IndexFault::TooComplex)
         );
     }

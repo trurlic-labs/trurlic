@@ -1,13 +1,19 @@
 //! The lexical rule for an item a macro invocation spells in its tokens,
-//! which tree-sitter leaves unparsed: an item keyword followed by a name
-//! (`define! { pub struct View { .. } }`, `proptest! { fn case() {} }`),
-//! at any depth of the invocation's token trees, and the named fields and
-//! variants a spelled `struct`, `union` or `enum` holds in its braces.
+//! which tree-sitter leaves unparsed. It is an item keyword followed by a
+//! name (`define! { pub struct View { .. } }`, `proptest! { fn case() {}
+//! }`), with the named fields and variants a spelled `struct`, `union` or
+//! `enum` holds in its braces. The items of a spelled `mod`'s braces are the
+//! module's. A tree that is another item's body, or that follows a name
+//! (`class!(Meters { fn new() })`, whose items the macro may make any
+//! type's members), defines nothing: a wrong path is worse than none. Any
+//! other tree is read as the invocation's own (`cfg_if! { if .. { .. } }`).
 //!
 //! A spelled item spans from its attributes, visibility and qualifiers to
-//! the first braced tree or `;` after its name, or to its name when the
-//! next item of its tree comes first, so a run of keywords spans each
-//! item alone. Every token read is spent from the file's work budget.
+//! the first braced tree or `;` after its name. It spans to its name alone
+//! when the next item of its tree comes first, so a run of keywords spans
+//! each item alone. Every token read is spent from the file's work budget.
+
+use std::collections::BTreeMap;
 
 use tree_sitter::Node;
 
@@ -34,12 +40,16 @@ pub(super) struct Spelled<'t> {
     pub(super) role: Role,
 }
 
-/// An item an invocation spells, with the keyword before its name and the
-/// members its braces hold.
+/// An item an invocation spells, with the keyword before its name, the
+/// members its braces hold, and the spelled module it is in, by its place
+/// among the items found before it.
 pub(super) struct SpelledItem<'t> {
     pub(super) item: Spelled<'t>,
     pub(super) keyword: &'t str,
     pub(super) members: Vec<Member<'t>>,
+    pub(super) within: Option<usize>,
+    /// The place of its body among the tokens of its tree.
+    body: Option<usize>,
 }
 
 /// A named field of a spelled struct or union, or a variant of a spelled
@@ -50,34 +60,80 @@ pub(super) struct Member<'t> {
     pub(super) fields: Vec<Spelled<'t>>,
 }
 
-/// The items `invocation` spells, at any depth of its token trees.
+/// The items `invocation` spells, in its own trees and in its spelled
+/// modules' bodies.
 pub(super) fn spelled_items<'t>(
     invocation: Node<'_>,
     text: &'t str,
     work: &mut Work,
 ) -> Result<Vec<SpelledItem<'t>>, IndexFault> {
-    let mut found = Vec::new();
+    let mut found: Vec<SpelledItem<'t>> = Vec::new();
     let mut cursor = invocation.walk();
-    // Each tree with the role of what holds it: a test module's body, or
-    // a tree an attribute marks (`cfg_if! { if #[cfg(test)] { .. } }`).
-    let mut trees: Vec<(Node<'_>, Role)> = invocation
+    // Each tree with the role of what holds it (a test module's body, or a
+    // tree an attribute marks: `cfg_if! { if #[cfg(test)] { .. } }`) and
+    // the spelled module it is the body of or in.
+    let mut trees: Vec<(Node<'_>, Role, Option<usize>)> = invocation
         .named_children(&mut cursor)
         .filter(|child| child.kind() == "token_tree")
-        .map(|tree| (tree, Role::Code))
+        .map(|tree| (tree, Role::Code, None))
         .collect();
-    while let Some((tree, role)) = trees.pop() {
+    while let Some((tree, role, within)) = trees.pop() {
         let tokens = inner_children(tree);
         work.spend(tokens.len())?;
         let mut roles = vec![role; tokens.len()];
-        found.extend(read_tree(&tokens, role, &mut roles, text, work)?);
+        let first = found.len();
+        found.extend(
+            read_tree(&tokens, role, &mut roles, text, work)?
+                .into_iter()
+                .map(|mut item| {
+                    item.within = within;
+                    item
+                }),
+        );
         mark_attributed_trees(&tokens, &mut roles, text);
-        let nested = tokens
-            .iter()
-            .zip(roles)
-            .filter(|(token, _)| token.kind() == "token_tree");
-        trees.extend(nested.map(|(token, role)| (*token, role)));
+        // The place of each item's body among `tokens`, and the module the
+        // body is of: the item itself when it is a `mod`.
+        let bodies: BTreeMap<usize, Option<usize>> = (first..found.len())
+            .filter_map(|at| {
+                let item = found.get(at)?;
+                Some((item.body?, (item.keyword == "mod").then_some(at)))
+            })
+            .collect();
+        trees.extend(nested_trees(&tokens, roles, &bodies, within, text));
     }
     Ok(found)
+}
+
+/// The trees among `tokens`, each with its role, to read for items. A
+/// spelled module's body is read in that module; a tree that is no
+/// item's body and follows no name is read in `within`, the module of the
+/// tree `tokens` are of. `bodies` holds each item body's place and its
+/// module, when the item is a `mod`.
+fn nested_trees<'n>(
+    tokens: &[Node<'n>],
+    roles: Vec<Role>,
+    bodies: &BTreeMap<usize, Option<usize>>,
+    within: Option<usize>,
+    text: &str,
+) -> Vec<(Node<'n>, Role, Option<usize>)> {
+    let mut found = Vec::new();
+    for (at, (token, role)) in tokens.iter().zip(roles).enumerate() {
+        if token.kind() != "token_tree" {
+            continue;
+        }
+        let body = bodies.get(&at);
+        let after_a_name = at
+            .checked_sub(1)
+            .and_then(|before| tokens.get(before))
+            .is_some_and(|before| before.kind() == "identifier" && is_name(text_of(*before, text)));
+        match body {
+            Some(Some(module)) => found.push((*token, role, Some(*module))),
+            Some(None) => {}
+            None if after_a_name => {}
+            None => found.push((*token, role, within)),
+        }
+    }
+    found
 }
 
 /// The items the `tokens` of one tree of `role` spell; each item's body
@@ -126,6 +182,8 @@ fn read_tree<'t>(
             },
             keyword,
             members,
+            within: None,
+            body: end.filter(|_| body.is_some()),
         });
     }
     Ok(found)

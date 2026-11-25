@@ -1,7 +1,7 @@
 //! The code facts of one tree, which the shell gathers and hands in as
 //! data, and the resolution of an anchor against them.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map};
 use std::fmt;
 use std::io::ErrorKind;
 
@@ -9,8 +9,8 @@ use crate::store::Anchor;
 
 use super::crates::Crates;
 use super::definitions::Definitions;
-use super::expand::{Arms, Expansion, Files, Held, Lookup, expand, expand_file};
-use super::index::{Definition, FileIndex, FileKind, IndexFault};
+use super::expand::{Expansion, Files, expand};
+use super::index::{Definition, Element, FileIndex, FileKind, IndexFault};
 use super::kinds::{DefinitionKind, Role};
 use super::roles::{role_of_place, target_of, test_files};
 use super::scope::Scopes;
@@ -183,48 +183,6 @@ fn split<'i>(
         .partition(|(path, _)| walked.contains(*path))
 }
 
-/// What the invocations of each Rust file of `outside`, files no walk
-/// took, add: each is read against its own macros, which no other file
-/// sees, then its crate's shared arms.
-fn expand_outside(
-    outside: &Files<'_>,
-    crates: &Crates<'_>,
-) -> BTreeMap<String, Result<Expansion, IndexFault>> {
-    let mut tables: BTreeMap<&str, Arms<'_>> = BTreeMap::new();
-    let mut expanded = BTreeMap::new();
-    for (&path, (kind, index)) in outside {
-        if *kind != FileKind::Rust || index.rust.invocations.is_empty() {
-            continue;
-        }
-        let owner = crates.crate_of(path);
-        let shared = tables.entry(owner).or_insert_with(|| crates.arms_of(path));
-        let mut own = Arms::default();
-        for found in &index.rust.macros {
-            own.add(Held {
-                found,
-                owner,
-                exported: false,
-            });
-        }
-        own.resolve(|own, from, hand_off| {
-            let name = hand_off.macro_name.as_str();
-            match hand_off.from_crate {
-                true => own.held(name).or_else(|| crates.held_in(from.owner, name)),
-                false => own.held(name).or_else(|| shared.held(name)),
-            }
-        });
-        let lookup = Lookup {
-            own: (!index.rust.macros.is_empty()).then_some(&own),
-            shared,
-        };
-        let expansion = expand_file(index, lookup);
-        if let Some(expansion) = expansion.transpose() {
-            expanded.insert(path.to_owned(), expansion);
-        }
-    }
-    expanded
-}
-
 impl CodeFacts {
     /// The facts of `entries`, which hold every path an anchor to be
     /// resolved names, every file of `walked` (the tree's Rust files and
@@ -234,11 +192,11 @@ impl CodeFacts {
     pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: &BTreeSet<String>) -> Self {
         let (tree, outside) = split(&entries, walked);
         let crates = Crates::of(&tree, &outside);
-        let mut expanded: BTreeMap<String, Result<Expansion, IndexFault>> = expand(&tree, &crates)
+        let expanded: BTreeMap<String, Result<Expansion, IndexFault>> = expand(&tree, &crates)
             .into_iter()
+            .chain(expand(&outside, &crates))
             .map(|(path, expansion)| (path.to_owned(), expansion))
             .collect();
-        expanded.extend(expand_outside(&outside, &crates));
         let test_files: BTreeSet<String> = test_files(&tree, &outside, &crates)
             .into_iter()
             .map(str::to_owned)
@@ -273,7 +231,10 @@ impl CodeFacts {
             .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
             .collect();
         let crates = Crates::of(&tree, &outside);
-        let expanded = expand_outside(&outside, &crates);
+        let expanded = expand(&outside, &crates)
+            .into_iter()
+            .map(|(path, expansion)| (path.to_owned(), expansion))
+            .collect();
         let test_files = test_files(&tree, &outside, &crates)
             .into_iter()
             .filter(|path| entries.contains_key(*path))
@@ -347,8 +308,9 @@ impl CodeFacts {
     }
 
     /// Whether a macro invocation in item position in `anchor`'s file
-    /// spells the last name of its symbol among its first tokens: a type a
-    /// macro the facts do not hold defines may be there.
+    /// spells the last name of its symbol among the arguments it keeps,
+    /// as a word or in a group's tokens: a type a macro the facts do not
+    /// hold defines may be there.
     pub(crate) fn spells_in_invocation(&self, anchor: &Anchor) -> bool {
         let Some(Entry::File {
             kind,
@@ -363,11 +325,17 @@ impl CodeFacts {
         let Some(Segment::Name(name)) = symbol.as_ref().and_then(|s| s.segments().last()) else {
             return false;
         };
-        index
-            .rust
-            .invocations
-            .iter()
-            .any(|invocation| invocation.tokens.iter().any(|token| token == name))
+        index.rust.invocations.iter().any(|invocation| {
+            invocation.arguments.iter().any(|argument| match argument {
+                Element::Word(word) => word == name,
+                Element::Group(_, Some(tokens)) => tokens.contains(name),
+                Element::Token(_)
+                | Element::Group(_, None)
+                | Element::Binding(_)
+                | Element::Forwarded(..)
+                | Element::Many => false,
+            })
+        })
     }
 
     /// Every definition of the tree's indexed files, those its macro
@@ -590,20 +558,12 @@ impl CodeFacts {
             true => named,
             false => whole,
         };
-        let mut paths: BTreeMap<Vec<&Segment>, Vec<&Definition>> = BTreeMap::new();
-        for definition in chosen {
-            let path = scopes.path_from_end(definition.scope).collect();
-            paths.entry(path).or_default().push(definition);
-        }
-        let mut sets = paths.into_values();
+        let mut sets = sets_by_path(chosen, scopes).into_values();
         match (sets.next(), sets.len()) {
             (None, _) => Resolution::SymbolMissing,
-            (Some(set), 0) => match set.split_first() {
-                Some((first, rest)) => {
-                    Resolution::Resolved(Target::Symbol(Definitions::of(first, rest)))
-                }
-                None => Resolution::SymbolMissing,
-            },
+            (Some((first, rest)), 0) => {
+                Resolution::Resolved(Target::Symbol(Definitions::of(first, &rest)))
+            }
             (Some(_), others) => Resolution::Ambiguous(others + 1),
         }
     }
@@ -613,11 +573,30 @@ impl CodeFacts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Namesakes {
     /// Whether the anchor's own file defines the symbol's last segment
-    /// under any path, or spells it among the first tokens of a macro
-    /// invocation: the code may be there under another spelling.
+    /// under any path, or spells it among the arguments a macro invocation
+    /// keeps: the code may be there under another spelling.
     pub(crate) at_home: bool,
     /// The other walked files of the anchor's crate target, by place, that
     /// write an item of its file's test role whose whole path the symbol
     /// is ([`CodeFacts::namesakes`]).
     pub(crate) elsewhere: Vec<String>,
+}
+
+/// The `definitions` of each path, as `scopes` spells it: the first of the
+/// path, and the rest of its set.
+fn sets_by_path<'d, 's>(
+    definitions: Vec<&'d Definition>,
+    scopes: Scopes<'s>,
+) -> BTreeMap<Vec<&'s Segment>, (&'d Definition, Vec<&'d Definition>)> {
+    let mut paths: BTreeMap<Vec<&Segment>, (&Definition, Vec<&Definition>)> = BTreeMap::new();
+    for definition in definitions {
+        let path = scopes.path_from_end(definition.scope).collect();
+        match paths.entry(path) {
+            btree_map::Entry::Vacant(vacant) => {
+                vacant.insert((definition, Vec::new()));
+            }
+            btree_map::Entry::Occupied(mut occupied) => occupied.get_mut().1.push(definition),
+        }
+    }
+    paths
 }

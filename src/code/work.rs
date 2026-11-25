@@ -3,20 +3,20 @@
 //! every machine reaches alike, and the file is refused as
 //! [`IndexFault::TooComplex`], rather than found by its time.
 //!
-//! There are four budgets, each counted in its own unit. The parse's
-//! counts parser steps and bytes the lexer is served (`syntax.rs`). The
+//! There are five budgets, each counted in its own unit. The parse's
+//! counts bytes the lexer is served (`syntax.rs`). The
 //! scan's counts tokens a tree-sitter resolver reads after it, the
-//! lexical one bytes a lexical resolver hashes, and the expansion's the
-//! bytes a macro expansion holds (`expand.rs`), which no cache keeps. A
+//! lexical one bytes a lexical resolver hashes. A macro expansion, which
+//! no cache keeps, has two: the elements it lines up
+//! (`expand/resolve.rs`) and the bytes it holds (`expand.rs`). A
 //! tree-sitter span hash is no part of any: each token is hashed once by
 //! construction (`syntax.rs`).
 
 use super::index::IndexFault;
 use super::scope::MAX_NESTING;
 
-/// Parser steps, and bytes the lexer is served, per byte of the file.
-/// Source a person wrote takes about one of each; the bound leaves a wide
-/// margin for code mid-edit.
+/// Bytes the lexer is served per byte of the file. Source a person wrote
+/// takes about one; the bound leaves a wide margin for code mid-edit.
 pub(super) const PARSE_WORK_PER_BYTE: usize = 64;
 
 /// Tokens a tree-sitter resolver's lexical rules read per byte of the
@@ -35,13 +35,18 @@ pub(super) const LEXICAL_WORK_PER_BYTE: usize = 2 * MAX_NESTING;
 /// and any name of its own.
 pub(super) const EXPANSION_BYTES_PER_BYTE: usize = 256;
 
+/// Elements a macro expansion lines up per byte of the invocations it
+/// expands, each rule's opening against each invocation or hand-off that
+/// may open it, and members and items it carries along a hand-off.
+pub(super) const RESOLUTION_WORK_PER_BYTE: usize = 64;
+
 /// The work any file may take, however short, in each budget but the
 /// expansion's.
 pub(super) const MIN_WORK: usize = 1 << 20;
 
 /// The bytes any file's expansion may hold, however short: room for a
 /// macro of many members invoked a few times.
-const MIN_EXPANSION_BYTES: usize = 8 << 20;
+pub(super) const MIN_EXPANSION_BYTES: usize = 8 << 20;
 
 /// What is left of one budget of a file.
 #[derive(Debug)]
@@ -82,17 +87,20 @@ impl Work {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_budget_is_linear_in_the_file_and_refuses_past_it() {
-        let bytes = MIN_WORK;
-        let mut work = Work::of(bytes, SCAN_WORK_PER_BYTE);
+    /// Whether `work` takes `units` and then refuses one more.
+    fn holds_exactly(mut work: Work, units: usize) -> bool {
+        work.spend(units).is_ok() && work.spend(1) == Err(IndexFault::TooComplex)
+    }
 
-        assert_eq!(work.spend(bytes * SCAN_WORK_PER_BYTE), Ok(()));
-        assert_eq!(work.spend(1), Err(IndexFault::TooComplex));
-        assert!(Work::of(0, SCAN_WORK_PER_BYTE).spend(MIN_WORK).is_ok());
-        assert_eq!(
-            Work::expansion(0).spend(MIN_EXPANSION_BYTES + 1),
-            Err(IndexFault::TooComplex)
-        );
+    #[test]
+    fn a_budget_is_linear_in_the_file_and_one_mib_of_work_at_least() {
+        assert!(holds_exactly(Work::of(100_000, 16), 1_600_000));
+        assert!(holds_exactly(Work::of(10, 16), 1_048_576));
+    }
+
+    #[test]
+    fn an_expansion_holds_256_bytes_a_byte_and_8_mib_at_least() {
+        assert!(holds_exactly(Work::expansion(100_000), 25_600_000));
+        assert!(holds_exactly(Work::expansion(10), 8_388_608));
     }
 }

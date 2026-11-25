@@ -1,6 +1,6 @@
 //! The crates of a tree: which directory each file's crate is, which are
-//! workspaces, and the type-defining macros each crate holds, the arms of
-//! which an invocation in it sees (`expand/table.rs`).
+//! workspaces, and the type-defining macros each crate holds, which an
+//! invocation in it reaches by name (`expand/resolve.rs`).
 //!
 //! A file's crate is the nearest directory above it with a `Cargo.toml`,
 //! or the file alone when there is none; its workspace is the nearest
@@ -9,13 +9,19 @@
 //! A file an anchor brought from outside the walk is read from those and
 //! the manifests the anchors brought. A manifest an anchor brings thus
 //! governs no file the walk took, so what one anchor resolves to never
-//! depends on the others. Only walked files bring macros.
+//! depends on the others. Only walked files bring macros to their crate.
+//!
+//! A name reaches the file's own macros of it first: a `macro_rules!`
+//! macro is in textual scope where it is defined, so it shadows one of
+//! another module. Else it reaches its crate's of the name, else the
+//! `#[macro_export]` ones of its workspace. A name several macros answer
+//! reaches each of them, and the expansion defines only what they agree
+//! on.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::expand::{Arms, Files, Held};
+use super::expand::{Files, Held};
 use super::index::FileIndex;
-use super::index::TypeMacro;
 use super::symbol::Segment;
 
 /// The manifest that makes a directory a crate.
@@ -62,12 +68,17 @@ impl<'i> Layout<'i> {
     }
 }
 
+/// The macros of one crate, or of every crate's exports, by name.
+type ByName<'i> = BTreeMap<&'i str, Vec<Held<'i>>>;
+
 /// The crates of the tree, which directories are workspaces, and the
 /// type-defining macros of each crate.
 pub(super) struct Crates<'i> {
     /// Each crate's directory (`""` for the code root) to its macros, and
     /// each lone file outside a crate to its own.
-    macros: BTreeMap<&'i str, Vec<&'i TypeMacro>>,
+    macros: BTreeMap<&'i str, ByName<'i>>,
+    /// The `#[macro_export]` macros of every crate.
+    exported: ByName<'i>,
     /// What the walked manifests say: what governs a walked file.
     walked: Layout<'i>,
     /// What those and the manifests an anchor brought say: what governs a
@@ -91,18 +102,20 @@ impl<'i> Crates<'i> {
         let brought = manifests(outside);
         let mut crates = Self {
             macros: BTreeMap::new(),
+            exported: BTreeMap::new(),
             walked: Layout::of(walked.iter().copied()),
             all: Layout::of(walked.iter().chain(&brought).copied()),
             outside: outside.keys().copied().collect(),
         };
         for (&path, (_, index)) in files {
-            if !index.rust.macros.is_empty() {
-                let owner = crates.crate_of(path);
-                crates
-                    .macros
-                    .entry(owner)
-                    .or_default()
-                    .extend(&index.rust.macros);
+            let owner = crates.crate_of(path);
+            for held in held_in_file(path, owner, index) {
+                let name = held.found.name.as_str();
+                if held.found.exported {
+                    crates.exported.entry(name).or_default().push(held);
+                }
+                let own = crates.macros.entry(owner).or_default();
+                own.entry(name).or_default().push(held);
             }
         }
         crates
@@ -120,54 +133,89 @@ impl<'i> Crates<'i> {
         self.layout_of(path).crate_of(path)
     }
 
-    /// The arms an invocation in the file at `path` sees but its own,
-    /// resolved: its crate's macros, then its workspace's exported ones its
-    /// crate does not shadow by name. A hand-off reaches the macro of its
-    /// name these hold, or through `$crate::` the one of the crate holding
-    /// the macro that hands it on.
-    pub(super) fn arms_of(&self, path: &str) -> Arms<'i> {
+    /// The macros an invocation in `index`, the file at `path`, reaches.
+    pub(super) fn reach<'a>(&'a self, path: &'i str, index: &'i FileIndex) -> Reach<'a, 'i> {
         let layout = self.layout_of(path);
         let owner = layout.crate_of(path);
-        let mut arms = Arms::default();
-        let own = self.macros.get_key_value(owner).into_iter();
-        for (dir, found) in own.flat_map(|(dir, found)| found.iter().map(move |f| (*dir, *f))) {
-            arms.add(Held {
-                found,
-                owner: dir,
-                exported: false,
-            });
+        Reach {
+            crates: self,
+            own: held_in_file(path, owner, index).collect(),
+            owner,
+            workspace: layout.workspace_of(owner),
         }
-        let workspace = layout.workspace_of(owner);
-        let shadowed = arms.names();
-        let exported = self
-            .macros
-            .iter()
-            .filter(|(dir, _)| workspace.is_some_and(|root| is_within(dir, root)))
-            .flat_map(|(dir, found)| found.iter().map(move |found| (*dir, *found)))
-            .filter(|(_, found)| found.exported && !shadowed.contains(found.name.as_str()));
-        for (dir, found) in exported {
-            arms.add(Held {
-                found,
-                owner: dir,
-                exported: true,
-            });
-        }
-        arms.resolve(|arms, from, hand_off| match hand_off.from_crate {
-            true => self.held_in(from.owner, &hand_off.macro_name),
-            false => arms.held(&hand_off.macro_name),
-        });
-        arms
     }
 
-    /// The macro of `name` the crate directory `owner` holds.
-    pub(super) fn held_in(&self, owner: &str, name: &str) -> Option<Held<'i>> {
-        let (dir, found) = self.macros.get_key_value(owner)?;
-        let found = found.iter().find(|found| found.name == name)?;
-        Some(Held {
+    /// The macros of `name` the crate directory `owner` holds.
+    fn held_in(&self, owner: &str, name: &str) -> Vec<Held<'i>> {
+        self.macros
+            .get(owner)
+            .and_then(|own| own.get(name))
+            .cloned() // clone: a lookup's macros are its caller's to keep
+            .unwrap_or_default()
+    }
+}
+
+/// The macros of `index`, the file at `path` of the crate `owner`.
+fn held_in_file<'i>(
+    path: &'i str,
+    owner: &'i str,
+    index: &'i FileIndex,
+) -> impl Iterator<Item = Held<'i>> {
+    index
+        .rust
+        .macros
+        .iter()
+        .enumerate()
+        .map(move |(at, found)| Held {
             found,
-            owner: dir,
-            exported: false,
+            file: path,
+            at,
+            owner,
         })
+}
+
+/// The macros one file's invocations reach by name: its own, its
+/// crate's, its workspace's exports.
+pub(super) struct Reach<'a, 'i> {
+    crates: &'a Crates<'i>,
+    own: Vec<Held<'i>>,
+    owner: &'i str,
+    workspace: Option<&'i str>,
+}
+
+impl<'i> Reach<'_, 'i> {
+    /// The macros `name` reaches from the file.
+    pub(super) fn named(&self, name: &str) -> Vec<Held<'i>> {
+        let own: Vec<Held<'i>> = self
+            .own
+            .iter()
+            .filter(|held| held.found.name == name)
+            .copied()
+            .collect();
+        if !own.is_empty() {
+            return own;
+        }
+        let crate_macros = self.crates.held_in(self.owner, name);
+        if !crate_macros.is_empty() {
+            return crate_macros;
+        }
+        let Some(workspace) = self.workspace else {
+            return Vec::new();
+        };
+        self.crates
+            .exported
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|held| is_within(held.owner, workspace))
+            .copied()
+            .collect()
+    }
+
+    /// The macros of `name` the crate directory `owner` holds, which a
+    /// path through `$crate::` names.
+    pub(super) fn in_crate(&self, owner: &str, name: &str) -> Vec<Held<'i>> {
+        self.crates.held_in(owner, name)
     }
 }
 

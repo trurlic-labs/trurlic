@@ -3,32 +3,29 @@
 use std::sync::Arc;
 
 use crate::code::index::{
-    After, Definition, Element, FileIndex, HandOff, IndexFault, Invocation, ModuleFile, Receives,
-    Rule, RustFacts, TypeArm, TypeImpl, TypeMacro,
+    Definition, Element, FileIndex, FileKind, Fragment, HandOff, IndexFault, Invocation,
+    ModuleFile, Receives, Rule, RustFacts, TraitToken, TypeImpl, TypeMacro,
 };
 use crate::code::kinds::{DefinitionKind, Role, Visibility};
-use crate::code::rust::MAX_OPENING;
+use crate::code::rust::{MAX_GROUP_TOKENS, MAX_OPENING};
 use crate::code::scope::{MAX_NESTING, Scope, ScopeId};
 use crate::code::span::{Span, SpanHash};
 use crate::code::symbol::Segment;
 
-use super::Indexed;
+use super::{Indexed, max_entry_bytes, weight};
 
-/// The items an index of a file of `source_bytes` bytes may hold past one
-/// per byte: an empty file's, and room besides.
-const ITEMS_BESIDES: usize = 64;
-
-/// The index `bytes` hold for a file of `source_bytes` bytes; `None` when
-/// they are no encoding of one. Each item of a real index (a scope, a
-/// segment, a definition, a rule, an element, a token) comes from at
-/// least one byte of its file. An entry that holds more than one item per
-/// byte and [`ITEMS_BESIDES`] is no index, so what a decode allocates is
-/// bounded by the file the entry is read for.
-pub(crate) fn decode(bytes: &[u8], source_bytes: usize) -> Option<Indexed> {
+/// The index `bytes` hold for a file of `kind` of `source_bytes` bytes;
+/// `None` when they are no encoding of one. A read charges an entry as
+/// the scope tree charged its parts when the index was built: its bytes,
+/// and the [`weight`] of each value, before it allocates the value. An
+/// entry past the room of the file it is read for is no index. So every
+/// entry a write makes reads back, and the entry and what its decode
+/// allocates together take no more than that room.
+pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Option<Indexed> {
     let mut reader = Reader {
         bytes,
         at: 0,
-        items: source_bytes.saturating_add(ITEMS_BESIDES),
+        weight: max_entry_bytes(kind, source_bytes).checked_sub(bytes.len())?,
     };
     let indexed = match reader.byte()? {
         0 => Ok(reader.index()?),
@@ -57,8 +54,8 @@ pub(crate) fn decode(bytes: &[u8], source_bytes: usize) -> Option<Indexed> {
 }
 
 struct Reader<'b> {
-    /// The items the index may still hold.
-    items: usize,
+    /// The weight of the values the index may still hold.
+    weight: usize,
     bytes: &'b [u8],
     at: usize,
 }
@@ -82,12 +79,10 @@ impl Reader<'_> {
         None
     }
 
-    /// A count of items each at least a byte long: never more than the
-    /// bytes left, so a forged count allocates nothing past the entry.
-    /// A count of items of the index, each spent from what it may hold.
-    fn items(&mut self) -> Option<usize> {
+    /// A count of values of the index of `weight` each, charged.
+    fn items(&mut self, weight: usize) -> Option<usize> {
         let count = self.count()?;
-        self.items = self.items.checked_sub(count)?;
+        self.weight = self.weight.checked_sub(count.checked_mul(weight)?)?;
         Some(count)
     }
 
@@ -135,16 +130,19 @@ impl Reader<'_> {
     fn index(&mut self) -> Option<FileIndex> {
         let scopes = self.scopes()?;
         let definitions = self.definitions(scopes.len())?;
-        let mut macros = Vec::new();
-        for _ in 0..self.items()? {
+        let count = self.items(weight::MACRO_PART)?;
+        let mut macros = Vec::with_capacity(count);
+        for _ in 0..count {
             macros.push(self.type_macro()?);
         }
-        let mut invocations = Vec::new();
-        for _ in 0..self.items()? {
+        let count = self.items(weight::INVOCATION)?;
+        let mut invocations = Vec::with_capacity(count);
+        for _ in 0..count {
             invocations.push(self.invocation(scopes.len())?);
         }
-        let mut module_files = Vec::new();
-        for _ in 0..self.items()? {
+        let count = self.items(weight::MODULE_FILE)?;
+        let mut module_files = Vec::with_capacity(count);
+        for _ in 0..count {
             module_files.push(self.module_file(scopes.len())?);
         }
         Some(FileIndex {
@@ -174,15 +172,15 @@ impl Reader<'_> {
     /// The scopes, each parent below its child, of one segment at least,
     /// each path within [`MAX_NESTING`].
     fn scopes(&mut self) -> Option<Vec<Scope>> {
-        let count = self.items()?;
+        let count = self.items(weight::SCOPE)?;
         let mut scopes = Vec::with_capacity(count);
         let mut depths: Vec<usize> = Vec::with_capacity(count);
         for own in 0..count {
             let parent = self.scope(own)?;
             // Every scope adds a segment: a forged entry cannot make
             // scopes of no bytes.
-            let segments = self.items().filter(|count| *count > 0)?;
-            let mut name = Vec::new();
+            let segments = self.items(weight::SEGMENT).filter(|count| *count > 0)?;
+            let mut name = Vec::with_capacity(segments);
             for _ in 0..segments {
                 name.push(self.segment()?);
             }
@@ -198,7 +196,7 @@ impl Reader<'_> {
     }
 
     fn definitions(&mut self, scopes: usize) -> Option<Vec<Definition>> {
-        let count = self.items()?;
+        let count = self.items(weight::DEFINITION)?;
         let mut definitions: Vec<Definition> = Vec::with_capacity(count);
         for _ in 0..count {
             let scope = ScopeId::of(self.number()?).filter(|id| id.at() < scopes)?;
@@ -246,64 +244,56 @@ impl Reader<'_> {
 
     fn type_macro(&mut self) -> Option<TypeMacro> {
         let name = self.text()?;
-        let exported = match self.byte()? {
-            0 => false,
-            1 => true,
-            _ => return None,
-        };
-        let mut arms = Vec::new();
-        for _ in 0..self.items()? {
-            arms.push(self.type_arm()?);
-        }
-        let mut rules = Vec::new();
-        for _ in 0..self.items()? {
+        let exported = self.flag()?;
+        let count = self.items(weight::MACRO_PART)?;
+        let mut rules = Vec::with_capacity(count);
+        for _ in 0..count {
             rules.push(self.rule()?);
-        }
-        if arms.iter().any(|arm| arm.rule >= rules.len()) {
-            return None;
         }
         Some(TypeMacro {
             name,
             exported,
-            arms,
             rules,
         })
     }
 
-    fn type_arm(&mut self) -> Option<TypeArm> {
-        let mut words = Vec::new();
-        for _ in 0..self.items()? {
-            words.push(self.text()?);
-        }
-        let after = match self.byte()? {
-            0 => After::End,
-            1 => After::Token(self.text()?),
-            2 => After::Unchecked,
-            _ => return None,
-        };
-        Some(TypeArm {
-            words,
-            after,
-            rule: self.number()?,
-        })
-    }
-
-    /// A rule, each place that receives a name an `ident` of its opening.
+    /// A rule, each place that receives a name a binding of an `ident` or
+    /// a `tt` of its opening, each place an argument forwards a binding of
+    /// it.
     fn rule(&mut self) -> Option<Rule> {
         let opening = self.elements()?;
         let whole = self.flag()?;
-        let mut receives = Vec::new();
-        for _ in 0..self.items()? {
+        let binds = |place: usize| matches!(opening.get(place), Some(Element::Binding(_)));
+        let count = self.items(weight::MACRO_PART)?;
+        let mut receives = Vec::with_capacity(count);
+        for _ in 0..count {
             let place = self.number()?;
-            if opening.get(place) != Some(&Element::Ident) {
+            let takes_a_name = matches!(
+                opening.get(place),
+                Some(Element::Binding(Fragment::Ident | Fragment::Tree))
+            );
+            if !takes_a_name {
                 return None;
             }
             receives.push((place, self.receives()?));
+        }
+        let count = self.items(weight::MACRO_PART)?;
+        let mut hand_offs = Vec::with_capacity(count);
+        for _ in 0..count {
+            let hand_off = self.hand_off()?;
+            let bound = hand_off.arguments.iter().all(
+                |argument| !matches!(argument, Element::Forwarded(Some(at), _) if !binds(*at)),
+            );
+            if !bound {
+                return None;
+            }
+            hand_offs.push(hand_off);
         }
         Some(Rule {
             opening,
             whole,
             receives,
+            hand_offs,
             items: self.named()?,
         })
     }
@@ -314,29 +304,20 @@ impl Reader<'_> {
             1 => Some(self.kind()?),
             _ => return None,
         };
-        let mut hand_offs = Vec::new();
-        for _ in 0..self.items()? {
-            let macro_name = self.text()?;
-            let from_crate = self.flag()?;
-            let arguments = self.elements()?;
-            let whole = self.flag()?;
-            let place = self.number().filter(|place| *place < arguments.len())?;
-            hand_offs.push(HandOff {
-                macro_name,
-                from_crate,
-                arguments,
-                whole,
-                place,
-            });
-        }
-        let mut impls = Vec::new();
-        for _ in 0..self.items()? {
+        let count = self.items(weight::MACRO_PART)?;
+        let mut impls = Vec::with_capacity(count);
+        for _ in 0..count {
             impls.push(self.type_impl()?);
         }
-        Some(Receives {
-            kind,
-            hand_offs,
-            impls,
+        Some(Receives { kind, impls })
+    }
+
+    fn hand_off(&mut self) -> Option<HandOff> {
+        Some(HandOff {
+            macro_name: self.text()?,
+            from_crate: self.flag()?,
+            arguments: self.elements()?,
+            whole: self.flag()?,
         })
     }
 
@@ -348,9 +329,16 @@ impl Reader<'_> {
         }
     }
 
-    /// At most [`MAX_OPENING`] elements.
+    fn fragment(&mut self) -> Option<Fragment> {
+        Fragment::ALL.get(usize::from(self.byte()?)).copied()
+    }
+
+    /// At most [`MAX_OPENING`] elements, a group's tokens at most
+    /// [`MAX_GROUP_TOKENS`].
     fn elements(&mut self) -> Option<Vec<Element>> {
-        let count = self.items().filter(|count| *count <= MAX_OPENING)?;
+        let count = self
+            .items(weight::ELEMENT)
+            .filter(|count| *count <= MAX_OPENING)?;
         let mut elements = Vec::with_capacity(count);
         for _ in 0..count {
             elements.push(match self.byte()? {
@@ -361,8 +349,11 @@ impl Reader<'_> {
                     let tokens = match self.flag()? {
                         false => None,
                         true => {
-                            let mut tokens = Vec::new();
-                            for _ in 0..self.items()? {
+                            let count = self
+                                .items(weight::ELEMENT)
+                                .filter(|count| *count <= MAX_GROUP_TOKENS)?;
+                            let mut tokens = Vec::with_capacity(count);
+                            for _ in 0..count {
                                 tokens.push(self.text()?);
                             }
                             Some(tokens)
@@ -370,10 +361,12 @@ impl Reader<'_> {
                     };
                     Element::Group(open, tokens)
                 }
-                3 => Element::Ident,
-                4 => Element::Tree,
-                5 => Element::Variable,
-                6 => Element::Many,
+                3 => Element::Binding(self.fragment()?),
+                4 => {
+                    let place = self.number()?.checked_sub(1);
+                    Element::Forwarded(place, self.fragment()?)
+                }
+                5 => Element::Many,
                 _ => return None,
             });
         }
@@ -384,9 +377,14 @@ impl Reader<'_> {
         let trait_tokens = match self.byte()? {
             0 => None,
             1 => {
-                let mut tokens = Vec::new();
-                for _ in 0..self.items()? {
-                    tokens.push(self.text()?);
+                let count = self.items(weight::MACRO_PART)?;
+                let mut tokens = Vec::with_capacity(count);
+                for _ in 0..count {
+                    tokens.push(match self.byte()? {
+                        0 => TraitToken::Text(self.text()?),
+                        1 => TraitToken::Name,
+                        _ => return None,
+                    });
                 }
                 Some(tokens)
             }
@@ -400,8 +398,9 @@ impl Reader<'_> {
 
     /// Names a macro gives, each with its kind.
     fn named(&mut self) -> Option<Vec<(Arc<Segment>, DefinitionKind)>> {
-        let mut named = Vec::new();
-        for _ in 0..self.items()? {
+        let count = self.items(weight::MACRO_PART)?;
+        let mut named = Vec::with_capacity(count);
+        for _ in 0..count {
             named.push((Arc::new(self.segment()?), self.kind()?));
         }
         Some(named)
@@ -411,10 +410,8 @@ impl Reader<'_> {
         let macro_name = self.text()?;
         let container = self.scope(scopes)?;
         let (span, hash) = self.span()?;
-        let mut tokens = Vec::new();
-        for _ in 0..self.items()? {
-            tokens.push(self.text()?);
-        }
+        let arguments = self.elements()?;
+        let whole = self.flag()?;
         let role = [Role::Code, Role::Test]
             .get(usize::from(self.byte()?))
             .copied()?;
@@ -423,7 +420,8 @@ impl Reader<'_> {
             container,
             span,
             hash,
-            tokens,
+            arguments,
+            whole,
             role,
         })
     }

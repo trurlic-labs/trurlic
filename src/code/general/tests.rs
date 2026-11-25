@@ -347,26 +347,31 @@ fn collect_with(source: &str, text: &str) -> Result<usize, IndexFault> {
 
 #[test]
 fn a_match_limit_that_is_hit_is_a_fault_not_a_dropped_match() {
-    // Every pair of a module's statements is a match in progress.
+    // Every pair of a module's statements is a match in progress: 129
+    // statements stay within the limit, and 130 pass it.
     let pairs = "(module (_) @hash.group (_) @hash.group)";
-    let few = "a\n".repeat(10);
-    let many = "a\n".repeat(MATCH_LIMIT as usize * 2);
 
-    assert!(collect_with(pairs, &few).is_ok());
-    assert_eq!(collect_with(pairs, &many), Err(IndexFault::TooComplex));
+    assert!(collect_with(pairs, &"a\n".repeat(129)).is_ok());
+    assert_eq!(
+        collect_with(pairs, &"a\n".repeat(130)),
+        Err(IndexFault::TooComplex)
+    );
 }
 
 #[test]
-fn the_text_a_predicate_reads_is_charged_to_the_budget() {
-    // Every block's whole text is read once per block it is in.
+fn the_text_a_predicate_reads_is_held_to_16_bytes_a_byte_of_the_file() {
+    // Every block's whole text is read once per block it is in: twenty
+    // blocks deep, a payload is read twenty times. A comment the query
+    // reads nothing of dilutes that: one byte shorter it is past the
+    // bound, and with that byte it is within.
     let whole_blocks = "((block) @_b (#match? @_b \"never\"))";
-    let payload = format!("\"{}\"", "x".repeat(1 << 19));
-    let deep = nested_ifs(MAX_INDENTATIONS - 1).replace("f\"{z}\"", &payload);
-    let shallow = nested_ifs(4).replace("f\"{z}\"", &payload);
+    let payload = format!("\"{}\"", "x".repeat(100_000));
+    let deep = nested_ifs(20).replace("f\"{z}\"", &payload);
+    let text = |comment: usize| format!("# {}\n{deep}", "p".repeat(comment));
 
-    assert!(collect_with(whole_blocks, &shallow).is_ok());
+    assert!(collect_with(whole_blocks, &text(24_905)).is_ok());
     assert_eq!(
-        collect_with(whole_blocks, &deep),
+        collect_with(whole_blocks, &text(24_904)),
         Err(IndexFault::TooComplex)
     );
 }

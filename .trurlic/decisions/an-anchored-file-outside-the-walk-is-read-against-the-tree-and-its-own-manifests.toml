@@ -1,6 +1,6 @@
 component = "code"
 choice = "The tree's macros, crates and test files come from the files the walk takes; an anchored Rust file outside them is read against those and the manifests above it, and adds nothing to them"
-reason = "What an anchor resolves to must be a function of the tree and that anchor, never of which other anchors there are. So the facts build the tree's crates, arm tables and test files once, from the walked files. A walked file's crate is read from the walked manifests alone. The shell reads, for each anchored Rust file the walk does not take, every Cargo.toml on its path, and such a file's crate is read from those and the walked ones. A manifest an anchor brings thus governs no file the walk took, a symlinked Cargo.toml beside walked files included. Each anchored file outside the walk is read against its own macros, in a small table looked up first, then its crate's shared table. It is a root or module of the test walk whose own declarations are not followed, so its macros, crate and role reach no other file. The cost is linear in the tree and the outside files. Its own unwalked crate's other files are not read, so their macros are not seen."
+reason = "What an anchor resolves to must be a function of the tree and that anchor, never of which other anchors there are. So the facts build the tree's crates and test files once, from the walked files. A walked file's crate is read from the walked manifests alone. The shell reads, for each anchored Rust file the walk does not take, every Cargo.toml on its path, and such a file's crate is read from those and the walked ones. A manifest an anchor brings thus governs no file the walk took, a symlinked Cargo.toml beside walked files included. Each anchored file outside the walk reaches its own macros first, then its crate's, as a walked file does. It is a root or module of the test walk whose own declarations are not followed, so its macros, crate and role reach no other file. The cost is linear in the tree and the outside files. Its own unwalked crate's other files are not read, so their macros are not seen."
 alternatives = [
     "Walk every unwalked directory an anchor points into: rejected because its macros would then reach the walked files and move other anchors",
     "Let every manifest read govern every file below it: rejected because anchoring a symlinked Cargo.toml then moved a walked file into another crate",
@@ -16,10 +16,10 @@ created = "2026-11-24T11:27:16.681896640Z"
 anchors = [
     { file = "src/code/crates.rs", symbol = "Crates::crate_of" },
     { file = "src/code/crates.rs", symbol = "Crates::of" },
-    { file = "src/code/expand/table.rs", symbol = "Lookup" },
+    { file = "src/code/crates.rs", symbol = "Crates::reach" },
     { file = "src/code/facts.rs", symbol = "CodeFacts::new" },
-    { file = "src/code/facts.rs", symbol = "expand_outside" },
     { file = "src/sources/mod.rs", symbol = "probe_anchored" },
+    { file = "src/sources/tests.rs", symbol = "a_file_outside_the_walk_reaches_its_crates_macros_and_its_own" },
     { file = "src/sources/tests.rs", symbol = "a_manifest_an_anchor_brings_governs_no_file_the_walk_took" },
     { file = "src/sources/walk.rs", symbol = "manifests_above" },
 ]

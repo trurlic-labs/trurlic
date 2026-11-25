@@ -27,10 +27,13 @@ mod items;
 mod macros;
 mod marks;
 mod reexports;
+mod silent;
 mod spelled;
 
-pub(super) use arms::{MAX_ARM_WORDS, MAX_OPENING};
-pub(super) use macros::{MAX_INVOCATION_TOKENS, is_name, is_word};
+pub(super) use arms::{MAX_GROUP_TOKENS, MAX_OPENING};
+pub(super) use macros::is_name;
+#[cfg(test)]
+pub(super) use macros::is_word;
 
 use tree_sitter::Node;
 
@@ -67,14 +70,16 @@ pub(super) const LEXICON: Lexicon = Lexicon {
     glued: &[("metavariable", 1)],
 };
 
-/// The index of `text`, a Rust file.
+/// The index of `text`, a Rust file. Its hashes leave out the tokens of
+/// no meaning (`silent.rs`).
 pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
     let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
+    let silent = silent::silent_tokens(tree.root_node());
     let mut walk = Walk {
         text,
         build: TreeIndex::new(
             text,
-            Leaves::of(&tree, text, &LEXICON),
+            Leaves::of(&tree, text, &LEXICON, &silent),
             ScopeTree::for_file(text.len()),
         ),
         reexports: Vec::new(),

@@ -29,14 +29,30 @@ impl Walk<'_> {
             return Ok(());
         }
         let (node, context) = (invocation.node, invocation.context);
+        // The scope of each item defined, by its place: a spelled module's
+        // items are in its scope.
+        let mut scopes: Vec<Option<ScopeId>> = Vec::new();
         for spelled in spelled::spelled_items(node, self.text, &mut self.build.work)? {
-            self.define_spelled_item(context, &spelled)?;
+            let inner = match spelled.within {
+                None => context,
+                Some(module) => match scopes.get(module).copied().flatten() {
+                    Some(scope) => Context {
+                        scope: Some(scope),
+                        ..context
+                    },
+                    None => {
+                        scopes.push(None);
+                        continue;
+                    }
+                },
+            };
+            scopes.push(self.define_spelled_item(inner, &spelled)?);
         }
         // A type-defining macro is invoked where an item stands.
         if !matches!(outer.parent, "source_file" | "declaration_list") {
             return Ok(());
         }
-        let Some((macro_name, tokens)) = macros::invocation_tokens(node, self.text) else {
+        let Some((macro_name, arguments)) = macros::invocation_arguments(node, self.text) else {
             return Ok(());
         };
         let range = outer.start..outer.node.end_byte();
@@ -45,22 +61,23 @@ impl Walk<'_> {
             container: context.scope,
             span: self.build.span(&range),
             hash: UNHASHED,
-            tokens,
+            arguments: arguments.elements,
+            whole: arguments.whole,
             role: context.role,
         };
         self.build.invoke(invocation, range)
     }
 
     /// Define an item an invocation in `context` spells, and its fields
-    /// and variants.
+    /// and variants; its scope, `None` for a keyword of no item.
     fn define_spelled_item(
         &mut self,
         context: Context,
         spelled: &SpelledItem<'_>,
-    ) -> Result<(), IndexFault> {
+    ) -> Result<Option<ScopeId>, IndexFault> {
         let Some(kind) = DefinitionKind::of_keyword(spelled.keyword, context.within.container())
         else {
-            return Ok(());
+            return Ok(None);
         };
         let what = What {
             kind,
@@ -90,7 +107,7 @@ impl Walk<'_> {
                 self.define_spelled(Some(member_scope), field, field_what)?;
             }
         }
-        Ok(())
+        Ok(Some(scope))
     }
 
     /// Define `spelled` under `parent` as `what` says; its scope.

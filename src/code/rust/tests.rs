@@ -1,5 +1,5 @@
 use super::*;
-use crate::code::index::{After, Element, FileKind, HandOff, TypeArm, index as index_file};
+use crate::code::index::{Element, FileKind, Fragment, HandOff, TraitToken, index as index_file};
 use crate::code::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::scope::{MAX_NESTING, Scopes};
 use crate::code::symbol::Segment;
@@ -78,7 +78,7 @@ fn an_item_an_invocation_spells_spans_its_attributes_to_its_body() {
 }
 
 #[test]
-fn a_type_macro_keeps_each_arms_words_what_follows_the_name_and_what_each_rule_spells() {
+fn a_type_macro_keeps_each_rules_opening_and_what_it_spells_of_each_binding() {
     let text = "#[macro_export]\nmacro_rules! id {\n    ($(#[$m:meta])* ordered $name:ident) => { pub enum $name { A } impl $name { fn rank() {} } };\n    ($name:ident, $t:ty) => { pub type $name = $t; };\n    (@inner $name:ident) => {};\n    ($vis:vis struct $name:ident) => { $vis struct $name; };\n}\nmacro_rules! call { ($x:ident) => { let _ = $x; } }\n";
     let macros = index(text).rust.macros;
     let [found] = macros.as_slice() else {
@@ -90,20 +90,33 @@ fn a_type_macro_keeps_each_arms_words_what_follows_the_name_and_what_each_rule_s
         .map(|rule| rule.receives.iter().map(|(at, r)| (*at, r.kind)).collect())
         .collect();
 
+    let openings: Vec<&[Element]> = found
+        .rules
+        .iter()
+        .map(|rule| rule.opening.as_slice())
+        .collect();
+    let ident = Element::Binding(Fragment::Ident);
+
     assert!(found.exported);
     assert_eq!(
-        found.arms,
+        openings,
         [
-            TypeArm {
-                words: vec!["ordered".into()],
-                after: After::End,
-                rule: 0,
-            },
-            TypeArm {
-                words: vec![],
-                after: After::Token(",".into()),
-                rule: 1,
-            },
+            &[Element::Word("ordered".into()), ident.clone()][..],
+            &[
+                ident.clone(),
+                Element::Token(",".into()),
+                Element::Binding(Fragment::Other)
+            ],
+            &[
+                Element::Token("@".into()),
+                Element::Word("inner".into()),
+                ident.clone()
+            ],
+            &[
+                Element::Binding(Fragment::Other),
+                Element::Word("struct".into()),
+                ident
+            ],
         ]
     );
     assert_eq!(
@@ -111,14 +124,14 @@ fn a_type_macro_keeps_each_arms_words_what_follows_the_name_and_what_each_rule_s
         [
             vec![(1, Some(DefinitionKind::Enum))],
             vec![(0, Some(DefinitionKind::TypeAlias))],
-            vec![(2, None)],
+            vec![],
             vec![(2, Some(DefinitionKind::Struct))],
         ]
     );
 }
 
 #[test]
-fn an_invocation_keeps_its_first_tokens_past_its_attributes() {
+fn an_invocation_keeps_its_first_elements_past_its_attributes() {
     let text = "mod m {\n    ids::id! {\n        /// Doc.\n        #[allow(dead_code)]\n        ordered Rank(u8), \"a b\"\n    }\n}\nfn f() { id! { ordered Local(u8) } }\n";
     let invocations = index(text).rust.invocations;
 
@@ -132,9 +145,16 @@ fn an_invocation_keeps_its_first_tokens_past_its_attributes() {
     };
     assert_eq!(testing::path(scopes, invocation.container.unwrap()), "m");
     assert_eq!(
-        invocation.tokens,
-        ["ordered", "Rank", "(", "u8", ")", ",", "\"a b\""]
+        invocation.arguments,
+        [
+            Element::Word("ordered".into()),
+            Element::Word("Rank".into()),
+            Element::Group('(', Some(vec!["u8".into()])),
+            Element::Token(",".into()),
+            Element::Token("\"a b\"".into()),
+        ]
     );
+    assert!(invocation.whole);
 }
 
 #[test]
@@ -173,33 +193,51 @@ fn a_macro_is_exported_by_its_attribute_not_by_a_word_in_its_docs() {
 }
 
 #[test]
-fn a_macro_of_many_arms_is_read_within_the_budget() {
-    let arms: String = (0..20_000)
+fn a_macro_of_many_rules_is_read_within_the_budget() {
+    let rules: String = (0..20_000)
         .map(|n| format!("(w{n} $n:ident) => {{ pub struct $n; }};\n"))
         .collect();
-    let text = format!("macro_rules! many {{\n{arms}}}\n");
+    let text = format!("macro_rules! many {{\n{rules}}}\n");
 
-    assert_eq!(index(&text).rust.macros[0].arms.len(), 20_000);
+    assert_eq!(index(&text).rust.macros[0].rules.len(), 20_000);
 }
 
 #[test]
-fn spelled_items_nested_deep_are_each_hashed_by_what_they_hold() {
-    let depth = 20_000;
+fn a_spelled_module_holds_its_items_each_hashed_by_what_it_holds() {
+    let depth = MAX_NESTING - 1;
     let text = format!(
-        "m! {{ {}{} }}\n",
-        "fn a { ".repeat(depth),
+        "m! {{ {}fn f() {{}}{} }}\n",
+        "mod a { ".repeat(depth),
         "}".repeat(depth)
     );
     let indexed = index(&text);
     let hashes: std::collections::BTreeSet<_> =
         indexed.definitions.iter().map(|d| d.hash).collect();
+    let deepest = defined(&text).pop().map(|(path, _)| path);
 
-    assert_eq!(indexed.definitions.len(), depth);
+    assert_eq!(indexed.definitions.len(), depth + 1);
     assert_eq!(
         hashes.len(),
-        depth,
+        depth + 1,
         "each holds one more than the one inside it"
     );
+    assert_eq!(deepest, Some(format!("{}f", "a::".repeat(depth))));
+}
+
+#[test]
+fn an_invocation_in_an_impl_spells_its_types_members_alone() {
+    let text = "struct T;\nimpl T {\n    forward! { bool struct identifier fn made() {} }\n}\n";
+    let paths: Vec<String> = defined(text).into_iter().map(|(path, _)| path).collect();
+
+    assert_eq!(paths, ["T", "T::made"]);
+}
+
+#[test]
+fn a_tree_after_a_name_or_in_an_items_body_defines_nothing() {
+    let text = "class!(Meters {\n    pub fn new() -> Self { Self }\n});\nm! { impl Seconds { fn new() {} } fn outer() { fn local() {} } }\ncfg_if! { if #[cfg(unix)] { fn branch() {} } }\n";
+    let paths: Vec<String> = defined(text).into_iter().map(|(path, _)| path).collect();
+
+    assert_eq!(paths, ["outer", "branch"]);
 }
 
 #[test]
@@ -248,7 +286,7 @@ fn a_type_macros_members_are_its_impl_blocks_items_and_the_rest_its_containers()
     let [rule] = found.rules.as_slice() else {
         panic!("{found:?}");
     };
-    let impls: Vec<(Option<Vec<String>>, Vec<String>)> = rule
+    let impls: Vec<(Option<Vec<TraitToken>>, Vec<String>)> = rule
         .receives
         .iter()
         .flat_map(|(_, receives)| &receives.impls)
@@ -260,32 +298,31 @@ fn a_type_macros_members_are_its_impl_blocks_items_and_the_rest_its_containers()
 }
 
 #[test]
-fn a_rule_that_hands_its_name_to_a_macro_keeps_the_arguments_up_to_it() {
-    let text = "macro_rules! entity {\n    (record $name:ident) => { declare!([] $name); };\n    (quiet $name:ident) => { let _ = $name; };\n    (moved $name:ident) => { $crate::path::declare! { $name } };\n}\n";
+fn a_rule_keeps_each_distinct_hand_off_of_a_binding_with_its_arguments() {
+    let text = "macro_rules! entity {\n    (record $name:ident) => { declare!([] $name); declare!([] $name); };\n    (quiet $name:ident) => { let _ = $name; };\n    (moved $name:ident) => { $crate::path::declare! { $name } };\n}\n";
     let macros = index(text).rust.macros;
-    let hand_offs: Vec<Vec<HandOff>> = macros[0]
+    let hand_offs: Vec<&[HandOff]> = macros[0]
         .rules
         .iter()
-        .flat_map(|rule| &rule.receives)
-        .map(|(_, receives)| receives.hand_offs.clone())
+        .map(|rule| rule.hand_offs.as_slice())
         .collect();
     let declare = |from_crate: bool, arguments: Vec<Element>| HandOff {
         macro_name: "declare".to_owned(),
         from_crate,
-        place: arguments.len() - 1,
         arguments,
         whole: true,
     };
+    let name = Element::Forwarded(Some(1), Fragment::Ident);
 
     assert_eq!(
         hand_offs,
         [
-            vec![declare(
+            &[declare(
                 false,
-                vec![Element::Group('[', Some(vec![])), Element::Variable]
-            )],
-            vec![],
-            vec![declare(true, vec![Element::Variable])],
+                vec![Element::Group('[', Some(vec![])), name.clone()]
+            )][..],
+            &[],
+            &[declare(true, vec![name])],
         ]
     );
 }

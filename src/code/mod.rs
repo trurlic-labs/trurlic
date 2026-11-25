@@ -154,6 +154,19 @@ mod tests {
             "const X: Option<&str> = option_env!(\"HOME\");\n",
         ),
         ("print", "fn f() { println!(\"x\"); }\n"),
+        ("raw_root", "fn f() { let _ = r#std::fs::read(\"/x\"); }\n"),
+        (
+            "tool_attribute",
+            "#[rustfmt::test]\npub(crate) fn tool() { let _ = std::fs::read(\"/x\"); }\n",
+        ),
+        (
+            "conditional_path",
+            "#[cfg_attr(all(), path = \"../outside.rs\")]\nmod outside;\n",
+        ),
+        (
+            "test_file_shipped",
+            "#[cfg(test)]\nmod hidden;\n#[cfg_attr(all(), path = \"test_file_shipped/hidden.rs\")]\nmod shipped;\n",
+        ),
     ];
 
     #[test]
@@ -178,6 +191,7 @@ mod tests {
             ),
         );
         write("src/index/tests.rs", "use std::fs;\n");
+        write("src/index/test_file_shipped/hidden.rs", "use std::fs;\n");
         for (name, text) in SEEDED {
             write(&format!("src/index/{name}.rs"), text);
         }

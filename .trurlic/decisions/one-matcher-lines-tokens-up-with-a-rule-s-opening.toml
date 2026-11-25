@@ -1,0 +1,28 @@
+component = "code"
+choice = "One matcher lines tokens up with a rule's opening from the front, and from the back when both are whole, as far as no repetition stands between; a rule fits surely only when all of it lines up"
+reason = "An invocation and a hand-off ask one question: which rules of a macro may take these tokens. The index keeps each rule's opening and each invocation's arguments as at most 16 elements. An element is a word, a punctuation or literal token, or a group with its tokens when none is a group or a metavariable (at most 8). It is else a binding by its fragment, a forwarded metavariable by the fragment it binds, or a repetition. Elements line up pairwise from the front until either side holds a repetition, a fragment of many tokens (expr, ty, path and the like) or a minus before a literal binding. When both sides are whole, they line up from the back the same way. A word or token fits its own spelling, a group its delimiter and tokens, an ident binding a word, a literal binding a literal token or a boolean, either one its own fragment forwarded, and a tt binding any one element. A lifetime binding tells nothing. A forwarded ident, tt or lifetime may match a literal token; any other forwarded fragment matches a binding alone, as Rust's are opaque. A rule fits surely only when every element lines up and fits and both sides end together. A side that ends while the other goes on refuses the rule, unless what is left may stand for nothing. A name is received only at a place that lines up from the front. Both bounds are in the cache key."
+alternatives = [
+    "Match repetitions as Rust does: rejected because that is a macro engine, and a rule left untold defines nothing, which is safe",
+    "Line up from the front only: rejected because rules that differ after a repetition, one with holding $h:ident before its block, could not be told apart",
+    "Two matchers, words for an invocation and elements for a hand-off: rejected because they disagreed on which rule an invocation opens",
+]
+tags = [
+    "anchors",
+    "macros",
+    "rust",
+]
+status = "proposed"
+origin = "one macro matcher"
+created = "2026-11-25T19:45:54.970624950Z"
+anchors = [
+    { file = "src/code/expand.rs", symbol = "a_group_tells_rules_apart_by_eight_tokens_and_no_more" },
+    { file = "src/code/expand.rs", symbol = "a_name_past_sixteen_elements_is_received_by_no_rule" },
+    { file = "src/code/expand.rs", symbol = "a_rule_the_tokens_refuse_from_the_back_past_a_repetition_is_no_candidate" },
+    { file = "src/code/expand/fit.rs", symbol = "binding" },
+    { file = "src/code/expand/fit.rs", symbol = "candidates" },
+    { file = "src/code/expand/fit.rs", symbol = "fit" },
+    { file = "src/code/expand/fit.rs", symbol = "fits" },
+    { file = "src/code/expand/fit.rs", symbol = "lined_up" },
+    { file = "src/code/rust/arms.rs", symbol = "MAX_GROUP_TOKENS" },
+    { file = "src/code/rust/arms.rs", symbol = "MAX_OPENING" },
+]

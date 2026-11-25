@@ -1,11 +1,12 @@
 component = "code"
-choice = "An invocation defines the type the arm it opens gives the name after its words, with the items of the impls of that name in the rules it reaches, and every item its own tokens spell"
-reason = "tree-sitter leaves a macro invocation's tokens unparsed, and real code defines types and functions through macros, so two lexical rules read them. First, a macro_rules! macro of the crate, or a #[macro_export] one of the workspace, defines a type where it is invoked. The invocation opens the arm of least place whose literal words it opens with, at most eight. The name after the words must be a word and no keyword, and the pattern's token right after the name must be the invocation's: an arm is never chosen by position alone, so no arm word becomes a phantom type. The arm's rule gives the kind, by its own type keyword or by a hand-off (a-name-handed-to-another-macro-is-received-by-the-rules-its-arguments-fit). The type holds the items of each impl whose self type is the name the rule receives, alone or with generic arguments, a trait impl's under Name::<Trait>. An impl of another type gives it nothing, and the reached rules' other items stand under the invocation's container. A type the file writes directly beside an invocation that defines it too is one set with it, unless the direct one lies inside the invocation's own tokens. Every path is held to MAX_NESTING and the expansion's memory to its budget of bytes, the names a macro gives shared. pyo3's create_exception! and import_exception! are listed by argument position. Second, an item keyword followed by a name, not a keyword, a path or a rename (enum B as C), is a definition under the invocation's container, spanning to its body or to the next item."
+choice = "An invocation defines each name every rule it may open defines alike, with the members and items they all give, and each item its own tokens spell where its path is told"
+reason = "tree-sitter leaves a macro invocation's tokens unparsed, and real code defines types and functions through macros, so two lexical rules read them. First, a macro_rules! macro the file reaches defines a type where it is invoked (a-macro-name-reaches-the-invoking-file-s-own-macros-first). Rust takes the first rule an invocation's tokens match. The index lines the tokens up with each rule's opening (one-matcher-lines-tokens-up-with-a-rule-s-opening), and the candidates are each rule they may fit, up to the first they surely fit. A wrong definition is worse than a missing one. So a name is defined only where every candidate defines it, with one kind, and the type holds only the members every candidate gives it; the container likewise. A rule defines a name it binds as an ident or a tt by the type keyword before it in its body, or through the macros it hands the name to (a-name-handed-to-another-macro-is-received-by-the-rules-its-arguments-fit). The type holds the items of each impl whose self type is the name, a trait impl's under Name::<Trait>. A trait impl whose trait names another metavariable gives nothing, as no invocation's tokens are followed into a body. A type the file writes directly beside an invocation that defines it too is one set with it, unless the direct one lies inside the invocation. pyo3's create_exception! and import_exception! are listed by argument position. Second, an item keyword followed by a name, not a keyword, a path or a rename, is a definition under the invocation's container, a member only a fn, type or const. A spelled mod's items are its own. A tree after a name, or another item's body, defines nothing: class!(Meters { fn new() }) may make new any type's member."
 alternatives = [
-    "Expand macros fully: rejected because it needs a Rust compiler's name resolution and macro engine, far past what an anchor asks",
-    "Pick the arm of least place by its words alone: rejected because an arm with no words then bound an arm word or a keyword as the name and invented a type",
-    "Give the type the items of every impl that names a metavariable: rejected because impl From<$name> for String and impl $other are impls of other types",
-    "Only the spelled-item rule: rejected because id! { OrderId(u32) } spells no keyword, so the type it defines would be missing",
+    "Expand macros fully: rejected because it needs a Rust compiler's name resolution and macro engine, far past what an anchor needs",
+    "Take the first rule an invocation's tokens may fit: rejected because rules that differ past a repetition then gave every type the first rule's kind and members",
+    "Union the members of every rule an invocation may open: rejected because a member one rule alone gives is a phantom of every type the other rules make",
+    "Open a rule by its literal words before the name and one token after: rejected because that second matcher chose rules the hand-off matcher told apart",
+    "Define a spelled item of any nested tree under the invocation's container: rejected because a constructor in a class body became a top-level function Rust does not have",
 ]
 tags = [
     "anchors",
@@ -16,14 +17,14 @@ status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/crates.rs", symbol = "Crates::arms_of" },
     { file = "src/code/expand.rs", symbol = "Adding::scope" },
     { file = "src/code/expand.rs", symbol = "FOREIGN_TYPE_MACROS" },
     { file = "src/code/expand.rs", symbol = "expand_file" },
-    { file = "src/code/expand/table.rs", symbol = "Arms::opened" },
-    { file = "src/code/rust/arms.rs", symbol = "arm" },
+    { file = "src/code/expand/resolve.rs", symbol = "Resolved::agree" },
+    { file = "src/code/expand/resolve.rs", symbol = "Resolver::defined" },
     { file = "src/code/rust/invocations.rs", symbol = "Walk::read_invocation" },
     { file = "src/code/rust/macros.rs", symbol = "impl_of_name" },
+    { file = "src/code/rust/macros.rs", symbol = "trait_token" },
     { file = "src/code/rust/macros.rs", symbol = "type_macro" },
     { file = "src/code/rust/spelled.rs", symbol = "spelled_items" },
 ]

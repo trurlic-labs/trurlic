@@ -3,39 +3,36 @@
 //! token trees, which tree-sitter leaves unparsed. The expansion, which
 //! needs the macros of the whole crate, is `expand.rs`'s.
 //!
-//! A macro can define a type when one of its arms opens with literal
-//! words and then a `$name:ident` (`arms.rs`). The type holds the items of
-//! each `impl` whose self type is the name a rule receives, alone or with
-//! generic arguments: `impl $name { fn new() }`, `impl<T> $name<T>`,
-//! `impl Display for $name`, a trait impl's under the trait's segment. An
-//! `impl` of any other type (`impl From<$name> for String`, `impl $other`
-//! of a second name) gives the type nothing.
+//! A macro can define a type when a rule spells a type of a name it binds,
+//! hands one on, or holds an `impl` of one (`arms.rs`). The type holds the
+//! items of each `impl` whose self type is the name a rule receives, alone
+//! or with generic arguments: `impl $name { fn new() }`, `impl<T>
+//! $name<T>`, `impl Display for $name`, a trait impl's under the trait's
+//! segment. An `impl` of any other type (`impl From<$name> for String`,
+//! `impl $other` of a second name) gives the type nothing, and nor does a
+//! trait impl whose trait holds a metavariable the opening does not bind.
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use tree_sitter::Node;
 
-use crate::code::index::{IndexFault, Receives, TypeImpl, TypeMacro};
+use crate::code::index::{Element, IndexFault, TraitToken, TypeImpl, TypeMacro};
 use crate::code::kinds::{Container, DefinitionKind};
 use crate::code::symbol::Segment;
 use crate::code::syntax::{self, Token, text_of};
 use crate::code::work::Work;
 
-use super::{LEXICON, arms};
-
-/// The tokens an invocation keeps: [`arms::MAX_ARM_WORDS`] words, the name, and
-/// room for the arguments a foreign macro's name is among.
-pub(in crate::code) const MAX_INVOCATION_TOKENS: usize = 16;
+use super::LEXICON;
+use super::arms::{self, MAX_OPENING};
 
 /// Names a macro's body gives items, each with its kind.
 pub(super) type Named = Vec<(Arc<Segment>, DefinitionKind)>;
 
 /// The type-defining facts of `definition`, a `macro_definition`; `None`
 /// when no rule of it spells a type of a name it binds, hands one on or
-/// holds an `impl` of one (`arms.rs`). What else the bodies define is the macro's, so the rule a
-/// recursive call reaches gives its items (`body_items`). Each body's
-/// tokens are read a few times at most and spent from `work`.
+/// holds an `impl` of one (`arms.rs`). Each body's tokens are read a few
+/// times at most and spent from `work`.
 pub(super) fn type_macro(
     definition: Node<'_>,
     text: &str,
@@ -50,20 +47,17 @@ pub(super) fn type_macro(
         .named_children(&mut cursor)
         .filter(|rule| rule.kind() == "macro_rule")
         .collect();
-    let (arms, rules_read) = arms::rules_of(&rules, text, work)?;
-    let gives_names = rules_read.iter().any(|rule| {
-        rule.receives
-            .iter()
-            .any(|(_, receives)| *receives != Receives::default())
-    });
+    let rules = arms::rules_of(&rules, text, work)?;
+    let gives_names = rules
+        .iter()
+        .any(|rule| !rule.receives.is_empty() || !rule.hand_offs.is_empty());
     if !gives_names {
         return Ok(None);
     }
     Ok(Some(TypeMacro {
         name: text_of(name, text).to_owned(),
         exported,
-        arms,
-        rules: rules_read,
+        rules,
     }))
 }
 
@@ -129,7 +123,8 @@ pub(super) fn impls_of(
 }
 
 /// The `impl` of the type `name` names with `header` and `block`; `None`
-/// for an impl of any other type.
+/// for an impl of any other type, or of a trait that holds another
+/// metavariable, which no invocation's tokens are followed into.
 fn type_impl(
     header: &[Node<'_>],
     block: Node<'_>,
@@ -140,6 +135,16 @@ fn type_impl(
     let Some(trait_tokens) = impl_of_name(header, name, text) else {
         return Ok(None);
     };
+    let trait_tokens = match trait_tokens {
+        None => None,
+        Some(tokens) => {
+            let token = |token: &Node<'_>| trait_token(*token, name, text);
+            let Some(tokens) = tokens.iter().map(token).collect::<Option<Vec<_>>>() else {
+                return Ok(None);
+            };
+            Some(tokens)
+        }
+    };
     let inside = inner_children(block);
     work.spend(inside.len())?;
     Ok(Some(TypeImpl {
@@ -148,12 +153,27 @@ fn type_impl(
     }))
 }
 
+/// A token of a trait an `impl` of `name` names; `None` for another
+/// metavariable.
+fn trait_token(token: Node<'_>, name: &str, text: &str) -> Option<TraitToken> {
+    let spelled = text_of(token, text);
+    match (token.kind() == "metavariable", spelled == name) {
+        (false, _) => Some(TraitToken::Text(spelled.to_owned())),
+        (true, true) => Some(TraitToken::Name),
+        (true, false) => None,
+    }
+}
+
 /// What an `impl` whose `header` (its tokens between `impl` and its
 /// block) gives the metavariable `name`; `None` when its self type is
 /// another than `name`, alone or with generic arguments (`$name<T>`).
-/// `Some(None)` is an inherent impl, and `Some(Some(trait))` a trait impl,
-/// the trait's tokens with `name` written `$`.
-fn impl_of_name(header: &[Node<'_>], name: &str, text: &str) -> Option<Option<Vec<String>>> {
+/// `Some(None)` is an inherent impl, and `Some(Some(trait))` a trait
+/// impl, with the trait's tokens.
+fn impl_of_name<'h, 'n>(
+    header: &'h [Node<'n>],
+    name: &str,
+    text: &str,
+) -> Option<Option<&'h [Node<'n>]>> {
     let spelled = |node: &Node<'_>| text_of(*node, text);
     let rest = match header.first().is_some_and(|first| spelled(first) == "<") {
         true => header.get(angle_close(header, text)? + 1..)?,
@@ -174,15 +194,7 @@ fn impl_of_name(header: &[Node<'_>], name: &str, text: &str) -> Option<Option<Ve
     if first.kind() != "metavariable" || spelled(first) != name || !generic {
         return None;
     }
-    Some(trait_tokens.map(|tokens| {
-        tokens
-            .iter()
-            .map(|token| match spelled(token) == name {
-                true => "$".to_owned(),
-                false => spelled(token).to_owned(),
-            })
-            .collect()
-    }))
+    Some(trait_tokens)
 }
 
 /// The index of the token that closes the angle bracket `tokens` opens
@@ -217,9 +229,19 @@ fn named_items(tokens: &[Node<'_>], container: Container, text: &str) -> Named {
         .collect()
 }
 
-/// The macro's name and the first tokens of `invocation`, a
+/// The arguments of an invocation, at most [`MAX_OPENING`] of its
+/// elements, and whether they are all of them.
+pub(super) struct Arguments {
+    pub(super) elements: Vec<Element>,
+    pub(super) whole: bool,
+}
+
+/// The macro's name and the arguments of `invocation`, a
 /// `macro_invocation`, its attributes and comments left out.
-pub(super) fn invocation_tokens(invocation: Node<'_>, text: &str) -> Option<(String, Vec<String>)> {
+pub(super) fn invocation_arguments(
+    invocation: Node<'_>,
+    text: &str,
+) -> Option<(String, Arguments)> {
     let path = invocation.child_by_field_name("macro")?;
     let name = path.child_by_field_name("name").unwrap_or(path);
     let mut cursor = invocation.walk();
@@ -227,19 +249,17 @@ pub(super) fn invocation_tokens(invocation: Node<'_>, text: &str) -> Option<(Str
         .named_children(&mut cursor)
         .find(|child| child.kind() == "token_tree")?;
     let inside = inner_children(tree);
-    let mut tokens = Vec::new();
-    for child in skip_attributes(&inside, text) {
-        let room = MAX_INVOCATION_TOKENS - tokens.len();
-        tokens.extend(
-            tokens_of(*child, text, room)
-                .into_iter()
-                .map(|token| text_of(token, text).to_owned()),
-        );
-        if tokens.len() == MAX_INVOCATION_TOKENS {
-            break;
-        }
-    }
-    Some((text_of(name, text).to_owned(), tokens))
+    let arguments = skip_attributes(&inside, text);
+    let elements = arguments
+        .iter()
+        .take(MAX_OPENING)
+        .map(|argument| arms::token_element(*argument, text))
+        .collect();
+    let whole = arguments.len() <= MAX_OPENING;
+    Some((
+        text_of(name, text).to_owned(),
+        Arguments { elements, whole },
+    ))
 }
 
 /// The children of a token tree or pattern between its delimiters,

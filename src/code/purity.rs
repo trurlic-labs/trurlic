@@ -4,32 +4,39 @@
 //! its non-test code may name.
 //!
 //! Every token of every Rust file under the checked directory is read,
-//! macro arguments and bodies included. Test code is left out as the
-//! index's own roles mark it: a definition of the test role, a file the
-//! crate's tree makes test code whole. A path's first segment says where
-//! it goes, a `use` list read whole. `std`, `core` and `alloc` go only to
+//! macro arguments and bodies included, a raw identifier as its name.
+//! Test code is left out by a rule of the check's own, never the index's.
+//! It is an item an exact `#[test]` or `#[cfg(test)]` marks, a file whose
+//! every `mod` declaration is such an item or in a test file, and a file
+//! under an inner `#![cfg(test)]`. A path's first segment says where it
+//! goes, a `use` list read whole. `std`, `core` and `alloc` go only to
 //! the modules of [`STD_MODULES`] and the items of the list. The crate
 //! (`crate`, `$crate`, or as many `super`s as reach its root) goes only to
 //! the list's modules and store items. A dependency is named only when the
 //! list holds it. Refused outright: a glob or an
-//! alias of such a root, `extern crate`, `#[path]`, and the prelude macros
+//! alias of such a root, `extern crate`, an attribute that names a `path`
+//! (`#[path = ..]`, `#[cfg_attr(.., path = ..)]`), and the prelude macros
 //! of [`MACROS`], which read files or the environment or write a stream.
 //! The one include admitted is `include_str!` of a plain string literal,
 //! a relative path that stays inside the checked directory: a language's
 //! query file, source of the index as its Rust files are.
 //!
-//! What can still reach the outside: a macro the crate root defines
-//! before `code` in textual scope (it has none), what an allowed crate's
-//! own functions do with a handle `code` cannot name, and what a caller
-//! hands in.
+//! What can still reach the outside, a list complete for what the check
+//! reads (paths, macros and attributes): a macro the crate root defines
+//! before `code` in textual scope (it has none); what an allowed crate's
+//! own functions do with a handle `code` cannot name; what a caller hands
+//! in (a closure, a value whose `Drop` or trait impl does I/O); and the
+//! runtime's own messages to stderr, a panic's or a failed allocation's.
 
 use std::path::Path;
 
-use super::crates::Crates;
-use super::expand::Files;
-use super::index::{FileIndex, FileKind, index};
-use super::kinds::Role;
-use super::roles::test_files;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
+
+use tree_sitter::Node;
+
+use super::index::{FileKind, index};
+use super::syntax::{self, Token, text_of};
 
 /// The modules of `std`, `core` and `alloc` the index may name: none
 /// reads or writes outside the process's memory.
@@ -109,35 +116,172 @@ const MACROS: [&str; 10] = [
 /// a crate's directory, as `file:line: what`, files sorted.
 pub(crate) fn faults(root: &Path, dir: &str, allowed: &AllowList) -> Vec<String> {
     let texts = sources(root);
-    let indexes: Vec<(&str, FileKind, FileIndex)> = texts
+    let dependencies = dependencies(&texts);
+    let read: BTreeMap<&str, Read> = texts
         .iter()
-        .map(|(path, text)| {
-            let kind = FileKind::of(path).unwrap();
-            (path.as_str(), kind, index(kind, text.as_bytes()).unwrap())
-        })
+        .filter(|(path, _)| path.ends_with(".rs"))
+        .map(|(path, text)| (path.as_str(), read(text)))
         .collect();
-    let files: Files<'_> = indexes
-        .iter()
-        .map(|(path, kind, index)| (*path, (*kind, index)))
-        .collect();
-    let crates = Crates::of(&files, &Files::new());
-    let tests = test_files(&files, &Files::new(), &crates);
-    let dependencies = dependencies(&files);
+    let tests = test_files(&read);
     let mut found = Vec::new();
-    for ((path, text), (_, _, indexed)) in texts.iter().zip(&indexes) {
-        if !path.starts_with(&format!("{dir}/")) || tests.contains(path.as_str()) {
+    for (path, file) in &read {
+        if !path.starts_with(&format!("{dir}/")) || tests.contains(path) {
             continue;
         }
-        let depth = module_depth(path);
-        let tokens = tokens_outside_tests(text, indexed);
         let place = Place { path, dir };
         found.extend(
-            file_faults(&tokens, depth, &dependencies, place, allowed)
-                .into_iter()
-                .map(|(line, what)| format!("{path}:{line}: {what}")),
+            file_faults(
+                &file.tokens,
+                module_depth(path),
+                &dependencies,
+                place,
+                allowed,
+            )
+            .into_iter()
+            .map(|(line, what)| format!("{path}:{line}: {what}")),
         );
     }
     found
+}
+
+/// What the check reads of a file: its tokens outside test items, each
+/// with its line, each `mod name;` it declares and whether a test mark
+/// holds it, and whether the whole file is test code.
+struct Read {
+    tokens: Vec<(usize, String)>,
+    modules: Vec<(String, bool)>,
+    test: bool,
+}
+
+/// What the check reads of `text`.
+fn read(text: &str) -> Read {
+    let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
+    let mut marked: Vec<Range<usize>> = Vec::new();
+    let mut modules = Vec::new();
+    let mut test = false;
+    let mut pending = vec![tree.root_node()];
+    while let Some(node) = pending.pop() {
+        let mut cursor = node.walk();
+        pending.extend(node.children(&mut cursor));
+        match node.kind() {
+            "inner_attribute_item" => test |= spelled(node, text) == "#![cfg(test)]",
+            "attribute_item" if is_test_mark(node, text) => marked.extend(marked_item(node)),
+            "mod_item" if node.child_by_field_name("body").is_none() => {
+                let name = node
+                    .child_by_field_name("name")
+                    .map_or("", |name| text_of(name, text));
+                modules.push((name.to_owned(), node.start_byte()));
+            }
+            _ => {}
+        }
+    }
+    let held = |at: usize| marked.iter().any(|range| range.contains(&at));
+    let mut tokens = Vec::new();
+    syntax::tokens(tree.root_node(), text, &super::rust::LEXICON, |token| {
+        if let Token::Node(node) = token
+            && !held(node.start_byte())
+        {
+            let spelled = text_of(node, text);
+            let name = spelled.strip_prefix("r#").unwrap_or(spelled);
+            tokens.push((node.start_position().row + 1, name.to_owned()));
+        }
+        std::ops::ControlFlow::Continue(())
+    });
+    Read {
+        tokens,
+        modules: modules
+            .into_iter()
+            .map(|(name, at)| (name, held(at)))
+            .collect(),
+        test,
+    }
+}
+
+/// `node`'s text without whitespace.
+fn spelled(node: Node<'_>, text: &str) -> String {
+    text_of(node, text)
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// Whether the attribute `node` is exactly `#[test]` or `#[cfg(test)]`.
+fn is_test_mark(node: Node<'_>, text: &str) -> bool {
+    matches!(spelled(node, text).as_str(), "#[test]" | "#[cfg(test)]")
+}
+
+/// The bytes from the attribute `node` to the end of the item it marks.
+fn marked_item(node: Node<'_>) -> Option<Range<usize>> {
+    let mut next = node.next_sibling();
+    while let Some(sibling) =
+        next.filter(|sibling| sibling.kind() == "attribute_item" || syntax::is_comment(*sibling))
+    {
+        next = sibling.next_sibling();
+    }
+    next.map(|item| node.start_byte()..item.end_byte())
+}
+
+/// The files of `read` that are test code whole: under an inner
+/// `#![cfg(test)]`, declared only by marked `mod` items, or in a test
+/// file's modules.
+fn test_files<'a>(read: &BTreeMap<&'a str, Read>) -> BTreeSet<&'a str> {
+    // Each file's declarations: whether one ships it.
+    let mut shipped: BTreeMap<String, bool> = BTreeMap::new();
+    for (path, file) in read {
+        for (name, marked) in &file.modules {
+            let dir = modules_dir(path);
+            for child in [format!("{dir}/{name}.rs"), format!("{dir}/{name}/mod.rs")] {
+                *shipped.entry(child).or_default() |= !marked;
+            }
+        }
+    }
+    let parent = |path: &str| {
+        read.keys()
+            .copied()
+            .find(|parent| *parent != path && modules_dir(parent) == parent_dir(path))
+    };
+    let mut tests: BTreeSet<&str> = read
+        .iter()
+        .filter(|(path, file)| file.test || shipped.get(**path) == Some(&false))
+        .map(|(path, _)| *path)
+        .collect();
+    loop {
+        let more: Vec<&str> = read
+            .keys()
+            .copied()
+            .filter(|path| !tests.contains(path))
+            .filter(|path| parent(path).is_some_and(|parent| tests.contains(parent)))
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        tests.extend(more);
+    }
+    tests
+}
+
+/// The directory of the files the `mod name;` items of the file at `path`
+/// declare: `a/b` for `a/b.rs`, `a/b/mod.rs` and `a/b/lib.rs`.
+fn modules_dir(path: &str) -> String {
+    let stem = path.trim_end_matches(".rs");
+    match stem.rsplit_once('/') {
+        Some((dir, "mod" | "lib" | "main")) => dir.to_owned(),
+        Some(_) | None => stem.to_owned(),
+    }
+}
+
+/// The directory the module file at `path` is declared from: `a` for
+/// `a/b.rs`, and for `a/b/mod.rs`.
+fn parent_dir(path: &str) -> String {
+    let dir = modules_dir(path);
+    let module = match path.ends_with("/mod.rs") {
+        true => dir.as_str(),
+        false => path,
+    };
+    module
+        .rsplit_once('/')
+        .map_or("", |(dir, _)| dir)
+        .to_owned()
 }
 
 /// Every Rust file under `root/src`, and `root/Cargo.toml`, by path.
@@ -170,10 +314,11 @@ fn sources(root: &Path) -> Vec<(String, String)> {
 
 /// The crate names of the dependencies `Cargo.toml` states, as a path
 /// spells them.
-fn dependencies(files: &Files<'_>) -> Vec<String> {
-    let Some((_, manifest)) = files.get("Cargo.toml") else {
+fn dependencies(texts: &[(String, String)]) -> Vec<String> {
+    let Some((_, manifest)) = texts.iter().find(|(path, _)| path == "Cargo.toml") else {
         return Vec::new();
     };
+    let manifest = index(FileKind::Toml, manifest.as_bytes()).unwrap();
     let scopes = super::scope::Scopes {
         file: &manifest.scopes,
         added: &[],
@@ -206,30 +351,6 @@ fn module_depth(path: &str) -> usize {
     }
 }
 
-/// The tokens of `text` outside its test definitions, each with its
-/// line.
-fn tokens_outside_tests(text: &str, indexed: &FileIndex) -> Vec<(usize, String)> {
-    let tests: Vec<(usize, usize)> = indexed
-        .definitions
-        .iter()
-        .filter(|d| d.role == Role::Test)
-        .map(|d| (d.span.start, d.span.end))
-        .collect();
-    let tree = super::syntax::parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
-    let mut found = Vec::new();
-    super::syntax::tokens(tree.root_node(), text, &super::rust::LEXICON, |token| {
-        if let super::syntax::Token::Node(node) = token {
-            let at = node.start_byte();
-            if !tests.iter().any(|&(from, to)| from <= at && at < to) {
-                let spelled = super::syntax::text_of(node, text).to_owned();
-                found.push((node.start_position().row + 1, spelled));
-            }
-        }
-        std::ops::ControlFlow::Continue(())
-    });
-    found
-}
-
 /// Where a checked file is: its path from the crate's directory, and the
 /// checked directory, which holds it.
 #[derive(Clone, Copy)]
@@ -254,7 +375,9 @@ fn file_faults(
         let line = tokens.get(at).map_or(0, |(line, _)| *line);
         match (spelled(at), spelled(at + 1), spelled(at + 2)) {
             ("extern", "crate", _) => found.push((line, "extern crate".to_owned())),
-            ("#", "[", "path") => found.push((line, "#[path]".to_owned())),
+            ("#", "[" | "!", _) if names_a_path(tokens, at) => {
+                found.push((line, "#[path]".to_owned()));
+            }
             ("include_str", "!", _) if is_admitted_include(tokens, at, place) => {}
             (name, "!", _) if MACROS.contains(&name) => found.push((line, format!("{name}!"))),
             _ => {}
@@ -270,6 +393,29 @@ fn file_faults(
         }
     }
     found
+}
+
+/// Whether the attribute that opens at `at`, its `#`, names a `path`
+/// anywhere in its brackets: `#[path = ..]` or `#[cfg_attr(.., path =
+/// ..)]`.
+fn names_a_path(tokens: &[(usize, String)], at: usize) -> bool {
+    let spelled = |n: usize| tokens.get(n).map_or("", |(_, token)| token.as_str());
+    let mut depth = 0_usize;
+    for n in at + 1.. {
+        match spelled(n) {
+            "" => return false,
+            "[" | "(" | "{" => depth += 1,
+            "]" | ")" | "}" => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return false;
+                }
+            }
+            "path" if spelled(n + 1) == "=" => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether the `include_str!` at `at` reads a file `place`'s directory

@@ -50,6 +50,8 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Pre-spec reads (`get_context`, `get_decisions_for_file`) | `mcp/tools.rs`, `mcp/context.rs` |
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
+| Macro expansion: rule matching / hand-offs / macro lookup | `code/expand/fit.rs` / `code/expand/resolve.rs` / `code/crates.rs` |
+| Rust tokens no span hash holds (rustfmt's commas and braces) | `code/rust/silent.rs` |
 | Likely duplicates (scoring, pair index) | `lint/duplicates/` |
 | Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/mod.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
 | Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/renames.rs`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |

@@ -3,52 +3,97 @@
 //!
 //! Numbers are LEB128 varints, texts a length and UTF-8 bytes, a hash its
 //! 32 bytes. A definition whose span is its predecessor's (the targets of
-//! one Makefile rule) keeps one byte for it. An entry is at most
-//! [`MAX_ENTRY_BYTES_PER_SOURCE_BYTE`] times its file and
-//! [`ENTRY_OVERHEAD_BYTES`] besides by construction. Every resolver adds
-//! what an entry holds through the scope tree, which charges each part
-//! its bytes here ([`room_of`], [`Measure`]) and refuses the file past its
-//! room. A read takes nothing on trust. Every count is bounded by the
-//! bytes left and by the file the entry is read for. Every id is bounded
-//! by what it names, every parent by its child (so a path's walk ends),
-//! and a path by [`MAX_NESTING`](super::scope::MAX_NESTING). Bytes that
-//! break any of it are no index.
+//! one Makefile rule) keeps one byte for it.
+//!
+//! Every resolver adds what an entry holds through the scope tree, which
+//! charges each part its cost here ([`room_of`], [`Measure`]) and refuses
+//! the file past its room. A part's cost is its bytes, and the [`weight`]
+//! of each value it holds: at least the memory the value takes once read.
+//! An entry's cost is thus at most [`MAX_ENTRY_BYTES_PER_SOURCE_BYTE`]
+//! times its file, and never past [`MAX_ENTRY_BYTES`], with
+//! [`ENTRY_OVERHEAD_BYTES`] besides.
+//!
+//! A read takes nothing on trust. It charges an entry as the tree did and
+//! refuses one past the room of the file it is read for, before it
+//! allocates. So every entry a write makes reads back, and an entry and
+//! the index it decodes to together take no more memory than that room.
+//! Every count is bounded by the bytes left, every id by what it names,
+//! every parent by its child (so a path's walk ends), and a path by
+//! [`MAX_NESTING`](super::scope::MAX_NESTING). Bytes that break any of it
+//! are no index.
 
 mod read;
 mod write;
 
-use super::index::{FileIndex, IndexFault};
+use super::index::{FileIndex, FileKind, IndexFault};
 use super::kinds::{DefinitionKind, Role, Visibility};
 
 pub(crate) use read::decode;
 pub(in crate::code) use write::Measure;
 pub(crate) use write::encode;
 
-/// The bytes an entry may take per byte of its file: a definition of two
-/// bytes (an enum variant `A,`) costs its scope, its span and its 32-byte
-/// hash.
-pub(super) const MAX_ENTRY_BYTES_PER_SOURCE_BYTE: usize = 32;
+/// The cost an entry may take per byte of its file: a definition of two
+/// bytes (a Makefile target `t `) costs its scope, its name, its span, its
+/// 32-byte hash and the weight of each.
+pub(super) const MAX_ENTRY_BYTES_PER_SOURCE_BYTE: usize = 64;
 
-/// The bytes an entry may take past [`MAX_ENTRY_BYTES_PER_SOURCE_BYTE`]
-/// times its file: the counts of an empty index, and room besides.
+/// The cost no entry passes, whatever its file: the room of the largest
+/// tree-sitter file, so a lexical file of more than a megabyte has less
+/// per byte. It bounds the memory any read of the cache takes for one
+/// entry.
+pub(super) const MAX_ENTRY_BYTES: usize = 64 << 20;
+
+/// The bytes an entry may take past its room per byte: the counts of an
+/// empty index, and room besides.
 pub(super) const ENTRY_OVERHEAD_BYTES: usize = 64;
+
+/// What an entry is charged for each value it holds, past its bytes: the
+/// memory the value takes once read, its slot in its collection and what
+/// it owns but its texts, whose bytes are in the entry's
+/// (`tests::each_weight_holds_its_value`).
+pub(super) mod weight {
+    pub(in crate::code) const SCOPE: usize = 32;
+    pub(in crate::code) const SEGMENT: usize = 48;
+    pub(in crate::code) const DEFINITION: usize = 72;
+    pub(in crate::code) const INVOCATION: usize = 128;
+    pub(in crate::code) const MODULE_FILE: usize = 32;
+    /// An element of an opening or of arguments, or a group's token.
+    pub(in crate::code) const ELEMENT: usize = 32;
+    /// A macro, a rule, a binding's place and what it receives, an
+    /// `impl`, a trait's token, a hand-off, or a name a macro gives with
+    /// the segment it shares.
+    pub(in crate::code) const MACRO_PART: usize = 104;
+}
 
 /// The bytes of an index's outcome tag and its five counts, each a count
 /// of at most `u32::MAX` items.
 const COUNTS_BYTES: usize = 1 + 5 * 5;
 
-/// The largest entry of a file of `bytes` bytes.
-pub(crate) const fn max_entry_bytes(bytes: usize) -> usize {
-    bytes
-        .saturating_mul(MAX_ENTRY_BYTES_PER_SOURCE_BYTE)
-        .saturating_add(ENTRY_OVERHEAD_BYTES)
+/// The largest cost of an entry of a file of `bytes` bytes within its
+/// kind's size.
+const fn room_cost(bytes: usize) -> usize {
+    let room = bytes.saturating_mul(MAX_ENTRY_BYTES_PER_SOURCE_BYTE);
+    let capped = match room < MAX_ENTRY_BYTES {
+        true => room,
+        false => MAX_ENTRY_BYTES,
+    };
+    capped + ENTRY_OVERHEAD_BYTES
 }
 
-/// The bytes the scopes, definitions, macros, invocations and module
-/// files of the index of a file of `bytes` bytes may take: an entry of
-/// them, its counts added, is within [`max_entry_bytes`].
+/// The largest cost of an entry of a file of `kind` of `bytes` bytes, its
+/// bytes and weights together: past the kind's size, a fault's alone.
+pub(crate) const fn max_entry_bytes(kind: FileKind, bytes: usize) -> usize {
+    match bytes > kind.max_bytes() {
+        true => ENTRY_OVERHEAD_BYTES,
+        false => room_cost(bytes),
+    }
+}
+
+/// What the scopes, definitions, macros, invocations and module files of
+/// the index of a file of `bytes` bytes, within its kind's size, may
+/// cost: an entry of them, its counts added, is within its room.
 pub(super) const fn room_of(bytes: usize) -> usize {
-    max_entry_bytes(bytes) - COUNTS_BYTES
+    room_cost(bytes) - COUNTS_BYTES
 }
 
 /// What indexing a file's bytes gave.
@@ -118,35 +163,122 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_index_reads_back_from_its_bytes() {
+    /// Every file of the fixture corpus and of `src/code`, with its kind
+    /// and bytes.
+    fn corpus() -> Vec<(String, FileKind, Vec<u8>)> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        for (file, kind) in [
+        let mut found = Vec::new();
+        let mut pending = vec![root.join("tests/fixtures/code"), root.join("src/code")];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                let name = path
+                    .to_str()
+                    .unwrap()
+                    .trim_end_matches(".fixture")
+                    .to_owned();
+                if let Some(kind) = FileKind::of(&name) {
+                    found.push((name, kind, std::fs::read(&path).unwrap()));
+                }
+            }
+        }
+        found.sort();
+        found
+    }
+
+    /// Files of each kind drawn from a seeded source: runs of the pieces
+    /// of `PIECES`, many alike, as dense in items as a file gets.
+    fn generated() -> Vec<(String, FileKind, Vec<u8>)> {
+        const PIECES: [(FileKind, &[&str]); 6] = [
             (
-                "tests/fixtures/code/crates/ledger/src/lib.rs",
                 FileKind::Rust,
+                &[
+                    "mod a {",
+                    "}",
+                    "enum E { A, A, ",
+                    "struct S { a: u8, ",
+                    "fn b() {} ",
+                    "macro_rules! m { ($a:ident, $b:ident) => { struct $a; h!($a, $b); g!($b, $a); impl From<$b> for $a {} }; } ",
+                    "m!(X, Y); ",
+                    "impl T { fn f() {} } ",
+                    "pub use a::{self, self, ",
+                    "a, ",
+                    "(",
+                    ")",
+                    "\"",
+                    "m! { struct Q; enum R { S } } ",
+                ],
             ),
             (
-                "tests/fixtures/code/crates/ledger/src/books/mod.rs",
+                FileKind::Python,
+                &[
+                    "a,",
+                    "z = 0\n",
+                    "class C:\n    ",
+                    "def f(): pass\n",
+                    "    ",
+                    "x=1\n",
+                ],
+            ),
+            (
+                FileKind::Toml,
+                &["[a]\n", "b=0\n", "[[c]]\n", "d.e=1\n", "f={g=1}\n"],
+            ),
+            (FileKind::Json, &["{", "}", "\"a\":0,", "[", "]", "\"z\":{"]),
+            (FileKind::Make, &["t ", ": x\n", "a b c: d\n", "\techo\n"]),
+            (
+                FileKind::Markdown,
+                &["# a\n", "## b\n", "text\n", "### c\n"],
+            ),
+        ];
+        let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut draw = |bound: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            usize::try_from(state % bound as u64).unwrap()
+        };
+        let mut found = Vec::new();
+        for (kind, pieces) in PIECES {
+            for file in 0..40 {
+                let mut text = String::new();
+                for _ in 0..draw(4_000) {
+                    text.push_str(pieces[draw(pieces.len())]);
+                }
+                found.push((
+                    format!("generated {kind:?} {file}"),
+                    kind,
+                    text.into_bytes(),
+                ));
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn every_entry_a_write_makes_reads_back() {
+        let hand_offs = "macro_rules! m { ($a:ident, $b:ident, $c:ident, $d:ident, $e:ident, $f:ident, $g:ident, $h:ident) => { first!($a, $b, $c, $d, $e, $f, $g, $h); second!($a, $b, $c, $d, $e, $f, $g, $h); }; }";
+        let variants = format!("enum E {{ {} }}", "A, ".repeat(5_000));
+        let names = format!("{}z = 0\n", "a,".repeat(50_000));
+        let cases = [
+            (
+                "hand-offs".to_owned(),
                 FileKind::Rust,
+                hand_offs.as_bytes().to_vec(),
             ),
-            ("tests/fixtures/code/python/shelf.py", FileKind::Python),
-            (
-                "tests/fixtures/code/typescript/shelf.ts",
-                FileKind::TypeScript,
-            ),
-            ("tests/fixtures/code/typescript/card.tsx", FileKind::Tsx),
-            ("tests/fixtures/code/settings.json", FileKind::Json),
-            ("tests/fixtures/code/Makefile", FileKind::Make),
-            ("tests/fixtures/code/docs/guide.md", FileKind::Markdown),
-            ("Cargo.toml", FileKind::Toml),
-        ] {
-            let indexed = index(kind, &std::fs::read(root.join(file)).unwrap());
-            let bytes = std::fs::read(root.join(file)).unwrap();
+            ("variants".to_owned(), FileKind::Rust, variants.into_bytes()),
+            ("names".to_owned(), FileKind::Python, names.into_bytes()),
+        ];
+        for (name, kind, bytes) in cases.into_iter().chain(corpus()).chain(generated()) {
+            let indexed = index(kind, &bytes);
             assert_eq!(
-                decode(&encode(&indexed), bytes.len()),
+                decode(&encode(&indexed), kind, bytes.len()),
                 Some(indexed),
-                "{file}"
+                "{name}"
             );
         }
         for fault in [
@@ -162,7 +294,10 @@ mod tests {
                 max: 1 << 20,
             },
         ] {
-            assert_eq!(decode(&encode(&Err(fault)), 0), Some(Err(fault)));
+            assert_eq!(
+                decode(&encode(&Err(fault)), FileKind::Rust, 0),
+                Some(Err(fault))
+            );
         }
     }
 
@@ -172,34 +307,116 @@ mod tests {
         let bytes = encode(&Ok(indexed));
 
         let source = 19;
+        let decoded = |bytes: &[u8]| decode(bytes, FileKind::Rust, source);
         for cut in 0..bytes.len() {
-            assert_eq!(decode(&bytes[..cut], source), None, "cut at {cut}");
+            assert_eq!(decoded(&bytes[..cut]), None, "cut at {cut}");
         }
         let mut longer = bytes.clone();
         longer.push(0);
-        assert_eq!(decode(&longer, source), None);
+        assert_eq!(decoded(&longer), None);
         // A scope whose parent is itself, one of no segment, and a count
         // past the bytes.
-        assert_eq!(decode(&[0, 1, 1, 0, 0, 0, 0], source), None);
-        assert_eq!(decode(&[0, 1, 0, 0, 0, 0, 0, 0], source), None);
-        assert_eq!(decode(&[0, 0x80, 0x80, 0x80, 0x80, 0x01], source), None);
-        assert_eq!(decode(&[9], source), None);
+        assert_eq!(decoded(&[0, 1, 1, 0, 0, 0, 0]), None);
+        assert_eq!(decoded(&[0, 1, 0, 0, 0, 0, 0, 0]), None);
+        assert_eq!(decoded(&[0, 0x80, 0x80, 0x80, 0x80, 0x01]), None);
+        assert_eq!(decoded(&[9]), None);
     }
 
-    #[test]
-    fn an_entry_holding_more_items_than_its_file_has_bytes_is_no_index() {
-        // Scopes of one empty segment each: four bytes apiece, which a
-        // read cap of 32 bytes per source byte would let in by the million.
-        let scopes = 200;
-        let mut forged = vec![0, 0x80 | (scopes & 0x7f) as u8, (scopes >> 7) as u8];
+    /// An entry of `scopes` scopes of one empty name each, and nothing
+    /// else: four bytes apiece, and the weights of a scope and a segment.
+    fn forged(scopes: usize) -> Vec<u8> {
+        let mut forged = vec![0];
+        let mut count = scopes;
+        while count >= 0x80 {
+            forged.push(0x80 | (count & 0x7f) as u8);
+            count >>= 7;
+        }
+        forged.push(count as u8);
         for _ in 0..scopes {
             forged.extend([0, 1, 0, 0]);
         }
         forged.extend([0, 0, 0, 0]);
+        forged
+    }
 
-        // Each scope and its segment is an item: 400 of them.
-        assert!(matches!(decode(&forged, 400), Some(Ok(_))));
-        assert_eq!(decode(&forged, 300), None);
+    #[test]
+    fn an_entry_past_the_room_of_the_file_it_is_read_for_is_no_index() {
+        // 807 bytes and 200 times 80 of weight: 16,807, within the 16,832
+        // of a file of 262 bytes and past the 16,768 of one of 261.
+        let entry = forged(200);
+        assert_eq!(entry.len(), 807);
+
+        assert!(matches!(decode(&entry, FileKind::Rust, 262), Some(Ok(_))));
+        assert_eq!(decode(&entry, FileKind::Rust, 261), None);
+    }
+
+    #[test]
+    fn no_entry_is_read_past_64_mib_whatever_its_file() {
+        // 798,915 scopes cost 67,108,868 of the 67,108,928 a lexical file
+        // of 4 MiB has, which 64 times its bytes would far pass.
+        let source = 4 << 20;
+
+        assert!(matches!(
+            decode(&forged(798_915), FileKind::Toml, source),
+            Some(Ok(_))
+        ));
+        assert_eq!(decode(&forged(798_916), FileKind::Toml, source), None);
+    }
+
+    #[test]
+    fn a_file_past_its_kinds_size_reads_back_its_fault_alone() {
+        let size = FileKind::Rust.max_bytes();
+        let fault = Err(IndexFault::TooLarge {
+            bytes: size + 1,
+            max: size,
+        });
+
+        assert_eq!(
+            decode(&encode(&fault), FileKind::Rust, size + 1),
+            Some(fault)
+        );
+        assert_eq!(decode(&forged(1), FileKind::Rust, size + 1), None);
+    }
+
+    #[test]
+    fn each_weight_holds_its_value() {
+        use std::sync::Arc;
+
+        use crate::code::index::{
+            Definition, Element, HandOff, Invocation, ModuleFile, Receives, Rule, TraitToken,
+            TypeImpl, TypeMacro,
+        };
+        use crate::code::scope::Scope;
+        use crate::code::symbol::Segment;
+
+        // A name a macro gives sits in its list beside its kind, and its
+        // segment in an `Arc` with two counts.
+        let named = size_of::<(Arc<Segment>, DefinitionKind)>()
+            + size_of::<Segment>()
+            + 2 * size_of::<usize>();
+        let held = [
+            ("scope", size_of::<Scope>(), weight::SCOPE),
+            ("segment", size_of::<Segment>(), weight::SEGMENT),
+            ("definition", size_of::<Definition>(), weight::DEFINITION),
+            ("invocation", size_of::<Invocation>(), weight::INVOCATION),
+            ("module file", size_of::<ModuleFile>(), weight::MODULE_FILE),
+            ("element", size_of::<Element>(), weight::ELEMENT),
+            ("group token", size_of::<String>(), weight::ELEMENT),
+            ("macro", size_of::<TypeMacro>(), weight::MACRO_PART),
+            ("rule", size_of::<Rule>(), weight::MACRO_PART),
+            (
+                "receives",
+                size_of::<(usize, Receives)>(),
+                weight::MACRO_PART,
+            ),
+            ("impl", size_of::<TypeImpl>(), weight::MACRO_PART),
+            ("trait token", size_of::<TraitToken>(), weight::MACRO_PART),
+            ("hand-off", size_of::<HandOff>(), weight::MACRO_PART),
+            ("named", named, weight::MACRO_PART),
+        ];
+        for (value, size, weight) in held {
+            assert!(size <= weight, "{value}: {size} bytes, weight {weight}");
+        }
     }
 
     /// The bytes [`Measure`] charges for what `index` holds, its counts
@@ -238,27 +455,13 @@ mod tests {
 
     #[test]
     fn an_entry_takes_no_more_than_its_parts_were_charged() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut pending = vec![root.join("tests/fixtures/code"), root.join("src/code")];
-        while let Some(dir) = pending.pop() {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    pending.push(path);
-                    continue;
-                }
-                let name = path.to_str().unwrap().trim_end_matches(".fixture");
-                let Some(kind) = FileKind::of(name) else {
-                    continue;
-                };
-                let bytes = std::fs::read(&path).unwrap();
-                let Ok(indexed) = index(kind, &bytes) else {
-                    continue;
-                };
-                let entry = encode(&Ok(indexed.clone())).len();
-                assert!(entry <= measured(&indexed), "{name}");
-                assert!(entry <= max_entry_bytes(bytes.len()), "{name}");
-            }
+        for (name, kind, bytes) in corpus() {
+            let Ok(indexed) = index(kind, &bytes) else {
+                continue;
+            };
+            let entry = encode(&Ok(indexed.clone())).len();
+            assert!(entry <= measured(&indexed), "{name}");
+            assert!(entry <= max_entry_bytes(kind, bytes.len()), "{name}");
         }
     }
 
@@ -292,7 +495,7 @@ mod tests {
             (FileKind::Rust, ""),
         ] {
             let bytes = encode(&index(kind, text.as_bytes()));
-            let bound = max_entry_bytes(text.len());
+            let bound = max_entry_bytes(kind, text.len());
             assert!(
                 bytes.len() <= bound,
                 "{kind:?} of {} bytes: {} bytes, over {bound}",

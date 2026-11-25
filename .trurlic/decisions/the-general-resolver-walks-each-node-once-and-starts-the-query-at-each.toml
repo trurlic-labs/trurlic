@@ -21,7 +21,7 @@ anchors = [
     { file = "src/code/general.rs", symbol = "collect" },
     { file = "src/code/general/tests.rs", symbol = "a_match_limit_that_is_hit_is_a_fault_not_a_dropped_match" },
     { file = "src/code/general/tests.rs", symbol = "hostile_python_is_refused_or_read_in_linear_work" },
-    { file = "src/code/general/tests.rs", symbol = "the_text_a_predicate_reads_is_charged_to_the_budget" },
+    { file = "src/code/general/tests.rs", symbol = "the_text_a_predicate_reads_is_held_to_16_bytes_a_byte_of_the_file" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",

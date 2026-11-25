@@ -377,7 +377,7 @@ fn read_and_index(store: &Store, path: &Path, kind: FileKind) -> Option<Sourced>
     let key = cache::key(kind, &bytes);
     let cached = store
         .read_symbols(key, cache::max_entry_bytes(kind, bytes.len()))
-        .and_then(|entry| cache::decode(key, &entry, bytes.len()));
+        .and_then(|entry| cache::decode(key, &entry, kind, bytes.len()));
     Some(match cached {
         Some(indexed) => Sourced::Indexed {
             key,

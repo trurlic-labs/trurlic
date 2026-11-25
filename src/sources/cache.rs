@@ -21,14 +21,9 @@ use crate::store::SymbolsKey;
 /// The bytes before the index: its sum and its key.
 const HEADER_BYTES: usize = 64;
 
-/// The largest entry of a file of `kind` of `source_bytes` bytes: one
-/// past the kind's size holds a fault, not an index.
+/// The largest entry of a file of `kind` of `source_bytes` bytes.
 pub(super) const fn max_entry_bytes(kind: FileKind, source_bytes: usize) -> usize {
-    let indexed = match source_bytes < kind.max_bytes() {
-        true => source_bytes,
-        false => kind.max_bytes(),
-    };
-    max_index_bytes(indexed).saturating_add(HEADER_BYTES)
+    max_index_bytes(kind, source_bytes).saturating_add(HEADER_BYTES)
 }
 
 /// The key of the index of `bytes`, a file of `kind`.
@@ -62,7 +57,12 @@ pub(super) fn encode(key: SymbolsKey, indexed: &Indexed) -> Vec<u8> {
 
 /// The index `bytes` hold for `key`, the key of a file of `source_bytes`
 /// bytes; `None` when they are no entry of it.
-pub(super) fn decode(key: SymbolsKey, bytes: &[u8], source_bytes: usize) -> Option<Indexed> {
+pub(super) fn decode(
+    key: SymbolsKey,
+    bytes: &[u8],
+    kind: FileKind,
+    source_bytes: usize,
+) -> Option<Indexed> {
     let (sum, rest) = bytes.split_at_checked(32)?;
     if sum != blake3::hash(rest).as_bytes() {
         return None;
@@ -71,7 +71,7 @@ pub(super) fn decode(key: SymbolsKey, bytes: &[u8], source_bytes: usize) -> Opti
     if stored != key.as_bytes() {
         return None;
     }
-    decode_index(index, source_bytes)
+    decode_index(index, kind, source_bytes)
 }
 
 #[cfg(test)]
@@ -86,10 +86,18 @@ mod tests {
         let indexed = index(FileKind::Rust, bytes);
         let entry = encode(key, &indexed);
 
-        assert_eq!(decode(key, &entry, bytes.len()), Some(indexed));
+        assert_eq!(
+            decode(key, &entry, FileKind::Rust, bytes.len()),
+            Some(indexed)
+        );
         assert!(entry.len() <= max_entry_bytes(FileKind::Rust, bytes.len()));
         assert_eq!(
-            decode(super::key(FileKind::Rust, b"other"), &entry, bytes.len()),
+            decode(
+                super::key(FileKind::Rust, b"other"),
+                &entry,
+                FileKind::Rust,
+                bytes.len()
+            ),
             None
         );
     }
@@ -109,9 +117,12 @@ mod tests {
         *altered.last_mut().unwrap() ^= 1;
 
         let len = bytes.len();
-        assert_eq!(decode(key, &entry[..entry.len() - 1], len), None);
-        assert_eq!(decode(key, &altered, len), None);
-        assert_eq!(decode(key, b"", len), None);
-        assert_eq!(decode(key, &[0; 64], len), None);
+        assert_eq!(
+            decode(key, &entry[..entry.len() - 1], FileKind::Rust, len),
+            None
+        );
+        assert_eq!(decode(key, &altered, FileKind::Rust, len), None);
+        assert_eq!(decode(key, b"", FileKind::Rust, len), None);
+        assert_eq!(decode(key, &[0; 64], FileKind::Rust, len), None);
     }
 }

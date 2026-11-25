@@ -1,8 +1,9 @@
-//! A case for each rule a review of the index found broken: a negative
-//! literal, a repetition's separator, arms at the bound of words, the
-//! impls a type-defining macro gives its type, a spelled path, a comment
-//! between an attribute and its item, a name re-exported twice, an
-//! absolute `#[path]` and a module declared in a function.
+//! A case for each rule a review of the index found broken. They are a
+//! negative literal, a repetition's separator, a rule's opening and a
+//! group at their bounds, and the impls a type-defining macro gives its
+//! type. They are a spelled path, a comment between an attribute and its
+//! item, a name re-exported twice, an absolute `#[path]` and a module
+//! declared in a function.
 
 pub fn sign(x: i8) -> bool {
     match x {
@@ -16,12 +17,22 @@ macro_rules! listed {
 }
 
 macro_rules! worded {
-    (a b c d e f g h $name:ident) => { pub struct $name; };
-    (a b c d e f g h i $name:ident) => { pub struct $name; };
+    (a b c d e f g h i j k l m n o $name:ident) => { pub struct $name; };
+    (a b c d e f g h i j k l m n o p $name:ident) => { pub struct $name; };
 }
 
-worded!(a b c d e f g h Eight);
-worded!(a b c d e f g h i Nine);
+worded!(a b c d e f g h i j k l m n o Sixteenth);
+worded!(a b c d e f g h i j k l m n o p Seventeenth);
+
+macro_rules! grouped {
+    ([a b c d e f g x] $name:ident) => { pub struct $name; };
+    ([a b c d e f g y] $name:ident) => { pub enum $name {} };
+    ([a b c d e f g h x] $name:ident) => { pub struct $name; };
+    ([a b c d e f g h y] $name:ident) => { pub enum $name {} };
+}
+
+grouped!([a b c d e f g y] EightTold);
+grouped!([a b c d e f g h y] NineUntold);
 
 macro_rules! owned {
     ($name:ident) => {

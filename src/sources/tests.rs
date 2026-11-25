@@ -187,8 +187,10 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     ("crates/ids/src/lib.rs", "Local", SYMBOL),
     ("crates/ids/src/lib.rs", "numbered_id", SYMBOL),
     (RULES, "sign", SYMBOL),
-    (RULES, "Eight", SYMBOL),
-    (RULES, "Nine", MISSING),
+    (RULES, "Sixteenth", SYMBOL),
+    (RULES, "Seventeenth", MISSING),
+    (RULES, "EightTold", SYMBOL),
+    (RULES, "NineUntold", MISSING),
     (RULES, "Owned", SYMBOL),
     (RULES, "Owned::get", SYMBOL),
     (RULES, "Owned::<Display>::fmt", SYMBOL),
@@ -209,6 +211,7 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (RULES, "First", SYMBOL),
     (RULES, "First::<Tr<First>>::tr", SYMBOL),
     (RULES, "First::only_second", MISSING),
+    (RULES, "Second::only_second", SYMBOL),
     (RULES, "Plain::declared", SYMBOL),
     (RULES, "Shown::declared", SYMBOL),
     (RULES, "compared", MISSING),
@@ -854,6 +857,7 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs sign Function Code Public",
     "crates/ledger/src/rules.rs listed Macro Code Private",
     "crates/ledger/src/rules.rs worded Macro Code Private",
+    "crates/ledger/src/rules.rs grouped Macro Code Private",
     "crates/ledger/src/rules.rs owned Macro Code Private",
     "crates/ledger/src/rules.rs commented Module Test Private",
     "crates/ledger/src/rules.rs commented::helper Function Test Private",
@@ -880,7 +884,8 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs y Module Code Private",
     "crates/ledger/src/rules.rs y::a Module Code Public",
     "crates/ledger/src/rules.rs y::a::spread Function Code Public",
-    "crates/ledger/src/rules.rs Eight Struct Code -",
+    "crates/ledger/src/rules.rs Sixteenth Struct Code -",
+    "crates/ledger/src/rules.rs EightTold Enum Code -",
     "crates/ledger/src/rules.rs Owned Struct Code -",
     "crates/ledger/src/rules.rs Owned::get Method Code -",
     "crates/ledger/src/rules.rs Owned::<Display> Impl Code -",
@@ -900,6 +905,8 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs First Struct Code -",
     "crates/ledger/src/rules.rs First::<Tr<First>> Impl Code -",
     "crates/ledger/src/rules.rs First::<Tr<First>>::tr Method Code -",
+    "crates/ledger/src/rules.rs Second Struct Code -",
+    "crates/ledger/src/rules.rs Second::only_second Method Code -",
     "crates/ledger/src/rules.rs Plain Struct Code -",
     "crates/ledger/src/rules.rs Plain::declared Method Code -",
     "crates/ledger/src/rules.rs Shown Struct Code -",
@@ -1187,9 +1194,9 @@ fn a_manifest_an_anchor_brings_governs_no_file_the_walk_took() {
 }
 
 #[test]
-fn outside_files_with_macros_of_their_own_share_their_crates_one_table() {
+fn a_file_outside_the_walk_reaches_its_crates_macros_and_its_own() {
     let tmp = TempDir::new().unwrap();
-    let arms: String = (0..2_000)
+    let rules: String = (0..2_000)
         .map(|n| format!("(w{n} $n:ident) => {{ pub struct $n; }};\n"))
         .collect();
     fs::create_dir_all(tmp.path().join("src")).unwrap();
@@ -1197,7 +1204,7 @@ fn outside_files_with_macros_of_their_own_share_their_crates_one_table() {
     fs::write(tmp.path().join("Cargo.toml"), "[package]\n").unwrap();
     fs::write(
         tmp.path().join("src/lib.rs"),
-        format!("macro_rules! m {{ {arms} }}\n"),
+        format!("macro_rules! m {{ {rules} }}\n"),
     )
     .unwrap();
     let outside: Vec<String> = (0..200).map(|n| format!(".gen/g{n}.rs")).collect();

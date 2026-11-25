@@ -111,11 +111,19 @@ struct Hashing<'a> {
 }
 
 impl Leaves {
-    /// The tokens of `tree`, of a grammar of `lexicon`.
-    pub(super) fn of(tree: &Tree, text: &str, lexicon: &Lexicon) -> Self {
+    /// The tokens of `tree`, of a grammar of `lexicon`, but the leaves that
+    /// start at a byte of `silent`, a sorted list of tokens that carry no
+    /// meaning.
+    pub(super) fn of(tree: &Tree, text: &str, lexicon: &Lexicon, silent: &[usize]) -> Self {
         let mut units = Vec::new();
         tokens(tree.root_node(), text, lexicon, |token| {
-            push_text(&mut units, token, lexicon);
+            let is_silent = match token {
+                Token::Node(node) => silent.binary_search(&node.start_byte()).is_ok(),
+                Token::Gap { .. } | Token::Enter(_) | Token::Leave(_) => false,
+            };
+            if !is_silent {
+                push_text(&mut units, token, lexicon);
+            }
             ControlFlow::Continue(())
         });
         Self { units }
@@ -342,7 +350,7 @@ mod tests {
 
     /// The hash of the whole of `text`, a Rust file.
     fn hash(text: &str) -> SpanHash {
-        let leaves = Leaves::of(&rust_tree(text), text, &LEXICON);
+        let leaves = Leaves::of(&rust_tree(text), text, &LEXICON, &[]);
         let units = leaves.within(&(0..text.len()));
         leaves.hash_each(text, std::slice::from_ref(&units))[0]
     }
@@ -425,7 +433,7 @@ mod tests {
     #[test]
     fn a_nested_definition_enters_its_parents_hash_by_its_own() {
         let text = "mod a { fn b() { 1 } }\nmod a { fn b() { 2 } }\n";
-        let leaves = Leaves::of(&rust_tree(text), text, &LEXICON);
+        let leaves = Leaves::of(&rust_tree(text), text, &LEXICON, &[]);
         let ranges = [0..22, 8..20, 23..45, 31..43, 8..20].map(|bytes| leaves.within(&bytes));
         let hashes = leaves.hash_each(text, &ranges);
 
@@ -433,7 +441,7 @@ mod tests {
         assert_ne!(hashes[1], hashes[3]);
         assert_eq!(hashes[1], hashes[4], "a range given twice hashes alike");
         let alone = "fn b() { 1 }";
-        let alone_leaves = Leaves::of(&rust_tree(alone), alone, &LEXICON);
+        let alone_leaves = Leaves::of(&rust_tree(alone), alone, &LEXICON, &[]);
         let own = alone_leaves.hash_each(alone, &[alone_leaves.within(&(0..12))]);
         assert_eq!(
             hashes[1], own[0],
