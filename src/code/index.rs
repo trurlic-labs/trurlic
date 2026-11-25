@@ -19,7 +19,7 @@ use super::{encoding, expand, general, json, make, markdown, rust, syntax, toml,
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 13;
+pub(crate) const INDEX_FORMAT: u32 = 14;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -560,7 +560,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 13] = [
+    const FINGERPRINTS: [(u32, &str); 14] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -612,6 +612,10 @@ mod tests {
         (
             13,
             "f66764382239698b97aeb30f3f17159783a21eaf945c1949822a6c49784e13b2",
+        ),
+        (
+            14,
+            "c134e6d6d4348dcb68d6ffe2c0f2a09a81950348e3cc07a8c228859d3d483070",
         ),
     ];
 

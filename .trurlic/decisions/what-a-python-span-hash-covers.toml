@@ -1,10 +1,12 @@
 component = "code"
-choice = "A Python span hash groups each statement and block, takes a string's text, a format specifier and an = interpolation as one token, and leaves out docstrings and a ; between statements"
-reason = "Python's NEWLINE, INDENT and DEDENT are tokens of no width in no node, so the tokens of if a: b c with c in the block and with c after it are the same, as are return x and return then x. The query marks each statement of a module or a block and each block a group, whose marks enter the hash, so moving a statement into or out of a block, or splitting one in two, moves it, while a re-indented block, a block on its header's line and two statements joined by ; do not. A string's text and a format specifier are one token each with their spaces, so a b and a  b differ, and a string's prefix is its own token. An interpolation with the = specifier is one token whole, since its output holds the text around the = as written: f'{x = }' and f'{x=}' print differently. A docstring, the first statement of a module, class or function whose one child is a string with no f, t or b prefix, documents the definition and is left out, as a Rust doc comment is; a statement that only starts with a string, \"a\", g(), is code."
+choice = "A Python span hash groups statements and blocks, hashes delimiters, numbers and escapes by meaning, and leaves out docstrings, a ; between statements, and commas and parentheses of no meaning"
+reason = "Python's NEWLINE, INDENT and DEDENT are tokens of no width in no node, so the query marks each statement of a module or a block and each block a group: a statement moved into or out of a block, or split, moves the hash; a re-indented block or two statements joined by ; do not. A string's text is one token with its spaces, cut at each escape. A delimiter, a number and an escape hash by what they mean in Python 3: prefix letters in any case or order and u none, either quote, letters in any case, 1. as 1.0. A line continuation is whitespace wherever it stands. A trailing comma is left out in arguments, parameters, an import list, a parenthesized with, a list, set or dictionary and their patterns, and a tuple of two or more; a one-element tuple and a subscript keep it. Parentheses are left out around a primary, a power under a unary operator, the whole expression of an assignment, return, del, for or condition, a tuple or target there, an assert's message and its condition but a yield, and a class's empty (). Elsewhere they bind an operator, or a comma may follow that a yield inside takes in. Each rule is exact: no two programs of different meaning hash alike. So black and ruff format move a hash only by what no exact rule states: a quote escape added or dropped, strings joined, parentheses elsewhere. An = interpolation's text up to its format specifier is its output, kept as written but its comments; a format specifier is its text, its nested fields hashed as code. A docstring, a class's or function's first statement whose one child is a plain string, is left out."
 alternatives = [
     "Hash the leaves alone, as for Rust: rejected because a statement moved out of its block would leave the hash as it was",
-    "Hash every node's extent: rejected because a grammar's inner nodes would make the hash move on edits that change no meaning",
     "Hash docstrings: rejected because a documentation edit would read as a change to the code",
+    "Leave out every comma before a closing bracket and every parenthesis: rejected because (a,) and (a), x[a,] and x[a], f((yield a), b) and f((yield a, b)) would hash alike",
+    "Hash a string by its decoded value, joined strings as one: rejected because decoding needs Unicode's name table for an escape such as \\N{...}, for the few strings a formatter changes so",
+    "State that a reformat moves the hash: rejected because every black or ruff run would then touch a third of a tree's definitions in a diff review",
 ]
 tags = [
     "anchors",
@@ -14,10 +16,13 @@ status = "proposed"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_formatters_quotes_prefix_case_and_trailing_commas_leave_the_hash" },
     { file = "src/code/general/tests.rs", symbol = "a_reformat_a_comment_or_a_docstring_leaves_the_hash" },
     { file = "src/code/general/tests.rs", symbol = "a_statement_moved_out_of_its_block_or_split_moves_the_hash" },
-    { file = "src/code/general/tests.rs", symbol = "a_strings_spaces_and_prefix_move_the_hash" },
+    { file = "src/code/general/tests.rs", symbol = "what_a_string_or_a_comma_means_moves_the_hash" },
     { file = "src/code/language/python.scm" },
+    { file = "src/code/units.rs", symbol = "delimiter" },
+    { file = "src/code/units.rs", symbol = "literal" },
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",

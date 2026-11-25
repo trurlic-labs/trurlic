@@ -172,6 +172,64 @@ fn a_reformat_a_comment_or_a_docstring_leaves_the_hash() {
         block("  '''Another doc.'''\n  return 1\n")
     );
     assert_eq!(block("  s = f'{ x }'\n"), block("  s = f'{x}'\n"));
+    // A comment inside an `=` interpolation is no part of its output, nor
+    // is one or a space inside a format specifier's nested field.
+    for (one, other) in [
+        ("f\"\"\"{x # c\n=}\"\"\"", "f\"\"\"{x # d\n=}\"\"\""),
+        ("f\"\"\"{x= # c\n}\"\"\"", "f\"\"\"{x= \n}\"\"\""),
+        ("f\"\"\"{x:>{w # c\n}}\"\"\"", "f\"\"\"{x:>{w}}\"\"\""),
+        ("f'{x:>{ w }}'", "f'{x:>{w}}'"),
+        ("f'{x=:>{ w }}'", "f'{x=:>{w}}'"),
+    ] {
+        let line = |string: &str| block(&format!("  s = {string}\n"));
+        assert_eq!(line(one), line(other), "{one:?}");
+    }
+}
+
+#[test]
+fn a_formatters_quotes_prefix_case_and_trailing_commas_leave_the_hash() {
+    for (one, other) in [
+        ("s = 'a'", "s = \"a\""),
+        ("s = u'a'", "s = 'a'"),
+        (
+            "s = R'a' + Rb'a' + F'{x!r}'",
+            "s = r\"a\" + br\"a\" + f\"{x!r}\"",
+        ),
+        ("s = '''a'''", "s = \"\"\"a\"\"\""),
+        ("f(a, b,)", "f(a, b)"),
+        ("f(\n    a,\n    b,  # last\n)", "f(a, b)"),
+        ("x = [1, 2,] + [3,]", "x = [1, 2] + [3]"),
+        ("x = {1: 2,} | {3,}", "x = {1: 2} | {3}"),
+        ("x = (1, 2,)", "x = (1, 2)"),
+        ("def g(a, *b, **c,): pass", "def g(a, *b, **c): pass"),
+        ("from m import (a, b,)", "from m import (a, b)"),
+        ("(a, b,) = [c, d,] = e", "a, b = [c, d] = e"),
+        ("x = (\n    a + b\n)", "x = a + b"),
+        ("x += ((a))", "x += a"),
+        ("return (a, b)", "return a, b"),
+        ("del (a, b)", "del a, b"),
+        ("for (a, b) in (c):\n    pass", "for a, b in c:\n    pass"),
+        (
+            "if (a):\n    pass\n  elif (b):\n    pass",
+            "if a:\n    pass\n  elif b:\n    pass",
+        ),
+        ("return a or \\\n    'b'", "return a or 'b'"),
+        ("assert (f(x)) is (None)", "assert f(x) is None"),
+        (
+            "y = -(x**2) + 1. + .5J + 0XAB",
+            "y = -x**2 + 1.0 + 0.5j + 0xab",
+        ),
+        (
+            "assert (\n    a is b\n), (\n    'm'\n)",
+            "assert a is b, 'm'",
+        ),
+        ("s = '\\xAB\\N{em dash}'", "s = '\\xab\\N{EM DASH}'"),
+        ("class C(): pass", "class C: pass"),
+        ("s = r'\\\\'", "s = r\"\\\\\""),
+    ] {
+        let line = |statement: &str| body_hash(&format!("  {statement}\n"));
+        assert_eq!(line(one), line(other), "{one:?}");
+    }
 }
 
 #[test]
@@ -187,15 +245,33 @@ fn a_statement_that_only_starts_with_a_string_is_no_docstring() {
 }
 
 #[test]
-fn a_strings_spaces_and_prefix_move_the_hash() {
+fn what_a_string_or_a_comma_means_moves_the_hash() {
     for (one, other) in [
         ("  f\"doc\"\n  return 1\n", "  return 1\n"),
         ("  s = 'a  b'\n", "  s = 'a b'\n"),
         ("  s = f'{x: >4}'\n", "  s = f'{x:>4}'\n"),
+        ("  s = f'{d:{s} %d}'\n", "  s = f'{d:{s}%d}'\n"),
         ("  s = rb'a'\n", "  s = b'a'\n"),
         ("  s = '#a'\n", "  s = '#b'\n"),
         ("  s = f'{x=}'\n", "  s = f'{x =}'\n"),
         ("  s = f'{x =}'\n", "  s = f'{x = }'\n"),
+        // The text of an `=` interpolation is its output, as written.
+        ("  s = f'{\"a\"=}'\n", "  s = f\"{'a'=}\"\n"),
+        ("  s = f'{f(a,)=}'\n", "  s = f'{f(a)=}'\n"),
+        ("  x = (1,)\n", "  x = (1)\n"),
+        ("  x = y[1,]\n", "  x = y[1]\n"),
+        ("  (a,) = b\n", "  (a) = b\n"),
+        ("  return ()\n", "  return\n"),
+        ("  x = (a + b) * c\n", "  x = a + b * c\n"),
+        ("  f((yield a), b)\n", "  f((yield a, b))\n"),
+        ("  x = (yield a), b\n", "  x = (yield a, b)\n"),
+        ("  x = (-a)**2\n", "  x = -a**2\n"),
+        ("  x = ('a' 'b').upper()\n", "  x = 'a' 'b'.upper()\n"),
+        ("  x = 1\n", "  x = 1.0\n"),
+        ("  assert (yield a), b\n", "  assert (yield a, b)\n"),
+        ("  s = '\\T'\n", "  s = '\\t'\n"),
+        ("  s = '\\N{x}'\n", "  s = '\\n{x}'\n"),
+        ("  s = r'\\''\n", "  s = r\"\\\"\"\n"),
     ] {
         assert_ne!(body_hash(one), body_hash(other), "{one:?}");
     }
@@ -325,9 +401,10 @@ fn a_run_of_continuations_past_the_bound_is_refused_before_the_parse() {
     let refused = Err(IndexFault::TooManyContinuations {
         max: MAX_CONTINUATIONS,
     });
-    // Unbounded, runs of 256 take seconds a MiB, and one run of a MiB an
-    // hour, in work no budget of the parse counts.
-    let hostile = continued(256).repeat((1 << 20) / continued(256).len());
+    // Unbounded, one run of a MiB takes an hour, in work no budget of the
+    // parse counts.
+    let run = continued(MAX_CONTINUATIONS + 1);
+    let hostile = run.repeat((1 << 20) / run.len());
 
     assert_eq!(
         index_of(
@@ -336,22 +413,6 @@ fn a_run_of_continuations_past_the_bound_is_refused_before_the_parse() {
             &BlankMacros::default()
         ),
         refused
-    );
-    assert_eq!(
-        index_of(
-            FileKind::Python,
-            continued(MAX_CONTINUATIONS + 1).as_bytes(),
-            &BlankMacros::default()
-        ),
-        refused
-    );
-    assert!(
-        index_of(
-            FileKind::Python,
-            continued(MAX_CONTINUATIONS).as_bytes(),
-            &BlankMacros::default()
-        )
-        .is_ok()
     );
 }
 
@@ -543,8 +604,12 @@ fn every_byte_but_comments_and_whitespace_is_in_one_token() {
         syntax::tokens(tree.root_node(), &text, &language.lexicon, |token| {
             let (from, to) = match token {
                 syntax::Token::Node(node) => (node.start_byte(), node.end_byte()),
-                syntax::Token::Gap { start, end } => (start, end),
-                syntax::Token::Enter(_) | syntax::Token::Leave(_) => (0, 0),
+                syntax::Token::Gap { start, end } | syntax::Token::Run { start, end } => {
+                    (start, end)
+                }
+                syntax::Token::Hole { .. } | syntax::Token::Enter(_) | syntax::Token::Leave(_) => {
+                    (0, 0)
+                }
             };
             for byte in &mut covered[from..to] {
                 assert!(!*byte, "{file}: byte {from} in two tokens");

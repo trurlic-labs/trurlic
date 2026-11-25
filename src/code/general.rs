@@ -367,6 +367,8 @@ impl<'r> Walk<'r, '_> {
                 Capture::Unit => mark(|marks| marks.whole = true),
                 Capture::Words => mark(|marks| marks.words = true),
                 Capture::Chars => mark(|marks| marks.chars = true),
+                Capture::Delimiter => mark(|marks| marks.delimiter = true),
+                Capture::Literal => mark(|marks| marks.literal = true),
                 Capture::Skip => mark(|marks| marks.skip = true),
                 Capture::Group => mark(|marks| marks.group = true),
                 Capture::Predicate => {}

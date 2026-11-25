@@ -288,7 +288,7 @@ const PYTHON_CASES: &[(&str, &str, &str)] = &[
     (
         "bounds/longer.py",
         "x",
-        "its file continues one line more than 64 times",
+        "its file continues one line more than 256 times",
     ),
 ];
 

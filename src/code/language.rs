@@ -53,16 +53,17 @@ pub(super) static PYTHON: Language = Language {
     node_types: tree_sitter_python::NODE_TYPES,
     queries: &[include_str!("language/python.scm")],
     syntax: Syntax::Code,
-    // tree-sitter-python lexes every comment and line continuation as
-    // an extra, never as a token or among bytes no node holds; a `#` at
-    // a token's start is a string's text (`"#fff"`).
+    // tree-sitter-python lexes every comment as an extra, never as a
+    // token or among bytes no node holds; a `#` at a token's start is a
+    // string's text (`"#fff"`). A line continuation is an extra, or before
+    // a string among bytes no node holds.
     lexicon: Lexicon {
         literals: &[],
         line_comments: &[],
         block_comments: &[],
         nested_blocks: false,
         glued: &[],
-        continuations: false,
+        continuations: true,
     },
     before_parse: &[python::check_indentations, python::check_continuations],
     test_places: &["tests/", "test_*.py", "*_test.py", "conftest.py"],

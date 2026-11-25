@@ -18,7 +18,9 @@
 //! (a string's prefix and delimiters, which a grammar may hide, are in
 //! it), and each run of bytes the grammar keeps in no node (a
 //! `macro_rules!` repetition's separator, what error recovery passes
-//! over). The span hashes over them are `units.rs`'s.
+//! over). A node a query takes as text is one token of its bytes but the
+//! comments inside, cut at each child the query marks as well
+//! ([`Take::Text`]). The span hashes over them are `units.rs`'s.
 
 use std::ops::ControlFlow;
 
@@ -64,37 +66,68 @@ fn parse_within(text: &str, language: &Language, mut scanned: Work) -> Result<Tr
 }
 
 /// One event of a walk of a tree's tokens: a leaf or a node taken whole,
-/// a run of bytes the grammar keeps in no node, or the walk entering or
-/// leaving a node it does not leave out.
+/// a run of bytes the grammar keeps in no node, a run of a node taken as
+/// text and a comment inside it, or the walk entering or leaving a node it
+/// does not leave out.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Token<'n> {
     Node(Node<'n>),
-    Gap { start: usize, end: usize },
+    Gap {
+        start: usize,
+        end: usize,
+    },
+    /// Bytes of a node taken as [`Take::Text`], one token without the
+    /// bytes of the holes inside them.
+    Run {
+        start: usize,
+        end: usize,
+    },
+    /// A comment inside a run: it comes before the run's token.
+    Hole {
+        start: usize,
+        end: usize,
+    },
     Enter(Node<'n>),
     Leave(Node<'n>),
 }
 
 impl Token<'_> {
-    /// The byte a token of bytes starts at; `None` for an entry or a
-    /// leaving, which holds none.
+    /// The byte a token of bytes starts at; `None` for a hole, an entry or
+    /// a leaving, which is no token of bytes.
     fn start(&self) -> Option<usize> {
         match self {
             Self::Node(node) => Some(node.start_byte()),
-            Self::Gap { start, .. } => Some(*start),
-            Self::Enter(_) | Self::Leave(_) => None,
+            Self::Gap { start, .. } | Self::Run { start, .. } => Some(*start),
+            Self::Hole { .. } | Self::Enter(_) | Self::Leave(_) => None,
         }
     }
 }
 
-/// How a walk of the tokens takes a node.
+/// How a walk of the tokens takes a node it marks; a node with no mark
+/// is walked, and inside a node taken as text is part of its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Take {
     /// Its children are walked; a leaf is a token.
     Walk,
     /// It is one token, whatever it holds.
-    Whole,
+    Token,
+    /// Its text is one token, the comments in it left out. Each of its
+    /// children with a mark is taken by it, cutting the text in two.
+    Text,
     /// It is left out, as a comment is.
     Skip,
+}
+
+/// How the walk takes the children of a node it is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Inside {
+    /// Each child by its mark, and each run of bytes after `last` that no
+    /// child holds as tokens.
+    Walked { last: usize },
+    /// A node taken as text, whose run since the last cut starts at `run`.
+    Text { run: usize },
+    /// A node of the text of one around it, every byte of it in the text.
+    Within,
 }
 
 /// Each token of `node`, in order, until `each` breaks: its leaves, each
@@ -109,59 +142,118 @@ pub(super) fn tokens<'n>(
     lexicon: &Lexicon,
     each: impl FnMut(Token<'n>) -> ControlFlow<()>,
 ) {
-    let take = |node: Node<'_>| match lexicon.literals.contains(&node.kind()) {
-        true => Take::Whole,
-        false => Take::Walk,
+    let take = |node: Node<'_>| {
+        lexicon
+            .literals
+            .contains(&node.kind())
+            .then_some(Take::Token)
     };
     walk_tokens(node, (text, lexicon), take, each);
 }
 
-/// The walk of [`tokens`], each node taken as `take` says, and each node
-/// it does not leave out entered and left. One cursor walk: each node and
-/// each byte is visited once.
+/// The walk of [`tokens`], each node taken as `take` marks it, and each
+/// node it does not leave out entered and left, but the nodes of a text.
+/// One cursor walk: each node and each byte is visited once.
 pub(super) fn walk_tokens<'n>(
     node: Node<'n>,
     (text, lexicon): (&str, &Lexicon),
-    take: impl Fn(Node<'n>) -> Take,
+    take: impl Fn(Node<'n>) -> Option<Take>,
     each: impl FnMut(Token<'n>) -> ControlFlow<()>,
 ) {
     let mut cursor = node.walk();
-    // The end of the last child seen of each node whose children are
-    // being walked, outermost first.
-    let mut ends: Vec<usize> = Vec::new();
+    // How the children of each node being walked are taken, outermost
+    // first.
+    let mut levels: Vec<Inside> = Vec::new();
     let mut each = without_comments(text, lexicon, each);
     loop {
         let current = cursor.node();
-        if let Some(last) = ends.last_mut() {
-            let gap = (*last, current.start_byte());
-            *last = current.end_byte();
-            if gaps(text, gap, lexicon, &mut each).is_break() {
-                return;
-            }
-        }
-        let taken = match is_comment(current) {
-            true => Take::Skip,
-            false => take(current),
-        };
-        if taken != Take::Skip {
-            if each(Token::Enter(current)).is_break() {
-                return;
-            }
-            if taken == Take::Walk && cursor.goto_first_child() {
-                ends.push(current.start_byte());
+        let visited = visit(
+            current,
+            levels.last_mut(),
+            (text, lexicon),
+            &take,
+            &mut each,
+        );
+        match visited {
+            ControlFlow::Break(()) => return,
+            ControlFlow::Continue(Some(inside)) if cursor.goto_first_child() => {
+                levels.push(inside);
                 continue;
             }
-            if current.end_byte() > current.start_byte() && each(Token::Node(current)).is_break() {
-                return;
-            }
-            if each(Token::Leave(current)).is_break() {
-                return;
-            }
+            ControlFlow::Continue(_) => {}
         }
-        if climb(&mut cursor, node, &mut ends, (text, lexicon), &mut each).is_break() {
+        if climb(&mut cursor, node, &mut levels, (text, lexicon), &mut each).is_break() {
             return;
         }
     }
+}
+
+/// Take `node`, a child of a node taken as `inside` (`None` at the walk's
+/// top): what it is goes to `each`, and how its children are taken comes
+/// back, `None` when they are not walked.
+fn visit<'n>(
+    node: Node<'n>,
+    inside: Option<&mut Inside>,
+    (text, lexicon): (&str, &Lexicon),
+    take: &impl Fn(Node<'n>) -> Option<Take>,
+    each: &mut impl FnMut(Token<'n>) -> ControlFlow<()>,
+) -> ControlFlow<(), Option<Inside>> {
+    let (start, end) = (node.start_byte(), node.end_byte());
+    let mark = match is_comment(node) {
+        true => Some(Take::Skip),
+        false => take(node),
+    };
+    match (inside, mark) {
+        (Some(Inside::Walked { last }), _) => {
+            gaps(text, (*last, start), lexicon, each)?;
+            *last = end;
+        }
+        (Some(Inside::Text { .. } | Inside::Within), _) if is_comment(node) => {
+            each(Token::Hole { start, end })?;
+            return ControlFlow::Continue(None);
+        }
+        (Some(Inside::Text { run }), Some(_)) => {
+            if *run < start {
+                each(Token::Run {
+                    start: *run,
+                    end: start,
+                })?;
+            }
+            *run = end;
+        }
+        // A node with no mark of its own, or any node deeper than a
+        // child: its bytes are the text's.
+        (Some(Inside::Text { .. }), None) | (Some(Inside::Within), _) => {
+            return ControlFlow::Continue((node.child_count() > 0).then_some(Inside::Within));
+        }
+        (None, _) => {}
+    }
+    open(node, mark, each)
+}
+
+/// Take `node`, marked `mark`, where a mark is taken by it: entered, and
+/// a token itself or how its children are taken.
+fn open<'n>(
+    node: Node<'n>,
+    mark: Option<Take>,
+    each: &mut impl FnMut(Token<'n>) -> ControlFlow<()>,
+) -> ControlFlow<(), Option<Inside>> {
+    let start = node.start_byte();
+    let inside = match mark {
+        Some(Take::Skip) => return ControlFlow::Continue(None),
+        Some(Take::Token) => None,
+        Some(Take::Text) => Some(Inside::Text { run: start }),
+        Some(Take::Walk) | None => Some(Inside::Walked { last: start }),
+    };
+    each(Token::Enter(node))?;
+    if inside.is_some() && node.child_count() > 0 {
+        return ControlFlow::Continue(inside);
+    }
+    if node.end_byte() > start {
+        each(Token::Node(node))?;
+    }
+    each(Token::Leave(node))?;
+    ControlFlow::Continue(None)
 }
 
 /// `each`, passed over the tokens of a comment a grammar lexes as tokens
@@ -192,12 +284,12 @@ fn without_comments<'n>(
 }
 
 /// Move `cursor` to the next node of `top`'s walk: a sibling, or the next
-/// of an ancestor once the gap after its last child is out and the
-/// ancestor is left. Breaks at the walk's end, or when `each` does.
+/// of an ancestor once what remains of it after its last child is out and
+/// the ancestor is left. Breaks at the walk's end, or when `each` does.
 fn climb<'n>(
     cursor: &mut tree_sitter::TreeCursor<'n>,
     top: Node<'n>,
-    ends: &mut Vec<usize>,
+    levels: &mut Vec<Inside>,
     (text, lexicon): (&str, &Lexicon),
     each: &mut impl FnMut(Token<'n>) -> ControlFlow<()>,
 ) -> ControlFlow<()> {
@@ -211,10 +303,14 @@ fn climb<'n>(
         if !cursor.goto_parent() {
             return ControlFlow::Break(());
         }
-        let parent = cursor.node();
-        let last = ends.pop().unwrap_or(parent.end_byte());
-        gaps(text, (last, parent.end_byte()), lexicon, each)?;
-        each(Token::Leave(parent))?;
+        let end = cursor.node().end_byte();
+        match levels.pop() {
+            Some(Inside::Walked { last }) => gaps(text, (last, end), lexicon, each)?,
+            Some(Inside::Text { run }) if run < end => each(Token::Run { start: run, end })?,
+            Some(Inside::Within) => continue,
+            Some(Inside::Text { .. }) | None => {}
+        }
+        each(Token::Leave(cursor.node()))?;
     }
 }
 
@@ -241,8 +337,9 @@ pub(super) struct Lexicon {
     /// may be written `$ a`): hashed as two, so the space between moves
     /// nothing.
     pub(super) glued: &'static [(&'static str, usize)],
-    /// Whether a backslash right before a line break is blank, as C's
-    /// line continuation is, in a gap and in a node hashed by its words.
+    /// Whether a backslash right before a line break is blank, as C's and
+    /// Python's line continuation is, in a gap and in a node hashed by its
+    /// words.
     pub(super) continuations: bool,
 }
 
@@ -297,8 +394,8 @@ impl Lexicon {
 }
 
 /// Each run of bytes of `text` within `from..to`, a gap between two
-/// nodes, that is neither whitespace nor a comment of `lexicon`, as a
-/// token.
+/// nodes, that is neither whitespace, a line continuation nor a comment
+/// of `lexicon`, as a token.
 fn gaps<'n>(
     text: &str,
     (from, to): (usize, usize),
@@ -406,8 +503,8 @@ mod tests {
             tokens(tree.root_node(), &text, &LEXICON, |token| {
                 let (from, to) = match token {
                     Token::Node(node) => (node.start_byte(), node.end_byte()),
-                    Token::Gap { start, end } => (start, end),
-                    Token::Enter(_) | Token::Leave(_) => (0, 0),
+                    Token::Gap { start, end } | Token::Run { start, end } => (start, end),
+                    Token::Hole { .. } | Token::Enter(_) | Token::Leave(_) => (0, 0),
                 };
                 for byte in &mut covered[from..to] {
                     assert!(!*byte, "{file}: byte {from} in two tokens");

@@ -42,13 +42,18 @@
 //!   the file's top named as the node's text is public when no mark holds
 //!   its name), `@scope.unnamed` (a scope no name stands for: see below),
 //!   `@scope.none` (no scope, whatever `@scope.unnamed` captures),
-//!   `@hash.unit` (one token whole), `@hash.words` (one token per run of
-//!   text between ASCII whitespace), `@hash.chars` (its text as JSX
-//!   renders it: a token a character, an empty one a run of whitespace but
-//!   one at an end that holds a line break), `@hash.skip` (left out of every hash)
-//!   and `@hash.group` (a statement or block, whose extent the hash
-//!   holds), and sets no property. A definition pattern may capture these
-//!   too.
+//!   `@hash.unit` (one token of its text, the comments in it left out, cut
+//!   where each of its children with a hash mark of its own is taken by
+//!   it), `@hash.words` (one token per run of text between ASCII
+//!   whitespace), `@hash.chars` (its text as JSX renders it: a token a
+//!   character, an empty one a run of whitespace but one at an end that
+//!   holds a line break), `@hash.delimiter` (a string's delimiter, hashed as what
+//!   it means: its prefix letters in any case and order, `u` none, each
+//!   quote `'` or `"` alike), `@hash.literal` (a number or an escape, hashed
+//!   as what it means: its letters in any case, a `.` with no digit beside
+//!   it as one with `0`), `@hash.skip` (left out of every hash) and
+//!   `@hash.group` (a statement or block, whose extent the hash holds),
+//!   and sets no property. A definition pattern may capture these too.
 //!
 //! A definition is under the innermost definition or unnamed scope whose
 //! captured node holds its own `@definition` node. An unnamed scope that a
@@ -92,6 +97,8 @@ pub(super) enum Capture {
     Unit,
     Words,
     Chars,
+    Delimiter,
+    Literal,
     Skip,
     Group,
     /// Read by a text predicate alone.
@@ -560,6 +567,8 @@ fn capture_of(name: &str) -> Result<Capture, QueryFault> {
         "hash.unit" => Capture::Unit,
         "hash.words" => Capture::Words,
         "hash.chars" => Capture::Chars,
+        "hash.delimiter" => Capture::Delimiter,
+        "hash.literal" => Capture::Literal,
         "hash.skip" => Capture::Skip,
         "hash.group" => Capture::Group,
         _ if name.starts_with('_') => Capture::Predicate,
