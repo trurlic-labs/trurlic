@@ -78,45 +78,9 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
 
-      - name: Install system dependencies (Linux native)
-        if: runner.os == 'Linux' && !matrix.cross
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang lld
-
       - name: Install cross
         if: matrix.cross
         run: cargo install cross --locked
-
-      - name: Strip linker overrides for cross builds
-        if: matrix.cross
-        shell: bash
-        run: |
-          # The Cross container uses its own GCC toolchain — strip the
-          # clang/lld overrides from .cargo/config.toml so they don't
-          # conflict (including the x86_64 section, which affects
-          # build-script host compilation).
-          python3 << 'PYEOF'
-          import pathlib, re
-          p = pathlib.Path('.cargo/config.toml')
-          lines = p.read_text().splitlines(keepends=True)
-          STRIP_SECTIONS = {
-              '[target.aarch64-unknown-linux-gnu]',
-              '[target.x86_64-unknown-linux-gnu]',
-          }
-          is_header = lambda s: bool(re.match(r'\s*\[\w', s))
-          out, skip = [], False
-          for line in lines:
-              s = line.strip()
-              if s.startswith('#') and 'Linux' in s:
-                  skip = True
-                  continue
-              if skip and is_header(line):
-                  if s in STRIP_SECTIONS:
-                      continue
-                  skip = False
-              if not skip:
-                  out.append(line)
-          p.write_text(''.join(out))
-          PYEOF
 
       - name: Install GNU tar (macOS)
         if: runner.os == 'macOS'
