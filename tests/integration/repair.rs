@@ -138,7 +138,7 @@ fn a_moved_symbol_and_a_renamed_file_are_repaired_by_one_op() {
     );
 }
 
-/// The repairs an op asking for every one writes depend on the anchors
+/// The repairs an op with no `repairs` writes depend on the anchors
 /// alone, applied where the op runs: after an earlier op of its batch
 /// renamed a decision, removed a stale anchor, or repaired it already,
 /// each anchor still stale is repaired once and nothing is refused.
@@ -174,7 +174,7 @@ fn every_repair_holds_against_the_ops_before_it() {
     }
 }
 
-/// An op asking for every repair that finds none refuses nothing: the
+/// An op with no `repairs` that finds none refuses nothing: the
 /// rest of its batch is written, and a stale anchor with no repair is
 /// still listed as left, nothing written for it.
 #[test]
@@ -251,14 +251,17 @@ fn a_file_anchor_does_not_follow_a_rename_git_pairs_by_a_shared_header() {
     assert!(!stderr.contains("repair"), "{stderr}");
 }
 
-/// A stale anchor with no repair is listed as left beside the repairs.
+/// A stale anchor with no repair is listed as left beside the repairs,
+/// in each decision ever accepted that holds it: a proposed one plans it.
 #[test]
 fn a_stale_anchor_with_no_repair_is_listed_as_left() {
     let project = moved_and_renamed();
     let text = project.read("decisions/moved-rule.toml");
+    let vanished = text.replace("\"moved\"", "\"vanished\"");
+    project.write("decisions/moved-rule.toml", &vanished);
     project.write(
-        "decisions/moved-rule.toml",
-        &text.replace("\"moved\"", "\"vanished\""),
+        "decisions/planned-rule.toml",
+        &vanished.replace("status = \"accepted\"", "status = \"proposed\""),
     );
     let (mut client, _) = McpClient::connect(&project);
 
@@ -367,23 +370,44 @@ fn changed(anchors: &[&str], before: &[(&str, &str)], after: &[(&str, Option<&st
     project.run_ok(&["fmt"]);
     git(project.path(), &["add", "--all"]);
     git(project.path(), &["commit", "--quiet", "-m", "before"]);
-    for (file, text) in after {
+    commit(&project, after);
+    project
+}
+
+/// `changes` (a path and its text, or `None` to remove it) committed in
+/// `project`.
+fn commit(project: &Project, changes: &[(&str, Option<&str>)]) {
+    for (file, text) in changes {
         match text {
             Some(text) => project.source(file, text),
             None => fs::remove_file(project.path().join(file)).unwrap(),
         }
     }
     git(project.path(), &["add", "--all"]);
-    git(project.path(), &["commit", "--quiet", "-m", "after"]);
+    git(project.path(), &["commit", "--quiet", "-m", "change"]);
+}
+
+/// [`changed`], then `later` committed: code that went for good and a
+/// namesake written afterwards.
+fn later(
+    anchors: &[&str],
+    before: &[(&str, &str)],
+    after: &[(&str, Option<&str>)],
+    later: &[(&str, Option<&str>)],
+) -> Project {
+    let project = changed(anchors, before, after);
+    commit(&project, later);
     project
 }
 
 /// A wrong repair is worse than none: a namesake that stood beside the
 /// deleted code (another file's function, a test module's helper, another
-/// file's type), a header-only or an empty file git pairs with the removed
-/// one, and a binary git pairs with another by shared boilerplate, whose
-/// `main` it edited, are each no repair; `check` shows none and the op
-/// writes none.
+/// file's type), one written after the code was deleted (a function
+/// dropped from its file, a file deleted, a type of the library and a
+/// later one of the binary), a module declaration where a function went,
+/// a header-only or an empty file git pairs with the removed one, and a
+/// binary git pairs with another by shared boilerplate, whose `main` it
+/// edited, are each no repair; `check` shows none and the op writes none.
 #[test]
 fn a_namesake_or_a_rename_that_carried_no_code_is_never_written() {
     let header = "// Licensed under the terms the project states.\n// Copyright the authors.\n";
@@ -438,6 +462,102 @@ fn a_namesake_or_a_rename_that_carried_no_code_is_never_written() {
                 ("src/bin/report.rs", Some(&report)),
             ],
         ),
+        later(
+            &["src/store.rs::retry_write"],
+            &[(
+                "src/store.rs",
+                "pub fn write() {}
+pub fn retry_write() {}
+",
+            )],
+            &[(
+                "src/store.rs",
+                Some(
+                    "pub fn write() {}
+",
+                ),
+            )],
+            &[(
+                "src/net.rs",
+                Some(
+                    "pub fn retry_write() {}
+",
+                ),
+            )],
+        ),
+        later(
+            &["src/cache.rs::evict"],
+            &[(
+                "src/cache.rs",
+                "pub fn evict() {}
+",
+            )],
+            &[("src/cache.rs", None)],
+            &[(
+                "src/http.rs",
+                Some(
+                    "pub fn evict() {}
+",
+                ),
+            )],
+        ),
+        later(
+            &["src/lib.rs::Config"],
+            &[(
+                "src/lib.rs",
+                "pub struct Config;
+pub fn open() {}
+",
+            )],
+            &[(
+                "src/lib.rs",
+                Some(
+                    "pub fn open() {}
+",
+                ),
+            )],
+            &[(
+                "src/main.rs",
+                Some(
+                    "struct Config;
+fn main() {}
+",
+                ),
+            )],
+        ),
+        changed(
+            &["src/a/scale.rs::scale"],
+            &[
+                (
+                    "src/a/scale.rs",
+                    "pub fn scale() {}
+",
+                ),
+                (
+                    "src/b/mod.rs",
+                    "pub fn other() {}
+",
+                ),
+            ],
+            &[
+                ("src/a/scale.rs", None),
+                (
+                    "src/b/scale.rs",
+                    Some(
+                        "pub fn estimate() {}
+",
+                    ),
+                ),
+                (
+                    "src/b/mod.rs",
+                    Some(
+                        "pub fn other() {}
+mod scale;
+",
+                    ),
+                ),
+            ],
+        ),
     ];
     for project in cases {
         let stderr = project.run_refused(&["check"]);
@@ -451,7 +571,121 @@ fn a_namesake_or_a_rename_that_carried_no_code_is_never_written() {
     }
 }
 
-/// What an op asking for every repair leaves is stated against the graph
+/// A file renamed unchanged, whose function a later commit split into a
+/// module of its own, leaving a `mod` declaration of its name: the anchor
+/// is repaired where the function went, never onto the declaration.
+#[test]
+fn a_function_split_out_after_an_exact_rename_is_repaired_where_it_went() {
+    let filler: String = (0..8).map(|n| format!("pub fn f{n}() {{}}\n")).collect();
+    let text = format!("pub fn join() {{}}\n{filler}");
+    let project = later(
+        &["src/a/corridor.rs::join"],
+        &[("src/a/corridor.rs", &text)],
+        &[
+            ("src/a/corridor.rs", None),
+            ("src/b/corridor.rs", Some(&text)),
+        ],
+        &[
+            ("src/b/corridor.rs", Some(&format!("mod join;\n{filler}"))),
+            ("src/b/corridor/join.rs", Some("pub fn join() {}\n")),
+        ],
+    );
+
+    let stderr = project.run_refused(&["check"]);
+
+    assert!(
+        stderr.contains("; repair: `src/b/corridor/join.rs::join`"),
+        "{stderr}"
+    );
+}
+
+/// git pairs two binaries that share their boilerplate and an identical
+/// `main`: `main` follows the rename, its code unchanged, but the file
+/// anchor does not, since the import function, which resolved in the old
+/// file, is not in the new one.
+#[test]
+fn a_file_whose_function_a_rename_left_behind_does_not_follow() {
+    let boilerplate: String = (0..12)
+        .map(|n| format!("use std::io::Line{n};\n"))
+        .collect();
+    let import = format!("{boilerplate}fn main() {{ run() }}\nfn import_csv() {{}}\n");
+    let report = format!("{boilerplate}fn main() {{ run() }}\nfn report_csv() {{}}\n");
+    let anchors = [
+        "src/bin/import.rs",
+        "src/bin/import.rs::main",
+        "src/bin/import.rs::import_csv",
+    ];
+    let project = changed(
+        &anchors,
+        &[("src/bin/import.rs", &import)],
+        &[
+            ("src/bin/import.rs", None),
+            ("src/bin/report.rs", Some(&report)),
+        ],
+    );
+
+    let stderr = project.run_refused(&["check"]);
+
+    let gone = "is stale: nothing is at its path";
+    for line in [
+        format!("`src/bin/import.rs` of `d` {gone}\n"),
+        format!("`src/bin/import.rs::import_csv` of `d` {gone}\n"),
+        format!("`src/bin/import.rs::main` of `d` {gone}; repair: `src/bin/report.rs::main`\n"),
+    ] {
+        assert!(stderr.contains(&line), "{line}\n{stderr}");
+    }
+}
+
+/// The repairs an op with no `repairs` writes are the caller's to trust,
+/// not to write: one a `[quality]` pattern refuses on the anchors field is
+/// left, the pattern its cause, and the others are written. The same
+/// repair listed by the caller refuses the batch, naming the decision.
+#[test]
+fn every_repair_leaves_a_repair_a_quality_pattern_refuses() {
+    let project = changed(
+        &["src/a.rs::f", "src/b.rs::g"],
+        &[
+            ("src/a.rs", "pub fn f() {}\n"),
+            ("src/b.rs", "pub fn g() {}\n"),
+        ],
+        &[
+            ("src/a.rs", Some("")),
+            ("src/legacy/a.rs", Some("pub fn f() {}\n")),
+            ("src/b.rs", Some("")),
+            ("src/c.rs", Some("pub fn g() {}\n")),
+        ],
+    );
+    let header = project.read("project.toml");
+    let table = "[quality]\n\n[[quality.patterns]]\npattern = '^src/legacy/'\n\
+                 fields = [\"anchors\"]\nlevel = \"refuse\"\nmessage = \"No legacy code.\"\n";
+    project.write("project.toml", &format!("{header}\n{table}"));
+    let (mut client, _) = McpClient::connect(&project);
+    let listed = json!({ "origin": "repair", "ops": [{ "op": "repair_anchors", "repairs": [{
+        "decision": "d",
+        "from": { "file": "src/a.rs", "symbol": "f" },
+        "to": { "file": "src/legacy/a.rs", "symbol": "f" },
+    }]}]});
+
+    let refusal = client.call_tool_refusal("apply", listed);
+    let result = client.call_tool("apply", every_repair());
+
+    assert_eq!(refusal["kind"], "batch_refused", "{refusal}");
+    assert_eq!(refusal["field"], "ops[0].repairs[0]", "{refusal}");
+    assert_eq!(
+        result["repaired"],
+        json!([{ "decision": "d", "anchor": "src/b.rs::g", "repair": "src/c.rs::g" }])
+    );
+    assert_eq!(
+        result["left"],
+        json!([{
+            "decision": "d", "anchor": "src/a.rs::f",
+            "cause": "its repair `src/legacy/a.rs::f` matches `[quality] patterns[0]` at byte 0 \
+                      (`src/legacy/`): No legacy code.",
+        }])
+    );
+}
+
+/// What an op with no `repairs` leaves is stated against the graph
 /// the write left: a decision an earlier op renamed is listed under its new
 /// name, with what it was repaired as and what it was left with.
 #[test]

@@ -32,9 +32,9 @@ use std::path::PathBuf;
 use crate::code::{CodeFacts, Resolution};
 use crate::store::{Anchor, Decision, Status};
 
-mod repair;
+pub(crate) mod repair;
 
-pub(crate) use repair::{Prior, Renamed, Renames, Search};
+pub(crate) use repair::{Judged, Prior, Renamed, Renames};
 
 /// The files of its kind that define a name, at least, for an anchor whose
 /// symbol is that name alone, resolved through a suffix, to be weak.
@@ -376,29 +376,26 @@ impl<'s, 'f> Here<'s, 'f> {
 /// What the repository's git says beyond the calling tree, which `check`
 /// reads and `status` does not: the other worktrees read, in the shell's
 /// order, with the first that holds each anchor [`Here::unresolved`] gave,
-/// and those none holds, which are stale; where the stale anchors' gone
-/// files went, and what git's history held of the files a repair is
-/// judged by.
+/// and those none holds, which are stale; and the repair of each stale
+/// anchor git's history shows ([`repair`]).
 #[derive(Debug)]
 pub(crate) struct Asked<'s> {
     read: Vec<Elsewhere>,
     /// The place in `read` of the worktree that holds each anchor held.
     holders: BTreeMap<&'s Anchor, usize>,
     stale: BTreeSet<&'s Anchor>,
-    renames: Renames,
-    prior: Prior,
+    repairs: BTreeMap<&'s Anchor, Anchor>,
 }
 
 impl<'s> Asked<'s> {
     /// `unresolved`, each stale until a worktree read holds it, with no
-    /// rename and no earlier revision known yet.
+    /// repair known yet.
     pub(crate) fn new(unresolved: BTreeSet<&'s Anchor>) -> Self {
         Self {
             read: Vec::new(),
             holders: BTreeMap::new(),
             stale: unresolved,
-            renames: Renames::none(),
-            prior: Prior::default(),
+            repairs: BTreeMap::new(),
         }
     }
 
@@ -456,41 +453,10 @@ impl<'s> Asked<'s> {
             .collect()
     }
 
-    /// These findings with `renames`, what git says of the gone files.
-    pub(crate) fn with_renames(self, renames: Renames) -> Self {
-        Self { renames, ..self }
-    }
-
-    /// The renames whose files git is asked for at the revision before
-    /// them, to hold a symbol anchor that follows one to its code.
-    pub(crate) fn renames(&self) -> &Renames {
-        &self.renames
-    }
-
-    /// The stale anchors the symbol search would repair, each with the one
-    /// file it would repair it to, whose earlier revision git is asked for
-    /// ([`Search`]).
-    pub(crate) fn searched(&self, here: &Here<'s, '_>) -> Vec<Search<'s>> {
-        let renamed = repair::followed(
-            &self.stale,
-            &here.resolutions,
-            here.facts,
-            self.renames(),
-            &self.prior,
-        );
-        repair::candidates(
-            &self.stale,
-            &here.resolutions,
-            here.facts,
-            &self.renames,
-            &renamed,
-        )
-    }
-
-    /// These findings with more of what git's history held, `prior`.
-    pub(crate) fn with_prior(mut self, prior: Prior) -> Self {
-        self.prior.extend(prior);
-        self
+    /// These findings with `repairs`, what git's history shows of the
+    /// stale anchors.
+    pub(crate) fn with_repairs(self, repairs: BTreeMap<&'s Anchor, Anchor>) -> Self {
+        Self { repairs, ..self }
     }
 }
 
@@ -501,13 +467,6 @@ pub(crate) fn findings<'s>(
     here: &Here<'s, '_>,
     asked: &Asked<'s>,
 ) -> Vec<Finding<'s, Checked>> {
-    let repairs = repair::repairs(
-        &asked.stale,
-        &here.resolutions,
-        here.facts,
-        &asked.renames,
-        &asked.prior,
-    );
     judged(decisions, here, |anchor, accepted| {
         if !accepted {
             return Some(Checked::Planned);
@@ -521,7 +480,7 @@ pub(crate) fn findings<'s>(
                     // clone: as above.
                     .map(|worktree| worktree.path.clone()),
                 // clone: each finding owns its repair, which decisions share.
-                repair: repairs.get(anchor).cloned(),
+                repair: asked.repairs.get(anchor).cloned(),
             },
         })
     })

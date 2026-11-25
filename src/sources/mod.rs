@@ -22,6 +22,7 @@
 mod cache;
 mod indexer;
 mod renames;
+mod repair;
 mod walk;
 mod worktrees;
 
@@ -34,10 +35,7 @@ use std::path::Path;
 
 use crate::code::{self, CodeFacts, Entry, FileFault, FileKind, Indexed, ReadFault};
 use crate::console::diag;
-use crate::git;
-use crate::lint::anchors::{
-    self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Prior, Renames, Unasked,
-};
+use crate::lint::anchors::{self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Unasked};
 use crate::store::{Anchor, Decision, Store, SymbolsKey};
 
 use indexer::{Indexer, Worker};
@@ -73,7 +71,7 @@ pub(crate) fn checked_findings<'s>(
     let here = Here::of(&decisions, &facts);
     let mut asked = Asked::new(here.unresolved(&decisions));
     let unread = elsewhere(store, &facts, &mut asked, &mut reads);
-    let asked = with_history(store, &facts, &here, asked, &mut reads);
+    let asked = repair::with_history(store, &facts, &here, asked, &mut reads);
     reads.write(store);
     CheckedFindings {
         findings: anchors::findings(&decisions, &here, &asked),
@@ -118,96 +116,6 @@ fn calling_tree(store: &Store, decisions: &Decisions<'_>, reads: &mut Reads) -> 
         .map(Anchor::file);
     let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, reads);
     CodeFacts::new(entries, walked)
-}
-
-/// `asked` with what git says of the stale anchors' repairs: where their
-/// gone files went and, for a rename that changed the file, its old path
-/// before it; then, for the symbol search's candidates, each anchor's file
-/// and candidate at the revision where that file last held its code.
-fn with_history<'s>(
-    store: &Store,
-    facts: &CodeFacts,
-    here: &Here<'s, '_>,
-    asked: Asked<'s>,
-    reads: &mut Reads,
-) -> Asked<'s> {
-    let root = store.code_root();
-    let renames = renames(store, facts, &asked.gone(here), reads);
-    let before: BTreeSet<(String, String)> = renames
-        .to
-        .iter()
-        .filter(|(_, renamed)| !renamed.exact)
-        // clone: the reads are keyed by revision and path apart from the map.
-        .map(|(from, renamed)| (renamed.before.clone(), from.clone()))
-        .collect();
-    let asked = asked
-        .with_renames(renames)
-        .with_prior(prior(root, &reads.indexer, &before));
-    let searched = asked.searched(here);
-    if searched.is_empty() {
-        return asked;
-    }
-    let files: BTreeSet<&str> = searched.iter().map(|search| search.anchor.file()).collect();
-    let revisions = renames::revisions(root, &files);
-    let mut wanted = BTreeSet::new();
-    for search in &searched {
-        if let Some(revision) = revisions.get(search.anchor.file()) {
-            // clone: each read names its revision and path.
-            wanted.insert((revision.clone(), search.anchor.file().to_owned()));
-            // clone: as above, for the candidate.
-            wanted.insert((revision.clone(), search.target.clone()));
-        }
-    }
-    let mut evidence = prior(root, &reads.indexer, &wanted);
-    for (file, revision) in revisions {
-        evidence.judge_at(file, revision);
-    }
-    asked.with_prior(evidence)
-}
-
-/// Where git says each of `gone`, the files of stale anchors with nothing
-/// at their path, was renamed to, and the facts of those paths beside
-/// `here`, the calling tree's, read as an anchor's path is.
-fn renames(store: &Store, here: &CodeFacts, gone: &BTreeSet<&str>, reads: &mut Reads) -> Renames {
-    let to = renames::renamed(store.code_root(), gone);
-    if to.is_empty() {
-        return Renames::none();
-    }
-    // clone: the paths are read apart from the map that keeps them.
-    let paths = to.values().map(|renamed| renamed.to.clone()).collect();
-    let facts = here.beside(&read_paths(store, store.code_root(), paths, reads));
-    Renames { to, facts }
-}
-
-/// What git's history held of each of `files`, a revision and a path, each
-/// read in a bounded read and indexed by `indexer`; a file git holds no
-/// blob of there, or any failure of git, leaves it out.
-fn prior(root: &Path, indexer: &Indexer, files: &BTreeSet<(String, String)>) -> Prior {
-    let mut prior = Prior::default();
-    if files.is_empty() {
-        return prior;
-    }
-    // clone: git is handed the files as a list.
-    let asked: Vec<(String, String)> = files.iter().cloned().collect();
-    let Ok(blobs) = git::renames::blobs(root, &asked, MAX_SOURCE_FILE_BYTES) else {
-        return prior;
-    };
-    let blobs: Vec<(FileKind, String, String, Vec<u8>)> = blobs
-        .into_iter()
-        .filter_map(|((revision, path), bytes)| Some((FileKind::of(&path)?, revision, path, bytes)))
-        .collect();
-    let indexed = indexer.map(&blobs, |worker, (kind, _, _, bytes)| {
-        match worker.index(*kind, bytes) {
-            Ok(indexed) => indexed.map_err(FileFault::Index),
-            Err(fault) => Err(FileFault::Read(fault)),
-        }
-    });
-    let indexed =
-        indexed.unwrap_or_else(|fault| blobs.iter().map(|_| Err(FileFault::Read(fault))).collect());
-    for ((kind, revision, path, _), index) in blobs.into_iter().zip(indexed) {
-        prior.insert(revision, path, Entry::File { kind, index });
-    }
-    prior
 }
 
 /// Read the other worktrees into `asked` for its stale anchors, those of

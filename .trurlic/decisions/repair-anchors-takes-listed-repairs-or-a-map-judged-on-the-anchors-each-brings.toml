@@ -4,7 +4,7 @@ reason = "The store imports no code index and runs no project git, so which anch
 alternatives = [
     "Refuse a repair to an anchor the decision holds already: rejected because every repair the tree shows would then fail on a decision that held both",
     "Judge a repaired decision on its whole list: rejected because one decision already past anchors_max, or one holding an anchor a pattern refuses, would block every repair of the tree",
-    "Withhold a repair of the map the bar refuses and write the rest: rejected because the verdict is then needed while the ops run, before the batch's pattern work is charged",
+    "Withhold in the store a map's repair the bar refuses and write the rest: rejected because the verdict is needed while the ops run, before the batch's pattern work is charged",
     "Let the store compute the repairs: rejected because store imports only error, console and git for its own repository",
 ]
 tags = [

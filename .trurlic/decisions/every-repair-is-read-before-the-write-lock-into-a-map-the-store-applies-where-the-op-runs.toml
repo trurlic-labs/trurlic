@@ -1,10 +1,10 @@
 component = "mcp"
-choice = "A repair_anchors op with no repairs is read before the write lock, as check reads the findings, into a map the store applies where the op runs; the result lists repaired and left within the budget"
-reason = "The repairs check shows are what the op writes, so a reader can see them before running it. Reading them walks the code tree and runs the project's git, which under the exclusive lock would hold every other writer for as long as git takes, and would keep the index's cache from filling, since its write needs the lock free. So apply's Access::Write has a read step that runs with no lock held, loads the graph as a read does, and gathers the findings with sources::checked_findings; then the writer takes the lock. The graph can change in between, so what the read hands the write is keyed by anchor, never by decision: the op carries the map of stale anchor to repair, and an earlier op of the batch, a second such op, or another write in between cannot turn it into a refusal. The result lists each repair the store made, read from Applied::repaired, and the stale anchors left, stated against the graph the write left under its lock: each decision ever accepted holding an anchor the tree showed no repair for, under its name there. As many as fit the budget are listed and the rest counted; trurlic check lists every one."
+choice = "A repair_anchors op with no repairs is filled before the write lock with the repairs check shows, less those a refuse pattern matches, which are left; the store applies the map where the op runs"
+reason = "The repairs check shows are what the op writes, so a reader can see them before running it. Reading them walks the code tree and runs the project's git, which under the exclusive lock would hold every other writer for as long as git takes, and would keep the index's cache from filling, since its write needs the lock free. So apply's Access::Write has a read step that runs with no lock held, loads the graph as a read does, and gathers the findings with sources::checked_findings; then the writer takes the lock. The caller wrote none of these repairs, so none may refuse the batch: the read compiles the project's bar once and judges each on the anchors field alone, as a write judges what a repair brings, its work charged against MAX_PATTERN_WORK first; one a refuse pattern matches is left, the pattern its cause. What the read hands the write is keyed by anchor, since the graph can change in between: an earlier op of the batch or another writer cannot turn it into a refusal, and a [quality] edited meanwhile still refuses under the lock. The result lists what was written and the stale anchors left, stated against the graph the write left under its lock, under the names there; as many as fit the budget, the rest counted, and trurlic check lists every one."
 alternatives = [
     "Read the repairs under the writer's lock: rejected because a slow git or a large tree would hold every other writer past its lock timeout, and the index's cache would never fill",
-    "Hand the store the repairs as an explicit list: rejected because a list names decisions and anchors the earlier ops of the batch may have renamed or removed, and is refused naming an argument the caller never wrote",
-    "Drop an op that finds nothing to repair: rejected because every later op's index in a refusal would shift, naming an op the caller did not write there",
+    "Hand the write the repairs as an explicit list: rejected because a list names what earlier ops may have renamed or removed, and is refused naming an argument the caller never wrote",
+    "Refuse the batch on a repair the bar refuses: rejected because the caller wrote no such repair, and one would keep every other repair from being written",
     "Leave the stale anchors left out of the result: rejected because the reader then cannot tell repaired all from repaired some",
 ]
 tags = [
@@ -17,12 +17,13 @@ origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"
 anchors = [
     { file = "src/mcp/apply/mod.rs", symbol = "read_repairs" },
+    { file = "src/mcp/apply/repairs.rs", symbol = "fill" },
     { file = "src/mcp/apply/repairs.rs", symbol = "left" },
-    { file = "src/mcp/apply/repairs.rs", symbol = "shown" },
-    { file = "src/mcp/apply/result.rs", symbol = "Answer" },
+    { file = "src/mcp/apply/repairs.rs", symbol = "sift" },
     { file = "src/mcp/apply/result.rs", symbol = "fit" },
     { file = "src/mcp/spec/tool.rs", symbol = "Access" },
     { file = "tests/integration/repair.rs", symbol = "a_moved_symbol_and_a_renamed_file_are_repaired_by_one_op" },
     { file = "tests/integration/repair.rs", symbol = "every_repair_holds_against_the_ops_before_it" },
+    { file = "tests/integration/repair.rs", symbol = "every_repair_leaves_a_repair_a_quality_pattern_refuses" },
     { file = "tests/integration/repair.rs", symbol = "every_repair_with_none_to_make_refuses_nothing" },
 ]

@@ -24,13 +24,13 @@ pub(crate) enum Access<A, O> {
     /// The graph loaded under the shared lock, and the store it came from.
     Read(fn(&Store, &ProjectState, A) -> Outcome<O>),
     /// A writer, `write`: the graph loaded under the exclusive lock. Before
-    /// it, `read`, when given, adds to the arguments what the write needs
-    /// of the code tree or the project's git, read holding no lock, so a
-    /// slow git holds no other writer and the index's cache can fill. The
-    /// graph can change between the two: what `read` adds must hold
-    /// against whatever graph `write` loads.
+    /// it, `read` adds to the arguments what the write needs of the code
+    /// tree or the project's git, read holding no lock, so a slow git holds
+    /// no other writer and the index's cache can fill. The graph can change
+    /// between the two: what `read` adds must hold against whatever graph
+    /// `write` loads.
     Write {
-        read: Option<fn(&Store, A) -> Outcome<A>>,
+        read: fn(&Store, A) -> Outcome<A>,
         write: fn(&mut Writer<'_>, A) -> Outcome<O>,
     },
     /// The store and the client: a handler that asks the client and waits
@@ -72,10 +72,7 @@ impl<A: Args, O: Output> ToolSpec<A, O> {
         match self.access {
             Access::Read(run) => run(store, &store.load_state()?, arguments),
             Access::Write { read, write } => {
-                let arguments = match read {
-                    Some(read) => read(store, arguments)?,
-                    None => arguments,
-                };
+                let arguments = read(store, arguments)?;
                 write(&mut store.begin_write()?, arguments)
             }
             Access::Interactive(_) => Err(ToolError::refused(format!(
@@ -267,9 +264,9 @@ mod tests {
     fn the_definition_follows_the_access_and_carries_both_schemas() {
         let cases = [
             (spec(Destructive::No, Access::Read(count)), true, false),
-            (spec(Destructive::No, write(None)), false, false),
-            (spec(Destructive::Yes, write(None)), false, true),
-            (spec(Destructive::No, write(Some(unlocked))), false, false),
+            (spec(Destructive::No, write(unread)), false, false),
+            (spec(Destructive::Yes, write(unread)), false, true),
+            (spec(Destructive::No, write(unlocked)), false, false),
             (
                 spec(Destructive::No, Access::Interactive(ask)),
                 false,
@@ -302,7 +299,7 @@ mod tests {
         let arguments = json!({ "name": "auth" });
         std::fs::write(store.component_path("auth"), "description='Auth'\n").unwrap();
 
-        let formatted = call(&spec(Destructive::No, write(None)), &store, &arguments);
+        let formatted = call(&spec(Destructive::No, write(unread)), &store, &arguments);
         assert_eq!(formatted.unwrap(), json!({ "name": "auth", "count": 1 }));
         assert_eq!(store.load_state().unwrap().non_canonical, []);
 
@@ -320,19 +317,20 @@ mod tests {
         );
         assert_eq!(asked.unwrap(), json!({ "name": "auth", "count": 0 }));
 
-        let read_then_written = call(
-            &spec(Destructive::No, write(Some(unlocked))),
-            &store,
-            &arguments,
-        );
+        let read_then_written = call(&spec(Destructive::No, write(unlocked)), &store, &arguments);
         assert_eq!(
             read_then_written.unwrap(),
             json!({ "name": "auth:free", "count": 0 })
         );
     }
 
-    /// `format`, after `read` when given.
-    fn write(read: Option<fn(&Store, Named) -> Outcome<Named>>) -> Access<Named, Probed> {
+    /// The arguments as they came: a write that needs nothing read first.
+    fn unread(_: &Store, named: Named) -> Outcome<Named> {
+        Ok(named)
+    }
+
+    /// `format`, after `read`.
+    fn write(read: fn(&Store, Named) -> Outcome<Named>) -> Access<Named, Probed> {
         Access::Write {
             read,
             write: format,
@@ -364,7 +362,7 @@ mod tests {
     #[test]
     fn a_refused_argument_is_refused_before_the_store_is_opened() {
         let store = Store::at("/nonexistent/.trurlic".into());
-        let tool = spec(Destructive::No, write(None));
+        let tool = spec(Destructive::No, write(unread));
         let refused = call(&tool, &store, &json!({ "name": 1 })).unwrap_err();
         let payload = serde_json::to_value(&refused).unwrap();
         assert_eq!(payload["kind"], "invalid_argument");

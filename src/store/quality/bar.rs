@@ -82,6 +82,16 @@ pub(crate) enum Broken {
     Quality(QualityFault),
 }
 
+/// The rule, as a refusal of the field it is broken in says it.
+impl std::fmt::Display for Broken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text { fault, .. } => write!(f, "{fault}"),
+            Self::Quality(fault) => write!(f, "{fault}"),
+        }
+    }
+}
+
 /// The first rule a judged decision breaks, and where.
 #[derive(Debug)]
 pub(crate) struct Breach {

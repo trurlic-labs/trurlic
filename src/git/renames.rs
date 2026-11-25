@@ -1,21 +1,52 @@
 //! What the history of the calling branch says of an anchored file: the
-//! commit that last changed it (for a file gone from `HEAD`, the one that
-//! deleted it), what that commit, or the work tree against `HEAD`, renamed
-//! or copied it to, and the bytes of a file at a revision. Every path is
-//! relative to the directory git runs in (`--relative`, `<rev>:./<path>`),
-//! as an anchor is to its code root, so a path outside that directory is
-//! never named; a path that is not UTF-8 names no anchor and is left out.
+//! commits that last changed and last added it (for a file gone from
+//! `HEAD`, the last change deleted it), what a commit, or the work tree
+//! against `HEAD`, renamed or copied it to, the commits that changed how
+//! often it spells a name, the paths a commit changed, and the bytes of a
+//! file at a revision. Every path is relative to the directory git runs in
+//! (`--relative`, `<rev>:./<path>`), as an anchor is to its code root, so a
+//! path outside that directory is never named; a path that is not UTF-8
+//! names no anchor and is left out.
 //!
 //! Renames and copies are git's own detection (`-M -C`) at its default
-//! similarity, and no external diff or text conversion runs.
+//! similarity, and no external diff or text conversion runs. Every command
+//! runs with the settings of [`PINNED`], so no configuration of the user's
+//! changes what it prints.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::Path;
+use std::process::Command;
 
 use crate::{Error, Result};
 
 use super::{command, run, shown};
+
+/// The settings every history read runs with, each one a user's
+/// configuration may set otherwise: a signature check prints its lines
+/// before a commit's header; with one path, `log` follows its renames into
+/// another path's commits; without the root commit's paths, a file added
+/// there has no commit that added it; `log` re-encodes all it prints; past
+/// the rename limit git pairs no rename, and 1000 is git's own default; a
+/// color code would sit in what is parsed.
+const PINNED: [&str; 7] = [
+    "log.showSignature=false",
+    "log.follow=false",
+    "log.showRoot=true",
+    "i18n.logOutputEncoding=UTF-8",
+    "diff.renameLimit=1000",
+    "color.ui=never",
+    "color.diff=never",
+];
+
+/// `git -C <dir>` with [`PINNED`], for its caller to add to.
+fn history(dir: &Path) -> Command {
+    let mut command = command(dir);
+    for setting in PINNED {
+        command.arg("-c").arg(setting);
+    }
+    command
+}
 
 /// What a diff says a file that left its path became. A file split in
 /// two shows as two records from its path, a copy beside the rename.
@@ -38,20 +69,27 @@ pub(crate) enum Changes<'c> {
     Uncommitted,
 }
 
-/// For each of `paths` the calling branch's history changed, the most
-/// recent commit that changed it, which for a path gone from `HEAD` is the
-/// one that deleted it: one walk of `HEAD`'s history, limited to those
-/// paths, each read literally. A walk of many paths costs about what one
-/// costs, which git's changed-path filters cut only for a single path, so
-/// one walk serves them all. Fails on an unborn branch.
-pub(crate) fn last_commits(dir: &Path, paths: &[&str]) -> Result<BTreeMap<String, String>> {
-    let pathspecs: Vec<String> = paths
-        .iter()
-        .map(|path| format!(":(literal){path}"))
-        .collect();
+/// What `HEAD`'s history says of a path it changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Changed {
+    /// The newest commit that changed it: for a path gone from `HEAD`, the
+    /// one that deleted it.
+    pub(crate) last: String,
+    /// The newest commit that added it; `None` when the history holds no
+    /// such commit.
+    pub(crate) added: Option<String>,
+}
+
+/// For each of `paths` the calling branch's history changed, its newest
+/// change and its newest addition: one walk of `HEAD`'s history, limited to
+/// those paths, each read literally. A walk of many paths costs about what
+/// one costs, which git's changed-path filters cut only for a single path,
+/// so one walk serves them all. Fails on an unborn branch.
+pub(crate) fn last_changes(dir: &Path, paths: &[&str]) -> Result<BTreeMap<String, Changed>> {
+    let pathspecs = literal(paths);
     let mut args: Vec<&OsStr> = [
         "log",
-        "--name-only",
+        "--name-status",
         "--relative",
         "--no-renames",
         "-z",
@@ -63,35 +101,137 @@ pub(crate) fn last_commits(dir: &Path, paths: &[&str]) -> Result<BTreeMap<String
     .map(OsStr::new)
     .collect();
     args.extend(pathspecs.iter().map(OsStr::new));
-    let stdout = run(command(dir), dir, &args, None)?;
-    parse_commits(&stdout).ok_or_else(|| Error::GitOutput {
-        args: shown(&args),
+    let commits = records(&run(history(dir), dir, &args, None)?, &args)?;
+    let mut changed: BTreeMap<String, Changed> = BTreeMap::new();
+    for Record { commit, paths } in commits {
+        for (status, path) in paths {
+            let found = changed.entry(path).or_insert_with(|| Changed {
+                // clone: a path's first record, its newest, names its commit.
+                last: commit.clone(),
+                added: None,
+            });
+            if status == b'A' && found.added.is_none() {
+                // clone: as above, for its newest addition.
+                found.added = Some(commit.clone());
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// The commits of `HEAD`'s history after `since`, newest first, that
+/// changed how many times `path` spells `name`: git's pickaxe (`log -S`),
+/// read literally. A commit that gives `path` a definition of `name` is
+/// among them.
+pub(crate) fn spelling_changes(
+    dir: &Path,
+    since: &str,
+    path: &str,
+    name: &str,
+) -> Result<Vec<String>> {
+    let pickaxe = format!("-S{name}");
+    let range = format!("{since}..HEAD");
+    let pathspec = format!(":(literal){path}");
+    let args = [
+        "log",
+        "--format=%H",
+        "--no-ext-diff",
+        "--no-textconv",
+        &pickaxe,
+        &range,
+        "--",
+        &pathspec,
+    ]
+    .map(OsStr::new);
+    let stdout = run(history(dir), dir, &args, None)?;
+    // Commit ids are hex: a lossy read changes none.
+    Ok(String::from_utf8_lossy(&stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect())
+}
+
+/// The paths each of `commits` changed against its first parent, none for
+/// a merge: one `git log --no-walk` for them all.
+pub(crate) fn changed_by(
+    dir: &Path,
+    commits: &BTreeSet<&str>,
+) -> Result<BTreeMap<String, BTreeSet<String>>> {
+    if commits.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut args: Vec<&OsStr> = [
+        "log",
+        "--no-walk=unsorted",
+        "--name-status",
+        "--relative",
+        "--no-renames",
+        "-z",
+        "--format=commit %H",
+    ]
+    .iter()
+    .map(OsStr::new)
+    .collect();
+    args.extend(commits.iter().map(OsStr::new));
+    args.push(OsStr::new("--"));
+    let found = records(&run(history(dir), dir, &args, None)?, &args)?;
+    Ok(found
+        .into_iter()
+        .map(|Record { commit, paths }| (commit, paths.into_iter().map(|(_, path)| path).collect()))
+        .collect())
+}
+
+/// Each path as a literal pathspec.
+fn literal(paths: &[&str]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| format!(":(literal){path}"))
+        .collect()
+}
+
+/// One commit `log -z --name-status` lists: its id, and each path it
+/// changed with the letter of its status.
+#[derive(Debug, PartialEq, Eq)]
+struct Record {
+    commit: String,
+    paths: Vec<(u8, String)>,
+}
+
+/// The records of `log -z --name-status --format='commit %H'`, read from
+/// the output of the command `args` ran: or that it printed a path before
+/// any commit.
+fn records(stdout: &[u8], args: &[&OsStr]) -> Result<Vec<Record>> {
+    parse_records(stdout).ok_or_else(|| Error::GitOutput {
+        args: shown(args),
         detail: "a changed path before any `commit <id>` record",
     })
 }
 
-/// The records of `log -z --name-only --format='commit %H'`: a header
-/// token, then the commit's paths, the first after a line break. The first
-/// commit naming a path, the newest, is kept for it.
-fn parse_commits(stdout: &[u8]) -> Option<BTreeMap<String, String>> {
-    let mut deleted = BTreeMap::new();
-    let mut commit: Option<&str> = None;
-    for token in stdout.split(|&byte| byte == 0).filter(|t| !t.is_empty()) {
+/// The records of `log -z --name-status --format='commit %H'`, newest
+/// first: a header token, then a status and a path for each path the
+/// commit changed, the first status after a line break. `None` when a
+/// status comes before any header or has no path.
+fn parse_records(stdout: &[u8]) -> Option<Vec<Record>> {
+    let mut commits: Vec<Record> = Vec::new();
+    let mut tokens = stdout.split(|&byte| byte == 0).filter(|t| !t.is_empty());
+    while let Some(token) = tokens.next() {
         let text = std::str::from_utf8(token).ok();
         if let Some(id) = text.and_then(|text| text.strip_prefix("commit ")) {
-            commit = Some(id);
+            commits.push(Record {
+                commit: id.to_owned(),
+                paths: Vec::new(),
+            });
             continue;
         }
-        let path = token.strip_prefix(b"\n").unwrap_or(token);
-        let (Some(id), Ok(path)) = (commit, std::str::from_utf8(path)) else {
-            commit?;
-            continue;
-        };
-        deleted
-            .entry(path.to_owned())
-            .or_insert_with(|| id.to_owned());
+        let status = token.strip_prefix(b"\n").unwrap_or(token);
+        let (&letter, _) = status.split_first()?;
+        let path = tokens.next()?;
+        let record = commits.last_mut()?;
+        if let Ok(path) = std::str::from_utf8(path) {
+            record.paths.push((letter, path.to_owned()));
+        }
     }
-    Some(deleted)
+    Some(commits)
 }
 
 /// The renames, copies and deletions of `changes`, as git detects them.
@@ -121,7 +261,7 @@ pub(crate) fn moved(dir: &Path, changes: Changes<'_>) -> Result<Vec<Moved>> {
     .collect();
     args.extend(range.iter().map(OsStr::new));
     args.push(OsStr::new("--"));
-    let stdout = run(command(dir), dir, &args, None)?;
+    let stdout = run(history(dir), dir, &args, None)?;
     parse_moved(&stdout).ok_or_else(|| Error::GitOutput {
         args: shown(&args),
         detail: "a rename or copy record without both of its paths",
@@ -194,7 +334,7 @@ pub(crate) fn blobs(
         return Ok(BTreeMap::new());
     }
     let check = [OsStr::new("cat-file"), OsStr::new("--batch-check")];
-    let sizes = run(command(dir), dir, &check, Some(&names(&asked)))?;
+    let sizes = run(history(dir), dir, &check, Some(&names(&asked)))?;
     let fitting: Vec<&(String, String)> = asked
         .into_iter()
         .zip(sizes.split(|&byte| byte == b'\n'))
@@ -205,7 +345,7 @@ pub(crate) fn blobs(
         return Ok(BTreeMap::new());
     }
     let batch = [OsStr::new("cat-file"), OsStr::new("--batch")];
-    let stdout = run(command(dir), dir, &batch, Some(&names(&fitting)))?;
+    let stdout = run(history(dir), dir, &batch, Some(&names(&fitting)))?;
     let contents = parse_batch(&stdout).ok_or_else(|| Error::GitOutput {
         args: shown(&batch),
         detail: "a blob record cut short",
@@ -241,20 +381,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_path_keeps_the_newest_commit_that_changed_it() {
-        let stdout = b"commit c2\0\na.rs\0b.rs\0commit c1\0\na.rs\0\0";
+    fn each_commit_lists_its_paths_with_their_status_newest_first() {
+        let stdout = b"commit c2\0\nM\0a.rs\0A\0b.rs\0commit c1\0\nA\0a.rs\0\0commit c0\0";
 
-        let deleted = parse_commits(stdout).unwrap();
-
+        let record = |commit: &str, paths: &[(u8, &str)]| Record {
+            commit: commit.to_owned(),
+            paths: paths.iter().map(|&(s, p)| (s, p.to_owned())).collect(),
+        };
         assert_eq!(
-            deleted,
-            BTreeMap::from([
-                ("a.rs".to_owned(), "c2".to_owned()),
-                ("b.rs".to_owned(), "c2".to_owned()),
-            ])
+            parse_records(stdout).unwrap(),
+            [
+                record("c2", &[(b'M', "a.rs"), (b'A', "b.rs")]),
+                record("c1", &[(b'A', "a.rs")]),
+                record("c0", &[]),
+            ]
         );
-        assert_eq!(parse_commits(b"\na.rs\0"), None);
-        assert_eq!(parse_commits(b""), Some(BTreeMap::new()));
+        assert_eq!(parse_records(b"\nM\0a.rs\0"), None);
+        assert_eq!(parse_records(b"commit c\0\nM\0"), None);
+        assert_eq!(parse_records(b""), Some(Vec::new()));
     }
 
     #[test]

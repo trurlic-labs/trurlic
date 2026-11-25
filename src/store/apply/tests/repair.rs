@@ -60,7 +60,7 @@ fn held(spelled: &str) -> Anchor {
     Anchor::new(file.to_owned(), symbol).unwrap()
 }
 
-/// An op asking for every repair of `map`, each stale anchor spelled with
+/// An op with every repair of `map`, each stale anchor spelled with
 /// its repair.
 fn every(map: &[(&str, &str)]) -> Op {
     let map: BTreeMap<Anchor, Anchor> = map

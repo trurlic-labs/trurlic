@@ -372,10 +372,7 @@ impl CodeFacts {
                 }
             };
             let expansion = expansion.and_then(|expansion| expansion.as_ref().ok());
-            let file_role = match self.test_files.contains(path) {
-                true => Role::Test,
-                false => Role::Code,
-            };
+            let file_role = self.file_role(path);
             let scopes = index.map(|index| self.scopes(index, expansion));
             let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
             index
@@ -404,11 +401,19 @@ impl CodeFacts {
     /// Whether `anchor`'s file defines its symbol as the whole path of a
     /// definition, no outer segment left out.
     pub(crate) fn defines_whole(&self, anchor: &Anchor) -> bool {
+        !self.whole(anchor).is_empty()
+    }
+
+    /// The kind and the role of each definition of `anchor`'s file whose
+    /// whole path its symbol is, those its macro invocations add included:
+    /// test code when the definition is or its file is, as far as these
+    /// facts tell. Empty when there is none.
+    pub(crate) fn whole(&self, anchor: &Anchor) -> BTreeSet<(DefinitionKind, Role)> {
         let Some((kind, index)) = self.entries.get(anchor.file()).and_then(indexed) else {
-            return false;
+            return BTreeSet::new();
         };
         let Some(Ok(symbol)) = anchor.symbol().map(|s| Symbol::parse(s, kind.syntax())) else {
-            return false;
+            return BTreeSet::new();
         };
         let expansion = self
             .expanded
@@ -416,16 +421,32 @@ impl CodeFacts {
             .and_then(|e| e.as_ref().ok());
         let scopes = self.scopes(index, expansion);
         let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
-        index.definitions.iter().chain(added).any(|definition| {
-            symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
-        })
+        let file_role = self.file_role(anchor.file());
+        index
+            .definitions
+            .iter()
+            .chain(added)
+            .filter(|definition| {
+                symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
+            })
+            .map(|definition| (definition.kind, definition.role.or(file_role)))
+            .collect()
+    }
+
+    /// `Test` for a file these facts hold as test code whole.
+    fn file_role(&self, path: &str) -> Role {
+        match self.test_files.contains(path) {
+            true => Role::Test,
+            false => Role::Code,
+        }
     }
 
     /// For each of `anchors`, a symbol on a Rust file that may be gone,
-    /// where its code may have moved ([`Namesakes`]). One pass over the
-    /// tree's definitions serves them all, and none is made for no anchor.
-    /// A file of another language is not searched: its crate and target
-    /// are not known.
+    /// where its code may have moved ([`Namesakes`]), whatever the role of
+    /// the item there, which the caller holds to the anchor's. One pass
+    /// over the tree's definitions serves them all, and none is made for no
+    /// anchor. A file of another language is not searched: its crate and
+    /// target are not known.
     pub(crate) fn namesakes<'a>(
         &self,
         anchors: impl IntoIterator<Item = &'a Anchor>,
@@ -448,27 +469,53 @@ impl CodeFacts {
         let holders = self.holders(&last);
         let (tree, outside) = split(&self.entries, &self.walked);
         let crates = Crates::of(&tree, &outside);
-        let mut found = BTreeMap::new();
-        for (anchor, symbol) in wanted {
-            let files = symbol.segments().last().and_then(|own| holders.get(own));
-            let at_home = files.is_some_and(|files| files.contains(anchor.file()))
-                || self.spells_in_invocation(anchor);
-            let place = target_of(anchor.file(), &crates);
-            let role = match self.test_files.contains(anchor.file()) {
-                true => Role::Test,
-                false => role_of_place(anchor.file(), &crates),
-            };
-            let elsewhere = files
-                .into_iter()
-                .flatten()
-                .filter(|&&file| file != anchor.file() && self.walked.contains(file))
-                .filter(|&&file| place.is_some() && target_of(file, &crates) == place)
-                .filter(|&&file| self.writes(file, &symbol, role))
-                .map(|&file| file.to_owned())
-                .collect();
-            found.insert(anchor, Namesakes { at_home, elsewhere });
+        wanted
+            .into_iter()
+            .filter_map(|(anchor, symbol)| {
+                let own = symbol.segments().last()?;
+                let files = holders.get(own).into_iter().flatten().copied();
+                Some((anchor, self.namesakes_of(anchor, &symbol, files, &crates)))
+            })
+            .collect()
+    }
+
+    /// Where `anchor`'s code may have moved, of `files`, those that define
+    /// something whose own segment is its symbol's last.
+    fn namesakes_of<'f>(
+        &self,
+        anchor: &Anchor,
+        symbol: &Symbol,
+        files: impl Iterator<Item = &'f str>,
+        crates: &Crates<'_>,
+    ) -> Namesakes {
+        let (mut at_home, mut elsewhere) = (self.spells_in_invocation(anchor), Vec::new());
+        let place = target_of(anchor.file(), crates);
+        for file in files {
+            if file == anchor.file() {
+                at_home = true;
+            } else if self.walked.contains(file)
+                && place.is_some()
+                && target_of(file, crates) == place
+                && self.writes(file, symbol)
+            {
+                elsewhere.push(file.to_owned());
+            }
         }
-        found
+        let name = match symbol.segments().last() {
+            // clone: the namesakes outlive the symbol parsed here.
+            Some(Segment::Name(name) | Segment::Impl { name, .. }) => name.clone(),
+            None => String::new(),
+        };
+        let file_role = match self.test_files.contains(anchor.file()) {
+            true => Role::Test,
+            false => role_of_place(anchor.file(), crates),
+        };
+        Namesakes {
+            at_home,
+            elsewhere,
+            name,
+            file_role,
+        }
     }
 
     /// The files that define something whose own segment, the last of its
@@ -487,22 +534,33 @@ impl CodeFacts {
         holders
     }
 
-    /// Whether the file at `path` writes an item of `role` whose whole
-    /// path `symbol` is: no re-export, and no type a macro invocation
-    /// defines, whose code is the macro's.
-    fn writes(&self, path: &str, symbol: &Symbol, role: Role) -> bool {
+    /// Whether `anchor`'s file writes an item whose whole path its symbol
+    /// is ([`CodeFacts::writes`]).
+    pub(crate) fn writes_whole(&self, anchor: &Anchor) -> bool {
+        let Some((kind, _)) = self.entries.get(anchor.file()).and_then(indexed) else {
+            return false;
+        };
+        let Some(Ok(symbol)) = anchor.symbol().map(|s| Symbol::parse(s, kind.syntax())) else {
+            return false;
+        };
+        self.writes(anchor.file(), &symbol)
+    }
+
+    /// Whether the file at `path` writes an item whose whole path `symbol`
+    /// is: no re-export, no module, whose code is its file or its body, and
+    /// no type a macro invocation defines, whose code is the macro's.
+    fn writes(&self, path: &str, symbol: &Symbol) -> bool {
         let Some((_, index)) = self.entries.get(path).and_then(indexed) else {
             return false;
         };
-        let file_role = match self.test_files.contains(path) {
-            true => Role::Test,
-            false => Role::Code,
-        };
         let scopes = self.scopes(index, None);
         index.definitions.iter().any(|definition| {
-            definition.kind != DefinitionKind::Reexport
-                && definition.role.or(file_role) == role
-                && symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
+            // Every other kind is an item whose code its own span holds.
+            let code = !matches!(
+                definition.kind,
+                DefinitionKind::Reexport | DefinitionKind::Module
+            );
+            code && symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
         })
     }
 
@@ -587,10 +645,16 @@ pub(crate) struct Namesakes {
     /// under any path, or spells it among the arguments a macro invocation
     /// keeps: the code may be there under another spelling.
     pub(crate) at_home: bool,
-    /// The other walked files of the anchor's crate target, by place, that
-    /// write an item of its file's test role whose whole path the symbol
-    /// is ([`CodeFacts::namesakes`]).
+    /// The other walked files of the anchor's crate target, by place
+    /// ([`target_of`]), that write an item whose whole path the symbol is
+    /// ([`CodeFacts::writes`]).
     pub(crate) elsewhere: Vec<String>,
+    /// The name of the symbol's last segment, which the source of a
+    /// definition it names spells.
+    pub(crate) name: String,
+    /// The role of the anchor's file in this tree: test code whole by its
+    /// place or by the module declarations that reach it, or code.
+    pub(crate) file_role: Role,
 }
 
 /// The `definitions` of each path, as `scopes` spells it: the first of the

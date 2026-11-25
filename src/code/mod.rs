@@ -57,6 +57,7 @@ pub(crate) use index::{
     BOUNDS, FileKind, INDEX_FORMAT, MAX_BYTES_INDEXED_AT_ONCE, MAX_BYTES_INDEXED_BY_A_WORKER,
     MAX_SOURCE_BYTES, PARSE_STACK_BYTES, WORKER_STACK_BYTES, index,
 };
+pub(crate) use kinds::{DefinitionKind, Role};
 #[cfg(test)]
 pub(crate) use purity::{AllowList, faults};
 pub(crate) use span::HASH_SCHEME;

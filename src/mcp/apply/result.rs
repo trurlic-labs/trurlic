@@ -357,7 +357,7 @@ mod tests {
             decision: name(),
             nearest: vec![nearest; NEAREST],
         };
-        // An op asking for every repair repairs every decision that holds
+        // An op with no `repairs` repairs every decision that holds
         // a stale anchor, as many as the graph holds.
         let repairs = 10_000;
         let applied = Applied {
