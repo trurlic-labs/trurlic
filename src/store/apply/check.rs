@@ -8,6 +8,7 @@ use std::fmt::Display;
 use super::decision::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, ListEdit};
+use super::patterns::Pending;
 use super::refusal::{NodeKind, Rule};
 use crate::store::name::name_fault;
 use crate::store::quality::{DecisionField, Place, element};
@@ -62,22 +63,33 @@ pub(super) fn new_name(edit: &Edit<'_>, name: &str, field: Field) -> Result<(), 
     ))
 }
 
-/// `decision` meets the bar in the fields of `held`, refused naming the
-/// argument at fault as `sources` place it; the warnings join the op's.
+/// `decision` meets the text rules and the limits in the fields of
+/// `held`, refused naming the argument at fault as `sources` place it; it
+/// is kept for the patterns, which judge it once every op has run
+/// (`patterns::judge`).
 pub(super) fn bar(
     context: &mut Context<'_>,
     decision: &Decision,
     held: &[DecisionField],
-    sources: &Sources,
+    sources: Sources,
 ) -> Result<(), Fault> {
-    let hits = context.bar.judge(decision, held).map_err(|breach| Fault {
-        field: Some(sources.path(decision, breach.place)),
-        rule: breach.broken.into(),
-    })?;
-    let located = hits
-        .into_iter()
-        .map(|(place, hit)| (sources.path(decision, place), hit));
-    context.hits.extend(located);
+    context
+        .bar
+        .judge_limits(decision, held)
+        .map_err(|breach| Fault {
+            field: Some(sources.path(decision, breach.place)),
+            rule: breach.broken.into(),
+        })?;
+    if context.bar.pattern_count() > 0 {
+        context.pending.push(Pending {
+            op: context.op,
+            // clone: later ops of the batch may change the decision before
+            // the patterns judge what this op wrote.
+            decision: decision.clone(),
+            held: held.to_vec(),
+            sources,
+        });
+    }
     Ok(())
 }
 
@@ -116,7 +128,7 @@ impl Sources {
 
     /// The argument path of `place` in `decision`: `add_tags[0]`, or the
     /// decision's field for a place no argument holds.
-    fn path(&self, decision: &Decision, place: Place) -> String {
+    pub(super) fn path(&self, decision: &Decision, place: Place) -> String {
         let named = element(decision, place).and_then(|element| {
             self.arguments
                 .iter()

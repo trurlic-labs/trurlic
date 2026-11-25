@@ -136,6 +136,15 @@ pub enum Rule {
     },
     /// A rule of the quality bar, built in or of `[quality]`.
     Quality(QualityFault),
+    /// The `[quality]` patterns would do `work` state-bytes over what the
+    /// batch writes up to this op, past `bound`. When this op passes the
+    /// bound by itself, `work` is its own and `costliest` the index of the
+    /// pattern that costs it the most.
+    PatternWork {
+        work: usize,
+        bound: usize,
+        costliest: Option<usize>,
+    },
     /// An issue the resulting graph has and the loaded one lacks, which
     /// no rule above refused.
     Issue(Issue),
@@ -181,6 +190,7 @@ impl Rule {
             Self::BothForms { .. } => "both_forms",
             Self::NotHeld { .. } => "not_held",
             Self::Quality(fault) => fault.as_str(),
+            Self::PatternWork { .. } => "pattern_work",
             Self::Issue(issue) => issue.kind.as_str(),
             Self::FileTooLarge { .. } => "file_too_large",
         }
@@ -231,6 +241,27 @@ impl fmt::Display for Rule {
                 write!(f, "names `{element}`, which the list does not hold")
             }
             Self::Quality(fault) => write!(f, "{fault}"),
+            Self::PatternWork {
+                work,
+                bound,
+                costliest: None,
+            } => write!(
+                f,
+                "the `[quality]` patterns would do {work} state-bytes of work over the batch \
+                 to here, past the {bound} one batch may (each pattern's bytes read times its \
+                 NFA's states); split the batch into batches of fewer ops"
+            ),
+            Self::PatternWork {
+                work,
+                bound,
+                costliest: Some(index),
+            } => write!(
+                f,
+                "the `[quality]` patterns would do {work} state-bytes of work over this alone, \
+                 past the {bound} one batch may (each pattern's bytes read times its NFA's \
+                 states): the project's patterns cost too much for this text, \
+                 `[quality] patterns[{index}]` the most; simplify it or write less text"
+            ),
             Self::Issue(issue) => write!(f, "the graph would gain an issue: {}", issue.message),
             Self::FileTooLarge { file, bytes, max } => write!(
                 f,

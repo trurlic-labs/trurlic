@@ -63,21 +63,23 @@ pub(super) const MAX_PATTERN_BYTES: usize = 500;
 /// for a large automaton: `\w{50}` over Unicode needs about 2.5 MB.
 pub(super) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
 
-/// The work the `[quality]` patterns do in one `status` lint section, in
-/// state-bytes. A pattern does, for each decision it reads, the bytes of
-/// the texts of its fields, one more per text, times the states of its
-/// Thompson NFA (`Bar::pattern_work`). A pattern's slowest engine, the
-/// PikeVM, walks at most every state per byte, so a search's time is
-/// linear in this work whatever the pattern. The worst rate measured on
-/// one core of the development machine is about 7 ns per state-byte. It
-/// holds for a pattern near the compile limit over ASCII text
-/// (`[\x00-\x7f]{0,4000}q`), and for a word boundary of a few states over
-/// CJK text (`\bq`), where the lazy DFA gives up on every byte. So a call
-/// at the bound costs at most about 14 s of CPU, shared by one task per
-/// pattern. The section reads the decisions by name while their work
-/// stays within the bound and names the first it left, where a call with
-/// `from` reads on; the default call judges no pattern.
-pub(crate) const MAX_REPORT_PATTERN_WORK: usize = 2_000_000_000;
+/// The work the `[quality]` patterns may do in one call, a `status` lint
+/// section or an `apply` batch, in state-bytes. A pattern does, for each
+/// text it reads, the text's bytes and one more, times the states of its
+/// Thompson NFA (`Bar::pattern_work`, `Bar::judge_work`). A pattern's
+/// slowest engine, the PikeVM, walks at most every state per byte, so a
+/// search's time is linear in this work whatever the pattern. The worst
+/// rate measured on one core of the development machine is about 7 ns per
+/// state-byte. It holds for a pattern near the compile limit over ASCII
+/// text (`[\x00-\x7f]{0,4000}q`), and for a word boundary of a few states
+/// over CJK text (`\bq`), where the lazy DFA gives up on every byte. So a
+/// call at the bound costs at most about 14 s of CPU. The lint section
+/// reads the decisions by name while their work stays within it and names
+/// the first it left, where a call with `from` reads on; the default call
+/// judges no pattern. A batch is charged over the origin and each
+/// decision its ops write, in op order, before any pattern runs, and
+/// refused at the op where the sum passes the bound.
+pub(crate) const MAX_PATTERN_WORK: usize = 2_000_000_000;
 
 /// Maximum byte length of a `[quality]` pattern's message, one line.
 pub(crate) const MAX_PATTERN_MESSAGE_BYTES: usize = 200;

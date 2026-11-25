@@ -11,10 +11,11 @@ use super::{anchor, apply, batch, graph, named, record, refused, revise};
 use crate::Error;
 use crate::store::apply::{Applied, Merge, Op, Record};
 use crate::store::canonical::canonical;
+use crate::store::limits::MAX_PATTERN_WORK;
 use crate::store::schema::Anchor;
 use crate::store::state::NodeFile;
 use crate::store::testing::{sample_decision, write_node};
-use crate::store::{ListEdit, PatternNote, Store, Warning, WarningKind};
+use crate::store::{ListEdit, PatternNote, Rule, Store, Warning, WarningKind};
 
 /// `table` appended to `project.toml` as its `[quality]`.
 fn with_quality(store: &Store, table: &str) {
@@ -632,4 +633,82 @@ fn a_text_fault_in_an_element_names_its_argument() {
             "ops[0] (revise `sign`), `add_tags[1]`: is blank".to_owned()
         )
     );
+}
+
+/// A pattern of the most states a pattern compiles to, over `field`.
+fn costly(index: usize, count: usize, field: &str, level: &str) -> String {
+    format!(
+        "[[quality.patterns]]\npattern = '[\\x00-\\x7f]{{0,{count}}}q'\nfields = [\"{field}\"]\n\
+         level = \"{level}\"\nmessage = \"Costly {index}.\"\n"
+    )
+}
+
+/// A batch whose patterns' work passes the bound is refused at the op
+/// where the sum does, before any pattern runs. Op 0 holds a match of a
+/// `refuse` pattern, which refuses the batch cut to its first op; past the
+/// bound that pattern never runs.
+#[test]
+fn a_batch_past_the_pattern_work_is_refused_before_any_pattern_runs() {
+    let tmp = TempDir::new().unwrap();
+    let zz = "[[quality.patterns]]\npattern = 'zz'\nfields = [\"choice\"]\nlevel = \"refuse\"\n\
+              message = \"No zz.\"\n";
+    let store = store_under(
+        &tmp,
+        Some(&format!("{zz}\n{}", costly(1, 9343, "reason", "warn"))),
+    );
+    let ops = |count: usize| -> Vec<Op> {
+        (0..count)
+            .map(|index| {
+                let mut op = record(&format!("costly-{index}"), "auth");
+                op.reason = format!("{} done.", "x".repeat(20_000));
+                if index == 0 {
+                    op.choice = "Choice zz".into();
+                }
+                Op::Record(op)
+            })
+            .collect()
+    };
+    let (rule, at, _) = named(&refused(&store, ops(1)));
+    assert_eq!((rule, at.as_str()), ("pattern", "ops[0].choice"));
+
+    let refusal = refused(&store, ops(10));
+
+    assert_eq!(refusal.path(), "ops[5]");
+    let Rule::PatternWork {
+        work,
+        bound,
+        costliest: None,
+    } = refusal.rule
+    else {
+        panic!("{refusal}")
+    };
+    assert_eq!(bound, MAX_PATTERN_WORK);
+    assert!(work > bound && work < bound + bound / 4, "{work}");
+}
+
+/// An op whose work alone passes the bound is refused at it, naming the
+/// pattern that costs it the most, the first of the costliest.
+#[test]
+fn an_op_past_the_pattern_work_alone_names_the_costliest_pattern() {
+    let tmp = TempDir::new().unwrap();
+    let table: String = [(0, 9000), (1, 9343), (2, 9343), (3, 100)]
+        .iter()
+        .map(|&(index, count)| costly(index, count, "reason", "warn"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let store = store_under(&tmp, Some(&table));
+    let ops = expire(|op| op.reason = format!("{} done.", "x".repeat(49_000)));
+
+    let refusal = refused(&store, ops);
+
+    assert_eq!(refusal.path(), "ops[0]");
+    let Rule::PatternWork {
+        work,
+        bound: MAX_PATTERN_WORK,
+        costliest: Some(1),
+    } = refusal.rule
+    else {
+        panic!("{refusal}")
+    };
+    assert!(work > MAX_PATTERN_WORK, "{work}");
 }

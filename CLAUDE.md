@@ -49,6 +49,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
 | Likely duplicates (scoring, pair index) | `lint/duplicates/` |
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
+| Work charged before `[quality]` patterns run | `store/quality/bar/work.rs`, `store/apply/patterns.rs` |
 | Failpoint sites | `store/failpoint.rs` |
 
 ### Invariants
@@ -68,6 +69,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 13. A change to what an index holds raises `code::INDEX_FORMAT` (the fingerprint test says when).
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.
+16. No `[quality]` pattern runs before its work over the call is charged against `MAX_PATTERN_WORK` (`store/limits.rs`). Past it a write is refused and a report reads no further.
 
 ### Working with the graph
 

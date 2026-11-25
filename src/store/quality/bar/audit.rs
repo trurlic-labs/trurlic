@@ -54,9 +54,9 @@ impl Bar {
     /// stored, at the pattern's level. First its match in the stored
     /// `origin`, when it reads `origin`, as [`Bar::judge_origin`] reads a
     /// batch's. Then its first match over the other fields it reads, as
-    /// [`Bar::judge`] reads an op's. A write that recorded the decision
-    /// would give both. `require_origin` binds a batch that records, which a
-    /// stored decision is no longer.
+    /// [`Bar::judge_patterns`] reads an op's. A write that recorded the
+    /// decision would give both. `require_origin` binds a batch that
+    /// records, which a stored decision is no longer.
     pub(crate) fn audit_pattern(&self, index: usize, decision: &Decision) -> Vec<Shortfall> {
         let Some(pattern) = self.patterns.get(index) else {
             return Vec::new();
@@ -84,20 +84,6 @@ impl Bar {
             .first_match(read)
             .map(|(place, found)| shortfall(place, &found));
         in_origin.into_iter().chain(in_fields).collect()
-    }
-
-    /// What judging this bar's patterns over `decision` costs at worst, in
-    /// state-bytes. Each pattern costs the bytes of each text of its fields
-    /// and one for the search itself, an anchor as `file::symbol`, times
-    /// the states of its NFA, which its slowest engine walks per byte.
-    pub(crate) fn pattern_work(&self, decision: &Decision) -> usize {
-        self.patterns
-            .iter()
-            .flat_map(|pattern| {
-                let fields = pattern.fields.iter();
-                fields.map(|&field| field_bytes(decision, field).saturating_mul(pattern.states))
-            })
-            .fold(0, usize::saturating_add)
     }
 
     /// The limits of `field` held to `decision`: a breach of each it breaks.
@@ -138,31 +124,6 @@ impl Bar {
             // and the origin have no limit.
             DecisionField::Choice | DecisionField::Tags | DecisionField::Origin => Vec::new(),
         }
-    }
-}
-
-/// The bytes of the texts of `field` a pattern reads in `decision`, each
-/// one more for the search over it.
-fn field_bytes(decision: &Decision, field: DecisionField) -> usize {
-    let searched = |text: usize| text.saturating_add(1);
-    let sum = |lengths: &mut dyn Iterator<Item = usize>| {
-        lengths.map(searched).fold(0, usize::saturating_add)
-    };
-    match field {
-        DecisionField::Choice => searched(decision.choice.len()),
-        DecisionField::Reason => searched(decision.reason.len()),
-        DecisionField::Alternatives => sum(&mut decision.alternatives.iter().map(String::len)),
-        DecisionField::Tags => sum(&mut decision.tags.iter().map(String::len)),
-        DecisionField::Anchors => sum(&mut decision.anchors.iter().map(|anchor| {
-            let symbol = anchor
-                .symbol()
-                .map_or(0, |symbol| symbol.len() + "::".len());
-            anchor.file().len() + symbol
-        })),
-        DecisionField::Origin => decision
-            .origin
-            .as_ref()
-            .map_or(0, |origin| searched(origin.len())),
     }
 }
 
@@ -365,7 +326,7 @@ mod tests {
                 .partition(|s| s.field == DecisionField::Origin);
 
             let judged = bar.judge(decision, &DecisionField::IN_FILE_ORDER);
-            let judged_origin = bar.judge_origin(decision.origin.as_deref(), false);
+            let judged_origin = bar.judge_origin(decision.origin.as_deref());
 
             assert_eq!(as_written(&fields), judged.map_err(breach), "{decision:?}");
             let origin_hits =

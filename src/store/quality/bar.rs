@@ -20,6 +20,7 @@ use crate::store::schema::Decision;
 use crate::store::text::{TextFault, TextField, fault};
 
 mod audit;
+mod work;
 
 pub use audit::Shortfall;
 
@@ -145,17 +146,42 @@ impl Bar {
 
     /// `decision` against the bar in the fields of `held`: the first rule
     /// it breaks, or the warnings of the `warn` patterns that match, each
-    /// with where it matched.
+    /// with where it matched. A write judges the two parts apart, the
+    /// patterns once their work is charged.
+    #[cfg(test)]
     pub(crate) fn judge(
         &self,
         decision: &Decision,
         held: &[DecisionField],
     ) -> Result<Vec<(Place, Hit)>, Breach> {
+        self.judge_limits(decision, held)?;
+        self.judge_patterns(decision, held)
+    }
+
+    /// `decision` against the text rules and the limits in the fields of
+    /// `held`, in the order of the file's keys: the first it breaks.
+    pub(crate) fn judge_limits(
+        &self,
+        decision: &Decision,
+        held: &[DecisionField],
+    ) -> Result<(), Breach> {
         for field in DecisionField::IN_FILE_ORDER {
             if held.contains(&field) {
                 self.limits(decision, field)?;
             }
         }
+        Ok(())
+    }
+
+    /// `decision` against the patterns in the fields of `held`, in their
+    /// order: the first `refuse` match, or the `warn` matches, each with
+    /// where it matched. The batch's origin is judged apart
+    /// ([`Bar::judge_origin`]).
+    pub(crate) fn judge_patterns(
+        &self,
+        decision: &Decision,
+        held: &[DecisionField],
+    ) -> Result<Vec<(Place, Hit)>, Breach> {
         if self.patterns.is_empty() {
             return Ok(Vec::new());
         }
@@ -186,20 +212,26 @@ impl Bar {
     }
 
     /// The batch's `origin` against `require_origin`, when the batch
-    /// `records` a decision, and against the patterns that read it.
-    pub(crate) fn judge_origin(
+    /// `records` a decision.
+    pub(crate) fn origin_required(
         &self,
         origin: Option<&str>,
         records: bool,
-    ) -> Result<Vec<Hit>, Breach> {
+    ) -> Result<(), Breach> {
+        if origin.is_none() && records && self.require_origin {
+            return Err(Breach {
+                place: Place::whole(DecisionField::Origin),
+                broken: Broken::Quality(QualityFault::OriginRequired),
+            });
+        }
+        Ok(())
+    }
+
+    /// The batch's `origin` against the patterns that read it: the first
+    /// `refuse` match, or the `warn` matches.
+    pub(crate) fn judge_origin(&self, origin: Option<&str>) -> Result<Vec<Hit>, Breach> {
         let place = Place::whole(DecisionField::Origin);
         let Some(origin) = origin else {
-            if records && self.require_origin {
-                return Err(Breach {
-                    place,
-                    broken: Broken::Quality(QualityFault::OriginRequired),
-                });
-            }
             return Ok(Vec::new());
         };
         let mut hits = Vec::new();

@@ -9,8 +9,11 @@
 //! one. The bar is a property of a write: at least one alternative and one
 //! anchor, and the project's limits and patterns. A graph migrated or edited
 //! by hand below it loads, passes `check` and stays revisable, since an op
-//! is held to the bar only in the fields it writes. [`Bar::judge`] runs
-//! both kinds for a write, so a write is refused for either in one order.
+//! is held to the bar only in the fields it writes. A write holds each
+//! decision an op writes to the text rules and the limits as the op runs
+//! ([`Bar::judge_limits`], field by field in one order), and to the
+//! patterns once their work over the batch is charged
+//! ([`Bar::judge_patterns`]).
 //!
 //! Words are counted one way everywhere: the runs of non-whitespace
 //! between Unicode whitespace ([`words`]). Bytes are bytes of UTF-8.

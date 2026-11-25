@@ -328,6 +328,11 @@ mod tests {
                 bytes: usize::MAX,
                 max: usize::MAX,
             },
+            Rule::PatternWork {
+                work: usize::MAX,
+                bound: usize::MAX,
+                costliest: Some(usize::MAX),
+            },
         ];
         for rule in rules {
             let refusal = Refusal {

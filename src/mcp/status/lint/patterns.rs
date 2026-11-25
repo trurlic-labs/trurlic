@@ -1,14 +1,14 @@
 //! How far a `status` call judges the `[quality]` patterns: the default
 //! call judges the limits alone, and the `lint` section asked for alone
 //! judges the patterns too, over the decisions by name while their work
-//! stays within [`MAX_REPORT_PATTERN_WORK`]. The counts say how many
+//! stays within [`MAX_PATTERN_WORK`]. The counts say how many
 //! decisions the patterns read, why they read no more, and the decision
 //! where a call with `from` reads on.
 
 use crate::lint::quality::{self, Found, Reach};
 use crate::mcp::spec::output::{Count, Nested, Str, Tag};
 use crate::mcp::spec::{Output, Shown};
-use crate::store::limits::MAX_REPORT_PATTERN_WORK;
+use crate::store::limits::MAX_PATTERN_WORK;
 use crate::store::{Bar, Decision, PatternFault, ProjectState, Shortfall};
 
 use crate::mcp::result::ToolError;
@@ -161,7 +161,7 @@ pub(super) fn shortfalls<'s>(
         Patterns::Judged { .. } => Bar::for_report(table),
         Patterns::NotAsked => (Bar::limits_only(table), None),
     };
-    let found = quality::shortfalls(state, &bar, limit, MAX_REPORT_PATTERN_WORK, wanted);
+    let found = quality::shortfalls(state, &bar, limit, MAX_PATTERN_WORK, wanted);
     let read =
         (!table.patterns.is_empty()).then(|| pattern_counts(patterns, uncompiled, &found.reach));
     (found.found, read)
@@ -187,7 +187,7 @@ fn pattern_counts(
             reach.judged,
             Cut::WorkLimit(Work {
                 measured: reach.work,
-                bound: MAX_REPORT_PATTERN_WORK,
+                bound: MAX_PATTERN_WORK,
                 next: reach.next.map(str::to_owned),
                 too_costly: reach.too_costly,
             }),
@@ -303,7 +303,7 @@ mod tests {
         assert_eq!((judged, unjudged), (3, 2));
         assert_eq!(value["why"], "work_limit");
         assert_eq!(value["work"]["measured"], 99);
-        assert_eq!(value["work"]["bound"], MAX_REPORT_PATTERN_WORK);
+        assert_eq!(value["work"]["bound"], MAX_PATTERN_WORK);
         assert_eq!(
             (&value["next"], &value["too_costly"]),
             (&"d3".into(), &1.into())
@@ -409,7 +409,7 @@ mod tests {
             .values()
             .map(|decision| bar.pattern_work(decision))
             .sum();
-        assert!(work > 100 * MAX_REPORT_PATTERN_WORK, "{work}");
+        assert!(work > 100 * MAX_PATTERN_WORK, "{work}");
         let worst = default_call(&store);
         assert_eq!(worst["counts"]["lint"]["patterns"]["why"], "not_asked");
         let items = worst["lint"]["items"].as_array().unwrap();

@@ -492,6 +492,43 @@ fn the_quality_table_holds_both_surfaces_alike() {
     assert_eq!(refusal["kind"], "store_error", "{refusal}");
 }
 
+/// A batch whose `[quality]` patterns would do more work than one batch
+/// may is refused alike over both surfaces, at the op where the sum
+/// passes the bound, and writes nothing.
+#[test]
+fn a_batch_past_the_pattern_work_is_refused_alike_over_both_surfaces() {
+    let project = Project::init();
+    let header = project.read("project.toml");
+    let costly = "\n[[quality.patterns]]\npattern = '[\\x00-\\x7f]{0,9343}q'\n\
+                  fields = [\"reason\"]\nlevel = \"warn\"\nmessage = \"Costly.\"\n";
+    project.write("project.toml", &format!("{header}\n[quality]\n{costly}"));
+    let ops: Vec<Value> = (0..8)
+        .map(|index| {
+            let mut op = record(&format!("costly-{index}"), "project", "A rule");
+            op["reason"] = json!(format!("{} done.", "x".repeat(20_000)));
+            op
+        })
+        .collect();
+    let batch = json!({ "origin": "row 1", "ops": ops });
+    let before = project.graph_files();
+    let (mut client, _) = McpClient::connect(&project);
+
+    let refusal = client.call_tool_refusal("apply", batch.clone());
+    let output = project.apply(&batch, &[]);
+
+    assert_eq!(
+        (&refusal["kind"], &refusal["rule"], &refusal["op"]["index"]),
+        (&json!("batch_refused"), &json!("pattern_work"), &json!(5)),
+        "{refusal}"
+    );
+    let message = refusal["message"].as_str().unwrap();
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("error: {message}\n")
+    );
+    assert_eq!(project.graph_files(), before);
+}
+
 /// Every refusal of a twin is the tool's refusal JSON on stdout under
 /// `--json`, a failed discovery's included, as the MCP call answers it.
 #[test]

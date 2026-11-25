@@ -1,5 +1,5 @@
 component = "lint"
-choice = "The lint section judges the [quality] patterns over the decisions by name while their work, bytes read times NFA states, stays within MAX_REPORT_PATTERN_WORK, and names where it stopped"
+choice = "The lint section judges the [quality] patterns over the decisions by name while their work, bytes read times NFA states, stays within MAX_PATTERN_WORK, and names where it stopped"
 reason = "A pattern's cost per byte runs from about a nanosecond on the lazy DFA to over a hundred microseconds on the PikeVM, which walks the states of the pattern's Thompson NFA for each byte, so bytes alone bound no time. Bar::pattern_work charges each pattern the bytes of every text it reads, one more per search, times its NFA's state count, so the work bounds the time of the slowest engine and needs no clock: the same cut on every machine. The worst rate measured on one core is about 7 ns per state-byte, for a counted repetition at the compile limit over ASCII text and for a word boundary of a few states over CJK text. So the bound of 2e9 state-bytes costs a call at most about 14 s of CPU. It admits the shipped table over the seeded corpus at 600 decisions whole and cuts it near half at 2000. The decisions are read in name order while the sum stays within the bound; one whose own work passes it is counted in too_costly and passed over; the first that would take the sum past it is named next, and a call with from set to it reads on, so a caller walks every decision but the too costly. The limits run no regex and are judged for every decision in one bounded fold. The patterns run one task per pattern over the decisions in order, so a compiled regex keeps one cache whatever the threads, and the parts merge by decision and rule, so the answer does not depend on the threads."
 alternatives = [
     "A wall-clock deadline: rejected because the answer would depend on the machine and its load, and lint reads no clock",
@@ -22,8 +22,8 @@ anchors = [
     { file = "src/lint/quality.rs", symbol = "tests::a_walk_from_next_to_next_reads_every_decision_it_can" },
     { file = "src/mcp/status/lint/patterns.rs", symbol = "Patterns::of" },
     { file = "src/mcp/status/lint/patterns.rs", symbol = "pattern_counts" },
-    { file = "src/store/limits.rs", symbol = "MAX_REPORT_PATTERN_WORK" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::pattern_work" },
+    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_WORK" },
+    { file = "src/store/quality/bar/work.rs", symbol = "Bar::pattern_work" },
     { file = "tests/integration/lint.rs", symbol = "from_reads_on_where_the_work_limit_stopped" },
 ]
 depends_on = [
