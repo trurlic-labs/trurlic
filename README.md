@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./banner.png" alt="Trurlic" height="100">
+  <img src="./banner.svg" alt="Trurlic — Delegate the code. Own the architecture." width="100%">
 </p>
 
 <p align="center">
