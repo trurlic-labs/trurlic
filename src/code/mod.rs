@@ -58,6 +58,24 @@ pub(crate) use index::{
     MAX_SOURCE_BYTES, PARSE_STACK_BYTES, WORKER_STACK_BYTES, index,
 };
 pub(crate) use kinds::{DefinitionKind, Role};
+pub(crate) use language::c_family::{BlankMacros, defines};
+
+/// Whether the query of the language named `name` (`c`, `cpp`, `python`,
+/// `typescript`, `tsx`) compiles within its contract, compiled afresh:
+/// what a benchmark times.
+#[cfg(feature = "bench")]
+pub(crate) fn query_compiles(name: &str) -> bool {
+    [
+        &language::C,
+        &language::CPP,
+        &language::PYTHON,
+        &language::TYPESCRIPT,
+        &language::TSX,
+    ]
+    .into_iter()
+    .find(|language| language.name == name)
+    .is_some_and(|language| language.compile().is_ok())
+}
 #[cfg(test)]
 pub(crate) use purity::{AllowList, faults};
 pub(crate) use span::HASH_SCHEME;

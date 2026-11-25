@@ -59,6 +59,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
 | A `[quality]` pattern's engine, its cache, the bytes it charges | `store/quality/bar/pattern.rs` |
 | A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/language.rs`, `code/language/<name>.scm`, `code/language/<name>.rs` |
+| C and C++ macros blanked before the parse: the per-file pass / the tree's set gathered | `code/language/c_family.rs` / `sources/indexer.rs` |
 | Span-hash units and hashing | `code/units.rs` |
 | Query contract / general resolver | `code/query.rs` / `code/general.rs` |
 | Failpoint sites | `store/failpoint.rs` |

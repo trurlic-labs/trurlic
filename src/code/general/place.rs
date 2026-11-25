@@ -23,10 +23,10 @@ pub(super) struct Placed {
 }
 
 /// The visibility the source states of the definition named `name` whose
-/// span is `span`, in `container`: the innermost mark that holds its name
-/// when the span holds the mark, else the innermost `@visibility.within`
-/// mark's, else public at the file's top when an `@export.name` capture
-/// spells its name.
+/// span is `span`, in `container`: the label in force at its name, else
+/// the innermost mark that holds its name when the span holds the mark,
+/// else the innermost `@visibility.within` mark's, else public at the
+/// file's top when an `@export.name` capture spells its name.
 fn visibility_of(
     found: &Found<'_, '_>,
     container: Container,
@@ -34,9 +34,11 @@ fn visibility_of(
     span: Extent,
 ) -> Option<Visibility> {
     let exported = container == Container::Top && found.is_exported(&name.parts);
-    name.visibility
-        .filter(|mark| span.holds(mark.start, mark.end))
-        .map(|mark| mark.visibility)
+    name.label
+        .or(name
+            .visibility
+            .filter(|mark| span.holds(mark.start, mark.end))
+            .map(|mark| mark.visibility))
         .or(name.within)
         .or(exported.then_some(Visibility::Public))
 }

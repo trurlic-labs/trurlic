@@ -96,11 +96,13 @@ const STORE_ITEMS: [&str; 1] = ["Anchor"];
 
 /// The crates the index may name: its parser, its grammars, its hash and
 /// the TOML reader.
-const CRATES: [&str; 6] = [
+const CRATES: [&str; 8] = [
     "tree_sitter",
     "tree_sitter_rust",
     "tree_sitter_python",
     "tree_sitter_typescript",
+    "tree_sitter_c",
+    "tree_sitter_cpp",
     "blake3",
     "toml",
 ];
@@ -352,7 +354,12 @@ fn dependencies(texts: &[(String, String)]) -> Vec<String> {
     let Some((_, manifest)) = texts.iter().find(|(path, _)| path == "Cargo.toml") else {
         return Vec::new();
     };
-    let manifest = index(FileKind::Toml, manifest.as_bytes()).unwrap();
+    let manifest = index(
+        FileKind::Toml,
+        manifest.as_bytes(),
+        &crate::code::BlankMacros::default(),
+    )
+    .unwrap();
     let scopes = super::scope::Scopes {
         file: &manifest.scopes,
         added: &[],

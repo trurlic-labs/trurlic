@@ -358,7 +358,11 @@ mod tests {
             ("tru", 0),
         ] {
             assert_eq!(
-                index(FileKind::Json, text.as_bytes()),
+                index(
+                    FileKind::Json,
+                    text.as_bytes(),
+                    &crate::code::BlankMacros::default()
+                ),
                 Err(IndexFault::Syntax { at }),
                 "{text:?}"
             );
@@ -369,8 +373,14 @@ mod tests {
     fn a_nesting_past_the_bound_is_refused() {
         let nested = |depth: usize| format!("{}1{}", "{\"a\":".repeat(depth), "}".repeat(depth));
 
-        let indexed =
-            |text: String| index(FileKind::Json, text.as_bytes()).map(|i| i.definitions.len());
+        let indexed = |text: String| {
+            index(
+                FileKind::Json,
+                text.as_bytes(),
+                &crate::code::BlankMacros::default(),
+            )
+            .map(|i| i.definitions.len())
+        };
 
         assert_eq!(indexed(nested(MAX_NESTING)), Ok(MAX_NESTING));
         assert_eq!(indexed(nested(MAX_NESTING + 1)), Err(IndexFault::TooDeep));

@@ -159,7 +159,12 @@ $(OUT)/%.o: %.c
     #[test]
     fn the_targets_of_one_rule_share_its_hash_within_the_budget() {
         let text = format!("{}: x\n\techo\n", "tgt ".repeat(40_000));
-        let indexed = index(FileKind::Make, text.as_bytes()).unwrap();
+        let indexed = index(
+            FileKind::Make,
+            text.as_bytes(),
+            &crate::code::BlankMacros::default(),
+        )
+        .unwrap();
 
         assert_eq!(indexed.definitions.len(), 40_000);
         assert!(

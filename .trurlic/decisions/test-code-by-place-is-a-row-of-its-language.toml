@@ -1,5 +1,5 @@
 component = "code"
-choice = "A file the general resolver reads is test code whole in a test place of its row: Python's tests/, test_*.py, *_test.py, conftest.py; TypeScript's and JavaScript's __tests__/, *.test.*, *.spec.*"
+choice = "A file the general resolver reads is test code whole in a test place of its row: Python's tests/, test_*.py, conftest.py; TypeScript's __tests__/, *.test.*; C's and C++'s tests/, *_test.*"
 reason = "A file's bytes do not say whether pytest reads it as a test module, so the place is a rule of the second step over the tree, and the places are data in the language's row, as its query is, not a branch of code per language. A fixture in conftest.py, a helper module under tests/ and a module pytest collects by its name are test code though no test function stands in them. A place is a directory name anywhere above the file, or a file name in which one * stands for any run of characters. Rust's places stay Rust's own rule, its crate's tests directory and the forward walk of module declarations, since they need its crates."
 alternatives = [
     "The bytes alone: rejected because a helper in conftest.py would be counted as code",

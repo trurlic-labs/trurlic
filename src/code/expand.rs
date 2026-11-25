@@ -304,7 +304,11 @@ mod tests {
             .iter()
             .map(|(path, text)| {
                 let kind = FileKind::of(path).unwrap();
-                (*path, kind, index(kind, text.as_bytes()).unwrap())
+                (
+                    *path,
+                    kind,
+                    index(kind, text.as_bytes(), &crate::code::BlankMacros::default()).unwrap(),
+                )
             })
             .collect();
         let tree = indexes
@@ -432,13 +436,17 @@ mod tests {
                 .collect();
             format!("macro_rules! m {{ {rules} }}\n{calls}")
         };
-        let spanned: usize = index(FileKind::Rust, with_rules(1).as_bytes())
-            .unwrap()
-            .rust
-            .invocations
-            .iter()
-            .map(|invocation| invocation.span.end - invocation.span.start)
-            .sum();
+        let spanned: usize = index(
+            FileKind::Rust,
+            with_rules(1).as_bytes(),
+            &crate::code::BlankMacros::default(),
+        )
+        .unwrap()
+        .rust
+        .invocations
+        .iter()
+        .map(|invocation| invocation.span.end - invocation.span.start)
+        .sum();
         let rules = spanned * 64 / (3 * 1_000);
 
         assert_eq!(spanned, 31_000);
@@ -666,7 +674,12 @@ mod tests {
         let text = format!(
             "macro_rules! m {{ ($n:ident) => {{ pub struct $n; impl $n {{ fn {long}() {{}} }} }}; }}\n{calls}"
         );
-        let index = index(FileKind::Rust, text.as_bytes()).unwrap();
+        let index = index(
+            FileKind::Rust,
+            text.as_bytes(),
+            &crate::code::BlankMacros::default(),
+        )
+        .unwrap();
         let manifest = index_manifest();
         let tree: Files<'_> = [
             ("Cargo.toml", (FileKind::Toml, &manifest)),
@@ -772,6 +785,11 @@ mod tests {
     }
 
     fn index_manifest() -> FileIndex {
-        index(FileKind::Toml, b"[package]\n").unwrap()
+        index(
+            FileKind::Toml,
+            b"[package]\n",
+            &crate::code::BlankMacros::default(),
+        )
+        .unwrap()
     }
 }

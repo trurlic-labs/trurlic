@@ -168,7 +168,12 @@ mod tests {
     #[test]
     fn a_test_module_or_condition_in_an_invocation_marks_what_it_holds() {
         let text = "m! { #[cfg(test)] mod t { fn helper() {} } }\ncfg_if! { if #[cfg(test)] { fn mocked() {} } else { fn real() {} } }\n";
-        let indexed = crate::code::index::index(FileKind::Rust, text.as_bytes()).unwrap();
+        let indexed = crate::code::index::index(
+            FileKind::Rust,
+            text.as_bytes(),
+            &crate::code::BlankMacros::default(),
+        )
+        .unwrap();
         let roles: Vec<_> = indexed.definitions.iter().map(|d| d.role).collect();
 
         assert_eq!(roles, [Role::Test, Role::Test, Role::Test, Role::Code]);

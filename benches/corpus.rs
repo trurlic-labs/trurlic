@@ -455,12 +455,22 @@ fn bench_code_index(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_query_compile(c: &mut Criterion) {
+    let mut group = c.benchmark_group("query_compile");
+    for name in ["c", "cpp", "python", "typescript", "tsx"] {
+        group.bench_function(name, |b| {
+            b.iter(|| assert!(trurlic::bench::query_compiles(name)));
+        });
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
     targets = bench_load_state, bench_validate, bench_duplicates, bench_status_lint,
-        bench_read_tools, bench_write, bench_apply, bench_code_index
+        bench_read_tools, bench_write, bench_apply, bench_code_index, bench_query_compile
 }
 criterion_main!(benches);

@@ -311,7 +311,11 @@ mod tests {
             .iter()
             .map(|(path, text)| {
                 let kind = FileKind::of(path).unwrap();
-                (*path, kind, index(kind, text.as_bytes()).unwrap())
+                (
+                    *path,
+                    kind,
+                    index(kind, text.as_bytes(), &crate::code::BlankMacros::default()).unwrap(),
+                )
             })
             .collect();
         let tree = indexes

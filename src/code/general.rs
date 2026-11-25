@@ -10,7 +10,8 @@
 //! predicates and the names read is charged to a budget per byte. The
 //! walk keeps its own frame for each ancestor of the node it is at (its
 //! kind, its span, whether a test mark holds it, the innermost visibility
-//! mark of each form, how far each span growth and wrap reaches from it,
+//! mark of each form, the label in force for its children, how far each
+//! span growth and wrap reaches from it,
 //! and the run of siblings of each preceding set right before it), so no
 //! parent or sibling is read through tree-sitter, which finds one by a
 //! descent from the root. A capture names a node at or below the match's root, which
@@ -130,14 +131,15 @@ struct VisibilityMark {
 
 /// What the walk found of a definition's name node: the text of each of
 /// its segments, whether a test mark holds it, the innermost visibility
-/// mark that holds it, and the visibility of the innermost
-/// `@visibility.within` mark that does.
+/// mark that holds it, the visibility of the innermost
+/// `@visibility.within` mark that does, and of the label in force there.
 #[derive(Debug, Clone)]
 struct NameNode {
     parts: Vec<String>,
     test: bool,
     visibility: Option<VisibilityMark>,
     within: Option<Visibility>,
+    label: Option<Visibility>,
 }
 
 impl NameNode {
@@ -165,6 +167,8 @@ struct Candidate<'r> {
     definer: &'r Definer,
     site: Option<Site>,
     name: Option<NameNode>,
+    /// The name nodes the walk has yet to reach.
+    names_left: usize,
 }
 
 /// What a captured node waits for the walk to reach it with.
@@ -175,6 +179,7 @@ enum Waiting {
     Test,
     Visibility(Visibility),
     Within(Visibility),
+    After(Visibility),
 }
 
 impl Waiting {
@@ -182,7 +187,9 @@ impl Waiting {
     const fn definition(&self) -> Option<usize> {
         match self {
             Self::Definition(at) => Some(*at),
-            Self::Name(_) | Self::Test | Self::Visibility(_) | Self::Within(_) => None,
+            Self::Name(_) | Self::Test | Self::Visibility(_) | Self::Within(_) | Self::After(_) => {
+                None
+            }
         }
     }
 }
@@ -195,6 +202,9 @@ struct Frame {
     test: bool,
     visibility: Option<VisibilityMark>,
     within: Option<Visibility>,
+    /// The label in force for its children: the last one among them seen
+    /// so far, else the one in force for it.
+    after: Option<Visibility>,
 }
 
 /// What the walk found: the candidates, the nodes captured as unnamed
@@ -212,7 +222,11 @@ impl<'r> Found<'r, '_> {
     /// in the order matched.
     fn complete(&self) -> impl Iterator<Item = (Site, &NameNode, &'r Definer)> {
         self.candidates.iter().filter_map(|candidate| {
-            Some((candidate.site?, candidate.name.as_ref()?, candidate.definer))
+            let name = candidate
+                .name
+                .as_ref()
+                .filter(|_| candidate.names_left == 0)?;
+            Some((candidate.site?, name, candidate.definer))
         })
     }
 
@@ -327,10 +341,10 @@ impl Matches<'_> {
     }
 }
 
-impl Walk<'_, '_> {
+impl<'r> Walk<'r, '_> {
     /// Record a match of pattern `pattern` that captured `captures`.
     fn record(&mut self, pattern: usize, captures: &[tree_sitter::QueryCapture<'_>]) {
-        let (mut definition, mut name) = (None, None);
+        let (mut definition, mut names) = (None, Vec::new());
         for capture in captures {
             let id = capture.node.id();
             let what = self.rules.captures.get(capture.index as usize);
@@ -338,10 +352,11 @@ impl Walk<'_, '_> {
             let mut mark = |set: fn(&mut NodeMarks)| set(self.found.marks.entry(id).or_default());
             match what.copied().unwrap_or(Capture::Predicate) {
                 Capture::Definition => definition = Some(id),
-                Capture::Name => name = Some(id),
+                Capture::Name => names.push(id),
                 Capture::Test => wait(Waiting::Test),
                 Capture::Visibility(visibility) => wait(Waiting::Visibility(visibility)),
                 Capture::Within(visibility) => wait(Waiting::Within(visibility)),
+                Capture::After(visibility) => wait(Waiting::After(visibility)),
                 Capture::Unnamed => self.found.unnamed.push(SpanNode::of(capture.node)),
                 Capture::Export => {
                     if let Some(spelled) = self.text.get(capture.node.byte_range()) {
@@ -356,16 +371,28 @@ impl Walk<'_, '_> {
             }
         }
         let definer = self.rules.patterns.get(pattern).and_then(Option::as_ref);
-        if let (Some(definition), Some(name), Some(definer)) = (definition, name, definer) {
-            let at = self.found.candidates.len();
-            self.found.candidates.push(Candidate {
-                definer,
-                site: None,
-                name: None,
-            });
-            let mut wait = |id, waiting| self.waiting.entry(id).or_default().push(waiting);
-            wait(definition, Waiting::Definition(at));
-            wait(name, Waiting::Name(at));
+        if let (Some(definition), Some(definer)) = (definition, definer) {
+            self.candidate(definer, definition, &names);
+        }
+    }
+
+    /// A candidate of `definer` that waits for its `@definition` node
+    /// `definition` and its `@name` nodes `names`, one at least.
+    fn candidate(&mut self, definer: &'r Definer, definition: usize, names: &[usize]) {
+        if names.is_empty() {
+            return;
+        }
+        let at = self.found.candidates.len();
+        self.found.candidates.push(Candidate {
+            definer,
+            site: None,
+            name: None,
+            names_left: names.len(),
+        });
+        let mut wait = |id, waiting| self.waiting.entry(id).or_default().push(waiting);
+        wait(definition, Waiting::Definition(at));
+        for name in names {
+            wait(*name, Waiting::Name(at));
         }
     }
 
@@ -377,6 +404,11 @@ impl Walk<'_, '_> {
         let waiting = self.waiting.remove(&node.id()).unwrap_or_default();
         let parent = self.frames.last().copied();
         let frame = frame_of(node, parent, &waiting);
+        for waited in &waiting {
+            if let (Waiting::After(label), Some(parent)) = (waited, self.frames.last_mut()) {
+                parent.after = Some(*label);
+            }
+        }
         self.push_reach(frame.kind, parent.map(|parent| parent.kind));
         self.push_runs(frame, syntax::is_comment(node));
         self.frames.push(frame);
@@ -392,7 +424,8 @@ impl Walk<'_, '_> {
                     }
                 }
                 Waiting::Name(at) => self.complete_name(at, node, frame, work)?,
-                Waiting::Test | Waiting::Visibility(_) | Waiting::Within(_) => {}
+                Waiting::Test | Waiting::Visibility(_) | Waiting::Within(_) | Waiting::After(_) => {
+                }
             }
         }
         Ok(())
@@ -536,15 +569,25 @@ impl Walk<'_, '_> {
         let parts = name::parts(
             node,
             self.text,
-            candidate.definer.separator.as_deref(),
+            (
+                candidate.definer.separator.as_deref(),
+                &candidate.definer.skip,
+            ),
             work,
         )?;
-        candidate.name = Some(NameNode {
-            parts,
-            test: frame.test,
-            visibility: frame.visibility,
-            within: frame.within,
-        });
+        candidate.names_left = candidate.names_left.saturating_sub(1);
+        match candidate.name.as_mut() {
+            Some(name) => name.parts.extend(parts),
+            None => {
+                candidate.name = Some(NameNode {
+                    parts,
+                    test: frame.test,
+                    visibility: frame.visibility,
+                    within: frame.within,
+                    label: frame.after,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -561,8 +604,9 @@ impl Walk<'_, '_> {
 }
 
 /// The frame of `node` under `parent`: test code when its parent is or a
-/// test mark waited for it, and under its own visibility marks of each
-/// form or else its parent's innermost.
+/// test mark waited for it, under its own visibility marks of each form
+/// or else its parent's innermost, and under the label in force for its
+/// parent's children.
 fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame {
     let span = SpanNode::of(node);
     let mut frame = Frame {
@@ -571,6 +615,7 @@ fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame
         test: parent.is_some_and(|parent| parent.test),
         visibility: parent.and_then(|parent| parent.visibility),
         within: parent.and_then(|parent| parent.within),
+        after: parent.and_then(|parent| parent.after),
     };
     for waited in waiting {
         match *waited {
@@ -583,7 +628,7 @@ fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame
                 });
             }
             Waiting::Within(visibility) => frame.within = Some(visibility),
-            Waiting::Definition(_) | Waiting::Name(_) => {}
+            Waiting::Definition(_) | Waiting::Name(_) | Waiting::After(_) => {}
         }
     }
     frame

@@ -1,0 +1,22 @@
+component = "code"
+choice = "A C or C++ definition is public unless static, an anonymous namespace or an access label says otherwise; class members are private and struct members public until a label"
+reason = "A count of what a file exposes needs each definition's visibility as its source states it. In C and C++ that is linkage and access: a function or variable at a namespace's top has external linkage unless static or in an anonymous namespace says internal, and a member is as accessible as the access label before it states, a class's default private and a struct's or union's public. A C type, field and enumerator take the same rule, public, so a struct reads alike in a .h file, read by the C++ grammar, and in a .c file. A label wins over static on a member, since static there names storage, not access. A macro is no name of the language's scopes and states none. Whether a header exports a function is a build fact, which no syntax states, so a plain function is public."
+alternatives = [
+    "C linkage alone, functions and variables only: rejected because a struct in a .h and the same one in a .c would then differ",
+    "Public only for what a header declares: rejected because which header is included is a build fact",
+]
+tags = [
+    "anchors",
+    "visibility",
+]
+status = "accepted"
+origin = "c and c++"
+created = "2026-11-25T23:03:16.297379871Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_label_states_the_visibility_of_what_follows_it" },
+    { file = "src/code/language/c.scm" },
+    { file = "src/code/language/cpp.scm" },
+]
+depends_on = [
+    "what-a-c-or-c-plus-plus-file-defines",
+]

@@ -13,7 +13,7 @@
 //! and a forged one costs a decode in proportion to the file.
 
 use crate::code::{
-    BOUNDS, FileKind, HASH_SCHEME, INDEX_FORMAT, Indexed, decode_index, encode_index,
+    BOUNDS, BlankMacros, FileKind, HASH_SCHEME, INDEX_FORMAT, Indexed, decode_index, encode_index,
     max_entry_bytes as max_index_bytes,
 };
 use crate::store::SymbolsKey;
@@ -26,8 +26,9 @@ pub(super) const fn max_entry_bytes(kind: FileKind, source_bytes: usize) -> usiz
     max_index_bytes(kind, source_bytes).saturating_add(HEADER_BYTES)
 }
 
-/// The key of the index of `bytes`, a file of `kind`.
-pub(super) fn key(kind: FileKind, bytes: &[u8]) -> SymbolsKey {
+/// The key of the index of `bytes`, a file of `kind`; a C or C++ file's
+/// holds the identity of `macros`, the ones its tree blanks.
+pub(super) fn key(kind: FileKind, bytes: &[u8], macros: &BlankMacros) -> SymbolsKey {
     let mut hasher = blake3::Hasher::new();
     for field in [kind.name().as_bytes(), HASH_SCHEME.as_bytes()] {
         hasher.update(&(field.len() as u64).to_le_bytes());
@@ -40,6 +41,9 @@ pub(super) fn key(kind: FileKind, bytes: &[u8]) -> SymbolsKey {
         hasher.update(&(bound as u64).to_le_bytes());
     }
     hasher.update(&kind.grammar());
+    if matches!(kind, FileKind::C | FileKind::Cpp) {
+        hasher.update(macros.identity());
+    }
     hasher.update(bytes);
     SymbolsKey::new(*hasher.finalize().as_bytes())
 }
@@ -77,13 +81,17 @@ pub(super) fn decode(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::index;
+    use crate::code::{defines, index};
+
+    fn none() -> BlankMacros {
+        BlankMacros::default()
+    }
 
     #[test]
     fn an_entry_reads_back_under_its_key_and_no_other() {
         let bytes = b"pub struct Table { rows: u32 }";
-        let key = key(FileKind::Rust, bytes);
-        let indexed = index(FileKind::Rust, bytes);
+        let key = key(FileKind::Rust, bytes, &none());
+        let indexed = index(FileKind::Rust, bytes, &none());
         let entry = encode(key, &indexed);
 
         assert_eq!(
@@ -93,7 +101,7 @@ mod tests {
         assert!(entry.len() <= max_entry_bytes(FileKind::Rust, bytes.len()));
         assert_eq!(
             decode(
-                super::key(FileKind::Rust, b"other"),
+                super::key(FileKind::Rust, b"other", &none()),
                 &entry,
                 FileKind::Rust,
                 bytes.len()
@@ -104,15 +112,37 @@ mod tests {
 
     #[test]
     fn a_key_holds_the_kind_and_the_bytes() {
-        assert_ne!(key(FileKind::Toml, b"a = 1"), key(FileKind::Json, b"a = 1"));
-        assert_ne!(key(FileKind::Toml, b"a = 1"), key(FileKind::Toml, b"a = 2"));
+        assert_ne!(
+            key(FileKind::Toml, b"a = 1", &none()),
+            key(FileKind::Json, b"a = 1", &none())
+        );
+        assert_ne!(
+            key(FileKind::Toml, b"a = 1", &none()),
+            key(FileKind::Toml, b"a = 2", &none())
+        );
+    }
+
+    #[test]
+    fn the_trees_macros_key_a_c_or_cpp_file_and_no_other() {
+        let macros = BlankMacros::of([defines(b"#define API\n")]);
+
+        for kind in [FileKind::C, FileKind::Cpp] {
+            assert_ne!(
+                key(kind, b"API int f();", &macros),
+                key(kind, b"API int f();", &none())
+            );
+        }
+        assert_eq!(
+            key(FileKind::Rust, b"fn f() {}", &macros),
+            key(FileKind::Rust, b"fn f() {}", &none())
+        );
     }
 
     #[test]
     fn a_torn_or_altered_entry_is_a_miss() {
         let bytes = b"fn a() {}";
-        let key = key(FileKind::Rust, bytes);
-        let entry = encode(key, &index(FileKind::Rust, bytes));
+        let key = key(FileKind::Rust, bytes, &none());
+        let entry = encode(key, &index(FileKind::Rust, bytes, &none()));
         let mut altered = entry.clone();
         *altered.last_mut().unwrap() ^= 1;
 

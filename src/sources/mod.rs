@@ -205,6 +205,9 @@ fn read_tree<'a>(
         Scope::Tree => walk::tree_sources(root).into_iter().collect(),
         Scope::Anchored => BTreeMap::new(),
     };
+    if scope == Scope::Tree {
+        read_macros(&mut reads.indexer, root, &walked);
+    }
     let (mut entries, anchored) = probe_anchored(root, anchored, &walked, scope);
     // clone: the facts tell the files the walk took from those an anchor
     // brought in.
@@ -233,6 +236,26 @@ fn read_tree<'a>(
         entries.insert(path, Entry::File { kind, index });
     }
     (entries, walked_paths)
+}
+
+/// Have `indexer` blank the macros the C and C++ files of `walked`, the
+/// tree at `root`, define, each read in a bounded read and within its
+/// kind's size. A file that cannot be read gives none, as one that
+/// vanished; a system that starts no thread leaves the set empty, and the
+/// files' own reads then fail alike.
+fn read_macros(indexer: &mut Indexer, root: &Path, walked: &BTreeMap<String, FileKind>) {
+    let c_family: Vec<(&String, FileKind)> = walked
+        .iter()
+        .filter(|(_, kind)| matches!(kind, FileKind::C | FileKind::Cpp))
+        .map(|(path, kind)| (path, *kind))
+        .collect();
+    let read = |(path, kind): &(&String, FileKind)| {
+        let bytes = read_source(&root.join(path)).ok()?;
+        (bytes.len() <= kind.max_bytes()).then_some(bytes)
+    };
+    if indexer.read_macros(&c_family, read).is_err() {
+        diag!("warning: the C and C++ macros to blank were not read: no thread started");
+    }
 }
 
 /// What is at each of `anchored` under `root`: the entries of the
@@ -293,7 +316,7 @@ fn read_and_index(
         Err(Gone) => return None,
         Err(Faulty(fault)) => return Some(Sourced::Fault(fault)),
     };
-    let key = cache::key(kind, &bytes);
+    let key = cache::key(kind, &bytes, worker.macros());
     let cached = store
         .read_symbols(key, cache::max_entry_bytes(kind, bytes.len()))
         .and_then(|entry| cache::decode(key, &entry, kind, bytes.len()));

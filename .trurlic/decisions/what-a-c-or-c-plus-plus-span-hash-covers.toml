@@ -1,0 +1,22 @@
+component = "code"
+choice = "A C or C++ span hash takes a literal as one token, a macro's body one token per word, and a line continuation as blank; a comment in a one-line macro body is one of its words"
+reason = "A hash must move with the code and stay under a reformat. A string or character literal, a raw string and an include's path are one token each, their spaces kept, since they are values. tree-sitter keeps a #define's body as one leaf, so its spaces and the lines it is continued over would move its hash; the body is hashed one token per run between blanks, and a backslash before a line break is blank there and between nodes, so re-wrapping a macro or a statement moves nothing. The comments of a continued #define are blanked before the parse, which also keeps tree-sitter from ending the directive at them; a comment in a one-line body is left, since blanking it leaves trailing blanks tree-sitter-c misreads, and is the stated limit. Concatenated strings and digraphs are hashed as written."
+alternatives = [
+    "A macro's body verbatim: rejected because a re-wrap would read as a change",
+    "Blank every #define's comments: rejected because trailing blanks broke curl's examples",
+]
+tags = [
+    "anchors",
+    "hashing",
+]
+status = "proposed"
+origin = "c and c++"
+created = "2026-11-25T23:03:16.297379871Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_macros_body_is_hashed_by_its_words_over_its_continuations" },
+    { file = "src/code/syntax.rs", symbol = "Lexicon::continuation" },
+    { file = "src/code/units.rs", symbol = "push_words" },
+]
+depends_on = [
+    "a-span-hash-is-t1-over-the-tokens-without-comments",
+]

@@ -142,7 +142,9 @@ impl Leaves {
         let take = |node: Node<'_>| marks_of(node).take();
         walk_tokens(tree.root_node(), (text, lexicon), take, |token| {
             match token {
-                Token::Node(node) if marks_of(node).words => push_words(&mut units, node, text),
+                Token::Node(node) if marks_of(node).words => {
+                    push_words(&mut units, node, (text, lexicon));
+                }
                 Token::Node(_) | Token::Gap { .. } => push_text(&mut units, token, lexicon),
                 Token::Enter(node) => {
                     let marked = marks_of(node);
@@ -204,14 +206,20 @@ impl Leaves {
     }
 }
 
-/// Push a unit for each run of `node`'s text between ASCII whitespace:
-/// none for a node of whitespace alone.
-fn push_words(units: &mut Vec<Unit>, node: Node<'_>, text: &str) {
+/// Push a unit for each run of `node`'s text between ASCII whitespace and
+/// `lexicon`'s line continuations: none for a node of blanks alone.
+fn push_words(units: &mut Vec<Unit>, node: Node<'_>, (text, lexicon): (&str, &Lexicon)) {
     let start = node.start_byte();
     let bytes = text.as_bytes().get(node.byte_range()).unwrap_or_default();
     let mut word: Option<usize> = None;
+    let mut continuation = 0;
     for (at, byte) in bytes.iter().enumerate() {
-        match (byte.is_ascii_whitespace(), word) {
+        if continuation == 0 {
+            continuation = lexicon.continuation(text.get(start + at..).unwrap_or_default());
+        }
+        let blank = byte.is_ascii_whitespace() || continuation > 0;
+        continuation = continuation.saturating_sub(1);
+        match (blank, word) {
             (true, Some(from)) => {
                 units.push(Unit::text(start + from, start + at));
                 word = None;

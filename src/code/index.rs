@@ -8,8 +8,9 @@ use std::fmt;
 use std::sync::{Arc, LazyLock};
 
 use super::kinds::{DefinitionKind, Role, Visibility};
+use super::language::c_family::{self, BlankMacros};
 use super::language::python;
-use super::language::{Language, PYTHON, TSX, TYPESCRIPT};
+use super::language::{C, CPP, Language, PYTHON, TSX, TYPESCRIPT};
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
 use super::symbol::{Segment, Syntax};
@@ -18,7 +19,7 @@ use super::{encoding, expand, general, json, make, markdown, rust, syntax, toml,
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 11;
+pub(crate) const INDEX_FORMAT: u32 = 12;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -60,7 +61,7 @@ pub(crate) const MAX_BYTES_INDEXED_AT_ONCE: usize = 2 * TREE_SITTER_MAX_BYTES;
 /// Every bound an index and its expansion are built within, by name and
 /// value: in a cache key, so an index built under other bounds is never
 /// read as one of these, whatever the fixture corpus shows of them.
-pub(crate) const BOUNDS: [(&str, usize); 31] = [
+pub(crate) const BOUNDS: [(&str, usize); 33] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
     ("parse_stack_bytes", PARSE_STACK_BYTES),
@@ -98,6 +99,11 @@ pub(crate) const BOUNDS: [(&str, usize); 31] = [
     ("max_indentations", python::MAX_INDENTATIONS),
     ("max_continuations", python::MAX_CONTINUATIONS),
     ("match_limit", general::MATCH_LIMIT as usize),
+    ("max_macro_body_tokens", c_family::MAX_MACRO_BODY_TOKENS),
+    (
+        "max_blank_argument_bytes",
+        c_family::MAX_BLANK_ARGUMENT_BYTES,
+    ),
 ];
 
 /// The largest file of any kind the index reads.
@@ -125,6 +131,9 @@ pub(crate) enum FileKind {
     TypeScript,
     /// TSX, and JavaScript, which the TSX grammar reads.
     Tsx,
+    C,
+    /// C++, and every C or C++ header, which the C++ grammar reads.
+    Cpp,
     Toml,
     Json,
     Make,
@@ -143,6 +152,8 @@ impl FileKind {
             (_, Some("py" | "pyi" | "pyw")) => Some(Self::Python),
             (_, Some("ts" | "mts" | "cts")) => Some(Self::TypeScript),
             (_, Some("tsx" | "js" | "jsx" | "mjs" | "cjs")) => Some(Self::Tsx),
+            (_, Some("c")) => Some(Self::C),
+            (_, Some("h" | "cc" | "cpp" | "cxx" | "hpp" | "hh")) => Some(Self::Cpp),
             (_, Some("toml")) => Some(Self::Toml),
             (_, Some("json")) => Some(Self::Json),
             (_, Some("md")) => Some(Self::Markdown),
@@ -157,6 +168,8 @@ impl FileKind {
             Self::Python => Some(&PYTHON),
             Self::TypeScript => Some(&TYPESCRIPT),
             Self::Tsx => Some(&TSX),
+            Self::C => Some(&C),
+            Self::Cpp => Some(&CPP),
             Self::Rust | Self::Toml | Self::Json | Self::Make | Self::Markdown => None,
         }
     }
@@ -166,7 +179,7 @@ impl FileKind {
     /// anchor names it.
     pub(crate) const fn is_code(self) -> bool {
         match self {
-            Self::Rust | Self::Python | Self::TypeScript | Self::Tsx => true,
+            Self::Rust | Self::Python | Self::TypeScript | Self::Tsx | Self::C | Self::Cpp => true,
             Self::Toml | Self::Json | Self::Make | Self::Markdown => false,
         }
     }
@@ -179,6 +192,8 @@ impl FileKind {
             Self::Python => PYTHON.syntax,
             Self::TypeScript => TYPESCRIPT.syntax,
             Self::Tsx => TSX.syntax,
+            Self::C => C.syntax,
+            Self::Cpp => CPP.syntax,
             Self::Toml | Self::Json | Self::Make | Self::Markdown => Syntax::Plain,
         }
     }
@@ -195,6 +210,8 @@ impl FileKind {
             Self::Python => PYTHON.identity(),
             Self::TypeScript => TYPESCRIPT.identity(),
             Self::Tsx => TSX.identity(),
+            Self::C => C.identity(),
+            Self::Cpp => CPP.identity(),
             Self::Toml | Self::Json | Self::Make | Self::Markdown => [0; 32],
         }
     }
@@ -202,7 +219,9 @@ impl FileKind {
     /// The largest file of the kind the index reads.
     pub(crate) const fn max_bytes(self) -> usize {
         match self {
-            Self::Rust | Self::Python | Self::TypeScript | Self::Tsx => TREE_SITTER_MAX_BYTES,
+            Self::Rust | Self::Python | Self::TypeScript | Self::Tsx | Self::C | Self::Cpp => {
+                TREE_SITTER_MAX_BYTES
+            }
             Self::Toml | Self::Json | Self::Make | Self::Markdown => LEXICAL_MAX_BYTES,
         }
     }
@@ -214,6 +233,8 @@ impl FileKind {
             Self::Python => PYTHON.name,
             Self::TypeScript => TYPESCRIPT.name,
             Self::Tsx => TSX.name,
+            Self::C => C.name,
+            Self::Cpp => CPP.name,
             Self::Toml => "toml",
             Self::Json => "json",
             Self::Make => "make",
@@ -460,8 +481,13 @@ impl fmt::Display for IndexFault {
     }
 }
 
-/// The index of `bytes`, a file of `kind`.
-pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Result<FileIndex, IndexFault> {
+/// The index of `bytes`, a file of `kind`, in a tree whose C and C++
+/// files blank `macros`.
+pub(crate) fn index(
+    kind: FileKind,
+    bytes: &[u8],
+    macros: &BlankMacros,
+) -> Result<FileIndex, IndexFault> {
     let max = kind.max_bytes();
     if bytes.len() > max {
         return Err(IndexFault::TooLarge {
@@ -477,6 +503,8 @@ pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Result<FileIndex, IndexFaul
         FileKind::Python => general::index(&PYTHON, text)?,
         FileKind::TypeScript => general::index(&TYPESCRIPT, text)?,
         FileKind::Tsx => general::index(&TSX, text)?,
+        FileKind::C => general::index(&C, &c_family::blank(text, macros))?,
+        FileKind::Cpp => general::index(&CPP, &c_family::blank(text, macros))?,
         FileKind::Toml => toml::index(text)?,
         FileKind::Json => json::index(text)?,
         FileKind::Make => make::index(text)?,
@@ -532,7 +560,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 11] = [
+    const FINGERPRINTS: [(u32, &str); 12] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -577,6 +605,10 @@ mod tests {
             11,
             "bc0087ec4045b9e204a4c2ce352ca9833f40e3b7806b08d32b7b574a8194c238",
         ),
+        (
+            12,
+            "bd91583a0889da4fc819252847ce667d09c134e5594183ec3194c0114324036f",
+        ),
     ];
 
     #[test]
@@ -594,13 +626,22 @@ mod tests {
             }
         }
         files.sort();
+        let kinds: Vec<(&std::path::PathBuf, FileKind)> = files
+            .iter()
+            .filter_map(|path| {
+                let name = path.to_str().unwrap().trim_end_matches(".fixture");
+                Some((path, FileKind::of(name)?))
+            })
+            .collect();
+        let macros = BlankMacros::of(
+            kinds
+                .iter()
+                .filter(|(_, kind)| matches!(kind, FileKind::C | FileKind::Cpp))
+                .map(|(path, _)| c_family::defines(&std::fs::read(path).unwrap())),
+        );
         let mut hasher = blake3::Hasher::new();
-        for path in files {
-            let name = path.to_str().unwrap().trim_end_matches(".fixture");
-            let Some(kind) = FileKind::of(name) else {
-                continue;
-            };
-            let indexed = index(kind, &std::fs::read(&path).unwrap());
+        for (path, kind) in kinds {
+            let indexed = index(kind, &std::fs::read(path).unwrap(), &macros);
             hasher.update(&crate::code::encoding::encode(&indexed));
         }
         let fingerprint = hasher.finalize().to_hex().to_string();
@@ -619,24 +660,48 @@ mod tests {
         let over = vec![b'\n'; 1_048_577];
 
         assert_eq!(
-            index(FileKind::Rust, &over),
+            index(FileKind::Rust, &over, &crate::code::BlankMacros::default()),
             Err(IndexFault::TooLarge {
                 bytes: 1_048_577,
                 max: 1_048_576,
             })
         );
         for kind in [FileKind::Python, FileKind::TypeScript, FileKind::Tsx] {
-            assert_eq!(index(kind, &over).err(), index(FileKind::Rust, &over).err());
-            assert!(index(kind, &over[1..]).is_ok(), "{kind:?}");
+            assert_eq!(
+                index(kind, &over, &crate::code::BlankMacros::default()).err(),
+                index(FileKind::Rust, &over, &crate::code::BlankMacros::default()).err()
+            );
+            assert!(
+                index(kind, &over[1..], &crate::code::BlankMacros::default()).is_ok(),
+                "{kind:?}"
+            );
         }
-        assert!(index(FileKind::Markdown, &over).is_ok());
-        assert!(index(FileKind::Rust, &over[1..]).is_ok());
+        assert!(
+            index(
+                FileKind::Markdown,
+                &over,
+                &crate::code::BlankMacros::default()
+            )
+            .is_ok()
+        );
+        assert!(
+            index(
+                FileKind::Rust,
+                &over[1..],
+                &crate::code::BlankMacros::default()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn bytes_that_are_not_utf8_give_no_index() {
         assert_eq!(
-            index(FileKind::Markdown, b"# ok\n\xff"),
+            index(
+                FileKind::Markdown,
+                b"# ok\n\xff",
+                &crate::code::BlankMacros::default()
+            ),
             Err(IndexFault::NotUtf8 { at: 5 })
         );
     }

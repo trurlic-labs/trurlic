@@ -187,9 +187,20 @@ Build it.
     fn a_path_past_the_bound_of_segments_is_refused() {
         let heading = |segments: usize| format!("# {}\n## b\n", vec!["a"; segments].join("::"));
 
-        assert!(index(FileKind::Markdown, heading(MAX_NESTING - 1).as_bytes()).is_ok());
+        assert!(
+            index(
+                FileKind::Markdown,
+                heading(MAX_NESTING - 1).as_bytes(),
+                &crate::code::BlankMacros::default()
+            )
+            .is_ok()
+        );
         assert_eq!(
-            index(FileKind::Markdown, heading(MAX_NESTING).as_bytes()),
+            index(
+                FileKind::Markdown,
+                heading(MAX_NESTING).as_bytes(),
+                &crate::code::BlankMacros::default()
+            ),
             Err(IndexFault::TooDeep)
         );
     }

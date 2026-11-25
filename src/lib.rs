@@ -33,6 +33,13 @@ pub mod bench {
             .len()
     }
 
+    /// Whether the query of the language named `name` compiles, compiled
+    /// afresh, as a process compiles it on its first file of the language.
+    #[must_use]
+    pub fn query_compiles(name: &str) -> bool {
+        crate::code::query_compiles(name)
+    }
+
     /// The likely duplicate pairs of `state`, the pass over every pair
     /// that `status` makes, unbounded: how many there are.
     #[must_use]

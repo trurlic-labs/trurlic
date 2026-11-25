@@ -16,7 +16,8 @@ fn facts(files: &[(&str, &str)], other: &[(&str, Entry)]) -> CodeFacts {
             let kind = FileKind::of(path).unwrap();
             let file = Entry::File {
                 kind,
-                index: index(kind, text.as_bytes()).map_err(FileFault::Index),
+                index: index(kind, text.as_bytes(), &crate::code::BlankMacros::default())
+                    .map_err(FileFault::Index),
             };
             ((*path).to_owned(), file)
         })
@@ -505,7 +506,12 @@ fn a_file_no_walk_took_is_not_counted_for_weak() {
         .collect();
     let hidden = Entry::File {
         kind: FileKind::Rust,
-        index: index(FileKind::Rust, b"pub fn run() {}\n").map_err(FileFault::Index),
+        index: index(
+            FileKind::Rust,
+            b"pub fn run() {}\n",
+            &crate::code::BlankMacros::default(),
+        )
+        .map_err(FileFault::Index),
     };
     let here = facts(&walked[1..], &[(".hidden/x.rs", hidden)]);
     let decisions = [(
@@ -540,7 +546,12 @@ fn another_worktrees_file_is_expanded_with_the_calling_trees_macros() {
     let there = |text: &str| {
         let entry = Entry::File {
             kind: FileKind::Rust,
-            index: index(FileKind::Rust, text.as_bytes()).map_err(FileFault::Index),
+            index: index(
+                FileKind::Rust,
+                text.as_bytes(),
+                &crate::code::BlankMacros::default(),
+            )
+            .map_err(FileFault::Index),
         };
         let read = BTreeMap::from([("src/lib.rs".to_owned(), Some(entry))]);
         Elsewhere {
@@ -618,7 +629,8 @@ const BEFORE_LATER: &str = "Y^";
 /// What `path` held at `revision`, `text`, as git's history gives it.
 fn held(revision: &str, path: &str, text: &str) -> (String, String, Entry) {
     let kind = FileKind::of(path).unwrap();
-    let index = index(kind, text.as_bytes()).map_err(FileFault::Index);
+    let index = index(kind, text.as_bytes(), &crate::code::BlankMacros::default())
+        .map_err(FileFault::Index);
     (
         revision.to_owned(),
         path.to_owned(),

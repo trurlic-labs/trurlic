@@ -196,9 +196,20 @@ unsafe_code = 'forbid'
         let header =
             |segments: usize| format!("[\"{}\"]\nkey = 1\n", vec!["a"; segments].join("::"));
 
-        assert!(index(FileKind::Toml, header(MAX_NESTING - 1).as_bytes()).is_ok());
+        assert!(
+            index(
+                FileKind::Toml,
+                header(MAX_NESTING - 1).as_bytes(),
+                &crate::code::BlankMacros::default()
+            )
+            .is_ok()
+        );
         assert_eq!(
-            index(FileKind::Toml, header(MAX_NESTING).as_bytes()),
+            index(
+                FileKind::Toml,
+                header(MAX_NESTING).as_bytes(),
+                &crate::code::BlankMacros::default()
+            ),
             Err(IndexFault::TooDeep)
         );
     }
@@ -213,9 +224,20 @@ unsafe_code = 'forbid'
         let below: String = (0..600).map(|n| format!("[x{n}.z]\n")).collect();
         let text = |value: usize| format!("p = \"{}\"\n{headers}{below}", "a".repeat(value));
 
-        assert!(index(FileKind::Toml, text(12_766).as_bytes()).is_ok());
+        assert!(
+            index(
+                FileKind::Toml,
+                text(12_766).as_bytes(),
+                &crate::code::BlankMacros::default()
+            )
+            .is_ok()
+        );
         assert_eq!(
-            index(FileKind::Toml, text(12_765).as_bytes()),
+            index(
+                FileKind::Toml,
+                text(12_765).as_bytes(),
+                &crate::code::BlankMacros::default()
+            ),
             Err(IndexFault::TooComplex)
         );
     }
@@ -223,12 +245,16 @@ unsafe_code = 'forbid'
     #[test]
     fn a_document_that_does_not_parse_has_no_index() {
         assert!(matches!(
-            index(FileKind::Toml, b"a = 1\na = 2\n"),
+            index(FileKind::Toml, b"a = 1\na = 2\n", &crate::code::BlankMacros::default()),
             Err(IndexFault::Syntax { at }) if at > 0
         ));
         let deep = format!("a = {}{}", "[".repeat(10_000), "]".repeat(10_000));
         assert!(matches!(
-            index(FileKind::Toml, deep.as_bytes()),
+            index(
+                FileKind::Toml,
+                deep.as_bytes(),
+                &crate::code::BlankMacros::default()
+            ),
             Err(IndexFault::Syntax { .. })
         ));
     }

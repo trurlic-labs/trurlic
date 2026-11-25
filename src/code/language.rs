@@ -5,12 +5,14 @@
 //! bounds its grammar needs checked before a parse (`language/<name>.rs`,
 //! for a grammar that has any), and the places of a tree that hold its
 //! test code. Adding a language is a grammar crate, a query file, a row
-//! here and a fixture corpus.
+//! here and a fixture corpus. C and C++ add the one rewrite before a
+//! parse, the tree's attribute macros blanked (`language/c_family.rs`).
 
 use std::sync::OnceLock;
 
 use super::index::IndexFault;
 
+pub(super) mod c_family;
 pub(super) mod python;
 use super::query::{QueryFault, Rules};
 use super::symbol::Syntax;
@@ -60,6 +62,7 @@ pub(super) static PYTHON: Language = Language {
         block_comments: &[],
         nested_blocks: false,
         glued: &[],
+        continuations: false,
     },
     before_parse: &[python::check_indentations, python::check_continuations],
     test_places: &["tests/", "test_*.py", "*_test.py", "conftest.py"],
@@ -79,6 +82,7 @@ const TYPESCRIPT_LEXICON: Lexicon = Lexicon {
     block_comments: &[],
     nested_blocks: false,
     glued: &[],
+    continuations: false,
 };
 
 /// `.ts`, `.mts` and `.cts`, read by the `typescript` grammar, which
@@ -132,13 +136,73 @@ pub(super) static TSX: Language = Language {
     identity: OnceLock::new(),
 };
 
+/// tree-sitter-c and tree-sitter-cpp lex every comment as an extra; a
+/// line continuation is in no node, and blank where it lies.
+const C_FAMILY_LEXICON: Lexicon = Lexicon {
+    literals: &[],
+    line_comments: &[],
+    block_comments: &[],
+    nested_blocks: false,
+    glued: &[],
+    continuations: true,
+};
+
+/// `.c`, read by the `c` grammar.
+pub(super) static C: Language = Language {
+    name: "c",
+    grammar: || tree_sitter_c::LANGUAGE.into(),
+    node_types: tree_sitter_c::NODE_TYPES,
+    queries: &[include_str!("language/c.scm")],
+    syntax: Syntax::Code,
+    lexicon: C_FAMILY_LEXICON,
+    before_parse: &[],
+    test_places: &["tests/", "test/", "*_test.c", "*_unittest.c"],
+    rules: OnceLock::new(),
+    identity: OnceLock::new(),
+};
+
+/// `.cc`, `.cpp`, `.cxx`, `.hpp`, `.hh`, and `.h`, a header of C or of
+/// C++, read by the `cpp` grammar. Its symbols are text, so `operator()`
+/// and `operator<` are spelled as written.
+pub(super) static CPP: Language = Language {
+    name: "cpp",
+    grammar: || tree_sitter_cpp::LANGUAGE.into(),
+    node_types: tree_sitter_cpp::NODE_TYPES,
+    queries: &[include_str!("language/cpp.scm")],
+    syntax: Syntax::Strings,
+    lexicon: C_FAMILY_LEXICON,
+    before_parse: &[],
+    test_places: &[
+        "tests/",
+        "test/",
+        "*_test.h",
+        "*_test.cc",
+        "*_test.cpp",
+        "*_test.cxx",
+        "*_test.hpp",
+        "*_test.hh",
+        "*_unittest.h",
+        "*_unittest.cc",
+        "*_unittest.cpp",
+        "*_unittest.cxx",
+        "*_unittest.hpp",
+        "*_unittest.hh",
+    ],
+    rules: OnceLock::new(),
+    identity: OnceLock::new(),
+};
+
 impl Language {
     /// Its query's rules, compiled once per process, on the first file
     /// of the language the cache does not hold.
     pub(super) fn rules(&self) -> Result<&Rules, &QueryFault> {
-        self.rules
-            .get_or_init(|| Rules::compile((self.grammar)(), &self.queries.concat()))
-            .as_ref()
+        self.rules.get_or_init(|| self.compile()).as_ref()
+    }
+
+    /// Its query compiled against its grammar and read by the contract:
+    /// the cost a process pays once for the language.
+    pub(super) fn compile(&self) -> Result<Rules, QueryFault> {
+        Rules::compile((self.grammar)(), &self.queries.concat())
     }
 
     /// The identity of its grammar and its query, in a cache key: a
@@ -187,7 +251,7 @@ mod tests {
 
     #[test]
     fn each_query_compiles_against_its_grammar_within_the_contract() {
-        for language in [&PYTHON, &TYPESCRIPT, &TSX] {
+        for language in [&PYTHON, &TYPESCRIPT, &TSX, &C, &CPP] {
             if let Err(fault) = language.rules() {
                 panic!("{}: {fault}", language.name);
             }
@@ -226,6 +290,26 @@ mod tests {
             (&TSX, "lib/__tests__/helpers.cjs", true),
             (&TSX, "lib/store.test.mjs", true),
             (&TSX, "lib/store.js", false),
+        ] {
+            assert_eq!(language.is_test_place(path), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn a_c_family_test_place_is_a_tests_or_test_directory_or_a_test_file() {
+        for (language, path, expected) in [
+            (&C, "tests/unit/lib500.c", true),
+            (&C, "deps/x/test/unit.c", true),
+            (&C, "db/c_test.c", true),
+            (&C, "db/c_unittest.c", true),
+            (&C, "src/test.c", false),
+            (&C, "src/testing.c", false),
+            (&CPP, "db/db_test.cc", true),
+            (&CPP, "util/env_unittest.cpp", true),
+            (&CPP, "test/format-test.cc", true),
+            (&CPP, "include/shelf_test.hpp", true),
+            (&CPP, "src/test_shelf.cc", false),
+            (&CPP, "src/shelf.h", false),
         ] {
             assert_eq!(language.is_test_place(path), expected, "{path}");
         }

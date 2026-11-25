@@ -1,9 +1,10 @@
 use super::*;
+use crate::code::BlankMacros;
 use crate::code::index::{FileKind, index as index_of};
 use crate::code::language::python::{MAX_CONTINUATIONS, MAX_INDENTATIONS};
 use crate::code::scope::Scopes;
 use crate::code::span::SpanHash;
-use crate::code::testing::{defined, on_parse_stack, path};
+use crate::code::testing::{defined, named, on_parse_stack, path};
 
 /// Each definition of `text`, a Python file, as `path kind role
 /// visibility` and the text of its span.
@@ -14,7 +15,7 @@ fn statements(text: &str) -> Vec<(String, &str)> {
 /// Each definition of `text`, a file of `kind`, as `path kind role
 /// visibility` and the text of its span.
 fn statements_of(kind: FileKind, text: &str) -> Vec<(String, &str)> {
-    let index = index_of(kind, text.as_bytes()).unwrap();
+    let index = index_of(kind, text.as_bytes(), &BlankMacros::default()).unwrap();
     let scopes = Scopes {
         file: &index.scopes,
         added: &[],
@@ -45,7 +46,7 @@ fn hash_of(text: &str, wanted: &str) -> SpanHash {
 /// The hash of the one definition of `text`, a file of `kind`, whose
 /// path is `wanted`.
 fn hash_in(kind: FileKind, text: &str, wanted: &str) -> SpanHash {
-    let index = index_of(kind, text.as_bytes()).unwrap();
+    let index = index_of(kind, text.as_bytes(), &BlankMacros::default()).unwrap();
     let scopes = Scopes {
         file: &index.scopes,
         added: &[],
@@ -244,10 +245,20 @@ fn a_comment_ending_in_a_backslash_continues_no_width_the_bound_counts() {
 
     for line_break in ["\n", "\r\n"] {
         let text = commented_ifs(600, line_break);
-        assert_eq!(index_of(FileKind::Python, text.as_bytes()), refused);
+        assert_eq!(
+            index_of(FileKind::Python, text.as_bytes(), &BlankMacros::default()),
+            refused
+        );
     }
     let own_line = nested_ifs(600).replace("if x:\n", "if x:\n# \\\n");
-    assert_eq!(index_of(FileKind::Python, own_line.as_bytes()), refused);
+    assert_eq!(
+        index_of(
+            FileKind::Python,
+            own_line.as_bytes(),
+            &BlankMacros::default()
+        ),
+        refused
+    );
 }
 
 #[test]
@@ -255,13 +266,18 @@ fn indentations_past_the_scanners_bound_are_refused_before_the_parse() {
     assert!(
         index_of(
             FileKind::Python,
-            nested_ifs(MAX_INDENTATIONS - 1).as_bytes()
+            nested_ifs(MAX_INDENTATIONS - 1).as_bytes(),
+            &BlankMacros::default()
         )
         .is_ok()
     );
     for depth in [MAX_INDENTATIONS + 1, 600] {
         assert_eq!(
-            index_of(FileKind::Python, nested_ifs(depth).as_bytes()),
+            index_of(
+                FileKind::Python,
+                nested_ifs(depth).as_bytes(),
+                &BlankMacros::default()
+            ),
             Err(IndexFault::TooManyIndentations {
                 max: MAX_INDENTATIONS
             })
@@ -287,7 +303,9 @@ fn hostile_python_is_refused_or_read_in_linear_work() {
     ];
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");
-        match on_parse_stack(|| index_of(FileKind::Python, text.as_bytes())) {
+        match on_parse_stack(|| {
+            index_of(FileKind::Python, text.as_bytes(), &BlankMacros::default())
+        }) {
             Ok(_) | Err(IndexFault::TooComplex) => {}
             Err(other) => panic!("{case}: {other}"),
         }
@@ -311,15 +329,30 @@ fn a_run_of_continuations_past_the_bound_is_refused_before_the_parse() {
     // hour, in work no budget of the parse counts.
     let hostile = continued(256).repeat((1 << 20) / continued(256).len());
 
-    assert_eq!(index_of(FileKind::Python, hostile.as_bytes()), refused);
     assert_eq!(
         index_of(
             FileKind::Python,
-            continued(MAX_CONTINUATIONS + 1).as_bytes()
+            hostile.as_bytes(),
+            &BlankMacros::default()
         ),
         refused
     );
-    assert!(index_of(FileKind::Python, continued(MAX_CONTINUATIONS).as_bytes()).is_ok());
+    assert_eq!(
+        index_of(
+            FileKind::Python,
+            continued(MAX_CONTINUATIONS + 1).as_bytes(),
+            &BlankMacros::default()
+        ),
+        refused
+    );
+    assert!(
+        index_of(
+            FileKind::Python,
+            continued(MAX_CONTINUATIONS).as_bytes(),
+            &BlankMacros::default()
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -394,6 +427,12 @@ fn general_corpus() -> Vec<(String, FileKind, String)> {
             "#!/usr/bin/env node\nconst t = `//a ${b /* c */} /*d*/`; // e\nconst r = /\\/\\*x/g;\n<!-- f\nconst j = <p> a  // b </p>;\n"
                 .to_owned(),
         ),
+        (
+            "lexemes.cc".to_owned(),
+            FileKind::Cpp,
+            "#define M(a) ((a) + \\\n  1) // m\nint x = 1 + \\\n  2; /* c */\nauto s = R\"x(/* no */)x\" \"//\";\n"
+                .to_owned(),
+        ),
     ];
     let mut pending = vec![root];
     while let Some(dir) = pending.pop() {
@@ -456,7 +495,10 @@ fn every_byte_but_comments_and_whitespace_is_in_one_token() {
         }
         for (at, c) in text.char_indices() {
             assert!(
-                covered[at] || extras[at] || c.is_whitespace(),
+                covered[at]
+                    || extras[at]
+                    || c.is_whitespace()
+                    || language.lexicon.continuation(&text[at..]) > 0,
                 "{file}: byte {at} ({c:?}) is in no token"
             );
         }
@@ -860,10 +902,132 @@ fn hostile_typescript_is_refused_or_read_in_linear_work() {
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");
         for kind in [FileKind::TypeScript, FileKind::Tsx] {
-            match on_parse_stack(|| index_of(kind, text.as_bytes())) {
+            match on_parse_stack(|| index_of(kind, text.as_bytes(), &BlankMacros::default())) {
                 Ok(_) | Err(IndexFault::TooComplex) => {}
                 Err(other) => panic!("{case}: {other}"),
             }
         }
     }
+}
+
+/// Each definition of `text`, a C++ file, as [`statements_of`] writes it,
+/// without its span.
+fn cpp(text: &str) -> Vec<String> {
+    statements_of(FileKind::Cpp, text)
+        .into_iter()
+        .map(|(statement, _)| statement)
+        .collect()
+}
+
+#[test]
+fn a_name_captured_on_several_nodes_is_their_segments_in_order() {
+    assert_eq!(
+        cpp("TEST(Shelf, Opens) {}\nTEST_F(Shelf, Closes) {}\nCHECK(Shelf, Fills) {}\n"),
+        ["Shelf::Opens Test Test -", "Shelf::Closes Test Test -"]
+    );
+}
+
+#[test]
+fn a_skipped_kind_is_no_part_of_a_name() {
+    assert_eq!(
+        cpp(
+            "template <> class Box<int> {};\ntemplate <typename T> T Box<T>::get() {}\nA::operator bool() const {}\n"
+        ),
+        [
+            "Box Class Code Public",
+            "Box::get Function Code Public",
+            "A::operator bool Function Code Public",
+        ]
+    );
+}
+
+#[test]
+fn a_space_stands_in_a_name_only_between_two_words() {
+    let text = "bool A::operator == (A o) {}\nA::operator  bool() {}\nA::~ A() {}\n";
+
+    assert_eq!(
+        cpp(text),
+        [
+            "A::operator== Function Code Public",
+            "A::operator bool Function Code Public",
+            "A::~A Function Code Public",
+        ]
+    );
+    for symbol in ["A::operator==", "A::operator bool", "A::~A()"] {
+        assert_eq!(named(FileKind::Cpp, text, symbol).len(), 1, "{symbol}");
+    }
+}
+
+#[test]
+fn a_label_states_the_visibility_of_what_follows_it() {
+    let text = "class A {\n  int a;\n public:\n  static int b() {}\n#if X\n  int c;\n#endif\n protected:\n  struct B { int d; };\n};\n\
+                struct C { int e; private: int f; };\nnamespace { int g; }\nstatic int h;\nint i;\n";
+
+    assert_eq!(
+        cpp(text),
+        [
+            "A Class Code Public",
+            "A::a Field Code Private",
+            "A::b Method Code Public",
+            "A::c Field Code Public",
+            "A::B Struct Code Protected",
+            "A::B::d Field Code Public",
+            "C Struct Code Public",
+            "C::e Field Code Public",
+            "C::f Field Code Private",
+            "g Variable Code Private",
+            "h Variable Code Private",
+            "i Variable Code Public",
+        ]
+    );
+}
+
+#[test]
+fn a_macros_body_is_hashed_by_its_words_over_its_continuations() {
+    let macro_hash = |text: &str| hash_in(FileKind::C, text, "M");
+
+    assert_eq!(
+        macro_hash("#define M(a) ((a) + 1)\n"),
+        macro_hash("#define M(a)   ((a)  + \\\n    1)\n")
+    );
+    assert_eq!(
+        macro_hash("#define M(a) ((a) + 1)\n"),
+        macro_hash("#define M(a) ((a) /* one */ + \\\n 1)\n")
+    );
+    assert_ne!(
+        macro_hash("#define M(a) ((a) + 1)\n"),
+        macro_hash("#define M(a) ((a) + 2)\n")
+    );
+    // The stated limit: a comment in a one-line body is one of its words.
+    assert_ne!(
+        macro_hash("#define M 1\n"),
+        macro_hash("#define M 1 // one\n")
+    );
+    assert_eq!(
+        hash_in(FileKind::C, "int f(void) { return 1 + 2; }\n", "f"),
+        hash_in(FileKind::C, "int f(void) { return 1 + \\\n2; }\n", "f")
+    );
+}
+
+#[test]
+fn a_tree_defined_attribute_macro_is_blanked_before_the_parse() {
+    let text = "class API Book { int pages; };\nNS_BEGIN\nint f();\nNS_END\n";
+    let macros = BlankMacros::of([crate::code::defines(
+        b"#define API __attribute__((visibility(\"default\")))\n#define NS_BEGIN namespace shelf {\n#define NS_END }\n",
+    )]);
+    let read = |macros: &BlankMacros| {
+        let index = index_of(FileKind::Cpp, text.as_bytes(), macros).unwrap();
+        let scopes = Scopes {
+            file: &index.scopes,
+            added: &[],
+        };
+        index
+            .definitions
+            .iter()
+            .map(|d| path(scopes, d.scope))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(read(&macros), ["Book", "Book::pages", "f"]);
+    assert!(!read(&BlankMacros::default()).contains(&"Book".to_owned()));
 }

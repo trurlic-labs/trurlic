@@ -425,6 +425,58 @@ const OTHER_CASES: &[(&str, &str, &str)] = &[
     ("docs/guide.md/x", "", "nothing is at its path"),
 ];
 
+const SHELF_H: &str = "c/shelf.h";
+const SHELF_C: &str = "c/shelf.c";
+const SHELF_HPP: &str = "cpp/shelf.hpp";
+const SHELF_CC: &str = "cpp/shelf.cc";
+
+/// One case per C and C++ construct and outcome: a header and its source,
+/// a prototype beside its definition, `#if` arms, overloads, a template
+/// and its specialization, operators, a destructor, conversions, and what
+/// the macro blanking reads and leaves.
+const C_FAMILY_CASES: &[(&str, &str, &str)] = &[
+    (SHELF_H, "shelf_open", SYMBOL),
+    (SHELF_C, "shelf_open", SYMBOL),
+    (SHELF_C, "shelf_open()", SYMBOL),
+    (SHELF_C, "sort_books", TWO),
+    (SHELF_C, "weigh", TWO),
+    (SHELF_C, "legacy", SYMBOL),
+    (SHELF_C, "pick", SYMBOL),
+    (SHELF_C, "SWAP", SYMBOL),
+    (SHELF_C, "shelf_open::local::unused", SYMBOL),
+    (SHELF_H, "shelf", TWO),
+    (SHELF_H, "book::pages", SYMBOL),
+    (SHELF_H, "shelf::place::row", SYMBOL),
+    (SHELF_H, "shelf::tag", SYMBOL),
+    (SHELF_H, "shelf::full", MISSING),
+    (SHELF_H, "shelf_state::SHELF_OPEN", SYMBOL),
+    (SHELF_H, "SHELF_API", TWO),
+    (SHELF_H, "shelf_visit", SYMBOL),
+    (SHELF_HPP, "shelf::model::Book", SYMBOL),
+    (SHELF_HPP, "Book::Book", TWO),
+    (SHELF_HPP, "Book::~Book", SYMBOL),
+    (SHELF_HPP, "Book::operator==", SYMBOL),
+    (SHELF_HPP, "Book::operator()", SYMBOL),
+    (SHELF_HPP, "Book::operator()()", SYMBOL),
+    (SHELF_HPP, "Book::operator bool", SYMBOL),
+    (SHELF_HPP, "Book::operator<", SYMBOL),
+    (SHELF_HPP, "Book::pages()", SYMBOL),
+    (SHELF_HPP, "Box", TWO),
+    (SHELF_HPP, "Box::get", TWO),
+    (SHELF_HPP, "heavier", TWO),
+    (SHELF_HPP, "weigh", TWO),
+    (SHELF_HPP, "edition::v2::number", SYMBOL),
+    (SHELF_HPP, "hidden_count", SYMBOL),
+    (SHELF_HPP, "Catalog", MISSING),
+    (SHELF_CC, "Book::operator==", SYMBOL),
+    (SHELF_CC, "Book::operator int", SYMBOL),
+    (SHELF_CC, "Box::get", TWO),
+    (SHELF_CC, "tidy", TWO),
+    (SHELF_CC, "stocked", SYMBOL),
+    (SHELF_CC, "shelf::stocked", MISSING),
+    ("cpp/shelf_test.cc", "BookTest::StartsEmpty", SYMBOL),
+];
+
 #[test]
 fn each_construct_of_the_fixture_corpus_resolves_as_stated() {
     let (_tmp, store) = fixture_tree();
@@ -436,6 +488,10 @@ fn each_construct_of_the_fixture_corpus_resolves_as_stated() {
         expected(TYPESCRIPT_CASES)
     );
     assert_eq!(resolve_all(&store, OTHER_CASES), expected(OTHER_CASES));
+    assert_eq!(
+        resolve_all(&store, C_FAMILY_CASES),
+        expected(C_FAMILY_CASES)
+    );
 }
 
 #[test]
@@ -758,8 +814,9 @@ fn statements(facts: &CodeFacts) -> Vec<String> {
 /// declares, a file under `tests/`; a `test_*` function, a `Test*` class
 /// and a `TestCase` subclass with what they hold, `conftest.py`,
 /// `test_*.py` and a Python file under `tests/`; a `describe`, `it` or
-/// `test` call, `*.test.ts`, `*.spec.jsx` and a file under `__tests__/`)
-/// and each visibility.
+/// `test` call, `*.test.ts`, `*.spec.jsx` and a file under `__tests__/`;
+/// googletest's `TEST` and its kin, `*_test.cc` and a C file under
+/// `tests/`) and each visibility.
 const STATEMENTS: &[&str] = &[
     "Cargo.toml workspace Key Code -",
     "Cargo.toml workspace::members Key Code -",
@@ -783,6 +840,135 @@ const STATEMENTS: &[&str] = &[
     "Makefile install Target Code -",
     "Makefile twice Target Code -",
     "Makefile twice Target Code -",
+    "c/shelf.c SWAP Macro Code -",
+    "c/shelf.c shelf_opened Variable Code Public",
+    "c/shelf.c verbose Variable Code Private",
+    "c/shelf.c sort_books Function Code Private",
+    "c/shelf.c shelf_open Function Code Public",
+    "c/shelf.c shelf_open::local Struct Code Public",
+    "c/shelf.c shelf_open::local::unused Field Code Public",
+    "c/shelf.c shelf_close Function Code Public",
+    "c/shelf.c sort_books Function Code Private",
+    "c/shelf.c weigh Function Code Private",
+    "c/shelf.c weigh Function Code Private",
+    "c/shelf.c pick Function Code Public",
+    "c/shelf.c legacy Function Code Public",
+    "c/shelf.c shelf_log Function Code Public",
+    "c/shelf.c shelf_outside Function Code Public",
+    "c/shelf.h SHELF_H Macro Code -",
+    "c/shelf.h SHELF_API Macro Code -",
+    "c/shelf.h SHELF_API Macro Code -",
+    "c/shelf.h SHELF_PRINTF Macro Code -",
+    "c/shelf.h SHELF_FLAG Macro Code -",
+    "c/shelf.h SHELF_CAPACITY Macro Code -",
+    "c/shelf.h SHELF_HALF Macro Code -",
+    "c/shelf.h shelf TypeAlias Code Public",
+    "c/shelf.h book Struct Code Public",
+    "c/shelf.h book::pages Field Code Public",
+    "c/shelf.h named_book_t TypeAlias Code Public",
+    "c/shelf.h named_book Struct Code Public",
+    "c/shelf.h named_book::pages Field Code Public",
+    "c/shelf.h shelf_visit TypeAlias Code Public",
+    "c/shelf.h shelf_state Enum Code Public",
+    "c/shelf.h shelf_state::SHELF_OPEN Variant Code Public",
+    "c/shelf.h shelf_state::SHELF_CLOSED Variant Code Public",
+    "c/shelf.h shelf Struct Code Public",
+    "c/shelf.h shelf::books Field Code Public",
+    "c/shelf.h shelf::count Field Code Public",
+    "c/shelf.h shelf::compare Field Code Public",
+    "c/shelf.h shelf::place Field Code Public",
+    "c/shelf.h shelf::place::row Field Code Public",
+    "c/shelf.h shelf::place::column Field Code Public",
+    "c/shelf.h shelf::id Field Code Public",
+    "c/shelf.h shelf::tag Field Code Public",
+    "c/shelf.h shelf_open Function Code Public",
+    "c/shelf.h shelf_close Function Code Public",
+    "c/shelf.h shelf_log Function Code Public",
+    "c/shelf.h shelf_opened Variable Code Public",
+    "c/tests/shelf_check.c check_open Function Test Private",
+    "c/tests/shelf_check.c main Function Test Public",
+    "cpp/shelf.cc stocked Function Code Public",
+    "cpp/shelf.cc shelf::model Module Code Public",
+    "cpp/shelf.cc shelf::model::Book::count Variable Code Public",
+    "cpp/shelf.cc shelf::model::Book::Book Function Code Public",
+    "cpp/shelf.cc shelf::model::Book::Book Function Code Public",
+    "cpp/shelf.cc shelf::model::Book::~Book Function Code Public",
+    "cpp/shelf.cc shelf::model::Book::operator== Function Code Public",
+    "cpp/shelf.cc shelf::model::Book::operator int Function Code Public",
+    "cpp/shelf.cc shelf::model::Book::operator() Function Code Public",
+    "cpp/shelf.cc shelf::model::Book::mark Function Code Public",
+    "cpp/shelf.cc shelf::model::Book::mark::Marker Struct Code Public",
+    "cpp/shelf.cc shelf::model::Book::mark::Marker::at Field Code Public",
+    "cpp/shelf.cc shelf::model::operator< Function Code Public",
+    "cpp/shelf.cc shelf::model::Box::get Function Code Public",
+    "cpp/shelf.cc shelf::model::Box::get Function Code Public",
+    "cpp/shelf.cc shelf::model::heavier Function Code Public",
+    "cpp/shelf.cc shelf::model::weigh Function Code Public",
+    "cpp/shelf.cc shelf::model::weigh Function Code Public",
+    "cpp/shelf.cc shelf::model::tidy Function Code Private",
+    "cpp/shelf.cc shelf::model::tidy Function Code Private",
+    "cpp/shelf.hpp SHELF_API Macro Code -",
+    "cpp/shelf.hpp SHELF_CONSTEXPR Macro Code -",
+    "cpp/shelf.hpp SHELF_BEGIN_NAMESPACE Macro Code -",
+    "cpp/shelf.hpp SHELF_END_NAMESPACE Macro Code -",
+    "cpp/shelf.hpp shelf::model Module Code Public",
+    "cpp/shelf.hpp shelf::model::Format Enum Code Public",
+    "cpp/shelf.hpp shelf::model::Format::kPaper Variant Code Public",
+    "cpp/shelf.hpp shelf::model::Format::kDigital Variant Code Public",
+    "cpp/shelf.hpp shelf::model::Book Class Code Public",
+    "cpp/shelf.hpp shelf::model::Book::Book Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::Book Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::~Book Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::operator== Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::operator= Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::operator bool Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::operator int Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::operator() Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::pages Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::count Field Code Public",
+    "cpp/shelf.hpp shelf::model::Book::total Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::read Method Code Public",
+    "cpp/shelf.hpp shelf::model::Book::operator< Function Code Public",
+    "cpp/shelf.hpp shelf::model::Book::swap Function Code Public",
+    "cpp/shelf.hpp shelf::model::Book::title_type TypeAlias Code Public",
+    "cpp/shelf.hpp shelf::model::Book::Page Struct Code Public",
+    "cpp/shelf.hpp shelf::model::Book::Page::number Field Code Public",
+    "cpp/shelf.hpp shelf::model::Book::mark Method Code Protected",
+    "cpp/shelf.hpp shelf::model::Book::title_ Field Code Private",
+    "cpp/shelf.hpp shelf::model::Book::pages_ Field Code Private",
+    "cpp/shelf.hpp shelf::model::Ledger Class Code Public",
+    "cpp/shelf.hpp shelf::model::Ledger::entries Field Code Private",
+    "cpp/shelf.hpp shelf::model::Ledger::size Method Code Public",
+    "cpp/shelf.hpp shelf::model::Spine Struct Code Public",
+    "cpp/shelf.hpp shelf::model::Spine::width Field Code Public",
+    "cpp/shelf.hpp shelf::model::Spine::glue Field Code Private",
+    "cpp/shelf.hpp shelf::model::Box Class Code Public",
+    "cpp/shelf.hpp shelf::model::Box::get Method Code Public",
+    "cpp/shelf.hpp shelf::model::Box::value_ Field Code Private",
+    "cpp/shelf.hpp shelf::model::Box Class Code Public",
+    "cpp/shelf.hpp shelf::model::Box::get Method Code Public",
+    "cpp/shelf.hpp shelf::model::heavier Function Code Public",
+    "cpp/shelf.hpp shelf::model::heavier Function Code Public",
+    "cpp/shelf.hpp shelf::model::weigh Function Code Public",
+    "cpp/shelf.hpp shelf::model::weigh Function Code Public",
+    "cpp/shelf.hpp shelf::model::Shelf TypeAlias Code Public",
+    "cpp/shelf.hpp shelf::model::visit TypeAlias Code Public",
+    "cpp/shelf.hpp shelf::model::by_pages Function Code Public",
+    "cpp/shelf.hpp shelf::model::edition Module Code Public",
+    "cpp/shelf.hpp shelf::model::edition::v2 Module Code Public",
+    "cpp/shelf.hpp shelf::model::edition::v2::number Function Code Public",
+    "cpp/shelf.hpp hidden_count Variable Code Private",
+    "cpp/shelf.hpp shelved Variable Code Private",
+    "cpp/shelf.hpp size Variable Code Public",
+    "cpp/shelf_test.cc shelf::model Module Test Public",
+    "cpp/shelf_test.cc shelf::model::ShelfTest Class Test Public",
+    "cpp/shelf_test.cc shelf::model::ShelfTest::opened_ Field Test Protected",
+    "cpp/shelf_test.cc shelf::model::BookTest::StartsEmpty Test Test -",
+    "cpp/shelf_test.cc shelf::model::ShelfTest::Opens Test Test -",
+    "cpp/shelf_test.cc shelf::model::ShelfTest::OpensEach Test Test -",
+    "cpp/shelf_test.cc shelf::model::BoxTest Class Test Public",
+    "cpp/shelf_test.cc shelf::model::BoxTest::Holds Test Test -",
+    "cpp/shelf_test.cc shelf::model::BoxTest::HoldsEach Test Test -",
     "crates/ids/Cargo.toml package Key Code -",
     "crates/ids/Cargo.toml package::name Key Code -",
     "crates/ids/src/lib.rs numbered_id Macro Code Public",
@@ -1123,6 +1309,38 @@ fn each_definition_of_the_fixture_corpus_states_its_kind_role_and_visibility() {
     );
 
     assert_eq!(statements(&facts), STATEMENTS);
+}
+
+#[test]
+fn a_file_outside_the_walk_is_read_against_the_trees_macros() {
+    let tmp = TempDir::new().unwrap();
+    let files = [
+        (
+            "include/api.h",
+            "#define API __attribute__((visibility(\"default\")))\n",
+        ),
+        ("src/book.cc", "class API Book { int pages; };\n"),
+        (
+            "node_modules/x/shelf.cc",
+            "class API Shelf { int size; };\n",
+        ),
+        ("node_modules/x/own.h", "#define API 1\n#define OWN\n"),
+        ("node_modules/x/own.cc", "class OWN Own { int size; };\n"),
+    ];
+    for (path, text) in files {
+        let path = tmp.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = setup_store(tmp.path());
+    let cases = [
+        ("src/book.cc", "Book::pages", SYMBOL),
+        ("node_modules/x/shelf.cc", "Shelf::size", SYMBOL),
+        ("node_modules/x/own.cc", "Own::size", MISSING),
+        ("node_modules/x/own.h", "OWN", SYMBOL),
+    ];
+
+    assert_eq!(resolve_all(&store, &cases), expected(&cases));
 }
 
 #[test]

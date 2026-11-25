@@ -241,9 +241,22 @@ pub(super) struct Lexicon {
     /// may be written `$ a`): hashed as two, so the space between moves
     /// nothing.
     pub(super) glued: &'static [(&'static str, usize)],
+    /// Whether a backslash right before a line break is blank, as C's
+    /// line continuation is, in a gap and in a node hashed by its words.
+    pub(super) continuations: bool,
 }
 
 impl Lexicon {
+    /// The bytes of the line continuation `rest` opens with; 0 when it
+    /// opens with none or the lexicon has none.
+    pub(super) fn continuation(&self, rest: &str) -> usize {
+        match (self.continuations, rest.as_bytes()) {
+            (true, [b'\\', b'\n', ..]) => 2,
+            (true, [b'\\', b'\r', b'\n', ..]) => 3,
+            _ => 0,
+        }
+    }
+
     /// The bytes of the comment `rest` opens with; 0 when it opens with
     /// none. A comment not closed runs to the end of `rest`.
     fn comment(&self, rest: &str) -> usize {
@@ -298,7 +311,7 @@ fn gaps<'n>(
     let mut run: Option<usize> = None;
     let mut at = 0;
     while let Some(rest) = gap.get(at..).filter(|rest| !rest.is_empty()) {
-        let comment = lexicon.comment(rest);
+        let comment = lexicon.comment(rest).max(lexicon.continuation(rest));
         let c = rest.chars().next().unwrap_or(' ');
         let silent = comment > 0 || c.is_whitespace();
         match (silent, run) {

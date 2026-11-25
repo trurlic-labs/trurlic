@@ -9,8 +9,9 @@
 //! has one root node (the resolver starts each pattern at one node).
 //!
 //! - A definition pattern captures `@definition`, the node its span is,
-//!   and `@name`, the node its own path segments are, once each, and sets
-//!   its `kind`. Its other properties: `kind.in "class:method"` (its kind
+//!   once, and `@name`, the node its own path segments are, once or on
+//!   several nodes, whose segments follow one another in the order of the
+//!   file (`TEST(Suite, Name)` is `Suite::Name`), and sets its `kind`. Its other properties: `kind.in "class:method"` (its kind
 //!   in a container of a kind), `container "false"` (what its span holds
 //!   is not under it), `within "top class"` (kept only at the file's top
 //!   or in a container of those kinds), `definition.via` and
@@ -22,14 +23,20 @@
 //!   between them included), `exclusive "true"` (a match of it drops
 //!   every match of a pattern without it that captured the same node as
 //!   its `@definition`), `name.separator "."` (each leaf of the name with
-//!   that text ends one segment and starts the next), and `visibility`
-//!   (its visibility when no mark states one).
+//!   that text ends one segment and starts the next), `name.skip
+//!   "template_argument_list"` (the leaves under nodes of those kinds are
+//!   no part of its name), and `visibility` (its visibility when no mark
+//!   states one).
 //! - A mark pattern captures any of `@role.test` (a definition whose name
 //!   lies inside is test code), `@visibility.<name>` (a definition whose
 //!   span holds the node, and the node its name, has that visibility; the
 //!   innermost such mark wins), `@visibility.within.<name>` (a definition
 //!   whose name lies inside has that visibility when no mark of the first
-//!   form states one; the innermost wins), `@export.name` (a definition at
+//!   form states one; the innermost wins), `@visibility.after.<name>` (a
+//!   label: a definition whose name lies in a later sibling of the node,
+//!   up to the next such label among them, has that visibility over a
+//!   mark of either other form: a C++ `public:`, or a class body's `{`
+//!   for its default), `@export.name` (a definition at
 //!   the file's top named as the node's text is public when no mark holds
 //!   its name), `@scope.unnamed` (a scope no name stands for: see below),
 //!   `@hash.unit` (one token whole), `@hash.words` (one token per run of
@@ -47,7 +54,9 @@
 //! What an unnamed scope holds that no definition holds defines nothing.
 //!
 //! A name is the text of its node's leaves, comments left out, one space
-//! where bytes lie between two leaves; a name written as a string literal
+//! where bytes lie between two leaves that a word character ends and
+//! starts (`operator ==` is `operator==`, `operator bool` keeps its
+//! space); a name written as a string literal
 //! is the text between its quotes; and a `::` in a name splits it as it
 //! splits a symbol. A capture whose name starts with `_` is read by a text
 //! predicate alone (`#eq?`, `#match?`, `#any-of?` and their `not-` forms,
@@ -70,6 +79,8 @@ pub(super) enum Capture {
     Test,
     Visibility(Visibility),
     Within(Visibility),
+    /// A label: the later siblings of the node have the visibility.
+    After(Visibility),
     Export,
     Unnamed,
     Unit,
@@ -111,6 +122,8 @@ pub(super) struct Definer {
     pub(super) exclusive: bool,
     /// The text of a leaf of its name that separates two segments.
     pub(super) separator: Option<String>,
+    /// The node kinds whose leaves its name leaves out.
+    pub(super) skip: Vec<u16>,
     pub(super) visibility: Option<Visibility>,
 }
 
@@ -175,6 +188,8 @@ pub(super) enum QueryFault {
 enum Count {
     Never,
     Once,
+    /// On several nodes, each once.
+    Many,
     Otherwise,
 }
 
@@ -217,7 +232,7 @@ impl fmt::Display for QueryFault {
 }
 
 /// The definition-pattern properties, each read once.
-const PROPERTIES: [&str; 11] = [
+const PROPERTIES: [&str; 12] = [
     "kind",
     "kind.in",
     "container",
@@ -228,6 +243,7 @@ const PROPERTIES: [&str; 11] = [
     "definition.preceding",
     "exclusive",
     "name.separator",
+    "name.skip",
     "visibility",
 ];
 
@@ -279,7 +295,7 @@ impl Rules {
         let name = self.count(pattern, Capture::Name);
         match (definition, name, settings) {
             (Count::Never, Count::Never, None) => Ok(None),
-            (Count::Once, Count::Once, settings) => self
+            (Count::Once, Count::Once | Count::Many, settings) => self
                 .definer(pattern, &settings.unwrap_or_default())
                 .map(Some),
             (Count::Never, Count::Never, Some(settings)) => Err(QueryFault::UnknownProperty {
@@ -288,7 +304,7 @@ impl Rules {
             }),
             // Every other mix: one of the two without the other, or either
             // more than once.
-            (Count::Never | Count::Once | Count::Otherwise, _, _) => {
+            (Count::Never | Count::Once | Count::Many | Count::Otherwise, _, _) => {
                 Err(QueryFault::NotADefinition { pattern })
             }
         }
@@ -308,6 +324,7 @@ impl Rules {
         match (captured.next(), captured.next()) {
             (None, _) => Count::Never,
             (Some(CaptureQuantifier::One), None) => Count::Once,
+            (Some(CaptureQuantifier::OneOrMore), None) => Count::Many,
             // Quantified (`?`, `*`, `+`), or captured under two names.
             (Some(_), _) => Count::Otherwise,
         }
@@ -358,6 +375,9 @@ impl Rules {
             preceding,
             exclusive: read.flag("exclusive", false)?,
             separator: settings.get("name.separator").cloned(),
+            skip: read
+                .node_kinds(&self.grammar, "name.skip")?
+                .unwrap_or_default(),
             visibility: read.visibility()?,
         })
     }
@@ -530,9 +550,13 @@ fn capture_of(name: &str) -> Result<Capture, QueryFault> {
         "hash.skip" => Capture::Skip,
         "hash.group" => Capture::Group,
         _ if name.starts_with('_') => Capture::Predicate,
-        _ => match name.strip_prefix("visibility.within.") {
-            Some(within) => Visibility::of_name(within).map(Capture::Within),
-            None => name
+        _ => match (
+            name.strip_prefix("visibility.within."),
+            name.strip_prefix("visibility.after."),
+        ) {
+            (Some(within), _) => Visibility::of_name(within).map(Capture::Within),
+            (None, Some(after)) => Visibility::of_name(after).map(Capture::After),
+            (None, None) => name
                 .strip_prefix("visibility.")
                 .and_then(Visibility::of_name)
                 .map(Capture::Visibility),
@@ -588,6 +612,23 @@ mod tests {
             (
                 "(identifier) @visibility.within.secret".to_owned(),
                 QueryFault::UnknownCapture("visibility.within.secret".to_owned()),
+            ),
+            (
+                "(identifier) @visibility.after.secret".to_owned(),
+                QueryFault::UnknownCapture("visibility.after.secret".to_owned()),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! name.skip \"arguments\"))"),
+                QueryFault::UnknownNodeKind {
+                    pattern: 0,
+                    name: "arguments".to_owned(),
+                },
+            ),
+            (
+                format!(
+                    "((function_definition name: (_) @definition body: (_) @definition) @name {kind})"
+                ),
+                QueryFault::NotADefinition { pattern: 0 },
             ),
             (
                 "(identifier) @scope.named".to_owned(),
@@ -721,7 +762,10 @@ mod tests {
              (#set! exclusive \"true\") (#set! name.separator \".\") \
              (#set! definition.preceding \"decorator comment\"))\n\
              ([(identifier) @export.name (string) @hash.words])\n\
-             ([(lambda) @scope.unnamed (block) @visibility.within.public])\n"
+             ([(lambda) @scope.unnamed (block) @visibility.within.public])\n\
+             ((call function: (identifier) @name arguments: (argument_list (identifier) @name)) \
+             @definition (#set! kind \"function\") (#set! name.skip \"keyword_argument\"))\n\
+             (class_definition body: (block . (_) @visibility.after.protected))\n"
         );
         let rules = Rules::compile(python(), &source).unwrap();
 
@@ -756,6 +800,13 @@ mod tests {
             rules
                 .captures
                 .contains(&Capture::Visibility(Visibility::Private))
+        );
+        let named_twice = rules.patterns[7].as_ref().unwrap();
+        assert_eq!(named_twice.skip.len(), 1);
+        assert!(
+            rules
+                .captures
+                .contains(&Capture::After(Visibility::Protected))
         );
     }
 }

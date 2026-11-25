@@ -274,7 +274,7 @@ mod tests {
             ("names".to_owned(), FileKind::Python, names.into_bytes()),
         ];
         for (name, kind, bytes) in cases.into_iter().chain(corpus()).chain(generated()) {
-            let indexed = index(kind, &bytes);
+            let indexed = index(kind, &bytes, &crate::code::BlankMacros::default());
             assert_eq!(
                 decode(&encode(&indexed), kind, bytes.len()),
                 Some(indexed),
@@ -303,7 +303,12 @@ mod tests {
 
     #[test]
     fn bytes_that_break_the_form_are_no_index() {
-        let indexed = index(FileKind::Rust, b"mod a { fn b() {} }").unwrap();
+        let indexed = index(
+            FileKind::Rust,
+            b"mod a { fn b() {} }",
+            &crate::code::BlankMacros::default(),
+        )
+        .unwrap();
         let bytes = encode(&Ok(indexed));
 
         let source = 19;
@@ -456,7 +461,7 @@ mod tests {
     #[test]
     fn an_entry_takes_no_more_than_its_parts_were_charged() {
         for (name, kind, bytes) in corpus() {
-            let Ok(indexed) = index(kind, &bytes) else {
+            let Ok(indexed) = index(kind, &bytes, &crate::code::BlankMacros::default()) else {
                 continue;
             };
             let entry = encode(&Ok(indexed.clone())).len();
@@ -494,7 +499,11 @@ mod tests {
             (FileKind::Python, lines.as_str()),
             (FileKind::Rust, ""),
         ] {
-            let bytes = encode(&index(kind, text.as_bytes()));
+            let bytes = encode(&index(
+                kind,
+                text.as_bytes(),
+                &crate::code::BlankMacros::default(),
+            ));
             let bound = max_entry_bytes(kind, text.len());
             assert!(
                 bytes.len() <= bound,

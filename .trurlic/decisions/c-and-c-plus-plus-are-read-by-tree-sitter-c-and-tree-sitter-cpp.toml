@@ -1,0 +1,27 @@
+component = "code"
+choice = "C files (.c) are read by tree-sitter-c and every other C or C++ file (.h, .cc, .cpp, .cxx, .hpp, .hh) by tree-sitter-cpp, through c.scm and cpp.scm, with no bound before the parse"
+reason = "A header cannot say whether C or C++ includes it, and the C++ grammar reads C headers about as well as the C grammar does (on curl and redis, within a percent of the definitions), so every .h is read as C++ and the two grammars meet the two languages once each. Both crates are at their newest releases whose ABIs tree-sitter 0.27 reads, and they add about 4.3 MB to the binary, which is the price of both languages. No bound runs before the parse: tree-sitter-c has no scanner, tree-sitter-cpp caps its raw string delimiter itself, and thirty hostile shapes at the 1 MiB cap, nested parentheses, casts, unclosed templates, a most vexing parse, deep #if nesting and continued macros among them, each finish in linear time on a 128 KiB stack. The memory of the worst, about 2.4 KB a byte for C++ templates, is held by the room of bytes indexed at once. A symbol on a C++ file is text, so operator() and operator< are spelled as written; on a C file it is a name."
+alternatives = [
+    "Read .h by the C grammar: rejected because a C++ header then misreads its classes and templates, while the C++ grammar reads a C header within a percent of the C grammar",
+    "Decide a header's grammar by a sibling .cpp file: rejected because the index of a file would then depend on another file's name",
+    "A bound before the parse like Python's: rejected because no hostile shape measured needs one",
+]
+tags = [
+    "dependencies",
+    "parsing",
+]
+status = "accepted"
+origin = "c and c++"
+created = "2026-11-25T23:03:16.297379871Z"
+anchors = [
+    { file = "Cargo.toml", symbol = "dependencies::tree-sitter-c" },
+    { file = "Cargo.toml", symbol = "dependencies::tree-sitter-cpp" },
+    { file = "src/code/index.rs", symbol = "FileKind::of" },
+    { file = "src/code/language.rs", symbol = "C" },
+    { file = "src/code/language.rs", symbol = "CPP" },
+    { file = "src/code/language/c.scm" },
+    { file = "src/code/language/cpp.scm" },
+]
+depends_on = [
+    "a-language-beyond-rust-is-a-grammar-and-a-query-file",
+]

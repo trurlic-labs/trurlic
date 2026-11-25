@@ -1,0 +1,29 @@
+component = "code"
+choice = "Before a C or C++ parse, the macros the tree defines only as attributes, specifiers or namespace openings, and comments inside a continued #define, are blanked"
+reason = "The index runs no preprocessor, and a macro tree-sitter cannot read wrecks what follows it: class LEVELDB_EXPORT DB { reads as a function, FMT_BEGIN_NAMESPACE swallows its namespace. A name is blanked when every #define of it in the tree is empty, specifiers, attribute forms or other such names, a function-like one with one body not empty, or only namespace openings or closings and the tree opens one. Blanking is spaces in place of the bytes outside directives, comments and literals, so offsets hold, and parse and hash read the blanked text. On curl, redis, fmt and leveldb it recovered 27, 412, 2403 and 285 definitions and halved the parse errors; a project list added 0 to 4. Each file's #defines are read alone (code::defines); the indexer takes the fixpoint over the walked tree's, a least one over a worklist, so a cycle blanks nothing and the work is linear; every C and C++ file of the call, an anchored one outside the walk, another tree's and a blob of git's history too, is read against that set, the only one known without walking the history, and its identity is in their cache keys. A body is read up to MAX_MACRO_BODY_TOKENS tokens and a call's arguments up to MAX_BLANK_ARGUMENT_BYTES. What stays unseen: what a function-like macro writes, a macro defined outside the tree, and the segments of a namespace a macro opens."
+alternatives = [
+    "A list of macros in project.toml: rejected because it recovered at most four definitions per corpus over the tree's own",
+    "Nothing, tree-sitter's recovery and patterns per damage shape: rejected because fmt then reads at 63 percent of its definitions",
+    "A key of the names each file spells: rejected because it needs a full pass over every file each call, past the cost of the set",
+]
+tags = [
+    "parsing",
+    "reliability",
+]
+status = "accepted"
+origin = "c and c++"
+created = "2026-11-25T23:03:16.297379871Z"
+anchors = [
+    { file = "src/code/language/c_family.rs", symbol = "BlankMacros::of" },
+    { file = "src/code/language/c_family.rs", symbol = "MAX_BLANK_ARGUMENT_BYTES" },
+    { file = "src/code/language/c_family.rs", symbol = "MAX_MACRO_BODY_TOKENS" },
+    { file = "src/code/language/c_family.rs", symbol = "blank" },
+    { file = "src/code/language/c_family.rs", symbol = "defines" },
+    { file = "src/code/language/c_family/tests.rs", symbol = "hostile_defines_are_read_in_linear_work" },
+    { file = "src/sources/cache.rs", symbol = "key" },
+    { file = "src/sources/indexer.rs", symbol = "Indexer::read_macros" },
+    { file = "src/sources/tests.rs", symbol = "a_file_outside_the_walk_is_read_against_the_trees_macros" },
+]
+depends_on = [
+    "a-language-beyond-rust-is-a-grammar-and-a-query-file",
+]

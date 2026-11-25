@@ -1,6 +1,6 @@
 component = "code"
-choice = "A definition's name is the text of its name node's leaves, comments left out, split at each leaf the pattern names its separator, a string literal's quotes dropped, and split at each ::"
-reason = "A name node may be more than one token: namespace A.B is a nested identifier, a test's name a string or a template literal, an enum member's or a property's a quoted string. Its text is its leaves' texts, one space where bytes lie between two of them, so a comment inside it moves nothing and a name reads as written. A pattern's name.separator splits it at each leaf of that text, so A.B is two segments, the namespace that namespace A { namespace B } spells. A part written as a string literal, one quote character opening and closing it, is named by the text between its quotes, so a test is named as its string reads. A :: in a part splits it as it splits a symbol, as a heading's or key's does, so a symbol can name any segment a user reads in the file. A part of no text defines nothing."
+choice = "A definition's name is the text of its name nodes' leaves, comments and skipped kinds left out, a space only between two words, split at its separator and each ::, quotes dropped"
+reason = "A name node may be more than one token: namespace A.B is a nested identifier, a test's name a string, an operator operator == with a space or none. Its text is its leaves' texts, a space where bytes lie between a leaf a word character ends and one a word character starts, so a comment inside moves nothing, operator == and operator== are one name, and operator bool keeps its space. A pattern may capture @name on several nodes, whose segments follow in the file's order, so TEST(Suite, Name) is Suite::Name. Its name.skip leaves out the subtrees of node kinds, so a template's arguments (Box<T>::get is Box::get) and a conversion's parameters are no part of a name. A pattern's name.separator splits at each leaf of that text, so A.B is two segments. A part written as a string literal is named by the text between its quotes. A :: in a part splits it as it splits a symbol, so a symbol can name any segment a reader sees. A part of no text defines nothing."
 alternatives = [
     "A name node's text verbatim: rejected because a comment inside a dotted name would become part of a segment",
     "A property per pattern to drop quotes: rejected because a quoted name is the same thing in every language, and no identifier opens with a quote",
@@ -16,7 +16,10 @@ created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
     { file = "src/code/general/name.rs", symbol = "parts" },
     { file = "src/code/general/name.rs", symbol = "unquoted" },
+    { file = "src/code/general/tests.rs", symbol = "a_name_captured_on_several_nodes_is_their_segments_in_order" },
     { file = "src/code/general/tests.rs", symbol = "a_name_splits_at_its_separator_and_drops_a_string_literals_quotes" },
+    { file = "src/code/general/tests.rs", symbol = "a_skipped_kind_is_no_part_of_a_name" },
+    { file = "src/code/general/tests.rs", symbol = "a_space_stands_in_a_name_only_between_two_words" },
 ]
 depends_on = [
     "a-query-file-is-held-to-the-general-resolver-s-contract",

@@ -84,6 +84,12 @@ tree-sitter-python = "0.25"
 # indexes. 0.23 is the newest release; its ABI 14 is one tree-sitter 0.27
 # reads.
 tree-sitter-typescript = "0.23"
+# C's and C++'s grammars for the general resolver: `c` reads `.c`, `cpp`
+# reads `.h`, `.cc`, `.cpp`, `.cxx`, `.hpp` and `.hh`
+# (src/code/language/c.scm, cpp.scm). 0.24 and 0.23 are the newest
+# releases; their ABIs 15 and 14 are ones tree-sitter 0.27 reads.
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
 
 # The `[quality]` patterns of project.toml: a project states its decision
 # rules as regular expressions, which a hand-rolled matcher would hold to
