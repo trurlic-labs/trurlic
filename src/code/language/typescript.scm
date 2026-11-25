@@ -36,7 +36,8 @@
 ; A named class expression an assignment binds (`module.exports = class
 ; A {}`, `X.Y = class Y {}`) is that class; an unnamed one defines
 ; nothing, nor do its members.
-((assignment_expression right: (class name: (type_identifier) @name) @definition)
+([(assignment_expression right: (class name: (type_identifier) @name) @definition)
+  (augmented_assignment_expression right: (class name: (type_identifier) @name) @definition)]
   (#set! kind "class")
   (#set! visibility "private"))
 
@@ -92,11 +93,35 @@
   (#set! visibility "private"))
 
 ; An unnamed default export is named `default`: a function or a class by
-; its kind, any other value but a single token (`export default x` names
-; `x`, which the export list rule makes public) a variable.
+; its kind, any other value of more than one leaf (`export default x`
+; names `x`, which the export list rule makes public) a variable. An
+; unnamed function or class `module.exports` is, CommonJS's default, is
+; named so too.
 ((export_statement "default" @name value: [(function_expression) (arrow_function) (generator_function)]) @definition
   (#set! kind "function")
   (#set! exclusive "true"))
+
+((assignment_expression
+   left: (member_expression object: (identifier) @_module property: (property_identifier) @name)
+   right: [(function_expression) (arrow_function) (generator_function)])
+   @definition
+  (#eq? @_module "module")
+  (#eq? @name "exports")
+  (#set! kind "function")
+  (#set! name.text "default")
+  (#set! definition.to "expression_statement")
+  (#set! visibility "public"))
+
+((assignment_expression
+   left: (member_expression object: (identifier) @_module property: (property_identifier) @name)
+   right: (class !name) @scope.none)
+   @definition
+  (#eq? @_module "module")
+  (#eq? @name "exports")
+  (#set! kind "class")
+  (#set! name.text "default")
+  (#set! definition.to "expression_statement")
+  (#set! visibility "public"))
 
 ((export_statement "default" @name value: (class)) @definition
   (#set! kind "class")
@@ -113,11 +138,13 @@
               (method_signature name: (_) @name)
               (abstract_method_signature name: (_) @name)] @definition)
   (#set! kind "method")
+  (#set! within "class")
   (#set! definition.preceding "decorator")
   (#set! visibility "public"))
 
 ((class_body (public_field_definition name: (_) @name) @definition)
   (#set! kind "field")
+  (#set! within "class")
   (#set! visibility "public"))
 
 ([(interface_body (property_signature name: (_) @name) @definition)
@@ -155,26 +182,61 @@
   (#set! kind "method")
   (#set! visibility "public"))
 
-; Tests are calls: `describe`, `it`, `test` and their kin, with `.only`,
-; `.skip`, `.todo`, `.concurrent`, `.failing`, `.describe` (Playwright's
-; `test.describe`) or `.each(..)`, named by their first argument when it
-; is a string, under the tests whose callbacks hold them. A call of
-; another member (`context.clip("x")`) is no test.
+; Tests are calls of `describe`, `it`, `test` and their kin, named by
+; their first argument when it is a string, under the tests whose
+; callbacks hold them: the runner itself (`it("a")`), or a chain of one
+; or two members from it, called directly or through a call (`it.only`,
+; `test.describe.serial`, `describe.each(table)`, `describe.runIf(x)`),
+; whose string is followed by a function, right after it or after one
+; argument between (Playwright's details). A member call with no
+; function there (`test.set("a", "b")`) is no test, and `context`, the
+; usual name of a Playwright or canvas context, roots no chain
+; (`context.route("x", handler)`).
 ((call_expression
-   function: [(identifier) @_test
-              (member_expression object: (identifier) @_test property: (property_identifier) @_modifier)
-              (call_expression function: (member_expression object: (identifier) @_test property: (property_identifier) @_each))]
+   function: (identifier) @_test
    arguments: (arguments . [(string) (template_string)] @name)) @definition @role.test
   (#any-of? @_test "describe" "context" "suite" "it" "test" "specify" "bench" "fdescribe" "xdescribe" "fit" "xit")
-  (#any-of? @_modifier "only" "skip" "todo" "concurrent" "failing" "describe")
-  (#eq? @_each "each")
+  (#set! kind "test"))
+
+((call_expression
+   function: [(member_expression object: [(identifier) @_test (member_expression object: (identifier) @_test)])
+              (call_expression function: (member_expression object: [(identifier) @_test (member_expression object: (identifier) @_test)]))]
+   arguments: (arguments . [(string) (template_string)] @name . (_)? . [(arrow_function) (function_expression)])) @definition @role.test
+  (#any-of? @_test "describe" "suite" "it" "test" "specify" "bench" "fdescribe" "xdescribe" "fit" "xit")
   (#set! kind "test"))
 
 ; Unnamed scopes: a function, method or class no pattern names. Its
 ; locals define nothing; a function in it is under the definition around
 ; it (`describe("a", () => { function f() {} })` is `a::f`), or defines
-; nothing when no definition is (`module.exports = () => { ... }`).
+; nothing when no definition is (`app.get("/", (req) => { ... })`).
 [(arrow_function) (function_expression) (generator_function) (method_definition) (class)] @scope.unnamed
+
+; No scope: a class a name binds, whose members are that name's, and a
+; wrapper of the whole file, which is the module: an unnamed function
+; called by a statement of the file's top (an IIFE, `(function () {}())`,
+; `!function () {}()`, `(function () {}).call(this)`), a factory such a
+; call passes (UMD), and the factory of a top-level `define` (AMD).
+[(variable_declarator value: (class) @scope.none)
+ (export_statement "default" value: (class) @scope.none)]
+
+(program (expression_statement [
+  (call_expression function: (parenthesized_expression [(function_expression) (arrow_function)] @scope.none))
+  (call_expression function: (member_expression object: (parenthesized_expression [(function_expression) (arrow_function)] @scope.none)))
+  (parenthesized_expression (call_expression function: (function_expression) @scope.none))
+  (unary_expression argument: (call_expression function: (function_expression) @scope.none))]))
+
+(program (expression_statement
+  (call_expression
+    function: (parenthesized_expression [(function_expression) (arrow_function)])
+    arguments: (arguments [(function_expression) @scope.none
+                           (arrow_function) @scope.none
+                           (parenthesized_expression (function_expression) @scope.none)]))))
+
+((program (expression_statement
+  (call_expression
+    function: (identifier) @_define
+    arguments: (arguments [(function_expression) (arrow_function)] @scope.none))))
+  (#eq? @_define "define"))
 
 ; Visibility: an `export` holds its declaration; an export list, a default
 ; export of a name and `export =` name a declaration of the module's top;
@@ -187,6 +249,9 @@
 (ambient_declaration [(module body: (statement_block) @visibility.within.public)
                       (internal_module body: (statement_block) @visibility.within.public)
                       (statement_block) @visibility.within.public])
+
+(ambient_declaration [(module body: (statement_block (export_statement [(export_clause) (namespace_export) "*" "=" value: (_)])) @visibility.within.private)
+                      (internal_module body: (statement_block (export_statement [(export_clause) (namespace_export) "*" "=" value: (_)])) @visibility.within.private)])
 
 (ambient_declaration (module name: (string)) @visibility.public)
 

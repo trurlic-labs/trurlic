@@ -2,7 +2,7 @@ use super::*;
 use crate::code::BlankMacros;
 use crate::code::index::{FileKind, index as index_of};
 use crate::code::language::python::{MAX_CONTINUATIONS, MAX_INDENTATIONS};
-use crate::code::scope::Scopes;
+use crate::code::scope::{ScopeTree, Scopes};
 use crate::code::span::SpanHash;
 use crate::code::testing::{defined, named, on_parse_stack, path};
 
@@ -378,6 +378,88 @@ fn collect_with(source: &str, text: &str) -> Result<usize, IndexFault> {
     collect(&rules, &tree, text).map(|found| found.candidates.len())
 }
 
+/// The path of each definition `source`, a Python query of a test, places
+/// in `text`, in the sweep's order.
+fn placed_with(source: &str, text: &str) -> Vec<String> {
+    let rules = rules(source);
+    let tree = syntax::parse(text, &rules.grammar).unwrap();
+    let found = collect(&rules, &tree, text).unwrap();
+    let mut tree_of_scopes = ScopeTree::for_file(text.len());
+    let placed = place::place(&found, &mut tree_of_scopes).unwrap();
+    let file = tree_of_scopes.into_scopes();
+    let scopes = Scopes {
+        file: &file,
+        added: &[],
+    };
+    placed.iter().map(|it| path(scopes, it.scope)).collect()
+}
+
+#[test]
+fn of_two_within_marks_of_one_node_the_one_visibility_orders_first_holds() {
+    let function =
+        "((function_definition name: (identifier) @name) @definition (#set! kind \"function\"))";
+    let public = "(module) @visibility.within.public";
+    let private = "(module) @visibility.within.private";
+
+    for marks in [[public, private], [private, public]] {
+        let source = format!("{function}\n{}\n{}", marks[0], marks[1]);
+        let rules = rules(&source);
+        let text = "def f(): pass\n";
+        let tree = syntax::parse(text, &rules.grammar).unwrap();
+        let found = collect(&rules, &tree, text).unwrap();
+        let placed = place::place(&found, &mut ScopeTree::for_file(text.len())).unwrap();
+
+        assert_eq!(
+            placed[0].what.visibility,
+            Some(Visibility::Private),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn two_definitions_of_one_node_are_siblings() {
+    let both = "((function_definition name: (identifier) @name) @definition (#set! kind \"function\"))\n\
+                ((function_definition name: (identifier) @name) @definition (#set! kind \"class\"))";
+
+    assert_eq!(
+        placed_with(both, "def f():\n    def g(): pass\n"),
+        ["f", "f", "f::g", "f::g"]
+    );
+}
+
+#[test]
+fn of_two_definitions_from_one_byte_the_wider_holds_the_other() {
+    let calls = "((call function: [(identifier) @name (call function: (identifier) @name)]) @definition (#set! kind \"function\"))";
+
+    assert_eq!(placed_with(calls, "f(1)(2)\n"), ["f", "f::f"]);
+}
+
+#[test]
+fn a_definition_its_container_drops_leaves_the_unnamed_scope_of_its_node() {
+    let dropped = "((function_definition name: (identifier) @name) @definition (#set! kind \"function\") (#set! within \"class\"))\n\
+                   ((class_definition name: (identifier) @name) @definition (#set! kind \"class\"))\n\
+                   ((assignment left: (identifier) @name) @definition (#set! kind \"variable\"))\n\
+                   (function_definition) @scope.unnamed";
+
+    assert_eq!(
+        placed_with(dropped, "def f():\n    x = 1\n"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_node_captured_as_no_scope_holds_what_it_holds_where_it_stands() {
+    let none = "((assignment left: (identifier) @name) @definition (#set! kind \"variable\"))\n\
+                (function_definition) @scope.unnamed\n\
+                (module (function_definition) @scope.none)";
+
+    assert_eq!(
+        placed_with(none, "def f():\n    x = 1\n    def g():\n        y = 2\n"),
+        ["x"]
+    );
+}
+
 #[test]
 fn a_match_limit_that_is_hit_is_a_fault_not_a_dropped_match() {
     // Every pair of a module's statements is a match in progress: 129
@@ -593,7 +675,7 @@ fn a_name_splits_at_its_separator_and_drops_a_string_literals_quotes() {
 
 #[test]
 fn a_test_call_is_named_by_its_strings_as_written() {
-    let text = "describe('Store', () => {\n  it(`opens ${kind}`, () => {});\n  test.each([1])(\"a::b %s\", () => {});\n  it.skip('later', () => {});\n  test.describe('nested', () => {});\n  it(name, () => {});\n  it('', () => {});\n});\n";
+    let text = "describe('Store', () => {\n  it(`opens ${kind}`, () => {});\n  test.each([1])(\"a::b %s\", () => {});\n  it.skip('later', () => {});\n  it(name, () => {});\n  it('', () => {});\n});\n";
 
     assert_eq!(
         typescript(text),
@@ -602,14 +684,31 @@ fn a_test_call_is_named_by_its_strings_as_written() {
             "Store::opens ${kind} Test Test -",
             "Store::a::b %s Test Test -",
             "Store::later Test Test -",
-            "Store::nested Test Test -",
+        ]
+    );
+}
+
+#[test]
+fn a_member_chain_of_a_runner_is_a_test_when_a_function_follows_its_string() {
+    let text = "describe.for([1])('grp', () => { it('a', () => {}); });\ndescribe.runIf(x)('run', () => {});\ntest.describe.serial('ser', () => {});\nit.concurrent.only('both', async () => {}, 10);\ntest.fail('details', { tag: '@x' }, async () => {});\ntest.extend({})('fixture', function () {});\n";
+
+    assert_eq!(
+        typescript(text),
+        [
+            "grp Test Test -",
+            "grp::a Test Test -",
+            "run Test Test -",
+            "ser Test Test -",
+            "both Test Test -",
+            "details Test Test -",
+            "fixture Test Test -",
         ]
     );
 }
 
 #[test]
 fn a_call_of_another_member_of_a_test_runners_name_is_no_test() {
-    let text = "function draw(context, test) {\n  context.clip('evenodd', () => {});\n  test.set('Content-Type', () => {});\n  it.each('x', () => {});\n}\n";
+    let text = "function draw(context, test) {\n  context.clip('evenodd');\n  test.set('Content-Type', 'text/plain');\n  context.waitForEvent('page');\n  context.request.get('/a', { headers });\n  context.route('/b', async (route) => {});\n}\n";
 
     assert_eq!(typescript(text), ["draw Function Code Private"]);
 }
@@ -645,6 +744,14 @@ fn an_export_states_what_its_module_makes_public() {
         typescript("function f() {}\nexport = f;\n"),
         ["f Function Code Public"]
     );
+    assert_eq!(
+        typescript("namespace N { function f() {} }\nfunction f() {}\nexport { f };\n"),
+        [
+            "N Module Code Private",
+            "N::f Function Code Private",
+            "f Function Code Public",
+        ]
+    );
 }
 
 #[test]
@@ -665,6 +772,26 @@ fn an_ambient_module_or_namespace_exports_what_it_holds_at_any_depth() {
             "Window Interface Code Public",
             "Window::x Field Code Public",
             "local Function Code Private",
+        ]
+    );
+}
+
+#[test]
+fn an_ambient_module_with_an_export_form_exports_only_what_it_marks() {
+    let text = "declare module \"*.svg\" { const content: string; export default content; }\ndeclare module \"lib\" { function f(): void; export function g(): void; export {}; }\ndeclare module \"m\" { class C { private p: number; q: number } }\n";
+
+    assert_eq!(
+        typescript(text),
+        [
+            "*.svg Module Code Public",
+            "*.svg::content Variable Code Private",
+            "lib Module Code Public",
+            "lib::f Function Code Private",
+            "lib::g Function Code Public",
+            "m Module Code Public",
+            "m::C Class Code Public",
+            "m::C::p Field Code Private",
+            "m::C::q Field Code Public",
         ]
     );
 }
@@ -727,7 +854,10 @@ fn what_an_unnamed_function_holds_is_under_the_definition_around_it_or_nothing()
     for (text, expected) in [
         (
             "module.exports = (compiler) => { const { a } = compiler; let css = false; function helper() {} };\n",
-            &[][..],
+            &[
+                "default Function Code Public",
+                "default::helper Function Code Private",
+            ][..],
         ),
         (
             "jest.mock('a', () => { const original = 1; });\njest.mock('b', () => { const original = 2; });\n",
@@ -744,6 +874,53 @@ fn what_an_unnamed_function_holds_is_under_the_definition_around_it_or_nothing()
         (
             "describe('a', () => { const x = 1; function f() {} });\n",
             &["a Test Test -", "a::f Function Test Private"][..],
+        ),
+        (
+            "namespace N { run(function () { const x = 1; }); run(function* () { const y = 1; }); }\n",
+            &["N Module Code Private"][..],
+        ),
+        (
+            "app.get('/', (req) => { const a = 1; function h() {} });\n",
+            &[][..],
+        ),
+    ] {
+        assert_eq!(typescript(text), expected, "{text}");
+    }
+}
+
+#[test]
+fn a_wrapper_of_the_whole_file_is_the_module() {
+    for (text, expected) in [
+        (
+            "(function () { function api() {} var x = 1; })();\n",
+            &["api Function Code Private", "x Variable Code Private"][..],
+        ),
+        (
+            "!function () { function api() {} }();\n",
+            &["api Function Code Private"][..],
+        ),
+        (
+            "(function () { function api() {} }).call(this);\n",
+            &["api Function Code Private"][..],
+        ),
+        (
+            "(function (root, factory) { factory(root); })(this, function (exports) { function lib() {} });\n",
+            &["lib Function Code Private"][..],
+        ),
+        (
+            "define(['a'], function (a) { function m() {} return m; });\n",
+            &["m Function Code Private"][..],
+        ),
+        (
+            "module.exports = function () { const local = 1; function helper() {} };\n",
+            &[
+                "default Function Code Public",
+                "default::helper Function Code Private",
+            ][..],
+        ),
+        (
+            "function f() { (function () { function deep() {} })(); }\n",
+            &["f Function Code Private", "f::deep Function Code Private"][..],
         ),
     ] {
         assert_eq!(typescript(text), expected, "{text}");
@@ -771,8 +948,28 @@ fn a_class_expression_is_a_class_where_a_name_holds_it() {
             "const C = class D { m() {} };\n",
             &["C Class Code Private", "C::m Method Code Public"][..],
         ),
-        ("module.exports = class { n() {} };\n", &[][..]),
+        (
+            "module.exports = class { n() {} };\n",
+            &["default Class Code Public", "default::n Method Code Public"][..],
+        ),
         ("register(class Local { n() {} });\n", &[][..]),
+        (
+            "function o() { return class V { m() {} }; }\n",
+            &["o Function Code Private"][..],
+        ),
+        (
+            "export const mixin = (B) => class extends B { m() {} };\n",
+            &["mixin Function Code Public"][..],
+        ),
+        (
+            "function outer() { let X; X ??= class V { m() {} f = 1; }; }\n",
+            &[
+                "outer Function Code Private",
+                "outer::V Class Code Private",
+                "outer::V::m Method Code Public",
+                "outer::V::f Field Code Public",
+            ][..],
+        ),
     ] {
         assert_eq!(typescript(text), expected, "{text}");
     }
@@ -825,6 +1022,8 @@ fn a_reformat_a_comment_or_a_semicolon_leaves_a_typescript_hash() {
         jsx("<div>{/* a */}</div>")
     );
     assert_ne!(jsx("<p>{a}</p>"), jsx("<p>a</p>"));
+    assert_eq!(jsx("<div>{}</div>"), jsx("<div></div>"));
+    assert_eq!(jsx("<p>a{/* c */}b</p>"), jsx("<p>ab</p>"));
 }
 
 #[test]
@@ -860,11 +1059,13 @@ fn jsx(element: &str) -> SpanHash {
 }
 
 #[test]
-fn jsx_text_is_hashed_by_its_words() {
+fn jsx_text_is_hashed_as_jsx_renders_it() {
     assert_eq!(jsx("<p>a   b</p>"), jsx("<p>a b</p>"));
     assert_eq!(jsx("<p>\n    a b\n  </p>"), jsx("<p>a b</p>"));
+    assert_eq!(jsx("<p>a\n    b</p>"), jsx("<p>a b</p>"));
     assert_ne!(jsx("<p>a b</p>"), jsx("<p>a c</p>"));
     assert_ne!(jsx("<p>a b</p>"), jsx("<p>ab</p>"));
+    assert_ne!(jsx("<p><b>Hi</b> there</p>"), jsx("<p><b>Hi</b>there</p>"));
 }
 
 #[test]

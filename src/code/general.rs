@@ -208,11 +208,14 @@ struct Frame {
 }
 
 /// What the walk found: the candidates, the nodes captured as unnamed
-/// scopes, how the hash takes each marked node, by its id, and the names
-/// an `@export.name` capture spells.
+/// scopes and, by id, those captured as no scope, how the hash takes each
+/// marked node, by its id, and the names an `@export.name` capture
+/// spells.
+#[derive(Default)]
 struct Found<'r, 't> {
     candidates: Vec<Candidate<'r>>,
     unnamed: Vec<SpanNode>,
+    no_scope: BTreeSet<usize>,
     marks: BTreeMap<usize, NodeMarks>,
     exported: BTreeSet<&'t str>,
 }
@@ -270,12 +273,7 @@ fn collect<'r, 't>(
         before: Vec::new(),
         runs: Vec::new(),
         waiting: BTreeMap::new(),
-        found: Found {
-            candidates: Vec::new(),
-            unnamed: Vec::new(),
-            marks: BTreeMap::new(),
-            exported: BTreeSet::new(),
-        },
+        found: Found::default(),
     };
     let mut matches = Matches {
         cursor: QueryCursor::new(),
@@ -358,6 +356,9 @@ impl<'r> Walk<'r, '_> {
                 Capture::Within(visibility) => wait(Waiting::Within(visibility)),
                 Capture::After(visibility) => wait(Waiting::After(visibility)),
                 Capture::Unnamed => self.found.unnamed.push(SpanNode::of(capture.node)),
+                Capture::NoScope => {
+                    self.found.no_scope.insert(id);
+                }
                 Capture::Export => {
                     if let Some(spelled) = self.text.get(capture.node.byte_range()) {
                         self.found.exported.insert(spelled);
@@ -365,6 +366,7 @@ impl<'r> Walk<'r, '_> {
                 }
                 Capture::Unit => mark(|marks| marks.whole = true),
                 Capture::Words => mark(|marks| marks.words = true),
+                Capture::Chars => mark(|marks| marks.chars = true),
                 Capture::Skip => mark(|marks| marks.skip = true),
                 Capture::Group => mark(|marks| marks.group = true),
                 Capture::Predicate => {}
@@ -566,15 +568,17 @@ impl<'r> Walk<'r, '_> {
         let Some(candidate) = self.found.candidates.get_mut(at) else {
             return Ok(());
         };
-        let parts = name::parts(
-            node,
-            self.text,
-            (
-                candidate.definer.separator.as_deref(),
-                &candidate.definer.skip,
-            ),
-            work,
-        )?;
+        let definer = candidate.definer;
+        let parts = match &definer.text {
+            // clone: the name's one segment is the candidate's own.
+            Some(text) => vec![text.clone()],
+            None => name::parts(
+                node,
+                self.text,
+                (definer.separator.as_deref(), &definer.skip),
+                work,
+            )?,
+        };
         candidate.names_left = candidate.names_left.saturating_sub(1);
         match candidate.name.as_mut() {
             Some(name) => name.parts.extend(parts),
@@ -605,8 +609,9 @@ impl<'r> Walk<'r, '_> {
 
 /// The frame of `node` under `parent`: test code when its parent is or a
 /// test mark waited for it, under its own visibility marks of each form
-/// or else its parent's innermost, and under the label in force for its
-/// parent's children.
+/// or else its parent's innermost (of two `@visibility.within` marks of
+/// the node, the one [`Visibility`] orders first), and under the label in
+/// force for its parent's children.
 fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame {
     let span = SpanNode::of(node);
     let mut frame = Frame {
@@ -617,6 +622,7 @@ fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame
         within: parent.and_then(|parent| parent.within),
         after: parent.and_then(|parent| parent.after),
     };
+    let mut within = None;
     for waited in waiting {
         match *waited {
             Waiting::Test => frame.test = true,
@@ -627,10 +633,13 @@ fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame
                     visibility,
                 });
             }
-            Waiting::Within(visibility) => frame.within = Some(visibility),
+            Waiting::Within(visibility) => {
+                within = Some(within.map_or(visibility, |other: Visibility| other.min(visibility)));
+            }
             Waiting::Definition(_) | Waiting::Name(_) | Waiting::After(_) => {}
         }
     }
+    frame.within = within.or(frame.within);
     frame
 }
 

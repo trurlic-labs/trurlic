@@ -1,6 +1,6 @@
 component = "code"
 choice = "A TypeScript span hash takes a string or regex as one token, walks a template string, groups each statement and member, drops a ; or , ending one and an empty JSX expression"
-reason = "Automatic semicolon insertion makes a line break carry syntax that no token holds: return then x on the next line is two statements, return x one. The query marks each statement of a program, a block or a switch case, and each member of a class, an interface or a type literal, a group whose marks enter the hash, so the two hash apart; with groups in place the ; that ends a statement and the ; or , that separates two members carry nothing and are left out, so a file with and without semicolons hashes alike. A string and a regular expression are one token with their spaces. A template string is walked: its text runs are tokens with their spaces, while a space or a comment inside its ${} moves nothing, and a definition inside one is found. A JSX comment is written {/* c */}, whose braces are tokens: a JSX expression that holds no expression, a comment or nothing, is left out whole, as a comment is elsewhere. JSX text is hashed as its runs between ASCII whitespace, since a reformat breaks and indents it; a space between text and an element is not seen, a stated limit."
+reason = "Automatic semicolon insertion makes a line break carry syntax that no token holds: return then x on the next line is two statements, return x one. The query marks each statement of a program, a block or a switch case, and each member of a class, an interface or a type literal, a group whose marks enter the hash, so the two hash apart; with groups in place the ; that ends a statement and the ; or , that separates two members carry nothing and are left out, so a file with and without semicolons hashes alike. A string and a regular expression are one token with their spaces. A template string is walked: its text runs are tokens with their spaces, while a space or a comment inside its ${} moves nothing, and a definition inside one is found. A JSX comment is written {/* c */}, whose braces are tokens: a JSX expression that holds no expression, a comment or nothing, is left out whole. JSX text is hashed as JSX renders it, a token a character and an empty one a run of whitespace, a run at an end of the text that holds a line break dropped, so a reformat moves nothing, <b>Hi</b> there hashes apart from <b>Hi</b>there, and a{/* c */}b hashes as ab."
 alternatives = [
     "Hash the leaves alone: rejected because a statement split by a line break would leave the hash as it was",
     "A template string as one token: rejected because a space or a comment inside its ${} would move the hash",
@@ -17,10 +17,10 @@ anchors = [
     { file = "src/code/general/tests.rs", symbol = "a_literals_text_moves_a_typescript_hash" },
     { file = "src/code/general/tests.rs", symbol = "a_reformat_a_comment_or_a_semicolon_leaves_a_typescript_hash" },
     { file = "src/code/general/tests.rs", symbol = "a_statement_split_by_a_line_break_moves_a_typescript_hash" },
-    { file = "src/code/general/tests.rs", symbol = "jsx_text_is_hashed_by_its_words" },
+    { file = "src/code/general/tests.rs", symbol = "jsx_text_is_hashed_as_jsx_renders_it" },
     { file = "src/code/language/tsx.scm" },
     { file = "src/code/language/typescript.scm" },
-    { file = "src/code/units.rs", symbol = "push_words" },
+    { file = "src/code/units.rs", symbol = "push_chars" },
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",

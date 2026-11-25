@@ -25,22 +25,27 @@
 //!   its `@definition`), `name.separator "."` (each leaf of the name with
 //!   that text ends one segment and starts the next), `name.skip
 //!   "template_argument_list"` (the leaves under nodes of those kinds are
-//!   no part of its name), and `visibility` (its visibility when no mark
-//!   states one).
+//!   no part of its name), `name.text "default"` (its one segment,
+//!   whatever its name node's text), and `visibility` (its visibility when
+//!   no mark states one).
 //! - A mark pattern captures any of `@role.test` (a definition whose name
 //!   lies inside is test code), `@visibility.<name>` (a definition whose
 //!   span holds the node, and the node its name, has that visibility; the
 //!   innermost such mark wins), `@visibility.within.<name>` (a definition
 //!   whose name lies inside has that visibility when no mark of the first
-//!   form states one; the innermost wins), `@visibility.after.<name>` (a
+//!   form states one; the innermost wins, and of two on one node the one
+//!   `Visibility` orders first), `@visibility.after.<name>` (a
 //!   label: a definition whose name lies in a later sibling of the node,
 //!   up to the next such label among them, has that visibility over a
 //!   mark of either other form: a C++ `public:`, or a class body's `{`
 //!   for its default), `@export.name` (a definition at
 //!   the file's top named as the node's text is public when no mark holds
 //!   its name), `@scope.unnamed` (a scope no name stands for: see below),
+//!   `@scope.none` (no scope, whatever `@scope.unnamed` captures),
 //!   `@hash.unit` (one token whole), `@hash.words` (one token per run of
-//!   text between ASCII whitespace), `@hash.skip` (left out of every hash)
+//!   text between ASCII whitespace), `@hash.chars` (its text as JSX
+//!   renders it: a token a character, an empty one a run of whitespace but
+//!   one at an end that holds a line break), `@hash.skip` (left out of every hash)
 //!   and `@hash.group` (a statement or block, whose extent the hash
 //!   holds), and sets no property. A definition pattern may capture these
 //!   too.
@@ -83,8 +88,10 @@ pub(super) enum Capture {
     After(Visibility),
     Export,
     Unnamed,
+    NoScope,
     Unit,
     Words,
+    Chars,
     Skip,
     Group,
     /// Read by a text predicate alone.
@@ -124,6 +131,8 @@ pub(super) struct Definer {
     pub(super) separator: Option<String>,
     /// The node kinds whose leaves its name leaves out.
     pub(super) skip: Vec<u16>,
+    /// The text of its one segment, in place of its name node's.
+    pub(super) text: Option<String>,
     pub(super) visibility: Option<Visibility>,
 }
 
@@ -232,7 +241,7 @@ impl fmt::Display for QueryFault {
 }
 
 /// The definition-pattern properties, each read once.
-const PROPERTIES: [&str; 12] = [
+const PROPERTIES: [&str; 13] = [
     "kind",
     "kind.in",
     "container",
@@ -244,6 +253,7 @@ const PROPERTIES: [&str; 12] = [
     "exclusive",
     "name.separator",
     "name.skip",
+    "name.text",
     "visibility",
 ];
 
@@ -378,6 +388,7 @@ impl Rules {
             skip: read
                 .node_kinds(&self.grammar, "name.skip")?
                 .unwrap_or_default(),
+            text: settings.get("name.text").cloned(),
             visibility: read.visibility()?,
         })
     }
@@ -545,8 +556,10 @@ fn capture_of(name: &str) -> Result<Capture, QueryFault> {
         "role.test" => Capture::Test,
         "export.name" => Capture::Export,
         "scope.unnamed" => Capture::Unnamed,
+        "scope.none" => Capture::NoScope,
         "hash.unit" => Capture::Unit,
         "hash.words" => Capture::Words,
+        "hash.chars" => Capture::Chars,
         "hash.skip" => Capture::Skip,
         "hash.group" => Capture::Group,
         _ if name.starts_with('_') => Capture::Predicate,
@@ -762,9 +775,11 @@ mod tests {
              (#set! exclusive \"true\") (#set! name.separator \".\") \
              (#set! definition.preceding \"decorator comment\"))\n\
              ([(identifier) @export.name (string) @hash.words])\n\
-             ([(lambda) @scope.unnamed (block) @visibility.within.public])\n\
+             ([(lambda) @scope.unnamed (block) @visibility.within.public (string) @hash.chars])\n\
+             (lambda) @scope.none\n\
              ((call function: (identifier) @name arguments: (argument_list (identifier) @name)) \
-             @definition (#set! kind \"function\") (#set! name.skip \"keyword_argument\"))\n\
+             @definition (#set! kind \"function\") (#set! name.skip \"keyword_argument\") \
+             (#set! name.text \"default\"))\n\
              (class_definition body: (block . (_) @visibility.after.protected))\n"
         );
         let rules = Rules::compile(python(), &source).unwrap();
@@ -801,8 +816,11 @@ mod tests {
                 .captures
                 .contains(&Capture::Visibility(Visibility::Private))
         );
-        let named_twice = rules.patterns[7].as_ref().unwrap();
+        let named_twice = rules.patterns[8].as_ref().unwrap();
         assert_eq!(named_twice.skip.len(), 1);
+        assert_eq!(named_twice.text.as_deref(), Some("default"));
+        assert!(rules.captures.contains(&Capture::Chars));
+        assert!(rules.captures.contains(&Capture::NoScope));
         assert!(
             rules
                 .captures

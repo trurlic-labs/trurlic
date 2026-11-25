@@ -70,12 +70,18 @@ struct Open {
 }
 
 /// What the sweep meets in `found`, by node start, the widest first, a
-/// definition before an unnamed scope of its own node.
+/// definition before an unnamed scope of its own node. A node captured as
+/// no scope is none.
 fn met<'f, 'r>(found: &'f Found<'r, '_>) -> Vec<Met<'f, 'r>> {
+    let unnamed = found
+        .unnamed
+        .iter()
+        .filter(|node| !found.no_scope.contains(&node.id))
+        .map(|node| Met::Unnamed(*node));
     let mut met: Vec<Met<'_, '_>> = found
         .complete()
         .map(|(site, name, definer)| Met::Definition(site, name, definer))
-        .chain(found.unnamed.iter().map(|node| Met::Unnamed(*node)))
+        .chain(unnamed)
         .collect();
     met.sort_by_key(|met| {
         let node = met.node();

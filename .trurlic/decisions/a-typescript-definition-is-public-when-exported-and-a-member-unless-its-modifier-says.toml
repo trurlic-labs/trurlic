@@ -1,11 +1,11 @@
 component = "code"
-choice = "A TypeScript declaration is public when an export holds or names it or an ambient module holds it, else private; a member is public unless private, # or protected says so; a test has none"
-reason = "A count of definitions with and without private ones needs each one's visibility as the source states it. In a module, export is the visibility: a declaration an export statement holds, one an export list names (export { a, b as c }), one export default or export = names, and in CommonJS one module.exports names or a class module.exports is, is public; any other declaration of the module's or a namespace's top is private to it. In an ambient context the source states every declaration exported: what declare module \"x\", declare namespace or declare global holds is public at any depth unless its own modifier says otherwise, as TypeScript reads it, and declare module \"x\" itself is public, since any file imports it by its name. A re-export (export { a } from) names another file's definition and makes nothing here public. A nested function is private. A class member is public unless private, a # name or protected states otherwise; protected is a visibility of its own, since a subclass may name it and no other code. An interface's, a type literal's, an object literal's and an enum's members have no modifier and are public. A test is a call, which nothing names from outside, so it has none."
+choice = "A TypeScript declaration is public when an export holds or names it or an ambient module with no export form holds it, else private; a member is public unless private, # or protected says so"
+reason = "A count of definitions with and without private ones needs each one's visibility as the source states it. In a module, export is the visibility: a declaration an export statement holds, one an export list names (export { a, b as c }), one export default or export = names, and in CommonJS one module.exports names, a class or a function module.exports is, is public; any other declaration of the module's or a namespace's top is private to it. In an ambient context TypeScript exports every declaration unless the body holds an export form (an export list, export *, export = or export default of a value): what declare module \"x\", declare namespace or declare global holds is then public at any depth, and with an export form only what an export marks is. declare module \"x\" itself is public, since any file imports it by its name. A re-export (export { a } from) names another file's definition. A nested function is private. A class member is public unless private, a # name or protected states otherwise; protected is a visibility of its own. An interface's, a type literal's, an object literal's and an enum's members have no modifier and are public. A test is a call, which nothing names from outside, so it has none."
 alternatives = [
     "Members as visible as their container: rejected because TypeScript states a member's visibility on the member, public by default",
     "protected as private: rejected because a subclass in another file may name it",
     "Ignore CommonJS exports: rejected because module.exports is how a CommonJS module exports, and its functions would read as private",
-    "Ambient declarations private unless exported: rejected because TypeScript exports them, and a declaration file would then read as wholly private",
+    "Every declaration of an ambient module public: rejected because TypeScript exports only the marked ones once the body holds an export form (declare module \"*.svg\" { const c: string; export default c })",
 ]
 tags = [
     "anchors",
@@ -17,6 +17,7 @@ created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
     { file = "src/code/general/place.rs", symbol = "place" },
     { file = "src/code/general/tests.rs", symbol = "an_ambient_module_or_namespace_exports_what_it_holds_at_any_depth" },
+    { file = "src/code/general/tests.rs", symbol = "an_ambient_module_with_an_export_form_exports_only_what_it_marks" },
     { file = "src/code/general/tests.rs", symbol = "an_export_states_what_its_module_makes_public" },
     { file = "src/code/kinds.rs", symbol = "Visibility" },
     { file = "src/code/language/typescript.scm" },

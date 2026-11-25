@@ -1,8 +1,10 @@
 //! The units of a tree's span hashes and the hashes over them. A tree's
 //! tokens (`syntax.rs`) are its units, each glued kind of its grammar's
-//! [`Lexicon`] two, and a node its query marks by its words one per run
-//! of its text between ASCII whitespace (JSX text). A grammar whose layout carries syntax that no byte
-//! holds (the statements and blocks of Python, whose NEWLINE, INDENT and
+//! [`Lexicon`] two, a node its query marks by its words one per run of
+//! its text between blanks (a C macro's body), and one it marks by its
+//! characters as JSX renders it (JSX text). A grammar whose layout
+//! carries syntax that no byte holds (the statements and blocks of
+//! Python, whose NEWLINE, INDENT and
 //! DEDENT are tokens of no width in no node) marks the nodes whose extent
 //! is part of the hash: each such group opens and closes with a mark no
 //! token's bytes give ([`Leaves::of_marked`]). A definition's hash is over
@@ -48,6 +50,9 @@ pub(super) struct NodeMarks {
     pub(super) whole: bool,
     /// One token per run of its text between ASCII whitespace.
     pub(super) words: bool,
+    /// Its text as JSX renders it: a token a character, an empty one a
+    /// run of whitespace.
+    pub(super) chars: bool,
     /// Left out of every hash.
     pub(super) skip: bool,
     /// Its extent is part of the hash: a mark opens and closes it.
@@ -62,7 +67,7 @@ pub(super) struct NodeMarks {
 impl NodeMarks {
     /// How the walk takes a node so marked.
     const fn take(self) -> Take {
-        match (self.skip, self.whole || self.words) {
+        match (self.skip, self.whole || self.words || self.chars) {
             (true, _) => Take::Skip,
             (false, true) => Take::Whole,
             (false, false) => Take::Walk,
@@ -145,6 +150,7 @@ impl Leaves {
                 Token::Node(node) if marks_of(node).words => {
                     push_words(&mut units, node, (text, lexicon));
                 }
+                Token::Node(node) if marks_of(node).chars => push_chars(&mut units, node, text),
                 Token::Node(_) | Token::Gap { .. } => push_text(&mut units, token, lexicon),
                 Token::Enter(node) => {
                     let marked = marks_of(node);
@@ -230,6 +236,40 @@ fn push_words(units: &mut Vec<Unit>, node: Node<'_>, (text, lexicon): (&str, &Le
     }
     if let Some(from) = word {
         units.push(Unit::text(start + from, start + bytes.len()));
+    }
+}
+
+/// Push the units of `node`'s text as JSX renders it: a unit for each
+/// character but ASCII whitespace, and an empty one for each run of
+/// whitespace, but a run at an end of the text that holds a line break,
+/// which JSX drops. A character is a unit of its own, so text that a node
+/// left out of the hash splits (`a{/* c */}b`) hashes as the text joined.
+fn push_chars(units: &mut Vec<Unit>, node: Node<'_>, text: &str) {
+    let start = node.start_byte();
+    let Some(run) = text.get(node.byte_range()) else {
+        return;
+    };
+    let breaks = |gap: &str| gap.contains(['\n', '\r']);
+    let mut space: Option<usize> = None;
+    let mut seen = false;
+    for (at, c) in run.char_indices() {
+        if c.is_ascii_whitespace() {
+            space = space.or(Some(at));
+            continue;
+        }
+        if let Some(from) = space.take()
+            && (seen || !run.get(from..at).is_some_and(breaks))
+        {
+            units.push(Unit::text(start + at, start + at));
+        }
+        seen = true;
+        units.push(Unit::text(start + at, start + at + c.len_utf8()));
+    }
+    if space
+        .and_then(|from| run.get(from..))
+        .is_some_and(|gap| !breaks(gap))
+    {
+        units.push(Unit::text(start + run.len(), start + run.len()));
     }
 }
 

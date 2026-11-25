@@ -343,7 +343,8 @@ const TYPESCRIPT_CASES: &[(&str, &str, &str)] = &[
     (SHELF_TEST, "with %s books::holds ${count}", SYMBOL),
     (SHELF_TEST, "Shelf::reads a::b and calls run()", SYMBOL),
     (SHELF_TEST, "handles f(x)", SYMBOL),
-    (SHELF_TEST, "weighs", SYMBOL),
+    // `test.todo("weighs")` passes no function, so it is no test.
+    (SHELF_TEST, "weighs", MISSING),
     ("typescript/card.tsx", "default", SYMBOL),
     ("typescript/card.tsx", "Badge()", SYMBOL),
     ("typescript/card.tsx", "Panel::render", SYMBOL),
@@ -1236,7 +1237,6 @@ const STATEMENTS: &[&str] = &[
     "typescript/shelf.test.ts Shelf::with %s books::holds ${count} Test Test -",
     "typescript/shelf.test.ts Shelf::reads a::b and calls run() Test Test -",
     "typescript/shelf.test.ts Shelf::handles f(x) Test Test -",
-    "typescript/shelf.test.ts weighs Test Test -",
     "typescript/shelf.ts CAPACITY Variable Code Public",
     "typescript/shelf.ts half Function Code Public",
     "typescript/shelf.ts opened Variable Code Private",
