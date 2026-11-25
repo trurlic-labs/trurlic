@@ -7,28 +7,35 @@
 //! matched only where it is rooted: a cursor run once over the whole tree
 //! goes quadratic on the deep error trees of hostile input. A query match
 //! limit that is hit is a fault, never a dropped match, and the text its
-//! predicates read is charged to a budget per byte. The walk keeps its
-//! own frame for each ancestor of the node it is at (its kind, its span,
-//! whether a test mark holds it, the innermost visibility mark, and how
-//! far each span growth and wrap reaches from it), so no parent is read
-//! through tree-sitter, which finds it by a descent from the root. A capture names a node at or below the match's root, which the
-//! walk reaches later or now: what it captures waits by node until then.
+//! predicates and the names read is charged to a budget per byte. The
+//! walk keeps its own frame for each ancestor of the node it is at (its
+//! kind, its span, whether a test mark holds it, the innermost visibility
+//! mark, how far each span growth and wrap reaches from it, and the run
+//! of siblings of each preceding set right before it), so no parent or
+//! sibling is read through tree-sitter, which finds one by a descent from
+//! the root. A capture names a node at or below the match's root, which
+//! the walk reaches later or now: what it captures waits by node until
+//! then. Every match that captures a node as its `@definition` is
+//! recorded by the time the walk reaches the node, so an exclusive
+//! pattern's claim on it is settled there, whatever the patterns' order.
 //!
-//! The sweep places the definitions by span: sorted by start, the widest
-//! first, each is under the innermost open container whose span holds it.
-//! A definition's path is its container's and its name.
+//! The sweep (`general/place.rs`) places the definitions by span. A
+//! definition's path is its container's and its name's segments
+//! (`general/name.rs`).
 
-use std::collections::BTreeMap;
+mod name;
+mod place;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter;
 
 use tree_sitter::{Node, QueryCursor, StreamingIterator, Tree};
 
 use super::index::{FileIndex, IndexFault};
-use super::kinds::{Role, Visibility, What};
+use super::kinds::{Role, Visibility};
 use super::language::Language;
-use super::query::{Capture, Container, Definer, Rules};
-use super::scope::{ScopeId, ScopeTree};
-use super::symbol::Segment;
+use super::query::{Capture, Definer, Rules};
+use super::scope::ScopeTree;
 use super::syntax;
 use super::tree::TreeIndex;
 use super::units::{Leaves, NodeMarks};
@@ -52,28 +59,27 @@ pub(super) fn index(language: &Language, text: &str) -> Result<FileIndex, IndexF
     let tree = syntax::parse(text, &rules.grammar)?;
     let found = collect(rules, &tree, text)?;
     let mut scopes = ScopeTree::for_file(text.len());
-    let placed = place(&found, text, &mut scopes)?;
+    let placed = place::place(&found, &mut scopes)?;
     let mut marks = found.marks;
     for definition in &placed {
-        marks.entry(definition.span.id).or_default().span = true;
+        marks.entry(definition.span.first).or_default().opens = true;
+        marks.entry(definition.span.last).or_default().closes = true;
     }
     let (leaves, units) = Leaves::of_marked(&tree, (text, &language.lexicon), &marks);
     let mut build = TreeIndex::new(text, leaves, scopes);
     for definition in placed {
         let span = definition.span;
-        // A span the query leaves out of every hash holds no unit.
-        let held = units.get(&span.id).cloned().unwrap_or_default();
         build.define_units(
             definition.scope,
             &(span.start..span.end),
-            held,
+            units.between(span.first, span.last),
             definition.what,
         )?;
     }
     Ok(build.finish())
 }
 
-/// A node a definition's span is: its id and its bytes.
+/// A node the walk passed: its id and its bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SpanNode {
     id: usize,
@@ -81,69 +87,40 @@ struct SpanNode {
     end: usize,
 }
 
-impl SpanNode {
+/// A definition's span: from node `first`'s start to node `last`'s end,
+/// one node, or a run of siblings its node closes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Extent {
+    first: usize,
+    last: usize,
+    start: usize,
+    end: usize,
+}
+
+impl Extent {
     /// Whether its bytes hold `start..end`.
     const fn holds(&self, start: usize, end: usize) -> bool {
         self.start <= start && end <= self.end
     }
 }
 
-/// What the walk found of a definition's name node.
+/// A node a `@visibility.<name>` capture marks: its bytes and the
+/// visibility.
 #[derive(Debug, Clone, Copy)]
-struct NameNode {
+struct VisibilityMark {
     start: usize,
     end: usize,
-    test: bool,
-    /// What the innermost visibility mark that holds it states.
-    visibility: Option<Visibility>,
+    visibility: Visibility,
 }
 
-/// A definition pattern's match, completed as the walk reaches the
-/// nodes it captured.
+/// What the walk found of a definition's name node: the text of each of
+/// its segments, whether a test mark holds it, and the innermost
+/// visibility mark that holds it.
 #[derive(Debug, Clone)]
-struct Candidate<'r> {
-    definer: &'r Definer,
-    span: Option<SpanNode>,
-    name: Option<NameNode>,
-}
-
-/// What a captured node waits for the walk to reach it with.
-#[derive(Debug, Clone, Copy)]
-enum Waiting {
-    Definition(usize),
-    Name(usize),
-    Test,
-    Visibility(Visibility),
-}
-
-/// What the walk keeps of an ancestor of the node it is at.
-#[derive(Debug, Clone, Copy)]
-struct Frame {
-    kind: u16,
-    node: SpanNode,
+struct NameNode {
+    parts: Vec<String>,
     test: bool,
-    visibility: Option<Visibility>,
-}
-
-/// What the walk found: the candidates, and how the hash takes each
-/// marked node, by its id.
-struct Found<'r> {
-    candidates: Vec<Candidate<'r>>,
-    marks: BTreeMap<usize, NodeMarks>,
-}
-
-impl<'r> Found<'r> {
-    /// The span, name and definer of each candidate the walk completed,
-    /// by span start, the widest first, then in the order matched.
-    fn complete(&self) -> Vec<(SpanNode, NameNode, &'r Definer)> {
-        let mut complete: Vec<(SpanNode, NameNode, &Definer)> = self
-            .candidates
-            .iter()
-            .filter_map(|candidate| Some((candidate.span?, candidate.name?, candidate.definer)))
-            .collect();
-        complete.sort_by_key(|(span, _, _)| (span.start, std::cmp::Reverse(span.end)));
-        complete
-    }
+    visibility: Option<VisibilityMark>,
 }
 
 impl NameNode {
@@ -156,27 +133,110 @@ impl NameNode {
     }
 }
 
-/// The walk's state: the frames of the ancestors, the reach of each
-/// growth and wrap from each (`reach`, a row of the rules' growths then
-/// wraps per frame, the depth of the node reached), and what waits.
-struct Walk<'r> {
+/// A definition pattern's match, completed as the walk reaches the
+/// nodes it captured.
+#[derive(Debug, Clone)]
+struct Candidate<'r> {
+    definer: &'r Definer,
+    span: Option<Extent>,
+    name: Option<NameNode>,
+}
+
+/// What a captured node waits for the walk to reach it with.
+#[derive(Debug, Clone, Copy)]
+enum Waiting {
+    Definition(usize),
+    Name(usize),
+    Test,
+    Visibility(Visibility),
+}
+
+impl Waiting {
+    /// The candidate a `@definition` capture waits for.
+    const fn definition(&self) -> Option<usize> {
+        match self {
+            Self::Definition(at) => Some(*at),
+            Self::Name(_) | Self::Test | Self::Visibility(_) => None,
+        }
+    }
+}
+
+/// What the walk keeps of an ancestor of the node it is at.
+#[derive(Debug, Clone, Copy)]
+struct Frame {
+    kind: u16,
+    node: SpanNode,
+    test: bool,
+    visibility: Option<VisibilityMark>,
+}
+
+/// What the walk found: the candidates, how the hash takes each marked
+/// node, by its id, and the names an `@export.name` capture spells.
+struct Found<'r, 't> {
+    candidates: Vec<Candidate<'r>>,
+    marks: BTreeMap<usize, NodeMarks>,
+    exported: BTreeSet<&'t str>,
+}
+
+impl<'r> Found<'r, '_> {
+    /// The span, name and definer of each candidate the walk completed,
+    /// by span start, the widest first, then in the order matched.
+    fn complete(&self) -> Vec<(Extent, &NameNode, &'r Definer)> {
+        let mut complete: Vec<(Extent, &NameNode, &Definer)> = self
+            .candidates
+            .iter()
+            .filter_map(|candidate| {
+                Some((candidate.span?, candidate.name.as_ref()?, candidate.definer))
+            })
+            .collect();
+        complete.sort_by_key(|(span, _, _)| (span.start, std::cmp::Reverse(span.end)));
+        complete
+    }
+
+    /// Whether an `@export.name` capture spells the name of one segment
+    /// `parts` is.
+    fn is_exported(&self, parts: &[String]) -> bool {
+        let [one] = parts else {
+            return false;
+        };
+        self.exported.contains(one.as_str())
+    }
+}
+
+/// The walk's state: the frames of the ancestors; per frame a row of the
+/// reach of each growth and wrap from it (`reach`, the rules' growths
+/// then wraps, each the depth of the node reached), of the run of each
+/// preceding set right before it (`before`), and of that run among its
+/// children seen so far (`runs`); and what waits.
+struct Walk<'r, 't> {
     rules: &'r Rules,
+    text: &'t str,
     frames: Vec<Frame>,
     reach: Vec<Option<usize>>,
+    before: Vec<Option<SpanNode>>,
+    runs: Vec<Option<SpanNode>>,
     waiting: BTreeMap<usize, Vec<Waiting>>,
-    found: Found<'r>,
+    found: Found<'r, 't>,
 }
 
 /// Each node of `tree` visited once, the query started at each named one.
-fn collect<'r>(rules: &'r Rules, tree: &Tree, text: &str) -> Result<Found<'r>, IndexFault> {
+fn collect<'r, 't>(
+    rules: &'r Rules,
+    tree: &Tree,
+    text: &'t str,
+) -> Result<Found<'r, 't>, IndexFault> {
     let mut walk = Walk {
         rules,
+        text,
         frames: Vec::new(),
         reach: Vec::new(),
+        before: Vec::new(),
+        runs: Vec::new(),
         waiting: BTreeMap::new(),
         found: Found {
             candidates: Vec::new(),
             marks: BTreeMap::new(),
+            exported: BTreeSet::new(),
         },
     };
     let mut matches = Matches {
@@ -192,7 +252,7 @@ fn collect<'r>(rules: &'r Rules, tree: &Tree, text: &str) -> Result<Found<'r>, I
         if node.is_named() {
             matches.record_at(node, &mut walk)?;
         }
-        walk.enter(node);
+        walk.enter(node, &mut matches.work)?;
         if cursor.goto_first_child() {
             continue;
         }
@@ -206,7 +266,8 @@ fn collect<'r>(rules: &'r Rules, tree: &Tree, text: &str) -> Result<Found<'r>, I
     }
 }
 
-/// The query's cursor and the budget of the text its predicates read.
+/// The query's cursor and the budget of the text its predicates and the
+/// names read.
 struct Matches<'t> {
     cursor: QueryCursor,
     work: Work,
@@ -217,7 +278,7 @@ impl Matches<'_> {
     /// Record each match rooted at `node`; [`IndexFault::TooComplex`] when
     /// the match limit is hit or the predicates' text runs past its
     /// budget.
-    fn record_at(&mut self, node: Node<'_>, walk: &mut Walk<'_>) -> Result<(), IndexFault> {
+    fn record_at(&mut self, node: Node<'_>, walk: &mut Walk<'_, '_>) -> Result<(), IndexFault> {
         let bytes = self.text.as_bytes();
         let mut over = false;
         let work = &mut self.work;
@@ -242,7 +303,7 @@ impl Matches<'_> {
     }
 }
 
-impl Walk<'_> {
+impl Walk<'_, '_> {
     /// Record a match of pattern `pattern` that captured `captures`.
     fn record(&mut self, pattern: usize, captures: &[tree_sitter::QueryCapture<'_>]) {
         let (mut definition, mut name) = (None, None);
@@ -250,14 +311,21 @@ impl Walk<'_> {
             let id = capture.node.id();
             let what = self.rules.captures.get(capture.index as usize);
             let mut wait = |waiting| self.waiting.entry(id).or_default().push(waiting);
+            let mut mark = |set: fn(&mut NodeMarks)| set(self.found.marks.entry(id).or_default());
             match what.copied().unwrap_or(Capture::Predicate) {
                 Capture::Definition => definition = Some(id),
                 Capture::Name => name = Some(id),
                 Capture::Test => wait(Waiting::Test),
                 Capture::Visibility(visibility) => wait(Waiting::Visibility(visibility)),
-                Capture::Unit => self.found.marks.entry(id).or_default().whole = true,
-                Capture::Skip => self.found.marks.entry(id).or_default().skip = true,
-                Capture::Group => self.found.marks.entry(id).or_default().group = true,
+                Capture::Export => {
+                    if let Some(spelled) = self.text.get(capture.node.byte_range()) {
+                        self.found.exported.insert(spelled);
+                    }
+                }
+                Capture::Unit => mark(|marks| marks.whole = true),
+                Capture::Words => mark(|marks| marks.words = true),
+                Capture::Skip => mark(|marks| marks.skip = true),
+                Capture::Group => mark(|marks| marks.group = true),
                 Capture::Predicate => {}
             }
         }
@@ -276,29 +344,40 @@ impl Walk<'_> {
     }
 
     /// Enter `node`: its frame, from its parent's and what waited for it,
-    /// and the candidates that captured it completed.
-    fn enter(&mut self, node: Node<'_>) {
+    /// and the candidates that captured it completed. A candidate of a
+    /// pattern that is not exclusive is dropped when one that is captured
+    /// the same node.
+    fn enter(&mut self, node: Node<'_>, work: &mut Work) -> Result<(), IndexFault> {
         let waiting = self.waiting.remove(&node.id()).unwrap_or_default();
         let parent = self.frames.last().copied();
         let frame = frame_of(node, parent, &waiting);
         self.push_reach(frame.kind, parent.map(|parent| parent.kind));
+        self.push_runs(frame, syntax::is_comment(node));
         self.frames.push(frame);
+        let claimed = waiting
+            .iter()
+            .filter_map(Waiting::definition)
+            .any(|at| self.is_exclusive(at));
         for waited in waiting {
             match waited {
-                Waiting::Definition(at) => self.complete_span(at),
-                Waiting::Name(at) => {
-                    if let Some(candidate) = self.found.candidates.get_mut(at) {
-                        candidate.name = Some(NameNode {
-                            start: frame.node.start,
-                            end: frame.node.end,
-                            test: frame.test,
-                            visibility: frame.visibility,
-                        });
+                Waiting::Definition(at) => {
+                    if !claimed || self.is_exclusive(at) {
+                        self.complete_span(at);
                     }
                 }
+                Waiting::Name(at) => self.complete_name(at, node, frame, work)?,
                 Waiting::Test | Waiting::Visibility(_) => {}
             }
         }
+        Ok(())
+    }
+
+    /// Whether candidate `at`'s pattern is exclusive.
+    fn is_exclusive(&self, at: usize) -> bool {
+        self.found
+            .candidates
+            .get(at)
+            .is_some_and(|candidate| candidate.definer.exclusive)
     }
 
     /// Push the reach of each growth and wrap from a node of `kind` under
@@ -329,6 +408,29 @@ impl Walk<'_> {
         }
     }
 
+    /// Push the runs of `frame`'s node: of each preceding set, the run
+    /// right before it among its parent's children seen so far, and none
+    /// yet among its own. The parent's run goes on through the node when
+    /// it is of the set's kinds or a comment, and ends at any other.
+    fn push_runs(&mut self, frame: Frame, comment: bool) {
+        let rules = self.rules;
+        let width = rules.precedings.len();
+        let parent_row = self.frames.len().checked_sub(1).map(|depth| depth * width);
+        for (at, kinds) in rules.precedings.iter().enumerate() {
+            let run = parent_row.and_then(|row| self.runs.get_mut(row + at));
+            let before = run.as_deref().copied().flatten();
+            if let Some(run) = run {
+                *run = match (kinds.contains(&frame.kind), comment) {
+                    (true, _) => Some(before.unwrap_or(frame.node)),
+                    (false, true) => before,
+                    (false, false) => None,
+                };
+            }
+            self.before.push(before);
+        }
+        self.runs.extend(iter::repeat_n(None, width));
+    }
+
     /// The reach of growth or wrap `at` (counted over the growths, then
     /// the wraps) from the frame at `depth`.
     fn reach_of(&self, depth: usize, at: usize) -> Option<usize> {
@@ -336,8 +438,9 @@ impl Walk<'_> {
         self.reach.get(depth * width + at).copied().flatten()
     }
 
-    /// Complete candidate `at`'s span: the node the walk is at, grown and
-    /// wrapped as its pattern says; none when its growth reaches nothing.
+    /// Complete candidate `at`'s span: the node the walk is at, grown,
+    /// wrapped and preceded as its pattern says; none when its growth
+    /// reaches nothing.
     fn complete_span(&mut self, at: usize) {
         let Some(definer) = self
             .found
@@ -367,19 +470,63 @@ impl Walk<'_> {
                 .and_then(|up| self.reach_of(up, self.rules.growths.len() + wrap))
                 .unwrap_or(grown),
         });
-        let span = wrapped
-            .and_then(|depth| self.frames.get(depth))
-            .map(|frame| frame.node);
+        let span = wrapped.and_then(|depth| self.extent_at(depth, definer));
         if let Some(candidate) = self.found.candidates.get_mut(at) {
             candidate.span = span;
         }
     }
 
+    /// The span of the node of the frame at `depth`, with the run of
+    /// siblings right before it that `definer` takes in.
+    fn extent_at(&self, depth: usize, definer: &Definer) -> Option<Extent> {
+        let node = self.frames.get(depth)?.node;
+        let width = self.rules.precedings.len();
+        let first = definer
+            .preceding
+            .and_then(|set| self.before.get(depth * width + set).copied().flatten())
+            .unwrap_or(node);
+        Some(Extent {
+            first: first.id,
+            last: node.id,
+            start: first.start,
+            end: node.end,
+        })
+    }
+
+    /// Complete candidate `at`'s name: `node`, whose frame is `frame`.
+    fn complete_name(
+        &mut self,
+        at: usize,
+        node: Node<'_>,
+        frame: Frame,
+        work: &mut Work,
+    ) -> Result<(), IndexFault> {
+        let Some(candidate) = self.found.candidates.get_mut(at) else {
+            return Ok(());
+        };
+        let parts = name::parts(
+            node,
+            self.text,
+            candidate.definer.separator.as_deref(),
+            work,
+        )?;
+        candidate.name = Some(NameNode {
+            parts,
+            test: frame.test,
+            visibility: frame.visibility,
+        });
+        Ok(())
+    }
+
     /// Leave the node the walk is at.
     fn leave(&mut self) {
         self.frames.pop();
+        let depth = self.frames.len();
         let width = self.rules.growths.len() + self.rules.wraps.len();
-        self.reach.truncate(self.frames.len() * width);
+        self.reach.truncate(depth * width);
+        let width = self.rules.precedings.len();
+        self.before.truncate(depth * width);
+        self.runs.truncate(depth * width);
     }
 }
 
@@ -401,63 +548,17 @@ fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame
     for waited in waiting {
         match *waited {
             Waiting::Test => frame.test = true,
-            Waiting::Visibility(visibility) => frame.visibility = Some(visibility),
+            Waiting::Visibility(visibility) => {
+                frame.visibility = Some(VisibilityMark {
+                    start: span.start,
+                    end: span.end,
+                    visibility,
+                });
+            }
             Waiting::Definition(_) | Waiting::Name(_) => {}
         }
     }
     frame
-}
-
-/// A definition placed in its file: its scope, its span node and what it
-/// is.
-struct Placed {
-    scope: ScopeId,
-    span: SpanNode,
-    what: What,
-}
-
-/// A container open in the sweep: its span, kind and scope.
-struct Open {
-    span: SpanNode,
-    container: Container,
-    scope: ScopeId,
-}
-
-/// The definitions of `found`, each under the innermost container whose
-/// span holds its own, its scope entered in `scopes`.
-fn place(found: &Found<'_>, text: &str, scopes: &mut ScopeTree) -> Result<Vec<Placed>, IndexFault> {
-    let mut open: Vec<Open> = Vec::new();
-    let mut placed = Vec::new();
-    for (span, name, definer) in found.complete() {
-        while open
-            .last()
-            .is_some_and(|top| !top.span.holds(span.start, span.end))
-        {
-            open.pop();
-        }
-        let container = open.last().map_or(Container::Top, |top| top.container);
-        let spelled = text.get(name.start..name.end).unwrap_or_default();
-        if !definer.admits(container) || spelled.trim().is_empty() {
-            continue;
-        }
-        let kind = definer.kind_in(container);
-        let parent = open.last().map(|top| top.scope);
-        let scope = scopes.enter(parent, vec![Segment::name(spelled)])?;
-        if definer.container {
-            open.push(Open {
-                span,
-                container: Container::Kind(kind),
-                scope,
-            });
-        }
-        let what = What {
-            kind,
-            role: name.role(),
-            visibility: name.visibility.or(definer.visibility),
-        };
-        placed.push(Placed { scope, span, what });
-    }
-    Ok(placed)
 }
 
 #[cfg(test)]

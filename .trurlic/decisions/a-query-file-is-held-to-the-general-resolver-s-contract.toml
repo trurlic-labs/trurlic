@@ -17,7 +17,7 @@ created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
     { file = "src/code/language.rs", symbol = "Language::identity()" },
     { file = "src/code/language.rs", symbol = "Language::rules()" },
-    { file = "src/code/language.rs", symbol = "the_python_query_compiles_against_its_grammar_within_the_contract" },
+    { file = "src/code/language.rs", symbol = "each_query_compiles_against_its_grammar_within_the_contract" },
     { file = "src/code/purity.rs", symbol = "is_admitted_include" },
     { file = "src/code/query.rs", symbol = "QueryFault" },
     { file = "src/code/query.rs", symbol = "Rules::compile" },

@@ -85,6 +85,13 @@ tree-sitter-rust = "0.24"
 # or a runtime of its own. 0.25 is the newest release, and its ABI 15 is
 # one tree-sitter 0.27 reads.
 tree-sitter-python = "0.25"
+# TypeScript's two grammars for the general resolver: `typescript` reads
+# `.ts`, `.mts` and `.cts`, `tsx` reads `.tsx` and every JavaScript file
+# (src/code/language/typescript.scm), so JavaScript needs no grammar of
+# its own. Their C parsers and scanners add about 3 MB to a binary that
+# indexes. 0.23 is the newest release; its ABI 14 is one tree-sitter 0.27
+# reads.
+tree-sitter-typescript = "0.23"
 
 # The size of a `[quality]` pattern's Thompson NFA, its state count, which
 # bounds what the pattern costs per byte it reads: `status` charges its

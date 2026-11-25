@@ -1,6 +1,6 @@
 component = "code"
-choice = "A definition the general resolver finds is under the innermost container whose span holds its own; within and kind.in read that container's kind"
-reason = "A query pattern names a fixed nesting and cannot say the enclosing class however deep, so containment comes from the spans: sorted by start, the widest first, each definition is under the innermost open container whose span holds it, and one whose pattern sets container false (a name a statement binds) opens none. within keeps a definition only at the file's top or in containers of the kinds it names, so a function's locals define nothing; kind.in gives a definition another kind in a container of a kind, so a def directly in a class is a method and a def in a method a function. A span grows from the captured node up through ancestors of the definition.via kinds to the first of a definition.to kind, or the match is dropped, and over the run of definition.wrap ancestors right above it, so a decorated definition starts at its first decorator. A name with no text, one the parser inserted as missing, defines nothing."
+choice = "A definition the general resolver finds is under the innermost container whose span holds its own, two of one span being siblings; within and kind.in read that container's kind"
+reason = "A query pattern names a fixed nesting and cannot say the enclosing class however deep, so containment comes from the spans: sorted by start, the widest first, each definition is under the innermost open container whose span holds it, and one whose pattern sets container false (a name a statement binds) opens none. Two of one span, the names of a = b = 1, are siblings. within keeps a definition only at the file's top or in containers of the kinds it names, so a function's locals define nothing; kind.in gives a definition another kind in a container of a kind, so a def directly in a class is a method and a def in a method a function. A span grows from the captured node up through ancestors of the definition.via kinds to the first of a definition.to kind, or the match is dropped, and over the run of definition.wrap ancestors right above it, so a decorated definition starts at its first decorator, and over the run of definition.preceding siblings right before it, comments between them included, so a TypeScript method starts at the first decorator beside it in its class body. A visibility mark applies to a definition whose span holds it, so an export around a namespace makes none of its members public. A name with no text, one the parser inserted as missing, defines nothing."
 alternatives = [
     "Containment by node ancestry: rejected because a grown span is not the captured node, and a later language's decorators stand beside the node they wrap",
     "A method pattern listed before the function pattern, a tie going to the earlier: rejected because the order of patterns would carry a meaning no refusal shows",
@@ -14,8 +14,11 @@ origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
     { file = "src/code/general.rs", symbol = "Walk::complete_span" },
-    { file = "src/code/general.rs", symbol = "place" },
+    { file = "src/code/general.rs", symbol = "Walk::push_runs" },
+    { file = "src/code/general/place.rs", symbol = "place" },
     { file = "src/code/general/tests.rs", symbol = "a_span_grows_over_its_decorators_and_a_name_to_its_statement" },
+    { file = "src/code/general/tests.rs", symbol = "a_span_takes_in_the_decorators_beside_it" },
+    { file = "src/code/general/tests.rs", symbol = "two_definitions_of_one_span_are_siblings" },
     { file = "src/code/query.rs", symbol = "Definer" },
     { file = "src/code/query.rs", symbol = "Definer::admits" },
     { file = "src/code/query.rs", symbol = "Definer::kind_in()" },

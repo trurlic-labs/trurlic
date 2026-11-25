@@ -42,7 +42,7 @@ pub(crate) fn named<'t>(kind: FileKind, text: &'t str, symbol: &str) -> Vec<&'t 
     index
         .definitions
         .iter()
-        .filter(|d| symbol.names(scopes.path_from_end(d.scope)))
+        .filter(|d| symbol.names(d.kind, scopes.path_from_end(d.scope)))
         .map(|d| &text[d.span.start..d.span.end])
         .collect()
 }

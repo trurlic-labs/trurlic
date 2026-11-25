@@ -14,9 +14,13 @@
 //! module-level `open` is named as `open` beside a `Store::open`. In a
 //! language, a symbol whose last segment ends in `()` names a function or
 //! method alone (`Store::code_root()` beside the field `Store::code_root`).
-//! A language the general resolver reads, Python, splits on `::` alone;
-//! so does a data or prose file, whose segments may hold `<`, `>` and
-//! parentheses as text (a Markdown heading).
+//! A language the general resolver reads splits on `::` alone, by the
+//! syntax its row names: Python's names are identifiers, so a `(x)` is
+//! refused; TypeScript names a test by its strings, so parentheses are
+//! text there and a last `()` names a function of the path without it or
+//! a definition whose last segment is written with it. A data or prose
+//! file splits on `::` too, its segments holding `<`, `>` and parentheses
+//! as text (a Markdown heading).
 
 use std::fmt;
 
@@ -92,8 +96,14 @@ pub(crate) enum Syntax {
     /// a last segment may end in `()`.
     Rust,
     /// `::` separates, every segment is a name, and a last segment may end
-    /// in `()`: a language the general resolver reads.
+    /// in `()`: a language whose names are identifiers (Python).
     Code,
+    /// `::` separates and every segment is text, since a language may name
+    /// a definition by a string literal (a test call, a quoted member)
+    /// that holds anything. A last segment ending in `()` names the
+    /// functions and methods of the path without it, and every definition
+    /// whose last segment is written with it; other parentheses are text.
+    Strings,
     /// `::` separates, and every segment is a name: a data or prose file.
     Plain,
 }
@@ -125,17 +135,21 @@ impl fmt::Display for SymbolFault {
     }
 }
 
-/// Whether a symbol names a function or method alone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Which definitions of the path a symbol's segments spell it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Call {
-    /// No suffix: every kind of definition is named.
+    /// No suffix: every kind of definition.
     Any,
     /// A last segment ending in `()`: a function or method alone.
     Function,
+    /// A last segment ending in `()` in [`Syntax::Strings`]: a function or
+    /// method of the path, or any definition of the path whose last
+    /// segment is this one, its parentheses written.
+    FunctionOrText(Segment),
 }
 
-/// A parsed symbol: its segments from the outermost, and whether a `()`
-/// ends it.
+/// A parsed symbol: its segments from the outermost, and what a `()`
+/// ending it narrows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Symbol {
     segments: Vec<Segment>,
@@ -145,25 +159,62 @@ pub(crate) struct Symbol {
 impl Symbol {
     /// A symbol of a file of `syntax`. In a language a last segment may
     /// end in `()`, whitespace before it allowed as within a name (`open
-    /// ()` is `open()`); `(..)` holding anything is refused, as is `()`
-    /// after a trait segment. A data or prose file takes parentheses as
-    /// text.
+    /// ()` is `open()`). In Rust and [`Syntax::Code`], `(..)` holding
+    /// anything is refused, as is `()` after a trait segment. A data or
+    /// prose file takes parentheses as text, and [`Syntax::Strings`] every
+    /// parenthesis but a last `()`, which it reads both ways.
     pub(crate) fn parse(text: &str, syntax: Syntax) -> Result<Self, SymbolFault> {
-        let (text, call) = match syntax {
-            Syntax::Plain => (text, Call::Any),
+        let (named, call) = match syntax {
+            Syntax::Plain => return Self::of_segments(text, syntax, Call::Any),
+            Syntax::Strings => return Self::of_strings(text),
             Syntax::Rust | Syntax::Code => call_suffix(text)?,
         };
+        let symbol = Self::of_segments(named, syntax, call)?;
+        if symbol.call == Call::Function
+            && matches!(symbol.segments.last(), Some(Segment::Impl { .. }))
+        {
+            return Err(SymbolFault::CallOnTrait);
+        }
+        Ok(symbol)
+    }
+
+    /// The symbol `text` of [`Syntax::Strings`]: its segments as text,
+    /// and, when its last ends in `()` that a name comes before, the
+    /// functions of the path without them too.
+    fn of_strings(text: &str) -> Result<Self, SymbolFault> {
+        let mut whole = Self::of_segments(text, Syntax::Strings, Call::Any)?;
+        // Parentheses that are no empty `()` after a name are text here, so
+        // the suffix's refusals read the symbol as text alone.
+        let called = match call_suffix(text) {
+            Ok((named, Call::Function)) => {
+                Self::of_segments(named, Syntax::Strings, Call::Any).ok()
+            }
+            Ok((_, Call::Any | Call::FunctionOrText(_))) | Err(_) => None,
+        };
+        match (called, whole.segments.pop()) {
+            (Some(called), Some(last)) => Ok(Self {
+                segments: called.segments,
+                call: Call::FunctionOrText(last),
+            }),
+            (None, Some(last)) => {
+                whole.segments.push(last);
+                Ok(whole)
+            }
+            (Some(_) | None, None) => Ok(whole),
+        }
+    }
+
+    /// The symbol whose segments `text` spells in `syntax`, `call` its
+    /// narrowing.
+    fn of_segments(text: &str, syntax: Syntax, call: Call) -> Result<Self, SymbolFault> {
         let parts = match syntax {
-            Syntax::Plain | Syntax::Code => text.split("::").collect(),
+            Syntax::Plain | Syntax::Code | Syntax::Strings => text.split("::").collect(),
             Syntax::Rust => split_outside_brackets(text)?,
         };
         let segments: Vec<Segment> = parts
             .into_iter()
             .map(|part| segment(part.trim(), syntax))
             .collect::<Result<_, _>>()?;
-        if call == Call::Function && matches!(segments.last(), Some(Segment::Impl { .. })) {
-            return Err(SymbolFault::CallOnTrait);
-        }
         Ok(Self { segments, call })
     }
 
@@ -172,44 +223,67 @@ impl Symbol {
         &self.segments
     }
 
-    /// Whether this symbol may name a definition of `kind`: any kind, or
-    /// a function or method alone after `()`.
-    pub(crate) const fn admits(&self, kind: DefinitionKind) -> bool {
-        match self.call {
-            Call::Any => true,
-            Call::Function => kind.is_function(),
-        }
-    }
-
-    /// Whether this symbol names the definition whose path's segments,
-    /// from its last, are `from_end`: the path ends with the symbol's
-    /// segments, a trait segment of the path the symbol leaves out
-    /// skipped, its last segment never.
-    pub(crate) fn names<'a>(&self, from_end: impl Iterator<Item = &'a Segment>) -> bool {
-        let mut wanted = self.segments.iter().rev().peekable();
-        let mut defined = from_end.enumerate();
-        while let Some(want) = wanted.peek() {
-            let Some((from_end, segment)) = defined.next() else {
-                return false;
-            };
-            if want.names(segment) {
-                wanted.next();
-            } else if from_end == 0 || matches!(segment, Segment::Name(_)) {
-                return false;
+    /// Whether this symbol names a definition of `kind` whose path's
+    /// segments, from its last, are `from_end`: the path ends with the
+    /// symbol's segments, a trait segment of the path the symbol leaves
+    /// out skipped, its last segment never; after `()`, the definition is
+    /// a function or method, or in [`Syntax::Strings`] its last segment
+    /// is written with them.
+    pub(crate) fn names<'a>(
+        &self,
+        kind: DefinitionKind,
+        from_end: impl Iterator<Item = &'a Segment> + Clone,
+    ) -> bool {
+        let wanted = || self.segments.iter().rev();
+        match &self.call {
+            Call::Any => ends_with(wanted(), from_end),
+            Call::Function => kind.is_function() && ends_with(wanted(), from_end),
+            Call::FunctionOrText(last) => {
+                // clone: an iterator of references, walked once per reading.
+                (kind.is_function() && ends_with(wanted(), from_end.clone()))
+                    || ends_with(self.text_from_end(last), from_end)
             }
         }
-        true
     }
 
-    /// Whether this symbol is the whole path whose segments, from its
-    /// last, are `from_end`, no segment left out.
+    /// Whether this symbol names a definition of `kind` whose path's
+    /// segments, from its last, are `from_end`, no segment left out.
     pub(crate) fn is_path_of<'a>(
         &self,
+        kind: DefinitionKind,
         from_end: impl Iterator<Item = &'a Segment> + Clone,
     ) -> bool {
         // clone: an iterator of references, walked once to count.
-        self.segments.len() == from_end.clone().count() && self.names(from_end)
+        self.segments.len() == from_end.clone().count() && self.names(kind, from_end)
     }
+
+    /// The segments of the text reading, from the last: `last` for this
+    /// symbol's own last segment.
+    fn text_from_end<'s>(&'s self, last: &'s Segment) -> impl Iterator<Item = &'s Segment> {
+        std::iter::once(last).chain(self.segments.iter().rev().skip(1))
+    }
+}
+
+/// Whether the path whose segments, from its last, are `defined` ends
+/// with `wanted`, a symbol's segments from its last: a trait segment of
+/// the path the symbol leaves out is skipped, the path's last never.
+fn ends_with<'s, 'a>(
+    wanted: impl Iterator<Item = &'s Segment>,
+    defined: impl Iterator<Item = &'a Segment>,
+) -> bool {
+    let mut wanted = wanted.peekable();
+    let mut defined = defined.enumerate();
+    while let Some(want) = wanted.peek() {
+        let Some((from_end, segment)) = defined.next() else {
+            return false;
+        };
+        if want.names(segment) {
+            wanted.next();
+        } else if from_end == 0 || matches!(segment, Segment::Name(_)) {
+            return false;
+        }
+    }
+    true
 }
 
 /// The definition-path segments of `text`, a name as a file of `syntax`
@@ -295,7 +369,7 @@ mod tests {
 
     /// Whether `symbol` names `path`.
     fn names(symbol: &str, path: &[Segment]) -> bool {
-        rust(symbol).names(path.iter().rev())
+        rust(symbol).names(DefinitionKind::Function, path.iter().rev())
     }
 
     #[test]
@@ -336,10 +410,18 @@ mod tests {
 
     #[test]
     fn a_symbol_is_the_whole_path_only_of_a_definition_it_leaves_nothing_of() {
-        assert!(rust("open").is_path_of(path("open").iter().rev()));
-        assert!(!rust("open").is_path_of(path("Store::open").iter().rev()));
-        assert!(rust("Table::<From>").is_path_of(path("Table::<From<Kind>>").iter().rev()));
-        assert!(!rust("Table::fmt").is_path_of(path("Table::<Display>::fmt").iter().rev()));
+        assert!(rust("open").is_path_of(DefinitionKind::Function, path("open").iter().rev()));
+        assert!(
+            !rust("open").is_path_of(DefinitionKind::Function, path("Store::open").iter().rev())
+        );
+        assert!(rust("Table::<From>").is_path_of(
+            DefinitionKind::Function,
+            path("Table::<From<Kind>>").iter().rev()
+        ));
+        assert!(!rust("Table::fmt").is_path_of(
+            DefinitionKind::Function,
+            path("Table::<Display>::fmt").iter().rev()
+        ));
     }
 
     #[test]
@@ -378,12 +460,15 @@ mod tests {
         let open = rust("Store::open()");
         let spaced = rust("Store::open ()");
 
+        let method = path("Store::open");
+        let names = |symbol: &Symbol, kind| symbol.names(kind, method.iter().rev());
+
         assert_eq!(open, spaced);
         assert_eq!(open.segments, rust("Store::open").segments);
-        assert!(open.admits(DefinitionKind::Method));
-        assert!(open.admits(DefinitionKind::Function));
-        assert!(!open.admits(DefinitionKind::Field));
-        assert!(rust("Store::open").admits(DefinitionKind::Field));
+        assert!(names(&open, DefinitionKind::Method));
+        assert!(names(&open, DefinitionKind::Function));
+        assert!(!names(&open, DefinitionKind::Field));
+        assert!(names(&rust("Store::open"), DefinitionKind::Field));
         for (text, syntax, fault) in [
             ("open(x)", Syntax::Rust, SymbolFault::CallArguments),
             ("open)", Syntax::Rust, SymbolFault::UnbalancedParentheses),
@@ -399,7 +484,7 @@ mod tests {
         }
         let python = Symbol::parse("Store::open()", Syntax::Code).unwrap();
         assert_eq!(python.segments, rust("Store::open").segments);
-        assert!(!python.admits(DefinitionKind::Variable));
+        assert!(!names(&python, DefinitionKind::Variable));
         assert_eq!(
             Symbol::parse("open(x)", Syntax::Code),
             Err(SymbolFault::CallArguments)
@@ -411,8 +496,40 @@ mod tests {
         for heading in ["Calling run()", "Install (Linux)", "g(x)"] {
             let plain = Symbol::parse(heading, Syntax::Plain).unwrap();
             assert_eq!(plain.segments, [Segment::name(heading)], "{heading:?}");
-            assert!(plain.admits(DefinitionKind::Heading));
+            assert!(plain.names(DefinitionKind::Heading, [Segment::name(heading)].iter()));
         }
+    }
+
+    #[test]
+    fn a_strings_symbol_takes_parentheses_as_text_and_reads_a_last_pair_both_ways() {
+        let strings = |text: &str| Symbol::parse(text, Syntax::Strings).unwrap();
+        let test = [Segment::name("Shelf"), Segment::name("calls run()")];
+        let function = [Segment::name("Shelf"), Segment::name("calls run")];
+        let named =
+            |symbol: &str, kind, path: &[Segment]| strings(symbol).names(kind, path.iter().rev());
+
+        assert!(named("Shelf::calls run()", DefinitionKind::Test, &test));
+        assert!(named("Shelf::calls  run()", DefinitionKind::Test, &test));
+        assert!(named(
+            "Shelf::calls run()",
+            DefinitionKind::Function,
+            &function
+        ));
+        assert!(!named(
+            "Shelf::calls run()",
+            DefinitionKind::Test,
+            &function
+        ));
+        assert!(named("Shelf::calls run", DefinitionKind::Test, &function));
+        let argued = [Segment::name("handles f(x)")];
+        assert!(named("handles f(x)", DefinitionKind::Test, &argued));
+        assert!(named("()", DefinitionKind::Test, &[Segment::name("()")]));
+        assert!(named("a)", DefinitionKind::Test, &[Segment::name("a)")]));
+        assert!(strings("Shelf::calls run()").is_path_of(DefinitionKind::Test, test.iter().rev()));
+        assert_eq!(
+            Symbol::parse("a::", Syntax::Strings),
+            Err(SymbolFault::EmptySegment)
+        );
     }
 
     #[test]

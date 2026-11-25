@@ -7,11 +7,11 @@
 
 /// The kind of a definition. A kind is a different thing in the source,
 /// never a guess: a `static` is no constant, a `union` no struct, a
-/// `pub use` leaf a re-export of something defined elsewhere, and a
-/// Python `class` no struct.
+/// `pub use` leaf a re-export of something defined elsewhere, a Python or
+/// TypeScript `class` no struct, and a TypeScript `interface` no trait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DefinitionKind {
-    /// A `mod`, inline or declared.
+    /// A `mod`, inline or declared; a TypeScript `namespace` or `module`.
     Module,
     Struct,
     Union,
@@ -20,12 +20,17 @@ pub(crate) enum DefinitionKind {
     /// A trait impl, `Type::<Trait>`.
     Impl,
     /// A `fn` outside every `impl` and trait: in a module, in a body, in
-    /// an `extern` block.
+    /// an `extern` block; a function a language declares, or a function
+    /// expression bound to a name.
     Function,
-    /// A `fn` of an `impl` or a trait, with a receiver or without.
+    /// A `fn` of an `impl` or a trait, with a receiver or without; a
+    /// function a class, an interface or an object literal holds, its
+    /// accessors and constructor included.
     Method,
-    /// A named field of a struct, a union or a struct variant.
+    /// A named field of a struct, a union or a struct variant; a
+    /// property a class, an interface or a type literal declares.
     Field,
+    /// A variant of a Rust enum, a member of a TypeScript one.
     Variant,
     /// A `const`, at any level.
     Constant,
@@ -47,8 +52,13 @@ pub(crate) enum DefinitionKind {
     /// A class: Python's `class`.
     Class,
     /// A name a module or a class binds by assignment, not a function's
-    /// local: Python's `x = 1`, `x: int`.
+    /// local: Python's `x = 1`, `x: int`, TypeScript's `const x = 1`.
     Variable,
+    /// A TypeScript `interface`.
+    Interface,
+    /// A test a call defines (`it("opens")` under `describe("Store")`),
+    /// named by the strings it is called with.
+    Test,
 }
 
 impl DefinitionKind {
@@ -74,7 +84,9 @@ impl DefinitionKind {
             | Self::Target
             | Self::Heading
             | Self::Class
-            | Self::Variable => false,
+            | Self::Variable
+            | Self::Interface
+            | Self::Test => false,
         }
     }
 
@@ -102,6 +114,8 @@ impl DefinitionKind {
             Self::Heading => "heading",
             Self::Class => "class",
             Self::Variable => "variable",
+            Self::Interface => "interface",
+            Self::Test => "test",
         }
     }
 
@@ -111,7 +125,7 @@ impl DefinitionKind {
     }
 
     /// Every kind, in the order of their codes in a cache entry.
-    pub(super) const ALL: [Self; 21] = [
+    pub(super) const ALL: [Self; 23] = [
         Self::Module,
         Self::Struct,
         Self::Union,
@@ -133,6 +147,8 @@ impl DefinitionKind {
         Self::Heading,
         Self::Class,
         Self::Variable,
+        Self::Interface,
+        Self::Test,
     ];
 
     /// The kind of the item a Rust keyword opens (`fn`, `struct`, ...),
@@ -191,11 +207,13 @@ impl Role {
 }
 
 /// Who may name a definition, as its source states it: Rust's modifiers,
-/// or a language's rule (a Python name with a leading underscore is
-/// private). A `pub(in path)` keeps no path: no reader needs which.
+/// a language's rule (a Python name with a leading underscore is
+/// private), or TypeScript's `export` and member modifiers. A
+/// `pub(in path)` keeps no path: no reader needs which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Visibility {
-    /// No modifier, or `pub(self)`.
+    /// No modifier, or `pub(self)`; a TypeScript declaration its module
+    /// does not export, a `private` or `#` member.
     Private,
     /// `pub(crate)`, or the old `crate`.
     Crate,
@@ -204,16 +222,20 @@ pub(crate) enum Visibility {
     /// `pub(in path)`.
     InPath,
     Public,
+    /// A TypeScript `protected` member: its class and those that extend
+    /// it.
+    Protected,
 }
 
 impl Visibility {
     /// Every visibility, in the order of their codes in a cache entry.
-    pub(super) const ALL: [Self; 5] = [
+    pub(super) const ALL: [Self; 6] = [
         Self::Private,
         Self::Crate,
         Self::Super,
         Self::InPath,
         Self::Public,
+        Self::Protected,
     ];
 
     /// The visibility's name in a query file.
@@ -224,6 +246,7 @@ impl Visibility {
             Self::Super => "super",
             Self::InPath => "in_path",
             Self::Public => "public",
+            Self::Protected => "protected",
         }
     }
 

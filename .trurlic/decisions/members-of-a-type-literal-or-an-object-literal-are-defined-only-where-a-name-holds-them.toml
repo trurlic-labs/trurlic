@@ -1,0 +1,23 @@
+component = "code"
+choice = "A type literal's members are fields and methods of the type alias it is the value of, and an object literal's methods are methods only of a top-level const or a default export"
+reason = "A type literal is anonymous wherever it stands but as a type alias's value, where type P = { x: number } is how many projects write what an interface states, so its members are the alias's fields and methods. An object literal is a value anywhere: one a call takes or a function returns is no part of a module's names. One a const binds at a module's or a namespace's top, or a module exports as its default, is an API a reader names as api::get, so its methods and the arrow functions and function expressions its keys hold are methods of that name. The patterns root at the program, the namespace body and the export, so an object a const binds inside a function, or inside another binding's value, defines nothing, however the definitions around it nest."
+alternatives = [
+    "Members of every type literal: rejected because a literal in a parameter's type is no name a reader looks up",
+    "Methods of every object literal: rejected because an object a call takes defines nothing a reader names",
+    "Methods of an object any const binds: rejected because a local's object is no part of the module",
+]
+tags = [
+    "anchors",
+    "typescript",
+]
+status = "proposed"
+origin = "typescript and javascript"
+created = "2026-11-25T18:18:55.579282906Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "an_object_literals_methods_are_defined_only_under_a_top_level_const" },
+    { file = "src/code/language/typescript.scm" },
+    { file = "src/sources/tests.rs", symbol = "TYPESCRIPT_CASES" },
+]
+depends_on = [
+    "what-a-typescript-file-defines",
+]

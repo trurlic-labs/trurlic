@@ -1,6 +1,7 @@
 //! The units of a tree's span hashes and the hashes over them. A tree's
 //! tokens (`syntax.rs`) are its units, each glued kind of its grammar's
-//! [`Lexicon`] two. A grammar whose layout carries syntax that no byte
+//! [`Lexicon`] two, and a node its query marks by its words one per run
+//! of its text between ASCII whitespace (JSX text). A grammar whose layout carries syntax that no byte
 //! holds (the statements and blocks of Python, whose NEWLINE, INDENT and
 //! DEDENT are tokens of no width in no node) marks the nodes whose extent
 //! is part of the hash: each such group opens and closes with a mark no
@@ -45,21 +46,47 @@ enum Mark {
 pub(super) struct NodeMarks {
     /// One token whole.
     pub(super) whole: bool,
+    /// One token per run of its text between ASCII whitespace.
+    pub(super) words: bool,
     /// Left out of every hash.
     pub(super) skip: bool,
     /// Its extent is part of the hash: a mark opens and closes it.
     pub(super) group: bool,
-    /// A definition's span: the units it holds are recorded.
-    pub(super) span: bool,
+    /// A definition's span starts at it: the units before it are counted.
+    pub(super) opens: bool,
+    /// A definition's span ends at it: the units up to its end are
+    /// counted.
+    pub(super) closes: bool,
 }
 
 impl NodeMarks {
     /// How the walk takes a node so marked.
     const fn take(self) -> Take {
-        match (self.skip, self.whole) {
+        match (self.skip, self.whole || self.words) {
             (true, _) => Take::Skip,
             (false, true) => Take::Whole,
             (false, false) => Take::Walk,
+        }
+    }
+}
+
+/// Where the spans of a marked tree's definitions lie among its units: by
+/// node id, the units before each node a span opens at, and the units up
+/// to the end of each node a span closes at. A node the walk leaves out
+/// is in neither.
+#[derive(Debug, Default)]
+pub(super) struct SpanUnits {
+    opened: BTreeMap<usize, usize>,
+    closed: BTreeMap<usize, usize>,
+}
+
+impl SpanUnits {
+    /// The units from node `first`'s start to node `last`'s end; none
+    /// when the walk left either out.
+    pub(super) fn between(&self, first: usize, last: usize) -> Range<usize> {
+        match (self.opened.get(&first), self.closed.get(&last)) {
+            (Some(&start), Some(&end)) if start <= end => start..end,
+            (Some(_) | None, _) => 0..0,
         }
     }
 }
@@ -95,23 +122,24 @@ impl Leaves {
     }
 
     /// The units of `tree`, each node taken as `marks` says by its id, and
-    /// the range of units each node marked a span holds, by its id.
+    /// where the spans its marks open and close lie among them.
     pub(super) fn of_marked(
         tree: &Tree,
         (text, lexicon): (&str, &Lexicon),
         marks: &BTreeMap<usize, NodeMarks>,
-    ) -> (Self, BTreeMap<usize, Range<usize>>) {
+    ) -> (Self, SpanUnits) {
         let mut units = Vec::new();
-        let mut spans: BTreeMap<usize, Range<usize>> = BTreeMap::new();
+        let mut spans = SpanUnits::default();
         let marks_of = |node: Node<'_>| marks.get(&node.id()).copied().unwrap_or_default();
         let take = |node: Node<'_>| marks_of(node).take();
         walk_tokens(tree.root_node(), (text, lexicon), take, |token| {
             match token {
+                Token::Node(node) if marks_of(node).words => push_words(&mut units, node, text),
                 Token::Node(_) | Token::Gap { .. } => push_text(&mut units, token, lexicon),
                 Token::Enter(node) => {
                     let marked = marks_of(node);
-                    if marked.span {
-                        spans.insert(node.id(), units.len()..units.len());
+                    if marked.opens {
+                        spans.opened.insert(node.id(), units.len());
                     }
                     if marked.group {
                         units.push(Unit::mark(node.start_byte(), Mark::Open));
@@ -122,8 +150,8 @@ impl Leaves {
                     if marked.group {
                         units.push(Unit::mark(node.end_byte(), Mark::Close));
                     }
-                    if let Some(range) = spans.get_mut(&node.id()).filter(|_| marked.span) {
-                        range.end = units.len();
+                    if marked.closes {
+                        spans.closed.insert(node.id(), units.len());
                     }
                 }
             }
@@ -165,6 +193,27 @@ impl Leaves {
         hashing.feed_before(usize::MAX);
         hashing.close_ended(usize::MAX);
         hashing.hashes
+    }
+}
+
+/// Push a unit for each run of `node`'s text between ASCII whitespace:
+/// none for a node of whitespace alone.
+fn push_words(units: &mut Vec<Unit>, node: Node<'_>, text: &str) {
+    let start = node.start_byte();
+    let bytes = text.as_bytes().get(node.byte_range()).unwrap_or_default();
+    let mut word: Option<usize> = None;
+    for (at, byte) in bytes.iter().enumerate() {
+        match (byte.is_ascii_whitespace(), word) {
+            (true, Some(from)) => {
+                units.push(Unit::text(start + from, start + at));
+                word = None;
+            }
+            (false, None) => word = Some(at),
+            (true, None) | (false, Some(_)) => {}
+        }
+    }
+    if let Some(from) = word {
+        units.push(Unit::text(start + from, start + bytes.len()));
     }
 }
 

@@ -1,7 +1,8 @@
 //! Test code a file's bytes cannot state, read from the tree, so a file's
 //! cached index stays a function of its bytes. A file of a language the
 //! general resolver reads is test code whole in a test place its
-//! language's row names (`tests/`, `test_*.py`, `conftest.py`). A Rust
+//! language's row names (`tests/`, `test_*.py`, `conftest.py`,
+//! `*.test.ts`, `__tests__/`). A Rust
 //! file is test code under its crate's `tests/` directory, or as a module
 //! file that only test code declares, a step over the crates like the
 //! macro expansion.
@@ -365,6 +366,10 @@ mod tests {
             ("tools/test_run.py", ""),
             ("tools/run_test.py", ""),
             ("tools/stubs.pyi", ""),
+            ("web/src/app.ts", ""),
+            ("web/src/app.test.ts", ""),
+            ("web/src/__tests__/setup.js", ""),
+            ("web/src/card.spec.jsx", ""),
         ];
 
         assert_eq!(
@@ -384,6 +389,9 @@ mod tests {
                 "tools/run_test.py",
                 "tools/test_run.py",
                 "tools/tests/helpers.py",
+                "web/src/__tests__/setup.js",
+                "web/src/app.test.ts",
+                "web/src/card.spec.jsx",
             ]
         );
     }

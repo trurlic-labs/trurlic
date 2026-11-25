@@ -1,0 +1,24 @@
+component = "code"
+choice = "A call of describe, it, test or their kin, with .only, .skip or .each, is a definition of kind test named by its first argument when that is a string, quotes dropped, under the tests around it"
+reason = "A JavaScript test is a call, not a named function, and a proof names the test it ran by the strings of the calls that hold it. So a call of describe, context, suite, it, test, specify, bench or their jasmine forms, directly, through a member (it.only) or through a call (describe.each(table)), is a definition of kind test whose segment is its first argument as written, a string's or a template literal's text without its quotes, its interpolations and .each placeholders kept. A test nested in another's callback is under it by span, so describe(\"Store\") with it(\"opens\") is Store::opens. A name whose argument is no string literal (describe(Foo.name)) defines nothing, and so does an empty one. A test and everything its callback defines are test code; the call has no visibility. The functions the list names are the test runners' own; a project's helper of another name is not read as a test."
+alternatives = [
+    "Test calls as no definitions: rejected because a proof could then name no test of a JavaScript project",
+    "Every call whose first argument is a string: rejected because a call of any function would become a test",
+    "The template literal with its interpolations evaluated: rejected because the index reads no value a program computes",
+]
+tags = [
+    "anchors",
+    "testing",
+    "typescript",
+]
+status = "proposed"
+origin = "typescript and javascript"
+created = "2026-11-25T18:18:55.579282906Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_test_call_is_named_by_its_strings_as_written" },
+    { file = "src/code/kinds.rs", symbol = "DefinitionKind::Test" },
+    { file = "src/code/language/typescript.scm" },
+]
+depends_on = [
+    "what-a-typescript-file-defines",
+]

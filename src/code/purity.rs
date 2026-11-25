@@ -56,12 +56,13 @@ const STD_MODULES: [&str; 18] = [
 /// The store's items the index may name: its value types.
 const STORE_ITEMS: [&str; 1] = ["Anchor"];
 
-/// The crates the index may name: its parser, its grammar, its hash and
+/// The crates the index may name: its parser, its grammars, its hash and
 /// the TOML reader.
-const CRATES: [&str; 5] = [
+const CRATES: [&str; 6] = [
     "tree_sitter",
     "tree_sitter_rust",
     "tree_sitter_python",
+    "tree_sitter_typescript",
     "blake3",
     "toml",
 ];

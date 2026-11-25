@@ -9,7 +9,7 @@
 //! has one root node (the resolver starts each pattern at one node).
 //!
 //! - A definition pattern captures `@definition`, the node its span is,
-//!   and `@name`, the node its own path segment is, once each, and sets
+//!   and `@name`, the node its own path segments are, once each, and sets
 //!   its `kind`. Its other properties: `kind.in "class:method"` (its kind
 //!   in a container of a kind), `container "false"` (what its span holds
 //!   is not under it), `within "top class"` (kept only at the file's top
@@ -17,19 +17,32 @@
 //!   `definition.to` (its span grows from the captured node up through
 //!   ancestors of the `via` kinds to the first of a `to` kind, or it is
 //!   dropped), `definition.wrap` (its span grows over each ancestor of
-//!   those kinds right above it), and `visibility` (its visibility when no
-//!   mark states one).
+//!   those kinds right above it), `definition.preceding` (its span takes
+//!   in the run of siblings of those kinds right before it, comments
+//!   between them included), `exclusive "true"` (a match of it drops
+//!   every match of a pattern without it that captured the same node as
+//!   its `@definition`), `name.separator "."` (each leaf of the name with
+//!   that text ends one segment and starts the next), and `visibility`
+//!   (its visibility when no mark states one).
 //! - A mark pattern captures any of `@role.test` (a definition whose name
 //!   lies inside is test code), `@visibility.<name>` (a definition whose
 //!   span holds the node, and the node its name, has that visibility; the
-//!   innermost such mark wins), `@hash.unit` (one token whole),
-//!   `@hash.skip` (left out of every hash) and `@hash.group` (a statement
-//!   or block, whose extent the hash holds), and sets no property.
+//!   innermost such mark wins), `@export.name` (a definition at the
+//!   file's top named as the node's text is public when no mark holds its
+//!   name), `@hash.unit` (one token whole), `@hash.words` (one token per
+//!   run of text between ASCII whitespace), `@hash.skip` (left out of
+//!   every hash) and `@hash.group` (a statement or block, whose extent the
+//!   hash holds), and sets no property. A definition pattern may capture
+//!   these too.
 //!
-//! A capture whose name starts with `_` is read by a text predicate alone
-//! (`#eq?`, `#match?`, `#any-of?` and their `not-` forms, which tree-sitter
-//! evaluates). Kinds and visibilities are named as `DefinitionKind::name`
-//! and `Visibility::name` write them.
+//! A name is the text of its node's leaves, comments left out, one space
+//! where bytes lie between two leaves; a name written as a string literal
+//! is the text between its quotes; and a `::` in a name splits it as it
+//! splits a symbol. A capture whose name starts with `_` is read by a text
+//! predicate alone (`#eq?`, `#match?`, `#any-of?` and their `not-` forms,
+//! which tree-sitter evaluates). Kinds and visibilities are named as
+//! `DefinitionKind::name` and `Visibility::name` write them. Which
+//! definition a match makes never depends on the order of the patterns.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -45,7 +58,9 @@ pub(super) enum Capture {
     Name,
     Test,
     Visibility(Visibility),
+    Export,
     Unit,
+    Words,
     Skip,
     Group,
     /// Read by a text predicate alone.
@@ -74,6 +89,14 @@ pub(super) struct Definer {
     pub(super) growth: Option<usize>,
     /// The wrapping of its span, by its place in [`Rules::wraps`].
     pub(super) wrap: Option<usize>,
+    /// The siblings its span takes in, by their place in
+    /// [`Rules::precedings`].
+    pub(super) preceding: Option<usize>,
+    /// A match of it drops the matches of patterns without it that
+    /// captured its `@definition` node.
+    pub(super) exclusive: bool,
+    /// The text of a leaf of its name that separates two segments.
+    pub(super) separator: Option<String>,
     pub(super) visibility: Option<Visibility>,
 }
 
@@ -115,6 +138,8 @@ pub(super) struct Rules {
     pub(super) growths: Vec<Growth>,
     /// The distinct sets of kinds a span wraps over.
     pub(super) wraps: Vec<Vec<u16>>,
+    /// The distinct sets of kinds of the siblings a span takes in.
+    pub(super) precedings: Vec<Vec<u16>>,
 }
 
 /// Why a query file breaks its contract.
@@ -178,7 +203,7 @@ impl fmt::Display for QueryFault {
 }
 
 /// The definition-pattern properties, each read once.
-const PROPERTIES: [&str; 8] = [
+const PROPERTIES: [&str; 11] = [
     "kind",
     "kind.in",
     "container",
@@ -186,6 +211,9 @@ const PROPERTIES: [&str; 8] = [
     "definition.via",
     "definition.to",
     "definition.wrap",
+    "definition.preceding",
+    "exclusive",
+    "name.separator",
     "visibility",
 ];
 
@@ -205,6 +233,7 @@ impl Rules {
             patterns: Vec::new(),
             growths: Vec::new(),
             wraps: Vec::new(),
+            precedings: Vec::new(),
         };
         for pattern in 0..rules.query.pattern_count() {
             let definer = rules.pattern(pattern)?;
@@ -298,41 +327,44 @@ impl Rules {
             pattern,
             key: "kind".to_owned(),
         })?;
-        let growth = match (
+        let growth = self.growth(&read)?;
+        let wrap = read
+            .node_kinds(&self.grammar, "definition.wrap")?
+            .map(|kinds| intern(&mut self.wraps, kinds));
+        let preceding = read
+            .node_kinds(&self.grammar, "definition.preceding")?
+            .map(|kinds| intern(&mut self.precedings, kinds));
+        Ok(Definer {
+            kind,
+            kind_in: read.kind_in()?,
+            container: read.flag("container", true)?,
+            within: read.within()?,
+            growth,
+            wrap,
+            preceding,
+            exclusive: read.flag("exclusive", false)?,
+            separator: settings.get("name.separator").cloned(),
+            visibility: read.visibility()?,
+        })
+    }
+
+    /// The growth `read` states, by its place in [`Rules::growths`];
+    /// `None` for none.
+    fn growth(&mut self, read: &Properties<'_>) -> Result<Option<usize>, QueryFault> {
+        match (
             read.node_kinds(&self.grammar, "definition.via")?,
             read.node_kinds(&self.grammar, "definition.to")?,
         ) {
-            (via, Some(to)) => Some(intern(
+            (via, Some(to)) => Ok(Some(intern(
                 &mut self.growths,
                 Growth {
                     via: via.unwrap_or_default(),
                     to,
                 },
-            )),
-            (Some(_), None) => return Err(read.bad("definition.via")),
-            (None, None) => None,
-        };
-        let wrap = read
-            .node_kinds(&self.grammar, "definition.wrap")?
-            .map(|kinds| intern(&mut self.wraps, kinds));
-        Ok(Definer {
-            kind,
-            kind_in: read.kind_in()?,
-            container: match settings.get("container").map(String::as_str) {
-                None => true,
-                Some("false") => false,
-                Some(_) => return Err(read.bad("container")),
-            },
-            within: read.within()?,
-            growth,
-            wrap,
-            visibility: match settings.get("visibility") {
-                None => None,
-                Some(name) => {
-                    Some(Visibility::of_name(name).ok_or_else(|| read.bad("visibility"))?)
-                }
-            },
-        })
+            ))),
+            (Some(_), None) => Err(read.bad("definition.via")),
+            (None, None) => Ok(None),
+        }
     }
 
     /// Refuse a container a `within` or `kind.in` names that no pattern
@@ -387,6 +419,17 @@ impl Properties<'_> {
         }
     }
 
+    /// The flag `key` sets: `unset` when the pattern does not set it, the
+    /// other of `"true"` and `"false"` when it does.
+    fn flag(&self, key: &str, unset: bool) -> Result<bool, QueryFault> {
+        match (self.settings.get(key).map(String::as_str), unset) {
+            (None, _) => Ok(unset),
+            (Some("false"), true) => Ok(false),
+            (Some("true"), false) => Ok(true),
+            (Some(_), _) => Err(self.bad(key)),
+        }
+    }
+
     fn words(&self, key: &str) -> Option<impl Iterator<Item = &str>> {
         self.settings.get(key).map(|value| value.split_whitespace())
     }
@@ -424,6 +467,13 @@ impl Properties<'_> {
         Ok(Some(kinds))
     }
 
+    fn visibility(&self) -> Result<Option<Visibility>, QueryFault> {
+        self.settings
+            .get("visibility")
+            .map(|name| Visibility::of_name(name).ok_or_else(|| self.bad("visibility")))
+            .transpose()
+    }
+
     fn kind_in(&self) -> Result<Vec<(DefinitionKind, DefinitionKind)>, QueryFault> {
         let Some(words) = self.words("kind.in") else {
             return Ok(Vec::new());
@@ -459,7 +509,9 @@ fn capture_of(name: &str) -> Result<Capture, QueryFault> {
         "definition" => Capture::Definition,
         "name" => Capture::Name,
         "role.test" => Capture::Test,
+        "export.name" => Capture::Export,
         "hash.unit" => Capture::Unit,
+        "hash.words" => Capture::Words,
         "hash.skip" => Capture::Skip,
         "hash.group" => Capture::Group,
         _ if name.starts_with('_') => Capture::Predicate,
@@ -577,6 +629,29 @@ mod tests {
                 },
             ),
             (
+                format!("{FUNCTION} {kind} (#set! exclusive \"false\"))"),
+                bad(0, "exclusive"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! container \"true\"))"),
+                bad(0, "container"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! name.separator \" \"))"),
+                bad(0, "name.separator"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! definition.preceding \"decorators\"))"),
+                QueryFault::UnknownNodeKind {
+                    pattern: 0,
+                    name: "decorators".to_owned(),
+                },
+            ),
+            (
+                "((identifier) @export.names)".to_owned(),
+                QueryFault::UnknownCapture("export.names".to_owned()),
+            ),
+            (
                 format!("{FUNCTION} {kind} (#set! within \"top struct\"))"),
                 QueryFault::UnknownContainer {
                     pattern: 0,
@@ -617,7 +692,11 @@ mod tests {
              ((assignment left: (identifier) @name) @definition (#set! kind \"variable\") \
              (#set! container \"false\") (#set! within \"top class\") \
              (#set! definition.via \"assignment\") (#set! definition.to \"expression_statement\"))\n\
-             ((identifier) @visibility.private @_n (#match? @_n \"^_\"))\n"
+             ((identifier) @visibility.private @_n (#match? @_n \"^_\"))\n\
+             ((class_definition name: (_) @name) @definition (#set! kind \"class\") \
+             (#set! exclusive \"true\") (#set! name.separator \".\") \
+             (#set! definition.preceding \"decorator comment\"))\n\
+             ([(identifier) @export.name (string) @hash.words])\n"
         );
         let rules = Rules::compile(python(), &source).unwrap();
 
@@ -635,6 +714,13 @@ mod tests {
         assert!(!variable.admits(Container::Kind(DefinitionKind::Function)));
         assert_eq!(variable.growth, Some(0));
         assert_eq!(rules.patterns[3], None);
+        let claimed = rules.patterns[4].as_ref().unwrap();
+        assert!(claimed.exclusive && !function.exclusive);
+        assert_eq!(claimed.separator.as_deref(), Some("."));
+        assert_eq!(claimed.preceding, Some(0));
+        assert_eq!(rules.precedings[0].len(), 2);
+        assert!(rules.captures.contains(&Capture::Export));
+        assert!(rules.captures.contains(&Capture::Words));
         assert!(
             rules
                 .captures

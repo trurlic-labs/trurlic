@@ -1,0 +1,23 @@
+component = "code"
+choice = "A definition's name is the text of its name node's leaves, comments left out, split at each leaf the pattern names its separator, a string literal's quotes dropped, and split at each ::"
+reason = "A name node may be more than one token: namespace A.B is a nested identifier, a test's name a string or a template literal, an enum member's or a property's a quoted string. Its text is its leaves' texts, one space where bytes lie between two of them, so a comment inside it moves nothing and a name reads as written. A pattern's name.separator splits it at each leaf of that text, so A.B is two segments, the namespace that namespace A { namespace B } spells. A part written as a string literal, one quote character opening and closing it, is named by the text between its quotes, so a test is named as its string reads. A :: in a part splits it as it splits a symbol, as a heading's or key's does, so a symbol can name any segment a user reads in the file. A part of no text defines nothing."
+alternatives = [
+    "A name node's text verbatim: rejected because a comment inside a dotted name would become part of a segment",
+    "A property per pattern to drop quotes: rejected because a quoted name is the same thing in every language, and no identifier opens with a quote",
+    "Split a name at its structure's fields: rejected because a leaf of the separator's text states the split in every grammar alike",
+]
+tags = [
+    "anchors",
+    "parsing",
+]
+status = "proposed"
+origin = "typescript and javascript"
+created = "2026-11-25T18:18:55.579282906Z"
+anchors = [
+    { file = "src/code/general/name.rs", symbol = "parts" },
+    { file = "src/code/general/name.rs", symbol = "unquoted" },
+    { file = "src/code/general/tests.rs", symbol = "a_name_splits_at_its_separator_and_drops_a_string_literals_quotes" },
+]
+depends_on = [
+    "a-query-file-is-held-to-the-general-resolver-s-contract",
+]

@@ -1,6 +1,5 @@
 use super::*;
 use crate::code::index::{FileKind, index as index_of};
-use crate::code::language::PYTHON;
 use crate::code::language::python::{MAX_CONTINUATIONS, MAX_INDENTATIONS};
 use crate::code::scope::Scopes;
 use crate::code::span::SpanHash;
@@ -9,7 +8,13 @@ use crate::code::testing::{defined, path};
 /// Each definition of `text`, a Python file, as `path kind role
 /// visibility` and the text of its span.
 fn statements(text: &str) -> Vec<(String, &str)> {
-    let index = index_of(FileKind::Python, text.as_bytes()).unwrap();
+    statements_of(FileKind::Python, text)
+}
+
+/// Each definition of `text`, a file of `kind`, as `path kind role
+/// visibility` and the text of its span.
+fn statements_of(kind: FileKind, text: &str) -> Vec<(String, &str)> {
+    let index = index_of(kind, text.as_bytes()).unwrap();
     let scopes = Scopes {
         file: &index.scopes,
         added: &[],
@@ -34,7 +39,13 @@ fn statements(text: &str) -> Vec<(String, &str)> {
 
 /// The hash of the one definition of `text` whose path is `wanted`.
 fn hash_of(text: &str, wanted: &str) -> SpanHash {
-    let index = index_of(FileKind::Python, text.as_bytes()).unwrap();
+    hash_in(FileKind::Python, text, wanted)
+}
+
+/// The hash of the one definition of `text`, a file of `kind`, whose
+/// path is `wanted`.
+fn hash_in(kind: FileKind, text: &str, wanted: &str) -> SpanHash {
+    let index = index_of(kind, text.as_bytes()).unwrap();
     let scopes = Scopes {
         file: &index.scopes,
         added: &[],
@@ -360,24 +371,36 @@ fn the_text_a_predicate_reads_is_charged_to_the_budget() {
     );
 }
 
-/// The Python fixture corpus, and a file of comments, continued lines and
-/// strings that open like a comment.
-fn python_corpus() -> Vec<(String, String)> {
+/// The fixture corpus of each language the general resolver reads, and a
+/// file per language of comments, continued lines and strings that open
+/// like a comment.
+fn general_corpus() -> Vec<(String, FileKind, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/code");
-    let mut found = vec![(
-        "lexemes".to_owned(),
-        "x = 1 + \\\n    2  # sum\ny = '#not' f'{x: >4} #' \\\n  \"\"\"# doc\"\"\"\n#!z\n"
-            .to_owned(),
-    )];
+    let mut found = vec![
+        (
+            "lexemes.py".to_owned(),
+            FileKind::Python,
+            "x = 1 + \\\n    2  # sum\ny = '#not' f'{x: >4} #' \\\n  \"\"\"# doc\"\"\"\n#!z\n"
+                .to_owned(),
+        ),
+        (
+            "lexemes.tsx".to_owned(),
+            FileKind::Tsx,
+            "#!/usr/bin/env node\nconst t = `//a ${b /* c */} /*d*/`; // e\nconst r = /\\/\\*x/g;\n<!-- f\nconst j = <p> a  // b </p>;\n"
+                .to_owned(),
+        ),
+    ];
     let mut pending = vec![root];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 pending.push(path);
-            } else if FileKind::of(path.to_str().unwrap()) == Some(FileKind::Python) {
+            } else if let Some(kind) =
+                FileKind::of(path.to_str().unwrap()).filter(|kind| kind.language().is_some())
+            {
                 let text = std::fs::read_to_string(&path).unwrap();
-                found.push((path.display().to_string(), text));
+                found.push((path.display().to_string(), kind, text));
             }
         }
     }
@@ -385,11 +408,13 @@ fn python_corpus() -> Vec<(String, String)> {
 }
 
 #[test]
-fn every_python_byte_but_extras_and_whitespace_is_in_one_token() {
-    for (file, text) in python_corpus() {
-        let tree = syntax::parse(&text, &tree_sitter_python::LANGUAGE.into()).unwrap();
+fn every_byte_but_comments_and_whitespace_is_in_one_token() {
+    for (file, kind, text) in general_corpus() {
+        let language = kind.language().unwrap();
+        let rules = language.rules().unwrap();
+        let tree = syntax::parse(&text, &rules.grammar).unwrap();
         let mut covered = vec![false; text.len()];
-        syntax::tokens(tree.root_node(), &text, &PYTHON.lexicon, |token| {
+        syntax::tokens(tree.root_node(), &text, &language.lexicon, |token| {
             let (from, to) = match token {
                 syntax::Token::Node(node) => (node.start_byte(), node.end_byte()),
                 syntax::Token::Gap { start, end } => (start, end),
@@ -407,7 +432,10 @@ fn every_python_byte_but_extras_and_whitespace_is_in_one_token() {
             let node = cursor.node();
             if syntax::is_comment(node) {
                 assert!(
-                    matches!(node.kind(), "comment" | "line_continuation"),
+                    matches!(
+                        node.kind(),
+                        "comment" | "html_comment" | "line_continuation"
+                    ),
                     "{file}: an extra {}",
                     node.kind()
                 );
@@ -426,6 +454,285 @@ fn every_python_byte_but_extras_and_whitespace_is_in_one_token() {
                 covered[at] || extras[at] || c.is_whitespace(),
                 "{file}: byte {at} ({c:?}) is in no token"
             );
+        }
+    }
+}
+
+/// Each definition of `text`, a TypeScript file, as [`statements_of`]
+/// writes it, without its span.
+fn typescript(text: &str) -> Vec<String> {
+    statements_of(FileKind::TypeScript, text)
+        .into_iter()
+        .map(|(statement, _)| statement)
+        .collect()
+}
+
+#[test]
+fn an_exclusive_pattern_claims_its_node_from_the_others() {
+    // A name bound to an arrow function is a function alone, not also
+    // the variable every other binding is.
+    assert_eq!(
+        typescript("const f = () => 1;\nconst g = 2;\n"),
+        ["f Function Code Private", "g Variable Code Private"]
+    );
+}
+
+#[test]
+fn two_definitions_of_one_span_are_siblings() {
+    assert_eq!(
+        typescript("const a = 1, f = () => 2;\n"),
+        ["a Variable Code Private", "f Function Code Private"]
+    );
+}
+
+#[test]
+fn a_span_takes_in_the_decorators_beside_it() {
+    let text = "class A {\n  @first() // why\n  @second\n  m() {}\n  n() {}\n}\n";
+    let spans: Vec<(String, &str)> = statements_of(FileKind::TypeScript, text);
+
+    assert_eq!(
+        spans[1],
+        (
+            "A::m Method Code Public".to_owned(),
+            "@first() // why\n  @second\n  m() {}"
+        )
+    );
+    assert_eq!(spans[2].1, "n() {}");
+    let decorated = |decorator: &str| {
+        hash_in(
+            FileKind::TypeScript,
+            &format!("class A {{\n  {decorator}\n  m() {{}}\n}}\n"),
+            "A::m",
+        )
+    };
+    assert_ne!(decorated("@first()"), decorated("@second()"));
+}
+
+#[test]
+fn a_name_splits_at_its_separator_and_drops_a_string_literals_quotes() {
+    assert_eq!(
+        typescript(
+            "namespace A . /* inner */ B { function f() {} }\ndeclare module \"pkg.name\" {}\nenum E { \"a b\" }\n"
+        ),
+        [
+            "A::B Module Code Private",
+            "A::B::f Function Code Private",
+            "pkg.name Module Code Private",
+            "E Enum Code Private",
+            "E::a b Variant Code Public",
+        ]
+    );
+}
+
+#[test]
+fn a_test_call_is_named_by_its_strings_as_written() {
+    let text = "describe('Store', () => {\n  it(`opens ${kind}`, () => {});\n  test.each([1])(\"a::b %s\", () => {});\n  it(name, () => {});\n  it('', () => {});\n});\n";
+
+    assert_eq!(
+        statements_of(FileKind::TypeScript, text)
+            .into_iter()
+            .map(|(statement, _)| statement)
+            .collect::<Vec<_>>(),
+        [
+            "Store Test Test -",
+            "Store::opens ${kind} Test Test -",
+            "Store::a::b %s Test Test -",
+        ]
+    );
+}
+
+#[test]
+fn an_export_states_what_its_module_makes_public() {
+    let text = "export function a() {}\nfunction b() {}\nfunction c() {}\nfunction d() {}\nfunction e() {}\nexport { b, c as see };\nexport { d } from './d';\nexport default e;\nexport namespace N { function hidden() {} export function shown() {} }\n";
+
+    assert_eq!(
+        typescript(text),
+        [
+            "a Function Code Public",
+            "b Function Code Public",
+            "c Function Code Public",
+            "d Function Code Private",
+            "e Function Code Public",
+            "N Module Code Public",
+            "N::hidden Function Code Private",
+            "N::shown Function Code Public",
+        ]
+    );
+    assert_eq!(
+        statements_of(
+            FileKind::Tsx,
+            "function f() {}\nfunction g() {}\nmodule.exports = { f, other: g };\n"
+        )
+        .into_iter()
+        .map(|(statement, _)| statement)
+        .collect::<Vec<_>>(),
+        ["f Function Code Public", "g Function Code Public"]
+    );
+    assert_eq!(
+        typescript("function f() {}\nexport = f;\n"),
+        ["f Function Code Public"]
+    );
+}
+
+#[test]
+fn an_unnamed_default_export_is_named_default() {
+    for (text, expected) in [
+        (
+            "export default class { m() {} }\n",
+            &["default Class Code Public", "default::m Method Code Public"][..],
+        ),
+        (
+            "export default function () {}\n",
+            &["default Function Code Public"][..],
+        ),
+        (
+            "export default { m() {}, n: () => 1, v: 2 };\n",
+            &[
+                "default Variable Code Public",
+                "default::m Method Code Public",
+                "default::n Method Code Public",
+            ][..],
+        ),
+        (
+            "export default defineConfig({});\n",
+            &["default Variable Code Public"][..],
+        ),
+        (
+            "const x = 1;\nexport default x;\n",
+            &["x Variable Code Public"][..],
+        ),
+    ] {
+        assert_eq!(typescript(text), expected, "{text}");
+    }
+}
+
+#[test]
+fn an_object_literals_methods_are_defined_only_under_a_top_level_const() {
+    let text = "const api = { get() {} };\nlet loose = { get() {} };\nfunction f() { const local = { get() {} }; }\nconst outer = (() => { const inner = { get() {} }; return inner; })();\n";
+
+    assert_eq!(
+        typescript(text),
+        [
+            "api Variable Code Private",
+            "api::get Method Code Public",
+            "loose Variable Code Private",
+            "f Function Code Private",
+            "outer Variable Code Private",
+        ]
+    );
+}
+
+/// The hash of `f`, a TypeScript function whose body is `body`.
+fn typescript_body(body: &str) -> SpanHash {
+    hash_in(
+        FileKind::TypeScript,
+        &format!("function f() {{\n{body}}}\n"),
+        "f",
+    )
+}
+
+#[test]
+fn a_statement_split_by_a_line_break_moves_a_typescript_hash() {
+    for (one, other) in [
+        ("  return\n  x\n", "  return x\n"),
+        ("  a\n  ++b\n", "  a++\n  b\n"),
+    ] {
+        assert_ne!(typescript_body(one), typescript_body(other), "{one:?}");
+    }
+}
+
+#[test]
+fn a_reformat_a_comment_or_a_semicolon_leaves_a_typescript_hash() {
+    let block = typescript_body;
+    assert_eq!(block("  a; b;\n"), block("  a\n  b\n"));
+    assert_eq!(
+        block("  const x = 1 +\n    2; // sum\n"),
+        block("  const x = 1 + 2\n")
+    );
+    assert_eq!(block("  /* c */ return a\n"), block("  return a;\n"));
+    assert_eq!(
+        block("  const t = `a ${ b /* c */ } c`;\n"),
+        block("  const t = `a ${b} c`;\n")
+    );
+    let members = |body: &str| hash_in(FileKind::TypeScript, &format!("interface I {body}\n"), "I");
+    assert_eq!(
+        members("{ a: string; b(): void }"),
+        members("{\n  a: string,\n  b(): void\n}")
+    );
+    assert_eq!(
+        members("{ a: string; b(): void }"),
+        members("{\n  a: string\n  b(): void\n}")
+    );
+}
+
+#[test]
+fn a_literals_text_moves_a_typescript_hash() {
+    for (one, other) in [
+        ("  s = 'a  b'\n", "  s = 'a b'\n"),
+        ("  s = `a  b`\n", "  s = `a b`\n"),
+        ("  s = `${a}b`\n", "  s = `${a} b`\n"),
+        ("  r = /a b/\n", "  r = /a  b/\n"),
+        ("  r = /a/g\n", "  r = /a/i\n"),
+        ("  s = '//a'\n", "  s = '//b'\n"),
+        ("  s = `//a`\n", "  s = `//b`\n"),
+    ] {
+        assert_ne!(typescript_body(one), typescript_body(other), "{one:?}");
+    }
+}
+
+#[test]
+fn a_definition_inside_a_template_strings_interpolation_is_found() {
+    assert_eq!(
+        typescript("const t = `${(() => { function inner() {} })()}`;\n"),
+        ["t Variable Code Private", "t::inner Function Code Private"]
+    );
+}
+
+/// The hash of `View`, a TSX function that returns `element`.
+fn jsx(element: &str) -> SpanHash {
+    hash_in(
+        FileKind::Tsx,
+        &format!("function View() {{\n  return {element};\n}}\n"),
+        "View",
+    )
+}
+
+#[test]
+fn jsx_text_is_hashed_by_its_words() {
+    assert_eq!(jsx("<p>a   b</p>"), jsx("<p>a b</p>"));
+    assert_eq!(jsx("<p>\n    a b\n  </p>"), jsx("<p>a b</p>"));
+    assert_ne!(jsx("<p>a b</p>"), jsx("<p>a c</p>"));
+    assert_ne!(jsx("<p>a b</p>"), jsx("<p>ab</p>"));
+}
+
+#[test]
+fn hostile_typescript_is_refused_or_read_in_linear_work() {
+    let mib = 1024 * 1024;
+    let cases: [(&str, String); 7] = [
+        ("unclosed brackets", "(".repeat(mib)),
+        ("unclosed template strings", "`${".repeat(mib / 3)),
+        (
+            "nested generics",
+            format!("let x: {}", "A<".repeat(mib / 2 - 8)),
+        ),
+        (
+            "nested elements",
+            format!("x = {}{}", "<a>".repeat(mib / 7), "</a>".repeat(mib / 7)),
+        ),
+        ("generic calls", "x<y>(z".repeat(mib / 6)),
+        (
+            "lines automatic semicolons end",
+            "return\nx\n".repeat(mib / 9),
+        ),
+        ("unclosed regular expressions", "/[/".repeat(mib / 3)),
+    ];
+    for (case, text) in cases {
+        assert!(text.len() <= mib, "{case}");
+        for kind in [FileKind::TypeScript, FileKind::Tsx] {
+            match index_of(kind, text.as_bytes()) {
+                Ok(_) | Err(IndexFault::TooComplex) => {}
+                Err(other) => panic!("{case}: {other}"),
+            }
         }
     }
 }

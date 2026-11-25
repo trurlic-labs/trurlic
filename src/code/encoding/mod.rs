@@ -77,6 +77,8 @@ pub(super) const fn kind_code(kind: DefinitionKind) -> u8 {
         DefinitionKind::Heading => 18,
         DefinitionKind::Class => 19,
         DefinitionKind::Variable => 20,
+        DefinitionKind::Interface => 21,
+        DefinitionKind::Test => 22,
     }
 }
 
@@ -89,6 +91,7 @@ pub(super) const fn visibility_code(visibility: Option<Visibility>) -> u8 {
         Some(Visibility::Super) => 3,
         Some(Visibility::InPath) => 4,
         Some(Visibility::Public) => 5,
+        Some(Visibility::Protected) => 6,
     }
 }
 
@@ -128,6 +131,11 @@ mod tests {
                 FileKind::Rust,
             ),
             ("tests/fixtures/code/python/shelf.py", FileKind::Python),
+            (
+                "tests/fixtures/code/typescript/shelf.ts",
+                FileKind::TypeScript,
+            ),
+            ("tests/fixtures/code/typescript/card.tsx", FileKind::Tsx),
             ("tests/fixtures/code/settings.json", FileKind::Json),
             ("tests/fixtures/code/Makefile", FileKind::Make),
             ("tests/fixtures/code/docs/guide.md", FileKind::Markdown),

@@ -1,10 +1,11 @@
 //! The languages the general resolver reads, each a row of data: its
-//! grammar, its query file (`language/<name>.scm`, compiled into the
-//! binary by `include_str!`, the one include the index's purity admits),
-//! the bounds its grammar needs checked before a parse
-//! (`language/<name>.rs`, for a grammar that has any), and the places of
-//! a tree that hold its test code. Adding a language is a grammar crate,
-//! a query file, a row here and a fixture corpus.
+//! grammar, its query files (`language/<name>.scm`, compiled into the
+//! binary by `include_str!`, the one include the index's purity admits,
+//! and read as one query), how a symbol on its files is spelled, the
+//! bounds its grammar needs checked before a parse (`language/<name>.rs`,
+//! for a grammar that has any), and the places of a tree that hold its
+//! test code. Adding a language is a grammar crate, a query file, a row
+//! here and a fixture corpus.
 
 use std::sync::OnceLock;
 
@@ -12,6 +13,7 @@ use super::index::IndexFault;
 
 pub(super) mod python;
 use super::query::{QueryFault, Rules};
+use super::symbol::Syntax;
 use super::syntax::{Lexicon, grammar_identity};
 
 /// A check of a file's bytes before its parse.
@@ -23,7 +25,10 @@ pub(super) struct Language {
     pub(super) name: &'static str,
     grammar: fn() -> tree_sitter::Language,
     node_types: &'static str,
-    query: &'static str,
+    /// The query files, read as one query in this order.
+    queries: &'static [&'static str],
+    /// How a symbol on its files is spelled.
+    pub(super) syntax: Syntax,
     /// What its tokens are made of beside its tree. Its literals are its
     /// query's `@hash.unit` captures, not kinds; a comment it declares is
     /// one its grammar leaves among tokens, which a grammar that lexes
@@ -44,7 +49,8 @@ pub(super) static PYTHON: Language = Language {
     name: "python",
     grammar: || tree_sitter_python::LANGUAGE.into(),
     node_types: tree_sitter_python::NODE_TYPES,
-    query: include_str!("language/python.scm"),
+    queries: &[include_str!("language/python.scm")],
+    syntax: Syntax::Code,
     // tree-sitter-python lexes every comment and line continuation as
     // an extra, never as a token or among bytes no node holds; a `#` at
     // a token's start is a string's text (`"#fff"`).
@@ -61,22 +67,90 @@ pub(super) static PYTHON: Language = Language {
     identity: OnceLock::new(),
 };
 
+/// TypeScript's rules, beside which TSX reads its own: what a file
+/// defines, how it is hashed, its test places.
+const TYPESCRIPT_QUERY: &str = include_str!("language/typescript.scm");
+
+/// tree-sitter-typescript lexes every comment as an extra; a `//` at a
+/// token's start is a template string's text.
+const TYPESCRIPT_LEXICON: Lexicon = Lexicon {
+    literals: &[],
+    line_comments: &[],
+    block_comments: &[],
+    nested_blocks: false,
+    glued: &[],
+};
+
+/// `.ts`, `.mts` and `.cts`, read by the `typescript` grammar, which
+/// takes `<T>x` as a cast where `tsx` reads an element.
+pub(super) static TYPESCRIPT: Language = Language {
+    name: "typescript",
+    grammar: || tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+    node_types: tree_sitter_typescript::TYPESCRIPT_NODE_TYPES,
+    queries: &[TYPESCRIPT_QUERY],
+    syntax: Syntax::Strings,
+    lexicon: TYPESCRIPT_LEXICON,
+    before_parse: &[],
+    test_places: &[
+        "__tests__/",
+        "*.test.ts",
+        "*.spec.ts",
+        "*.test.mts",
+        "*.spec.mts",
+        "*.test.cts",
+        "*.spec.cts",
+    ],
+    rules: OnceLock::new(),
+    identity: OnceLock::new(),
+};
+
+/// `.tsx`, and JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`): the `tsx`
+/// grammar reads JavaScript with its JSX, and TypeScript's query finds in
+/// it what JavaScript has of TypeScript's definitions.
+pub(super) static TSX: Language = Language {
+    name: "tsx",
+    grammar: || tree_sitter_typescript::LANGUAGE_TSX.into(),
+    node_types: tree_sitter_typescript::TSX_NODE_TYPES,
+    queries: &[TYPESCRIPT_QUERY, include_str!("language/tsx.scm")],
+    syntax: Syntax::Strings,
+    lexicon: TYPESCRIPT_LEXICON,
+    before_parse: &[],
+    test_places: &[
+        "__tests__/",
+        "*.test.tsx",
+        "*.spec.tsx",
+        "*.test.js",
+        "*.spec.js",
+        "*.test.jsx",
+        "*.spec.jsx",
+        "*.test.mjs",
+        "*.spec.mjs",
+        "*.test.cjs",
+        "*.spec.cjs",
+    ],
+    rules: OnceLock::new(),
+    identity: OnceLock::new(),
+};
+
 impl Language {
     /// Its query's rules, compiled once per process, on the first file
     /// of the language the cache does not hold.
     pub(super) fn rules(&self) -> Result<&Rules, &QueryFault> {
         self.rules
-            .get_or_init(|| Rules::compile((self.grammar)(), self.query))
+            .get_or_init(|| Rules::compile((self.grammar)(), &self.queries.concat()))
             .as_ref()
     }
 
     /// The identity of its grammar and its query, in a cache key: a
-    /// pattern of the query, or its order, is a rule of the index.
+    /// pattern of the query is a rule of the index.
     pub(super) fn identity(&self) -> [u8; 32] {
         *self.identity.get_or_init(|| {
             let mut hasher = blake3::Hasher::new();
             hasher.update(&grammar_identity(&(self.grammar)(), self.node_types));
-            hasher.update(self.query.as_bytes());
+            for query in self.queries {
+                hasher.update(&(query.len() as u64).to_le_bytes());
+                hasher.update(query.as_bytes());
+            }
             *hasher.finalize().as_bytes()
         })
     }
@@ -112,9 +186,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_python_query_compiles_against_its_grammar_within_the_contract() {
-        if let Err(fault) = PYTHON.rules() {
-            panic!("{fault}");
+    fn each_query_compiles_against_its_grammar_within_the_contract() {
+        for language in [&PYTHON, &TYPESCRIPT, &TSX] {
+            if let Err(fault) = language.rules() {
+                panic!("{}: {fault}", language.name);
+            }
         }
     }
 
@@ -133,6 +209,25 @@ mod tests {
             ("conftest.pyi", false),
         ] {
             assert_eq!(PYTHON.is_test_place(path), expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn a_typescript_test_place_is_a_tests_directory_or_a_test_or_spec_file() {
+        for (language, path, expected) in [
+            (&TYPESCRIPT, "src/__tests__/store.ts", true),
+            (&TYPESCRIPT, "src/store.test.ts", true),
+            (&TYPESCRIPT, "src/store.spec.mts", true),
+            (&TYPESCRIPT, "src/store.ts", false),
+            (&TYPESCRIPT, "src/test.ts", false),
+            (&TYPESCRIPT, "tests/store.ts", false),
+            (&TSX, "ui/card.test.tsx", true),
+            (&TSX, "lib/store.spec.js", true),
+            (&TSX, "lib/__tests__/helpers.cjs", true),
+            (&TSX, "lib/store.test.mjs", true),
+            (&TSX, "lib/store.js", false),
+        ] {
+            assert_eq!(language.is_test_place(path), expected, "{path}");
         }
     }
 }

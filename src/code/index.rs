@@ -9,7 +9,7 @@ use std::sync::{Arc, LazyLock};
 
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::language::python;
-use super::language::{Language, PYTHON};
+use super::language::{Language, PYTHON, TSX, TYPESCRIPT};
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
 use super::symbol::{Segment, Syntax};
@@ -18,7 +18,7 @@ use super::{encoding, general, json, make, markdown, rust, syntax, toml, work};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 8;
+pub(crate) const INDEX_FORMAT: u32 = 9;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -77,6 +77,9 @@ static RUST_GRAMMAR: LazyLock<[u8; 32]> = LazyLock::new(|| {
 pub(crate) enum FileKind {
     Rust,
     Python,
+    TypeScript,
+    /// TSX, and JavaScript, which the TSX grammar reads.
+    Tsx,
     Toml,
     Json,
     Make,
@@ -93,6 +96,8 @@ impl FileKind {
             ("Makefile" | "makefile" | "GNUmakefile", _) | (_, Some("mk")) => Some(Self::Make),
             (_, Some("rs")) => Some(Self::Rust),
             (_, Some("py" | "pyi" | "pyw")) => Some(Self::Python),
+            (_, Some("ts" | "mts" | "cts")) => Some(Self::TypeScript),
+            (_, Some("tsx" | "js" | "jsx" | "mjs" | "cjs")) => Some(Self::Tsx),
             (_, Some("toml")) => Some(Self::Toml),
             (_, Some("json")) => Some(Self::Json),
             (_, Some("md")) => Some(Self::Markdown),
@@ -105,6 +110,8 @@ impl FileKind {
     pub(super) const fn language(self) -> Option<&'static Language> {
         match self {
             Self::Python => Some(&PYTHON),
+            Self::TypeScript => Some(&TYPESCRIPT),
+            Self::Tsx => Some(&TSX),
             Self::Rust | Self::Toml | Self::Json | Self::Make | Self::Markdown => None,
         }
     }
@@ -114,17 +121,27 @@ impl FileKind {
     /// anchor names it.
     pub(crate) const fn is_code(self) -> bool {
         match self {
-            Self::Rust | Self::Python => true,
+            Self::Rust | Self::Python | Self::TypeScript | Self::Tsx => true,
             Self::Toml | Self::Json | Self::Make | Self::Markdown => false,
         }
     }
 
-    /// How a symbol on a file of this kind is spelled.
+    /// How a symbol on a file of this kind is spelled: a language's by
+    /// its row.
     pub(crate) const fn syntax(self) -> Syntax {
-        match self {
-            Self::Rust => Syntax::Rust,
-            Self::Python => Syntax::Code,
-            Self::Toml | Self::Json | Self::Make | Self::Markdown => Syntax::Plain,
+        match (self, self.language()) {
+            (_, Some(language)) => language.syntax,
+            (Self::Rust, None) => Syntax::Rust,
+            (
+                Self::Python
+                | Self::TypeScript
+                | Self::Tsx
+                | Self::Toml
+                | Self::Json
+                | Self::Make
+                | Self::Markdown,
+                None,
+            ) => Syntax::Plain,
         }
     }
 
@@ -138,6 +155,8 @@ impl FileKind {
         match self {
             Self::Rust => *RUST_GRAMMAR,
             Self::Python => PYTHON.identity(),
+            Self::TypeScript => TYPESCRIPT.identity(),
+            Self::Tsx => TSX.identity(),
             Self::Toml | Self::Json | Self::Make | Self::Markdown => [0; 32],
         }
     }
@@ -145,7 +164,7 @@ impl FileKind {
     /// The largest file of the kind the index reads.
     pub(crate) const fn max_bytes(self) -> usize {
         match self {
-            Self::Rust | Self::Python => TREE_SITTER_MAX_BYTES,
+            Self::Rust | Self::Python | Self::TypeScript | Self::Tsx => TREE_SITTER_MAX_BYTES,
             Self::Toml | Self::Json | Self::Make | Self::Markdown => LEXICAL_MAX_BYTES,
         }
     }
@@ -155,6 +174,8 @@ impl FileKind {
         match self {
             Self::Rust => "rust",
             Self::Python => PYTHON.name,
+            Self::TypeScript => TYPESCRIPT.name,
+            Self::Tsx => TSX.name,
             Self::Toml => "toml",
             Self::Json => "json",
             Self::Make => "make",
@@ -408,6 +429,8 @@ pub(crate) fn index(kind: FileKind, bytes: &[u8]) -> Result<FileIndex, IndexFaul
     let mut index = match kind {
         FileKind::Rust => rust::index(text)?,
         FileKind::Python => general::index(&PYTHON, text)?,
+        FileKind::TypeScript => general::index(&TYPESCRIPT, text)?,
+        FileKind::Tsx => general::index(&TSX, text)?,
         FileKind::Toml => toml::index(text)?,
         FileKind::Json => json::index(text)?,
         FileKind::Make => make::index(text)?,
@@ -434,6 +457,16 @@ mod tests {
             ("tools/run.py", Some(FileKind::Python)),
             ("pkg/__init__.pyi", Some(FileKind::Python)),
             ("tools/gui.pyw", Some(FileKind::Python)),
+            ("src/app.ts", Some(FileKind::TypeScript)),
+            ("types/index.d.ts", Some(FileKind::TypeScript)),
+            ("lib/a.mts", Some(FileKind::TypeScript)),
+            ("lib/a.cts", Some(FileKind::TypeScript)),
+            ("ui/App.tsx", Some(FileKind::Tsx)),
+            ("lib/a.js", Some(FileKind::Tsx)),
+            ("ui/App.jsx", Some(FileKind::Tsx)),
+            ("lib/a.mjs", Some(FileKind::Tsx)),
+            ("lib/a.cjs", Some(FileKind::Tsx)),
+            ("lib/a.json", Some(FileKind::Json)),
             ("Cargo.toml", Some(FileKind::Toml)),
             ("a/b.json", Some(FileKind::Json)),
             ("Makefile", Some(FileKind::Make)),
@@ -453,7 +486,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 8] = [
+    const FINGERPRINTS: [(u32, &str); 9] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -485,6 +518,10 @@ mod tests {
         (
             8,
             "102cfbc72d9beba458820443d3193fe8074dc29b42390c0c5b9c04ba1683c179",
+        ),
+        (
+            9,
+            "348f0b3b9c2a45d73863d6dd1a36c53951e2df349de51e3bc5448d5d717eb2e2",
         ),
     ];
 
@@ -534,13 +571,12 @@ mod tests {
                 max: TREE_SITTER_MAX_BYTES,
             })
         );
-        assert_eq!(
-            index(FileKind::Python, &over).err(),
-            index(FileKind::Rust, &over).err()
-        );
+        for kind in [FileKind::Python, FileKind::TypeScript, FileKind::Tsx] {
+            assert_eq!(index(kind, &over).err(), index(FileKind::Rust, &over).err());
+            assert!(index(kind, &over[1..]).is_ok(), "{kind:?}");
+        }
         assert!(index(FileKind::Markdown, &over).is_ok());
         assert!(index(FileKind::Rust, &over[1..]).is_ok());
-        assert!(index(FileKind::Python, &over[1..]).is_ok());
     }
 
     #[test]

@@ -438,8 +438,7 @@ impl CodeFacts {
         let scopes = self.scopes(index, expansion);
         let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
         index.definitions.iter().chain(added).any(|definition| {
-            symbol.admits(definition.kind)
-                && symbol.is_path_of(scopes.path_from_end(definition.scope))
+            symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
         })
     }
 
@@ -524,8 +523,7 @@ impl CodeFacts {
         index.definitions.iter().any(|definition| {
             definition.kind != DefinitionKind::Reexport
                 && definition.role.or(file_role) == role
-                && symbol.admits(definition.kind)
-                && symbol.is_path_of(scopes.path_from_end(definition.scope))
+                && symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
         })
     }
 
@@ -579,13 +577,14 @@ impl CodeFacts {
             .definitions
             .iter()
             .chain(added)
-            .filter(|definition| symbol.admits(definition.kind))
-            .filter(|definition| symbol.names(scopes.path_from_end(definition.scope)))
+            .filter(|definition| {
+                symbol.names(definition.kind, scopes.path_from_end(definition.scope))
+            })
             .collect();
         let whole: Vec<&Definition> = named
             .iter()
             .copied()
-            .filter(|d| symbol.is_path_of(scopes.path_from_end(d.scope)))
+            .filter(|d| symbol.is_path_of(d.kind, scopes.path_from_end(d.scope)))
             .collect();
         let chosen = match whole.is_empty() {
             true => named,

@@ -169,6 +169,10 @@ mod tests {
             "tools/tests/test_run.py",
             "tools/__pycache__/run.py",
             "web/node_modules/gyp/build.py",
+            "web/node_modules/react/index.js",
+            "web/src/app.tsx",
+            "web/src/types.d.ts",
+            "web/legacy.cjs",
             "venv/pyvenv.cfg",
             "venv/lib/site.py",
             "env/conda-meta/history",
@@ -206,6 +210,9 @@ mod tests {
                 ("tools/run.py".to_owned(), FileKind::Python),
                 ("tools/tests/test_run.py".to_owned(), FileKind::Python),
                 ("tools/types.pyi".to_owned(), FileKind::Python),
+                ("web/legacy.cjs".to_owned(), FileKind::Tsx),
+                ("web/src/app.tsx".to_owned(), FileKind::Tsx),
+                ("web/src/types.d.ts".to_owned(), FileKind::TypeScript),
             ]
         );
     }

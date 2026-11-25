@@ -1,5 +1,5 @@
 component = "code"
-choice = "A file of a language the general resolver reads is test code whole in a test place of its language's row: for Python a tests directory anywhere above it, test_*.py, *_test.py or conftest.py"
+choice = "A file the general resolver reads is test code whole in a test place of its row: Python's tests/, test_*.py, *_test.py, conftest.py; TypeScript's and JavaScript's __tests__/, *.test.*, *.spec.*"
 reason = "A file's bytes do not say whether pytest reads it as a test module, so the place is a rule of the second step over the tree, and the places are data in the language's row, as its query is, not a branch of code per language. A fixture in conftest.py, a helper module under tests/ and a module pytest collects by its name are test code though no test function stands in them. A place is a directory name anywhere above the file, or a file name in which one * stands for any run of characters. Rust's places stay Rust's own rule, its crate's tests directory and the forward walk of module declarations, since they need its crates."
 alternatives = [
     "The bytes alone: rejected because a helper in conftest.py would be counted as code",
@@ -9,6 +9,7 @@ alternatives = [
 tags = [
     "python",
     "testing",
+    "typescript",
 ]
 status = "proposed"
 origin = "languages as query files"
@@ -16,7 +17,10 @@ created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
     { file = "src/code/language.rs", symbol = "Language::is_test_place" },
     { file = "src/code/language.rs", symbol = "PYTHON" },
+    { file = "src/code/language.rs", symbol = "TSX" },
+    { file = "src/code/language.rs", symbol = "TYPESCRIPT" },
     { file = "src/code/language.rs", symbol = "a_test_place_is_a_directory_anywhere_above_or_a_file_name" },
+    { file = "src/code/language.rs", symbol = "a_typescript_test_place_is_a_tests_directory_or_a_test_or_spec_file" },
     { file = "src/code/roles.rs", symbol = "test_files" },
 ]
 depends_on = [
