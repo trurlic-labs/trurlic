@@ -1,4 +1,5 @@
 description = "Findings over the graph that no rule refuses, pure over ProjectState and the facts a shell hands it: likely duplicate decisions, the quality bar's findings on stored decisions, and the anchor findings of check and status"
 connects_to = [
+    "code",
     "store",
 ]

@@ -61,7 +61,7 @@ impl Renames {
     pub(crate) fn none() -> Self {
         Self {
             to: BTreeMap::new(),
-            facts: CodeFacts::new(BTreeMap::new(), &BTreeSet::new()),
+            facts: CodeFacts::new(BTreeMap::new(), BTreeSet::new()),
         }
     }
 
@@ -113,7 +113,7 @@ impl Prior {
     /// The file at `path` held `entry` at `revision`.
     pub(crate) fn insert(&mut self, revision: String, path: String, entry: Entry) {
         // clone: the facts key their one entry by the path the map keys too.
-        let facts = CodeFacts::new(BTreeMap::from([(path.clone(), entry)]), &BTreeSet::new());
+        let facts = CodeFacts::new(BTreeMap::from([(path.clone(), entry)]), BTreeSet::new());
         self.files.insert((revision, path), facts);
     }
 

@@ -32,13 +32,14 @@ fn anchored(project: &Project, name: &str, anchors: &[&str], status: &str) {
 
 /// A project with a source tree: `src/lib.rs` defines `open`, a `Book`
 /// with a field and a method `pages`, a `Shelf` with a field `pages`, and
-/// `run`, which nine other files
-/// define too.
+/// a `Runner` with a method `run`, a name nine other files define as a
+/// function.
 fn project() -> Project {
     let project = Project::init();
     project.source(
         "src/lib.rs",
-        "pub fn open() {}\npub fn run() {}\npub struct Book { pages: u32 }\n\
+        "pub fn open() {}\npub struct Runner;\nimpl Runner { pub fn run(&self) {} }\n\
+         pub struct Book { pages: u32 }\n\
          impl Book { pub fn pages(&self) -> u32 { self.pages } }\n\
          pub struct Shelf { pages: u32 }\n",
     );
@@ -55,7 +56,8 @@ fn anchors(client: &mut McpClient) -> Value {
 /// `status` lists each kind with its cause, the unresolved first, and
 /// counts them; a missing anchor on a proposed decision is no finding
 /// there, while a malformed or an unverified one is, whatever the status;
-/// the default report leaves the section out.
+/// a field and its getter, one place, and a function named by its whole
+/// path are none; the default report leaves the section out.
 #[test]
 fn status_lists_each_finding_with_its_kind_and_cause() {
     let project = project();
@@ -66,6 +68,7 @@ fn status_lists_each_finding_with_its_kind_and_cause() {
         "src/lib.rs::pages",
         "src/lib.rs::Book::pages",
         "src/lib.rs::run",
+        "src/m1.rs::run",
         "src/lib.rs::a::<B",
         "notes.txt::line",
     ];
@@ -78,7 +81,6 @@ fn status_lists_each_finding_with_its_kind_and_cause() {
 
     let missing = "its file defines nothing its symbol names in this tree";
     let ambiguous = "its symbol names definitions of 2 paths";
-    let mixed = "its symbol names 2 definitions of more than one kind";
     let weak = "its symbol is one name, defined in 10 files of its kind";
     let malformed = "its symbol has an angle bracket that does not pair";
     let unverified =
@@ -100,15 +102,13 @@ fn status_lists_each_finding_with_its_kind_and_cause() {
             item("kept", "src/lib.rs::pages", "ambiguous", ambiguous),
             item("drafted", "notes.txt::line", "unverified", unverified),
             item("kept", "notes.txt::line", "unverified", unverified),
-            item("drafted", "src/lib.rs::Book::pages", "mixed", mixed),
-            item("kept", "src/lib.rs::Book::pages", "mixed", mixed),
             item("drafted", "src/lib.rs::run", "weak", weak),
             item("kept", "src/lib.rs::run", "weak", weak),
         ])
     );
     assert_eq!(
         status["counts"]["anchors"],
-        json!({ "unresolved": 2, "malformed": 2, "ambiguous": 2, "unverified": 2, "mixed": 2, "weak": 2 })
+        json!({ "unresolved": 2, "malformed": 2, "ambiguous": 2, "unverified": 2, "weak": 2 })
     );
     let whole = client.call_tool("status", json!({}));
     assert!(whole.get("anchors").is_none(), "{whole}");
@@ -137,9 +137,9 @@ fn an_origin_narrows_the_findings_to_its_decisions() {
 }
 
 /// `check` fails on a stale, a malformed or an ambiguous anchor, each an
-/// error, a malformed one on a proposed decision too: an unverified, a
-/// mixed or a weak one is a warning, a planned one a note, and none of
-/// those fails it. A pending one, a note too, is `placement.rs`'s.
+/// error, a malformed one on a proposed decision too: an unverified or a
+/// weak one is a warning, a planned one a note, and none of those fails
+/// it. A pending one, a note too, is `placement.rs`'s.
 #[test]
 fn check_fails_on_a_stale_or_an_ambiguous_anchor() {
     let cases = [
@@ -160,12 +160,6 @@ fn check_fails_on_a_stale_or_an_ambiguous_anchor() {
             "accepted",
             Some(1),
             "  error: anchor `src/lib.rs::pages` of `d` is ambiguous: its symbol names definitions of 2 paths\n",
-        ),
-        (
-            "src/lib.rs::Book::pages",
-            "accepted",
-            Some(0),
-            "  warning: anchor `src/lib.rs::Book::pages` of `d` is mixed: its symbol names 2 definitions of more than one kind\n",
         ),
         (
             "src/lib.rs::run",
@@ -205,8 +199,8 @@ fn check_fails_on_a_stale_or_an_ambiguous_anchor() {
         };
         assert_eq!(stdout, consistent, "{anchor}");
     }
-    // A proposed revision of an accepted decision keeps the accepted
-    // decision's anchors: stale, as before the revision.
+    // A proposed revision of an accepted decision has all its anchors
+    // judged as accepted, since the accepted text keeps none: stale.
     let revised = project();
     anchored(&revised, "d", &["src/gone.rs"], "proposed");
     let text = revised.read("decisions/d.toml");
@@ -255,7 +249,7 @@ fn the_anchors_section_is_the_same_from_the_command_line() {
     let text = String::from_utf8(text.stdout).unwrap();
     assert!(
         text.contains(
-            "anchors: 1 unresolved, 0 malformed, 0 ambiguous, 0 unverified, 0 mixed, 1 weak\n  \
+            "anchors: 1 unresolved, 0 malformed, 0 ambiguous, 0 unverified, 1 weak\n  \
              unresolved: `src/gone.rs` of `d`: nothing is at its path in this tree\n  \
              weak: `src/lib.rs::run` of `d`: its symbol is one name, defined in 10 files of its kind\n"
         ),
@@ -314,7 +308,7 @@ fn a_tree_with_no_git_is_judged_alike() {
 
     assert_eq!(
         status["counts"]["anchors"],
-        json!({ "unresolved": 1, "malformed": 0, "ambiguous": 0, "unverified": 0, "mixed": 0, "weak": 0 })
+        json!({ "unresolved": 1, "malformed": 0, "ambiguous": 0, "unverified": 0, "weak": 0 })
     );
     let stderr = project.run_refused(&["check"]);
     assert!(
@@ -333,7 +327,7 @@ fn the_count_line_is_printed_with_no_finding() {
     let text = project.run_ok(&["status", "--section", "anchors"]).stdout;
     let whole = project.run_ok(&["status"]).stdout;
 
-    let line = "anchors: 0 unresolved, 0 malformed, 0 ambiguous, 0 unverified, 0 mixed, 0 weak\n";
+    let line = "anchors: 0 unresolved, 0 malformed, 0 ambiguous, 0 unverified, 0 weak\n";
     assert!(String::from_utf8(text).unwrap().contains(line));
     assert!(!String::from_utf8(whole).unwrap().contains("anchors:"));
 }

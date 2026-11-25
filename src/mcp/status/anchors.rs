@@ -6,9 +6,8 @@
 //! another worktree holds (pending) from one none does (stale): it names
 //! either one unresolved, "does not resolve in this tree", and leaves the
 //! verdict, and the planned anchors of decisions never accepted, to
-//! `trurlic check`, which runs git. A malformed, ambiguous, unverified,
-//! mixed or weak anchor needs no git, and is reported as `check` reports
-//! it.
+//! `trurlic check`, which runs git. A malformed, ambiguous, unverified
+//! or weak anchor needs no git, and is reported as `check` reports it.
 
 use crate::lint::anchors::{Finding, Kind, KindName, Unasked, WEAK_FILES};
 use crate::mcp::spec::output::{Count, Nested, Str, Tag};
@@ -35,7 +34,6 @@ pub(crate) struct AnchorCounts {
     pub(crate) malformed: usize,
     pub(crate) ambiguous: usize,
     pub(crate) unverified: usize,
-    pub(crate) mixed: usize,
     pub(crate) weak: usize,
 }
 
@@ -48,7 +46,6 @@ impl AnchorCounts {
                 Kind::Malformed(_) => &mut counts.malformed,
                 Kind::Ambiguous(_) => &mut counts.ambiguous,
                 Kind::Unverified(_) => &mut counts.unverified,
-                Kind::Mixed(_) => &mut counts.mixed,
                 Kind::Weak(_) => &mut counts.weak,
             };
             *count += 1;
@@ -107,10 +104,9 @@ impl Output for AnchorItem {
                      `malformed`: a symbol out of the grammar or on a directory, which \
                      fails `trurlic check`; `ambiguous`: its symbol names definitions of \
                      several paths, which fails it too; `unverified`: its file is of a kind \
-                     no resolver reads or cannot be indexed; `mixed`: its symbol names \
-                     definitions of one path and more than one kind, a field and its \
-                     getter; `weak`: its symbol is one name 10 or more files of its kind \
-                     define.";
+                     no resolver reads or cannot be indexed; `weak`: its symbol is one \
+                     name, not the whole path of what it names, that 10 or more files of \
+                     its kind define.";
         fields.required("kind", about, &kind, |item| &item.kind);
         let cause = "What makes it one: the cause, or the count.";
         fields.required("cause", cause, &Str, |item| &item.cause);
@@ -126,7 +122,6 @@ impl Output for AnchorCounts {
         fields.required("unverified", "Unverified anchors.", &Count, |c| {
             &c.unverified
         });
-        fields.required("mixed", "Anchors of mixed kinds.", &Count, |c| &c.mixed);
         fields.required("weak", "Weak anchors.", &Count, |c| &c.weak);
     }
 }

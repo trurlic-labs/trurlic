@@ -2,5 +2,6 @@ description = "MCP server: JSON-RPC stdio, version negotiation, the server's own
 connects_to = [
     "discovery",
     "lint",
+    "sources",
     "store",
 ]

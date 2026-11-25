@@ -18,7 +18,8 @@ const UPSTREAM: [&str; 2] = ["audit", "gateway"];
 /// Two decisions per component, both anchored in the component's source
 /// file, the second depending on the first, so file queries and
 /// dependencies span several components. The first also anchors `sign`,
-/// which ten files define, a weak anchor; the second, proposed, also
+/// a method named alone, which ten files define, a weak anchor; the
+/// second, proposed, also
 /// anchors a function its file does not define yet, a planned anchor.
 fn build_graph(project: &Project) {
     for n in 0..3 {
@@ -42,7 +43,8 @@ fn build_graph(project: &Project) {
         );
     }
     for component in std::iter::once(&HUB).chain(&DOWNSTREAM).chain(&UPSTREAM) {
-        project.source(&format!("src/{component}.rs"), "pub fn sign() {}\n");
+        let signer = "pub struct Signer;\nimpl Signer { pub fn sign(&self) {} }\n";
+        project.source(&format!("src/{component}.rs"), signer);
         let anchor = format!(
             "anchors = [{{ file = \"src/{component}.rs\" }}, \
              {{ file = \"src/{component}.rs\", symbol = \"sign\" }}]\n"

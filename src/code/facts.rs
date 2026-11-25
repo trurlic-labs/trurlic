@@ -195,8 +195,8 @@ impl CodeFacts {
     /// manifests, whose macros a file can invoke) and the manifests above
     /// each anchored Rust file outside them: a path absent from them is
     /// missing.
-    pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: &BTreeSet<String>) -> Self {
-        let (tree, outside) = split(&entries, walked);
+    pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: BTreeSet<String>) -> Self {
+        let (tree, outside) = split(&entries, &walked);
         let crates = Crates::of(&tree, &outside);
         let expanded: BTreeMap<String, Result<Expansion, IndexFault>> = expand(&tree, &crates)
             .into_iter()
@@ -211,8 +211,7 @@ impl CodeFacts {
             entries,
             expanded,
             test_files,
-            // clone: the facts keep which paths the walk took.
-            walked: walked.clone(),
+            walked,
         }
     }
 
@@ -254,12 +253,13 @@ impl CodeFacts {
         }
     }
 
-    /// For each of `anchors` whose symbol is one plain name on a code file,
-    /// how many walked files of that file's kind hold a definition of that
-    /// name at any depth, those macro invocations add included: whether
-    /// the name alone picks out a place. A file only an anchor brought in
-    /// is not counted. One pass over the tree serves them all, and none is
-    /// made when no anchor is one name.
+    /// For each of `anchors` whose symbol is one plain name on a code file
+    /// and not the whole path of any definition there, so it resolves
+    /// through a suffix, how many walked files of that file's kind hold a
+    /// definition of that name at any depth, those macro invocations add
+    /// included: whether the name alone picks out a place. A file only an
+    /// anchor brought in is not counted. One pass over the tree serves them
+    /// all, and none is made when no anchor is such a name.
     pub(crate) fn spread<'a>(
         &self,
         anchors: impl IntoIterator<Item = &'a Anchor>,
@@ -300,7 +300,9 @@ impl CodeFacts {
     }
 
     /// The one plain name `anchor`'s symbol is, with its file's kind, when
-    /// that kind is code and the file has an index.
+    /// that kind is code, the file has an index, and no definition there
+    /// has the name as its whole path: a module-level item's name is the
+    /// fullest spelling it has.
     fn lone_name(&self, anchor: &Anchor) -> Option<(FileKind, String)> {
         let Some(Entry::File { kind, index: Ok(_) }) = self.entries.get(anchor.file()) else {
             return None;
@@ -309,6 +311,9 @@ impl CodeFacts {
         let [Segment::Name(name)] = symbol.segments() else {
             return None;
         };
+        if self.defines_whole(anchor) {
+            return None;
+        }
         // clone: the name outlives the symbol parsed here.
         kind.is_code().then(|| (*kind, name.clone()))
     }

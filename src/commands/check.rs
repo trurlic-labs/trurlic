@@ -15,9 +15,8 @@ use super::{graph_name, placement};
 /// the anchor findings, with the other worktrees asked: a stale, malformed
 /// or ambiguous anchor as an error, an unverified or weak one, and another
 /// worktree that went unread, as a warning, a pending or planned one as a
-/// note. Fails
-/// when there is an error; a file that only needs `trurlic fmt` does not
-/// fail it, since a hand edit is a legal write. It says the graph is
+/// note. Fails when there is an error; a file that only needs `trurlic
+/// fmt` does not fail it, since a hand edit is a legal write. It says the graph is
 /// consistent only when it printed nothing.
 ///
 /// The placement is held to what git says of the directory that holds the

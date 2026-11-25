@@ -71,9 +71,8 @@ pub(crate) fn checked_findings<'s>(
     let mut reads = Reads::new();
     let facts = calling_tree(store, &decisions, &mut reads);
     let here = Here::of(&decisions, &facts);
-    let unresolved = here.unresolved(&decisions);
-    let (elsewhere, unread) = elsewhere(store, &facts, &unresolved, &mut reads);
-    let asked = Asked::of(&unresolved, &elsewhere);
+    let mut asked = Asked::new(here.unresolved(&decisions));
+    let unread = elsewhere(store, &facts, &mut asked, &mut reads);
     let asked = with_history(store, &facts, &here, asked, &mut reads);
     reads.write(store);
     CheckedFindings {
@@ -118,20 +117,20 @@ fn calling_tree(store: &Store, decisions: &Decisions<'_>, reads: &mut Reads) -> 
         .flat_map(|(_, decision)| &decision.anchors)
         .map(Anchor::file);
     let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, reads);
-    CodeFacts::new(entries, &walked)
+    CodeFacts::new(entries, walked)
 }
 
 /// `asked` with what git says of the stale anchors' repairs: where their
 /// gone files went and, for a rename that changed the file, its old path
 /// before it; then, for the symbol search's candidates, each anchor's file
 /// and candidate at the revision where that file last held its code.
-fn with_history<'s, 'w>(
+fn with_history<'s>(
     store: &Store,
     facts: &CodeFacts,
     here: &Here<'s, '_>,
-    asked: Asked<'s, 'w>,
+    asked: Asked<'s>,
     reads: &mut Reads,
-) -> Asked<'s, 'w> {
+) -> Asked<'s> {
     let root = store.code_root();
     let renames = renames(store, facts, &asked.gone(here), reads);
     let before: BTreeSet<(String, String)> = renames
@@ -211,52 +210,49 @@ fn prior(root: &Path, indexer: &Indexer, files: &BTreeSet<(String, String)>) -> 
     prior
 }
 
-/// The facts of the other worktrees for `missing`, the anchors of
-/// decisions ever accepted missing in the calling tree, whose facts
-/// `here` are, and those git could not say enough of; none when nothing is
-/// missing. Each worktree, in git's order, is read for the missing anchors
-/// no earlier one holds whose files it changed since the fork, and no
-/// further worktree is read once every one is held. Those files alone are
-/// read, never a walk of the tree, against the calling tree's macros.
+/// Read the other worktrees into `asked` for its stale anchors, those of
+/// decisions ever accepted missing in the calling tree, whose facts `here`
+/// are, and give those git could not say enough of; none is asked when
+/// nothing is missing. Each worktree, in git's order, is read for the
+/// anchors no earlier one holds at the paths its work tree changed since
+/// the fork, and no further worktree is read once every one is held. Those
+/// files alone are read, never a walk of the tree, against the calling
+/// tree's macros.
 fn elsewhere(
     store: &Store,
     here: &CodeFacts,
-    missing: &BTreeSet<&Anchor>,
+    asked: &mut Asked<'_>,
     reads: &mut Reads,
-) -> (Vec<Elsewhere>, Vec<UnreadWorktree>) {
-    if missing.is_empty() {
-        return (Vec::new(), Vec::new());
+) -> Vec<UnreadWorktree> {
+    if asked.stale().is_empty() {
+        return Vec::new();
     }
     let others = worktrees::others(store.code_root());
     let mut unread = others.unread;
-    // clone: a set of references, narrowed as worktrees hold its anchors.
-    let mut remaining = missing.clone();
-    let mut read = Vec::new();
     for forked in others.trees {
-        if remaining.is_empty() {
+        if asked.stale().is_empty() {
             break;
         }
-        let paths: BTreeSet<&str> = remaining.iter().map(|anchor| anchor.file()).collect();
+        let paths: BTreeSet<&str> = asked.stale().iter().map(|&anchor| anchor.file()).collect();
         let paths: Vec<&str> = paths.into_iter().collect();
         let changed = match forked.changed(&paths) {
             Ok(changed) if changed.is_empty() => continue,
             Ok(changed) => changed,
             Err(error) => {
-                // clone: the warning names the worktree beside the listing.
-                let path = forked.worktree.path.clone();
-                unread.push(UnreadWorktree::of(Some(path), &error));
+                unread.push(UnreadWorktree {
+                    worktree: Some(forked.worktree.path),
+                    cause: error.into(),
+                });
                 continue;
             }
         };
         let facts = here.beside(&read_paths(store, &forked.worktree.path, changed, reads));
-        let tree = Elsewhere {
+        asked.read(Elsewhere {
             worktree: forked.worktree,
             facts,
-        };
-        remaining.retain(|anchor| !tree.holds(anchor));
-        read.push(tree);
+        });
     }
-    (read, unread)
+    unread
 }
 
 /// What is at each of `paths` in the tree at `root`, `None` where nothing

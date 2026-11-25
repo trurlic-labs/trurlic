@@ -50,6 +50,7 @@ pub(crate) use crates::MANIFEST;
 pub(crate) use encoding::{
     Indexed, decode as decode_index, encode as encode_index, max_entry_bytes,
 };
+#[cfg(test)]
 pub(crate) use facts::Target;
 pub(crate) use facts::{CodeFacts, Entry, FileFault, Namesakes, ReadFault, Resolution};
 pub(crate) use index::{

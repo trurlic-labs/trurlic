@@ -7,19 +7,18 @@ use super::index::Definition;
 use super::span::{Span, SpanHash};
 
 /// The definitions of one path, one at least. It holds their spans in
-/// file order, a span two share listed once, how many they are, and
-/// whether they are of more than one kind. Its one hash is over the
+/// file order, a span two share listed once, and how many they are. Its
+/// one hash is over the
 /// members' hashes in their own order ([`SpanHash::of_members`]), so twins
 /// that swap places move nothing. The cfg twins of an item, a field and
 /// its getter, a key an array's elements each hold: each is one thing an
 /// anchor names, whose every span a change may touch. Kind plays no part
-/// in what is one thing; a set of mixed kinds is what a report warns of.
+/// in what is one thing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Definitions {
     first: Span,
     /// The spans after the first, in file order.
     more: Vec<Span>,
-    mixed_kinds: bool,
     hash: SpanHash,
 }
 
@@ -43,7 +42,6 @@ impl Definitions {
         Self {
             first: spans.next().unwrap_or(first.span),
             more: spans.collect(),
-            mixed_kinds: rest.iter().any(|d| d.kind != first.kind),
             hash: SpanHash::of_members(&hashes),
         }
     }
@@ -63,12 +61,6 @@ impl Definitions {
     /// How many definitions, their shared spans counted once.
     pub(crate) fn count(&self) -> usize {
         self.more.len() + 1
-    }
-
-    /// Whether the definitions are of more than one kind: a field and its
-    /// getter, `mod parse` and `fn parse`.
-    pub(crate) const fn mixed_kinds(&self) -> bool {
-        self.mixed_kinds
     }
 
     /// The hash of the set: one definition's own, or that of several.
@@ -125,11 +117,10 @@ mod tests {
             "{printed}"
         );
         assert!(printed.len() < 200);
-        assert!(!set.mixed_kinds());
     }
 
     #[test]
-    fn a_sets_hash_is_of_its_members_whatever_their_order_and_kinds_are_told() {
+    fn a_sets_hash_is_of_its_members_whatever_their_order() {
         let field = definition(10, DefinitionKind::Field, "a");
         let getter = definition(20, DefinitionKind::Method, "b");
         let swapped_field = definition(20, DefinitionKind::Field, "a");
@@ -143,7 +134,6 @@ mod tests {
             swapped.hash(),
             "twins that swap places move nothing"
         );
-        assert!(set.mixed_kinds());
         assert_eq!(shared_span.count(), 1);
         assert_eq!(shared_span.hash(), field.hash);
         assert_eq!(set.to_string().lines().count(), 1);

@@ -26,7 +26,7 @@ fn facts(files: &[(&str, &str)], other: &[(&str, Entry)]) -> CodeFacts {
             .iter()
             .map(|(path, entry)| ((*path).to_owned(), entry.clone())),
     );
-    CodeFacts::new(entries, &walked)
+    CodeFacts::new(entries, walked)
 }
 
 fn anchor(spelled: &str) -> Anchor {
@@ -56,7 +56,7 @@ fn decision(anchors: &[&str], status: StatusName) -> Decision {
 fn judged(
     decisions: &[(&str, Decision)],
     here: &CodeFacts,
-    elsewhere: Option<&[Elsewhere]>,
+    elsewhere: Option<Vec<Elsewhere>>,
 ) -> Vec<String> {
     let named: Vec<(&str, &Decision)> = decisions.iter().map(|(n, d)| (*n, d)).collect();
     let here = Here::of(&named, here);
@@ -66,8 +66,10 @@ fn judged(
             .map(ToString::to_string)
             .collect();
     };
-    let unresolved = here.unresolved(&named);
-    let asked = Asked::of(&unresolved, elsewhere);
+    let mut asked = Asked::new(here.unresolved(&named));
+    for tree in elsewhere {
+        asked.read(tree);
+    }
     findings(&named, &here, &asked)
         .iter()
         .map(ToString::to_string)
@@ -75,9 +77,13 @@ fn judged(
 }
 
 /// No other worktree: git asked, and it named none.
-const ASKED: Option<&[Elsewhere]> = Some(&[]);
+const ASKED: Option<Vec<Elsewhere>> = Some(Vec::new());
 
 const LIB: &str = "pub struct Book { pages: u32 }\nimpl Book { fn pages(&self) -> u32 { self.pages } }\npub fn open() {}\n";
+
+/// A second type with a field `pages`, which makes `pages` alone ambiguous
+/// beside [`LIB`].
+const SHELF: &str = "pub struct Shelf { pages: u32 }\n";
 
 /// The verdict follows the cause, which it keeps: a file or a symbol
 /// missing is stale on an accepted decision and planned on a proposed
@@ -173,7 +179,7 @@ fn the_verdict_on_an_anchor_that_names_nothing_follows_its_cause() {
 /// them apart. Ambiguous and weak need no git and are judged alike.
 #[test]
 fn with_git_not_asked_an_anchor_that_names_nothing_is_unresolved() {
-    let here = facts(&[("src/lib.rs", LIB)], &[]);
+    let here = facts(&[("src/lib.rs", &format!("{LIB}{SHELF}"))], &[]);
     let anchors = ["gone.rs", "src/lib.rs::close", "src/lib.rs::pages"];
     let decisions = [
         ("kept", decision(&anchors, StatusName::Accepted)),
@@ -194,11 +200,11 @@ fn with_git_not_asked_an_anchor_that_names_nothing_is_unresolved() {
         [
             "anchor `gone.rs` of `kept` is unresolved: nothing is at its path in this tree",
             "anchor `src/lib.rs::close` of `kept` is unresolved: its file defines nothing its symbol names in this tree",
-            "anchor `src/lib.rs::pages` of `kept` is mixed: its symbol names 2 definitions of more than one kind",
-            "anchor `src/lib.rs::pages` of `planned` is mixed: its symbol names 2 definitions of more than one kind",
+            "anchor `src/lib.rs::pages` of `kept` is ambiguous: its symbol names definitions of 2 paths",
+            "anchor `src/lib.rs::pages` of `planned` is ambiguous: its symbol names definitions of 2 paths",
         ]
     );
-    let asked = judged(&decisions, &here, Some(&[holder]));
+    let asked = judged(&decisions, &here, Some(vec![holder]));
     let kinds: Vec<&str> = asked
         .iter()
         .map(|line| line.split(": ").next().unwrap())
@@ -207,8 +213,8 @@ fn with_git_not_asked_an_anchor_that_names_nothing_is_unresolved() {
         kinds,
         [
             "anchor `gone.rs` of `kept` is stale",
-            "anchor `src/lib.rs::pages` of `kept` is mixed",
-            "anchor `src/lib.rs::pages` of `planned` is mixed",
+            "anchor `src/lib.rs::pages` of `kept` is ambiguous",
+            "anchor `src/lib.rs::pages` of `planned` is ambiguous",
             "anchor `src/lib.rs::close` of `kept` is pending",
             "anchor `gone.rs` of `planned` is planned",
             "anchor `src/lib.rs::close` of `planned` is planned",
@@ -218,8 +224,9 @@ fn with_git_not_asked_an_anchor_that_names_nothing_is_unresolved() {
 
 /// An anchor of a decision ever accepted that names nothing here and
 /// names what another worktree holds is pending on the first such
-/// worktree, a definition it names twice there included; one of a
-/// decision never accepted is planned, wherever its code is.
+/// worktree, a definition it names twice there and definitions of two
+/// paths there included; one of a decision never accepted is planned,
+/// wherever its code is.
 #[test]
 fn an_anchor_another_worktree_holds_is_pending_on_its_branch() {
     let here = facts(&[("src/lib.rs", LIB)], &[]);
@@ -238,7 +245,7 @@ fn an_anchor_another_worktree_holds_is_pending_on_its_branch() {
             &[
                 (
                     "src/lib.rs",
-                    "pub fn close() {}\npub struct X;\nimpl X { fn twice(&self) {} }\nimpl X { fn twice(&self) {} }\n",
+                    "pub fn close() {}\npub struct X;\nimpl X { fn twice(&self) {} }\nimpl X { fn twice(&self) {} }\nimpl X { fn run(&self) {} }\npub struct Y;\nimpl Y { fn run(&self) {} }\n",
                 ),
                 ("src/new.rs", ""),
             ],
@@ -258,6 +265,7 @@ fn an_anchor_another_worktree_holds_is_pending_on_its_branch() {
                     "src/new.rs",
                     "src/lib.rs::twice",
                     "src/lib.rs::late",
+                    "src/lib.rs::run",
                 ],
                 StatusName::Accepted,
             ),
@@ -274,10 +282,11 @@ fn an_anchor_another_worktree_holds_is_pending_on_its_branch() {
     let missing = "its file defines nothing its symbol names here";
     let planned = "its file defines nothing its symbol names";
     assert_eq!(
-        judged(&decisions, &here, Some(&elsewhere)),
+        judged(&decisions, &here, Some(elsewhere.into())),
         [
             format!("anchor `src/lib.rs::close` of `accepted` is pending: {missing}; it resolves in the worktree at /w/feature on branch `feature`"),
             format!("anchor `src/lib.rs::late` of `accepted` is pending: {missing}; it resolves in the worktree at /w/detached, whose HEAD is detached"),
+            format!("anchor `src/lib.rs::run` of `accepted` is pending: {missing}; it resolves in the worktree at /w/feature on branch `feature`"),
             format!("anchor `src/lib.rs::twice` of `accepted` is pending: {missing}; it resolves in the worktree at /w/feature on branch `feature`"),
             "anchor `src/new.rs` of `accepted` is pending: nothing is at its path here; it resolves in the worktree at /w/feature on branch `feature`".to_owned(),
             format!("anchor `src/lib.rs::late` of `proposed` is planned: {planned}"),
@@ -288,11 +297,11 @@ fn an_anchor_another_worktree_holds_is_pending_on_its_branch() {
 
 /// A symbol that names definitions of several paths is ambiguous with
 /// their count; one that names definitions of one path and more than one
-/// kind, a field and its getter, is mixed with theirs.
+/// kind, a field and its getter, is no finding: the index makes them one
+/// place on purpose.
 #[test]
-fn several_paths_are_ambiguous_and_one_path_of_several_kinds_mixed() {
-    let shelf = "pub struct Shelf { pages: u32 }\n";
-    let here = facts(&[("src/lib.rs", &format!("{LIB}{shelf}"))], &[]);
+fn several_paths_are_ambiguous_and_one_path_of_several_kinds_is_no_finding() {
+    let here = facts(&[("src/lib.rs", &format!("{LIB}{SHELF}"))], &[]);
     let decisions = [(
         "d",
         decision(
@@ -307,28 +316,30 @@ fn several_paths_are_ambiguous_and_one_path_of_several_kinds_mixed() {
 
     assert_eq!(
         judged(&decisions, &here, ASKED),
-        [
-            "anchor `src/lib.rs::pages` of `d` is ambiguous: its symbol names definitions of 2 paths",
-            "anchor `src/lib.rs::Book::pages` of `d` is mixed: its symbol names 2 definitions of more than one kind",
-        ]
+        ["anchor `src/lib.rs::pages` of `d` is ambiguous: its symbol names definitions of 2 paths",]
     );
 }
 
-/// A resolved symbol of one plain name is weak when [`WEAK_FILES`] or more
-/// walked files of its kind hold a definition of it at any depth, a type
-/// a macro invocation defines included: a qualified symbol, a file anchor
-/// and a kind that is no code never are.
+/// A method named alone, which resolves through a suffix of its path.
+const RUN_METHOD: &str = "pub struct R;\nimpl R { pub fn run() {} }\n";
+
+/// A resolved symbol of one plain name that is not the whole path of what
+/// it names is weak when [`WEAK_FILES`] or more walked files of its kind
+/// hold a definition of it at any depth, a type a macro invocation defines
+/// included: a symbol that is the whole path of a module-level item, a
+/// qualified symbol, a file anchor and a kind that is no code never are.
 #[test]
 fn one_name_that_ten_files_of_its_kind_define_is_weak() {
     let mut files: Vec<(String, String)> = (0..WEAK_FILES - 1)
         .map(|n| {
             (
                 format!("src/m{n}.rs"),
-                "mod inner { struct S { run: u8 } }\n".to_owned(),
+                "mod inner { struct S { run: u8 } }\npub fn top() {}\n".to_owned(),
             )
         })
         .collect();
-    files.push(("src/lib.rs".to_owned(), "pub fn run() {}\n".to_owned()));
+    files.push(("src/lib.rs".to_owned(), RUN_METHOD.to_owned()));
+    files.push(("src/top.rs".to_owned(), "pub fn top() {}\n".to_owned()));
     let maker = "macro_rules! make { ($name:ident) => { pub struct $name; }; }\n";
     for n in 0..WEAK_FILES {
         files.push((format!("src/made{n}.rs"), format!("{maker}make!(T{n});\n")));
@@ -346,6 +357,7 @@ fn one_name_that_ten_files_of_its_kind_define_is_weak() {
         decision(
             &[
                 "src/lib.rs::run",
+                "src/top.rs::top",
                 "src/m0.rs::S::run",
                 "src/lib.rs",
                 "docs/d0.md::run",
@@ -375,7 +387,7 @@ fn one_name_that_ten_files_of_its_kind_define_is_weak() {
 /// about, are those of decisions ever accepted alone.
 #[test]
 fn findings_sort_by_kind_then_decision_then_anchor() {
-    let here = facts(&[("src/lib.rs", LIB)], &[]);
+    let here = facts(&[("src/lib.rs", &format!("{LIB}{SHELF}"))], &[]);
     let decisions = [
         (
             "a",
@@ -398,8 +410,8 @@ fn findings_sort_by_kind_then_decision_then_anchor() {
         kinds,
         [
             "anchor `x.rs` of `b` is stale",
-            "anchor `src/lib.rs::pages` of `a` is mixed",
-            "anchor `src/lib.rs::pages` of `b` is mixed",
+            "anchor `src/lib.rs::pages` of `a` is ambiguous",
+            "anchor `src/lib.rs::pages` of `b` is ambiguous",
             "anchor `y.rs` of `a` is planned",
             "anchor `z.rs` of `a` is planned",
         ]
@@ -486,7 +498,7 @@ fn a_file_no_walk_took_is_not_counted_for_weak() {
     let mut files: Vec<(String, String)> = (0..WEAK_FILES - 1)
         .map(|n| (format!("src/m{n}.rs"), "pub fn run() {}\n".to_owned()))
         .collect();
-    files.push(("src/lib.rs".to_owned(), "pub fn run() {}\n".to_owned()));
+    files.push(("src/lib.rs".to_owned(), RUN_METHOD.to_owned()));
     let walked: Vec<(&str, &str)> = files
         .iter()
         .map(|(p, t)| (p.as_str(), t.as_str()))
@@ -541,8 +553,8 @@ fn another_worktrees_file_is_expanded_with_the_calling_trees_macros() {
     };
     let decisions = [("d", decision(&["src/lib.rs::Foo"], StatusName::Accepted))];
 
-    let defined = judged(&decisions, &here, Some(&[there("define!(Foo);\n")]));
-    let unknown = judged(&decisions, &here, Some(&[there("elsewhere!(Foo);\n")]));
+    let defined = judged(&decisions, &here, Some(vec![there("define!(Foo);\n")]));
+    let unknown = judged(&decisions, &here, Some(vec![there("elsewhere!(Foo);\n")]));
 
     let missing = "its file defines nothing its symbol names";
     assert_eq!(
@@ -572,8 +584,7 @@ fn repaired(
 ) -> Vec<String> {
     let named: Vec<(&str, &Decision)> = decisions.iter().map(|(n, d)| (*n, d)).collect();
     let here = Here::of(&named, here);
-    let unresolved = here.unresolved(&named);
-    let asked = Asked::of(&unresolved, &[])
+    let asked = Asked::new(here.unresolved(&named))
         .with_renames(renames)
         .with_prior(prior);
     findings(&named, &here, &asked)
@@ -983,9 +994,12 @@ fn a_planned_or_pending_anchor_is_never_repaired() {
     ];
     let named: Vec<(&str, &Decision)> = decisions.iter().map(|(n, d)| (*n, d)).collect();
     let here = Here::of(&named, &here);
-    let unresolved = here.unresolved(&named);
+    let mut asked = Asked::new(here.unresolved(&named));
+    for tree in elsewhere {
+        asked.read(tree);
+    }
     let history = prior(&[("src/lib.rs", "pub fn gone() {}\npub fn branch() {}\n")]);
-    let asked = Asked::of(&unresolved, &elsewhere).with_prior(history);
+    let asked = asked.with_prior(history);
 
     let found = findings(&named, &here, &asked);
 
@@ -998,7 +1012,6 @@ fn a_planned_or_pending_anchor_is_never_repaired() {
                 | Kind::Malformed(_)
                 | Kind::Unverified(_)
                 | Kind::Ambiguous(_)
-                | Kind::Mixed(_)
                 | Kind::Weak(_) => None,
             };
             (finding.decision, repair.map(ToString::to_string))

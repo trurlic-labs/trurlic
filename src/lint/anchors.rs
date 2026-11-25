@@ -16,17 +16,20 @@
 //! or on a directory, is malformed whatever the decision's status; one on
 //! a file trurlic cannot read, of a kind no resolver reads or that cannot
 //! be indexed, is unverified, whatever the status: neither is asked of
-//! another worktree. A symbol that names several definitions is
-//! ambiguous; a resolved symbol that is one plain name [`WEAK_FILES`] or
-//! more files of its kind define is weak. Findings sort by kind, the most
-//! severe first, then by decision and anchor. A stale anchor carries its
-//! repair when the tree and git's history show one ([`repair`]).
+//! another worktree. A symbol that names definitions of several paths is
+//! ambiguous; a resolved symbol that is one plain name, not the whole path
+//! of what it names, which [`WEAK_FILES`] or more files of its kind define,
+//! is weak. A symbol that names one path's definitions of several kinds, a
+//! field and its getter, is no finding: the index makes them one place on
+//! purpose. Findings sort by kind, the most severe first, then by decision
+//! and anchor. A stale anchor carries its repair when the tree and git's
+//! history show one ([`repair`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::code::{CodeFacts, Resolution, Target};
+use crate::code::{CodeFacts, Resolution};
 use crate::store::{Anchor, Decision, Status};
 
 mod repair;
@@ -34,7 +37,7 @@ mod repair;
 pub(crate) use repair::{Prior, Renamed, Renames, Search};
 
 /// The files of its kind that define a name, at least, for an anchor whose
-/// symbol is that name alone to be weak.
+/// symbol is that name alone, resolved through a suffix, to be weak.
 pub(crate) const WEAK_FILES: usize = 10;
 
 /// A live worktree of the repository other than the calling tree.
@@ -47,24 +50,13 @@ pub(crate) struct Worktree {
     pub(crate) branch: Option<String>,
 }
 
-/// Another worktree that changed what some missing anchors name since its
-/// line forked from the calling tree's, and the code facts of those files
-/// there, gathered for the anchors that name nothing in the calling tree.
+/// Another worktree whose work tree differs from where its line forked
+/// from the calling tree's at the files of some missing anchors, and the
+/// code facts of those files there.
 #[derive(Debug)]
 pub(crate) struct Elsewhere {
     pub(crate) worktree: Worktree,
     pub(crate) facts: CodeFacts,
-}
-
-impl Elsewhere {
-    /// Whether `anchor` names what this worktree holds: one definition, or
-    /// several.
-    pub(crate) fn holds(&self, anchor: &Anchor) -> bool {
-        matches!(
-            self.facts.resolve(anchor),
-            Resolution::Resolved(_) | Resolution::Ambiguous(_)
-        )
-    }
 }
 
 /// The decisions whose anchors are judged, by name.
@@ -89,11 +81,7 @@ pub(crate) struct Unread(Resolution);
 /// What a [`Resolution`] makes of an anchor before its decision's status
 /// and the other worktrees are asked.
 enum Class {
-    /// It resolves; to definitions of more than one kind when `mixed`
-    /// holds their count.
-    Resolved {
-        mixed: Option<usize>,
-    },
+    Resolved,
     Missing(Missing),
     Broken(Broken),
     Unread(Unread),
@@ -106,12 +94,7 @@ impl Class {
         // that holds no definition.
         let cause = || resolution.clone();
         match resolution {
-            Resolution::Resolved(Target::Symbol(definitions)) => Self::Resolved {
-                mixed: definitions.mixed_kinds().then(|| definitions.count()),
-            },
-            Resolution::Resolved(Target::File | Target::Directory) => {
-                Self::Resolved { mixed: None }
-            }
+            Resolution::Resolved(_) => Self::Resolved,
             Resolution::FileMissing | Resolution::SymbolMissing => Self::Missing(Missing(cause())),
             Resolution::Malformed(_) | Resolution::SymbolOnDirectory => {
                 Self::Broken(Broken(cause()))
@@ -153,10 +136,8 @@ pub(crate) enum Kind<V> {
     /// Its symbol names definitions of this many paths, which a fuller
     /// spelling tells apart.
     Ambiguous(usize),
-    /// Its symbol names this many definitions of one path and more than
-    /// one kind: a field and its getter, a module and a function.
-    Mixed(usize),
-    /// Its symbol is one name that this many files of its kind define.
+    /// Its symbol is one name, not the whole path of what it names, that
+    /// this many files of its kind define.
     Weak(usize),
 }
 
@@ -193,7 +174,6 @@ pub(crate) enum KindName {
     Malformed,
     Ambiguous,
     Unverified,
-    Mixed,
     Weak,
     Pending,
     Planned,
@@ -210,12 +190,11 @@ pub(crate) enum Severity {
 
 impl KindName {
     /// The kinds of a judgement with git not asked.
-    pub(crate) const UNASKED: [Self; 6] = [
+    pub(crate) const UNASKED: [Self; 5] = [
         Self::Unresolved,
         Self::Malformed,
         Self::Ambiguous,
         Self::Unverified,
-        Self::Mixed,
         Self::Weak,
     ];
 
@@ -226,7 +205,6 @@ impl KindName {
             Self::Malformed => "malformed",
             Self::Ambiguous => "ambiguous",
             Self::Unverified => "unverified",
-            Self::Mixed => "mixed",
             Self::Weak => "weak",
             Self::Pending => "pending",
             Self::Planned => "planned",
@@ -298,7 +276,6 @@ impl<V: Verdict> Kind<V> {
             Self::Malformed(_) => KindName::Malformed,
             Self::Unverified(_) => KindName::Unverified,
             Self::Ambiguous(_) => KindName::Ambiguous,
-            Self::Mixed(_) => KindName::Mixed,
             Self::Weak(_) => KindName::Weak,
         }
     }
@@ -313,7 +290,7 @@ impl Kind<Checked> {
             Self::Missing(_, Checked::Stale { .. }) | Self::Malformed(_) | Self::Ambiguous(_) => {
                 Severity::Error
             }
-            Self::Unverified(_) | Self::Mixed(_) | Self::Weak(_) => Severity::Warning,
+            Self::Unverified(_) | Self::Weak(_) => Severity::Warning,
             Self::Missing(_, Checked::Pending(_) | Checked::Planned) => Severity::Note,
         }
     }
@@ -327,12 +304,6 @@ impl<V: Verdict> fmt::Display for Kind<V> {
             Self::Malformed(cause) => cause.fmt(f),
             Self::Unverified(cause) => cause.fmt(f),
             Self::Ambiguous(paths) => write!(f, "its symbol names definitions of {paths} paths"),
-            Self::Mixed(count) => {
-                write!(
-                    f,
-                    "its symbol names {count} definitions of more than one kind"
-                )
-            }
             Self::Weak(files) => {
                 write!(
                     f,
@@ -403,46 +374,76 @@ impl<'s, 'f> Here<'s, 'f> {
 }
 
 /// What the repository's git says beyond the calling tree, which `check`
-/// reads and `status` does not: the first other worktree, in the shell's
-/// order, that holds each anchor [`Here::unresolved`] gives, and for one
-/// none holds, which is stale, the first whose file spells its name in a
-/// macro invocation the calling tree's macros do not expand; where the
-/// stale anchors' gone files went, and what git's history held of the
-/// files a repair is judged by.
+/// reads and `status` does not: the other worktrees read, in the shell's
+/// order, with the first that holds each anchor [`Here::unresolved`] gave,
+/// and those none holds, which are stale; where the stale anchors' gone
+/// files went, and what git's history held of the files a repair is
+/// judged by.
 #[derive(Debug)]
-pub(crate) struct Asked<'s, 'w> {
-    holders: BTreeMap<&'s Anchor, &'w Worktree>,
-    unexpanded: BTreeMap<&'s Anchor, &'w Worktree>,
+pub(crate) struct Asked<'s> {
+    read: Vec<Elsewhere>,
+    /// The place in `read` of the worktree that holds each anchor held.
+    holders: BTreeMap<&'s Anchor, usize>,
     stale: BTreeSet<&'s Anchor>,
     renames: Renames,
     prior: Prior,
 }
 
-impl<'s, 'w> Asked<'s, 'w> {
-    /// What `elsewhere`, the other worktrees read, say of `unresolved`,
-    /// with no rename and no earlier revision known yet.
-    pub(crate) fn of(unresolved: &BTreeSet<&'s Anchor>, elsewhere: &'w [Elsewhere]) -> Self {
-        let mut asked = Self {
+impl<'s> Asked<'s> {
+    /// `unresolved`, each stale until a worktree read holds it, with no
+    /// rename and no earlier revision known yet.
+    pub(crate) fn new(unresolved: BTreeSet<&'s Anchor>) -> Self {
+        Self {
+            read: Vec::new(),
             holders: BTreeMap::new(),
-            unexpanded: BTreeMap::new(),
-            stale: BTreeSet::new(),
+            stale: unresolved,
             renames: Renames::none(),
             prior: Prior::default(),
-        };
-        for &anchor in unresolved {
-            if let Some(holder) = elsewhere.iter().find(|tree| tree.holds(anchor)) {
-                asked.holders.insert(anchor, &holder.worktree);
-                continue;
-            }
-            asked.stale.insert(anchor);
-            let spelled = elsewhere
-                .iter()
-                .find(|tree| tree.facts.spells_in_invocation(anchor));
-            if let Some(tree) = spelled {
-                asked.unexpanded.insert(anchor, &tree.worktree);
-            }
         }
-        asked
+    }
+
+    /// The anchors no worktree read so far holds: those the next one is
+    /// read for.
+    pub(crate) fn stale(&self) -> &BTreeSet<&'s Anchor> {
+        &self.stale
+    }
+
+    /// Read `tree`, the next other worktree: it holds each anchor still
+    /// stale that names one definition there, or several.
+    pub(crate) fn read(&mut self, tree: Elsewhere) {
+        let at = self.read.len();
+        self.stale.retain(|&anchor| {
+            let held = match tree.facts.resolve(anchor) {
+                Resolution::Resolved(_) | Resolution::Ambiguous(_) => true,
+                Resolution::FileMissing
+                | Resolution::SymbolMissing
+                | Resolution::SymbolOnDirectory
+                | Resolution::NoResolver
+                | Resolution::Unindexable(_)
+                | Resolution::Malformed(_) => false,
+            };
+            if held {
+                self.holders.insert(anchor, at);
+            }
+            !held
+        });
+        self.read.push(tree);
+    }
+
+    /// The worktree that holds `anchor`, the first read that does.
+    fn holder(&self, anchor: &Anchor) -> Option<&Worktree> {
+        let at = *self.holders.get(anchor)?;
+        self.read.get(at).map(|tree| &tree.worktree)
+    }
+
+    /// The first worktree read whose file of `anchor`, which none holds,
+    /// spells its name in a macro invocation the calling tree's macros do
+    /// not expand.
+    fn unexpanded(&self, anchor: &Anchor) -> Option<&Worktree> {
+        self.read
+            .iter()
+            .find(|tree| tree.facts.spells_in_invocation(anchor))
+            .map(|tree| &tree.worktree)
     }
 
     /// The files of the stale anchors with nothing at their path here:
@@ -494,11 +495,11 @@ impl<'s, 'w> Asked<'s, 'w> {
 }
 
 /// The findings of `decisions`' anchors with git asked, judged from what
-/// they resolve to `here` and in the other worktrees `asked` names.
+/// they resolve to `here` and in the other worktrees `asked` read.
 pub(crate) fn findings<'s>(
     decisions: &Decisions<'s>,
     here: &Here<'s, '_>,
-    asked: &Asked<'s, '_>,
+    asked: &Asked<'s>,
 ) -> Vec<Finding<'s, Checked>> {
     let repairs = repair::repairs(
         &asked.stale,
@@ -511,13 +512,12 @@ pub(crate) fn findings<'s>(
         if !accepted {
             return Some(Checked::Planned);
         }
-        Some(match asked.holders.get(anchor) {
+        Some(match asked.holder(anchor) {
             // clone: a finding outlives the facts it is judged from.
-            Some(&worktree) => Checked::Pending(worktree.clone()),
+            Some(worktree) => Checked::Pending(worktree.clone()),
             None => Checked::Stale {
                 unexpanded: asked
-                    .unexpanded
-                    .get(anchor)
+                    .unexpanded(anchor)
                     // clone: as above.
                     .map(|worktree| worktree.path.clone()),
                 // clone: each finding owns its repair, which decisions share.
@@ -551,8 +551,7 @@ fn judged<'s, V: Verdict>(
             Class::Broken(cause) => Kind::Malformed(cause),
             Class::Unread(cause) => Kind::Unverified(cause),
             Class::Ambiguous(count) => Kind::Ambiguous(count),
-            Class::Resolved { mixed: Some(count) } => Kind::Mixed(count),
-            Class::Resolved { mixed: None } => {
+            Class::Resolved => {
                 let files = *spread.get(anchor)?;
                 return (files >= WEAK_FILES).then_some(Kind::Weak(files));
             }

@@ -52,8 +52,8 @@ result budget; one that leaves items out gives \
 with the whole budget. `origin` narrows the counts and the findings to the decisions \
 recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do \
 not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are \
-malformed, ambiguous, of a file no resolver reads (unverified), name definitions of \
-mixed kinds, or are one name ten or more files define (weak). \
+malformed, ambiguous, of a file no resolver reads (unverified), or are one name, not the \
+whole path of what it names, that ten or more files define (weak). \
 Where the graph sits in the project's git is reported by `trurlic check`.";
 
 /// The bytes a report keeps, beyond its frame, for the `truncated`

@@ -59,7 +59,7 @@ fn gather<'a>(store: &Store, anchored: impl Iterator<Item = &'a str>) -> CodeFac
     let mut reads = Reads::new();
     let (entries, walked) = read_tree(store, store.code_root(), Scope::Tree, anchored, &mut reads);
     reads.write(store);
-    CodeFacts::new(entries, &walked)
+    CodeFacts::new(entries, walked)
 }
 
 /// What each of `cases` resolves to in the tree of `store`.
@@ -626,7 +626,8 @@ fn a_busy_lock_skips_the_cache_write() {
 
 /// The anchors of the graph are judged against the code root: `check`
 /// names a planned anchor, `status`, which runs no git, gives it no
-/// finding; both name a field and its getter mixed.
+/// finding; both name a symbol on a directory malformed, and neither a
+/// field and its getter, which resolve to one place.
 #[test]
 fn the_anchors_of_the_graph_are_judged_against_the_code_root() {
     let (tmp, store) = fixture_tree();
@@ -640,6 +641,7 @@ anchors = [
     { file = "crates/ledger/src/lib.rs", symbol = "Book::pages" },
     { file = "crates/ledger/src/lib.rs", symbol = "Book::torn" },
     { file = "docs" },
+    { file = "docs", symbol = "intro" },
 ]
 "#;
     fs::write(tmp.path().join(".trurlic/decisions/pages.toml"), decision).unwrap();
@@ -652,21 +654,19 @@ anchors = [
         .collect();
     let unasked = tree_findings(&store, &state.decisions);
 
-    let mixed = format!(
-        "anchor `{LEDGER}::Book::pages` of `pages` is mixed: its symbol names 2 definitions of \
-         more than one kind"
-    );
+    let malformed =
+        "anchor `docs::intro` of `pages` is malformed: its symbol is on a directory".to_owned();
     assert_eq!(
         checked,
         [
-            mixed.clone(),
+            malformed.clone(),
             format!(
                 "anchor `{LEDGER}::Book::torn` of `pages` is planned: its file defines nothing its symbol names"
             )
         ]
     );
     let unasked: Vec<String> = unasked.iter().map(ToString::to_string).collect();
-    assert_eq!(unasked, [mixed]);
+    assert_eq!(unasked, [malformed]);
 }
 
 /// A read of a few paths of another tree shares the call's one cache

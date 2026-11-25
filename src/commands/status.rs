@@ -92,12 +92,11 @@ fn anchors(report: &Report) -> Result<()> {
         malformed,
         ambiguous,
         unverified,
-        mixed,
         weak,
     } = counts;
     out!(
         "anchors: {unresolved} unresolved, {malformed} malformed, {ambiguous} ambiguous, \
-         {unverified} unverified, {mixed} mixed, {weak} weak"
+         {unverified} unverified, {weak} weak"
     )?;
     for item in &section.items {
         let (kind, anchor, decision) = (item.kind.as_str(), &item.anchor, &item.decision);

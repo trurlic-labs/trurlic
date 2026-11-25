@@ -1,0 +1,18 @@
+component = "lint"
+choice = "A symbol that names one path's definitions of several kinds, a field and its getter, is no anchor finding"
+reason = "The code index unites the definitions of one path under one set and one hash on purpose, so a field and its getter, or the cfg twins of an item, are one place an anchor names, whose every span a change may touch. A warning on such a set could be cleared only toward the method, by spelling it with its parentheses: no spelling names the field alone, so a decision about the data would carry the warning for good. lint::anchors therefore classes every resolved anchor alike, whatever the kinds its set holds, and status has no count for such sets."
+alternatives = [
+    "Warn of every set of mixed kinds: rejected because no spelling clears it for a field, so a decision about the data warns for good",
+    "Warn only of a set that is not a field and a function: rejected because it needs a list of kind pairs that are fine, for sets no tree has shown",
+]
+tags = [
+    "anchors",
+    "lint",
+]
+status = "accepted"
+origin = "anchor findings review"
+created = "2026-11-25T20:47:20.288273807Z"
+anchors = [
+    { file = "src/lint/anchors.rs", symbol = "Class::of" },
+    { file = "src/lint/anchors/tests.rs", symbol = "several_paths_are_ambiguous_and_one_path_of_several_kinds_is_no_finding" },
+]

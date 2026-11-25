@@ -313,12 +313,11 @@ fn anchored_repository(dir: &Path) {
     git(dir, &["commit", "--quiet", "-m", "first"]);
 }
 
-/// A worktree of a branch the calling tree has moved past holds no commit
-/// it lacks: an anchor deleted since is stale, not pending on the old
-/// branch. Nor does a worktree at the same commit, even with the symbol
-/// written there and not committed; nor one of a branch cut before the
-/// deletion with a commit of its own, which never changed the anchor's
-/// file: merging it would not bring the code back.
+/// A worktree of a branch the calling tree has moved past, its work tree
+/// as committed, holds nothing the calling tree lacks: an anchor deleted
+/// since is stale, not pending on the old branch. Nor does one of a branch
+/// cut before the deletion with a commit of its own, which never changed
+/// the anchor's file: merging it would not bring the code back.
 #[test]
 fn a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending() {
     let tmp = TempDir::new().unwrap();
@@ -338,10 +337,6 @@ fn a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending(
     );
     git(
         &main,
-        &["worktree", "add", "--quiet", "--detach", "../same"],
-    );
-    git(
-        &main,
         &["worktree", "add", "--quiet", "-b", "feature", "../feature"],
     );
     fs::write(root.join("feature/src/other.rs"), "pub fn other() {}\n").unwrap();
@@ -349,11 +344,6 @@ fn a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending(
     git(&root.join("feature"), &["commit", "--quiet", "-m", "other"]);
     fs::write(main.join("src/lib.rs"), "").unwrap();
     git(&main, &["commit", "--quiet", "-a", "-m", "drop foo"]);
-    git(
-        &root.join("same"),
-        &["checkout", "--quiet", "--detach", "main"],
-    );
-    fs::write(root.join("same/src/lib.rs"), "pub fn foo() {}\n").unwrap();
 
     let (code, _, stderr) = checked(&main);
 
@@ -363,6 +353,69 @@ fn a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending(
         "{stderr}"
     );
     assert!(!stderr.contains("pending"), "{stderr}");
+}
+
+/// Code another worktree holds and has not committed counts by the one
+/// rule, its work tree against the fork, whatever that worktree's commit:
+/// at the calling tree's commit with an edit, behind it with an edit, and
+/// ahead with a new file not yet added each make their anchor pending.
+#[test]
+fn code_another_worktree_has_not_committed_is_pending_there() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let main = root.join("main");
+    anchored_repository(&main);
+    let anchors = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"same\" },\n    \
+                   { file = \"src/lib.rs\", symbol = \"behind\" },\n    \
+                   { file = \"src/new.rs\", symbol = \"untracked\" },\n]\n";
+    fs::write(
+        main.join(".trurlic/decisions/later.toml"),
+        decision("project", "Later rules", anchors),
+    )
+    .unwrap();
+    trurlic_ok(&main, &["fmt"]);
+    for (branch, dir) in [("behind", "../behind"), ("ahead", "../ahead")] {
+        git(&main, &["worktree", "add", "--quiet", "-b", branch, dir]);
+    }
+    git(&main, &["add", "--all"]);
+    git(&main, &["commit", "--quiet", "-m", "later rules"]);
+    git(
+        &main,
+        &["worktree", "add", "--quiet", "-b", "same", "../same"],
+    );
+    let ahead = root.join("ahead");
+    fs::write(ahead.join("src/other.rs"), "pub fn other() {}\n").unwrap();
+    git(&ahead, &["add", "src/other.rs"]);
+    git(&ahead, &["commit", "--quiet", "-m", "other"]);
+    let written = [
+        ("same/src/lib.rs", "pub fn foo() {}\npub fn same() {}\n"),
+        ("behind/src/lib.rs", "pub fn foo() {}\npub fn behind() {}\n"),
+        ("ahead/src/new.rs", "pub fn untracked() {}\n"),
+    ];
+    for (path, text) in written {
+        fs::write(root.join(path), text).unwrap();
+    }
+
+    let (code, _, stderr) = checked(&main);
+
+    assert_eq!(code, Some(0), "{stderr}");
+    let edited = "its file defines nothing its symbol names here";
+    for (anchor, cause, branch) in [
+        ("src/lib.rs::same", edited, "same"),
+        ("src/lib.rs::behind", edited, "behind"),
+        (
+            "src/new.rs::untracked",
+            "nothing is at its path here",
+            "ahead",
+        ),
+    ] {
+        let pending = format!(
+            "`{anchor}` of `later` is pending: {cause}; it resolves in the worktree at {} on \
+             branch `{branch}`",
+            root.join(branch).display()
+        );
+        assert!(stderr.contains(&pending), "{pending}\n{stderr}");
+    }
 }
 
 /// A linked worktree moved without `git worktree repair` is no live
@@ -567,6 +620,22 @@ fn a_nested_worktree_of_a_shared_graph_reads_it_for_itself() {
     fs::write(&batch, ops.to_string()).unwrap();
     trurlic_ok(&nested.join("src"), &["apply", batch.to_str().unwrap()]);
     assert!(graph.join("decisions/from-nested.toml").is_file());
+}
+
+/// `check` in a linked worktree nested in the main one reads every other
+/// worktree at its own place in each: its own worktree is the nearest
+/// listed top above it, not the main worktree that also holds it, so the
+/// file it lacks is pending on the branch that holds it.
+#[test]
+fn a_nested_worktree_finds_what_a_sibling_holds_pending() {
+    let trees = Trees::shared();
+    let nested = trees.add_nested("HEAD");
+    fs::remove_file(nested.join("src/branch.rs")).unwrap();
+
+    let (code, _, stderr) = checked(&nested);
+
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stderr, pending_on_feature(&trees));
 }
 
 /// Under `tracked`, a linked worktree inside the main worktree on a branch

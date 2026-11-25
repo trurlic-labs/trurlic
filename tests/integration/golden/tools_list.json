@@ -880,7 +880,7 @@
         "readOnlyHint": true,
         "title": "Status"
       },
-      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason of 0.5 or more), each rule of the quality bar a stored decision breaks, and the decisions whose anchors all name a file and no symbol, counted by kind. The call judges the bar's limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over the decisions by name within a work limit: `counts.lint.patterns` says how many decisions they read and names in `next` the first left unread, and the same call with `from` set to it reads on from there. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts and the findings to the decisions recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are malformed, ambiguous, of a file no resolver reads (unverified), name definitions of mixed kinds, or are one name ten or more files define (weak). Where the graph sits in the project's git is reported by `trurlic check`.",
+      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason of 0.5 or more), each rule of the quality bar a stored decision breaks, and the decisions whose anchors all name a file and no symbol, counted by kind. The call judges the bar's limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over the decisions by name within a work limit: `counts.lint.patterns` says how many decisions they read and names in `next` the first left unread, and the same call with `from` set to it reads on from there. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts and the findings to the decisions recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are malformed, ambiguous, of a file no resolver reads (unverified), or are one name, not the whole path of what it names, that ten or more files define (weak). Where the graph sits in the project's git is reported by `trurlic check`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -934,13 +934,12 @@
                       "type": "string"
                     },
                     "kind": {
-                      "description": "`unresolved`: no file at its path or no definition its symbol names in this tree, on a decision ever accepted; stale, or pending on another worktree's branch, which only `trurlic check` tells apart; `malformed`: a symbol out of the grammar or on a directory, which fails `trurlic check`; `ambiguous`: its symbol names definitions of several paths, which fails it too; `unverified`: its file is of a kind no resolver reads or cannot be indexed; `mixed`: its symbol names definitions of one path and more than one kind, a field and its getter; `weak`: its symbol is one name 10 or more files of its kind define.",
+                      "description": "`unresolved`: no file at its path or no definition its symbol names in this tree, on a decision ever accepted; stale, or pending on another worktree's branch, which only `trurlic check` tells apart; `malformed`: a symbol out of the grammar or on a directory, which fails `trurlic check`; `ambiguous`: its symbol names definitions of several paths, which fails it too; `unverified`: its file is of a kind no resolver reads or cannot be indexed; `weak`: its symbol is one name, not the whole path of what it names, that 10 or more files of its kind define.",
                       "enum": [
                         "unresolved",
                         "malformed",
                         "ambiguous",
                         "unverified",
-                        "mixed",
                         "weak"
                       ],
                       "type": "string"
@@ -1053,11 +1052,6 @@
                     "minimum": 0,
                     "type": "integer"
                   },
-                  "mixed": {
-                    "description": "Anchors of mixed kinds.",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
                   "unresolved": {
                     "description": "Anchors that do not resolve in this tree.",
                     "minimum": 0,
@@ -1079,7 +1073,6 @@
                   "malformed",
                   "ambiguous",
                   "unverified",
-                  "mixed",
                   "weak"
                 ],
                 "type": "object"

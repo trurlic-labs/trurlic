@@ -131,15 +131,16 @@ pub(crate) fn merge_base(dir: &Path, ours: &str, theirs: &str) -> Result<Option<
 
 /// Which of `paths`, relative to `dir`, differ in the work tree at `dir`
 /// from commit `base`: committed there since, staged or edited and not
-/// committed. `git diff --name-only` with each path a literal pathspec,
-/// no rename paired, without optional locks; a path that is not UTF-8
-/// names no anchor and is left out.
+/// committed, or untracked and not ignored. `git diff --name-only`, no
+/// rename paired, then `git ls-files --others --exclude-standard`, each
+/// with every path a literal pathspec and without optional locks; a path
+/// that is not UTF-8 names no anchor and is left out.
 pub(crate) fn changed_since(dir: &Path, base: &str, paths: &[&str]) -> Result<BTreeSet<String>> {
     let pathspecs: Vec<String> = paths
         .iter()
         .map(|path| format!(":(literal){path}"))
         .collect();
-    let options = [
+    let diff = [
         "--no-optional-locks",
         "diff",
         "--name-only",
@@ -151,15 +152,27 @@ pub(crate) fn changed_since(dir: &Path, base: &str, paths: &[&str]) -> Result<BT
         base,
         "--",
     ];
-    let mut args: Vec<&OsStr> = options.iter().map(OsStr::new).collect();
-    args.extend(pathspecs.iter().map(OsStr::new));
-    let stdout = run(command(dir), dir, &args, None)?;
-    Ok(stdout
-        .split(|&byte| byte == 0)
-        .filter_map(|path| std::str::from_utf8(path).ok())
-        .filter(|path| !path.is_empty())
-        .map(str::to_owned)
-        .collect())
+    let untracked = [
+        "--no-optional-locks",
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+        "--",
+    ];
+    let mut changed = BTreeSet::new();
+    for options in [&diff[..], &untracked[..]] {
+        let mut args: Vec<&OsStr> = options.iter().map(OsStr::new).collect();
+        args.extend(pathspecs.iter().map(OsStr::new));
+        let stdout = run(command(dir), dir, &args, None)?;
+        let listed = stdout
+            .split(|&byte| byte == 0)
+            .filter_map(|path| std::str::from_utf8(path).ok())
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned);
+        changed.extend(listed);
+    }
+    Ok(changed)
 }
 
 /// The first `.git` that git's discovery meets from a directory upward.
@@ -621,8 +634,8 @@ mod tests {
 
     /// The commit each worktree's HEAD names; the fork of two lines is
     /// their merge base, the older commit itself when one holds the other;
-    /// and what a work tree changed since a commit, uncommitted edits
-    /// included and other paths left out.
+    /// and what a work tree changed since a commit, uncommitted edits and
+    /// untracked files included, ignored files and other paths left out.
     #[test]
     fn worktrees_name_their_commits_and_the_fork_is_asked_of_the_graph() {
         let tmp = TempDir::new().unwrap();
@@ -655,10 +668,14 @@ mod tests {
             merge_base(&main, &unknown, &first),
             Err(Error::GitFailed { .. })
         ));
-        let changed = changed_since(&linked, &first, &["a.rs", "b.rs", "c.rs"]).unwrap();
+        fs::write(linked.join("new.rs"), "").unwrap();
+        fs::write(linked.join(".gitignore"), "/ignored.rs\n").unwrap();
+        fs::write(linked.join("ignored.rs"), "").unwrap();
+        let asked = ["a.rs", "b.rs", "c.rs", "new.rs", "ignored.rs"];
+        let changed = changed_since(&linked, &first, &asked).unwrap();
         assert_eq!(
             changed,
-            BTreeSet::from(["a.rs".to_owned(), "b.rs".to_owned()])
+            BTreeSet::from(["a.rs".to_owned(), "b.rs".to_owned(), "new.rs".to_owned()])
         );
     }
 
