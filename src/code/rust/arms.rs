@@ -1,158 +1,254 @@
-//! What a `macro_rules!` macro defines the name it is given as: for each
-//! arm an invocation can open by its words, and for the macro as a whole,
-//! which another macro reaches by handing it a name.
+//! What a `macro_rules!` macro's rules do with a name: for each rule, the
+//! elements its pattern opens with, and for each `$x:ident` among them the
+//! type its body spells of it and the macros it hands it to; and the arms
+//! an invocation opens by literal words before the name.
 //!
-//! An arm opens, after an optional `$(#[$meta:meta])*`, with at most
-//! [`MAX_ARM_WORDS`] literal words and then a `$name:ident`. It defines a
-//! type of the kind of the first type keyword before `$name` in its own
-//! body (`struct $name`), or else in any body of the macro (a recursive
-//! call reaches another arm); or else, when its own body hands `$name` to
-//! a macro invocation (`record!([..] $name)`), what that macro defines it
-//! as. The macro as a whole defines a name as the first type keyword
-//! before a metavariable in any body, or else as the macro its first body
-//! to hand on an `ident` metavariable hands it to. Which macro a name
-//! reaches is the crate's to say (`expand.rs`), at a bound of hand-offs.
-
-use std::collections::{BTreeMap, BTreeSet};
+//! A rule's `$x:ident` defines a type of the kind of the type keyword
+//! right before `$x` in its own body (`struct $x`). It also gives the name
+//! to each macro its body invokes at its top level with `$x` among the
+//! arguments: `record!([..] $x)`, `$crate::record!($x)`, a recursive
+//! `m!(@inner $x)`. Which rule of that macro receives it, and so what it
+//! defines, is the crate's to say (`expand/table.rs`). The arguments are
+//! matched against each rule's opening in order, as Rust does.
 
 use tree_sitter::Node;
 
-use crate::code::index::{Defines, IndexFault, TypeArm};
+use crate::code::index::{After, Element, HandOff, IndexFault, Receives, Rule, TypeArm};
 use crate::code::kinds::{Container, DefinitionKind};
 use crate::code::syntax::text_of;
 use crate::code::work::Work;
 
-use super::macros::{inner_children, is_word, tokens_of};
+use super::macros::{Body, body_of, impls_of, inner_children, is_word, tokens_of, top_of};
 
 /// The literal words an arm may open with; an arm with more defines
 /// nothing.
 pub(crate) const MAX_ARM_WORDS: usize = 8;
 
+/// The elements of a pattern's opening, and of a hand-off's arguments,
+/// that are kept: a name past them is received by no rule.
+pub(crate) const MAX_OPENING: usize = 16;
+
+/// The literal tokens of a group that are kept to tell one rule from
+/// another (`[summarized]` from `[compared]`); a group of more is taken
+/// as one whose tokens cannot be told.
+const MAX_GROUP_TOKENS: usize = 8;
+
 /// A keyword whose next token in a macro body is a type's name.
 const TYPE_KEYWORDS: [&str; 5] = ["struct", "enum", "union", "trait", "type"];
 
-/// What a macro's rules define: the arms an invocation opens by words,
-/// and what the macro defines a name it is handed as.
-pub(super) struct Defined {
-    pub(super) arms: Vec<TypeArm>,
-    pub(super) defines: Option<Defines>,
-}
-
-/// The rules of one macro as read once: each rule's pattern and body,
-/// and each body's tokens.
-struct Rules<'n> {
-    patterns: Vec<Option<Node<'n>>>,
-    bodies: Vec<Option<Node<'n>>>,
-    tokens: Vec<Vec<Node<'n>>>,
-}
-
-/// What the macro of `rules`, whose `ident` metavariables are `names`,
-/// defines. Each body's tokens are read twice at most and spent from
-/// `work`.
-pub(super) fn defined(
+/// The arms and the rules of the macro of `rules`. Each pattern and body
+/// is read once or twice and spent from `work`.
+pub(super) fn rules_of(
     rules: &[Node<'_>],
-    names: &BTreeSet<&str>,
     text: &str,
     work: &mut Work,
-) -> Result<Defined, IndexFault> {
-    let mut read = Rules {
-        patterns: Vec::with_capacity(rules.len()),
-        bodies: Vec::with_capacity(rules.len()),
-        tokens: Vec::with_capacity(rules.len()),
-    };
-    for rule in rules {
+) -> Result<(Vec<TypeArm>, Vec<Rule>), IndexFault> {
+    let mut arms = Vec::new();
+    let mut read = Vec::with_capacity(rules.len());
+    for (at, rule) in rules.iter().enumerate() {
+        let (opening, whole) = rule
+            .child_by_field_name("left")
+            .map(|pattern| opening(pattern, text))
+            .unwrap_or_default();
         let body = rule.child_by_field_name("right");
         let tokens = body
             .map(|body| tokens_of(body, text, usize::MAX))
             .unwrap_or_default();
         work.spend(tokens.len())?;
-        read.patterns.push(rule.child_by_field_name("left"));
-        read.bodies.push(body);
-        read.tokens.push(tokens);
-    }
-    let all: Vec<&[Node<'_>]> = read.tokens.iter().map(Vec::as_slice).collect();
-    let any_body = type_kinds(&all, text);
-    let mut arms = Vec::new();
-    for at in 0..rules.len() {
-        if let Some(arm) = read.arm(at, &any_body, text, work)? {
-            arms.push(arm);
+        let top = match body {
+            Some(body) => top_of(body, work)?,
+            None => Vec::new(),
+        };
+        let parts = body_of(&top, text);
+        let read_body = ReadBody {
+            tokens: &tokens,
+            top: &top,
+            parts: &parts,
+        };
+        let mut receives = Vec::new();
+        for (place, element) in opening.iter().enumerate() {
+            let variable = (element == &Element::Ident)
+                .then(|| binding_name(rule, place, text))
+                .flatten();
+            if let Some(variable) = variable {
+                receives.push((place, read_body.receives(variable, text, work)?));
+            }
         }
+        arms.extend(arm(&opening, whole, at));
+        read.push(Rule {
+            opening,
+            whole,
+            receives,
+            items: parts.items.clone(),
+        });
     }
-    let first_kind = read
-        .tokens
+    Ok((arms, read))
+}
+
+/// A rule's body as read once: its tokens, flat; its top-level tokens;
+/// and the items and `impl`s at its top.
+struct ReadBody<'a, 'n> {
+    tokens: &'a [Node<'n>],
+    top: &'a [Node<'n>],
+    parts: &'a Body<'n>,
+}
+
+impl ReadBody<'_, '_> {
+    /// What the body does with `variable`: the kind of the type keyword
+    /// right before it, each top-level invocation that hands it on, and
+    /// each `impl` of it.
+    fn receives(
+        &self,
+        variable: &str,
+        text: &str,
+        work: &mut Work,
+    ) -> Result<Receives, IndexFault> {
+        let kind = self.tokens.windows(2).find_map(|pair| match pair {
+            [keyword, name]
+                if name.kind() == "metavariable" && text_of(*name, text) == variable =>
+            {
+                type_keyword(*keyword, text)
+            }
+            _ => None,
+        });
+        Ok(Receives {
+            kind,
+            hand_offs: hand_offs(self.top, variable, text, work)?,
+            impls: impls_of(self.parts, variable, text, work)?,
+        })
+    }
+}
+
+/// The arm of the rule at `at` whose `opening` is literal words and then
+/// an `$x:ident`; `whole` when the opening is the whole pattern.
+fn arm(opening: &[Element], whole: bool, at: usize) -> Option<TypeArm> {
+    let name = opening
         .iter()
-        .find_map(|tokens| first_type_kind(tokens, text));
-    let defines = match first_kind {
-        Some(kind) => Some(Defines::Kind(kind)),
-        None => read.first_hand_off(|variable| names.contains(variable), text, work)?,
+        .position(|element| !matches!(element, Element::Word(_)))?;
+    if opening.get(name) != Some(&Element::Ident) || name > MAX_ARM_WORDS {
+        return None;
+    }
+    let words = opening
+        .get(..name)?
+        .iter()
+        .filter_map(|element| {
+            let Element::Word(word) = element else {
+                return None;
+            };
+            Some(word.clone())
+        })
+        .collect();
+    let after = match opening.get(name + 1) {
+        Some(Element::Word(token) | Element::Token(token)) => After::Token(token.clone()),
+        Some(Element::Group(open, _)) => After::Token(open.to_string()),
+        Some(Element::Ident | Element::Tree | Element::Variable | Element::Many) => {
+            After::Unchecked
+        }
+        None if whole => After::End,
+        None => After::Unchecked,
     };
-    Ok(Defined { arms, defines })
+    Some(TypeArm {
+        words,
+        after,
+        rule: at,
+    })
 }
 
-impl Rules<'_> {
-    /// The arm of rule `at`, when it opens by words and defines its name;
-    /// `any_body` is the kind each metavariable has in any body.
-    fn arm(
-        &self,
-        at: usize,
-        any_body: &BTreeMap<&str, DefinitionKind>,
-        text: &str,
-        work: &mut Work,
-    ) -> Result<Option<TypeArm>, IndexFault> {
-        let own = self.tokens.get(at).map_or(&[][..], Vec::as_slice);
-        // Each arm reads its own body once more: twice the macro in all.
-        work.spend(own.len())?;
-        let opening = self
-            .patterns
-            .get(at)
-            .copied()
-            .flatten()
-            .and_then(|pattern| arm_opening(pattern, text));
-        let Some((words, variable)) = opening else {
-            return Ok(None);
-        };
-        let own_kinds = type_kinds(&[own], text);
-        let kind = own_kinds
-            .get(variable.as_str())
-            .or_else(|| any_body.get(variable.as_str()));
-        let defines = match kind {
-            Some(kind) => Some(Defines::Kind(*kind)),
-            None => {
-                let body = self.bodies.get(at).copied().flatten();
-                hand_off(body, |held| held == variable, text, work)?.map(Defines::HandedTo)
-            }
-        };
-        Ok(defines.map(|defines| TypeArm { words, defines }))
-    }
+/// The elements `pattern` opens with, past an opening `$(#[$m:meta])*`,
+/// at most [`MAX_OPENING`], and whether they are all of it.
+fn opening(pattern: Node<'_>, text: &str) -> (Vec<Element>, bool) {
+    let inside = inner_children(pattern);
+    let rest = match inside.split_first() {
+        Some((first, rest)) if is_attribute_repetition(*first, text) => rest,
+        Some(_) | None => inside.as_slice(),
+    };
+    let kept: Vec<Element> = rest
+        .iter()
+        .take(MAX_OPENING)
+        .map(|node| pattern_element(*node, text))
+        .collect();
+    let whole = rest.len() <= MAX_OPENING;
+    (kept, whole)
+}
 
-    /// The macro the first body that hands on a metavariable `handed`
-    /// accepts hands it to.
-    fn first_hand_off(
-        &self,
-        handed: impl Fn(&str) -> bool + Copy,
-        text: &str,
-        work: &mut Work,
-    ) -> Result<Option<Defines>, IndexFault> {
-        for body in self.bodies.iter().copied() {
-            if let Some(name) = hand_off(body, handed, text, work)? {
-                return Ok(Some(Defines::HandedTo(name)));
+/// The name of the binding at `place` of the opening of `rule`.
+fn binding_name<'t>(rule: &Node<'_>, place: usize, text: &'t str) -> Option<&'t str> {
+    let pattern = rule.child_by_field_name("left")?;
+    let inside = inner_children(pattern);
+    let skip = usize::from(
+        inside
+            .first()
+            .is_some_and(|first| is_attribute_repetition(*first, text)),
+    );
+    let node = inside.get(skip + place)?;
+    Some(text_of(node.child_by_field_name("name")?, text))
+}
+
+/// What a pattern's element is.
+fn pattern_element(node: Node<'_>, text: &str) -> Element {
+    match node.kind() {
+        "token_binding_pattern" => {
+            let fragment = node
+                .child_by_field_name("type")
+                .map_or("", |fragment| text_of(fragment, text));
+            match fragment {
+                "ident" => Element::Ident,
+                "tt" | "literal" | "lifetime" => Element::Tree,
+                _ => Element::Many,
             }
         }
-        Ok(None)
+        "token_repetition_pattern" => Element::Many,
+        _ => token_element(node, text),
     }
 }
 
-/// The name of the first macro invoked at the top of `body` whose
-/// arguments hold a metavariable `handed` accepts (`record!([] $name)`,
-/// `path::record! { $name }`).
-fn hand_off(
-    body: Option<Node<'_>>,
-    handed: impl Fn(&str) -> bool,
+/// The tokens a group holds when each is a literal token, at most
+/// [`MAX_GROUP_TOKENS`]; `None` otherwise.
+fn literal_tokens(group: Node<'_>, text: &str) -> Option<Vec<String>> {
+    let inside = inner_children(group);
+    let literal = inside.len() <= MAX_GROUP_TOKENS
+        && inside
+            .iter()
+            .all(|token| token.child_count() == 0 && token.kind() != "metavariable");
+    literal.then(|| {
+        inside
+            .iter()
+            .map(|token| text_of(*token, text).to_owned())
+            .collect()
+    })
+}
+
+/// What a hand-off's argument is.
+fn argument_element(node: Node<'_>, text: &str) -> Element {
+    match node.kind() {
+        "metavariable" => Element::Variable,
+        "token_repetition" => Element::Many,
+        _ => token_element(node, text),
+    }
+}
+
+/// A group by its delimiter and literal tokens, a word, or a token
+/// matching itself.
+fn token_element(node: Node<'_>, text: &str) -> Element {
+    let spelled = text_of(node, text);
+    match (node.child_count() > 0, spelled.chars().next()) {
+        (true, Some(open)) => Element::Group(open, literal_tokens(node, text)),
+        (true, None) => Element::Many,
+        (false, _) if is_word(spelled) => Element::Word(spelled.to_owned()),
+        (false, _) => Element::Token(spelled.to_owned()),
+    }
+}
+
+/// Each macro invoked in `top`, a body's top-level tokens, with
+/// `variable` among its arguments, with its arguments.
+fn hand_offs(
+    top: &[Node<'_>],
+    variable: &str,
     text: &str,
     work: &mut Work,
-) -> Result<Option<String>, IndexFault> {
-    let top = body.map(inner_children).unwrap_or_default();
-    for window in top.windows(3) {
+) -> Result<Vec<HandOff>, IndexFault> {
+    let mut found = Vec::new();
+    for (at, window) in top.windows(3).enumerate() {
         let [name, bang, tree] = window else {
             continue;
         };
@@ -162,77 +258,55 @@ fn hand_off(
         if !invoked {
             continue;
         }
-        let arguments = tokens_of(*tree, text, usize::MAX);
-        work.spend(arguments.len())?;
-        let holds = arguments
-            .iter()
-            .any(|token| token.kind() == "metavariable" && handed(text_of(*token, text)));
-        if holds {
-            return Ok(Some(text_of(*name, text).to_owned()));
+        let inside = inner_children(*tree);
+        work.spend(inside.len())?;
+        // The attributes a body passes on (`$(#[$doc])*`), as a pattern's
+        // opening leaves them out.
+        let arguments = match inside.split_first() {
+            Some((first, rest)) if is_passed_attributes(*first, text) => rest,
+            Some(_) | None => inside.as_slice(),
+        };
+        let Some(place) = arguments.iter().position(|argument| {
+            argument.kind() == "metavariable" && text_of(*argument, text) == variable
+        }) else {
+            continue;
+        };
+        if place >= MAX_OPENING {
+            continue;
         }
+        let from_crate = path_root(top, at, text) == "$crate";
+        found.push(HandOff {
+            macro_name: text_of(*name, text).to_owned(),
+            from_crate,
+            arguments: arguments
+                .iter()
+                .take(MAX_OPENING)
+                .map(|argument| argument_element(*argument, text))
+                .collect(),
+            whole: arguments.len() <= MAX_OPENING,
+            place,
+        });
     }
-    Ok(None)
+    Ok(found)
 }
 
-/// The metavariables the patterns of `rules` bind as an `ident`
-/// (`$name:ident`), at any depth of a repetition.
-pub(super) fn ident_variables<'t>(
-    rules: &[Node<'_>],
-    text: &'t str,
-    work: &mut Work,
-) -> Result<BTreeSet<&'t str>, IndexFault> {
-    let mut names = BTreeSet::new();
-    for pattern in rules
-        .iter()
-        .filter_map(|rule| rule.child_by_field_name("left"))
-    {
-        let mut pending = vec![pattern];
-        while let Some(node) = pending.pop() {
-            work.spend(1)?;
-            let ident = node.kind() == "token_binding_pattern"
-                && node
-                    .child_by_field_name("type")
-                    .is_some_and(|fragment| text_of(fragment, text) == "ident");
-            match (ident, node.child_by_field_name("name")) {
-                (true, Some(variable)) => {
-                    names.insert(text_of(variable, text));
-                }
-                (true, None) | (false, _) => {
-                    let mut cursor = node.walk();
-                    pending.extend(node.named_children(&mut cursor));
-                }
-            }
-        }
+/// The first segment of the path whose last, the macro's name, is
+/// `top[at]`: `$crate` of `$crate::a::m`, `m` itself when it stands alone.
+fn path_root<'t>(top: &[Node<'_>], mut at: usize, text: &'t str) -> &'t str {
+    let spelled = |n: Option<usize>| n.and_then(|n| top.get(n)).map_or("", |t| text_of(*t, text));
+    while spelled(at.checked_sub(1)) == "::" && !spelled(at.checked_sub(2)).is_empty() {
+        at -= 2;
     }
-    Ok(names)
+    spelled(Some(at))
 }
 
-/// The words an arm's pattern opens with and the `$name` of the `ident`
-/// that follows them; `None` for an arm that opens otherwise.
-fn arm_opening(pattern: Node<'_>, text: &str) -> Option<(Vec<String>, String)> {
-    let inside = inner_children(pattern);
-    let mut rest = inside.iter().peekable();
-    if rest
-        .peek()
-        .is_some_and(|first| is_attribute_repetition(**first, text))
-    {
-        rest.next();
-    }
-    let mut words = Vec::new();
-    for node in rest {
-        if node.kind() == "token_binding_pattern" {
-            let fragment = node.child_by_field_name("type")?;
-            let variable = node.child_by_field_name("name")?;
-            return (text_of(fragment, text) == "ident")
-                .then(|| (words, text_of(variable, text).to_owned()));
-        }
-        let word = text_of(*node, text);
-        if node.child_count() > 0 || !is_word(word) || words.len() == MAX_ARM_WORDS {
-            return None;
-        }
-        words.push(word.to_owned());
-    }
-    None
+/// Whether `node` is `$(#[$doc])*`, the attributes a body hands on.
+fn is_passed_attributes(node: Node<'_>, text: &str) -> bool {
+    let spelled: String = text_of(node, text)
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    node.kind() == "token_repetition" && spelled.starts_with("$(#[$") && spelled.ends_with("])*")
 }
 
 /// Whether `node` is `$(#[$meta:meta])*`, the attributes an invocation
@@ -245,29 +319,6 @@ fn is_attribute_repetition(node: Node<'_>, text: &str) -> bool {
     node.kind() == "token_repetition_pattern"
         && spelled.starts_with("$(#[$")
         && spelled.ends_with(":meta])*")
-}
-
-/// The kind of the first type keyword before a metavariable in `tokens`.
-fn first_type_kind(tokens: &[Node<'_>], text: &str) -> Option<DefinitionKind> {
-    tokens.windows(2).find_map(|pair| match pair {
-        [keyword, name] if name.kind() == "metavariable" => type_keyword(*keyword, text),
-        _ => None,
-    })
-}
-
-/// The kind of the type each metavariable names in `bodies`: the first
-/// type keyword before it; one pass over the tokens.
-fn type_kinds<'t>(bodies: &[&[Node<'_>]], text: &'t str) -> BTreeMap<&'t str, DefinitionKind> {
-    let mut kinds = BTreeMap::new();
-    for pair in bodies.iter().flat_map(|tokens| tokens.windows(2)) {
-        if let [keyword, name] = pair
-            && name.kind() == "metavariable"
-            && let Some(kind) = type_keyword(*keyword, text)
-        {
-            kinds.entry(text_of(*name, text)).or_insert(kind);
-        }
-    }
-    kinds
 }
 
 /// The kind a type keyword opens; `None` for any other token.

@@ -3,16 +3,17 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::io;
+use std::io::ErrorKind;
 
 use crate::store::Anchor;
 
-use super::expand::{Arms, Crates, Expansion, Files, MANIFEST, expand, expand_file, file_name};
+use super::crates::Crates;
+use super::definitions::Definitions;
+use super::expand::{Arms, Expansion, Files, Held, Lookup, expand, expand_file};
 use super::index::{Definition, FileIndex, FileKind, IndexFault};
 use super::kinds::Role;
 use super::roles::test_files;
 use super::scope::Scopes;
-use super::span::{Span, SpanHash};
 use super::symbol::{Segment, Symbol, SymbolFault};
 
 /// Why the shell has no bytes of a file it found.
@@ -24,7 +25,7 @@ pub(crate) enum ReadFault {
     /// followed: a FIFO, a device, a socket.
     NotAFile,
     /// The read failed: no permission, a symlink loop, an I/O error.
-    Unreadable(io::ErrorKind),
+    Unreadable(ErrorKind),
 }
 
 impl fmt::Display for ReadFault {
@@ -90,73 +91,6 @@ impl fmt::Display for Target {
     }
 }
 
-/// The definitions of one path, one at least: their spans in file order,
-/// a span two of them share listed once, and one hash over them
-/// ([`SpanHash::of_members`]). The cfg twins of an item, a field and its
-/// getter of one name, a key an array's elements each hold: each is one
-/// thing an anchor names, whose every span a change may touch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Definitions {
-    first: Span,
-    /// The spans after the first, in file order.
-    more: Vec<Span>,
-    hash: SpanHash,
-}
-
-impl Definitions {
-    /// The set of `members`, each a definition's span and hash; `None`
-    /// for none.
-    fn of(members: impl Iterator<Item = (Span, SpanHash)>) -> Option<Self> {
-        let mut members: Vec<(Span, SpanHash)> = members.collect();
-        members.sort_unstable();
-        members.dedup_by_key(|(span, _)| *span);
-        let hashes: Vec<SpanHash> = members.iter().map(|(_, hash)| *hash).collect();
-        let mut spans = members.into_iter().map(|(span, _)| span);
-        Some(Self {
-            first: spans.next()?,
-            more: spans.collect(),
-            hash: SpanHash::of_members(&hashes),
-        })
-    }
-
-    /// Each span, in file order.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the anchor findings and the diff review are the first callers"
-        )
-    )]
-    pub(crate) fn spans(&self) -> impl Iterator<Item = &Span> {
-        std::iter::once(&self.first).chain(&self.more)
-    }
-
-    /// The hash of the set: one definition's own, or that of several.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the anchor findings and the diff review are the first callers"
-        )
-    )]
-    pub(crate) const fn hash(&self) -> SpanHash {
-        self.hash
-    }
-}
-
-impl fmt::Display for Definitions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.more.is_empty() {
-            write!(f, "{} definitions: ", self.more.len() + 1)?;
-        }
-        write!(f, "{}", self.first)?;
-        for span in &self.more {
-            write!(f, "; {span}")?;
-        }
-        write!(f, ", {}", self.hash)
-    }
-}
-
 /// What an anchor names in a tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Resolution {
@@ -212,8 +146,8 @@ pub(crate) struct CodeFacts {
 }
 
 /// What the invocations of each Rust file of `outside`, files no walk
-/// took, add: each is read against its crate's arms, and its own macros,
-/// which no other file sees.
+/// took, add: each is read against its own macros, which no other file
+/// sees, then its crate's shared arms.
 fn expand_outside(
     outside: &Files<'_>,
     crates: &Crates<'_>,
@@ -225,15 +159,27 @@ fn expand_outside(
             continue;
         }
         let owner = crates.crate_of(path);
-        let expansion = match index.macros.is_empty() {
-            true => expand_file(
-                index,
-                tables
-                    .entry(owner)
-                    .or_insert_with(|| crates.arms_of(owner, None)),
-            ),
-            false => expand_file(index, &crates.arms_of(owner, Some(&index.macros))),
+        let shared = tables.entry(owner).or_insert_with(|| crates.arms_of(path));
+        let mut own = Arms::default();
+        for found in &index.macros {
+            own.add(Held {
+                found,
+                owner,
+                exported: false,
+            });
+        }
+        own.resolve(|own, from, hand_off| {
+            let name = hand_off.macro_name.as_str();
+            match hand_off.from_crate {
+                true => own.held(name).or_else(|| crates.held_in(from.owner, name)),
+                false => own.held(name).or_else(|| shared.held(name)),
+            }
+        });
+        let lookup = Lookup {
+            own: (!index.macros.is_empty()).then_some(&own),
+            shared,
         };
+        let expansion = expand_file(index, lookup);
         if let Some(expansion) = expansion.transpose() {
             expanded.insert(path.to_owned(), expansion);
         }
@@ -258,14 +204,11 @@ impl CodeFacts {
                 Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed => None,
             })
             .collect();
-        let (tree, alone): (Files<'_>, Files<'_>) = indexed
+        let (tree, outside): (Files<'_>, Files<'_>) = indexed
             .iter()
             .map(|(path, file)| (*path, *file))
             .partition(|(path, _)| walked.contains(*path));
-        let (manifests, outside): (Files<'_>, Files<'_>) = alone
-            .into_iter()
-            .partition(|(path, _)| file_name(path) == MANIFEST);
-        let crates = Crates::of(&tree, &manifests);
+        let crates = Crates::of(&tree, &outside);
         let mut expanded: BTreeMap<String, Result<Expansion, IndexFault>> = expand(&tree, &crates)
             .into_iter()
             .map(|(path, expansion)| (path.to_owned(), expansion))
@@ -403,10 +346,12 @@ impl CodeFacts {
         let mut sets = paths.into_values();
         match (sets.next(), sets.len()) {
             (None, _) => Resolution::SymbolMissing,
-            (Some(set), 0) => Definitions::of(set.iter().map(|d| (d.span, d.hash)))
-                .map_or(Resolution::SymbolMissing, |found| {
-                    Resolution::Resolved(Target::Symbol(found))
-                }),
+            (Some(set), 0) => match set.split_first() {
+                Some((first, rest)) => {
+                    Resolution::Resolved(Target::Symbol(Definitions::of(first, rest)))
+                }
+                None => Resolution::SymbolMissing,
+            },
             (Some(_), others) => Resolution::Ambiguous(others + 1),
         }
     }

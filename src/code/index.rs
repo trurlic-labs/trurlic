@@ -5,18 +5,18 @@
 //! it whatever path or tree the bytes are under.
 
 use std::fmt;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::scope::{MAX_NESTING, Scope, ScopeId};
 use super::span::{Span, SpanHash};
-use super::symbol::Syntax;
-use super::{json, make, markdown, rust, syntax, toml};
+use super::symbol::{Segment, Syntax};
+use super::{encoding, json, make, markdown, rust, syntax, toml, work};
 
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 5;
+pub(crate) const INDEX_FORMAT: u32 = 6;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -26,6 +26,29 @@ const TREE_SITTER_MAX_BYTES: usize = 1024 * 1024;
 
 /// The largest file a lexical resolver indexes.
 const LEXICAL_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// Every bound an index is built within, by name and value: in a cache
+/// key, so an index built under other bounds is never read as one of
+/// these, whatever the fixture corpus shows of them. The expansion's
+/// budget is no part of it: an expansion is never cached.
+pub(crate) const BOUNDS: [(&str, usize); 13] = [
+    ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
+    ("lexical_max_bytes", LEXICAL_MAX_BYTES),
+    ("parse_work_per_byte", work::PARSE_WORK_PER_BYTE),
+    ("scan_work_per_byte", work::SCAN_WORK_PER_BYTE),
+    ("lexical_work_per_byte", work::LEXICAL_WORK_PER_BYTE),
+    ("min_work", work::MIN_WORK),
+    ("steps_per_report", syntax::STEPS_PER_REPORT),
+    ("chunk_bytes", syntax::CHUNK_BYTES),
+    ("max_nesting", MAX_NESTING),
+    (
+        "entry_bytes_per_source_byte",
+        encoding::MAX_ENTRY_BYTES_PER_SOURCE_BYTE,
+    ),
+    ("entry_overhead_bytes", encoding::ENTRY_OVERHEAD_BYTES),
+    ("max_arm_words", rust::MAX_ARM_WORDS),
+    ("max_invocation_tokens", rust::MAX_INVOCATION_TOKENS),
+];
 
 /// The largest file of any kind the index reads.
 pub(crate) const MAX_SOURCE_BYTES: usize = if TREE_SITTER_MAX_BYTES > LEXICAL_MAX_BYTES {
@@ -126,9 +149,10 @@ pub(crate) struct Definition {
 }
 
 /// A `macro_rules!` macro whose invocations can define a type: the arms
-/// that do, what its bodies define a name as, the items its body's
-/// `impl`s of the type hold, members of the type, and the other items its
-/// body names.
+/// an invocation opens by its words, and every rule as a hand-off from
+/// another macro meets it, with what its body gives a name it receives.
+/// The names it gives are shared, so each invocation's expansion holds
+/// them by reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeMacro {
     pub(crate) name: String,
@@ -136,42 +160,106 @@ pub(crate) struct TypeMacro {
     /// alone.
     pub(crate) exported: bool,
     pub(crate) arms: Vec<TypeArm>,
-    /// What a name another macro hands this one is defined as: the first
-    /// type keyword before a metavariable in any body, or else the macro
-    /// the first body to hand a name on hands it to.
-    pub(crate) defines: Option<Defines>,
-    pub(crate) members: Vec<Member>,
-    /// The other items its body names, items of the invocation's
-    /// container.
-    pub(crate) items: Vec<(String, DefinitionKind)>,
+    /// Every rule, in order: the first a hand-off's arguments match is
+    /// the one that receives the name, as in Rust.
+    pub(crate) rules: Vec<Rule>,
 }
 
-/// What an arm, or a macro, defines the name it is given as.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Defines {
-    /// A type of this kind, which a body spells (`struct $name`).
-    Kind(DefinitionKind),
-    /// What the macro of this name defines it as: the body hands the name
-    /// on (`record!([] $name)`), its own body spelling no type of it.
-    HandedTo(String),
-}
-
-/// An item of an `impl` of the type a [`TypeMacro`] defines.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct Member {
-    /// For a trait impl, the trait's tokens, each metavariable that names
-    /// the type written `$` (`From < $ >`); `None` for an inherent impl.
-    pub(crate) trait_tokens: Option<Vec<String>>,
-    pub(crate) name: String,
-    pub(crate) kind: DefinitionKind,
-}
-
-/// An arm of a [`TypeMacro`]: the literal words it opens with before the
-/// `$name:ident` it defines a type of, and what it defines it as.
+/// An arm an invocation opens by literal words before the `$name:ident`
+/// that receives the name: the words, what the pattern holds right after
+/// the name, and the rule it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeArm {
     pub(crate) words: Vec<String>,
-    pub(crate) defines: Defines,
+    pub(crate) after: After,
+    /// The index of its rule in [`TypeMacro::rules`]; the name is the
+    /// element after the words of its opening.
+    pub(crate) rule: usize,
+}
+
+/// What an arm's pattern holds right after its `$name`, which the
+/// invocation's token after the name must be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum After {
+    /// Nothing: the name is the invocation's last token.
+    End,
+    /// This token, or the opening delimiter of a group.
+    Token(String),
+    /// A binding or a repetition, which no single token states.
+    Unchecked,
+}
+
+/// A rule as a hand-off meets it: the elements its pattern opens with,
+/// at most [`MAX_OPENING`](super::rust::MAX_OPENING), and what each of its
+/// `ident` bindings among them receives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Rule {
+    pub(crate) opening: Vec<Element>,
+    /// Whether the opening is the whole pattern.
+    pub(crate) whole: bool,
+    /// Each `ident` binding's place in the opening, and what its body
+    /// does with the name it receives there.
+    pub(crate) receives: Vec<(usize, Receives)>,
+    /// The items its body names at its top level but types (`pub fn
+    /// make()`), items of the invocation's container.
+    pub(crate) items: Vec<(Arc<Segment>, DefinitionKind)>,
+}
+
+/// One element of a pattern's opening, or of a hand-off's arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Element {
+    Word(String),
+    /// A punctuation token or a literal, which matches itself alone.
+    Token(String),
+    /// A delimited group, by its opening delimiter, and its tokens when
+    /// they are all literal (`[summarized]`, `[]`); `None` when it holds a
+    /// metavariable, a binding, a repetition or a group, which no literal
+    /// states.
+    Group(char, Option<Vec<String>>),
+    /// A pattern's `$x:ident`.
+    Ident,
+    /// A pattern's binding of one token tree (`tt`, `literal`, `lifetime`).
+    Tree,
+    /// A hand-off's metavariable, whatever it holds.
+    Variable,
+    /// A binding of many tokens, or a repetition: what follows it cannot
+    /// be lined up.
+    Many,
+}
+
+/// What a rule's body does with a name it receives: the type it spells of
+/// it (`struct $name`), each macro it hands the name to, and each `impl`
+/// of it (`impl $name`, `impl<T> $name<T>`), whose items are the type's.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Receives {
+    pub(crate) kind: Option<DefinitionKind>,
+    pub(crate) hand_offs: Vec<HandOff>,
+    pub(crate) impls: Vec<TypeImpl>,
+}
+
+/// An invocation in a body that hands a name on. It holds the macro,
+/// whether it is named through `$crate::` (the defining crate's macro),
+/// and the place of the name among its arguments. The arguments are at
+/// most [`MAX_OPENING`](super::rust::MAX_OPENING), and `whole` says
+/// whether they are all of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HandOff {
+    pub(crate) macro_name: String,
+    pub(crate) from_crate: bool,
+    pub(crate) arguments: Vec<Element>,
+    pub(crate) whole: bool,
+    pub(crate) place: usize,
+}
+
+/// An `impl` of the type a name defines, `impl $name`: its
+/// trait's tokens for a trait impl, and the items it holds, the type's
+/// members.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TypeImpl {
+    /// The trait's tokens, the metavariable that names the type written
+    /// `$` (`From < $ >`); `None` for an inherent impl.
+    pub(crate) trait_tokens: Option<Vec<String>>,
+    pub(crate) members: Vec<(Arc<Segment>, DefinitionKind)>,
 }
 
 /// A macro invocation in item position: what a type-defining macro of
@@ -305,7 +393,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 5] = [
+    const FINGERPRINTS: [(u32, &str); 6] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -325,6 +413,10 @@ mod tests {
         (
             5,
             "e90e33a198c4c8499706082d7e8ae1410f8e9929f8c3f22c309803611c6144f9",
+        ),
+        (
+            6,
+            "2311aee02372c269a380b0faaef22e11a092ac4a92922d9baca6d4433da4af92",
         ),
     ];
 

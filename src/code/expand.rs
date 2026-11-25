@@ -1,37 +1,40 @@
 //! The second step of the index: the types the macro invocations of each
 //! Rust file define, from the type-defining macros its crate and its
-//! workspace hold. A file's own index is a function of its bytes alone;
-//! this step is a function of the indexes of the whole tree.
+//! workspace hold (`crates.rs`). A file's own index is a function of its
+//! bytes alone; this step is a function of the indexes of the whole tree.
 //!
-//! A file's crate is the nearest directory above it with a `Cargo.toml`,
-//! or the file alone when there is none; its workspace is the nearest
-//! directory from the crate's up whose `Cargo.toml` has a `workspace`
-//! table. An invocation sees each `macro_rules!` macro of its crate, and
-//! each `#[macro_export]` one of its workspace that the crate does not
-//! shadow with one of the same name. It defines the name after the words
-//! of the first arm it opens with, under the container it is in, of the
-//! kind the arm defines it as, following each hand-off to the macro of
-//! that name the crate sees (`rust/arms.rs`); that type holds the members
-//! the `impl`s of it give in every macro the name went through, a trait
-//! impl's under `Name::<Trait>`.
+//! An invocation sees each `macro_rules!` macro of its crate, and each
+//! `#[macro_export]` one of its workspace that the crate does not shadow
+//! with one of the same name. It defines the name after the words of the
+//! arm it opens (`expand/table.rs`), under the container it is in. Its
+//! kind is what the arm's rule, or a rule the name is handed on to, spells
+//! (`rust/arms.rs`). The type holds the items of the `impl`s of it in
+//! every rule the name reached, a trait impl's under `Name::<Trait>`.
 //!
-//! The arms a crate sees are a table by macro name and words, built once
-//! per crate, so an invocation finds its arm in a few lookups whatever
-//! the number of arms. What a file's invocations add is spent from a
-//! budget of the bytes they span ([`Work::expansion`]), and every path
-//! they make is held to [`MAX_NESTING`]: past either, the file has no
-//! index.
+//! An expansion is not cached, so its memory is bounded by construction.
+//! A name the macro gives is shared with the macro, never copied per
+//! invocation. Every added definition is charged the bytes it holds
+//! against a budget of the bytes the file's invocations span
+//! ([`Work::expansion`]), and every path it makes is held to
+//! [`MAX_NESTING`]. Past either, the file has no index.
+
+mod table;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
+use super::crates::Crates;
 use super::index::{
-    Defines, Definition, FileIndex, FileKind, IndexFault, Invocation, Member, TypeMacro,
+    Definition, FileIndex, FileKind, IndexFault, Invocation, Receives, Rule, TypeImpl,
 };
 use super::kinds::DefinitionKind;
-use super::rust::{MAX_ARM_WORDS, is_word};
-use super::scope::{MAX_NESTING, Scope, ScopeId, Scopes};
+use super::rust::is_word;
+use super::scope::{AddedScope, MAX_NESTING, ScopeId, Scopes};
+use super::span::Span;
 use super::symbol::Segment;
 use super::work::Work;
+
+pub(super) use table::{Arms, Held, Lookup};
 
 /// Macros of other crates that define the type their argument at this
 /// position names, and its kind. The facts of their crates are not in the
@@ -43,22 +46,24 @@ const FOREIGN_TYPE_MACROS: [(&str, usize, DefinitionKind); 2] = [
     ("import_exception", 1, DefinitionKind::Struct),
 ];
 
-/// The manifest that makes a directory a crate.
-pub(crate) const MANIFEST: &str = "Cargo.toml";
+/// The bytes an added definition holds besides a name of its own: its
+/// scope, its definition and its depth.
+const ADDED_BYTES: usize = size_of::<AddedScope>() + size_of::<Definition>() + size_of::<usize>();
 
 /// What the invocations of one file add: scopes past the file's own, and
 /// the definitions in them.
 #[derive(Debug, Default)]
 pub(super) struct Expansion {
-    pub(super) scopes: Vec<Scope>,
+    pub(super) scopes: Vec<AddedScope>,
     pub(super) definitions: Vec<Definition>,
 }
 
 /// The files of a tree: a path to its kind and index.
 pub(super) type Files<'i> = BTreeMap<&'i str, (FileKind, &'i FileIndex)>;
 
-/// The definitions the invocations of each Rust file of `files` add, by
-/// path, or why they cannot be added; `crates` is of the same files.
+/// The definitions the invocations of each Rust file of `files`, the files
+/// the walk took, add, by path, or why they cannot be added; `crates` is
+/// of the same files.
 pub(super) fn expand<'i>(
     files: &Files<'i>,
     crates: &Crates<'i>,
@@ -69,36 +74,36 @@ pub(super) fn expand<'i>(
         if *kind != FileKind::Rust || index.invocations.is_empty() {
             continue;
         }
-        let owner = crates.crate_of(path);
-        let arms = tables
-            .entry(owner)
-            .or_insert_with(|| crates.arms_of(owner, None));
-        if let Some(expansion) = expand_file(index, arms).transpose() {
+        let shared = tables
+            .entry(crates.crate_of(path))
+            .or_insert_with(|| crates.arms_of(path));
+        let lookup = Lookup { own: None, shared };
+        if let Some(expansion) = expand_file(index, lookup).transpose() {
             expanded.insert(path, expansion);
         }
     }
     expanded
 }
 
-/// What the invocations of `index` add with the arms of `arms`; `None`
-/// when they add nothing.
+/// What the invocations of `index` add with the arms `lookup` finds;
+/// `None` when they add nothing.
 pub(super) fn expand_file(
     index: &FileIndex,
-    arms: &Arms<'_>,
+    lookup: Lookup<'_, '_>,
 ) -> Result<Option<Expansion>, IndexFault> {
     if index.invocations.is_empty() {
         return Ok(None);
     }
     // An invocation that spells the item it defines (`m! { struct X }`)
-    // defines it once: the file's own index holds it.
-    let own: BTreeMap<(Option<ScopeId>, &[Segment]), ScopeId> = index
-        .definitions
-        .iter()
-        .filter_map(|d| {
-            let scope = index.scopes.get(d.scope.at())?;
-            Some(((scope.parent, scope.name.as_slice()), d.scope))
-        })
-        .collect();
+    // defines it once: the file's own index holds it, within the span.
+    let mut own: Own<'_> = BTreeMap::new();
+    for definition in &index.definitions {
+        if let Some(scope) = index.scopes.get(definition.scope.at()) {
+            own.entry((scope.parent, scope.name.as_slice()))
+                .or_default()
+                .push((definition.scope, definition.span));
+        }
+    }
     let spanned = index
         .invocations
         .iter()
@@ -109,10 +114,11 @@ pub(super) fn expand_file(
         own: &own,
         expansion: Expansion::default(),
         depths: Vec::new(),
+        this_invocation: BTreeMap::new(),
         work: Work::expansion(spanned),
     };
     for invocation in &index.invocations {
-        if let Some(defined) = arms.defined_by(invocation) {
+        if let Some(defined) = lookup.defined_by(invocation) {
             adding.define(invocation, &defined)?;
         }
     }
@@ -120,226 +126,38 @@ pub(super) fn expand_file(
     Ok((!expansion.definitions.is_empty()).then_some(expansion))
 }
 
-/// The crates of the tree, which directories are workspaces, and the
-/// type-defining macros of each crate.
-pub(super) struct Crates<'i> {
-    /// Each crate's directory (`""` for the code root) to its macros, and
-    /// each lone file outside a crate to its own.
-    macros: BTreeMap<&'i str, Vec<&'i TypeMacro>>,
-    crate_roots: Vec<&'i str>,
-    workspaces: Vec<&'i str>,
-}
+/// The file's own definitions by their parent and name: each one's scope
+/// and span.
+type Own<'i> = BTreeMap<(Option<ScopeId>, &'i [Segment]), Vec<(ScopeId, Span)>>;
 
-impl<'i> Crates<'i> {
-    /// The crates of `files`, the macros of its Rust files, and the
-    /// crates and workspaces of `manifests` besides, which bring in no
-    /// macros: the manifests above an anchored file the walk does not
-    /// take, which govern only the files below them.
-    pub(super) fn of(files: &Files<'i>, manifests: &Files<'i>) -> Self {
-        let all: Vec<(&str, &FileIndex)> = files
-            .iter()
-            .chain(manifests)
-            .filter(|(path, _)| file_name(path) == MANIFEST)
-            .map(|(path, (_, index))| (*path, *index))
-            .collect();
-        let mut crate_roots: Vec<&str> = all.iter().map(|(path, _)| parent(path)).collect();
-        let mut workspaces: Vec<&str> = all
-            .iter()
-            .filter(|(_, index)| has_workspace_table(index))
-            .map(|(path, _)| parent(path))
-            .collect();
-        // A path sorts before its siblings that extend its name (`a` before
-        // `a-b`), but `a/b` after `a-b`: the parents need their own sort.
-        crate_roots.sort_unstable();
-        crate_roots.dedup();
-        workspaces.sort_unstable();
-        workspaces.dedup();
-        let mut crates = Self {
-            macros: BTreeMap::new(),
-            crate_roots,
-            workspaces,
-        };
-        for (&path, (_, index)) in files {
-            if !index.macros.is_empty() {
-                let owner = crates.crate_of(path);
-                crates
-                    .macros
-                    .entry(owner)
-                    .or_default()
-                    .extend(&index.macros);
-            }
-        }
-        crates
-    }
-
-    /// The crate directory of `path`, or `path` itself outside every crate.
-    pub(super) fn crate_of<'p>(&self, path: &'p str) -> &'p str {
-        ancestors(path)
-            .find(|dir| self.crate_roots.binary_search(dir).is_ok())
-            .unwrap_or(path)
-    }
-
-    /// The arms an invocation in the crate `owner` (a lone file's own
-    /// path outside every crate) sees: `own`'s macros first, a file's
-    /// own that no crate holds, then its crate's, then its workspace's
-    /// exported ones that neither shadows by name.
-    pub(super) fn arms_of(&self, owner: &str, own: Option<&'i [TypeMacro]>) -> Arms<'i> {
-        let mut arms = Arms::default();
-        let crate_macros = self.macros.get(owner).map_or(&[][..], Vec::as_slice);
-        for found in own.into_iter().flatten() {
-            arms.add(found);
-        }
-        for found in crate_macros {
-            arms.add(found);
-        }
-        // A file outside every crate is in no workspace.
-        let workspace = std::iter::once(owner)
-            .chain(ancestors(owner))
-            .filter(|_| self.crate_roots.binary_search(&owner).is_ok())
-            .find(|dir| self.workspaces.binary_search(dir).is_ok());
-        let shadowed = arms.names();
-        let exported = self
-            .macros
-            .iter()
-            .filter(|(dir, _)| workspace.is_some_and(|root| is_within(dir, root)))
-            .flat_map(|(_, found)| found)
-            .filter(|found| found.exported && !shadowed.contains(&found.name.as_str()));
-        for found in exported {
-            arms.add(found);
-        }
-        arms
-    }
-}
-
-/// Whether a manifest's index defines a top-level `workspace` table.
-fn has_workspace_table(index: &FileIndex) -> bool {
-    let workspace = [Segment::name("workspace")];
-    index.definitions.iter().any(|d| {
-        index
-            .scopes
-            .get(d.scope.at())
-            .is_some_and(|scope| scope.parent.is_none() && scope.name == workspace)
-    })
-}
-
-/// The hand-offs a name may go through from the arm an invocation opens
-/// to the macro that spells its type; a chain longer is no type, as a
-/// cycle of macros handing a name round is not.
-const MAX_HAND_OFFS: usize = 8;
-
-/// An arm an invocation can open: what it defines its name as, and its
-/// macro.
-#[derive(Clone, Copy)]
-struct Arm<'i> {
-    defines: &'i Defines,
-    found: &'i TypeMacro,
-}
-
-/// The arms invocations of one crate see, by macro name and words, each
-/// with its place in the order a scan would meet it: the first arm an
-/// invocation opens with is the one of least place. Each macro is held by
-/// its name too, the first of a name, which a hand-off reaches.
-#[derive(Default)]
-pub(super) struct Arms<'i> {
-    by_words: BTreeMap<(&'i str, &'i [String]), (usize, Arm<'i>)>,
-    by_name: BTreeMap<&'i str, &'i TypeMacro>,
-    added: usize,
-}
-
-impl<'i> Arms<'i> {
-    fn add(&mut self, found: &'i TypeMacro) {
-        self.by_name.entry(found.name.as_str()).or_insert(found);
-        for arm in &found.arms {
-            let place = self.added;
-            self.added += 1;
-            self.by_words
-                .entry((found.name.as_str(), arm.words.as_slice()))
-                .or_insert((
-                    place,
-                    Arm {
-                        defines: &arm.defines,
-                        found,
-                    },
-                ));
-        }
-    }
-
-    /// The names of the macros held.
-    fn names(&self) -> BTreeSet<&'i str> {
-        self.by_name.keys().copied().collect()
-    }
-
-    /// The name `invocation` defines with an arm held here, or with a
-    /// foreign macro: the name, its kind and the macros it went through.
-    fn defined_by<'a>(&self, invocation: &'a Invocation) -> Option<Defined<'a, 'i>> {
-        let tokens = &invocation.tokens;
-        let opened = (0..=MAX_ARM_WORDS.min(tokens.len()))
-            .filter_map(|words| {
-                let name = tokens.get(words).filter(|name| is_word(name))?;
-                let key = (invocation.macro_name.as_str(), tokens.get(..words)?);
-                let (place, arm) = self.by_words.get(&key)?;
-                Some((*place, name, *arm))
-            })
-            .min_by_key(|(place, ..)| *place);
-        if let Some((_, name, arm)) = opened {
-            let (kind, macros) = self.follow(arm)?;
-            return Some(Defined { name, kind, macros });
-        }
-        let (_, position, kind) = FOREIGN_TYPE_MACROS
-            .iter()
-            .find(|(name, ..)| *name == invocation.macro_name)?;
-        argument(tokens, *position).map(|name| Defined {
-            name,
-            kind: *kind,
-            macros: Vec::new(),
-        })
-    }
-
-    /// The kind `arm` defines its name as, following each hand-off to the
-    /// macro held by its name, and the macros the name went through, each
-    /// once; `None` past [`MAX_HAND_OFFS`] or at a macro that defines
-    /// nothing.
-    fn follow(&self, arm: Arm<'i>) -> Option<(DefinitionKind, Vec<&'i TypeMacro>)> {
-        let mut macros = vec![arm.found];
-        let mut defines = arm.defines;
-        for _ in 0..=MAX_HAND_OFFS {
-            let name = match defines {
-                Defines::Kind(kind) => return Some((*kind, macros)),
-                Defines::HandedTo(name) => name,
-            };
-            let next = *self.by_name.get(name.as_str())?;
-            if !macros.iter().any(|seen| std::ptr::eq(*seen, next)) {
-                macros.push(next);
-            }
-            defines = next.defines.as_ref()?;
-        }
-        None
-    }
-}
-
-/// What an invocation defines: the type's name and kind, and the macros
-/// whose members and items it holds, none for a foreign macro.
+/// What an invocation defines: the type's name and kind, and the rules
+/// that received the name, whose `impl`s' items the type holds and whose
+/// items its container does; none for a foreign macro.
 struct Defined<'a, 'i> {
     name: &'a String,
     kind: DefinitionKind,
-    macros: Vec<&'i TypeMacro>,
+    reached: Vec<(&'i Rule, &'i Receives)>,
 }
 
 /// The types a file's invocations define, being added to its expansion.
 struct Adding<'a, 'i> {
     /// The file's own scopes: an added scope's id is past them.
-    scopes: &'a [Scope],
+    scopes: &'a [super::scope::Scope],
     /// The file's own definitions, by their parent and name.
-    own: &'a BTreeMap<(Option<ScopeId>, &'i [Segment]), ScopeId>,
+    own: &'a Own<'i>,
     expansion: Expansion,
     /// The depth of each added scope.
     depths: Vec<usize>,
+    /// What the invocation being added has added, by parent and name: two
+    /// rules it may reach that give one member give it once.
+    this_invocation: BTreeMap<(Option<ScopeId>, Arc<Segment>), ScopeId>,
+    /// The bytes the expansion may still hold.
     work: Work,
 }
 
 impl Adding<'_, '_> {
     /// Define the type `invocation` names and each member and item its
-    /// macro gives that the file does not define itself, over the
+    /// macros give that the file does not define itself, over the
     /// invocation's span. The invocation states no visibility: the
     /// macro's body does.
     fn define(
@@ -347,49 +165,46 @@ impl Adding<'_, '_> {
         invocation: &Invocation,
         defined: &Defined<'_, '_>,
     ) -> Result<(), IndexFault> {
+        self.this_invocation.clear();
         let container = invocation.container;
-        let members: BTreeSet<&Member> = defined
-            .macros
+        let items: BTreeSet<&(Arc<Segment>, DefinitionKind)> = defined
+            .reached
             .iter()
-            .flat_map(|found| &found.members)
-            .collect();
-        let items: BTreeSet<&(String, DefinitionKind)> = defined
-            .macros
-            .iter()
-            .flat_map(|found| &found.items)
+            .flat_map(|(rule, _)| &rule.items)
             .collect();
         for (item, kind) in items {
-            self.scope(invocation, container, Segment::name(item), *kind)?;
+            self.scope(invocation, container, Arc::clone(item), *kind)?;
         }
-        let type_scope = self.scope(
-            invocation,
-            container,
-            Segment::name(defined.name),
-            defined.kind,
-        )?;
-        self.members(invocation, (type_scope, defined.name), members)
+        let name = Arc::new(Segment::name(defined.name));
+        let type_scope = self.scope(invocation, container, name, defined.kind)?;
+        self.define_members(invocation, defined, type_scope)
     }
 
-    /// Define each of `members` under the type `name` of scope
-    /// `type_scope`, a trait impl's under the trait's segment.
-    fn members(
+    /// Define the members the impls of `defined`'s reached rules give the
+    /// type at `type_scope`, a trait impl's under the trait's segment.
+    fn define_members(
         &mut self,
         invocation: &Invocation,
-        (type_scope, name): (ScopeId, &str),
-        members: BTreeSet<&Member>,
+        defined: &Defined<'_, '_>,
+        type_scope: ScopeId,
     ) -> Result<(), IndexFault> {
+        let impls: BTreeSet<&TypeImpl> = defined
+            .reached
+            .iter()
+            .flat_map(|(_, receives)| &receives.impls)
+            .collect();
         let mut traits: BTreeMap<&[String], ScopeId> = BTreeMap::new();
-        for member in members {
-            let parent = match &member.trait_tokens {
+        for found_impl in impls {
+            let parent = match &found_impl.trait_tokens {
                 None => type_scope,
                 Some(tokens) => match traits.get(tokens.as_slice()) {
                     Some(scope) => *scope,
                     None => {
-                        let segment = Segment::of_trait(&trait_text(tokens, name));
+                        let segment = Segment::of_trait(&trait_text(tokens, defined.name));
                         let scope = self.scope(
                             invocation,
                             Some(type_scope),
-                            segment,
+                            Arc::new(segment),
                             DefinitionKind::Impl,
                         )?;
                         traits.insert(tokens, scope);
@@ -397,40 +212,48 @@ impl Adding<'_, '_> {
                     }
                 },
             };
-            self.scope(
-                invocation,
-                Some(parent),
-                Segment::name(&member.name),
-                member.kind,
-            )?;
+            for (member, kind) in &found_impl.members {
+                self.scope(invocation, Some(parent), Arc::clone(member), *kind)?;
+            }
         }
         Ok(())
     }
 
-    /// The scope of `name` under `parent`: the file's own definition of
-    /// it, or one added and defined as a `kind` over `invocation`.
+    /// The scope of `name` under `parent`: the file's own definition of it
+    /// within `invocation`'s span, else one added as a `kind` over
+    /// `invocation`. An added one is charged what it holds: a fixed size,
+    /// and the name when no other holds it. A definition of the path
+    /// outside the span is a twin the set of the path takes in.
     fn scope(
         &mut self,
         invocation: &Invocation,
         parent: Option<ScopeId>,
-        name: Segment,
+        name: Arc<Segment>,
         kind: DefinitionKind,
     ) -> Result<ScopeId, IndexFault> {
-        let key = (parent, std::slice::from_ref(&name));
-        if let Some(own) = self.own.get(&key) {
+        let key = (parent, std::slice::from_ref(&*name));
+        let within =
+            |span: &Span| span.start >= invocation.span.start && span.end <= invocation.span.end;
+        let spelled = self.own.get(&key).into_iter().flatten();
+        if let Some((own, _)) = spelled.into_iter().find(|(_, span)| within(span)) {
             return Ok(*own);
         }
-        self.work.spend(1)?;
+        if let Some(added) = self.this_invocation.get(&(parent, Arc::clone(&name))) {
+            return Ok(*added);
+        }
+        let held = match Arc::strong_count(&name) {
+            1 => segment_bytes(&name),
+            _ => 0,
+        };
+        self.work.spend(ADDED_BYTES + held)?;
         let depth = parent.map_or(0, |parent| self.depth(parent)) + 1;
         if depth > MAX_NESTING {
             return Err(IndexFault::TooDeep);
         }
         let id = ScopeId::of(self.scopes.len() + self.expansion.scopes.len())
             .ok_or(IndexFault::TooComplex)?;
-        self.expansion.scopes.push(Scope {
-            parent,
-            name: vec![name],
-        });
+        self.this_invocation.insert((parent, Arc::clone(&name)), id);
+        self.expansion.scopes.push(AddedScope { parent, name });
         self.depths.push(depth);
         self.expansion.definitions.push(Definition {
             scope: id,
@@ -455,6 +278,14 @@ impl Adding<'_, '_> {
                 file.path_from_end(id).count()
             }
         }
+    }
+}
+
+/// The bytes of the texts `segment` holds.
+fn segment_bytes(segment: &Segment) -> usize {
+    match segment {
+        Segment::Name(name) => name.len(),
+        Segment::Impl { name, arguments } => name.len() + arguments.as_ref().map_or(0, String::len),
     }
 }
 
@@ -495,37 +326,10 @@ fn argument(tokens: &[String], position: usize) -> Option<&String> {
     }
 }
 
-pub(super) fn file_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-}
-
-/// The directory of `path`; `""` for the code root.
-pub(super) fn parent(path: &str) -> &str {
-    path.rsplit_once('/').map_or("", |(dir, _)| dir)
-}
-
-/// The directories above `path`, nearest first, the code root (`""`)
-/// last.
-pub(super) fn ancestors(path: &str) -> impl Iterator<Item = &str> {
-    let mut rest = Some(path);
-    std::iter::from_fn(move || {
-        let current = rest?;
-        rest = (!current.is_empty()).then(|| parent(current));
-        rest
-    })
-}
-
-/// Whether `dir` is `root` or under it.
-pub(super) fn is_within(dir: &str, root: &str) -> bool {
-    root.is_empty()
-        || dir
-            .strip_prefix(root)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::crates::Crates;
     use crate::code::index::index;
 
     /// What each file's invocations define in the tree of `files`: the
@@ -699,5 +503,178 @@ mod tests {
             expanded_with_kinds(&[("src/lib.rs", &nested(MAX_NESTING))]),
             Err(IndexFault::TooDeep)
         );
+    }
+
+    /// What `text`, the `src/lib.rs` of one crate, defines by its
+    /// invocations, each path with its kind.
+    fn one_crate(text: &str) -> Vec<String> {
+        expanded_with_kinds(&[("Cargo.toml", "[package]\n"), ("src/lib.rs", text)])
+            .unwrap()
+            .into_iter()
+            .map(|found| found.trim_start_matches("src/lib.rs: ").to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn an_arm_is_opened_only_by_what_its_pattern_holds_around_the_name() {
+        let text = "macro_rules! helper { ($name:ident) => { pub struct $name; impl $name { pub fn shown(&self) {} } }; }\nmacro_rules! front {\n    ($name:ident in $module:literal) => { helper!($name); };\n    (compared $name:ident in $module:literal) => { helper!($name); };\n    (enum $source:path as $name:ident) => { helper!($name); };\n}\nfront!(Plain in \"m\");\nfront!(compared Shown in \"m\");\nfront!(enum other::Source as Mirrored);\nfront!(enum in \"m\");\n";
+
+        assert_eq!(
+            one_crate(text),
+            [
+                "Plain Struct",
+                "Plain::shown Method",
+                "Shown Struct",
+                "Shown::shown Method",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_arm_spells_its_type_or_hands_the_name_on_and_no_other_arm_decides() {
+        let text = "macro_rules! record { ($name:ident) => { pub struct $name; impl $name { pub fn new() -> Self { Self } } }; }\nmacro_rules! model {\n    (choice $name:ident) => { pub enum $name { A } };\n    (record $name:ident) => { record!($name); };\n    (inner $name:ident) => { model!(@spelled $name); };\n    (@spelled $n:ident) => { pub union $n { a: u8 } impl $n { fn inner(&self) {} } };\n    (also $name:ident) => { pub struct $name; extra!($name); };\n}\nmacro_rules! extra { ($e:ident) => { impl $e { pub fn extra(&self) {} } }; }\nmodel!(record Account);\nmodel!(inner Deep);\nmodel!(also Meters);\n";
+
+        assert_eq!(
+            one_crate(text),
+            [
+                "Account Struct",
+                "Account::new Method",
+                "Deep Union",
+                "Deep::inner Method",
+                "Meters Struct",
+                "Meters::extra Method",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hand_off_is_received_by_the_metavariable_at_its_place() {
+        let text = "macro_rules! pair { ($name:ident, $error:ident) => {\n    pub enum $error { Failed }\n    pub fn $name() -> Result<(), $error> { Ok(()) }\n}; }\nmacro_rules! operation {\n    (op $name:ident) => { pair!($name, OperationError); };\n    (error $name:ident) => { pair!(run, $name); };\n    (both $name:ident $kind:ident) => { pair!($kind, $name); };\n}\noperation!(op run);\noperation!(error Failure);\noperation!(both Failure2 run2);\n";
+
+        assert_eq!(one_crate(text), ["Failure Enum", "Failure2 Enum"]);
+    }
+
+    #[test]
+    fn a_hand_off_by_path_reaches_the_macro_of_its_last_name() {
+        let text = "macro_rules! helper { ($name:ident) => { pub struct $name; }; }\nmacro_rules! front {\n    (plain $name:ident) => { self::helper! { $name } };\n    (rooted $name:ident) => { $crate::helper!($name); };\n}\nfront!(plain ByPath);\nfront!(rooted ByRoot);\n";
+
+        assert_eq!(one_crate(text), ["ByPath Struct", "ByRoot Struct"]);
+    }
+
+    #[test]
+    fn a_crate_hand_off_reaches_the_defining_crates_macro() {
+        let helper = |kind: &str, member: &str| {
+            format!(
+                "macro_rules! helper {{ ($name:ident) => {{ pub {kind} $name {{}} impl $name {{ pub fn {member}(&self) {{}} }} }}; }}\n"
+            )
+        };
+        let exported = format!(
+            "#[macro_export]\n{}#[macro_export]\nmacro_rules! front {{ (make $name:ident) => {{ $crate::helper!($name); }}; }}\n",
+            helper("struct", "from_a")
+        );
+        let own = format!("{}front!(make InB);\n", helper("enum", "from_b"));
+        let files = [
+            ("Cargo.toml", "[workspace]\n"),
+            ("a/Cargo.toml", "[package]\n"),
+            ("a/src/lib.rs", exported.as_str()),
+            ("b/Cargo.toml", "[package]\n"),
+            ("b/src/lib.rs", own.as_str()),
+        ];
+
+        assert_eq!(
+            expanded_with_kinds(&files).unwrap(),
+            [
+                "b/src/lib.rs: InB Struct",
+                "b/src/lib.rs: InB::from_a Method"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_goes_through_at_most_eight_hand_offs_and_a_cycle_ends() {
+        let chain = |prefix: &str, hops: usize| -> String {
+            let mut text = format!(
+                "macro_rules! {prefix}0 {{ (go $name:ident) => {{ {prefix}1!(x $name); }}; }}\n"
+            );
+            for hop in 1..hops {
+                text.push_str(&format!(
+                    "macro_rules! {prefix}{hop} {{ (x $name:ident) => {{ {prefix}{}!(x $name); }}; }}\n",
+                    hop + 1
+                ));
+            }
+            text.push_str(&format!(
+                "macro_rules! {prefix}{hops} {{ (x $name:ident) => {{ pub struct $name; }}; }}\n"
+            ));
+            text
+        };
+        let text = format!(
+            "{}{}macro_rules! ping {{ (go $name:ident) => {{ pong!(go $name); }}; }}\nmacro_rules! pong {{ (go $name:ident) => {{ ping!(go $name); }}; }}\nc8_0!(go Hops8);\nc9_0!(go Hops9);\nping!(go Cycle);\n",
+            chain("c8_", 8),
+            chain("c9_", 9)
+        );
+
+        assert_eq!(one_crate(&text), ["Hops8 Struct"]);
+    }
+
+    #[test]
+    fn an_impl_gives_members_to_the_name_it_is_of_alone() {
+        let text = "macro_rules! pair { ($a:ident, $b:ident) => { pub struct $a; pub struct $b; impl $b { fn only_b() {} } impl From<$b> for $a { fn from(_: $b) -> Self { $a } } }; }\nmacro_rules! gen { ($n:ident) => { pub struct $n<T>(T); impl<T> $n<T> { fn new() {} } impl<F: Fn() -> u8> Tr2<F> for $n { fn g() {} } impl Tr<$n> for $n { fn t() {} } }; }\npair!(A, B);\ngen!(G);\n";
+
+        assert_eq!(
+            one_crate(text),
+            [
+                "A Struct",
+                "A::<From<$b>> Impl",
+                "A::<From<$b>>::from Method",
+                "G Struct",
+                "G::new Method",
+                "G::<Tr<G>> Impl",
+                "G::<Tr<G>>::t Method",
+                "G::<Tr2<F>> Impl",
+                "G::<Tr2<F>>::g Method",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_path_written_directly_and_by_an_invocation_is_one_set() {
+        let text = "macro_rules! id { ($name:ident) => { pub struct $name(u8); }; }\n#[cfg(unix)]\npub struct Foo(u8);\n#[cfg(not(unix))]\nid!(Foo);\nm! { struct Spelled; }\nmacro_rules! m { ($k:ident $name:ident;) => { $k $name; }; }\n";
+
+        assert_eq!(one_crate(text), ["Foo Struct"]);
+    }
+
+    #[test]
+    fn an_expansion_shares_the_names_its_macro_gives() {
+        let long = "a".repeat(100_000);
+        let calls: String = (0..40).map(|n| format!("m!(T{n});\n")).collect();
+        let text = format!(
+            "macro_rules! m {{ ($n:ident) => {{ pub struct $n; impl $n {{ fn {long}() {{}} }} }}; }}\n{calls}"
+        );
+        let index = index(FileKind::Rust, text.as_bytes()).unwrap();
+        let manifest = index_manifest();
+        let tree: Files<'_> = [
+            ("Cargo.toml", (FileKind::Toml, &manifest)),
+            ("src/lib.rs", (FileKind::Rust, &index)),
+        ]
+        .into_iter()
+        .collect();
+        let crates = Crates::of(&tree, &Files::new());
+        let expansion = expand(&tree, &crates)
+            .remove("src/lib.rs")
+            .unwrap()
+            .unwrap();
+        let members: Vec<&Arc<Segment>> = expansion
+            .scopes
+            .iter()
+            .filter(|scope| matches!(&*scope.name, Segment::Name(name) if name.len() == long.len()))
+            .map(|scope| &scope.name)
+            .collect();
+
+        assert_eq!(members.len(), 40);
+        assert!(members.windows(2).all(|pair| Arc::ptr_eq(pair[0], pair[1])));
+    }
+
+    fn index_manifest() -> FileIndex {
+        index(FileKind::Toml, b"[package]\n").unwrap()
     }
 }

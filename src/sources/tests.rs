@@ -195,6 +195,23 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (RULES, "Recorded::declared", SYMBOL),
     (RULES, "Relayed", SYMBOL),
     (RULES, "Relayed::declared", SYMBOL),
+    (RULES, "get", "its symbol names definitions of 2 paths"),
+    (RULES, "First", SYMBOL),
+    (RULES, "First::<Tr<First>>::tr", SYMBOL),
+    (RULES, "First::only_second", MISSING),
+    (RULES, "Plain::declared", SYMBOL),
+    (RULES, "Shown::declared", SYMBOL),
+    (RULES, "compared", MISSING),
+    (RULES, "Alias", MISSING),
+    (RULES, "Source", MISSING),
+    (RULES, "defaulted", SYMBOL),
+    (RULES, "Disc::A::K", SYMBOL),
+    (
+        RULES,
+        "a::spread",
+        "its symbol names definitions of 2 paths",
+    ),
+    (RULES, "x::a::spread", TWO),
     ("loose/single.rs", "Alone", SYMBOL),
     ("loose/single.rs", "Visible", SYMBOL),
 ];
@@ -570,8 +587,6 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/books/mod.rs CatalogId::new Method Code -",
     "crates/ledger/src/books/mod.rs CatalogId::raw Method Code -",
     "crates/ledger/src/books/mod.rs Isbn Struct Code -",
-    "crates/ledger/src/books/mod.rs Isbn::new Method Code -",
-    "crates/ledger/src/books/mod.rs Isbn::raw Method Code -",
     "crates/ledger/src/books/mod.rs ShelfNumber Struct Code -",
     "crates/ledger/src/books/mod.rs ShelfNumber::get Method Code -",
     "crates/ledger/src/checks.rs balanced Function Test Public",
@@ -658,8 +673,21 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs declare Macro Code Private",
     "crates/ledger/src/rules.rs relay Macro Code Private",
     "crates/ledger/src/rules.rs entity Macro Code Private",
+    "crates/ledger/src/rules.rs Disc Enum Code Public",
+    "crates/ledger/src/rules.rs Disc::A Variant Code Public",
+    "crates/ledger/src/rules.rs Disc::A::K Constant Code Public",
+    "crates/ledger/src/rules.rs recovered Function Code Private",
+    "crates/ledger/src/rules.rs defaulted Function Code Private",
+    "crates/ledger/src/rules.rs paired Macro Code Private",
+    "crates/ledger/src/rules.rs front Macro Code Private",
+    "crates/ledger/src/rules.rs x Module Code Private",
+    "crates/ledger/src/rules.rs x::a Module Code Public",
+    "crates/ledger/src/rules.rs x::a::spread Function Code Public",
+    "crates/ledger/src/rules.rs x::a::spread Function Code Public",
+    "crates/ledger/src/rules.rs y Module Code Private",
+    "crates/ledger/src/rules.rs y::a Module Code Public",
+    "crates/ledger/src/rules.rs y::a::spread Function Code Public",
     "crates/ledger/src/rules.rs Eight Struct Code -",
-    "crates/ledger/src/rules.rs i Struct Code -",
     "crates/ledger/src/rules.rs Owned Struct Code -",
     "crates/ledger/src/rules.rs Owned::get Method Code -",
     "crates/ledger/src/rules.rs Owned::<Display> Impl Code -",
@@ -676,6 +704,13 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs Recorded::declared Method Code -",
     "crates/ledger/src/rules.rs Relayed Struct Code -",
     "crates/ledger/src/rules.rs Relayed::declared Method Code -",
+    "crates/ledger/src/rules.rs First Struct Code -",
+    "crates/ledger/src/rules.rs First::<Tr<First>> Impl Code -",
+    "crates/ledger/src/rules.rs First::<Tr<First>>::tr Method Code -",
+    "crates/ledger/src/rules.rs Plain Struct Code -",
+    "crates/ledger/src/rules.rs Plain::declared Method Code -",
+    "crates/ledger/src/rules.rs Shown Struct Code -",
+    "crates/ledger/src/rules.rs Shown::declared Method Code -",
     "crates/ledger/src/rules/in_body.rs reached_by_test Function Test Public",
     "crates/ledger/tests/flow.rs opened_book Function Test Private",
     "crates/ledger/tests/flow.rs a_book_opens Function Test Private",
@@ -762,4 +797,84 @@ fn an_anchor_resolves_alike_whatever_else_is_anchored() {
         resolve(&["vendor/sub/src/own.rs", "vendor/sub/src/lib.rs"]),
         alone
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_manifest_an_anchor_brings_governs_no_file_the_walk_took() {
+    let tmp = TempDir::new().unwrap();
+    let files = [
+        ("Cargo.toml", "[package]\n"),
+        (
+            "src/lib.rs",
+            "macro_rules! m { (x $n:ident) => { pub struct $n; }; }\n",
+        ),
+        ("shared.toml", "[package]\n"),
+        ("sub/src/lib.rs", "m!(x T);\n"),
+        ("sub/tests/t.rs", "pub fn helper() {}\n"),
+    ];
+    for (path, text) in files {
+        let path = tmp.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    // The walk takes no symlink, so the manifest is the anchor's alone.
+    std::os::unix::fs::symlink("../shared.toml", tmp.path().join("sub/Cargo.toml")).unwrap();
+    let store = setup_store(tmp.path());
+    let t = anchor("sub/src/lib.rs", "T");
+    let facts_of = |anchored: &[&str]| -> (String, Vec<String>) {
+        let facts = gather(&store, anchored.iter().copied());
+        let roles = facts
+            .definitions()
+            .filter(|(file, ..)| *file == "sub/tests/t.rs")
+            .map(|(_, _, definition, role)| format!("{:?} {role:?}", definition.kind))
+            .collect();
+        (outcome(&facts.resolve(&t)), roles)
+    };
+
+    let without = facts_of(&["sub/src/lib.rs", "sub/tests/t.rs"]);
+    assert_eq!(
+        without,
+        (SYMBOL.to_owned(), vec!["Function Code".to_owned()])
+    );
+    assert_eq!(
+        facts_of(&["sub/Cargo.toml", "sub/src/lib.rs", "sub/tests/t.rs"]),
+        without
+    );
+}
+
+#[test]
+fn outside_files_with_macros_of_their_own_share_their_crates_one_table() {
+    let tmp = TempDir::new().unwrap();
+    let arms: String = (0..2_000)
+        .map(|n| format!("(w{n} $n:ident) => {{ pub struct $n; }};\n"))
+        .collect();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::create_dir_all(tmp.path().join(".gen")).unwrap();
+    fs::write(tmp.path().join("Cargo.toml"), "[package]\n").unwrap();
+    fs::write(
+        tmp.path().join("src/lib.rs"),
+        format!("macro_rules! m {{ {arms} }}\n"),
+    )
+    .unwrap();
+    let outside: Vec<String> = (0..200).map(|n| format!(".gen/g{n}.rs")).collect();
+    for path in &outside {
+        fs::write(
+            tmp.path().join(path),
+            "m!(w1 X);\nmacro_rules! own { (q $n:ident) => { pub struct $n; }; }\nown!(q Y);\n",
+        )
+        .unwrap();
+    }
+    let store = setup_store(tmp.path());
+    let facts = gather(&store, outside.iter().map(String::as_str));
+
+    for path in &outside {
+        for symbol in ["X", "Y"] {
+            assert_eq!(
+                outcome(&facts.resolve(&anchor(path, symbol))),
+                SYMBOL,
+                "{path}::{symbol}"
+            );
+        }
+    }
 }

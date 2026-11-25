@@ -1,0 +1,29 @@
+component = "code"
+choice = "A name a rule hands to a macro is received by each rule its arguments may fit, up to the first they surely fit, and defined as the first type keyword of the nearest rule that spells one"
+reason = "A crate's front macro often spells no type itself and hands the name to a helper that does (record!([..] $name)), sometimes through $crate:: or a recursive call. A rule's own body decides first: the type keyword right before its name, then the hand-offs at its top level. A hand-off goes to the macro of that name the crate sees, or through $crate:: to the defining crate's. Its arguments are matched against each rule's opening in order, as Rust takes the first rule an invocation matches. Literal words, tokens and the literal contents of a group must be equal; a group holding a metavariable or a repetition, or a binding of many tokens, leaves the rest untold. The name reaches each rule its arguments may fit, up to the first they surely fit, and goes on from there, at most eight hops and 64 rules. The kind is the nearest rule's that spells one; the type holds the impls of every rule reached. Where the arguments cannot tell rules apart, the type holds each one's members, so a member anchor proves the macro gives the member, not that this invocation does. A name no reached rule spells a type of defines nothing: a wrong type is worse than a missing one."
+alternatives = [
+    "Fall back to a type keyword of any body of the macro: rejected because the arm a model macro hands to a record helper took another arm's enum and lost the helper's members",
+    "A helper defines the first type keyword before any of its metavariables: rejected because pair!($name, Error) made a function name an enum",
+    "Take the first rule whose opening fits up to the name: rejected because rules that differ only after the name, or in a group's words, all took the first",
+    "Follow hand-offs without a bound: rejected because two macros handing a name to each other would never end",
+]
+tags = [
+    "anchors",
+    "macros",
+    "rust",
+]
+status = "proposed"
+origin = "code index review fixes"
+created = "2026-11-25T17:10:51.306704636Z"
+anchors = [
+    { file = "src/code/crates.rs", symbol = "Crates::held_in" },
+    { file = "src/code/expand/table.rs", symbol = "MAX_HAND_OFFS" },
+    { file = "src/code/expand/table.rs", symbol = "fit" },
+    { file = "src/code/expand/table.rs", symbol = "follow" },
+    { file = "src/code/expand/table.rs", symbol = "receiving_rules" },
+    { file = "src/code/rust/arms.rs", symbol = "hand_offs" },
+    { file = "src/code/rust/arms.rs", symbol = "rules_of" },
+]
+depends_on = [
+    "a-macro-invocation-defines-what-its-crate-s-macro-or-its-tokens-name",
+]

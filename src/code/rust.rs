@@ -29,8 +29,8 @@ mod marks;
 mod reexports;
 mod spelled;
 
-pub(super) use arms::MAX_ARM_WORDS;
-pub(super) use macros::is_word;
+pub(super) use arms::{MAX_ARM_WORDS, MAX_OPENING};
+pub(super) use macros::{MAX_INVOCATION_TOKENS, is_name, is_word};
 
 use tree_sitter::Node;
 
@@ -38,7 +38,7 @@ use super::index::{FileIndex, IndexFault, ModuleFile};
 use super::kinds::{DefinitionKind, Role, Visibility, What};
 use super::scope::ScopeId;
 use super::symbol::Segment;
-use super::syntax::{self, text_of};
+use super::syntax::{self, Lexicon, text_of};
 use super::tree::TreeIndex;
 
 use items::{Item, Within};
@@ -56,12 +56,22 @@ pub(super) const LITERALS: [&str; 5] = [
     "float_literal",
 ];
 
+/// What tree-sitter-rust's tokens are made of beside its tree: its
+/// literal kinds, and Rust's comments, block comments nesting.
+pub(super) const LEXICON: Lexicon = Lexicon {
+    literals: &LITERALS,
+    line_comments: &["//"],
+    block_comments: &[("/*", "*/")],
+    nested_blocks: true,
+    glued: &[("metavariable", 1)],
+};
+
 /// The index of `text`, a Rust file.
 pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
     let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
     let mut walk = Walk {
         text,
-        build: TreeIndex::new(text, &tree, &LITERALS),
+        build: TreeIndex::new(text, &tree, &LEXICON),
         reexports: Vec::new(),
     };
     walk.run(tree.root_node())?;

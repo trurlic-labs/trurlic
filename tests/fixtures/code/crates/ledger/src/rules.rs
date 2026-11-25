@@ -100,3 +100,62 @@ macro_rules! entity {
 
 entity!(record Recorded at "here");
 entity!(Relayed relayed);
+
+pub enum Disc {
+    A = {
+        pub const K: isize = 1;
+        K
+    },
+}
+
+fn recovered() {
+    let x = 1 @@ 2;
+}
+
+spelled! {
+    default fn defaulted() {}
+    enum Source as Alias { A }
+}
+
+macro_rules! paired {
+    ($a:ident, $b:ident) => {
+        pub struct $a;
+        pub struct $b;
+        impl $b {
+            fn only_second() {}
+        }
+        impl Tr<$a> for $a {
+            fn tr() {}
+        }
+    };
+}
+
+paired!(First, Second);
+
+macro_rules! front {
+    ($name:ident in $module:literal) => {
+        declare!([] plain $name);
+    };
+    (compared $name:ident in $module:literal) => {
+        $crate::declare!([] plain $name);
+    };
+}
+
+front!(Plain in "m");
+front!(compared Shown in "m");
+front!(enum in "m");
+
+mod x {
+    pub mod a {
+        #[cfg(unix)]
+        pub fn spread() {}
+        #[cfg(not(unix))]
+        pub fn spread() {}
+    }
+}
+
+mod y {
+    pub mod a {
+        pub fn spread() {}
+    }
+}

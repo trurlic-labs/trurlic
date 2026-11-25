@@ -24,7 +24,8 @@
 
 use std::collections::BTreeSet;
 
-use super::expand::{Crates, Files, file_name, parent};
+use super::crates::{Crates, file_name, parent};
+use super::expand::Files;
 use super::index::{FileIndex, FileKind, ModuleFile};
 use super::kinds::{DefinitionKind, Role};
 use super::scope::ScopeId;

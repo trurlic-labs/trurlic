@@ -15,6 +15,8 @@
 //! against the room of the file ([`encoding::room_of`]), so no rule of any
 //! resolver can make an index outgrow its file.
 
+use std::sync::Arc;
+
 use super::encoding::{self, Measure};
 use super::index::{Definition, IndexFault, Invocation, ModuleFile, TypeMacro};
 use super::symbol::Segment;
@@ -116,19 +118,35 @@ impl ScopeTree {
     }
 }
 
+/// A scope a macro expansion adds: its one segment, under its parent.
+/// A name the macro gives (a member, an item) is shared with the macro,
+/// so an invocation adds a fixed size whatever the name's length.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AddedScope {
+    pub(crate) parent: Option<ScopeId>,
+    pub(crate) name: Arc<Segment>,
+}
+
 /// The scopes a path is walked through: a file's, and those a macro
 /// expansion adds past them.
 #[derive(Clone, Copy)]
 pub(crate) struct Scopes<'a> {
     pub(crate) file: &'a [Scope],
-    pub(crate) added: &'a [Scope],
+    pub(crate) added: &'a [AddedScope],
 }
 
 impl<'a> Scopes<'a> {
-    pub(crate) fn get(self, id: ScopeId) -> Option<&'a Scope> {
+    /// The parent and the own segments of the scope `id`.
+    fn get(self, id: ScopeId) -> Option<(Option<ScopeId>, &'a [Segment])> {
         match id.at().checked_sub(self.file.len()) {
-            None => self.file.get(id.at()),
-            Some(past) => self.added.get(past),
+            None => self
+                .file
+                .get(id.at())
+                .map(|scope| (scope.parent, scope.name.as_slice())),
+            Some(past) => self
+                .added
+                .get(past)
+                .map(|scope| (scope.parent, std::slice::from_ref(&*scope.name))),
         }
     }
 
@@ -139,9 +157,9 @@ impl<'a> Scopes<'a> {
         let mut next = Some(id);
         std::iter::from_fn(move || {
             let current = next?;
-            let scope = self.get(current)?;
-            next = scope.parent.filter(|parent| *parent < current);
-            Some(scope.name.iter().rev())
+            let (parent, name) = self.get(current)?;
+            next = parent.filter(|parent| *parent < current);
+            Some(name.iter().rev())
         })
         .flatten()
     }

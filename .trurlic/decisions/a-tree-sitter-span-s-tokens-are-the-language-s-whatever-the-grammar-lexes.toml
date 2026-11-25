@@ -1,0 +1,28 @@
+component = "code"
+choice = "A span's tokens are every byte but whitespace and comments: each leaf, each literal whole, each run of bytes no node holds, by the comment syntax and glued tokens each grammar declares"
+reason = "A grammar's tree is no exact lexer of its language, and the hash must follow the language. Each leaf is a token, and each node of a lexical literal kind is one whole, so a string's prefix and delimiters are hashed and -1 and - 1 agree. A repetition's separator and what error recovery passes over lie in no node, so each run of such bytes is a token too. tree-sitter-rust lexes a comment as tokens in some places, after a repetition's separator among them. So a token that opens a comment by the grammar's declared syntax starts bytes no token is taken from, and a gap's comments are dropped as whitespace is. A token the grammar glues where the language has two, Rust's metavariable $a written $ a, is hashed as the two. Each grammar states its literal kinds, comment delimiters and glued kinds as data in one Lexicon, so a new grammar brings its own and the machinery stays one."
+alternatives = [
+    "Hash the leaves alone: rejected because a repetition's separator and an error's bytes are in no leaf, so changing them moved no hash",
+    "State in the span-hash rule that a comment in a separator moves the hash: rejected because a comment edit in valid Rust would then read as a change to the code",
+    "Hard-code Rust's comment syntax in the token walk: rejected because each grammar the index adds has its own",
+]
+tags = [
+    "anchors",
+    "hashing",
+]
+status = "proposed"
+origin = "code index review fixes"
+created = "2026-11-25T17:10:51.306704636Z"
+anchors = [
+    { file = "src/code/rust.rs", symbol = "LEXICON" },
+    { file = "src/code/syntax.rs", symbol = "Leaves::of" },
+    { file = "src/code/syntax.rs", symbol = "Lexicon" },
+    { file = "src/code/syntax.rs", symbol = "Lexicon::comment" },
+    { file = "src/code/syntax.rs", symbol = "a_byte_no_node_holds_is_a_token" },
+    { file = "src/code/syntax.rs", symbol = "a_comment_among_bytes_no_node_holds_moves_no_hash" },
+    { file = "src/code/syntax.rs", symbol = "every_byte_but_comments_and_whitespace_is_in_one_token" },
+    { file = "src/code/syntax.rs", symbol = "gaps" },
+]
+depends_on = [
+    "a-span-hash-is-t1-over-the-tokens-without-comments",
+]

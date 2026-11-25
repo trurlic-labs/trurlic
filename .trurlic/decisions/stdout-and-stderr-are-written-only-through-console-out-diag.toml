@@ -14,6 +14,10 @@ status = "proposed"
 created = "2026-10-03T13:55:11.254367052Z"
 anchors = [
     { file = "clippy.toml" },
+    { file = "src/console.rs", symbol = "diag" },
+    { file = "src/console.rs", symbol = "out" },
+    { file = "src/console.rs", symbol = "stderr" },
+    { file = "src/console.rs", symbol = "stdout" },
     { file = "src/console.rs", symbol = "write_diag" },
     { file = "src/console.rs", symbol = "write_out" },
     { file = "src/mcp/mod.rs", symbol = "run_server" },

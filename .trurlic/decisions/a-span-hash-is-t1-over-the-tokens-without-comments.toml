@@ -1,6 +1,6 @@
 component = "code"
 choice = "A span hash is t1: and the BLAKE3 of a span's tokens, every byte but comments and whitespace in one, each nested definition by its own hash; a lexical span hashes its normalized text"
-reason = "A diff review compares a definition's hash between two revisions to tell whether a change touched it, so the hash must move with what the code does and stay put under what it does not: a reformat, a comment, a doc comment. The tokens of the parse tree cover every byte but comments and whitespace: each leaf; each node of the grammar's lexical literal kinds whole, so a string's prefix and delimiters (br, r#, c) are hashed with it and -1 and - 1 agree, a negative literal being no lexical token; and each run of bytes no node holds, a macro repetition's separator or what error recovery passes over. Each token goes in after its length, so a b and ab differ. A definition nested in the span goes in as its own hash, after a mark no length takes, so each token is hashed once however deep the definitions nest, and an edit inside still moves every hash around it. A Rust item's span takes in its attributes and doc comments, and the hash drops the comments. A TOML key, a JSON key, a Makefile rule and a Markdown section are hashed by their text with each run of whitespace made one space. The definitions of one path an anchor names hash as one: a single definition by its own hash, several by the hash of their hashes in span order, each after the nested mark, as the units of a definition holding them and no token of its own. The scheme prefix names the rules and is fixed from the scheme's first release: no t1 hash was released before these rules, and a later change to them is t2, never compared as equal to t1."
+reason = "A diff review compares a definition's hash between two revisions to tell whether a change touched it. So the hash must move with what the code does and stay put under what it does not: a reformat, a comment, a doc comment. The tokens of the parse tree cover every byte but comments and whitespace (a-tree-sitter-span-s-tokens-are-the-language-s-whatever-the-grammar-lexes). Each token goes in after its length, so a b and ab differ. A definition nested in the span goes in as its own hash, after a mark no length takes, so each token is hashed once however deep the definitions nest. An edit inside still moves every hash around it. A Rust item's span takes in its attributes and doc comments, and the hash drops the comments. A TOML key, a JSON key, a Makefile rule and a Markdown section are hashed by their text, each run of whitespace made one space. The scheme prefix names the rules and is fixed from the scheme's first release: no t1 hash was released before these rules, and a later change is t2."
 alternatives = [
     "Hash the span's raw bytes: rejected because every reformat and comment edit would read as a change to the code",
     "Hash the tokens without lengths: rejected because two token runs that join to the same bytes would hash alike",
@@ -19,13 +19,11 @@ anchors = [
     { file = "src/code/lexical.rs", symbol = "Lexical::hash" },
     { file = "src/code/rust.rs", symbol = "LITERALS" },
     { file = "src/code/span.rs", symbol = "HASH_SCHEME" },
-    { file = "src/code/span.rs", symbol = "SpanHash::of_members" },
-    { file = "src/code/span.rs", symbol = "a_set_of_one_is_its_member_and_of_several_is_none_of_them" },
     { file = "src/code/syntax.rs", symbol = "Leaves::hash_each" },
-    { file = "src/code/syntax.rs", symbol = "a_byte_no_node_holds_is_a_token" },
     { file = "src/code/syntax.rs", symbol = "a_hash_of_tokens_ignores_comments_and_layout" },
+    { file = "src/code/syntax.rs", symbol = "a_literal_is_hashed_with_its_prefix_and_delimiters" },
     { file = "src/code/syntax.rs", symbol = "a_nested_definition_enters_its_parents_hash_by_its_own" },
-    { file = "src/code/syntax.rs", symbol = "every_byte_but_comments_and_whitespace_is_in_one_token" },
+    { file = "src/code/syntax.rs", symbol = "tokens" },
 ]
 
 [accepted_text]

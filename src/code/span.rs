@@ -1,18 +1,16 @@
 //! Where a definition is in its file, and the hash of what it holds.
 //!
 //! A [`SpanHash`] is the hash of a span's normalized text, named by its
-//! scheme ([`HASH_SCHEME`]), fixed from its first release: a change of
+//! scheme ([`HASH_SCHEME`]), fixed from its first release. A change of
 //! the normalization is a new scheme, so two hashes of different schemes
 //! are never compared as equal. Under `t1` a tree-sitter span hashes its
-//! tokens (`syntax.rs`: every byte but comments and whitespace in one,
-//! a literal of the lexical literal kinds whole), each with its length,
-//! each definition nested in it by its own hash instead, so reformatting
-//! the span or editing a comment in it changes nothing; a lexical span
-//! hashes its text with every run of whitespace made one space and the
-//! ends trimmed. The definitions of one path a symbol names hash as one
+//! tokens (`syntax.rs`), each with its length, each definition nested in
+//! it by its own hash instead. So reformatting the span or editing a
+//! comment in it changes nothing. A lexical span hashes its text with
+//! every run of whitespace made one space and the ends trimmed. The
+//! definitions of one path a symbol names hash as one
 //! ([`SpanHash::of_members`]): one alone by its own hash, several by the
-//! hash of their hashes in span order, each after the mark a nested
-//! definition's hash takes.
+//! hash of their hashes in the order of the hashes.
 
 use std::fmt;
 use std::str::FromStr;
@@ -88,7 +86,7 @@ impl SpanHash {
         Self(*blake3::hash(units).as_bytes())
     }
 
-    /// The hash of the definitions of one path, `members` in span order:
+    /// The hash of the definitions of one path, `members` sorted:
     /// one alone is its own; several are hashed as a definition's units
     /// would be that held them and no token of its own, each hash after
     /// [`NESTED_MARK`], so no single definition's hash, which holds its

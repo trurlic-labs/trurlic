@@ -18,6 +18,6 @@ anchors = [
     { file = "src/code/kinds.rs", symbol = "DefinitionKind" },
     { file = "src/code/kinds.rs", symbol = "DefinitionKind::of_keyword" },
     { file = "src/code/rust/items.rs", symbol = "Item::kind" },
-    { file = "src/code/rust/macros.rs", symbol = "impl_members" },
+    { file = "src/code/rust/macros.rs", symbol = "type_impl" },
     { file = "src/code/rust/macros.rs", symbol = "type_macro" },
 ]

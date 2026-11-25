@@ -30,10 +30,10 @@ use super::span::{NESTED_MARK, SpanHash};
 use super::work::{PARSE_WORK_PER_BYTE, Work};
 
 /// The steps between two of the parser's progress reports.
-const STEPS_PER_REPORT: usize = 100;
+pub(super) const STEPS_PER_REPORT: usize = 100;
 
 /// The bytes the lexer is handed at a time.
-const CHUNK_BYTES: usize = 1024;
+pub(super) const CHUNK_BYTES: usize = 1024;
 
 /// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
 /// the parse runs past its budget.
@@ -83,35 +83,47 @@ fn parse_within(
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Token<'n> {
     Node(Node<'n>),
-    Gap(usize, usize),
+    Gap { start: usize, end: usize },
+}
+
+impl Token<'_> {
+    /// The byte it starts at.
+    fn start(&self) -> usize {
+        match self {
+            Self::Node(node) => node.start_byte(),
+            Self::Gap { start, .. } => *start,
+        }
+    }
 }
 
 /// Each token of `node`, in order, until `each` breaks: its leaves, each
-/// node of a kind of `literals` whole, and each run of non-whitespace
-/// bytes between a node's children that no child holds; comments and
-/// every other extra but an error ([`is_comment`]), and tokens of no
-/// width (the parser's inserted missing tokens), left out. One cursor walk: each node and each byte is
-/// visited once.
+/// node of a literal kind of `lexicon` whole, and each run of bytes
+/// between a node's children that no child holds. Whitespace and the
+/// comments `lexicon` delimits are left out. So are comments and every
+/// other extra but an error ([`is_comment`]), and tokens of no width (the
+/// parser's inserted missing tokens). One cursor walk: each node and each
+/// byte is visited once.
 pub(super) fn tokens<'n>(
     node: Node<'n>,
     text: &str,
-    literals: &[&str],
-    mut each: impl FnMut(Token<'n>) -> ControlFlow<()>,
+    lexicon: &Lexicon,
+    each: impl FnMut(Token<'n>) -> ControlFlow<()>,
 ) {
     let mut cursor = node.walk();
     // The end of the last child seen of each node whose children are
     // being walked, outermost first.
     let mut ends: Vec<usize> = Vec::new();
+    let mut each = without_comments(text, lexicon, each);
     loop {
         let current = cursor.node();
         if let Some(last) = ends.last_mut() {
             let gap = (*last, current.start_byte());
             *last = current.end_byte();
-            if gaps(text, gap, &mut each).is_break() {
+            if gaps(text, gap, lexicon, &mut each).is_break() {
                 return;
             }
         }
-        let unit = current.child_count() == 0 || literals.contains(&current.kind());
+        let unit = current.child_count() == 0 || lexicon.literals.contains(&current.kind());
         if !is_comment(current) {
             if !unit && cursor.goto_first_child() {
                 ends.push(current.start_byte());
@@ -124,8 +136,33 @@ pub(super) fn tokens<'n>(
                 return;
             }
         }
-        if climb(&mut cursor, node, &mut ends, text, &mut each).is_break() {
+        if climb(&mut cursor, node, &mut ends, (text, lexicon), &mut each).is_break() {
             return;
+        }
+    }
+}
+
+/// `each`, passed over the tokens of a comment a grammar lexes as tokens
+/// where it does not expect one (tree-sitter-rust after a repetition's
+/// separator). A token that opens a comment by `lexicon` starts bytes no
+/// token is taken from.
+fn without_comments<'n>(
+    text: &str,
+    lexicon: &Lexicon,
+    mut each: impl FnMut(Token<'n>) -> ControlFlow<()>,
+) -> impl FnMut(Token<'n>) -> ControlFlow<()> {
+    let mut comment_end = 0;
+    move |token: Token<'n>| {
+        let start = token.start();
+        if start < comment_end {
+            return ControlFlow::Continue(());
+        }
+        match lexicon.comment(text.get(start..).unwrap_or_default()) {
+            0 => each(token),
+            length => {
+                comment_end = start + length;
+                ControlFlow::Continue(())
+            }
         }
     }
 }
@@ -137,7 +174,7 @@ fn climb<'n>(
     cursor: &mut tree_sitter::TreeCursor<'n>,
     top: Node<'n>,
     ends: &mut Vec<usize>,
-    text: &str,
+    (text, lexicon): (&str, &Lexicon),
     each: &mut impl FnMut(Token<'n>) -> ControlFlow<()>,
 ) -> ControlFlow<()> {
     loop {
@@ -152,7 +189,7 @@ fn climb<'n>(
         }
         let parent = cursor.node();
         let last = ends.pop().unwrap_or(parent.end_byte());
-        gaps(text, (last, parent.end_byte()), each)?;
+        gaps(text, (last, parent.end_byte()), lexicon, each)?;
     }
 }
 
@@ -163,29 +200,100 @@ pub(super) fn is_comment(node: Node<'_>) -> bool {
     node.is_extra() && !node.is_error()
 }
 
-/// Each run of non-whitespace bytes of `text` within `from..to`, a gap
-/// between two nodes, as a token.
+/// What a grammar's tokens are made of beside its tree. It names the node
+/// kinds that are lexical literals, each one token whole. It names the
+/// comment delimiters, by which a comment the grammar lexes as tokens, or
+/// leaves among bytes no node holds, is dropped as whitespace is.
+pub(super) struct Lexicon {
+    pub(super) literals: &'static [&'static str],
+    pub(super) line_comments: &'static [&'static str],
+    /// Each opening and closing delimiter of a block comment.
+    pub(super) block_comments: &'static [(&'static str, &'static str)],
+    /// Whether a block comment holds another (Rust's do).
+    pub(super) nested_blocks: bool,
+    /// Leaf kinds the grammar lexes as one token where the language has
+    /// two, with the bytes of the first (Rust's metavariable `$a`, which
+    /// may be written `$ a`): hashed as two, so the space between moves
+    /// nothing.
+    pub(super) glued: &'static [(&'static str, usize)],
+}
+
+impl Lexicon {
+    /// The bytes of the comment `rest` opens with; 0 when it opens with
+    /// none. A comment not closed runs to the end of `rest`.
+    fn comment(&self, rest: &str) -> usize {
+        if let Some(open) = self
+            .line_comments
+            .iter()
+            .find(|open| rest.starts_with(**open))
+        {
+            return rest.get(open.len()..).map_or(rest.len(), |after| {
+                open.len() + after.find('\n').unwrap_or(after.len())
+            });
+        }
+        let Some((open, close)) = self
+            .block_comments
+            .iter()
+            .find(|(open, _)| rest.starts_with(*open))
+        else {
+            return 0;
+        };
+        let mut depth = 0_usize;
+        let mut at = 0;
+        while let Some(tail) = rest.get(at..).filter(|tail| !tail.is_empty()) {
+            if tail.starts_with(close) {
+                depth = depth.saturating_sub(1);
+                at += close.len();
+                if depth == 0 {
+                    return at;
+                }
+            } else if tail.starts_with(open) && (depth == 0 || self.nested_blocks) {
+                depth += 1;
+                at += open.len();
+            } else {
+                at += tail.chars().next().map_or(1, char::len_utf8);
+            }
+        }
+        rest.len()
+    }
+}
+
+/// Each run of bytes of `text` within `from..to`, a gap between two
+/// nodes, that is neither whitespace nor a comment of `lexicon`, as a
+/// token.
 fn gaps<'n>(
     text: &str,
     (from, to): (usize, usize),
+    lexicon: &Lexicon,
     each: &mut impl FnMut(Token<'n>) -> ControlFlow<()>,
 ) -> ControlFlow<()> {
     let Some(gap) = text.get(from..to) else {
         return ControlFlow::Continue(());
     };
     let mut run: Option<usize> = None;
-    for (at, c) in gap.char_indices() {
-        match (c.is_whitespace(), run) {
+    let mut at = 0;
+    while let Some(rest) = gap.get(at..).filter(|rest| !rest.is_empty()) {
+        let comment = lexicon.comment(rest);
+        let c = rest.chars().next().unwrap_or(' ');
+        let silent = comment > 0 || c.is_whitespace();
+        match (silent, run) {
             (true, Some(start)) => {
-                each(Token::Gap(from + start, from + at))?;
+                each(Token::Gap {
+                    start: from + start,
+                    end: from + at,
+                })?;
                 run = None;
             }
             (false, None) => run = Some(at),
             (true, None) | (false, Some(_)) => {}
         }
+        at += comment.max(c.len_utf8());
     }
     match run {
-        Some(start) => each(Token::Gap(from + start, to)),
+        Some(start) => each(Token::Gap {
+            start: from + start,
+            end: to,
+        }),
         None => ControlFlow::Continue(()),
     }
 }
@@ -215,14 +323,27 @@ struct Hashing<'a> {
 }
 
 impl Leaves {
-    /// The tokens of `tree`, whose grammar's literal kinds are `literals`.
-    pub(super) fn of(tree: &Tree, text: &str, literals: &[&str]) -> Self {
+    /// The tokens of `tree`, of a grammar of `lexicon`.
+    pub(super) fn of(tree: &Tree, text: &str, lexicon: &Lexicon) -> Self {
         let mut ranges = Vec::new();
-        tokens(tree.root_node(), text, literals, |token| {
-            ranges.push(match token {
+        tokens(tree.root_node(), text, lexicon, |token| {
+            let (from, to) = match token {
                 Token::Node(node) => (node.start_byte(), node.end_byte()),
-                Token::Gap(from, to) => (from, to),
-            });
+                Token::Gap { start, end } => (start, end),
+            };
+            let glued = match token {
+                Token::Node(node) => lexicon
+                    .glued
+                    .iter()
+                    .find(|(kind, _)| *kind == node.kind())
+                    .map(|(_, first)| from + first)
+                    .filter(|split| *split < to),
+                Token::Gap { .. } => None,
+            };
+            match glued {
+                Some(split) => ranges.extend([(from, split), (split, to)]),
+                None => ranges.push((from, to)),
+            }
             ControlFlow::Continue(())
         });
         Self { ranges }
@@ -355,7 +476,7 @@ pub(super) fn text_of<'t>(node: Node<'_>, text: &'t str) -> &'t str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::rust::LITERALS;
+    use crate::code::rust::LEXICON;
 
     fn rust_tree(text: &str) -> Tree {
         parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap()
@@ -363,7 +484,7 @@ mod tests {
 
     /// The hash of the whole of `text`, a Rust file.
     fn hash(text: &str) -> SpanHash {
-        let leaves = Leaves::of(&rust_tree(text), text, &LITERALS);
+        let leaves = Leaves::of(&rust_tree(text), text, &LEXICON);
         leaves.hash_each(text, std::slice::from_ref(&(0..text.len())))[0]
     }
 
@@ -422,6 +543,26 @@ mod tests {
         assert_ne!(recovered("@@"), recovered("\u{a7}"));
     }
 
+    #[test]
+    fn a_comment_among_bytes_no_node_holds_moves_no_hash() {
+        assert_eq!(
+            hash("macro_rules! m { ($($a:ident),*) => {}; }"),
+            hash("macro_rules! m { ($($a:ident), /* c */ *) => {}; }")
+        );
+        assert_eq!(
+            hash("macro_rules! m { ($a:ident) => {}; }"),
+            hash("macro_rules! m { ($ /* c */ a:ident) => {}; }")
+        );
+        assert_eq!(
+            hash("macro_rules! m { ($a:ident) => {}; }"),
+            hash("macro_rules! m { ($ a:ident) => {}; }")
+        );
+        assert_eq!(
+            hash("fn f() { let x = 1 @ @ 2; }"),
+            hash("fn f() { let x = 1 @/* c /* nested */ */@ 2; }")
+        );
+    }
+
     /// Every Rust file under `src/`, and the fixture of macro
     /// repetitions and error recovery.
     fn token_corpus() -> Vec<(String, String)> {
@@ -451,7 +592,7 @@ mod tests {
         for (file, text) in token_corpus() {
             let tree = rust_tree(&text);
             let mut covered = vec![false; text.len()];
-            for &(from, to) in &Leaves::of(&tree, &text, &LITERALS).ranges {
+            for &(from, to) in &Leaves::of(&tree, &text, &LEXICON).ranges {
                 for byte in &mut covered[from..to] {
                     assert!(!*byte, "{file}: byte {from} in two tokens");
                     *byte = true;
@@ -485,14 +626,14 @@ mod tests {
     #[test]
     fn a_nested_definition_enters_its_parents_hash_by_its_own() {
         let text = "mod a { fn b() { 1 } }\nmod a { fn b() { 2 } }\n";
-        let leaves = Leaves::of(&rust_tree(text), text, &LITERALS);
+        let leaves = Leaves::of(&rust_tree(text), text, &LEXICON);
         let hashes = leaves.hash_each(text, &[0..22, 8..20, 23..45, 31..43, 8..20]);
 
         assert_ne!(hashes[0], hashes[2], "an edit inside moves the parent");
         assert_ne!(hashes[1], hashes[3]);
         assert_eq!(hashes[1], hashes[4], "a range given twice hashes alike");
         let alone = "fn b() { 1 }";
-        let own = Leaves::of(&rust_tree(alone), alone, &LITERALS)
+        let own = Leaves::of(&rust_tree(alone), alone, &LEXICON)
             .hash_each(alone, std::slice::from_ref(&(0..12)));
         assert_eq!(
             hashes[1], own[0],

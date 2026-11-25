@@ -16,7 +16,7 @@ use crate::code::kinds::{Container, DefinitionKind, Role, Visibility};
 use crate::code::syntax::text_of;
 use crate::code::work::Work;
 
-use super::macros::{inner_children, tokens_of};
+use super::macros::{inner_children, is_name, tokens_of};
 use super::marks;
 
 /// A token an item spelled in an invocation may open with before its
@@ -96,11 +96,12 @@ fn read_tree<'t>(
             continue;
         };
         let keyword = text_of(*keyword, text);
-        // `enum a::B` names a path, which no item is in Rust.
+        // `enum a::B` names a path, and `enum B as C` renames one: no item
+        // is either in Rust.
         let path = tokens
             .get(at + 2)
-            .is_some_and(|next| text_of(*next, text) == "::");
-        if !starts_item(keyword, *name) || path {
+            .is_some_and(|next| matches!(text_of(*next, text), "::" | "as"));
+        if !starts_item(keyword, *name, text) || path {
             continue;
         }
         let first = spelled_item_start(tokens, at, text);
@@ -150,8 +151,10 @@ fn mark_attributed_trees(tokens: &[Node<'_>], roles: &mut [Role], text: &str) {
 
 /// Whether `keyword` and `name` open an item: an item keyword, then an
 /// identifier.
-fn starts_item(keyword: &str, name: Node<'_>) -> bool {
-    name.kind() == "identifier" && DefinitionKind::of_keyword(keyword, Container::Items).is_some()
+fn starts_item(keyword: &str, name: Node<'_>, text: &str) -> bool {
+    name.kind() == "identifier"
+        && is_name(text_of(name, text))
+        && DefinitionKind::of_keyword(keyword, Container::Items).is_some()
 }
 
 /// For each of `tokens`, the index of the first braced tree or `;` from
@@ -164,7 +167,7 @@ fn item_ends(tokens: &[Node<'_>], text: &str) -> Vec<Option<usize>> {
         let own = (spelled == ";" || spelled.starts_with('{')).then_some(at);
         let next_item = tokens
             .get(at + 1)
-            .is_some_and(|name| starts_item(spelled, *name));
+            .is_some_and(|name| starts_item(spelled, *name, text));
         let next = ends.get(at + 1).copied().flatten().filter(|_| !next_item);
         if let Some(end) = ends.get_mut(at) {
             *end = own.or(next);

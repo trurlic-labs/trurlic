@@ -1,7 +1,8 @@
 use super::*;
-use crate::code::index::{Defines, FileKind, Member, TypeArm, TypeMacro, index as index_file};
+use crate::code::index::{After, Element, FileKind, HandOff, TypeArm, index as index_file};
 use crate::code::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::scope::{MAX_NESTING, Scopes};
+use crate::code::symbol::Segment;
 use crate::code::testing;
 
 fn index(text: &str) -> FileIndex {
@@ -77,32 +78,42 @@ fn an_item_an_invocation_spells_spans_its_attributes_to_its_body() {
 }
 
 #[test]
-fn a_type_macro_keeps_the_words_of_each_arm_that_defines_a_type() {
+fn a_type_macro_keeps_each_arms_words_what_follows_the_name_and_what_each_rule_spells() {
     let text = "#[macro_export]\nmacro_rules! id {\n    ($(#[$m:meta])* ordered $name:ident) => { pub enum $name { A } impl $name { fn rank() {} } };\n    ($name:ident, $t:ty) => { pub type $name = $t; };\n    (@inner $name:ident) => {};\n    ($vis:vis struct $name:ident) => { $vis struct $name; };\n}\nmacro_rules! call { ($x:ident) => { let _ = $x; } }\n";
+    let macros = index(text).macros;
+    let [found] = macros.as_slice() else {
+        panic!("{macros:?}");
+    };
+    let receives: Vec<Vec<(usize, Option<DefinitionKind>)>> = found
+        .rules
+        .iter()
+        .map(|rule| rule.receives.iter().map(|(at, r)| (*at, r.kind)).collect())
+        .collect();
 
+    assert!(found.exported);
     assert_eq!(
-        index(text).macros,
-        [TypeMacro {
-            name: "id".into(),
-            exported: true,
-            arms: vec![
-                TypeArm {
-                    words: vec!["ordered".into()],
-                    defines: Defines::Kind(DefinitionKind::Enum),
-                },
-                TypeArm {
-                    words: vec![],
-                    defines: Defines::Kind(DefinitionKind::TypeAlias),
-                },
-            ],
-            defines: Some(Defines::Kind(DefinitionKind::Enum)),
-            members: vec![Member {
-                trait_tokens: None,
-                name: "rank".into(),
-                kind: DefinitionKind::Method,
-            }],
-            items: vec![],
-        }]
+        found.arms,
+        [
+            TypeArm {
+                words: vec!["ordered".into()],
+                after: After::End,
+                rule: 0,
+            },
+            TypeArm {
+                words: vec![],
+                after: After::Token(",".into()),
+                rule: 1,
+            },
+        ]
+    );
+    assert_eq!(
+        receives,
+        [
+            vec![(1, Some(DefinitionKind::Enum))],
+            vec![(0, Some(DefinitionKind::TypeAlias))],
+            vec![(2, None)],
+            vec![(2, Some(DefinitionKind::Struct))],
+        ]
     );
 }
 
@@ -228,44 +239,53 @@ fn an_item_in_a_discriminant_has_its_own_visibility() {
 fn a_type_macros_members_are_its_impl_blocks_items_and_the_rest_its_containers() {
     let text = "macro_rules! def {\n    ($name:ident) => {\n        pub struct $name;\n        pub fn make() -> $name { $name }\n        pub mod helpers {}\n        impl $name { pub fn get(&self) {} }\n        impl Other { fn not_its() {} }\n    };\n}\n";
     let found = &index(text).macros[0];
+    let named = |named: &[(std::sync::Arc<Segment>, DefinitionKind)]| -> Vec<String> {
+        named
+            .iter()
+            .map(|(name, kind)| format!("{name} {kind:?}"))
+            .collect()
+    };
+    let [rule] = found.rules.as_slice() else {
+        panic!("{found:?}");
+    };
+    let impls: Vec<(Option<Vec<String>>, Vec<String>)> = rule
+        .receives
+        .iter()
+        .flat_map(|(_, receives)| &receives.impls)
+        .map(|found| (found.trait_tokens.clone(), named(&found.members)))
+        .collect();
 
-    assert_eq!(
-        found.members,
-        [Member {
-            trait_tokens: None,
-            name: "get".to_owned(),
-            kind: DefinitionKind::Method,
-        }]
-    );
-    assert_eq!(
-        found.items,
-        [
-            ("helpers".to_owned(), DefinitionKind::Module),
-            ("make".to_owned(), DefinitionKind::Function)
-        ]
-    );
+    assert_eq!(impls, [(None, vec!["get Method".to_owned()])]);
+    assert_eq!(named(&rule.items), ["helpers Module", "make Function"]);
 }
 
 #[test]
-fn an_arm_that_hands_its_name_to_a_macro_defines_it_as_that_macro_does() {
-    let text = "macro_rules! entity {\n    (record $name:ident) => { declare!([] $name); };\n    (quiet $name:ident) => { let _ = $name; };\n}\nmacro_rules! declare {\n    ([$($doc:tt)*] $name:ident) => { pub struct $name; };\n}\nmacro_rules! relay {\n    ([$($doc:tt)*] $other:ident) => { declare!([] $other); };\n}\n";
+fn a_rule_that_hands_its_name_to_a_macro_keeps_the_arguments_up_to_it() {
+    let text = "macro_rules! entity {\n    (record $name:ident) => { declare!([] $name); };\n    (quiet $name:ident) => { let _ = $name; };\n    (moved $name:ident) => { $crate::path::declare! { $name } };\n}\n";
     let macros = index(text).macros;
-    let facts: Vec<(&str, Vec<&Defines>, Option<&Defines>)> = macros
+    let hand_offs: Vec<Vec<HandOff>> = macros[0]
+        .rules
         .iter()
-        .map(|found| {
-            let arms = found.arms.iter().map(|arm| &arm.defines).collect();
-            (found.name.as_str(), arms, found.defines.as_ref())
-        })
+        .flat_map(|rule| &rule.receives)
+        .map(|(_, receives)| receives.hand_offs.clone())
         .collect();
-    let declare = Defines::HandedTo("declare".to_owned());
-    let strukt = Defines::Kind(DefinitionKind::Struct);
+    let declare = |from_crate: bool, arguments: Vec<Element>| HandOff {
+        macro_name: "declare".to_owned(),
+        from_crate,
+        place: arguments.len() - 1,
+        arguments,
+        whole: true,
+    };
 
     assert_eq!(
-        facts,
+        hand_offs,
         [
-            ("relay", vec![], Some(&declare)),
-            ("declare", vec![], Some(&strukt)),
-            ("entity", vec![&declare], Some(&declare)),
+            vec![declare(
+                false,
+                vec![Element::Group('[', Some(vec![])), Element::Variable]
+            )],
+            vec![],
+            vec![declare(true, vec![Element::Variable])],
         ]
     );
 }

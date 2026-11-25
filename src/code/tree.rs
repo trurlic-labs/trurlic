@@ -16,7 +16,7 @@ use super::index::{Definition, FileIndex, IndexFault, Invocation, ModuleFile, Ty
 use super::kinds::What;
 use super::scope::{ScopeId, ScopeTree};
 use super::span::{Lines, Span, SpanHash};
-use super::syntax::Leaves;
+use super::syntax::{Leaves, Lexicon};
 use super::work::{SCAN_WORK_PER_BYTE, Work};
 
 /// The hash a definition or invocation holds until the end of the walk.
@@ -37,12 +37,12 @@ pub(super) struct TreeIndex<'t> {
 }
 
 impl<'t> TreeIndex<'t> {
-    /// The builder of `text`'s index, parsed as `tree` by a grammar whose
-    /// literal kinds are `literals`.
-    pub(super) fn new(text: &'t str, tree: &Tree, literals: &[&str]) -> Self {
+    /// The builder of `text`'s index, parsed as `tree` by a grammar of
+    /// `lexicon`.
+    pub(super) fn new(text: &'t str, tree: &Tree, lexicon: &Lexicon) -> Self {
         Self {
             text,
-            leaves: Leaves::of(tree, text, literals),
+            leaves: Leaves::of(tree, text, lexicon),
             lines: Lines::of(text.as_bytes()),
             scopes: ScopeTree::for_file(text.len()),
             work: Work::of(text.len(), SCAN_WORK_PER_BYTE),
