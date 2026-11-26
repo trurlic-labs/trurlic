@@ -17,17 +17,18 @@
 //! goes, a `use` list read whole. `std`, `core` and `alloc` go only to
 //! the modules of [`STD_MODULES`] and the items of the list. The crate
 //! (`crate`, `$crate`, or `super`s, read from the file's own module) goes
-//! only to the list's modules, each a path from the crate root a path may
-//! start with (`code`, `code::index`), and to its store items. A
-//! dependency is named only when the list holds it or the item named. Refused outright: the names of
-//! [`REFUSED_NAMES`] wherever they stand, a glob or an alias of such a
-//! root, an alias of any path of `std`, `core` or `alloc`, `extern crate`,
-//! a `macro_rules!` definition, an attribute that names a `path`
-//! (`#[path = ..]`, `#[cfg_attr(.., path = ..)]`), a `mod name` in a
-//! macro's tokens, which declares a module the check cannot see marked, a
-//! `mod name;` inside an inline module, whose file the check places by
-//! its declaring file's path alone, and the prelude macros of [`MACROS`],
-//! which read files or the environment or write a stream.
+//! only into the list's modules, each a path from the crate root
+//! (`code`, `code::index`) a path must go past, and to its store items.
+//! A dependency is named only when the list holds it or the item named.
+//! Refused outright: the names of [`REFUSED_NAMES`] wherever they stand,
+//! a glob or an alias of such a root, an alias of any path of `std`,
+//! `core` or `alloc`, `extern crate`, a `macro_rules!` definition, an
+//! attribute that names a `path` (`#[path = ..]`,
+//! `#[cfg_attr(.., path = ..)]`), a `mod name` in a macro's tokens, which
+//! declares a module the check cannot see marked, a `mod name;` inside an
+//! inline module, whose file the check places by its declaring file's
+//! path alone, and the prelude macros of [`MACROS`], which read files or
+//! the environment or write a stream.
 //! The one include admitted is `include_str!` of a plain string literal,
 //! a relative path that stays inside the checked directory: a language's
 //! query file, source of the index as its Rust files are.
@@ -691,7 +692,7 @@ fn path_fault(
     let refuse = || Some(format!("names `{spelled}`"));
     if let Some(rest) = from_crate(path, module) {
         return match rest.as_slice() {
-            rest if allowed.modules.iter().any(|module| is_within(rest, module)) => None,
+            rest if allowed.modules.iter().any(|module| goes_into(rest, module)) => None,
             ["store", item, ..] if allowed.store_items.contains(item) => None,
             _ => refuse(),
         };
@@ -726,6 +727,14 @@ fn path_fault(
 fn is_within(path: &[&str], module: &str) -> bool {
     let module: Vec<&str> = module.split("::").collect();
     path.starts_with(&module)
+}
+
+/// Whether `path`, segments from the crate root, goes into `module`, a
+/// module path such as `code::index`: the module itself is no item of
+/// it, so an item of its parent spelled as the module (the function
+/// `code::index` beside the module `code::index`) is outside.
+fn goes_into(path: &[&str], module: &str) -> bool {
+    path.len() > module.split("::").count() && is_within(path, module)
 }
 
 #[cfg(test)]
@@ -805,6 +814,10 @@ mod tests {
         ("crate_shell", "fn f() { crate::git::toplevel(); }\n"),
         ("crate_store", "fn f(store: &crate::store::Store) {}\n"),
         ("crate_glob", "use crate::*;\n"),
+        (
+            "parent_item_named_as_module",
+            "fn f() { crate::index(b\"x\"); }\n",
+        ),
         ("crate_alias", "use crate as c;\n"),
         (
             "super_reach",
