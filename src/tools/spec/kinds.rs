@@ -12,8 +12,9 @@ use super::{
 };
 
 /// A string of at most `max_bytes`. Its characters are the store's to judge:
-/// every text an op writes is held to `store::text`, a name to the name
-/// rule and an anchor to its own, so a refusal names the rule it breaks.
+/// every text an op writes is held to `store::model::text`, a name to the
+/// name rule and an anchor to its own, so a refusal names the rule it
+/// breaks.
 pub(crate) struct Text {
     pub max_bytes: usize,
 }

@@ -3,11 +3,12 @@
 //! every write but `init` and `migrate`, which under `shared` placement
 //! ends with a commit to the graph's own git repository.
 //!
-//! Its parts depend one way. `model` holds the values and names no other
-//! part; `graph` judges a loaded state; `format` reads and writes the files
-//! and knows the older formats; `write` opens the graph under its lock and
-//! commits to it; `quality`, `apply`, `cache` and `corpus` build on those.
-//! Code outside the store names its items through the re-exports here.
+//! Its parts depend one way, each naming only those before it: `model`
+//! holds the values; `graph` judges a loaded state; `format` reads and
+//! writes the files and holds the steps from older formats; `write` opens
+//! the graph under its lock and commits to it; `quality`, `apply`, `cache`
+//! and `corpus` build on those. Code outside the store names its items
+//! through the re-exports here.
 
 mod apply;
 mod cache;
