@@ -179,7 +179,7 @@ const REPAIRS: List<Object<Repair>> = List {
 };
 
 /// The repairs given, or, when none are, every repair the tree shows,
-/// which [`prepare`] fills in.
+/// which `tool::prepare` fills in.
 fn repair_anchors(fields: &mut Fields<'_, '_>) -> Op {
     let about = "Each stale anchor to replace, in its decision; absent, every repair \
                  `trurlic check` shows, in each decision ever accepted that holds the stale \

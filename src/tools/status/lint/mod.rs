@@ -4,7 +4,7 @@
 //! the bar a stored decision breaks, and the decisions with only file
 //! anchors come by decision name. The section lists them in that order of
 //! kinds, each kind fitted to the budget on its own. A finding is a
-//! [`finding`]; the section is gathered and fitted in [`gather`]. The
+//! [`finding`]; the section is gathered and fitted in [`mod@gather`]. The
 //! pairs are compared ([`pairs`]) and the `[quality]` patterns judged
 //! ([`patterns`]) only for the section asked for alone, the pairs only
 //! without `from`.
