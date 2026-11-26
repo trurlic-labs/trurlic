@@ -1,23 +1,30 @@
 component = "tools"
-choice = "A tool delegates every disk write to the store's Writer, and neither tools nor a surface above it touches a file under .trurlic/"
-reason = """
-A write tool runs on a Writer its entry begins for the call: ToolSpec::run hands a spec-built tool whose Access is Write the Writer of Store::begin_write, which holds the exclusive lock and the graph loaded under it, validates, commits through the journal and keeps its graph equal to disk. apply is the one write tool: its handler turns the parsed arguments into a store::Batch and calls Writer::apply, which holds every rule; status, get_context and get_decisions_for_file are reads on Store::load_state. The tool layer parses arguments and builds the JSON result, and the MCP server and the CLI twins only carry it, but none opens a file under .trurlic/, so the store stays the single authority for disk mutations and no tool bypasses its atomic write guarantees.
-"""
+choice = "apply is the one tool that writes the graph, on the store's Writer; no other tool or command adds, changes or removes a node, and no surface touches a file under .trurlic/"
+reason = "A write tool or a CLI command per op would each need the cascades and checks the store's batch already holds, and a change made of several of them would land in several commits. So apply, on MCP and as trurlic apply, is the one write: its ops cover every change of a node (record, revise, rename, merge, remove, the component ops, repair_anchors), with the cascades and checks in the store. Its handler turns the parsed arguments into a Batch and calls Writer::apply on the Writer that ToolSpec::run begins for the call, which holds the exclusive lock and the graph loaded under it, validates, commits through the journal and keeps its graph equal to disk; status, get_context and get_decisions_for_file are reads on Store::load_state. The tool layer parses arguments and builds the result, the MCP server and the CLI twins carry it, and none of them opens a file under .trurlic/, so no tool bypasses the store's atomic writes. init, fmt and migrate write a whole store through the store's own entry points, never a node's value. A hand edit stays a legal write: every load validates it, and fmt and check hold it to the same rules."
 alternatives = [
+    "A write tool or a CLI command per op: rejected because each needs cascade and validation logic the batch holds, and one change then lands in several commits",
     "A tool writes TOML files directly: rejected because it would bypass the atomic writes, the file lock and validation in the store",
-    "A separate write layer between the tools and the store: rejected because the Writer already is the right abstraction",
+    "A separate write layer between the tools and the store: rejected because the Writer already is that layer",
 ]
 tags = [
+    "api",
     "data-integrity",
     "module-boundary",
+    "scope",
 ]
 status = "proposed"
 created = "2026-06-15T09:44:59.411657570Z"
 anchors = [
+    { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
     { file = "src/tools/apply/mod.rs", symbol = "apply" },
-    { file = "src/tools/reads/mod.rs", symbol = "Read::call" },
+    { file = "src/tools/registry.rs", symbol = "TOOLS" },
     { file = "src/tools/spec/tool.rs", symbol = "Access" },
-    { file = "src/tools/spec/tool.rs", symbol = "SpecTool::call" },
+    { file = "src/tools/spec/tool.rs", symbol = "ToolSpec::run" },
+    { file = "tests/integration/golden/tools_list.json" },
+]
+depends_on = [
+    "a-load-fails-only-when-a-file-is-not-its-type",
+    "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",
 ]
 
 [accepted_text]

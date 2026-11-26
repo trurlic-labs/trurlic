@@ -1,4 +1,28 @@
 component = "store"
+choice = "A shared graph's write, fmt with nothing to rewrite included, first commits as hand edit each graph file its last commit does not hold as on disk, so its own commit holds the write alone"
+reason = "A hand edit is a legal write, so the graph's work tree can hold changes no tool made when a write starts; folded into the write's commit they would carry its Origin. Store::prepare_history runs before the commit point under the exclusive lock: git status over the graph files, and when the branch has a commit and any of them differs, they are staged as they are on disk and committed as hand edit. A failure there leaves the graph as it was. In a repository with no commit yet there is nothing to edit: the write's commit is the first and holds every graph file. The way to land a hand edit is trurlic fmt, then trurlic check, and check warns of graph files the history does not hold, so Writer::format runs prepare_history alone when it has nothing to rewrite: the one hand edit commit a write would make. With files to rewrite it makes that commit and then its own."
+alternatives = [
+    "Fold hand edits into the write's commit: rejected because the commit would claim the write's Origin for edits it did not make",
+    "Refuse a write while hand edits are uncommitted: rejected because a hand edit is a legal write, and the owner would have to commit by hand before every tool call",
+    "Commit hand edits only at a write that changes files: rejected because the owner would have no command but git to settle the history",
+    "A trurlic commit command: rejected because fmt is the command that settles the files",
+]
+tags = [
+    "git",
+    "history",
+]
+status = "proposed"
+created = "2026-11-24T12:00:00Z"
+anchors = [
+    { file = "src/store/write/access.rs", symbol = "Writer::format" },
+    { file = "src/store/write/history.rs", symbol = "HAND_EDIT" },
+    { file = "src/store/write/history.rs", symbol = "Store::prepare_history" },
+]
+depends_on = [
+    "a-shared-graph-is-a-git-repository-of-its-own-and-every-write-is-one-commit-there",
+]
+
+[accepted_text]
 choice = "A shared graph's write first commits, as hand edit, every graph file its last commit does not hold as it is on disk, so the write's own commit holds the write alone"
 reason = """
 A hand edit is a legal write, so the graph's work tree can hold changes no tool made when a write starts; folded into the write's commit they would carry its Origin. Store::prepare_history runs before the commit point under the exclusive lock: git status over the graph files, and when the branch has a commit and any of them differs, they are staged as they are on disk and committed as \"hand edit\". A failure there leaves the graph as it was. In a repository with no commit yet there is nothing to edit: the write's commit is the first and holds every graph file.
@@ -6,17 +30,4 @@ A hand edit is a legal write, so the graph's work tree can hold changes no tool 
 alternatives = [
     "Fold hand edits into the write's commit: rejected because the commit would claim the write's Origin for edits it did not make",
     "Refuse a write while hand edits are uncommitted: rejected because a hand edit is a legal write, and the owner would have to commit by hand before every tool call",
-]
-tags = [
-    "git",
-    "history",
-]
-status = "accepted"
-created = "2026-11-24T12:00:00Z"
-anchors = [
-    { file = "src/store/write/history.rs", symbol = "HAND_EDIT" },
-    { file = "src/store/write/history.rs", symbol = "Store::prepare_history" },
-]
-depends_on = [
-    "a-shared-graph-is-a-git-repository-of-its-own-and-every-write-is-one-commit-there",
 ]

@@ -22,6 +22,6 @@ anchors = [
     { file = "tests/integration/placement.rs", symbol = "init_tracked_needs_a_work_tree_whose_git_does_not_ignore_the_graph" },
 ]
 depends_on = [
-    "a-tracked-graph-is-one-git-tracks-a-file-of-and-ignores-none",
+    "check-refuses-a-placement-git-contradicts-and-a-second-graph",
     "trurlic-init-requires-placement",
 ]

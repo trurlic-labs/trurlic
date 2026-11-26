@@ -23,5 +23,6 @@ anchors = [
     { file = "src/store/format/migration/steps.rs", symbol = "STEPS" },
     { file = "src/store/format/migration/steps.rs", symbol = "Step" },
     { file = "src/store/format/migration/steps.rs", symbol = "chain" },
+    { file = "src/store/model/schema.rs", symbol = "FORMAT_VERSION" },
     { file = "src/store/write/migrate.rs", symbol = "Store::migration_chain" },
 ]

@@ -1,4 +1,38 @@
 component = "store"
+choice = "check refuses a tracked graph git tracks no file of, ignores a file of or finds outside a work tree, a shared graph git tracks or off the main worktree's top, and a second graph"
+reason = "The placement decides how the graph is found and versioned, so one git contradicts breaks it without a word: a tracked graph git does not version is missing from every linked worktree, a shared graph git tracks is committed with the code and checked out as a second copy, and a linked worktree's own .trurlic/ hides the shared graph from itself, since the walk finds its own first. A file of the graph is tracked when the index holds its path, the rule the migration reads git's listing by (store::graph::placement::partition). A tracked graph needs one tracked file, not all: a decision written and checked before git add is a change waiting for its commit. One git tracks none of is refused, since linked worktrees check out nothing, and so is a file an ignore rule matches, which can never be committed, and a tracked graph outside any work tree. A shared graph outside any work tree passes, since symlinked trees reach it; in a work tree it is the main worktree's at its top, where linked worktrees look, and elsewhere, or in a bare repository's worktree, it is SharedOffMain. Every other graph directory is a second graph: a linked worktree's beside a shared main graph, found from the main worktree with its branch, and this graph when the main worktree's is shared, found from the linked side whatever placement it states. check names each as an issue of its own kind, whose subject is the graph directory at fault and whose message names the files or the worktree and its branch, and fails; status and the reads ask git nothing."
+alternatives = [
+    "Warn and pass: rejected because a contradicted placement breaks how the graph is found or versioned, and nothing else would say so",
+    "Check the placement on every command: rejected because every read would spawn git",
+    "Every file tracked: rejected because a decision written and checked before git add would fail check",
+    "Only an ignore rule contradicts tracked: rejected because a tracked graph never committed would pass while every linked worktree finds no graph",
+    "Report a second graph only from the main worktree: rejected because a check run in the linked worktree, which reads its own graph, would pass",
+]
+tags = [
+    "git",
+    "placement",
+    "validation",
+]
+status = "proposed"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/commands/check.rs", symbol = "check" },
+    { file = "src/store/graph/placement.rs", symbol = "ProjectState::placement_issues" },
+    { file = "src/store/graph/placement.rs", symbol = "partition" },
+    { file = "src/store/graph/placement.rs", symbol = "second_graphs" },
+    { file = "src/store/graph/placement.rs", symbol = "shared_issues" },
+    { file = "src/store/graph/placement.rs", symbol = "tracked_issues" },
+    { file = "src/store/graph/validate.rs", symbol = "IssueKind" },
+    { file = "tests/integration/placement.rs", symbol = "check_refuses_a_second_graph_beside_a_shared_one_from_both_sides" },
+    { file = "tests/integration/placement.rs", symbol = "check_refuses_a_shared_graph_git_tracks_from_every_tree" },
+    { file = "tests/integration/placement.rs", symbol = "check_refuses_a_tracked_graph_git_tracks_none_of" },
+]
+depends_on = [
+    "trurlic-init-requires-placement",
+    "validation-issues-carry-a-kind-and-a-subject-and-come-sorted",
+]
+
+[accepted_text]
 choice = "check refuses a placement git contradicts and a second graph directory beside a shared one, each a typed issue naming the paths"
 reason = """
 The placement decides how the graph is found and versioned, so a placement git contradicts breaks one of the two without a word: a tracked graph git does not version is missing from every linked worktree, a shared graph git tracks is committed with the code and checked out as a second copy, and a linked worktree that carries its own .trurlic/ hides the shared graph from itself, since the walk finds its own first. check names each as an issue of its own kind (TrackedUnversioned, TrackedIgnored, SharedVersioned, SharedOffMain, SecondGraph) whose subject is the graph directory at fault and whose message names the files or the worktree and its branch, sorted as validation issues are, and fails. Only check asks git; status and the reads do not, so they cost no process.
@@ -6,22 +40,4 @@ The placement decides how the graph is found and versioned, so a placement git c
 alternatives = [
     "Warn and pass: rejected because the owner's design has check refuse it",
     "Check the placement on every command: rejected because every read would spawn git",
-]
-tags = [
-    "git",
-    "placement",
-    "validation",
-]
-status = "accepted"
-created = "2026-11-24T03:00:00Z"
-anchors = [
-    { file = "src/commands/check.rs", symbol = "check" },
-    { file = "src/store/graph/placement.rs", symbol = "ProjectState::placement_issues" },
-    { file = "src/store/graph/validate.rs", symbol = "IssueKind" },
-    { file = "tests/integration/placement.rs", symbol = "check_refuses_a_second_graph_beside_a_shared_one_from_both_sides" },
-    { file = "tests/integration/placement.rs", symbol = "check_refuses_a_shared_graph_git_tracks_from_every_tree" },
-]
-depends_on = [
-    "trurlic-init-requires-placement",
-    "validation-issues-carry-a-kind-and-a-subject-and-come-sorted",
 ]

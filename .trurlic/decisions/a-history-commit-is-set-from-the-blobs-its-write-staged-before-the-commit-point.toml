@@ -1,17 +1,17 @@
 component = "store"
 choice = "A shared write's staged files become blobs before its commit point, named in the journal; its history commit's index is set from those ids, so it holds the write's bytes whatever the files hold"
-reason = "The commit used to stage the write's files as they were on disk after the renames and judge by content whether it was made. A hand edit of one of those files between a stopped write and the opener that finished it was then committed under the write's Origin, and while a read keeps a history commit that waits, that window is open-ended. Store::write_blobs runs one update-index on a scratch index in .state/tmp/, with that directory as the work tree, so the staged bytes become blobs in one object transaction flushed once, and ls-files --stage reads the ids back; the repository's index and work tree are not touched. The journal's HistoryStep carries the message, the parent (the branch's commit after any hand edit commit) and each blob id, and commit_history sets the index from them with update-index --index-info, a removal at the null name, then commits. An opener that finishes a stopped write looks for its commit first: the first commit after the parent on the first-parent line whose tree holds the blobs and none of the removed files is the write's, reworded, amended, packed or followed by a hand commit since, and none is made again. A blob git lost since, to a gc --prune=now or a repository made again, is staged from the file on disk with a warning. Measured on this disk: the scratch index costs 11.5 ms for one blob and 23.9 ms for fifty, against 10.5 and 23.6 ms for the update-index it replaces after the commit point."
+reason = "A hand edit of a write's files between a stopped write and the opener that finishes it must not be committed under the write's Origin, and while a read keeps a history commit that waits, that window is open-ended. So the commit holds the bytes the write staged, never the files as they are then: Store::write_blobs runs one update-index on a scratch index in .state/tmp/, with that directory as the work tree, so the staged bytes become blobs in one object transaction, and ls-files --stage reads the ids back; the repository's index and work tree are not touched. The journal's HistoryStep carries the message, the parent (the branch's commit after any hand edit commit) and each blob id, and commit_history sets the index from them with update-index --index-info, a removal at the null name, then commits. An opener that finishes a stopped write looks for its commit first: the first commit after the parent on the first-parent line whose tree holds the blobs and none of the removed files is the write's, reworded, amended, packed or followed by a hand commit since, and none is made again. A blob git lost since, to a gc --prune=now or a repository made again, is staged from the file on disk with a warning."
 alternatives = [
     "Stage the files as on disk after the renames and judge the commit by content: rejected because a hand edit made before the opener runs is committed as the write's",
-    "hash-object -w --stdin-paths: rejected because it opens no object transaction, so every blob is flushed on its own, 581 ms for fifty blobs",
-    "fast-import with marks: rejected because it writes a pack and loosens it in a child unpack-objects, about twice the scratch index's time for one blob",
+    "hash-object -w --stdin-paths: rejected because it opens no object transaction, so every blob is flushed on its own",
+    "fast-import with marks: rejected because it writes a pack and loosens it in a child unpack-objects, slower than the scratch index for the blobs of a write",
     "A write id in a trailer looked up at HEAD: rejected because a reword drops it and a hand commit after the write hides it",
 ]
 tags = [
     "history",
     "reliability",
 ]
-status = "accepted"
+status = "proposed"
 created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/git/graph/index.rs", symbol = "Repository::set_index" },
@@ -27,4 +27,14 @@ anchors = [
 depends_on = [
     "a-history-commit-names-the-tool-and-carries-its-batch-s-trailers",
     "every-commit-goes-through-a-flushed-journal-in-state-txn",
+]
+
+[accepted_text]
+choice = "A shared write's staged files become blobs before its commit point, named in the journal; its history commit's index is set from those ids, so it holds the write's bytes whatever the files hold"
+reason = "The commit used to stage the write's files as they were on disk after the renames and judge by content whether it was made. A hand edit of one of those files between a stopped write and the opener that finished it was then committed under the write's Origin, and while a read keeps a history commit that waits, that window is open-ended. Store::write_blobs runs one update-index on a scratch index in .state/tmp/, with that directory as the work tree, so the staged bytes become blobs in one object transaction flushed once, and ls-files --stage reads the ids back; the repository's index and work tree are not touched. The journal's HistoryStep carries the message, the parent (the branch's commit after any hand edit commit) and each blob id, and commit_history sets the index from them with update-index --index-info, a removal at the null name, then commits. An opener that finishes a stopped write looks for its commit first: the first commit after the parent on the first-parent line whose tree holds the blobs and none of the removed files is the write's, reworded, amended, packed or followed by a hand commit since, and none is made again. A blob git lost since, to a gc --prune=now or a repository made again, is staged from the file on disk with a warning. Measured on this disk: the scratch index costs 11.5 ms for one blob and 23.9 ms for fifty, against 10.5 and 23.6 ms for the update-index it replaces after the commit point."
+alternatives = [
+    "Stage the files as on disk after the renames and judge the commit by content: rejected because a hand edit made before the opener runs is committed as the write's",
+    "hash-object -w --stdin-paths: rejected because it opens no object transaction, so every blob is flushed on its own, 581 ms for fifty blobs",
+    "fast-import with marks: rejected because it writes a pack and loosens it in a child unpack-objects, about twice the scratch index's time for one blob",
+    "A write id in a trailer looked up at HEAD: rejected because a reword drops it and a hand commit after the write hides it",
 ]

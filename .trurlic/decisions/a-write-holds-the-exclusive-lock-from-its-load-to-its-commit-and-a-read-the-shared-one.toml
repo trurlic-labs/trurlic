@@ -1,4 +1,34 @@
 component = "store"
+choice = "A write holds the exclusive lock in its Writer from its load to its last commit and validates against that graph; a read takes the shared lock for its load alone"
+reason = "A write that validated against a graph loaded before it took the lock lost another process's commit in between. Store::begin_write takes the exclusive lock, checks the format, recovers, loads the graph under the lock and returns a Writer that owns both. Every graph write is a Writer method and its fields are private to the store, so no caller can pair the lock with a graph loaded before it, a graph a read loaded is never committed, and each commit leaves the writer's graph equal to the files. The apply tool, its CLI twin and trurlic fmt write through a Writer; a write tool gets its Writer from ToolSpec::run_on, one per call, so the dispatch and not the handler takes the lock. migrate takes Store::lock itself and plans under it, since it reads files the current types cannot. Every commit takes the StoreLock, so no command writes without it. A read, query through open_store, check and the status tool among them, takes the shared lock for its load alone, so it waits only while a writer holds the lock and never on another read."
+alternatives = [
+    "Validate against a graph loaded earlier, then lock and commit: rejected because that is the lost update",
+    "Lock and reload inside each tool handler or command: rejected because every one must remember to validate after the reload, and scattered locking is how a write forgets its lock",
+    "One open function that always takes the exclusive lock: rejected because status and check would wait on each other and on every MCP read",
+    "Skip the reload when file fingerprints match: rejected because the store keeps no fingerprints, and the unconditional load is correct",
+]
+tags = [
+    "concurrency",
+    "error-handling",
+    "reliability",
+]
+status = "proposed"
+created = "2026-10-02T11:35:08.670219118Z"
+anchors = [
+    { file = "src/commands/fmt.rs", symbol = "fmt" },
+    { file = "src/commands/migrate.rs", symbol = "migrate" },
+    { file = "src/commands/mod.rs", symbol = "open_store" },
+    { file = "src/store/write/access.rs", symbol = "Store::begin_write" },
+    { file = "src/store/write/access.rs", symbol = "Store::load_state" },
+    { file = "src/store/write/access.rs", symbol = "Writer" },
+    { file = "src/store/write/access.rs", symbol = "Writer::format" },
+    { file = "src/tools/spec/tool.rs", symbol = "ToolSpec::run_on" },
+]
+depends_on = [
+    "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",
+]
+
+[accepted_text]
 choice = "Every write validates against the graph loaded under the exclusive lock, held with that lock in the Writer that begin_write returns"
 reason = """
 A write that validated against a graph loaded before it took the file lock silently lost another process's commit in between. Store::begin_write takes the exclusive lock, checks the format, recovers, loads the graph under the lock and returns a Writer that owns both. Every graph write is a Writer method and the Writer's fields are private to the store, so no caller can pair the lock with a graph loaded before it, and a graph a read loaded can never be committed. Each commit leaves the writer's graph equal to the files. Today the one write method is Writer::format, behind trurlic fmt. A spec-built MCP tool whose Access is Write gets its Writer from SpecTool::call, one per call, so the dispatch and not the handler takes the lock. migrate takes the lock itself, since it plans on files the current types cannot read.
@@ -7,20 +37,4 @@ alternatives = [
     "Validate against a graph loaded earlier, then lock and commit: rejected because that is the lost update",
     "Lock and reload inside each tool handler: rejected because every handler must remember to validate after the reload; one call site cannot forget",
     "Skip the reload when file fingerprints match: rejected because the store keeps no fingerprints, and the unconditional load is correct and within budget",
-]
-tags = [
-    "concurrency",
-    "reliability",
-]
-status = "accepted"
-created = "2026-10-02T11:35:08.670219118Z"
-anchors = [
-    { file = "src/commands/fmt.rs", symbol = "fmt" },
-    { file = "src/store/write/access.rs", symbol = "Store::begin_write" },
-    { file = "src/store/write/access.rs", symbol = "Writer" },
-    { file = "src/store/write/access.rs", symbol = "Writer::format" },
-    { file = "src/tools/spec/tool.rs", symbol = "SpecTool::call" },
-]
-depends_on = [
-    "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",
 ]
