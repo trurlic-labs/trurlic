@@ -1,5 +1,5 @@
 //! Tool argument specs: one declaration per tool yields both the input
-//! schema `tools/list` advertises and the parser the tool's calls go
+//! schema a surface lists and the parser the tool's calls go
 //! through, so the two cannot drift.
 //!
 //! An [`Args`] type declares its fields in [`Args::declare`], reading each
@@ -25,7 +25,8 @@ use serde_json::{Map, Value};
 
 pub(crate) use output::{Output, to_value};
 pub(super) use output::{Shown, output_schema};
-pub(super) use tool::{Destructive, SpecTool};
+pub(crate) use tool::Destructive;
+pub(super) use tool::SpecTool;
 
 // -- Declarations ---------------------------------------------------------
 

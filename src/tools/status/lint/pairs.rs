@@ -4,10 +4,10 @@
 //! compared, why no more, and how the rest come to be compared.
 
 use crate::lint::duplicates::{Among, Similarity};
-use crate::mcp::spec::output::{Count, Nested, Str, Tag};
-use crate::mcp::spec::{Output, Shown};
 use crate::store::ProjectState;
 use crate::store::limits::MAX_DUPLICATE_WORK;
+use crate::tools::spec::output::{Count, Nested, Str, Tag};
+use crate::tools::spec::{Output, Shown};
 
 use super::{LintItem, LintKind, Patterns, Work, is_under, lint_limit};
 
@@ -167,8 +167,8 @@ impl Output for PairCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::spec::to_value;
     use crate::store::testing::{empty_state, sample_decision};
+    use crate::tools::spec::to_value;
 
     /// Three decisions of one text, three pairs at a score of one.
     fn copies() -> ProjectState {

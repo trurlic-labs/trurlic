@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::console::out;
-use crate::mcp::{
+use crate::tools::{
     AnchorCounts, Cut, LintItem, PairCounts, Part, PatternCounts, QualityCounts, Report, STATUS,
     ToolError,
 };

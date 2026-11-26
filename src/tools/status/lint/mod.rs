@@ -11,11 +11,11 @@
 use crate::budget::MAX_TOOL_RESULT_BYTES;
 use crate::lint::duplicates::Score;
 use crate::lint::quality;
-use crate::mcp::spec::output::{Count, Nested, Str, Tag};
-use crate::mcp::spec::{Output, Shown, to_value};
-use crate::mcp::truncate::json_len;
 use crate::store::limits::MAX_NAME_BYTES;
 use crate::store::{Decision, Level, ProjectState, QualityFault, Shortfall};
+use crate::tools::spec::output::{Count, Nested, Str, Tag};
+use crate::tools::spec::{Output, Shown, to_value};
+use crate::tools::truncate::json_len;
 
 use super::{Listed, Part};
 

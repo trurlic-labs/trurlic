@@ -16,10 +16,10 @@ status = "accepted"
 created = "2026-10-02T11:35:08.670219118Z"
 anchors = [
     { file = "src/commands/fmt.rs", symbol = "fmt" },
-    { file = "src/mcp/spec/tool.rs", symbol = "SpecTool::call" },
     { file = "src/store/access.rs", symbol = "Store::begin_write" },
     { file = "src/store/access.rs", symbol = "Writer" },
     { file = "src/store/access.rs", symbol = "Writer::format" },
+    { file = "src/tools/spec/tool.rs", symbol = "SpecTool::call" },
 ]
 depends_on = [
     "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",

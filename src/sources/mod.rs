@@ -4,7 +4,7 @@
 //! forked from the calling tree's, and what git's history says of the
 //! stale anchors' files and their repairs; reads and fills the index's
 //! cache through the [`Store`](crate::store::Store); and hands the facts to `code` and `lint`
-//! as data. `mcp` (`status`, `apply`) and `commands` (`check`) stand on
+//! as data. `tools` (`status`, `apply`) and `commands` (`check`) stand on
 //! it. A caller holds no lock of the store while it runs: the cache's
 //! write takes the exclusive lock when it is free, and the caller's own
 //! shared lock would keep it busy.

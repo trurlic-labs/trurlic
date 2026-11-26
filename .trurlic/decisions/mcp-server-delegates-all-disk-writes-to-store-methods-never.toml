@@ -1,4 +1,26 @@
-component = "mcp"
+component = "tools"
+choice = "A tool delegates every disk write to the store's Writer, and neither tools nor a surface above it touches a file under .trurlic/"
+reason = """
+A write tool runs on a Writer its entry begins for the call: ToolSpec::run hands a spec-built tool whose Access is Write the Writer of Store::begin_write, which holds the exclusive lock and the graph loaded under it, validates, commits through the journal and keeps its graph equal to disk. apply is the one write tool: its handler turns the parsed arguments into a store::Batch and calls Writer::apply, which holds every rule; status, get_context and get_decisions_for_file are reads on Store::load_state. The tool layer parses arguments and builds the JSON result, and the MCP server and the CLI twins only carry it, but none opens a file under .trurlic/, so the store stays the single authority for disk mutations and no tool bypasses its atomic write guarantees.
+"""
+alternatives = [
+    "A tool writes TOML files directly: rejected because it would bypass the atomic writes, the file lock and validation in the store",
+    "A separate write layer between the tools and the store: rejected because the Writer already is the right abstraction",
+]
+tags = [
+    "data-integrity",
+    "module-boundary",
+]
+status = "proposed"
+created = "2026-06-15T09:44:59.411657570Z"
+anchors = [
+    { file = "src/tools/apply/mod.rs", symbol = "apply" },
+    { file = "src/tools/legacy/mod.rs", symbol = "Read::call" },
+    { file = "src/tools/spec/tool.rs", symbol = "Access" },
+    { file = "src/tools/spec/tool.rs", symbol = "SpecTool::call" },
+]
+
+[accepted_text]
 choice = "The MCP server delegates every disk write to the store's Writer and never touches a file under .trurlic/"
 reason = """
 A write tool runs on a Writer the dispatch begins for the call: SpecTool::call hands a spec-built tool whose Access is Write the Writer of Store::begin_write, which holds the exclusive lock and the graph loaded under it, validates, commits through the journal and keeps its graph equal to disk. apply is the one write tool: its handler turns the parsed arguments into a store::Batch and calls Writer::apply, which holds every rule; status, get_context and get_decisions_for_file are reads on Store::load_state. The MCP module parses arguments and builds the JSON result but never opens a file under .trurlic/, so the store stays the single authority for disk mutations and no tool bypasses its atomic write guarantees.
@@ -6,16 +28,4 @@ A write tool runs on a Writer the dispatch begins for the call: SpecTool::call h
 alternatives = [
     "The MCP module writes TOML files directly: rejected because it would bypass the atomic writes, the file lock and validation in the store",
     "A separate write layer between MCP and the store: rejected because the Writer already is the right abstraction",
-]
-tags = [
-    "data-integrity",
-    "module-boundary",
-]
-status = "accepted"
-created = "2026-06-15T09:44:59.411657570Z"
-anchors = [
-    { file = "src/mcp/apply/mod.rs", symbol = "apply" },
-    { file = "src/mcp/spec/tool.rs", symbol = "Access" },
-    { file = "src/mcp/spec/tool.rs", symbol = "SpecTool::call" },
-    { file = "src/mcp/tools.rs", symbol = "Read::call" },
 ]

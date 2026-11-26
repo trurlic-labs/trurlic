@@ -136,7 +136,7 @@ pub(crate) const MAX_QUOTED_MATCH_BYTES: usize = 40;
 /// the rest are counted. Each `warn` pattern warns once per op, so an op
 /// can draw [`MAX_QUALITY_PATTERNS`] warnings and fifty ops 1,600: no
 /// result lists them within its budget beside the ops it names. The
-/// arithmetic is in `mcp/apply.rs`, beside the test that holds it.
+/// arithmetic is in `tools/apply/result.rs`, beside the test that holds it.
 pub(crate) const MAX_WARNINGS_PER_OP: usize = 1;
 
 /// Bytes the messages of a project's `warn` patterns take together, as a

@@ -205,8 +205,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::mcp::spec::Fault;
     use crate::store::{FORMAT_VERSION, FormatVersion};
+    use crate::tools::spec::Fault;
 
     fn refusal_payload(result: ToolResult) -> Value {
         let (text, kind) = result.into_parts();

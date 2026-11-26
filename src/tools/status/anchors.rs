@@ -10,10 +10,10 @@
 //! or weak anchor needs no git, and is reported as `check` reports it.
 
 use crate::lint::anchors::{Finding, Kind, KindName, Unasked, WEAK_FILES};
-use crate::mcp::spec::output::{Count, Nested, Str, Tag};
-use crate::mcp::spec::{Output, Shown};
 use crate::sources;
 use crate::store::{ProjectState, Store};
+use crate::tools::spec::output::{Count, Nested, Str, Tag};
+use crate::tools::spec::{Output, Shown};
 
 use super::report::{Part, Report};
 

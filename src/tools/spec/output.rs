@@ -1,5 +1,5 @@
 //! Tool result specs: one declaration per result type yields both the
-//! `outputSchema` `tools/list` advertises and the JSON a call returns, so
+//! output schema a surface lists and the JSON a call returns, so
 //! the two cannot drift.
 //!
 //! An [`Output`] type declares its fields in [`Output::declare`], each

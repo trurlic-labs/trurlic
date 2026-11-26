@@ -6,13 +6,13 @@
 //! decision where a call with `from` reads on.
 
 use crate::lint::quality::{self, Found, Reach, Stop};
-use crate::mcp::spec::output::{Count, Nested, Str, Tag};
-use crate::mcp::spec::{Output, Shown};
 use crate::store::limits::MAX_REPORT_PATTERN_BYTES;
 use crate::store::{Bar, Decision, ProjectState, Shortfall};
+use crate::tools::spec::output::{Count, Nested, Str, Tag};
+use crate::tools::spec::{Output, Shown};
 
-use crate::mcp::result::ToolError;
-use crate::mcp::status::Section;
+use crate::tools::result::ToolError;
+use crate::tools::status::Section;
 
 /// The decisions the `[quality]` patterns read, why they read no more, and
 /// where the next page starts.
@@ -121,7 +121,7 @@ impl Cut {
 /// every decision they read, and from which decision on: the `lint`
 /// section asked for alone does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::mcp::status) enum Patterns<'a> {
+pub(in crate::tools::status) enum Patterns<'a> {
     /// The decisions named `from` or after, all when `None`.
     Judged {
         from: Option<&'a str>,
@@ -134,7 +134,7 @@ impl<'a> Patterns<'a> {
     /// the `lint` section alone, else the limits alone. `from` beside any
     /// other section is refused, since only the patterns read the
     /// decisions a page at a time.
-    pub(in crate::mcp::status) fn of(
+    pub(in crate::tools::status) fn of(
         section: Option<Section>,
         from: Option<&'a str>,
     ) -> Result<Self, ToolError> {
@@ -206,7 +206,7 @@ pub(super) fn shortfalls<'s>(
 }
 
 /// How far a call's patterns read, before the result's room is known.
-pub(in crate::mcp::status) struct Reading<'s> {
+pub(in crate::tools::status) struct Reading<'s> {
     verdict: Verdict,
     /// The decision of the first finding past those the pass kept.
     beyond: Option<&'s str>,
@@ -354,13 +354,13 @@ mod tests {
 
     use super::*;
     use crate::lint::quality::Next;
-    use crate::mcp::result::ToolResult;
-    use crate::mcp::spec::to_value;
-    use crate::mcp::status::{StatusArgs, status};
     use crate::store::Store;
     use crate::store::corpus::Corpus;
     use crate::store::limits::{MAX_QUALITY_PATTERNS, MAX_TEXT_FIELD_BYTES};
     use crate::store::testing::OUTGROWS_ITS_CACHE;
+    use crate::tools::result::ToolResult;
+    use crate::tools::spec::to_value;
+    use crate::tools::status::{StatusArgs, status};
 
     /// The patterns' reading of `d0` to `d5`, stopped for `why` before
     /// `next`.
@@ -430,11 +430,11 @@ mod tests {
     /// The decisions of a page's quality findings, fitted by keeping the
     /// first `room`: the decisions listed, what was omitted, and the counts.
     fn page_of(decisions: Vec<&'static str>, room: usize) -> (Vec<String>, usize, PatternCounts) {
-        use crate::mcp::status::lint::{
+        use crate::store::Level;
+        use crate::tools::status::lint::{
             LintCounts, LintItem, LintItems, LintKind, Page, QualityItem, fitted,
         };
-        use crate::mcp::status::{Listed, Part};
-        use crate::store::Level;
+        use crate::tools::status::{Listed, Part};
 
         let item = |decision: &str| {
             LintItem::Quality(QualityItem {

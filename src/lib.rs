@@ -11,6 +11,7 @@ pub(crate) mod lint;
 pub(crate) mod mcp;
 pub(crate) mod sources;
 pub mod store;
+pub(crate) mod tools;
 
 pub use error::{Error, Result};
 

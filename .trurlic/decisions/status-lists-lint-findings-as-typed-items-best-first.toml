@@ -1,4 +1,4 @@
-component = "mcp"
+component = "tools"
 choice = "status has a lint section whose items are a LintItem enum tagged by kind: a duplicate names its two decisions, first by name, and its score; pairs best first, then by names"
 reason = "Findings of other kinds will join the section, the code index's anchor findings and the quality checks over the graph, each with fields of its own. So an item is an enum whose kind tag names the variant and whose fields are declared once in its Output, a new kind being one more variant. The decision field is common to every kind; a duplicate adds other and score, a string of six decimals so every machine prints the same text. Pairs come best first, then by their names, so the ones most worth reading lead and a cut drops the weakest. The section is fitted like every other, from a total that counts every pair found and the best pairs a result can hold; the pairs that a cut leaves out rank at or below the last listed, which stays true when scores tie at the cut. The quality and file-anchor findings are further variants."
 alternatives = [
@@ -13,10 +13,10 @@ origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
     { file = "src/commands/status.rs", symbol = "finding" },
-    { file = "src/mcp/status/lint.rs", symbol = "LintItem" },
-    { file = "src/mcp/status/lint.rs", symbol = "PAIRS_MORE" },
-    { file = "src/mcp/status/lint.rs", symbol = "gather" },
-    { file = "src/mcp/status/mod.rs", symbol = "Section::more" },
+    { file = "src/tools/status/lint/mod.rs", symbol = "LintItem" },
+    { file = "src/tools/status/lint/mod.rs", symbol = "PAIRS_MORE" },
+    { file = "src/tools/status/lint/mod.rs", symbol = "gather" },
+    { file = "src/tools/status/mod.rs", symbol = "Section::more" },
     { file = "tests/integration/budget.rs", symbol = "status_fits_the_budget_and_counts_what_it_leaves_out" },
 ]
 depends_on = [

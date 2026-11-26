@@ -9,7 +9,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::mcp::result::{ResultKind, ToolResult};
+use crate::tools::{ResultKind, ToolResult};
 
 /// Typed MCP tool-result envelope; `text` holds the result's text as the
 /// tool layer fitted it.
@@ -54,7 +54,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::mcp::result::ToolError;
+    use crate::tools::ToolError;
 
     fn wire(result: ToolResult) -> Value {
         serde_json::to_value(ToolEnvelope::from(result)).unwrap()

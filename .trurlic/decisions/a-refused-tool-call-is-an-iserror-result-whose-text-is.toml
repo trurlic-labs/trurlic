@@ -16,9 +16,9 @@ created = "2026-11-23T23:15:10.921780295Z"
 anchors = [
     { file = "src/mcp/envelope.rs", symbol = "ToolEnvelope" },
     { file = "src/mcp/mod.rs", symbol = "call_tool" },
-    { file = "src/mcp/result.rs", symbol = "ErrorKind" },
-    { file = "src/mcp/result.rs", symbol = "ToolError" },
     { file = "src/store/apply/refusal.rs", symbol = "Refusal" },
+    { file = "src/tools/result.rs", symbol = "ErrorKind" },
+    { file = "src/tools/result.rs", symbol = "ToolError" },
 ]
 
 [accepted_text]

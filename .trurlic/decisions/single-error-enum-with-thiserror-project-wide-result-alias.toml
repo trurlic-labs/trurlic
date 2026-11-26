@@ -17,5 +17,5 @@ anchors = [
     { file = "src/commands/apply.rs", symbol = "apply" },
     { file = "src/commands/install.rs", symbol = "InstallError" },
     { file = "src/error.rs", symbol = "Error" },
-    { file = "src/mcp/result.rs", symbol = "ToolError" },
+    { file = "src/tools/result.rs", symbol = "ToolError" },
 ]

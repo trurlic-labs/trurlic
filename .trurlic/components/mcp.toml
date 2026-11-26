@@ -1,7 +1,5 @@
-description = "MCP server: JSON-RPC stdio, version negotiation, the server's own requests, argument and result specs, the apply and status tools and their CLI twins, tool dispatch, context assembly, the 24 KiB result cap"
+description = "MCP server: JSON-RPC over stdio, version negotiation, the client and the server's own requests, the tool-result envelope and the tools/list entries, over the tool layer"
 connects_to = [
-    "discovery",
-    "lint",
-    "sources",
     "store",
+    "tools",
 ]

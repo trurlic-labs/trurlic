@@ -1,4 +1,4 @@
-//! What `apply` returns, declared once for its `outputSchema` and its
+//! What `apply` returns, declared once for its output schema and its
 //! JSON: each op's node and what it changed, the warnings, the repairs
 //! written and the stale anchors left, the likely duplicates, and the
 //! files written. The lists a batch cannot bound fill the room the rest
@@ -6,10 +6,10 @@
 //! longest refusal of a batch to the result budget.
 
 use crate::budget::MAX_TOOL_RESULT_BYTES;
-use crate::mcp::spec::output::{Count, Items, Nested, Str, Tag};
-use crate::mcp::spec::{Output, Shown, to_value};
-use crate::mcp::truncate::json_len;
 use crate::store::{Applied, Done, Field, OpKind, PatternNote, StatusName, Warning, WarningKind};
+use crate::tools::spec::output::{Count, Items, Nested, Str, Tag};
+use crate::tools::spec::{Output, Shown, to_value};
+use crate::tools::truncate::json_len;
 
 use super::duplicates::Duplicates;
 use super::repairs::{self, Left, Repaired};
@@ -238,11 +238,11 @@ impl Output for Done {
 mod tests {
     use super::*;
     use crate::budget::MAX_TOOL_RESULT_BYTES;
-    use crate::mcp::apply::duplicates::{NEAREST, Nearest};
     use crate::store::Anchor;
     use crate::store::limits::{
         MAX_ALTERNATIVE_BYTES, MAX_BATCH_OPS, MAX_LIST_ITEMS, MAX_NAME_BYTES, MAX_TEXT_FIELD_BYTES,
     };
+    use crate::tools::apply::duplicates::{NEAREST, Nearest};
 
     /// The longest result a batch can have fits the result budget whole.
     ///
@@ -381,12 +381,12 @@ mod tests {
     /// refusal is cut like any long payload.
     #[test]
     fn the_longest_refusal_fits_the_budget() {
-        use crate::mcp::result::ToolError;
         use crate::store::limits::{MAX_PATTERN_MESSAGE_BYTES, MAX_QUOTED_MATCH_BYTES};
         use crate::store::{
             NodeFile, NodeKind, OpAt, PatternMatch, QualityFault, Refusal, Rule, TextFault,
             TextField,
         };
+        use crate::tools::result::ToolError;
 
         let name = || "n".repeat(MAX_NAME_BYTES);
         let names = || vec![name(); 1_000];

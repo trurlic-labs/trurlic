@@ -7,27 +7,10 @@
 //! call. Without one, `initialize` and `tools/list` still answer, and
 //! every tool call is refused naming the command that fixes it.
 
-mod apply;
-mod context;
 mod envelope;
 mod listing;
 mod peer;
 mod protocol;
-mod registry;
-mod result;
-mod spec;
-mod status;
-mod tools;
-mod truncate;
-
-pub(crate) use apply::{APPLY, Answer, Duplicates};
-pub(crate) use registry::MAX_REQUEST_BYTES;
-pub(crate) use result::{ToolError, ToolResult};
-pub(crate) use spec::{Output, to_value};
-pub(crate) use status::{
-    AnchorCounts, Cut, LintItem, PAIRS_MORE, PairCounts, Part, PatternCounts, QualityCounts,
-    Report, STATUS, section_names,
-};
 
 use std::any::Any;
 use std::io::{self, BufRead, Write};
@@ -42,13 +25,15 @@ use crate::Result;
 use crate::console::diag;
 #[cfg(feature = "failpoints")]
 use crate::store::failpoint::{self, Site};
+#[cfg(feature = "failpoints")]
+use crate::tools::ToolError;
+use crate::tools::{Tool, ToolResult};
 
 use envelope::ToolEnvelope;
 use peer::{Client, ClientCapabilities, Peer};
 use protocol::{
     INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, Message, Request,
 };
-use registry::Tool;
 
 /// The protocol revisions the server speaks. `initialize` answers with the
 /// client's when it is one of them, else with the latest.

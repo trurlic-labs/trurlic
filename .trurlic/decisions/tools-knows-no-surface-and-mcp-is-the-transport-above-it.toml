@@ -1,0 +1,21 @@
+component = "tools"
+choice = "tools names no surface: no JSON-RPC, stdio, client, MCP envelope or tools/list entry; mcp is the transport alone and imports tools, never the reverse"
+reason = "A tool's arguments, handler and result serve every surface: the MCP server, a CLI twin, and a command or a local server that gives the same JSON. Kept inside mcp, each such surface would import the module of a protocol it does not speak. So tools holds the specs and the schemas they walk, the handlers, the registry a call is looked up in, and the ToolResult fitted to the budget with the refusal shape; mcp holds only what MCP speaks: JSON-RPC over stdio (protocol), the client and the server's own requests (peer), the tool-result envelope with structuredContent and isError (envelope), and the tools/list entries with their annotations (listing), built from what the registry states of each tool. A tool that must ask the person something takes no Peer: its question crosses as a value of tools, and the surface asks it, MCP through elicitation/create, so the transport never enters tools. budget stays a module of its own, which tools uses."
+alternatives = [
+    "Keep the tool layer in mcp and let other surfaces import it: rejected, a command or a local server would depend on a module named for a protocol it does not speak",
+    "A client trait in tools that mcp's Peer implements: rejected, it has one implementation, and no tool asks the client",
+    "Build each tool's tools/list entry in tools: rejected, readOnlyHint and its siblings are MCP's words, which another surface would carry or strip",
+]
+tags = [
+    "module-boundary",
+]
+status = "proposed"
+origin = "module structure"
+created = "2026-11-26T14:07:53.995149408Z"
+anchors = [
+    { file = "src/mcp/envelope.rs", symbol = "ToolEnvelope" },
+    { file = "src/mcp/listing.rs", symbol = "entry" },
+    { file = "src/mcp/mod.rs", symbol = "call_tool" },
+    { file = "src/tools/mod.rs" },
+    { file = "src/tools/registry.rs", symbol = "Tool" },
+]

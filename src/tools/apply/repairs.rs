@@ -21,10 +21,10 @@
 use std::collections::BTreeMap;
 
 use crate::lint::anchors::{Checked, Kind, Repair};
-use crate::mcp::result::ToolError;
-use crate::mcp::spec::output::{Count, Items, Nested, Str};
-use crate::mcp::spec::{Output, Shown as Fields};
 use crate::sources::{self, Seen};
+use crate::tools::result::ToolError;
+use crate::tools::spec::output::{Count, Items, Nested, Str};
+use crate::tools::spec::{Output, Shown as Fields};
 
 use crate::store::{Anchor, LeftRepair, Op, ProjectState, RepairAnchors, Store};
 

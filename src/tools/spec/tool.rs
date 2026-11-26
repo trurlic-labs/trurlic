@@ -14,8 +14,8 @@ use serde_json::{Map, Value, json};
 
 use super::{Args, At, Output, input_schema, output_schema, parse, to_value};
 use crate::discovery::discover;
-use crate::mcp::result::ToolError;
 use crate::store::{ProjectState, Store, Writer};
+use crate::tools::result::ToolError;
 
 /// A tool's outcome: its result, or why it refused.
 pub(crate) type Outcome<O> = Result<O, ToolError>;
@@ -156,10 +156,10 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::mcp::spec::Fields;
-    use crate::mcp::spec::Shown;
-    use crate::mcp::spec::kinds::Text;
-    use crate::mcp::spec::output::{Count, Str};
+    use crate::tools::spec::Fields;
+    use crate::tools::spec::Shown;
+    use crate::tools::spec::kinds::Text;
+    use crate::tools::spec::output::{Count, Str};
 
     #[derive(Debug)]
     struct Named {

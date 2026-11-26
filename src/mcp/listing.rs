@@ -7,8 +7,7 @@ use std::sync::LazyLock;
 
 use serde_json::{Value, json};
 
-use crate::mcp::registry::{TOOLS, Tool};
-use crate::mcp::spec::Destructive;
+use crate::tools::{Destructive, TOOLS, Tool};
 
 static TOOL_LIST: LazyLock<Value> = LazyLock::new(|| {
     let tools: Vec<Value> = TOOLS.iter().map(|&tool| entry(tool)).collect();
@@ -30,7 +29,7 @@ fn entry(tool: Tool) -> Value {
             "inputSchema": spec.input_schema(),
             "outputSchema": spec.output_schema(),
         }),
-        Tool::Unspecified(read) => json!({
+        Tool::Legacy(read) => json!({
             "name": read.name(),
             "description": read.description(),
             "annotations": annotations(read.title(), true, Destructive::No),
@@ -78,7 +77,7 @@ mod tests {
                     assert_eq!(entry["inputSchema"], Value::Object(spec.input_schema()));
                     assert_eq!(entry["outputSchema"], Value::Object(spec.output_schema()));
                 }
-                Tool::Unspecified(read) => {
+                Tool::Legacy(read) => {
                     assert_eq!(hints["readOnlyHint"], true, "{entry}");
                     assert_eq!(entry["inputSchema"], read.input_schema());
                 }

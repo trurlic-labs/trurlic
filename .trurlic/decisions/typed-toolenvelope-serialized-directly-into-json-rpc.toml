@@ -14,9 +14,9 @@ created = "2026-06-15T09:45:18.917975440Z"
 anchors = [
     { file = "src/mcp/envelope.rs", symbol = "ToolEnvelope" },
     { file = "src/mcp/protocol.rs", symbol = "write_line" },
-    { file = "src/mcp/result.rs", symbol = "ToolResult::structured" },
-    { file = "src/mcp/truncate.rs", symbol = "fit_payload" },
-    { file = "src/mcp/truncate.rs", symbol = "fit_value" },
+    { file = "src/tools/result.rs", symbol = "ToolResult::structured" },
+    { file = "src/tools/truncate.rs", symbol = "fit_payload" },
+    { file = "src/tools/truncate.rs", symbol = "fit_value" },
 ]
 
 [accepted_text]

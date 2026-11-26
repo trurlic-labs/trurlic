@@ -390,7 +390,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::mcp::spec::{At, parse};
+    use crate::tools::spec::{At, parse};
 
     fn ops(arguments: &Value) -> Vec<Op> {
         parse::<ApplyArgs>(arguments.as_object().unwrap(), At::Root)

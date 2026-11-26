@@ -12,7 +12,7 @@ status = "proposed"
 created = "2026-06-15T09:45:07.215781733Z"
 anchors = [
     { file = "src/mcp/listing.rs", symbol = "TOOL_LIST" },
-    { file = "src/mcp/registry.rs", symbol = "Tool::named" },
+    { file = "src/tools/registry.rs", symbol = "Tool::named" },
 ]
 
 [accepted_text]

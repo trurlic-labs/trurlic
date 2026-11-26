@@ -15,9 +15,9 @@ tags = [
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
-    { file = "src/mcp/context.rs", symbol = "health" },
     { file = "src/store/schema.rs", symbol = "AcceptedText" },
     { file = "src/store/schema.rs", symbol = "DecisionFields" },
     { file = "src/store/schema.rs", symbol = "Status" },
     { file = "src/store/schema.rs", symbol = "StatusFault" },
+    { file = "src/tools/legacy/context.rs", symbol = "health" },
 ]

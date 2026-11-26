@@ -6,7 +6,7 @@
 //! trailing characters, and a `truncated` array added to the root names each
 //! cut by JSON pointer with what it omitted. Array items are kept or dropped
 //! whole, so every kept value is one the tool produced. Sizes are bytes of
-//! the payload's compact serialization, the text the client receives.
+//! the payload's compact serialization, the text a surface sends.
 //!
 //! Each unit, and each array item in it, is measured only until it passes
 //! the budget, so a cut costs in proportion to the budget, not to the

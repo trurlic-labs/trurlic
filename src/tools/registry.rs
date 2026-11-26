@@ -7,13 +7,13 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use super::apply::APPLY;
+use super::legacy::Read;
 use super::result::ToolResult;
 use super::spec::SpecTool;
 use super::status::STATUS;
-use super::tools::Read;
 
-/// Bytes of the request one tool call arrives in: a JSON-RPC message on
-/// the server's line, the batch document `trurlic apply` reads.
+/// Bytes of the request one tool call arrives in, on every surface: a
+/// message the server reads, a batch document `trurlic apply` reads.
 pub(crate) const MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
 
 /// A tool a surface lists and calls.
@@ -22,15 +22,15 @@ pub(crate) enum Tool {
     /// Built on a spec: its schemas and its parse walk one declaration.
     Spec(&'static dyn SpecTool),
     /// A read that predates specs, its schema written out by hand.
-    Unspecified(Read),
+    Legacy(Read),
 }
 
 /// Every tool, spec-built first.
 pub(crate) static TOOLS: [Tool; 4] = [
     Tool::Spec(&APPLY),
     Tool::Spec(&STATUS),
-    Tool::Unspecified(Read::Context),
-    Tool::Unspecified(Read::DecisionsForFile),
+    Tool::Legacy(Read::Context),
+    Tool::Legacy(Read::DecisionsForFile),
 ];
 
 impl Tool {
@@ -42,7 +42,7 @@ impl Tool {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Spec(tool) => tool.name(),
-            Self::Unspecified(read) => read.name(),
+            Self::Legacy(read) => read.name(),
         }
     }
 
@@ -54,7 +54,7 @@ impl Tool {
                 |refused| ToolResult::refusal(&refused),
                 ToolResult::structured,
             ),
-            Self::Unspecified(read) => read.call(cwd, arguments),
+            Self::Legacy(read) => read.call(cwd, arguments),
         }
     }
 }

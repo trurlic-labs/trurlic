@@ -1,4 +1,4 @@
-component = "mcp"
+component = "tools"
 choice = "repair_anchors with no repairs is filled before the write lock with every repair check shows, as a map the store applies where the op runs, leaving one the bar refuses or cannot judge"
 reason = "The repairs check shows are what the op writes, so a reader can see them before running it. Reading them walks the code tree and runs the project's git, which under the exclusive lock would hold every other writer for as long as git takes, and would keep the index's cache from filling, since its write needs the lock free. So apply's Access::Write has a read step that runs with no lock held, loads the graph as a read does, gathers the findings with sources::checked_findings and compiles the bar; then the writer takes the lock. The tree can change in between: each repair carries the code it named when read (sources::Seen), and under the lock sources::still_holding reads the files each repair names through the reads check makes of the tree, so a file is judged as check judges it, and leaves each repair whose stale anchor resolves again or whose repair names other code now; it leaves every one when HEAD names another commit than the read's history walk did, asked in one git rev-parse. That recheck walks the tree and lexes its headers again, a known cost under the lock on a tree of thousands of headers. What the read hands the write is keyed by anchor, since the graph can change too. How the store judges the map's repairs, none refusing the batch, is the decision repair-anchors-takes-listed-repairs-or-a-map-judged-on-the-anchors-each-brings. The result lists what was written and the stale anchors left with their causes, stated against the graph the write left under its lock, under the names there; as many as fit the budget, the rest counted, and trurlic check lists every one."
 alternatives = [
@@ -17,13 +17,13 @@ status = "proposed"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"
 anchors = [
-    { file = "src/mcp/apply/mod.rs", symbol = "prepare" },
-    { file = "src/mcp/apply/repairs.rs", symbol = "fill" },
-    { file = "src/mcp/apply/repairs.rs", symbol = "left" },
-    { file = "src/mcp/spec/tool.rs", symbol = "Access" },
     { file = "src/sources/repair/mod.rs", symbol = "Seen" },
     { file = "src/sources/repair/mod.rs", symbol = "still_holding" },
     { file = "src/sources/tests.rs", symbol = "a_repair_held_again_under_the_lock_reads_its_file_as_the_tree_read_does" },
+    { file = "src/tools/apply/mod.rs", symbol = "prepare" },
+    { file = "src/tools/apply/repairs.rs", symbol = "fill" },
+    { file = "src/tools/apply/repairs.rs", symbol = "left" },
+    { file = "src/tools/spec/tool.rs", symbol = "Access" },
     { file = "tests/integration/repair.rs", symbol = "a_repair_whose_code_changed_after_the_read_is_not_written" },
     { file = "tests/integration/repair.rs", symbol = "every_repair_holds_against_the_ops_before_it" },
     { file = "tests/integration/repair.rs", symbol = "every_repair_leaves_a_repair_a_quality_pattern_refuses" },

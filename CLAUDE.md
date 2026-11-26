@@ -12,10 +12,12 @@ Single crate (`src/lib.rs`). `pub` only on `cli` and `store`; everything else `p
 store      → git                         graph files: schema, canonical form, validation, text and
                                          quality rules, apply, commit/journal/recovery, lock,
                                          migrations, a shared graph's history
-mcp        → store, lint, sources,       JSON-RPC stdio server, tool specs, `apply` and `status`
-             budget, discovery           and their CLI twins, context reads, result cap
-commands   → store, mcp, sources, lint,  init, apply, status, query, check, fmt, migrate, install, serve
-             git, discovery
+tools      → store, lint, sources,       the tools, known to no surface: specs (schema = parser),
+             budget, discovery           `apply`, `status`, the pre-spec reads, registry, result cap
+mcp        → tools, store                JSON-RPC stdio server: protocol, client, envelope, `tools/list`
+commands   → store, tools, mcp (serve),  init, apply, status, query, check, fmt, migrate, install, serve
+             sources, lint, git,
+             discovery
 cli        → commands, store             clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
 lint       → store, code                 pure findings over the graph that refuse nothing: likely
@@ -31,7 +33,7 @@ error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
 ```
 
-`error` is used by every module but `code`, `lint` and `budget`; `console` by `store`, `mcp`, `commands`, `cli` and `sources`.
+`error` is used by every module but `code`, `lint` and `budget`; `console` by `store`, `tools`, `mcp`, `commands`, `cli` and `sources`.
 
 ### Where things are
 
@@ -45,18 +47,19 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Shared-graph history | `store/history.rs`, `git/graph/` |
 | Format check / migration registry | `store/version.rs` / `store/migration/` |
 | Size and count limits | `store/limits.rs` |
-| Tool specs (schema = parser) | `mcp/spec/` |
-| Refusal JSON, result fitting | `mcp/result.rs`, `mcp/truncate.rs` |
-| Pre-spec reads (`get_context`, `get_decisions_for_file`) | `mcp/tools.rs`, `mcp/context.rs` |
+| Tool specs (schema = parser) | `tools/spec/` |
+| Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |
+| Tool registry / its MCP listing and result envelope | `tools/registry.rs` / `mcp/listing.rs`, `mcp/envelope.rs` |
+| Pre-spec reads (`get_context`, `get_decisions_for_file`) | `tools/legacy/` |
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
 | Rust tokens no span hash holds (rustfmt's commas and braces) | `code/rust/silent.rs` |
 | The threads files are indexed on (pool, stack, bytes at once) | `sources/indexer.rs` |
 | The tree-sitter runtime and the patch that bounds a parse | `vendor/tree-sitter/`, `vendor/tree-sitter-0.27.2-bounds.patch` |
-| Likely duplicates (scoring, pair index) / which `status` call compares them | `lint/duplicates/` / `mcp/status/lint/pairs.rs` |
-| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/findings.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
-| Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair/`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |
-| Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
+| Likely duplicates (scoring, pair index) / which `status` call compares them | `lint/duplicates/` / `tools/status/lint/pairs.rs` |
+| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/findings.rs`, `sources/worktrees.rs` / `tools/status/anchors.rs` |
+| Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair/`, `git/renames.rs` / `store/apply/repair.rs` / `tools/apply/repairs.rs` |
+| Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `tools/status/lint/mod.rs` |
 | A `[quality]` pattern's engine, its caches, the bytes it charges / what compiling it folds | `store/quality/bar/pattern.rs` / `store/quality/bar/folding.rs` |
 | A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/language.rs`, `code/language/<name>.scm`, `code/language/<name>.rs` |
 | C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/language/c_family.rs` / `c_family/set.rs` / `sources/reads.rs`, `sources/lexical.rs` |

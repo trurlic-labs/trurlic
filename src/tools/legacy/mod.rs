@@ -6,10 +6,10 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
-use super::context;
-use super::result::{ToolError, ToolResult};
+mod context;
 use crate::discovery::discover;
 use crate::store::ProjectState;
+use crate::tools::result::{ToolError, ToolResult};
 
 /// A read that predates specs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-component = "mcp"
+component = "tools"
 choice = "Every tool result fits MAX_TOOL_RESULT_BYTES (24 KiB); a larger payload keeps its shape, cuts tails to one level and names each cut"
 reason = "Claude Code warns above 10,000 tokens of tool output and moves a result above 25,000 tokens to a file the agent reads in part, and a large graph's results run far past that. Every surface sends a result::ToolResult, which only its constructors build, each through truncate, so the cap lives there: truncate::fit_payload serializes into a buffer that stops at the budget and sends a payload that fits as it is; otherwise it cuts every array and string reachable from the root through objects to the highest common level budget::level finds, arrays by trailing items (kept or dropped whole) and strings at a character boundary, sizes counted in compact JSON bytes. A truncated array at the root names each cut by RFC 6901 pointer with omitted_items or omitted_bytes; a skeleton that alone exceeds the budget is sent as one whole-payload omission, the only case that measures the payload whole. A spec-built tool's result is a value and that value's text (ToolResult::structured, through truncate::fit_value), which MCP sends as structuredContent and the text block, so a cut result is cut alike in both, and its outputSchema admits the truncated notice. A refusal is a payload like any other, {\"error\": {...}}, cut by fit_payload (ToolResult::refusal). Each unit, and each array item in it, is counted only until it passes the budget (no longer prefix can be kept, so one decision carrying megabytes of alternatives costs no more than the budget to measure), and a string keeps escaped-size checkpoints every 64 bytes, so a cut costs in proportion to the budget, not to the payload. The level search lives in the budget module, which has no internal dependencies. A seeded property test checks fit, parse, prefix-only cuts and exact counts over 1000 payloads; tests/integration/budget.rs holds every tool to the cap through the binary."
 alternatives = [
@@ -16,10 +16,10 @@ status = "proposed"
 created = "2026-10-02T16:33:52.329619019Z"
 anchors = [
     { file = "src/budget.rs", symbol = "level" },
-    { file = "src/mcp/result.rs", symbol = "ToolResult::refusal" },
-    { file = "src/mcp/result.rs", symbol = "ToolResult::structured" },
-    { file = "src/mcp/result.rs", symbol = "ToolResult::unstructured" },
-    { file = "src/mcp/truncate.rs", symbol = "fit_payload" },
+    { file = "src/tools/result.rs", symbol = "ToolResult::refusal" },
+    { file = "src/tools/result.rs", symbol = "ToolResult::structured" },
+    { file = "src/tools/result.rs", symbol = "ToolResult::unstructured" },
+    { file = "src/tools/truncate.rs", symbol = "fit_payload" },
     { file = "tests/integration/budget.rs" },
 ]
 

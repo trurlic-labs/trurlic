@@ -14,7 +14,7 @@ use std::io::{self, BufRead, Write};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use super::registry::MAX_REQUEST_BYTES;
+use crate::tools::MAX_REQUEST_BYTES;
 
 // -- Error codes (JSON-RPC 2.0 section 5.1) -------------------------------
 

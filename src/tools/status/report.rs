@@ -1,4 +1,4 @@
-//! What `status` answers, declared once for its `outputSchema` and its
+//! What `status` answers, declared once for its output schema and its
 //! JSON: the counts, and each section as the items that fit out of its
 //! total.
 
@@ -7,8 +7,8 @@ use crate::store::{IssueKind, Placement};
 use super::anchors::{self, AnchorCounts, AnchorItem};
 use super::lint::{LintCounts, LintItem};
 
-use crate::mcp::spec::output::{Count, Items, Nested, Str, Tag};
-use crate::mcp::spec::{Output, Shown};
+use crate::tools::spec::output::{Count, Items, Nested, Str, Tag};
+use crate::tools::spec::{Output, Shown};
 
 /// What `status` answers.
 pub(crate) struct Report {

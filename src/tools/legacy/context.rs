@@ -1,5 +1,5 @@
-//! The two reads agents call through MCP until `brief` replaces them: a
-//! component's context and the decisions anchored in a file.
+//! What the reads that predate specs assemble: a component's context
+//! and the decisions anchored in a file.
 
 use std::collections::BTreeSet;
 use std::fmt;

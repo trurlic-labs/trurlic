@@ -5,9 +5,9 @@
 //! are looked for.
 
 use crate::lint::duplicates::Similarity;
-use crate::mcp::spec::output::{Items, Nested, Str};
-use crate::mcp::spec::{Output, Shown};
 use crate::store::{Done, Field, OpKind, ProjectState};
+use crate::tools::spec::output::{Items, Nested, Str};
+use crate::tools::spec::{Output, Shown};
 
 /// The likely duplicates listed per decision, best first.
 pub(super) const NEAREST: usize = 3;
