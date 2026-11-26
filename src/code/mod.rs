@@ -60,7 +60,7 @@ pub(crate) fn query_compiles(name: &str) -> bool {
 mod tests {
     use std::path::Path;
 
-    use crate::purity::{AllowList, faults};
+    use crate::purity::{AllowList, Crate};
 
     /// What the code index may name: the store's value type an anchor is,
     /// a few items of `std` that hold no path, its parser, its grammars, its
@@ -70,7 +70,6 @@ mod tests {
         store_items: &["Anchor"],
         std_items: &[
             ("io", "ErrorKind"),
-            ("sync", "Arc"),
             ("sync", "LazyLock"),
             ("sync", "OnceLock"),
         ],
@@ -89,37 +88,47 @@ mod tests {
 
     #[test]
     fn the_index_names_nothing_but_what_its_allow_list_holds() {
-        let found = faults(Path::new(env!("CARGO_MANIFEST_DIR")), "src/code", &CODE);
+        let found = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR"))).faults("code", &CODE);
 
         assert_eq!(found, Vec::<String>::new());
     }
 
-    /// Each sub-module of the index and the modules of the index it may
-    /// name: the values below every resolver, the resolvers on them, and
-    /// the facts over a tree on the values and the language rows. The
-    /// dispatch and the surface, at the root, name them all. The check
-    /// sees an edge only as a path a file spells: a method call or a field
-    /// names none, so every impl stands in its type's sub-module (what a
-    /// file of a kind is read as is a free function of `parse`, not a
-    /// method of `FileKind`), and a value or closure a caller hands in is
-    /// not seen.
-    const LAYERS: [(&str, &[&str]); 4] = [
-        ("src/code/index", &["code::index"]),
-        ("src/code/lexical", &["code::index", "code::lexical"]),
-        ("src/code/parse", &["code::index", "code::parse"]),
+    /// Each sub-module of the index, the modules of the index it may name,
+    /// and the dependencies it may name of those [`CODE`] holds: the
+    /// values below every resolver, with their hash, the resolvers on
+    /// them, the parser and its grammars in `parse` alone, and the facts
+    /// over a tree on the values and the language rows. The dispatch and
+    /// the surface, at the root, name them all. A method call names no
+    /// path (`crate::purity` states what the check cannot see), so every
+    /// impl stands in its type's sub-module: what a file of a kind is read
+    /// as is a free function of `parse`, not a method of `FileKind`.
+    const LAYERS: [(&str, &[&str], &[&str]); 4] = [
+        ("code::index", &["code::index"], &["blake3"]),
         (
-            "src/code/facts",
+            "code::lexical",
+            &["code::index", "code::lexical"],
+            &["toml"],
+        ),
+        ("code::parse", &["code::index", "code::parse"], CODE.crates),
+        (
+            "code::facts",
             &["code::index", "code::parse", "code::facts"],
+            &[],
         ),
     ];
 
     #[test]
     fn each_sub_module_names_no_module_above_it() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        for (dir, modules) in LAYERS {
-            let found = faults(root, dir, &AllowList { modules, ..CODE });
+        let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
+        for (module, modules, crates) in LAYERS {
+            let allowed = AllowList {
+                modules,
+                crates,
+                ..CODE
+            };
+            let found = source.faults(module, &allowed);
 
-            assert_eq!(found, Vec::<String>::new(), "{dir}");
+            assert_eq!(found, Vec::<String>::new(), "{module}");
         }
     }
 }

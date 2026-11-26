@@ -66,7 +66,7 @@ pub(crate) use quality::PatternMatch;
 mod tests {
     use std::path::Path;
 
-    use crate::purity::places_beyond;
+    use crate::purity::Crate;
 
     /// The parts of the store, each after every part its code may name.
     const PARTS: [&str; 8] = [
@@ -75,26 +75,32 @@ mod tests {
 
     /// What every part may name outside the store: the error, the console,
     /// git and the failpoints.
-    const OUTSIDE: [&str; 6] = ["Error", "Result", "error", "console", "git", "failpoint"];
+    const OUTSIDE: [&str; 5] = ["Error", "Result", "console", "git", "failpoint"];
 
     /// A part names the store's items through the parts it may name, never
     /// through the re-exports of the store's root, which hide the part an
     /// item belongs to, and names nothing outside the store but
-    /// [`OUTSIDE`]. A method called on a value names no path, so a call of
-    /// a method of `Store` that a later part defines is not seen.
+    /// [`OUTSIDE`]; the root names nothing else either, so no module that
+    /// names the store reaches past it through a re-export. A method
+    /// called on a value names no path (`crate::purity` states what the
+    /// check cannot see), so a call of a method of `Store` that a later
+    /// part defines is not seen.
     #[test]
     fn each_part_of_the_store_names_only_the_parts_before_it() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        for (index, part) in PARTS.iter().enumerate() {
-            let before: Vec<String> = PARTS[..=index]
+        let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
+        let parts: Vec<String> = PARTS.iter().map(|part| format!("store::{part}")).collect();
+        for (index, part) in parts.iter().enumerate() {
+            let within: Vec<&str> = parts[..=index]
                 .iter()
-                .map(|part| format!("store::{part}"))
+                .map(String::as_str)
+                .chain(OUTSIDE)
                 .collect();
-            let within: Vec<&str> = before.iter().map(String::as_str).chain(OUTSIDE).collect();
 
-            let found = places_beyond(root, &format!("store::{part}"), &within);
+            let found = source.places_beyond(part, &within);
 
             assert_eq!(found, Vec::<String>::new(), "{part}");
         }
+        let within: Vec<&str> = parts.iter().map(String::as_str).chain(OUTSIDE).collect();
+        assert_eq!(source.places_beyond("store", &within), Vec::<String>::new());
     }
 }

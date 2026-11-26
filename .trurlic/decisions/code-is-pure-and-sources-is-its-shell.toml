@@ -13,12 +13,12 @@ created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::new" },
     { file = "src/code/mod.rs", symbol = "tests::the_index_names_nothing_but_what_its_allow_list_holds" },
-    { file = "src/purity.rs", symbol = "STD_MODULES" },
-    { file = "src/purity.rs", symbol = "each_path_to_the_outside_is_found_however_it_is_spelled" },
-    { file = "src/purity.rs", symbol = "faults" },
-    { file = "src/purity.rs", symbol = "names_a_path" },
-    { file = "src/purity.rs", symbol = "path_fault" },
-    { file = "src/purity.rs", symbol = "test_files" },
+    { file = "src/purity/pure.rs", symbol = "Crate::faults" },
+    { file = "src/purity/pure.rs", symbol = "STD_MODULES" },
+    { file = "src/purity/pure.rs", symbol = "path_fault" },
+    { file = "src/purity/read.rs", symbol = "names_a_path" },
+    { file = "src/purity/read.rs", symbol = "test_files" },
+    { file = "src/purity/tests.rs", symbol = "each_path_to_the_outside_is_found_however_it_is_spelled" },
     { file = "src/sources/reads.rs", symbol = "read_tree" },
 ]
 

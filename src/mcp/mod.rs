@@ -424,13 +424,15 @@ mod tests {
         );
     }
 
-    /// The transport sits below the commands that serve it: no non-test
-    /// code of it spells `commands` or `cli`.
+    /// The transport sits below the commands that serve it: its non-test
+    /// code names in the crate only itself, the tool layer, the budget,
+    /// the error, the console and the failpoints, however a path is
+    /// spelled (`crate::purity` states what the check cannot see).
     #[test]
     fn the_transport_names_no_command() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let found = crate::purity::places_spelling(root, "src/mcp", &["commands", "cli"]);
-        assert_eq!(found, Vec::<String>::new());
+        let named = ["mcp", "tools", "budget", "Result", "console", "failpoint"];
+        let source = crate::purity::Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
+        assert_eq!(source.places_beyond("mcp", &named), Vec::<String>::new());
     }
 
     #[test]

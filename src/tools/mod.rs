@@ -26,14 +26,30 @@ pub(crate) use status::{
 mod tests {
     use std::path::Path;
 
-    use crate::purity::places_spelling;
+    use crate::purity::Crate;
 
-    /// No non-test code of the layer spells `mcp`, `commands` or `cli`, so
-    /// no path, `use` list or `super` chain of it reaches a surface.
+    /// What the layer's non-test code may name in the crate: itself, the
+    /// modules its arrow of the module map reaches, the error and the
+    /// console, and the failpoints. No surface (`mcp`, `commands`, `cli`,
+    /// the crate root's `main` or `bench`) is on it.
+    const NAMED: [&str; 9] = [
+        "tools",
+        "store",
+        "lint",
+        "sources",
+        "budget",
+        "discovery",
+        "Error",
+        "console",
+        "failpoint",
+    ];
+
+    /// Every path the layer names into the crate goes into [`NAMED`],
+    /// however it is spelled (`crate::purity` states what the check
+    /// cannot see).
     #[test]
     fn the_tool_layer_names_no_surface() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let found = places_spelling(root, "src/tools", &["mcp", "commands", "cli"]);
-        assert_eq!(found, Vec::<String>::new());
+        let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
+        assert_eq!(source.places_beyond("tools", &NAMED), Vec::<String>::new());
     }
 }
