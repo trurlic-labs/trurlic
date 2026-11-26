@@ -16,8 +16,8 @@ status = "accepted"
 created = "2026-10-02T13:33:21.627819553Z"
 anchors = [
     { file = "clippy.toml" },
+    { file = "src/store/graph/query.rs", symbol = "ProjectState::decisions_in" },
     { file = "src/store/model/state.rs", symbol = "ProjectState" },
-    { file = "src/store/query.rs", symbol = "ProjectState::decisions_in" },
     { file = "tests/integration/determinism.rs", symbol = "read_tools_answer_the_same_bytes_in_two_servers" },
     { file = "tests/lints.rs" },
 ]

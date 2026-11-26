@@ -5,10 +5,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 
-use crate::store::cycles::cycles;
+use crate::store::graph::cycles;
+use crate::store::graph::{Issue, carry_members, introduced};
 use crate::store::model::ProjectState;
 use crate::store::model::{Component, Decision};
-use crate::store::validate::{Issue, carry_members, introduced};
 
 /// The writer's graph while a batch applies to it.
 pub(super) struct Edit<'s> {

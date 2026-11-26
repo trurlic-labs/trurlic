@@ -17,8 +17,8 @@ anchors = [
     { file = "src/commands/placement.rs", symbol = "facts" },
     { file = "src/commands/placement.rs", symbol = "main_worktree" },
     { file = "src/discovery.rs", symbol = "worktree_graph" },
-    { file = "src/store/placement.rs", symbol = "MainWorktree" },
-    { file = "src/store/placement.rs", symbol = "PlacementFacts" },
+    { file = "src/store/graph/placement.rs", symbol = "MainWorktree" },
+    { file = "src/store/graph/placement.rs", symbol = "PlacementFacts" },
 ]
 depends_on = [
     "check-refuses-a-placement-git-contradicts-and-a-second-graph",

@@ -14,11 +14,11 @@ tags = [
 status = "proposed"
 created = "2026-11-24T01:00:00Z"
 anchors = [
+    { file = "src/store/graph/validate.rs", symbol = "ProjectState::check_names" },
     { file = "src/store/model/limits.rs", symbol = "MAX_NAME_BYTES" },
     { file = "src/store/model/name.rs", symbol = "is_valid_kebab_case" },
     { file = "src/store/model/name.rs", symbol = "name_fault" },
     { file = "src/store/model/schema.rs", symbol = "PROJECT_COMPONENT" },
-    { file = "src/store/validate.rs", symbol = "ProjectState::check_names" },
 ]
 depends_on = [
     "a-load-fails-only-when-a-file-is-not-its-type",

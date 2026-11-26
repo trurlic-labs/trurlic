@@ -15,8 +15,8 @@ tags = [
 status = "accepted"
 created = "2026-10-02T12:57:55.359394005Z"
 anchors = [
-    { file = "src/store/validate.rs", symbol = "Issue" },
-    { file = "src/store/validate.rs", symbol = "IssueKind" },
-    { file = "src/store/validate.rs", symbol = "ProjectState::validate" },
+    { file = "src/store/graph/validate.rs", symbol = "Issue" },
+    { file = "src/store/graph/validate.rs", symbol = "IssueKind" },
+    { file = "src/store/graph/validate.rs", symbol = "ProjectState::validate" },
     { file = "tests/integration/invalid_graph.rs", symbol = "check_reports_each_issue_once_and_identically_on_every_run" },
 ]

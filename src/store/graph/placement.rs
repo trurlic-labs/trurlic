@@ -208,7 +208,7 @@ fn second_graphs(at: &str, placement: Placement, main: &MainWorktree, issues: &m
 
 /// `files` split into those `listing` holds and the rest, each in order;
 /// borrowed or owned as `files` yields them.
-pub(super) fn partition<S: AsRef<str>>(
+pub(in crate::store) fn partition<S: AsRef<str>>(
     files: impl IntoIterator<Item = S>,
     listing: &BTreeSet<PathBuf>,
 ) -> (Vec<S>, Vec<S>) {
@@ -219,7 +219,7 @@ pub(super) fn partition<S: AsRef<str>>(
 
 /// `files` comma-separated, the first [`SHOWN_FILES`] named and the rest
 /// counted.
-pub(super) fn listed<S: AsRef<str>>(files: &[S]) -> String {
+pub(in crate::store) fn listed<S: AsRef<str>>(files: &[S]) -> String {
     let shown: Vec<&str> = files.iter().take(SHOWN_FILES).map(AsRef::as_ref).collect();
     match files.len().saturating_sub(SHOWN_FILES) {
         0 => shown.join(", "),

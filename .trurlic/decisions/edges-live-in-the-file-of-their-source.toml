@@ -15,9 +15,9 @@ tags = [
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
+    { file = "src/store/graph/validate.rs", symbol = "check_edge" },
     { file = "src/store/model/schema.rs", symbol = "Component" },
     { file = "src/store/model/schema.rs", symbol = "Decision" },
-    { file = "src/store/validate.rs", symbol = "check_edge" },
     { file = "tests/integration/git_merge.rs", symbol = "two_branches_that_each_add_a_decision_and_an_edge_merge_and_pass_check" },
 ]
 depends_on = [

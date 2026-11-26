@@ -31,7 +31,7 @@ impl ProjectState {
 /// Every cycle through the nodes `roots` lead to, as its sorted members,
 /// the cycles sorted. `successors` gives the names a node points at; a name
 /// it gives `None` for points nowhere.
-pub(super) fn cycles<'g>(
+pub(in crate::store) fn cycles<'g>(
     roots: impl IntoIterator<Item = &'g str>,
     successors: impl Fn(&str) -> Option<&'g BTreeSet<String>>,
 ) -> Vec<Vec<&'g str>> {

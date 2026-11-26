@@ -35,7 +35,7 @@ use crate::{Error, Result};
 use super::Store;
 use super::failpoint::{self, Site};
 use super::lock::StoreLock;
-use super::placement::listed;
+use crate::store::graph::listed;
 use crate::store::model::{COMPONENTS_DIR, DECISIONS_DIR, PROJECT_FILE, Placement, STATE_DIR};
 use crate::store::model::{TextField, fault};
 

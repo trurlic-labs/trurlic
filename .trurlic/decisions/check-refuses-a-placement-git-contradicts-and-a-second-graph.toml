@@ -16,8 +16,8 @@ status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [
     { file = "src/commands/check.rs", symbol = "check" },
-    { file = "src/store/placement.rs", symbol = "ProjectState::placement_issues" },
-    { file = "src/store/validate.rs", symbol = "IssueKind" },
+    { file = "src/store/graph/placement.rs", symbol = "ProjectState::placement_issues" },
+    { file = "src/store/graph/validate.rs", symbol = "IssueKind" },
     { file = "tests/integration/placement.rs", symbol = "check_refuses_a_second_graph_beside_a_shared_one_from_both_sides" },
     { file = "tests/integration/placement.rs", symbol = "check_refuses_a_shared_graph_git_tracks_from_every_tree" },
 ]

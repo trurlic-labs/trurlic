@@ -127,7 +127,7 @@ impl Issue {
     /// Whether the issue is about the node `name`: the node itself, either
     /// end of an edge, or a member of a cycle. Read from the subject, so it
     /// is exact for a kebab-case `name`.
-    pub(super) fn concerns(&self, name: &str) -> bool {
+    pub(in crate::store) fn concerns(&self, name: &str) -> bool {
         let subject = self.subject.as_str();
         match self.kind {
             IssueKind::NameInvalid
@@ -434,7 +434,7 @@ fn decision_file(name: &str) -> NodeFile {
 /// `carried` maps each node a write renamed, or merged into
 /// another, to the name it has after the write, so an issue of `before`
 /// that the node keeps under its new name is not new.
-pub(super) fn introduced(
+pub(in crate::store) fn introduced(
     mut after: Vec<Issue>,
     before: &[Issue],
     carried: &BTreeMap<String, String>,
@@ -456,7 +456,7 @@ pub(super) fn introduced(
 /// and each once: two members merged into one are one. The one reading of
 /// a cycle the graph began with under a write's renames and merges, for
 /// [`introduced`] and for the cycle rule of each op of `apply`.
-pub(super) fn carry_members<'m>(
+pub(in crate::store) fn carry_members<'m>(
     members: impl IntoIterator<Item = &'m str>,
     carried: &'m BTreeMap<String, String>,
 ) -> Vec<&'m str> {

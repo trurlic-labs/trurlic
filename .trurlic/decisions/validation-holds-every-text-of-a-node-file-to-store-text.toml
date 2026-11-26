@@ -13,10 +13,10 @@ tags = [
 status = "proposed"
 created = "2026-10-03T14:48:16.270508355Z"
 anchors = [
+    { file = "src/store/graph/validate.rs", symbol = "IssueKind" },
+    { file = "src/store/graph/validate.rs", symbol = "check_text" },
     { file = "src/store/model/schema.rs", symbol = "AnchorFault" },
     { file = "src/store/model/text.rs", symbol = "fault" },
-    { file = "src/store/validate.rs", symbol = "IssueKind" },
-    { file = "src/store/validate.rs", symbol = "check_text" },
     { file = "tests/integration/decision_text.rs", symbol = "check_reports_each_class_naming_the_file_the_field_and_the_fault" },
 ]
 depends_on = [

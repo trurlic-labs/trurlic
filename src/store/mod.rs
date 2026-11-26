@@ -10,23 +10,20 @@ mod commit;
 #[cfg(any(test, feature = "bench"))]
 pub(crate) mod corpus;
 mod create;
-mod cycles;
 mod durable;
 pub(crate) mod failpoint;
+mod graph;
 mod history;
 mod journal;
 mod load;
 mod lock;
 mod migration;
 mod model;
-mod placement;
 mod quality;
-mod query;
 mod recovery;
 #[cfg(any(test, feature = "bench"))]
 pub(crate) mod seeded;
 mod symbols;
-mod validate;
 mod version;
 
 use std::fmt;
@@ -41,6 +38,10 @@ pub use apply::{
     Repaired, Revise, ReviseComponent, Warning, WarningKind,
 };
 pub(crate) use durable::sync_dir;
+pub use graph::{
+    Issue, IssueKind, LinkedGraph, MainWorktree, Named, PlacementFacts, WorkTreeFacts, anchors_in,
+    normalize_path,
+};
 pub use history::HistoryFinding;
 pub use lock::StoreLock;
 pub use migration::PlacementDoubt;
@@ -54,12 +55,9 @@ pub use model::{
     Quality, STATE_DIR, STORE_DIR, Status, StatusName, TextFault, TextField, Timestamp,
     TimestampError,
 };
-pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
 pub(crate) use quality::Bar;
 pub use quality::{PreparedBar, QualityFault, Shortfall};
-pub use query::{Named, anchors_in, normalize_path};
 pub use symbols::SymbolsKey;
-pub use validate::{Issue, IssueKind};
 
 #[cfg(test)]
 pub(crate) use apply::{NodeKind, OpAt, Rule};
