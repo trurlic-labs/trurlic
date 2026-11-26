@@ -1,9 +1,14 @@
-//! What the resolvers' tests read an index through: a file's index, alone
-//! or in a tree of C and C++ headers, and each definition's path and the
-//! text of its span.
+//! What the tests read an index through: a file's index, alone or in a
+//! tree of C and C++ headers, each definition's path and the text of its
+//! span, and the inputs several modules' tests share. The purity check
+//! (`crate::purity`) reads a Rust file's tokens and a manifest's index
+//! through it too.
 
-use super::index::{FileKind, Indexed, ScopeId, Scopes, Symbol};
+use super::index::{FileKind, Indexed, ScopeId, Symbol};
 use super::parse::{BlankMacros, FileMacros, lexed};
+
+pub(crate) use super::index::Scopes;
+pub(crate) use super::parse::{RUST_LEXICON, Token, is_comment, parse, text_of, tokens};
 
 /// The index of `bytes`, a file of `kind` alone in its tree: a C or C++
 /// file blanks what its own `#define`s make blankable.

@@ -26,11 +26,14 @@ lint       → store, code                 pure findings over the graph that ref
                                          their repairs
 sources    → code, lint, store, git      code-root walk, bounded reads, index cache, other worktrees,
                                          the anchor findings of `check` and `status`
-code       → store (types)               pure code index: definitions, spans, span hashes, symbols
+code       → store (types)               pure code index: what an index holds (`index/`), the
+                                         tree-sitter and lexical resolvers (`parse/`, `lexical/`), facts
+                                         over a whole tree (`tree/`)
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
 budget     → —                           fitting output into a byte budget
 error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
+purity     → code (tests only)           the check that `code` and `lint` name only their allow lists
 ```
 
 `error` is used by every module but `code`, `lint` and `budget`; `console` by `store`, `tools`, `mcp`, `commands`, `cli` and `sources`.
@@ -80,7 +83,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 9. A load fails only on an unreadable file; everything else is a validation issue (`check` fails, reads still answer).
 10. Every tool result fits 24 KiB (`budget::MAX_TOOL_RESULT_BYTES`) as valid JSON; cuts are named in `truncated`. Every refusal is an `isError` result `{"error": {"kind", ...}}`; JSON-RPC errors only for malformed messages, unknown methods/tools, panics.
 11. A panic in a request is answered `-32603` and the server keeps serving (`panic = "unwind"`, one `catch_unwind` in `mcp::Server::answer`).
-12. `code` is pure: its non-test code names only what an allow list holds (`code/purity.rs`, `code::tests`). Its cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
+12. `code` is pure: its non-test code names only what an allow list holds (`purity.rs`, `code::tests`). Its cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
 13. A change to what an index holds raises `code::INDEX_FORMAT` (the fingerprint test says when).
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.

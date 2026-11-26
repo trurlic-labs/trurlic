@@ -24,9 +24,9 @@ pub(in crate::code) use language::{
     TSX, TYPESCRIPT, TYPESCRIPT_DECLARATIONS, blank, line_ends,
 };
 #[cfg(test)]
-pub(in crate::code) use rust::LEXICON as RUST_LEXICON;
+pub(crate) use rust::LEXICON as RUST_LEXICON;
 pub(in crate::code) use syntax::{CHUNK_BYTES, OPERATIONS_PER_PROGRESS};
 #[cfg(test)]
-pub(in crate::code) use syntax::{parse, text_of};
+pub(crate) use syntax::{parse, text_of};
 #[cfg(test)]
-pub(in crate::code) use tokens::{Token, is_comment, tokens};
+pub(crate) use tokens::{Token, is_comment, tokens};

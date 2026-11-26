@@ -13,7 +13,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use crate::code::{AllowList, faults};
+    use crate::purity::{AllowList, faults};
 
     /// What `lint` may name: the code index's facts, the graph's value
     /// types, the bar, the store's constant limits, and the thread pool's

@@ -14,6 +14,8 @@ pub(crate) mod error;
 pub(crate) mod git;
 pub(crate) mod lint;
 pub(crate) mod mcp;
+#[cfg(test)]
+mod purity;
 pub(crate) mod sources;
 pub(crate) mod store;
 pub(crate) mod tools;

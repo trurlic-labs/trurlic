@@ -21,7 +21,7 @@ anchors = [
     { file = "src/code/parse/query/compile.rs", symbol = "Rules::compile" },
     { file = "src/code/parse/query/compile.rs", symbol = "a_query_is_refused_for_each_break_of_its_contract" },
     { file = "src/code/parse/query/mod.rs", symbol = "QueryFault" },
-    { file = "src/code/purity.rs", symbol = "is_admitted_include" },
+    { file = "src/purity.rs", symbol = "is_admitted_include" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",

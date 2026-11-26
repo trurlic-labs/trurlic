@@ -16,7 +16,7 @@ use tree_sitter::Node;
 /// text and a comment inside it, or the walk entering or leaving a node it
 /// does not leave out.
 #[derive(Debug, Clone, Copy)]
-pub(in crate::code) enum Token<'n> {
+pub(crate) enum Token<'n> {
     Node(Node<'n>),
     Gap {
         start: usize,
@@ -82,7 +82,7 @@ enum Inside {
 /// comments `lexicon` delimits are left out. So are comments and every
 /// other extra but an error ([`is_comment`]), and tokens of no width (the
 /// parser's inserted missing tokens).
-pub(in crate::code) fn tokens<'n>(
+pub(crate) fn tokens<'n>(
     node: Node<'n>,
     text: &str,
     lexicon: &Lexicon,
@@ -263,7 +263,7 @@ fn climb<'n>(
 /// Whether `node` is left out of the tokens: an extra (a comment), but
 /// not the error that recovery passes over, which the grammar may also
 /// make an extra.
-pub(in crate::code) fn is_comment(node: Node<'_>) -> bool {
+pub(crate) fn is_comment(node: Node<'_>) -> bool {
     node.is_extra() && !node.is_error()
 }
 
@@ -271,7 +271,7 @@ pub(in crate::code) fn is_comment(node: Node<'_>) -> bool {
 /// kinds that are lexical literals, each one token whole. It names the
 /// comment delimiters, by which a comment the grammar lexes as tokens, or
 /// leaves among bytes no node holds, is dropped as whitespace is.
-pub(in crate::code) struct Lexicon {
+pub(crate) struct Lexicon {
     pub(in crate::code) literals: &'static [&'static str],
     pub(in crate::code) line_comments: &'static [&'static str],
     /// Each opening and closing delimiter of a block comment.

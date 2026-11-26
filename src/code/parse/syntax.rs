@@ -39,7 +39,7 @@ pub(in crate::code) const OPERATIONS_PER_PROGRESS: usize = 100;
 
 /// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
 /// the parse runs past either of its budgets.
-pub(in crate::code) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault> {
+pub(crate) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault> {
     // A parser per parse: a parser that parsed before reuses its pools and
     // counts fewer operations, so only a fresh one makes the verdict a
     // function of the file.
@@ -99,7 +99,7 @@ pub(in crate::code) fn grammar_identity(language: &Language, node_types: &str) -
 }
 
 /// The text of `node` in `text`.
-pub(in crate::code) fn text_of<'t>(node: Node<'_>, text: &'t str) -> &'t str {
+pub(crate) fn text_of<'t>(node: Node<'_>, text: &'t str) -> &'t str {
     text.get(node.byte_range()).unwrap_or_default()
 }
 

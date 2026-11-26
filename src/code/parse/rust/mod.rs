@@ -58,7 +58,7 @@ pub(in crate::code) const LITERALS: [&str; 5] = [
 
 /// What tree-sitter-rust's tokens are made of beside its tree: its
 /// literal kinds, and Rust's comments, block comments nesting.
-pub(in crate::code) const LEXICON: Lexicon = Lexicon {
+pub(crate) const LEXICON: Lexicon = Lexicon {
     literals: &LITERALS,
     line_comments: &["//"],
     block_comments: &[("/*", "*/")],
