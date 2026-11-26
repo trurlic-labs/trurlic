@@ -16,7 +16,7 @@ created = "2026-11-26T14:45:30.766338253Z"
 anchors = [
     { file = "src/code/index/mod.rs" },
     { file = "src/code/mod.rs", symbol = "each_sub_module_names_no_module_above_it" },
-    { file = "src/code/parse/language/mod.rs", symbol = "FileKind::syntax" },
+    { file = "src/code/parse/language/kind.rs", symbol = "syntax_of" },
     { file = "src/code/resolver.rs", symbol = "blanked" },
     { file = "src/code/resolver.rs", symbol = "index" },
     { file = "src/purity.rs", symbol = "path_fault" },

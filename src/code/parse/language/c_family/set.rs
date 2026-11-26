@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::define::{Body, Define, Defines, Lexed, MAX_MACRO_BODY_TOKENS};
 use crate::code::index::FileKind;
+use crate::code::parse::language_of;
 
 /// What the `#define`s of one name are, read together: their forms, the
 /// shapes of their bodies, and the names their attribute bodies need
@@ -263,7 +264,7 @@ impl Reach {
 /// Whether the file at `path` is test code by its place.
 fn is_test_code(path: &str) -> bool {
     FileKind::of(path)
-        .and_then(FileKind::language)
+        .and_then(language_of)
         .is_some_and(|language| language.is_test_place(path))
 }
 

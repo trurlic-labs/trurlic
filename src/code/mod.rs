@@ -31,8 +31,8 @@ pub(crate) use index::{
     encode as encode_index, max_entry_bytes,
 };
 pub(crate) use parse::{
-    BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
-    max_lexed_bytes,
+    BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, grammar_identity_of,
+    is_header, lexed, max_lexed_bytes, name_of,
 };
 pub(crate) use resolver::{BOUNDS, INDEX_FORMAT, index};
 #[cfg(test)]
@@ -97,7 +97,12 @@ mod tests {
     /// Each sub-module of the index and the modules of the index it may
     /// name: the values below every resolver, the resolvers on them, and
     /// the facts over a tree on the values and the language rows. The
-    /// dispatch and the surface, at the root, name them all.
+    /// dispatch and the surface, at the root, name them all. The check
+    /// sees an edge only as a path a file spells: a method call or a field
+    /// names none, so every impl stands in its type's sub-module (what a
+    /// file of a kind is read as is a free function of `parse`, not a
+    /// method of `FileKind`), and a value or closure a caller hands in is
+    /// not seen.
     const LAYERS: [(&str, &[&str]); 4] = [
         ("src/code/index", &["code::index"]),
         ("src/code/lexical", &["code::index", "code::lexical"]),

@@ -5,7 +5,7 @@
 //! through it too.
 
 use super::index::{FileKind, Indexed, ScopeId, Symbol};
-use super::parse::{BlankMacros, FileMacros, lexed};
+use super::parse::{BlankMacros, FileMacros, lexed, syntax_of};
 
 pub(crate) use super::index::Scopes;
 pub(crate) use super::parse::{RUST_LEXICON, Token, is_comment, parse, text_of, tokens};
@@ -51,7 +51,7 @@ pub(crate) fn path(scopes: Scopes<'_>, scope: ScopeId) -> String {
 /// The text of each definition of `text`, a file of `kind`, that
 /// `symbol` names.
 pub(crate) fn named<'t>(kind: FileKind, text: &'t str, symbol: &str) -> Vec<&'t str> {
-    let symbol = Symbol::parse(symbol, kind.syntax()).unwrap();
+    let symbol = Symbol::parse(symbol, syntax_of(kind)).unwrap();
     let index = index(kind, text.as_bytes()).unwrap();
     let scopes = Scopes(&index.scopes);
     index

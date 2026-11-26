@@ -4,25 +4,29 @@
 //! and read as one query), how a symbol on its files is spelled, the
 //! bounds its grammar needs checked before a parse (`<name>.rs`, for a
 //! grammar that has any), and the places of a tree that hold its test
-//! code. Adding a language is a grammar crate, a query file, a row here
-//! and a fixture corpus. C and C++ add the one rewrite before a parse,
+//! code; and what a file of each kind is read as (`kind.rs`). Adding a
+//! language is a grammar crate, a query file, a row here and a fixture
+//! corpus. C and C++ add the one rewrite before a parse,
 //! the tree's attribute macros blanked (`c_family/`).
 
 mod c_family;
+mod kind;
 mod python;
 
-use std::sync::{LazyLock, OnceLock};
+use std::sync::OnceLock;
 
 use super::query::{QueryFault, Rules};
 use super::syntax::grammar_identity;
 use super::tokens::Lexicon;
-use crate::code::index::{FileKind, IndexFault, Syntax};
+use crate::code::index::{IndexFault, Syntax};
 
 pub(crate) use c_family::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
     max_lexed_bytes,
 };
 pub(in crate::code) use c_family::{MAX_BLANK_ARGUMENT_BYTES, MAX_MACRO_BODY_TOKENS, blank};
+pub(crate) use kind::{grammar_identity_of, name_of};
+pub(in crate::code) use kind::{language_of, syntax_of};
 pub(in crate::code) use python::{MAX_INDENTATIONS, line_ends};
 
 /// A check of a file's bytes before its parse.
@@ -224,84 +228,6 @@ pub(in crate::code) static CPP: Language = Language {
     identity: OnceLock::new(),
 };
 
-/// The identity of tree-sitter-rust, computed once.
-static RUST_GRAMMAR: LazyLock<[u8; 32]> = LazyLock::new(|| {
-    grammar_identity(
-        &tree_sitter_rust::LANGUAGE.into(),
-        tree_sitter_rust::NODE_TYPES,
-    )
-});
-
-/// What a file of each kind is read as: the language row of a kind the
-/// general resolver reads, the spelling of its symbols, its grammar's
-/// identity and its name in a cache key.
-impl FileKind {
-    /// The language the general resolver reads a file of this kind as;
-    /// `None` for Rust and the lexical kinds.
-    pub(in crate::code) const fn language(self) -> Option<&'static Language> {
-        match self {
-            Self::Python => Some(&PYTHON),
-            Self::TypeScript => Some(&TYPESCRIPT),
-            Self::TypeScriptDeclarations => Some(&TYPESCRIPT_DECLARATIONS),
-            Self::Tsx => Some(&TSX),
-            Self::C => Some(&C),
-            Self::Cpp => Some(&CPP),
-            Self::Rust | Self::Toml | Self::Json | Self::Make | Self::Markdown => None,
-        }
-    }
-
-    /// How a symbol on a file of this kind is spelled: a language's by
-    /// its row.
-    pub(crate) const fn syntax(self) -> Syntax {
-        match self {
-            Self::Rust => Syntax::Rust,
-            Self::Python => PYTHON.syntax,
-            Self::TypeScript => TYPESCRIPT.syntax,
-            Self::TypeScriptDeclarations => TYPESCRIPT_DECLARATIONS.syntax,
-            Self::Tsx => TSX.syntax,
-            Self::C => C.syntax,
-            Self::Cpp => CPP.syntax,
-            Self::Toml | Self::Json | Self::Make | Self::Markdown => Syntax::Plain,
-        }
-    }
-
-    /// The identity of the grammar the kind is parsed with, in a cache
-    /// key: a grammar's new version may parse the same bytes into
-    /// another tree, which no fixture of the index need show. A lexical
-    /// kind's rules are the index's own, so its identity is
-    /// [`INDEX_FORMAT`](crate::code::INDEX_FORMAT)'s. A language the general resolver reads adds
-    /// its query file, whose patterns are rules of its index.
-    pub(crate) fn grammar(self) -> [u8; 32] {
-        match self {
-            Self::Rust => *RUST_GRAMMAR,
-            Self::Python => PYTHON.identity(),
-            Self::TypeScript => TYPESCRIPT.identity(),
-            Self::TypeScriptDeclarations => TYPESCRIPT_DECLARATIONS.identity(),
-            Self::Tsx => TSX.identity(),
-            Self::C => C.identity(),
-            Self::Cpp => CPP.identity(),
-            Self::Toml | Self::Json | Self::Make | Self::Markdown => [0; 32],
-        }
-    }
-
-    /// The kind's name in a cache key.
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Rust => "rust",
-            Self::Python => PYTHON.name,
-            Self::TypeScript => TYPESCRIPT.name,
-            Self::TypeScriptDeclarations => TYPESCRIPT_DECLARATIONS.name,
-            Self::Tsx => TSX.name,
-            Self::C => C.name,
-            Self::Cpp => CPP.name,
-            Self::Toml => "toml",
-            Self::Json => "json",
-            Self::Make => "make",
-            Self::Markdown => "markdown",
-        }
-    }
-}
-
 impl Language {
     /// Its query's rules, compiled once per process, on the first file
     /// of the language the cache does not hold.
@@ -466,7 +392,7 @@ mod tests {
                 if path.is_dir() {
                     pending.push(path);
                 } else if let Some(kind) =
-                    FileKind::of(path.to_str().unwrap()).filter(|kind| kind.language().is_some())
+                    FileKind::of(path.to_str().unwrap()).filter(|kind| language_of(*kind).is_some())
                 {
                     let text = std::fs::read_to_string(&path).unwrap();
                     found.push((path.display().to_string(), kind, text));
@@ -479,7 +405,7 @@ mod tests {
     #[test]
     fn every_byte_but_comments_and_whitespace_is_in_one_token() {
         for (file, kind, text) in general_corpus() {
-            let language = kind.language().unwrap();
+            let language = language_of(kind).unwrap();
             let rules = language.rules().unwrap();
             let tree = syntax::parse(&text, &rules.grammar).unwrap();
             let mut covered = vec![false; text.len()];

@@ -16,12 +16,12 @@ mod tree_index;
 mod units;
 
 pub(crate) use language::{
-    BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
-    max_lexed_bytes,
+    BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, grammar_identity_of,
+    is_header, lexed, max_lexed_bytes, name_of,
 };
 pub(in crate::code) use language::{
     C, CPP, Language, MAX_BLANK_ARGUMENT_BYTES, MAX_INDENTATIONS, MAX_MACRO_BODY_TOKENS, PYTHON,
-    TSX, TYPESCRIPT, TYPESCRIPT_DECLARATIONS, blank, line_ends,
+    TSX, TYPESCRIPT, TYPESCRIPT_DECLARATIONS, blank, language_of, line_ends, syntax_of,
 };
 #[cfg(test)]
 pub(crate) use rust::LEXICON as RUST_LEXICON;

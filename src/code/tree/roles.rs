@@ -30,6 +30,7 @@ use std::collections::BTreeSet;
 
 use super::crates::{Crates, Files, file_name, parent};
 use crate::code::index::{DefinitionKind, FileIndex, FileKind, ModuleFile, Role, ScopeId, Segment};
+use crate::code::parse::language_of;
 
 /// The files of a target's root in a crate, by their directory.
 const ROOT_FILES: [&str; 3] = ["src/lib.rs", "src/main.rs", "build.rs"];
@@ -51,8 +52,7 @@ pub(super) fn test_files<'i>(
             .iter()
             .chain(outside)
             .filter(|(path, (kind, _))| {
-                kind.language()
-                    .is_some_and(|language| language.is_test_place(path))
+                language_of(*kind).is_some_and(|language| language.is_test_place(path))
             })
             .map(|(&path, _)| path),
     );

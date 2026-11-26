@@ -14,6 +14,7 @@ use crate::code::index::{
     Definition, DefinitionKind, FileIndex, FileKind, Role, Scopes, Segment, SpanHash, Symbol,
     SymbolFault,
 };
+use crate::code::parse::syntax_of;
 
 /// Where a resolved anchor points.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,7 +242,7 @@ impl CodeFacts {
         let Some(Entry::File { kind, index: Ok(_) }) = self.entries.get(anchor.file()) else {
             return None;
         };
-        let symbol = Symbol::parse(anchor.symbol()?, kind.syntax()).ok()?;
+        let symbol = Symbol::parse(anchor.symbol()?, syntax_of(*kind)).ok()?;
         let [Segment::Name(name)] = symbol.segments() else {
             return None;
         };
@@ -296,7 +297,7 @@ impl CodeFacts {
         let Some((kind, index)) = self.entries.get(anchor.file()).and_then(indexed) else {
             return BTreeSet::new();
         };
-        let Some(Ok(symbol)) = anchor.symbol().map(|s| Symbol::parse(s, kind.syntax())) else {
+        let Some(Ok(symbol)) = anchor.symbol().map(|s| Symbol::parse(s, syntax_of(kind))) else {
             return BTreeSet::new();
         };
         let scopes = Scopes(&index.scopes);
@@ -339,7 +340,7 @@ impl CodeFacts {
         }
         let writers = |anchor: &Anchor| -> Option<BTreeSet<&'f str>> {
             let kind = FileKind::of(anchor.file())?;
-            let symbol = Symbol::parse(anchor.symbol()?, kind.syntax()).ok()?;
+            let symbol = Symbol::parse(anchor.symbol()?, syntax_of(kind)).ok()?;
             let files = holders.get(&(kind, symbol.segments().last()?))?.iter();
             let other = files.filter(|path| **path != anchor.file() && self.writes(path, &symbol));
             let other: BTreeSet<&str> = other.copied().collect();
@@ -357,7 +358,7 @@ impl CodeFacts {
         let Some((kind, _)) = self.entries.get(anchor.file()).and_then(indexed) else {
             return false;
         };
-        let Some(Ok(symbol)) = anchor.symbol().map(|s| Symbol::parse(s, kind.syntax())) else {
+        let Some(Ok(symbol)) = anchor.symbol().map(|s| Symbol::parse(s, syntax_of(kind))) else {
             return false;
         };
         self.writes(anchor.file(), &symbol)
@@ -434,7 +435,7 @@ impl CodeFacts {
             Entry::File {
                 kind,
                 index: Ok(index),
-            } => match Symbol::parse(symbol, kind.syntax()) {
+            } => match Symbol::parse(symbol, syntax_of(*kind)) {
                 Ok(symbol) => Self::find(index, &symbol),
                 Err(fault) => Resolution::Malformed(fault),
             },
