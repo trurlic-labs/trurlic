@@ -52,7 +52,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Tool registry / its MCP listing and result envelope | `tools/registry.rs` / `mcp/listing.rs`, `mcp/envelope.rs` |
 | Pre-spec reads (`get_context`, `get_decisions_for_file`) | `tools/legacy/` |
 | Placement vs git (`check`) | `commands/placement.rs` |
-| Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
+| Index work budgets / cache encoding | `code/index/work.rs` / `code/index/encoding/` |
 | Rust tokens no span hash holds (rustfmt's commas and braces) | `code/rust/silent.rs` |
 | The threads files are indexed on (pool, stack, bytes at once) | `sources/indexer.rs` |
 | The tree-sitter runtime and the patch that bounds a parse | `vendor/tree-sitter/`, `vendor/tree-sitter-0.27.2-bounds.patch` |

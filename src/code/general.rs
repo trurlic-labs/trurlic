@@ -34,16 +34,14 @@ use std::iter;
 
 use tree_sitter::{Node, QueryCursor, StreamingIterator, Tree};
 
-use super::index::{FileIndex, IndexFault};
-use super::kinds::{Role, Visibility};
+use super::index::{
+    FileIndex, IndexFault, Lines, MIN_WORK, Role, SCAN_WORK_PER_BYTE, ScopeTree, Visibility, Work,
+};
 use super::language::Language;
 use super::query::{Capture, Definer, Rules};
-use super::scope::ScopeTree;
-use super::span::Lines;
 use super::syntax;
 use super::tree::TreeIndex;
 use super::units::{Leaves, NodeMarks};
-use super::work::{MIN_WORK, SCAN_WORK_PER_BYTE, Work};
 
 use frame::{Frame, VisibilityMark, Waiting};
 

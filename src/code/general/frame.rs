@@ -6,7 +6,7 @@
 use tree_sitter::Node;
 
 use super::SpanNode;
-use crate::code::kinds::Visibility;
+use crate::code::index::Visibility;
 
 /// A node a `@visibility.<name>` capture marks: its bytes and the
 /// visibility.

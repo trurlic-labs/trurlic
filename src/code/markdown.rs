@@ -6,10 +6,8 @@
 //! runs of whitespace made one space; a `::` in it splits it as it splits
 //! a symbol.
 
-use super::index::{FileIndex, IndexFault};
-use super::kinds::DefinitionKind;
+use super::index::{DefinitionKind, FileIndex, IndexFault, ScopeId, ScopeTree};
 use super::lexical::Lexical;
-use super::scope::{ScopeId, ScopeTree};
 
 /// The index of `text`, a Markdown file: its heading sections.
 pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
@@ -126,8 +124,7 @@ impl Fence {
 
 #[cfg(test)]
 mod tests {
-    use crate::code::index::{FileKind, IndexFault};
-    use crate::code::scope::MAX_NESTING;
+    use crate::code::index::{FileKind, IndexFault, MAX_NESTING};
     use crate::code::testing;
 
     const README: &str = "\

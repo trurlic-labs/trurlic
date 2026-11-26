@@ -8,10 +8,9 @@
 
 use std::ops::Range;
 
-use super::index::{Definition, FileIndex, IndexFault, ModuleFile};
-use super::kinds::What;
-use super::scope::{ScopeId, ScopeTree};
-use super::span::{Lines, Span, SpanHash};
+use super::index::{
+    Definition, FileIndex, IndexFault, Lines, ModuleFile, ScopeId, ScopeTree, Span, SpanHash, What,
+};
 use super::units::Leaves;
 
 /// The hash a definition holds until the end of the walk.

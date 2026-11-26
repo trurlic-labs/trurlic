@@ -3,8 +3,7 @@
 
 use std::fmt;
 
-use super::index::Definition;
-use super::span::{Span, SpanHash};
+use super::index::{Definition, Span, SpanHash};
 
 /// The definitions of one path, one at least. It holds their spans in
 /// file order, a span two share listed once, and how many they are. Its
@@ -83,8 +82,7 @@ impl fmt::Display for Definitions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::kinds::{DefinitionKind, Role};
-    use crate::code::scope::ScopeId;
+    use crate::code::index::{DefinitionKind, Role, ScopeId};
 
     fn definition(at: usize, kind: DefinitionKind, hash: &str) -> Definition {
         Definition {

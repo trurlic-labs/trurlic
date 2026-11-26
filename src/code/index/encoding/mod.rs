@@ -28,7 +28,7 @@
 mod read;
 mod write;
 
-use super::index::{Definition, FileIndex, FileKind, IndexFault};
+use super::file::{Definition, FileIndex, FileKind, IndexFault};
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::scope::Scope;
 use super::symbol::Segment;
@@ -44,7 +44,7 @@ const MIN_BLOCK_BYTES: usize = 32;
 /// The bytes a heap block of `requested` bytes takes, as glibc's malloc
 /// takes it on a 64-bit target: none for none, else the request and its
 /// 8-byte header rounded up to 16, and [`MIN_BLOCK_BYTES`] at least.
-pub(super) const fn block(requested: usize) -> usize {
+pub(in crate::code) const fn block(requested: usize) -> usize {
     if requested == 0 {
         return 0;
     }
@@ -59,7 +59,7 @@ pub(super) const fn block(requested: usize) -> usize {
 const HASH_BYTES: usize = 32;
 
 /// What a read keeps beside each scope: its depth.
-pub(super) const DEPTH_BYTES: usize = size_of::<usize>();
+pub(in crate::code) const DEPTH_BYTES: usize = size_of::<usize>();
 
 /// The densest definitions a file of a kind holds: each takes `bytes` of
 /// the file, `name` of them its name.
@@ -125,7 +125,7 @@ const fn definition_cost(densest: Densest, max: usize) -> usize {
 
 /// The room of each byte of a file of `kind`: what its densest
 /// definitions cost per byte.
-pub(super) const fn room_per_byte(kind: FileKind) -> usize {
+pub(in crate::code) const fn room_per_byte(kind: FileKind) -> usize {
     let densest = densest(kind);
     definition_cost(densest, kind.max_bytes()).div_ceil(densest.bytes)
 }
@@ -141,11 +141,12 @@ const COLLECTIONS: usize = 4;
 
 /// The bytes an entry and its decode take past the room of its file: the
 /// counts of an index, and what the block of each collection rounds up.
-pub(super) const ENTRY_OVERHEAD_BYTES: usize = COUNTS_BYTES + COLLECTIONS * MIN_BLOCK_BYTES;
+pub(in crate::code) const ENTRY_OVERHEAD_BYTES: usize =
+    COUNTS_BYTES + COLLECTIONS * MIN_BLOCK_BYTES;
 
 /// What the parts of the index of a file of `kind` of `bytes` bytes,
 /// within its kind's size, may cost together.
-pub(super) const fn room_of(kind: FileKind, bytes: usize) -> usize {
+pub(in crate::code) const fn room_of(kind: FileKind, bytes: usize) -> usize {
     bytes.saturating_mul(room_per_byte(kind))
 }
 
@@ -163,13 +164,13 @@ pub(crate) type Indexed = Result<FileIndex, IndexFault>;
 
 /// A kind's code: its place in [`DefinitionKind::ALL`], by which a read
 /// takes it back.
-pub(super) fn kind_code(kind: DefinitionKind) -> u8 {
+pub(in crate::code) fn kind_code(kind: DefinitionKind) -> u8 {
     place_in(&DefinitionKind::ALL, &kind)
 }
 
 /// A visibility's code: 0 for none, else one past its place in
 /// [`Visibility::ALL`].
-pub(super) fn visibility_code(visibility: Option<Visibility>) -> u8 {
+pub(in crate::code) fn visibility_code(visibility: Option<Visibility>) -> u8 {
     visibility.map_or(0, |visibility| {
         place_in(&Visibility::ALL, &visibility).saturating_add(1)
     })
@@ -182,7 +183,7 @@ fn place_in<T: PartialEq>(all: &[T], value: &T) -> u8 {
     u8::try_from(place.unwrap_or(all.len())).unwrap_or(u8::MAX)
 }
 
-pub(super) const fn role_code(role: Role) -> u8 {
+pub(in crate::code) const fn role_code(role: Role) -> u8 {
     match role {
         Role::Code => 0,
         Role::Test => 1,

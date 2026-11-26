@@ -1,9 +1,9 @@
 //! Writing an index's entry, and measuring what each part of it costs.
 
-use crate::code::index::{Definition, FileIndex, IndexFault, ModuleFile};
-use crate::code::scope::{Scope, ScopeId};
-use crate::code::span::{Span, SpanHash};
-use crate::code::symbol::Segment;
+use crate::code::index::file::{Definition, FileIndex, IndexFault, ModuleFile};
+use crate::code::index::scope::{Scope, ScopeId};
+use crate::code::index::span::{Span, SpanHash};
+use crate::code::index::symbol::Segment;
 
 use super::{DEPTH_BYTES, Indexed, block, kind_code, role_code, visibility_code};
 

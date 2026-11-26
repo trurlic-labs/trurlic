@@ -16,6 +16,6 @@ anchors = [
     { file = "src/code/facts.rs", symbol = "FileFault" },
     { file = "src/code/facts.rs", symbol = "ReadFault" },
     { file = "src/code/facts.rs", symbol = "Resolution" },
-    { file = "src/code/index.rs", symbol = "IndexFault" },
-    { file = "src/code/symbol.rs", symbol = "SymbolFault" },
+    { file = "src/code/index/file.rs", symbol = "IndexFault" },
+    { file = "src/code/index/symbol.rs", symbol = "SymbolFault" },
 ]

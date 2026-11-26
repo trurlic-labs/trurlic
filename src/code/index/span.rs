@@ -22,12 +22,12 @@ pub(crate) const HASH_SCHEME: &str = "t1";
 
 /// The mark before a nested definition's hash among a definition's
 /// units: a length no token has.
-pub(super) const NESTED_MARK: [u8; 8] = u64::MAX.to_le_bytes();
+pub(in crate::code) const NESTED_MARK: [u8; 8] = u64::MAX.to_le_bytes();
 
 /// The units that open and close a group of a marked tree (a statement, a
 /// block) in a hash: lengths no token has, nor [`NESTED_MARK`].
-pub(super) const OPEN_MARK: [u8; 8] = (u64::MAX - 1).to_le_bytes();
-pub(super) const CLOSE_MARK: [u8; 8] = (u64::MAX - 2).to_le_bytes();
+pub(in crate::code) const OPEN_MARK: [u8; 8] = (u64::MAX - 1).to_le_bytes();
+pub(in crate::code) const CLOSE_MARK: [u8; 8] = (u64::MAX - 2).to_le_bytes();
 
 /// A definition's place in its file: bytes `start..end`, on lines
 /// `first_line..=last_line`, counted from 1.
@@ -50,13 +50,13 @@ impl fmt::Display for Span {
 }
 
 /// The line of each byte offset of one text.
-pub(super) struct Lines {
+pub(in crate::code) struct Lines {
     /// The offset each line starts at; the first is 0.
     starts: Vec<usize>,
 }
 
 impl Lines {
-    pub(super) fn of(text: &[u8]) -> Self {
+    pub(in crate::code) fn of(text: &[u8]) -> Self {
         let mut starts = vec![0];
         starts.extend(
             text.iter()
@@ -69,7 +69,7 @@ impl Lines {
 
     /// The span of bytes `start..end`; its last line holds the byte before
     /// `end`, so a span ending with a line break ends on that line.
-    pub(super) fn span(&self, start: usize, end: usize) -> Span {
+    pub(in crate::code) fn span(&self, start: usize, end: usize) -> Span {
         let line = |at: usize| self.starts.partition_point(|&s| s <= at);
         Span {
             start,
@@ -89,7 +89,7 @@ impl SpanHash {
     /// The hash of `units`, a definition's tokens and nested hashes, each
     /// after its length mark (`Leaves::hash_each`), so `a b` and `ab` hash
     /// apart.
-    pub(super) fn of_units(units: &[u8]) -> Self {
+    pub(in crate::code) fn of_units(units: &[u8]) -> Self {
         Self(*blake3::hash(units).as_bytes())
     }
 
@@ -98,7 +98,7 @@ impl SpanHash {
     /// would be that held them and no token of its own, each hash after
     /// [`NESTED_MARK`], so no single definition's hash, which holds its
     /// tokens, is one of a set's.
-    pub(super) fn of_members(members: &[Self]) -> Self {
+    pub(in crate::code) fn of_members(members: &[Self]) -> Self {
         match members {
             [one] => *one,
             several => {
@@ -123,7 +123,7 @@ impl SpanHash {
 
     /// The hash of `text` with its runs of whitespace made one space and
     /// its ends trimmed.
-    pub(super) fn of_text(text: &str) -> Self {
+    pub(in crate::code) fn of_text(text: &str) -> Self {
         let mut hasher = blake3::Hasher::new();
         for (n, word) in text.split_whitespace().enumerate() {
             if n > 0 {

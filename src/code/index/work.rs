@@ -12,12 +12,12 @@
 //! tree-sitter span hash is no part of any: each token is hashed once by
 //! construction (`syntax.rs`).
 
-use super::index::IndexFault;
+use super::file::IndexFault;
 use super::scope::MAX_NESTING;
 
 /// Bytes the lexer is served per byte of the file. Source a person wrote
 /// takes about one; the bound leaves a wide margin for code mid-edit.
-pub(super) const SERVED_BYTES_PER_BYTE: usize = 64;
+pub(in crate::code) const SERVED_BYTES_PER_BYTE: usize = 64;
 
 /// The runtime's progress operations a parse may take per byte of its
 /// file, every 64 bytes allocated one of them. They decide which file is
@@ -27,44 +27,44 @@ pub(super) const SERVED_BYTES_PER_BYTE: usize = 64;
 /// is not interrupted, and one step of error recovery can cost several
 /// times the whole budget. The costliest sources measured take under half
 /// of it; error-dense logs named as source can pass it.
-pub(super) const PARSE_OPERATIONS_PER_BYTE: usize = 32;
+pub(in crate::code) const PARSE_OPERATIONS_PER_BYTE: usize = 32;
 
 /// The progress operations any parse may take, however short its file: 4
 /// MiB of allocation.
-pub(super) const MIN_PARSE_OPERATIONS: usize = 1 << 16;
+pub(in crate::code) const MIN_PARSE_OPERATIONS: usize = 1 << 16;
 
 /// Nodes the general resolver enters and bytes its predicates read per
 /// byte of the file.
-pub(super) const SCAN_WORK_PER_BYTE: usize = 16;
+pub(in crate::code) const SCAN_WORK_PER_BYTE: usize = 16;
 
 /// Bytes a lexical resolver hashes per byte of the file: a byte is
 /// hashed once per definition whose span holds it, and spans nest at
 /// most [`MAX_NESTING`] deep along a path; twice that leaves room for
 /// spans that overlap without nesting (a TOML table and the one whose
 /// header comes between its own and its sub-table's).
-pub(super) const LEXICAL_WORK_PER_BYTE: usize = 2 * MAX_NESTING;
+pub(in crate::code) const LEXICAL_WORK_PER_BYTE: usize = 2 * MAX_NESTING;
 
 /// The work any file may take, however short, in each budget but the
 /// parse's operations.
-pub(super) const MIN_WORK: usize = 1 << 20;
+pub(in crate::code) const MIN_WORK: usize = 1 << 20;
 
 /// What is left of one budget of a file.
 #[derive(Debug)]
-pub(super) struct Work {
+pub(in crate::code) struct Work {
     left: usize,
 }
 
 impl Work {
     /// The budget of `per_byte` units for each of `bytes`, and `min` at
     /// least.
-    pub(super) fn of(bytes: usize, per_byte: usize, min: usize) -> Self {
+    pub(in crate::code) fn of(bytes: usize, per_byte: usize, min: usize) -> Self {
         Self {
             left: bytes.saturating_mul(per_byte).max(min),
         }
     }
 
     /// Spend `units`; [`IndexFault::TooComplex`] once the budget is gone.
-    pub(super) fn spend(&mut self, units: usize) -> Result<(), IndexFault> {
+    pub(in crate::code) fn spend(&mut self, units: usize) -> Result<(), IndexFault> {
         self.left = self.left.checked_sub(units).ok_or(IndexFault::TooComplex)?;
         Ok(())
     }

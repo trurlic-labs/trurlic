@@ -4,10 +4,8 @@
 //! a `define` block holds no rule, and a recipe line opens with a tab;
 //! blank and comment lines inside a recipe neither end it nor join it.
 
-use super::index::{FileIndex, IndexFault};
-use super::kinds::DefinitionKind;
+use super::index::{DefinitionKind, FileIndex, IndexFault, ScopeTree};
 use super::lexical::Lexical;
-use super::scope::ScopeTree;
 
 /// The index of `text`, a Makefile: its rule targets.
 pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {

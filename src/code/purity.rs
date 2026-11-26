@@ -393,7 +393,7 @@ fn dependencies(texts: &[(String, String)]) -> Vec<String> {
         return Vec::new();
     };
     let manifest = crate::code::testing::index(FileKind::Toml, manifest.as_bytes()).unwrap();
-    let scopes = super::scope::Scopes(&manifest.scopes);
+    let scopes = super::index::Scopes(&manifest.scopes);
     manifest
         .definitions
         .iter()

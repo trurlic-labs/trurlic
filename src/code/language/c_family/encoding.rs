@@ -4,7 +4,7 @@
 //! refuses an entry past it, so bytes no write made cost no more than
 //! that room.
 
-use crate::code::encoding::{Reader, Writer};
+use crate::code::index::{Reader, Writer};
 
 use super::{Body, Define, Defines, Lexed};
 

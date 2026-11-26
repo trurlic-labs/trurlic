@@ -16,13 +16,13 @@ status = "proposed"
 origin = "code index: rust paths spelled from tokens, invoked names removed"
 created = "2026-11-26T10:16:30.726089612Z"
 anchors = [
+    { file = "src/code/index/symbol.rs", symbol = "Segment::of_rust" },
+    { file = "src/code/index/symbol.rs", symbol = "Segment::of_trait" },
+    { file = "src/code/index/symbol.rs", symbol = "rust_spelling" },
+    { file = "src/code/index/symbol.rs", symbol = "split_outside_brackets" },
     { file = "src/code/rust.rs", symbol = "type_segment" },
     { file = "src/code/rust/tests.rs", symbol = "a_raw_identifier_is_defined_and_named_as_its_name" },
     { file = "src/code/rust/tests.rs", symbol = "an_anchor_names_an_impl_whatever_its_spaces_and_trailing_commas" },
     { file = "src/code/rust/tests.rs", symbol = "an_impls_path_is_spelled_from_its_tokens_so_rustfmt_and_a_comment_move_none" },
-    { file = "src/code/symbol.rs", symbol = "Segment::of_rust" },
-    { file = "src/code/symbol.rs", symbol = "Segment::of_trait" },
-    { file = "src/code/symbol.rs", symbol = "rust_spelling" },
-    { file = "src/code/symbol.rs", symbol = "split_outside_brackets" },
     { file = "src/code/tree.rs", symbol = "TreeIndex::spelled" },
 ]

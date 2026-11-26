@@ -17,10 +17,10 @@ status = "proposed"
 origin = "every tree-sitter parse bounded by one count of work"
 created = "2026-11-26T09:47:30.725930774Z"
 anchors = [
-    { file = "src/code/index.rs", symbol = "the_vendored_runtime_is_the_one_the_index_format_names" },
+    { file = "src/code/index/work.rs", symbol = "MIN_PARSE_OPERATIONS" },
+    { file = "src/code/index/work.rs", symbol = "PARSE_OPERATIONS_PER_BYTE" },
+    { file = "src/code/resolver.rs", symbol = "the_vendored_runtime_is_the_one_the_index_format_names" },
     { file = "src/code/syntax.rs", symbol = "parse" },
-    { file = "src/code/work.rs", symbol = "MIN_PARSE_OPERATIONS" },
-    { file = "src/code/work.rs", symbol = "PARSE_OPERATIONS_PER_BYTE" },
     { file = "vendor/tree-sitter/src/alloc.c", symbol = "ts_take_allocated_bytes" },
     { file = "vendor/tree-sitter/src/parser.c", symbol = "ts_parser__check_progress" },
     { file = "vendor/tree-sitter/src/stack.c", symbol = "stack_node_add_link" },

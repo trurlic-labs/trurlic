@@ -24,7 +24,7 @@ use std::ops::{ControlFlow, Range};
 
 use tree_sitter::{Node, Tree};
 
-use super::span::{CLOSE_MARK, NESTED_MARK, OPEN_MARK, SpanHash};
+use super::index::{CLOSE_MARK, NESTED_MARK, OPEN_MARK, SpanHash};
 use super::syntax::{Lexicon, Take, Token, tokens, walk_tokens};
 use jsx::{JsxText, push_chars};
 

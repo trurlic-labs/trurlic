@@ -1,10 +1,12 @@
 //! Reading an index's entry back, taking nothing on trust.
 
-use crate::code::index::{Definition, FileIndex, FileKind, IndexFault, ModuleFile, RustFacts};
-use crate::code::kinds::{DefinitionKind, Role, Visibility};
-use crate::code::scope::{MAX_NESTING, Scope, ScopeId};
-use crate::code::span::{Span, SpanHash};
-use crate::code::symbol::Segment;
+use crate::code::index::file::{
+    Definition, FileIndex, FileKind, IndexFault, ModuleFile, RustFacts,
+};
+use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
+use crate::code::index::scope::{MAX_NESTING, Scope, ScopeId};
+use crate::code::index::span::{Span, SpanHash};
+use crate::code::index::symbol::Segment;
 
 use super::{DEPTH_BYTES, Indexed, block, max_entry_bytes};
 

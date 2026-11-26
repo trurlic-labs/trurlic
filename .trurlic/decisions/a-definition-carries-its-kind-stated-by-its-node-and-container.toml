@@ -13,7 +13,7 @@ status = "accepted"
 origin = "definition kinds"
 created = "2026-11-24T10:33:26.877207089Z"
 anchors = [
-    { file = "src/code/kinds.rs", symbol = "DefinitionKind" },
-    { file = "src/code/kinds.rs", symbol = "DefinitionKind::name" },
+    { file = "src/code/index/kinds.rs", symbol = "DefinitionKind" },
+    { file = "src/code/index/kinds.rs", symbol = "DefinitionKind::name" },
     { file = "src/code/rust/items.rs", symbol = "Item::kind" },
 ]

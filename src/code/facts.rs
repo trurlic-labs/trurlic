@@ -9,12 +9,11 @@ use crate::store::Anchor;
 
 use super::crates::{Crates, Files};
 use super::definitions::Definitions;
-use super::index::{Definition, FileIndex, FileKind, IndexFault};
-use super::kinds::{DefinitionKind, Role};
+use super::index::{
+    Definition, DefinitionKind, FileIndex, FileKind, IndexFault, Role, Scopes, Segment, SpanHash,
+    Symbol, SymbolFault,
+};
 use super::roles::test_files;
-use super::scope::Scopes;
-use super::span::SpanHash;
-use super::symbol::{Segment, Symbol, SymbolFault};
 
 /// Why the shell has no bytes of a file it found, or no index of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

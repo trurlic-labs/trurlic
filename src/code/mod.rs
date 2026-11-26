@@ -11,20 +11,18 @@
 //! contract of `query.rs`). TOML, JSON, Makefiles and Markdown have
 //! lexical resolvers of their own (over `lexical.rs`). A file's index is a
 //! function of its kind and bytes ([`index`]): its paths a tree of scopes
-//! (`scope.rs`), which charges all an index holds to the file's room, its
-//! work under budgets per byte (`work.rs`), its cache entry a compact
-//! encoding (`encoding.rs`). What needs the whole tree is a second step
+//! (`index/scope_tree.rs`), which charges all an index holds to the file's room, its
+//! work under budgets per byte (`index/work.rs`), its cache entry a compact
+//! encoding (`index/encoding/`). What needs the whole tree is a second step
 //! over the indexes: the files that are test code whole (`roles.rs`). A
 //! macro invocation defines nothing (`rust.rs`).
 
 mod crates;
 mod definitions;
-mod encoding;
 mod facts;
 mod general;
 mod index;
 mod json;
-mod kinds;
 mod language;
 mod lexical;
 mod make;
@@ -32,33 +30,29 @@ mod markdown;
 #[cfg(test)]
 mod purity;
 mod query;
+mod resolver;
 mod roles;
 mod rust;
-
-mod scope;
-mod span;
-mod symbol;
 mod syntax;
 #[cfg(test)]
 pub(crate) mod testing;
 mod toml;
 mod tree;
 mod units;
-mod work;
 
 pub(crate) use crates::MANIFEST;
-pub(crate) use encoding::{
-    Indexed, decode as decode_index, encode as encode_index, max_entry_bytes,
-};
 #[cfg(test)]
 pub(crate) use facts::Target;
 pub(crate) use facts::{Code, CodeFacts, Entry, FileFault, ReadFault, Resolution};
-pub(crate) use index::{BOUNDS, FileKind, INDEX_FORMAT, MAX_SOURCE_BYTES, index};
-pub(crate) use kinds::DefinitionKind;
+pub(crate) use index::{
+    DefinitionKind, FileKind, HASH_SCHEME, Indexed, MAX_SOURCE_BYTES, decode as decode_index,
+    encode as encode_index, max_entry_bytes,
+};
 pub(crate) use language::c_family::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
     max_lexed_bytes,
 };
+pub(crate) use resolver::{BOUNDS, INDEX_FORMAT, index};
 
 /// Whether the query of the language named `name` (`c`, `cpp`, `python`,
 /// `typescript`, `tsx`) compiles within its contract, compiled afresh:
@@ -77,10 +71,9 @@ pub(crate) fn query_compiles(name: &str) -> bool {
     .is_some_and(|language| language.compile().is_ok())
 }
 #[cfg(test)]
-pub(crate) use purity::{AllowList, faults};
-pub(crate) use span::HASH_SCHEME;
+pub(crate) use index::SpanHash;
 #[cfg(test)]
-pub(crate) use span::SpanHash;
+pub(crate) use purity::{AllowList, faults};
 
 #[cfg(test)]
 mod tests {

@@ -19,10 +19,8 @@ use std::ops::Range;
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
-use super::index::{FileIndex, IndexFault};
-use super::kinds::DefinitionKind;
+use super::index::{DefinitionKind, FileIndex, IndexFault, MAX_NESTING, ScopeId, ScopeTree};
 use super::lexical::Lexical;
-use super::scope::{MAX_NESTING, ScopeId, ScopeTree};
 
 /// The index of `text`, a TOML file: its key paths.
 pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {

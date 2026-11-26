@@ -32,9 +32,9 @@ use std::ops::{ControlFlow, Range};
 
 use tree_sitter::{Language, Node, ParseOptions, Parser, Tree};
 
-use super::index::IndexFault;
-use super::work::{
-    MIN_PARSE_OPERATIONS, MIN_WORK, PARSE_OPERATIONS_PER_BYTE, SERVED_BYTES_PER_BYTE, Work,
+use super::index::{
+    IndexFault, MIN_PARSE_OPERATIONS, MIN_WORK, PARSE_OPERATIONS_PER_BYTE, SERVED_BYTES_PER_BYTE,
+    Work,
 };
 
 /// The bytes the lexer is handed at a time. The lexer reads again within

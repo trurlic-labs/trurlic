@@ -15,13 +15,13 @@ status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/scope.rs", symbol = "MAX_NESTING" },
+    { file = "src/code/index/scope.rs", symbol = "MAX_NESTING" },
+    { file = "src/code/index/work.rs", symbol = "SCAN_WORK_PER_BYTE" },
+    { file = "src/code/index/work.rs", symbol = "SERVED_BYTES_PER_BYTE" },
+    { file = "src/code/index/work.rs", symbol = "Work" },
     { file = "src/code/syntax.rs", symbol = "CHUNK_BYTES" },
     { file = "src/code/syntax.rs", symbol = "a_parse_is_held_to_64_bytes_served_a_byte_of_its_file" },
     { file = "src/code/syntax.rs", symbol = "parse" },
-    { file = "src/code/work.rs", symbol = "SCAN_WORK_PER_BYTE" },
-    { file = "src/code/work.rs", symbol = "SERVED_BYTES_PER_BYTE" },
-    { file = "src/code/work.rs", symbol = "Work" },
     { file = "src/sources/source.rs", symbol = "read_source" },
     { file = "src/sources/tests.rs", symbol = "hostile_files_are_refused_with_their_cause" },
 ]

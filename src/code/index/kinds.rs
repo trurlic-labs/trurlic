@@ -91,7 +91,7 @@ impl DefinitionKind {
     }
 
     /// The kind's name in a query file.
-    pub(super) const fn name(self) -> &'static str {
+    pub(in crate::code) const fn name(self) -> &'static str {
         match self {
             Self::Module => "module",
             Self::Struct => "struct",
@@ -120,12 +120,12 @@ impl DefinitionKind {
     }
 
     /// The kind a query file names `name`.
-    pub(super) fn of_name(name: &str) -> Option<Self> {
+    pub(in crate::code) fn of_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 
     /// Every kind, in the order of their codes in a cache entry.
-    pub(super) const ALL: [Self; 23] = [
+    pub(in crate::code) const ALL: [Self; 23] = [
         Self::Module,
         Self::Struct,
         Self::Union,
@@ -154,10 +154,10 @@ impl DefinitionKind {
 
 /// What a definition is, beside where.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct What {
-    pub(super) kind: DefinitionKind,
-    pub(super) role: Role,
-    pub(super) visibility: Option<Visibility>,
+pub(in crate::code) struct What {
+    pub(in crate::code) kind: DefinitionKind,
+    pub(in crate::code) role: Role,
+    pub(in crate::code) visibility: Option<Visibility>,
 }
 
 /// Whether a definition is test code or the code a project ships.
@@ -169,7 +169,7 @@ pub(crate) enum Role {
 
 impl Role {
     /// Test code when either is.
-    pub(super) const fn or(self, other: Self) -> Self {
+    pub(in crate::code) const fn or(self, other: Self) -> Self {
         match (self, other) {
             (Self::Code, Self::Code) => Self::Code,
             (Self::Test, _) | (_, Self::Test) => Self::Test,
@@ -200,7 +200,7 @@ pub(crate) enum Visibility {
 
 impl Visibility {
     /// Every visibility, in the order of their codes in a cache entry.
-    pub(super) const ALL: [Self; 6] = [
+    pub(in crate::code) const ALL: [Self; 6] = [
         Self::Private,
         Self::Crate,
         Self::Super,
@@ -210,7 +210,7 @@ impl Visibility {
     ];
 
     /// The visibility's name in a query file.
-    pub(super) const fn name(self) -> &'static str {
+    pub(in crate::code) const fn name(self) -> &'static str {
         match self {
             Self::Private => "private",
             Self::Crate => "crate",
@@ -222,7 +222,7 @@ impl Visibility {
     }
 
     /// The visibility a query file names `name`.
-    pub(super) fn of_name(name: &str) -> Option<Self> {
+    pub(in crate::code) fn of_name(name: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|visibility| visibility.name() == name)
@@ -230,7 +230,7 @@ impl Visibility {
 
     /// The visibility a modifier's text states (`pub`, `pub ( crate )`);
     /// `None` for a text that is no modifier.
-    pub(super) fn of_modifier(modifier: &str) -> Option<Self> {
+    pub(in crate::code) fn of_modifier(modifier: &str) -> Option<Self> {
         let modifier = modifier.trim();
         if modifier == "crate" {
             return Some(Self::Crate);

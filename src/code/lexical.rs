@@ -6,12 +6,10 @@
 
 use std::ops::Range;
 
-use super::index::{Definition, FileIndex, IndexFault};
-use super::kinds::{DefinitionKind, Role};
-use super::scope::{ScopeId, ScopeTree};
-use super::span::{Lines, SpanHash};
-use super::symbol::name_segments;
-use super::work::{LEXICAL_WORK_PER_BYTE, MIN_WORK, Work};
+use super::index::{
+    Definition, DefinitionKind, FileIndex, IndexFault, LEXICAL_WORK_PER_BYTE, Lines, MIN_WORK,
+    Role, ScopeId, ScopeTree, SpanHash, Work, name_segments,
+};
 
 pub(super) struct Lexical<'t> {
     text: &'t str,

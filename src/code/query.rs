@@ -91,7 +91,7 @@ use std::fmt;
 
 use tree_sitter::{CaptureQuantifier, Language, Query, QueryError};
 
-use super::kinds::{DefinitionKind, Visibility};
+use super::index::{DefinitionKind, Visibility};
 
 /// What a capture of a query is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

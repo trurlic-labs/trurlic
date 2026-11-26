@@ -32,11 +32,10 @@ mod silent;
 
 use tree_sitter::Node;
 
-use super::index::{FileIndex, IndexFault, ModuleFile};
-use super::kinds::{DefinitionKind, Role, Visibility, What};
-use super::scope::{ScopeId, ScopeTree};
-use super::span::Lines;
-use super::symbol::Segment;
+use super::index::{
+    DefinitionKind, FileIndex, IndexFault, Lines, ModuleFile, Role, ScopeId, ScopeTree, Segment,
+    Visibility, What,
+};
 use super::syntax::{self, Lexicon, text_of};
 use super::tree::TreeIndex;
 use super::units::Leaves;

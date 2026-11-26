@@ -180,8 +180,8 @@ fn bare_block(holder: Node<'_>) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::index::SpanHash;
     use crate::code::rust::LEXICON;
-    use crate::code::span::SpanHash;
     use crate::code::syntax::parse;
     use crate::code::units::Leaves;
 
@@ -309,7 +309,7 @@ mod tests {
         let hashes = |text: &str| -> std::collections::BTreeMap<String, SpanHash> {
             let index =
                 crate::code::testing::index(crate::code::FileKind::Rust, text.as_bytes()).unwrap();
-            let scopes = crate::code::scope::Scopes(&index.scopes);
+            let scopes = crate::code::index::Scopes(&index.scopes);
             index
                 .definitions
                 .iter()

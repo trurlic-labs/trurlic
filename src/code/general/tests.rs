@@ -1,9 +1,7 @@
 use super::*;
 use crate::code::BlankMacros;
-use crate::code::index::FileKind;
+use crate::code::index::{FileKind, ScopeTree, Scopes, Span, SpanHash};
 use crate::code::language::python::MAX_INDENTATIONS;
-use crate::code::scope::{ScopeTree, Scopes};
-use crate::code::span::{Span, SpanHash};
 use crate::code::testing::{defined, index_in, named, path};
 
 /// Each definition of `text`, a Python file, as `path kind role

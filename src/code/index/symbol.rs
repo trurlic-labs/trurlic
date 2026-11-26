@@ -41,20 +41,20 @@ pub(crate) enum Segment {
 
 impl Segment {
     /// A name segment, its whitespace normalized as a symbol's is.
-    pub(super) fn name(text: &str) -> Self {
+    pub(in crate::code) fn name(text: &str) -> Self {
         Self::Name(normalize_spaces(text))
     }
 
     /// The segment of `text`, a Rust name or a type with no name (a tuple,
     /// an array), as [`rust_spelling`] spells it.
-    pub(super) fn of_rust(text: &str) -> Self {
+    pub(in crate::code) fn of_rust(text: &str) -> Self {
         Self::Name(rust_spelling(text))
     }
 
     /// The trait segment of `text`, a trait as source writes it
     /// (`fmt::Display`, `From < Kind >`), without the angle brackets of the
     /// segment, as [`rust_spelling`] spells it.
-    pub(super) fn of_trait(text: &str) -> Self {
+    pub(in crate::code) fn of_trait(text: &str) -> Self {
         let spelled = rust_spelling(text);
         let (path, arguments) = match spelled.find('<') {
             Some(at) => spelled.split_at(at),
@@ -295,7 +295,7 @@ fn ends_with<'s, 'a>(
 /// The definition-path segments of `text`, a name as a file of `syntax`
 /// holds it: a `::` in a heading or a key splits it as it splits a
 /// symbol, so a symbol can name it.
-pub(super) fn name_segments(text: &str) -> impl Iterator<Item = Segment> {
+pub(in crate::code) fn name_segments(text: &str) -> impl Iterator<Item = Segment> {
     text.split("::").map(Segment::name)
 }
 
@@ -321,7 +321,7 @@ fn segment(part: &str, syntax: Syntax) -> Result<Segment, SymbolFault> {
 /// but the one of a one-element tuple, `(u8,)`. The index spells the
 /// tokens of a definition's path and a symbol's text by it, so rustfmt's
 /// trailing commas and the spaces of an anchor name what the code does.
-pub(super) fn rust_spelling(text: &str) -> String {
+pub(in crate::code) fn rust_spelling(text: &str) -> String {
     let mut spelled = String::with_capacity(text.len());
     // The open brackets, each with the commas written in it so far.
     let mut open: Vec<usize> = Vec::new();
@@ -411,7 +411,7 @@ fn split_outside_brackets(text: &str) -> Result<Vec<&str>, SymbolFault> {
 }
 
 /// `text` trimmed, with each run of whitespace in it made one space.
-pub(super) fn normalize_spaces(text: &str) -> String {
+pub(in crate::code) fn normalize_spaces(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

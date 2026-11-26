@@ -13,10 +13,7 @@ use std::ops::Range;
 
 use tree_sitter::Node;
 
-use crate::code::index::IndexFault;
-use crate::code::kinds::{DefinitionKind, Visibility, What};
-use crate::code::scope::ScopeId;
-use crate::code::symbol::Segment;
+use crate::code::index::{DefinitionKind, IndexFault, ScopeId, Segment, Visibility, What};
 use crate::code::syntax::text_of;
 
 use super::{Visit, Walk, marks};

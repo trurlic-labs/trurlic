@@ -17,9 +17,9 @@ origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "src/code/general/tests.rs", symbol = "a_definitions_hash_is_its_own_whatever_follows_it_or_holds_it" },
+    { file = "src/code/index/span.rs", symbol = "HASH_SCHEME" },
     { file = "src/code/lexical.rs", symbol = "Lexical::hash" },
     { file = "src/code/rust.rs", symbol = "LITERALS" },
-    { file = "src/code/span.rs", symbol = "HASH_SCHEME" },
     { file = "src/code/syntax.rs", symbol = "walk_tokens" },
     { file = "src/code/units.rs", symbol = "Leaves::hash_each" },
     { file = "src/code/units.rs", symbol = "Leaves::of_marked" },

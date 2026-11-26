@@ -8,9 +8,8 @@
 
 use tree_sitter::Node;
 
-use crate::code::index::IndexFault;
+use crate::code::index::{IndexFault, Work};
 use crate::code::syntax;
-use crate::code::work::Work;
 
 /// The quotes a string literal opens and closes with.
 const QUOTES: [char; 3] = ['"', '\'', '`'];

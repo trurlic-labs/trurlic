@@ -15,7 +15,7 @@ status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/index.rs", symbol = "FileKind::is_code" },
+    { file = "src/code/index/file.rs", symbol = "FileKind::is_code" },
     { file = "src/sources/walk.rs", symbol = "SKIPPED_MARKERS" },
     { file = "src/sources/walk.rs", symbol = "SKIPPED_NAMES" },
     { file = "src/sources/walk.rs", symbol = "manifests_above" },

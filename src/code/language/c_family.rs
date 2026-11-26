@@ -51,8 +51,7 @@ use lex::{Item, lex};
 
 use super::Language;
 use crate::code::general::{self, Source};
-use crate::code::index::{FileIndex, IndexFault};
-use crate::code::scope::ScopeTree;
+use crate::code::index::{FileIndex, IndexFault, ScopeTree};
 
 pub(crate) use encoding::{decode_lexed, encode_lexed, max_lexed_bytes};
 pub(crate) use set::{BlankMacros, FileMacros};

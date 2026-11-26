@@ -13,6 +13,6 @@ origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
     { file = "src/code/general/tests.rs", symbol = "a_leading_underscore_is_private_and_a_dunder_public" },
-    { file = "src/code/kinds.rs", symbol = "Visibility" },
+    { file = "src/code/index/kinds.rs", symbol = "Visibility" },
     { file = "src/code/language/python.scm" },
 ]

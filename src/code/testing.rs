@@ -2,11 +2,8 @@
 //! or in a tree of C and C++ headers, and each definition's path and the
 //! text of its span.
 
-use super::encoding::Indexed;
-use super::index::FileKind;
+use super::index::{FileKind, Indexed, ScopeId, Scopes, Symbol};
 use super::language::c_family::{BlankMacros, FileMacros, lexed};
-use super::scope::{ScopeId, Scopes};
-use super::symbol::Symbol;
 
 /// The index of `bytes`, a file of `kind` alone in its tree: a C or C++
 /// file blanks what its own `#define`s make blankable.
@@ -21,7 +18,7 @@ pub(crate) fn index_in(path: &str, kind: FileKind, bytes: &[u8], tree: &BlankMac
         true => tree.of_file(path, &lexed(bytes)),
         false => FileMacros::default(),
     };
-    super::index::index(kind, bytes, &macros)
+    super::resolver::index(kind, bytes, &macros)
 }
 
 /// Each definition of `text`, a file of `kind`, as its path joined by

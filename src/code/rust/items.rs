@@ -1,7 +1,7 @@
 //! What a Rust item is, from its node and the container it stands in:
 //! its kind, and whose visibility it and its members have.
 
-use crate::code::kinds::{DefinitionKind, Visibility};
+use crate::code::index::{DefinitionKind, Visibility};
 
 /// The container a node stands in, as far as what it defines is
 /// concerned: whether a `fn` is a method, and whose visibility a member

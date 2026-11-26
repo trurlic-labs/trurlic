@@ -16,7 +16,7 @@ created = "2026-11-25T23:03:16.297379871Z"
 anchors = [
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-c" },
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-cpp" },
-    { file = "src/code/index.rs", symbol = "FileKind::of" },
+    { file = "src/code/index/file.rs", symbol = "FileKind::of" },
     { file = "src/code/language.rs", symbol = "C" },
     { file = "src/code/language.rs", symbol = "CPP" },
     { file = "src/code/language/c.scm" },
