@@ -8,7 +8,10 @@
 //! tree's own worktree is the listed one whose top is the nearest at or
 //! above the code root; the code root's place in it, its prefix, is where
 //! every other worktree is read, so a graph in a subdirectory is read
-//! against the same subdirectory there.
+//! against the same subdirectory there. Git lists the main worktree of a
+//! submodule by its git directory: when the calling tree is that worktree,
+//! its top is the code root's own, and seen from a linked worktree it is
+//! left out with a warning that says why.
 //!
 //! One rule says at which paths another worktree may hold an anchor: those
 //! its work tree differs in from the commit where its line forked from the
@@ -16,8 +19,10 @@
 //! from that base, then the untracked files `git ls-files --others`
 //! lists). So code written there and not committed, or not yet added,
 //! counts whether that worktree is ahead, behind or at the calling tree's
-//! commit, and a branch cut before the calling tree deleted something,
-//! whose work tree still holds it, never hides the deletion. When the two
+//! commit. The anchor is held there only when it does not resolve in those
+//! files as the fork held them, so a branch cut before the calling tree
+//! deleted something, whose work tree still holds it, never hides the
+//! deletion, whatever else it changed in the file. When the two
 //! lines share no commit, either one on an unborn branch or their
 //! histories unrelated, every path of that worktree counts. A worktree git
 //! marks prunable, the bare entry and one with no directory at the prefix
@@ -53,6 +58,12 @@ pub(super) struct Forked {
 }
 
 impl Forked {
+    /// The commit where this worktree's line forked from the calling
+    /// tree's; `None` when they share none.
+    pub(super) fn base(&self) -> Option<&str> {
+        self.base.as_deref()
+    }
+
     /// Which of `paths`, relative to the code root, this worktree's work
     /// tree differs in from the fork: all of them when there is none.
     pub(super) fn changed(&self, paths: &[&str]) -> Result<BTreeSet<String>> {
@@ -86,6 +97,13 @@ pub(crate) enum UnreadCause {
         here.display()
     )]
     NotListed { here: PathBuf },
+    /// Git lists the worktree by its git directory, as it lists the main
+    /// worktree of a submodule, so where its work tree is is not known.
+    #[error(
+        "git lists it by its git directory, as it lists a submodule's main worktree, so its work \
+         tree is not known here; run `trurlic check` in that work tree"
+    )]
+    GitDirectory,
 }
 
 impl fmt::Display for UnreadWorktree {
@@ -122,10 +140,13 @@ fn listed(code_root: &Path) -> std::result::Result<Others, UnreadCause> {
         return Ok(Others::default());
     }
     let here = code_root.canonicalize().map_err(Error::io(code_root))?;
-    let live = live(code_root)?;
+    let mut live = live(code_root)?;
+    let mut others = Others::default();
+    if live.iter().any(|tree| !tree.top.join(".git").exists()) {
+        submodule_main(code_root, &mut live, &mut others)?;
+    }
     let own = own(&live, &here)?;
     let prefix = here.strip_prefix(&own.top).unwrap_or(Path::new(""));
-    let mut others = Others::default();
     for tree in live.iter().filter(|tree| tree.top != own.top) {
         let path = match prefix.as_os_str().is_empty() {
             // clone: the worktree found outlives the listing; `join` of an
@@ -153,6 +174,40 @@ fn listed(code_root: &Path) -> std::result::Result<Others, UnreadCause> {
         }
     }
     Ok(others)
+}
+
+/// `live` with the main worktree of a submodule, which git lists by its git
+/// directory, the common dir, given the work tree that directory serves as
+/// its top: the calling tree's own top when the calling tree is that
+/// worktree. Seen from a linked worktree of the submodule that work tree is
+/// not known, so the entry is left out, and `others` says so.
+fn submodule_main(
+    code_root: &Path,
+    live: &mut Vec<Listed>,
+    others: &mut Others,
+) -> std::result::Result<(), UnreadCause> {
+    let common = git::common_dir(code_root)?;
+    let common = common.canonicalize().map_err(Error::io(&common))?;
+    let Some(at) = live.iter().position(|tree| tree.top == common) else {
+        return Ok(());
+    };
+    let own = git::git_dir(code_root)?;
+    let own = own.canonicalize().map_err(Error::io(&own))?;
+    let top = match own == common {
+        true => git::toplevel(code_root)?,
+        false => None,
+    };
+    match (top, live.get_mut(at)) {
+        (Some(top), Some(main)) => main.top = top.canonicalize().map_err(Error::io(&top))?,
+        (None, _) | (_, None) => {
+            live.remove(at);
+            others.unread.push(UnreadWorktree {
+                worktree: Some(common),
+                cause: UnreadCause::GitDirectory,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The calling tree's own worktree, of `live`: the one whose top is the

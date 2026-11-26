@@ -5,17 +5,15 @@
 //! root, git is asked nothing and no anchor is repaired.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
-use crate::code::{CodeFacts, Entry, FileFault, FileKind};
-use crate::git;
+use crate::code::CodeFacts;
 use crate::lint::anchors::repair::{self, Search};
 use crate::lint::anchors::{Asked, Here, Judged, Prior, Renames};
 use crate::store::{Anchor, Store};
 
-use super::indexer::Indexer;
+use super::blobs::Blobs;
 use super::renames::History;
-use super::{MAX_SOURCE_FILE_BYTES, Reads, read_paths};
+use super::{Reads, read_paths};
 
 /// `asked` with the repair of each stale anchor git's history shows: a
 /// rename of its gone file that carried its code, or a move of its symbol
@@ -105,47 +103,4 @@ fn moves<'s>(
     }
     prior.extend(blobs.read(&repair::carrier_reads(&gained, &prior)));
     repair::moved(&gained, here, &prior)
-}
-
-/// The files of the code root's history, read from git and indexed by
-/// the shell's one indexer.
-struct Blobs<'r> {
-    root: &'r Path,
-    indexer: &'r Indexer,
-}
-
-impl Blobs<'_> {
-    /// What git's history held of each of `files`, a revision and a path,
-    /// each read in a bounded read and indexed; a file git holds no blob of
-    /// there, or any failure of git, leaves it out, and a file the indexer
-    /// cannot take is an index fault.
-    fn read(&self, files: &BTreeSet<(String, String)>) -> Vec<(String, String, Entry)> {
-        if files.is_empty() {
-            return Vec::new();
-        }
-        // clone: git is handed the files as a list.
-        let asked: Vec<(String, String)> = files.iter().cloned().collect();
-        let Ok(blobs) = git::renames::blobs(self.root, &asked, MAX_SOURCE_FILE_BYTES) else {
-            return Vec::new();
-        };
-        let blobs: Vec<(FileKind, String, String, Vec<u8>)> = blobs
-            .into_iter()
-            .filter_map(|((revision, path), bytes)| {
-                Some((FileKind::of(&path)?, revision, path, bytes))
-            })
-            .collect();
-        let indexed = self.indexer.map(&blobs, |worker, (kind, _, _, bytes)| {
-            match worker.index(*kind, bytes) {
-                Ok(indexed) => indexed.map_err(FileFault::Index),
-                Err(fault) => Err(FileFault::Read(fault)),
-            }
-        });
-        let indexed = indexed
-            .unwrap_or_else(|fault| blobs.iter().map(|_| Err(FileFault::Read(fault))).collect());
-        blobs
-            .into_iter()
-            .zip(indexed)
-            .map(|((kind, revision, path, _), index)| (revision, path, Entry::File { kind, index }))
-            .collect()
-    }
 }

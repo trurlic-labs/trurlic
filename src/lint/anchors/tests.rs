@@ -192,6 +192,7 @@ fn with_git_not_asked_an_anchor_that_names_nothing_is_unresolved() {
             branch: Some("feature".to_owned()),
         },
         facts: facts(&[("src/lib.rs", "pub fn close() {}\n")], &[]),
+        fork: None,
     };
 
     let unasked = judged(&decisions, &here, None);
@@ -237,6 +238,7 @@ fn an_anchor_another_worktree_holds_is_pending_on_its_branch() {
             branch: branch.map(str::to_owned),
         },
         facts: facts(files, &[]),
+        fork: None,
     };
     let elsewhere = [
         tree("/w/old", Some("old"), &[("src/lib.rs", LIB)]),
@@ -292,6 +294,52 @@ fn an_anchor_another_worktree_holds_is_pending_on_its_branch() {
             "anchor `src/new.rs` of `accepted` is pending: nothing is at its path here; it resolves in the worktree at /w/feature on branch `feature`".to_owned(),
             format!("anchor `src/lib.rs::late` of `proposed` is planned: {planned}"),
             format!("anchor `src/lib.rs::never` of `proposed` is planned: {planned}"),
+        ]
+    );
+}
+
+/// Another worktree holds an anchor only when the commit its line forked
+/// at did not: code the fork held is code the calling tree's line removed
+/// since, which that worktree's older copy, edited elsewhere in the file,
+/// brings back to nothing. Code the fork lacked is pending there.
+#[test]
+fn code_the_fork_held_is_stale_though_another_worktree_holds_it() {
+    let here = facts(&[("src/lib.rs", "pub fn close() {}\n")], &[]);
+    let there = Elsewhere {
+        worktree: Worktree {
+            path: "/w/fix".into(),
+            branch: Some("fix".to_owned()),
+        },
+        facts: facts(
+            &[(
+                "src/lib.rs",
+                "/// Reworded.\npub fn close() {}\npub fn gone() {}\npub fn fresh() {}\n",
+            )],
+            &[],
+        ),
+        fork: Some(facts(
+            &[("src/lib.rs", "pub fn close() {}\npub fn gone() {}\n")],
+            &[],
+        )),
+    };
+    let decisions = [(
+        "d",
+        decision(
+            &["src/lib.rs::gone", "src/lib.rs::fresh"],
+            StatusName::Accepted,
+        ),
+    )];
+
+    let kinds: Vec<String> = judged(&decisions, &here, Some(vec![there]))
+        .iter()
+        .map(|line| line.split(": ").next().unwrap().to_owned())
+        .collect();
+
+    assert_eq!(
+        kinds,
+        [
+            "anchor `src/lib.rs::gone` of `d` is stale",
+            "anchor `src/lib.rs::fresh` of `d` is pending",
         ]
     );
 }
@@ -1301,6 +1349,7 @@ fn a_planned_or_pending_anchor_is_never_repaired() {
             branch: Some("branch".into()),
         },
         facts: facts(&[("src/lib.rs", "pub fn branch() {}\n")], &[]),
+        fork: None,
     }];
     let mut revised = decision(&["src/lib.rs::gone"], StatusName::Proposed);
     revised.status = Status::Proposed {

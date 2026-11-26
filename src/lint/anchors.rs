@@ -51,11 +51,28 @@ pub(crate) struct Worktree {
 
 /// Another worktree whose work tree differs from where its line forked
 /// from the calling tree's at the files of some missing anchors, and the
-/// code facts of those files there.
+/// code facts of those files there and at the fork.
 #[derive(Debug)]
 pub(crate) struct Elsewhere {
     pub(crate) worktree: Worktree,
     pub(crate) facts: CodeFacts,
+    /// The facts of those files at the commit where the two lines forked;
+    /// `None` when they share no commit.
+    pub(crate) fork: Option<CodeFacts>,
+}
+
+/// Whether `anchor` names what `facts` hold: one definition, or several.
+fn holds(facts: &CodeFacts, anchor: &Anchor) -> bool {
+    match facts.resolve(anchor) {
+        Resolution::Resolved(_) | Resolution::Ambiguous(_) => true,
+        Resolution::FileMissing
+        | Resolution::SymbolMissing
+        | Resolution::SymbolInInvocation
+        | Resolution::SymbolOnDirectory
+        | Resolution::NoResolver
+        | Resolution::Unindexable(_)
+        | Resolution::Malformed(_) => false,
+    }
 }
 
 /// The decisions whose anchors are judged, by name.
@@ -394,20 +411,15 @@ impl<'s> Asked<'s> {
     }
 
     /// Read `tree`, the next other worktree: it holds each anchor still
-    /// stale that names one definition there, or several.
+    /// stale that names one definition there, or several, and named none
+    /// at the fork. Code the fork held is code the calling tree's line
+    /// removed since, which another worktree's older copy never brings
+    /// back, whatever else that worktree changed in the file.
     pub(crate) fn read(&mut self, tree: Elsewhere) {
         let at = self.read.len();
         self.stale.retain(|&anchor| {
-            let held = match tree.facts.resolve(anchor) {
-                Resolution::Resolved(_) | Resolution::Ambiguous(_) => true,
-                Resolution::FileMissing
-                | Resolution::SymbolMissing
-                | Resolution::SymbolInInvocation
-                | Resolution::SymbolOnDirectory
-                | Resolution::NoResolver
-                | Resolution::Unindexable(_)
-                | Resolution::Malformed(_) => false,
-            };
+            let at_fork = tree.fork.as_ref().is_some_and(|fork| holds(fork, anchor));
+            let held = holds(&tree.facts, anchor) && !at_fork;
             if held {
                 self.holders.insert(anchor, at);
             }

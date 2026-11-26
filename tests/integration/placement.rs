@@ -355,6 +355,103 @@ fn a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending(
     assert!(!stderr.contains("pending"), "{stderr}");
 }
 
+/// A deletion the calling tree committed is never hidden by a worktree
+/// whose line forked before it and still holds the code, whatever else
+/// that worktree changed in the file: an edit not committed, or a commit
+/// of its own made before the deletion. The anchor is stale there.
+#[test]
+fn a_worktree_that_edited_the_file_elsewhere_hides_no_deletion() {
+    for committed in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let main = root.join("main");
+        anchored_repository(&main);
+        git(
+            &main,
+            &["worktree", "add", "--quiet", "-b", "fix", "../fix"],
+        );
+        let fix = root.join("fix");
+        fs::write(fix.join("src/lib.rs"), "/// Reworded.\npub fn foo() {}\n").unwrap();
+        if committed {
+            git(&fix, &["commit", "--quiet", "-a", "-m", "reword"]);
+        }
+        fs::write(main.join("src/lib.rs"), "").unwrap();
+        git(
+            &main,
+            &["commit", "--quiet", "-a", "-m", "drop foo for good"],
+        );
+
+        let (code, _, stderr) = checked(&main);
+
+        assert_eq!(code, Some(1), "committed: {committed}: {stderr}");
+        assert!(
+            stderr.starts_with(
+                "  error: anchor `src/lib.rs::foo` of `rule` is stale: its file defines nothing its symbol names\n"
+            ),
+            "committed: {committed}: {stderr}"
+        );
+        assert!(!stderr.contains("pending"), "{stderr}");
+    }
+}
+
+/// A submodule's main worktree, which git lists by its git directory, is
+/// the calling tree's own when `check` runs there, so its linked worktree
+/// is read: a symbol written there is pending.
+#[test]
+fn a_linked_worktree_of_a_submodule_is_read_from_its_main_worktree() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    anchored_repository(&root.join("lib"));
+    let sup = root.join("sup");
+    fs::create_dir_all(&sup).unwrap();
+    git(&sup, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        &sup,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "--quiet",
+            "../lib",
+            "lib",
+        ],
+    );
+    git(&sup, &["commit", "--quiet", "-m", "submodule"]);
+    let lib = sup.join("lib");
+    let anchor = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"newfn\" },\n]\n";
+    fs::write(
+        lib.join(".trurlic/decisions/later.toml"),
+        decision("project", "A later rule", anchor),
+    )
+    .unwrap();
+    trurlic_ok(&lib, &["fmt"]);
+    git(&lib, &["add", "--all"]);
+    git(&lib, &["commit", "--quiet", "-m", "later rule"]);
+    git(
+        &lib,
+        &["worktree", "add", "--quiet", "-b", "s2", "../../subwt"],
+    );
+    let linked = root.join("subwt");
+    fs::write(
+        linked.join("src/lib.rs"),
+        "pub fn foo() {}\npub fn newfn() {}\n",
+    )
+    .unwrap();
+
+    let (code, _, stderr) = checked(&lib);
+
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "`src/lib.rs::newfn` of `later` is pending: its file defines nothing its symbol names \
+             here; it resolves in the worktree at {} on branch `s2`",
+            linked.display()
+        )),
+        "{stderr}"
+    );
+}
+
 /// Code another worktree holds and has not committed counts by the one
 /// rule, its work tree against the fork, whatever that worktree's commit:
 /// at the calling tree's commit with an edit, behind it with an edit, and
@@ -428,6 +525,8 @@ fn a_worktree_git_does_not_list_warns_that_the_others_went_unread() {
     let root = tmp.path().canonicalize().unwrap();
     let main = root.join("main");
     anchored_repository(&main);
+    fs::write(main.join("src/lib.rs"), "").unwrap();
+    git(&main, &["commit", "--quiet", "-a", "-m", "drop foo"]);
     for (branch, dir) in [("feature", "../feature"), ("other", "../other")] {
         git(&main, &["worktree", "add", "--quiet", "-b", branch, dir]);
     }
@@ -438,12 +537,12 @@ fn a_worktree_git_does_not_list_warns_that_the_others_went_unread() {
     .unwrap();
     git(
         &root.join("feature"),
-        &["commit", "--quiet", "-a", "-m", "bar"],
+        &["commit", "--quiet", "-a", "-m", "foo again"],
     );
-    fs::write(root.join("other/src/lib.rs"), "").unwrap();
+    fs::write(root.join("other/src/lib.rs"), "pub fn other() {}\n").unwrap();
     git(
         &root.join("other"),
-        &["commit", "--quiet", "-a", "-m", "drop foo"],
+        &["commit", "--quiet", "-a", "-m", "other"],
     );
 
     let (before, _, pending) = checked(&root.join("other"));

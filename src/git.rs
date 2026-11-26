@@ -245,7 +245,20 @@ pub(crate) fn toplevel(dir: &Path) -> Result<Option<PathBuf>> {
 /// it relative to `dir` when it is below it, so a relative answer is joined
 /// to `dir`.
 pub(crate) fn common_dir(dir: &Path) -> Result<PathBuf> {
-    let args = ["rev-parse".as_ref(), "--git-common-dir".as_ref()];
+    rev_parse_path(dir, "--git-common-dir")
+}
+
+/// The git directory of the worktree holding `dir`: the common dir for the
+/// main worktree, its own under `worktrees/` for a linked one; joined to
+/// `dir` as [`common_dir`] is.
+pub(crate) fn git_dir(dir: &Path) -> Result<PathBuf> {
+    rev_parse_path(dir, "--git-dir")
+}
+
+/// The path `git rev-parse <flag>` prints in `dir`, joined to `dir` when
+/// git prints it relative.
+fn rev_parse_path(dir: &Path, flag: &str) -> Result<PathBuf> {
+    let args = ["rev-parse".as_ref(), flag.as_ref()];
     let path = line_path(run(command(dir), dir, &args, None)?);
     Ok(if path.is_relative() {
         dir.join(path)

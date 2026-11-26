@@ -19,6 +19,7 @@
 //! the call's own work, under the exclusive lock when it is free: a busy
 //! lock skips the write, since the cache is never authoritative.
 
+mod blobs;
 mod cache;
 mod indexer;
 mod renames;
@@ -38,6 +39,7 @@ use crate::console::diag;
 use crate::lint::anchors::{self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Unasked};
 use crate::store::{Anchor, Decision, Store, SymbolsKey};
 
+use blobs::Blobs;
 use indexer::{Indexer, Worker};
 use walk::Probe;
 
@@ -125,7 +127,7 @@ fn calling_tree(store: &Store, decisions: &Decisions<'_>, reads: &mut Reads) -> 
 /// anchors no earlier one holds at the paths its work tree changed since
 /// the fork, and no further worktree is read once every one is held. Those
 /// files alone are read, never a walk of the tree, against the calling
-/// tree's crates and module declarations.
+/// tree's crates and module declarations, there and as the fork held them.
 fn elsewhere(
     store: &Store,
     here: &CodeFacts,
@@ -154,13 +156,37 @@ fn elsewhere(
                 continue;
             }
         };
+        let fork = forked.base().map(|base| {
+            let blobs = Blobs {
+                root: &forked.top,
+                indexer: &reads.indexer,
+            };
+            at_fork(here, &blobs, base, &changed)
+        });
         let facts = here.beside(&read_paths(store, &forked.top, changed, reads));
         asked.read(Elsewhere {
             worktree: forked.worktree,
             facts,
+            fork,
         });
     }
     unread
+}
+
+/// The facts of `paths` at commit `base`, read from git beside `here`, the
+/// calling tree's.
+fn at_fork(here: &CodeFacts, blobs: &Blobs<'_>, base: &str, paths: &BTreeSet<String>) -> CodeFacts {
+    // clone: each read names its revision and path.
+    let asked = paths
+        .iter()
+        .map(|path| (base.to_owned(), path.clone()))
+        .collect();
+    let mut read: BTreeMap<String, Option<Entry>> =
+        paths.iter().map(|path| (path.clone(), None)).collect();
+    for (_, path, entry) in blobs.read(&asked) {
+        read.insert(path, Some(entry));
+    }
+    here.beside(&read)
 }
 
 /// What is at each of `paths` in the tree at `root`, `None` where nothing
