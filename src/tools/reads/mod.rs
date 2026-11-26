@@ -32,21 +32,21 @@ const DECISIONS_FOR_FILE_DESCRIPTION: &str = "Reverse lookup: given a file or di
     anchored there; get_context(\"project\") lists them.";
 
 impl Read {
-    pub(crate) const fn name(self) -> &'static str {
+    pub(super) const fn name(self) -> &'static str {
         match self {
             Self::Context => "get_context",
             Self::DecisionsForFile => "get_decisions_for_file",
         }
     }
 
-    pub(crate) const fn title(self) -> &'static str {
+    pub(super) const fn title(self) -> &'static str {
         match self {
             Self::Context => "Get context",
             Self::DecisionsForFile => "Get decisions for file",
         }
     }
 
-    pub(crate) const fn description(self) -> &'static str {
+    pub(super) const fn description(self) -> &'static str {
         match self {
             Self::Context => CONTEXT_DESCRIPTION,
             Self::DecisionsForFile => DECISIONS_FOR_FILE_DESCRIPTION,
@@ -54,7 +54,7 @@ impl Read {
     }
 
     /// The JSON Schema of the read's arguments.
-    pub(crate) fn input_schema(self) -> Value {
+    pub(super) fn input_schema(self) -> Value {
         match self {
             Self::Context => json!({
                 "type": "object",

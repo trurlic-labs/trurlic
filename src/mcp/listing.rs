@@ -1,11 +1,10 @@
 //! The `tools/list` result: every tool of the registry as MCP lists it,
-//! built once on first access and returned by reference. A tool built on
-//! a spec lists the schemas its spec walks; a read written by hand,
-//! the schema it writes out by hand.
+//! built once on first access and returned by reference. An entry names
+//! in MCP's words what the tool states of itself.
 
 use std::sync::LazyLock;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::tools::{Destructive, TOOLS, Tool};
 
@@ -18,34 +17,31 @@ pub(super) fn tool_list() -> &'static Value {
     &TOOL_LIST
 }
 
-/// `tool`'s entry in `tools/list`.
+/// `tool`'s entry in `tools/list`. A tool with an output schema names its
+/// title beside its name as well; one without names it among its hints
+/// alone.
 fn entry(tool: Tool) -> Value {
-    match tool {
-        Tool::Spec(spec) => json!({
-            "name": spec.name(),
-            "title": spec.title(),
-            "description": spec.description(),
-            "annotations": annotations(spec.title(), spec.is_read_only(), spec.destructive()),
-            "inputSchema": spec.input_schema(),
-            "outputSchema": spec.output_schema(),
-        }),
-        Tool::Read(read) => json!({
-            "name": read.name(),
-            "description": read.description(),
-            "annotations": annotations(read.title(), true, Destructive::No),
-            "inputSchema": read.input_schema(),
-        }),
+    let mut entry = Map::from_iter([
+        ("name".to_owned(), json!(tool.name())),
+        ("description".to_owned(), json!(tool.description())),
+        ("annotations".to_owned(), annotations(tool)),
+        ("inputSchema".to_owned(), tool.input_schema()),
+    ]);
+    if let Some(output) = tool.output_schema() {
+        entry.insert("title".to_owned(), json!(tool.title()));
+        entry.insert("outputSchema".to_owned(), output);
     }
+    Value::Object(entry)
 }
 
 /// MCP's hints of a tool: a read is idempotent, and no tool reaches past
 /// the project.
-fn annotations(title: &str, read_only: bool, destructive: Destructive) -> Value {
+fn annotations(tool: Tool) -> Value {
     json!({
-        "title": title,
-        "readOnlyHint": read_only,
-        "destructiveHint": destructive == Destructive::Yes,
-        "idempotentHint": read_only,
+        "title": tool.title(),
+        "readOnlyHint": tool.is_read_only(),
+        "destructiveHint": tool.destructive() == Destructive::Yes,
+        "idempotentHint": tool.is_read_only(),
         "openWorldHint": false,
     })
 }
@@ -58,30 +54,22 @@ mod tests {
         tool_list()["tools"].as_array().unwrap()
     }
 
-    /// `tools/list` is the registry in its order, each spec-built tool
-    /// with the facts and schemas its spec gives, each read written by
-    /// hand a read.
+    /// `tools/list` is the registry in its order, each tool with the
+    /// facts and schemas it states of itself.
     #[test]
     fn tool_list_is_the_registry_as_each_tool_declares_itself() {
         assert_eq!(listed().len(), TOOLS.len());
         for (entry, tool) in listed().iter().zip(TOOLS) {
             assert_eq!(entry["name"], tool.name());
             let hints = &entry["annotations"];
+            assert_eq!(hints["title"], tool.title(), "{entry}");
             assert_eq!(hints["openWorldHint"], false, "{entry}");
-            assert_eq!(hints["idempotentHint"], hints["readOnlyHint"], "{entry}");
-            match tool {
-                Tool::Spec(spec) => {
-                    assert_eq!(hints["readOnlyHint"], spec.is_read_only(), "{entry}");
-                    let destructive = spec.destructive() == Destructive::Yes;
-                    assert_eq!(hints["destructiveHint"], destructive, "{entry}");
-                    assert_eq!(entry["inputSchema"], Value::Object(spec.input_schema()));
-                    assert_eq!(entry["outputSchema"], Value::Object(spec.output_schema()));
-                }
-                Tool::Read(read) => {
-                    assert_eq!(hints["readOnlyHint"], true, "{entry}");
-                    assert_eq!(entry["inputSchema"], read.input_schema());
-                }
-            }
+            assert_eq!(hints["readOnlyHint"], tool.is_read_only(), "{entry}");
+            assert_eq!(hints["idempotentHint"], tool.is_read_only(), "{entry}");
+            let destructive = tool.destructive() == Destructive::Yes;
+            assert_eq!(hints["destructiveHint"], destructive, "{entry}");
+            assert_eq!(entry["inputSchema"], tool.input_schema());
+            assert_eq!(entry.get("outputSchema"), tool.output_schema().as_ref());
         }
     }
 
