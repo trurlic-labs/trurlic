@@ -16,6 +16,6 @@ anchors = [
     { file = "tests/integration/canonical_form.rs", symbol = "fmt_twice_changes_nothing" },
 ]
 depends_on = [
-    "every-commit-goes-through-a-flushed-journal-in-state-txn",
+    "every-commit-goes-through-a-flushed-journal-that-names-only-the-steps-left",
     "one-canonical-form-for-every-graph-file",
 ]

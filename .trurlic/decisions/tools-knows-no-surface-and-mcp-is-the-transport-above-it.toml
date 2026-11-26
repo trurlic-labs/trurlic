@@ -1,6 +1,6 @@
 component = "tools"
-choice = "tools names no surface: its non-test code spells no mcp, commands or cli; mcp is the transport alone and imports tools, never the reverse"
-reason = "A tool's arguments, handler and result serve every surface: the MCP server, a CLI twin, and a command or a local server that gives the same JSON. Kept inside mcp, each such surface would import the module of a protocol it does not speak, and a tool that named one surface would tie every other surface to it. So tools holds the specs and the schemas they walk, the handlers, the registry a call is looked up in with what each Tool states of itself, and the ToolResult fitted to the budget with the refusal shape; mcp holds only what MCP speaks: JSON-RPC over stdio (protocol), the client and the server's own requests (peer), the tool-result envelope with structuredContent and isError (envelope), and the tools/list entries with their annotations (listing), which name in MCP's words what each Tool states. The test the_tool_layer_names_no_surface holds the direction: it refuses the token mcp, commands or cli anywhere in the non-test code under src/tools, so no path, use list or super chain reaches a surface unseen."
+choice = "tools names no surface and mcp no command: tools' non-test code spells no mcp, commands or cli, mcp's no commands or cli; mcp imports tools, never the reverse"
+reason = "A tool's arguments, handler and result serve every surface: the MCP server, a CLI twin, and a command or a local server that gives the same JSON. Kept inside mcp, each such surface would import the module of a protocol it does not speak, and a tool that named one surface would tie every other surface to it. So tools holds the specs and the schemas they walk, the handlers, the registry a call is looked up in with what each Tool states of itself, and the ToolResult fitted to the budget with the refusal shape; mcp holds only what MCP speaks: JSON-RPC over stdio (protocol), the client and the server's own requests (peer), the tool-result envelope with structuredContent and isError (envelope), and the tools/list entries with their annotations (listing), which name in MCP's words what each Tool states. The test the_tool_layer_names_no_surface holds the direction: it refuses the token mcp, commands or cli anywhere in the non-test code under src/tools, so no path, use list or super chain reaches a surface unseen. The transport sits below the commands that serve it: the_transport_names_no_command refuses commands or cli in the non-test code under src/mcp, so serve calls the server and the server never a command."
 alternatives = [
     "Keep the tool layer in mcp and let other surfaces import it: rejected, a command or a local server would depend on a module named for a protocol it does not speak",
     "A client trait in tools that mcp's Peer implements: rejected, it has one implementation, and no tool asks the client",
@@ -12,6 +12,7 @@ created = "2026-11-26T14:07:53.995149408Z"
 anchors = [
     { file = "src/mcp/envelope.rs", symbol = "ToolEnvelope" },
     { file = "src/mcp/listing.rs", symbol = "entry" },
+    { file = "src/mcp/mod.rs", symbol = "tests::the_transport_names_no_command" },
     { file = "src/tools/mod.rs", symbol = "tests::the_tool_layer_names_no_surface" },
     { file = "src/tools/registry.rs", symbol = "Tool" },
 ]

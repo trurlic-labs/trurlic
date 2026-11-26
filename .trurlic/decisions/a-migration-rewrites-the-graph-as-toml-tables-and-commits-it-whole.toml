@@ -22,6 +22,6 @@ anchors = [
     { file = "tests/integration/migrate.rs", symbol = "a_migration_stopped_between_its_removals_lands_on_the_next_command" },
 ]
 depends_on = [
-    "every-commit-goes-through-a-flushed-journal-in-state-txn",
+    "every-commit-goes-through-a-flushed-journal-that-names-only-the-steps-left",
     "one-serializer-writes-every-graph-file-and-no-node-type-derives-serialize",
 ]
