@@ -1,6 +1,6 @@
 //! The word tables a corpus draws its text and names from.
 
-use super::SYMBOLS_PER_FILE;
+const SYMBOLS_PER_FILE: usize = 8;
 
 /// Prose vocabulary of architecture terms, so text reads like the text of
 /// a production graph.
