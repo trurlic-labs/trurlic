@@ -23,7 +23,7 @@ anchors = [
     { file = "src/code/language/c_family/tests.rs", symbol = "a_files_own_defines_are_judged_in_work_its_own_bound" },
     { file = "src/code/language/c_family/tests.rs", symbol = "a_header_in_a_test_place_reaches_test_code_alone" },
     { file = "src/code/language/c_family/tests.rs", symbol = "hostile_defines_are_read_in_linear_work" },
-    { file = "src/sources/lexical.rs", symbol = "read_headers" },
+    { file = "src/sources/reads.rs", symbol = "Reads::of_tree" },
     { file = "src/sources/tests.rs", symbol = "a_file_outside_the_walk_is_read_against_the_trees_macros" },
     { file = "src/sources/tests.rs", symbol = "a_headers_define_blanks_every_file_and_a_source_files_that_file_alone" },
 ]

@@ -11,7 +11,8 @@ use crate::git;
 use crate::store::Store;
 
 use super::lexical::Cached;
-use super::{MAX_SOURCE_FILE_BYTES, Reads, Sourced, index_bytes};
+use super::reads::Reads;
+use super::source::{MAX_SOURCE_FILE_BYTES, Sourced, index_bytes};
 
 /// Files of the repository's history, read from git.
 pub(super) struct Blobs<'r> {

@@ -22,7 +22,7 @@ anchors = [
     { file = "src/code/work.rs", symbol = "SCAN_WORK_PER_BYTE" },
     { file = "src/code/work.rs", symbol = "SERVED_BYTES_PER_BYTE" },
     { file = "src/code/work.rs", symbol = "Work" },
-    { file = "src/sources/mod.rs", symbol = "read_source" },
+    { file = "src/sources/source.rs", symbol = "read_source" },
     { file = "src/sources/tests.rs", symbol = "hostile_files_are_refused_with_their_cause" },
 ]
 depends_on = [

@@ -1,10 +1,16 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File};
 use std::path::PathBuf;
 
 use tempfile::TempDir;
 
-use super::*;
-use crate::code::{Resolution, SpanHash, Target};
+use super::findings::{checked_findings, tree_findings};
+use super::reads::{Reads, Scope, read_paths, read_tree};
+use super::repair::{Seen, still_holding};
+use super::source::MAX_SOURCE_FILE_BYTES;
+use crate::code::{CodeFacts, FileKind, Resolution, SpanHash, Target};
 use crate::store::testing::setup_store;
+use crate::store::{Anchor, Store, SymbolsKey};
 
 /// The per-construct fixture corpus, `tests/fixtures/code/`. Its manifests
 /// are named `Cargo.toml.fixture`, so cargo takes no directory of the
@@ -732,24 +738,6 @@ fn a_file_at_the_cap_whose_parse_stack_runs_deep_is_indexed_on_the_worker_stack(
     let facts = gather(&store, std::iter::empty());
 
     assert_eq!(outcome(&facts.resolve(&anchor("deep.ts", "x"))), SYMBOL);
-}
-
-#[test]
-fn a_file_gone_before_its_read_is_absent_not_a_fault() {
-    let tmp = TempDir::new().unwrap();
-
-    assert!(matches!(
-        read_source(&tmp.path().join("gone.rs")),
-        Err(Gone)
-    ));
-    assert!(matches!(
-        read_source(&tmp.path().join("gone.rs/x")),
-        Err(Gone)
-    ));
-    assert!(matches!(
-        read_source(tmp.path()),
-        Err(Faulty(ReadFault::NotAFile))
-    ));
 }
 
 /// Each definition of `facts`: its file and path, kind, role and

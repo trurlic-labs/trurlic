@@ -16,7 +16,7 @@ anchors = [
     { file = "src/code/crates.rs", symbol = "Crates::crate_of" },
     { file = "src/code/crates.rs", symbol = "Crates::of" },
     { file = "src/code/facts.rs", symbol = "CodeFacts::new" },
-    { file = "src/sources/mod.rs", symbol = "probe_anchored" },
+    { file = "src/sources/reads.rs", symbol = "probe_anchored" },
     { file = "src/sources/tests.rs", symbol = "a_manifest_an_anchor_brings_governs_no_file_the_walk_took" },
     { file = "src/sources/walk.rs", symbol = "manifests_above" },
 ]

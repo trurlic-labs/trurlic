@@ -54,12 +54,12 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | The threads files are indexed on (pool, stack, bytes at once) | `sources/indexer.rs` |
 | The tree-sitter runtime and the patch that bounds a parse | `vendor/tree-sitter/`, `vendor/tree-sitter-0.27.2-bounds.patch` |
 | Likely duplicates (scoring, pair index) / which `status` call compares them | `lint/duplicates/` / `mcp/status/lint/pairs.rs` |
-| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/mod.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
-| Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair.rs`, `sources/renames.rs`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |
+| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/findings.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
+| Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair/`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
 | A `[quality]` pattern's engine, its caches, the bytes it charges / what compiling it folds | `store/quality/bar/pattern.rs` / `store/quality/bar/folding.rs` |
 | A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/language.rs`, `code/language/<name>.scm`, `code/language/<name>.rs` |
-| C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/language/c_family.rs` / `c_family/set.rs` / `sources/lexical.rs` |
+| C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/language/c_family.rs` / `c_family/set.rs` / `sources/reads.rs`, `sources/lexical.rs` |
 | Span-hash units and hashing | `code/units.rs` |
 | Query contract / general resolver | `code/query.rs` / `code/general.rs` |
 | Failpoint sites | `store/failpoint.rs` |
