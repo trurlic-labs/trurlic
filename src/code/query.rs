@@ -51,9 +51,17 @@
 //!   character, an empty one a run of whitespace but one at an end that
 //!   holds a line break), `@hash.delimiter` (a string's delimiter, hashed as what
 //!   it means: its prefix letters in any case and order, `u` none, each
-//!   quote `'` or `"` alike), `@hash.literal` (a number or an escape, hashed
-//!   as what it means: its letters in any case, a `.` with no digit beside
-//!   it as one with `0`), `@hash.skip` (left out of every hash) and
+//!   quote `'` or `"` alike; the escapes a raw string's end holds are its
+//!   text), `@hash.join` (a delimiter that starts a string the one before
+//!   continues: left out with that one's end where both start alike, so
+//!   their texts are one), `@hash.string` (a string's text, one token with
+//!   the text that continues it, its escapes spelled as
+//!   `@hash.escape` captures them), `@hash.escape` (an escape of a string's
+//!   text, hashed as what it means: a quote escape as its quote, hex digits
+//!   and a name in any case, an octal one of three digits),
+//!   `@hash.literal` (a number, hashed as what it means: its letters in any
+//!   case, a `.` with no digit beside it as one with `0`, an exponent's
+//!   `+` none), `@hash.skip` (left out of every hash) and
 //!   `@hash.group` (a statement or block, whose extent the hash holds),
 //!   and sets no property. A definition pattern may capture these too.
 //!
@@ -102,6 +110,9 @@ pub(super) enum Capture {
     Tokens,
     Chars,
     Delimiter,
+    Join,
+    String,
+    Escape,
     Literal,
     Skip,
     Group,
@@ -573,6 +584,9 @@ fn capture_of(name: &str) -> Result<Capture, QueryFault> {
         "visibility.through" => Capture::Through,
         "hash.chars" => Capture::Chars,
         "hash.delimiter" => Capture::Delimiter,
+        "hash.join" => Capture::Join,
+        "hash.string" => Capture::String,
+        "hash.escape" => Capture::Escape,
         "hash.literal" => Capture::Literal,
         "hash.skip" => Capture::Skip,
         "hash.group" => Capture::Group,

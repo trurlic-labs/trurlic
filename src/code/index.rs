@@ -20,7 +20,7 @@ use super::{encoding, json, make, markdown, rust, syntax, toml, work};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 19;
+pub(crate) const INDEX_FORMAT: u32 = 20;
 
 /// The largest file a tree-sitter grammar indexes. A parse's budget of
 /// work and allocation is per byte of its file (`work.rs`), so this bounds
@@ -333,7 +333,8 @@ impl fmt::Display for IndexFault {
 }
 
 /// The index of `bytes`, a file of `kind`; a C or C++ file blanks
-/// `macros`, the part of its tree's set it writes. Each resolver builds
+/// `macros`, the part of its tree's set it writes, and a Python file is
+/// read with Python's line ends. Each resolver builds
 /// it into the scope tree of the file's kind and size, which holds it to
 /// the file's room.
 pub(crate) fn index(
@@ -355,7 +356,9 @@ pub(crate) fn index(
     let plain = Source::plain(text);
     let mut index = match kind {
         FileKind::Rust => rust::index(text, scopes)?,
-        FileKind::Python => general::index(&PYTHON, &plain, scopes)?,
+        FileKind::Python => {
+            general::index(&PYTHON, &Source::plain(&python::line_ends(text)), scopes)?
+        }
         FileKind::TypeScript => general::index(&TYPESCRIPT, &plain, scopes)?,
         FileKind::Tsx => general::index(&TSX, &plain, scopes)?,
         FileKind::C => c_family::index(&C, text, macros, scopes)?,
@@ -411,7 +414,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 19] = [
+    const FINGERPRINTS: [(u32, &str); 20] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -487,6 +490,10 @@ mod tests {
         (
             19,
             "1b33aab31dac314239cb8c62360a4d11c14abd3b262e10fa8f919600611df05a",
+        ),
+        (
+            20,
+            "5214c21a480d9b11eef3b3f229d4d51335dd2c11daf9f29b93bdb94e5520b060",
         ),
     ];
 

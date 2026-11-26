@@ -3,7 +3,7 @@ use crate::code::BlankMacros;
 use crate::code::index::FileKind;
 use crate::code::language::python::MAX_INDENTATIONS;
 use crate::code::scope::{ScopeTree, Scopes};
-use crate::code::span::SpanHash;
+use crate::code::span::{Span, SpanHash};
 use crate::code::testing::{defined, index_in, named, path};
 
 /// Each definition of `text`, a Python file, as `path kind role
@@ -220,6 +220,48 @@ fn a_formatters_quotes_prefix_case_and_trailing_commas_leave_the_hash() {
         ("s = '\\xAB\\N{em dash}'", "s = '\\xab\\N{EM DASH}'"),
         ("class C(): pass", "class C: pass"),
         ("s = r'\\\\'", "s = r\"\\\\\""),
+        ("s = r'\\\"' + br'\\''", "s = r\"\\\"\" + rb\"\\'\""),
+        (
+            "s = rf'\\'{x}' + r'''\\\"'''",
+            "s = rf\"\\'{x}\" + r\"\"\"\\\"\"\"\"",
+        ),
+        (
+            "s = 'it\\'s' + b'\\'' + f'\\'{x}'",
+            "s = \"it's\" + b\"'\" + f\"'{x}\"",
+        ),
+        ("s = \"\\\"\" + '\\\\\\''", "s = '\"' + \"\\\\'\""),
+        ("y = 1e+5 + 1E+5j", "y = 1e5 + 1e5j"),
+        ("x = a, b,", "x = (\n    a,\n    b,\n)"),
+        ("return a, b,", "return a, b"),
+        ("a, b, = c", "a, b = c"),
+        ("x = y[a, b,]", "x = y[\n    a,\n    b,\n]"),
+        (
+            "def g(x: (A | B) = 1, y: C[d, e,] = 2) -> (\n    F | G\n): pass",
+            "def g(x: A | B = 1, y: C[d, e] = 2) -> F | G: pass",
+        ),
+        ("x: (\n    A | None\n) = None", "x: A | None = None"),
+        (
+            "f((a if b else c), k=(d if e else f))",
+            "f(a if b else c, k=d if e else f)",
+        ),
+        (
+            "x = [(a if b else c) for d in e], {k: (a if b else c)}, ((a if b else c), d)",
+            "x = [a if b else c for d in e], {k: a if b else c}, (a if b else c, d)",
+        ),
+        (
+            "x = a if b else (c if d else e)",
+            "x = a if b else c if d else e",
+        ),
+        ("x = lambda: (a or not b)", "x = lambda: a or not b"),
+        ("from m import (\n    a,\n)", "from m import a"),
+        (
+            "with (\n    a() as b,\n    c(),\n):\n    pass",
+            "with a() as b, c():\n    pass",
+        ),
+        ("x = [d for (d,) in e]", "x = [d for d, in e]"),
+        ("x = yield (\n    a,\n    b,\n)", "x = yield a, b"),
+        ("(a,)", "a,"),
+        ("f((\n    'a'\n    'b'\n))", "f('ab')"),
     ] {
         let line = |statement: &str| body_hash(&format!("  {statement}\n"));
         assert_eq!(line(one), line(other), "{one:?}");
@@ -260,15 +302,101 @@ fn what_a_string_or_a_comma_means_moves_the_hash() {
         ("  f((yield a), b)\n", "  f((yield a, b))\n"),
         ("  x = (yield a), b\n", "  x = (yield a, b)\n"),
         ("  x = (-a)**2\n", "  x = -a**2\n"),
-        ("  x = ('a' 'b').upper()\n", "  x = 'a' 'b'.upper()\n"),
+        ("  x = ('a' 'b').upper()\n", "  x = 'a' + 'b'.upper()\n"),
+        // Parentheses bind a conditional expression or a yield to what
+        // follows them, and a tuple in an annotation or a target.
+        ("  x = (a if b else c) + d\n", "  x = a if b else c + d\n"),
+        (
+            "  x = (a if b else c) if d else e\n",
+            "  x = a if b else c if d else e\n",
+        ),
+        (
+            "  f = lambda: (yield a), b\n",
+            "  f = lambda: (yield a, b)\n",
+        ),
+        ("  def g(x: (a, b)): pass\n", "  def g(x: a, b): pass\n"),
+        (
+            "  with (a, b) as c:\n    pass\n",
+            "  with a, b as c:\n    pass\n",
+        ),
+        ("  x = [d for (d,) in e]\n", "  x = [d for d in e]\n"),
+        ("  (a,)\n", "  a\n"),
+        ("  yield (a, b), c\n", "  yield a, b, c\n"),
+        ("  yield (a,)\n", "  yield a\n"),
         ("  x = 1\n", "  x = 1.0\n"),
         ("  assert (yield a), b\n", "  assert (yield a, b)\n"),
         ("  s = '\\T'\n", "  s = '\\t'\n"),
         ("  s = '\\N{x}'\n", "  s = '\\n{x}'\n"),
         ("  s = r'\\''\n", "  s = r\"\\\"\"\n"),
+        // A raw string's backslash is its text; a quote escape's is not.
+        ("  s = r'\\''\n", "  s = '\\''\n"),
+        ("  s = rf'\\'{x}'\n", "  s = f'\\'{x}'\n"),
+        ("  s = '\\''\n", "  s = '\\\\\\''\n"),
+        ("  s = '\\8'\n", "  s = '\\008'\n"),
+        ("  s = '\\U0001F600'\n", "  s = '\\u0001F600'\n"),
+        ("  y = 1e+5\n", "  y = 1e-5\n"),
+        ("  x = a, b,\n", "  x = a, (b,)\n"),
+        ("  a, b, = c\n", "  a, (b,) = c\n"),
+        ("  x = y[a, b,]\n", "  x = y[(a, b),]\n"),
     ] {
         assert_ne!(body_hash(one), body_hash(other), "{one:?}");
     }
+}
+
+#[test]
+fn implicitly_concatenated_strings_that_start_alike_hash_as_one() {
+    for (one, other) in [
+        ("'a' 'b'", "'ab'"),
+        ("u'a' \"b\" '' 'c'", "'abc'"),
+        ("(\n    'a'  # c\n    'b'\n)", "'ab'"),
+        ("'a' \\\n    'b'", "'ab'"),
+        ("r'\\d' R'\\w'", "r'\\d\\w'"),
+        ("b'\\x41' B\"\\'\"", "b'\\x41\\''"),
+        ("'\\0' '1'", "'\\0001'"),
+    ] {
+        let line = |string: &str| body_hash(&format!("  s = {string}\n"));
+        assert_eq!(line(one), line(other), "{one:?}");
+    }
+}
+
+#[test]
+fn concatenated_strings_keep_what_each_part_means() {
+    for (one, other) in [
+        // An octal escape ends where its part does.
+        ("'\\0' '1'", "'\\01'"),
+        ("'\\1' '23'", "'\\123'"),
+        // A raw part's backslashes and an escape's are not one text.
+        ("r'\\n' 'b'", "'\\nb'"),
+        ("'\\n' r'b'", "r'\\nb'"),
+        ("'\\\\' 'n'", "'\\n'"),
+        // An f-string part is no text to join: its braces are fields.
+        ("'{x}' f'a'", "f'{x}a'"),
+        ("f'{x}' '{y}'", "f'{x}{y}'"),
+    ] {
+        let line = |string: &str| body_hash(&format!("  s = {string}\n"));
+        assert_ne!(line(one), line(other), "{one:?}");
+    }
+}
+
+#[test]
+fn a_lone_carriage_return_ends_a_line_as_python_reads_it() {
+    let lines = "class C:\n    def m(self):\n        return 1\n    s = '''a\nb'''\n";
+    let returns = lines.replace('\n', "\r");
+    let edited = returns.replace("return 1", "return 2");
+    let read = |text: &str| {
+        let index = crate::code::testing::index(FileKind::Python, text.as_bytes()).unwrap();
+        let scopes = Scopes(&index.scopes);
+        let defined: Vec<(String, Span, SpanHash)> = index
+            .definitions
+            .iter()
+            .map(|d| (path(scopes, d.scope), d.span, d.hash))
+            .collect();
+        defined
+    };
+
+    assert_eq!(read(&returns), read(lines), "spans, their lines and hashes");
+    assert_ne!(hash_of(&edited, "C::m"), hash_of(&returns, "C::m"));
+    assert_ne!(hash_of(&edited, "C"), hash_of(&returns, "C"));
 }
 
 #[test]

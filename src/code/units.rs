@@ -2,9 +2,10 @@
 //! tokens (`syntax.rs`) are its units, each glued kind of its grammar's
 //! [`Lexicon`] two, a node its query marks by its tokens one per token
 //! its lexicon's lexer finds in it (a C macro's body), and one it marks by
-//! its characters as JSX renders it (JSX text), and a string's delimiter,
-//! a number or an escape it marks one spelled by what it means
-//! ([`delimiter`], [`literal`]); a comment inside a token, and a line
+//! its characters as JSX renders it (JSX text), and a string's delimiter
+//! or a number it marks one spelled by what it means (`units/spelling.rs`),
+//! and a string's text one with the text that continues it, its escapes
+//! so spelled; a comment inside a token, and a line
 //! continuation the lexicon splices there, is no part of it. A grammar whose layout carries syntax that no byte holds (the
 //! statements and blocks of Python, whose NEWLINE, INDENT and DEDENT are
 //! tokens of no width in no node) marks the nodes whose extent is part of
@@ -13,6 +14,8 @@
 //! its units, each nested definition's units replaced by that
 //! definition's hash, so each unit is hashed once however deep the
 //! definitions nest ([`Leaves::hash_each`]).
+
+mod spelling;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -24,13 +27,15 @@ use super::span::{CLOSE_MARK, NESTED_MARK, OPEN_MARK, SpanHash};
 use super::syntax::{Lexicon, Take, Token, tokens, walk_tokens};
 
 /// The units of a tree's span hashes, in order: each token's bytes, and
-/// the marks that open and close a group of a marked tree; and the
-/// comments and spliced line continuations inside tokens, in order, whose
-/// bytes no token holds.
+/// the marks that open and close a group of a marked tree; the comments,
+/// spliced line continuations and bytes between joined strings inside
+/// units, in order, whose bytes no unit holds; and the escapes inside
+/// string text, in order.
 #[derive(Default)]
 pub(super) struct Leaves {
     units: Vec<Unit>,
     holes: Vec<Range<usize>>,
+    escapes: Vec<Range<usize>>,
 }
 
 /// One unit of a span hash: a token over bytes `from..to`, or a group's
@@ -45,9 +50,12 @@ struct Unit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mark {
     Text,
-    /// A string's delimiter, hashed as [`delimiter`] spells it.
+    /// A string's delimiter, hashed as [`spelling::delimiter`] spells it.
     Delimiter,
-    /// A number or an escape, hashed as [`literal`] spells it.
+    /// A string's text, the holes in it left out and each escape in it
+    /// spelled as [`spelling::escape`] spells it.
+    String,
+    /// A number, hashed as [`spelling::literal`] spells it.
     Literal,
     Open,
     Close,
@@ -66,7 +74,14 @@ pub(super) struct NodeMarks {
     pub(super) chars: bool,
     /// One token, a string's delimiter, hashed by what it means.
     pub(super) delimiter: bool,
-    /// One token, a number or an escape, hashed by what it means.
+    /// A string's start that continues the string before it in an
+    /// implicit concatenation.
+    pub(super) join: bool,
+    /// One token, a string's text, with the text that continues it.
+    pub(super) string: bool,
+    /// An escape of a string's text, hashed by what it means.
+    pub(super) escape: bool,
+    /// One token, a number, hashed by what it means.
     pub(super) literal: bool,
     /// Left out of every hash.
     pub(super) skip: bool,
@@ -90,6 +105,7 @@ impl NodeMarks {
             | Self {
                 delimiter: true, ..
             }
+            | Self { string: true, .. }
             | Self { literal: true, .. } => Some(Take::Token),
             Self { whole: true, .. } => Some(Take::Text),
             Self { group: true, .. } => Some(Take::Walk),
@@ -170,26 +186,15 @@ impl Leaves {
     ) -> (Self, SpanUnits) {
         let mut leaves = Self::default();
         let mut spans = SpanUnits::default();
-        let marks_of = |node: Node<'_>| marks.get(&node.id()).copied().unwrap_or_default();
-        let take = |node: Node<'_>| marks_of(node).take();
+        let take = |node: Node<'_>| marks_of(marks, node).take();
         walk_tokens(tree.root_node(), (text, lexicon), take, |token| {
-            let units = &mut leaves.units;
             match token {
-                Token::Node(node) if marks_of(node).tokens => {
-                    leaves.push_tokens(node, (text, lexicon));
-                }
-                Token::Node(node) if marks_of(node).delimiter => {
-                    units.push(Unit::spelled(node, Mark::Delimiter));
-                }
-                Token::Node(node) if marks_of(node).literal => {
-                    units.push(Unit::spelled(node, Mark::Literal));
-                }
-                Token::Node(node) if marks_of(node).chars => push_chars(units, node, text),
-                Token::Node(_) | Token::Gap { .. } | Token::Run { .. } | Token::Hole { .. } => {
+                Token::Node(node) => leaves.push_marked(node, (text, lexicon), marks),
+                Token::Gap { .. } | Token::Run { .. } | Token::Hole { .. } => {
                     leaves.push(token, (text, lexicon));
                 }
                 Token::Enter(node) => {
-                    let marked = marks_of(node);
+                    let (marked, units) = (marks_of(marks, node), &mut leaves.units);
                     if marked.opens {
                         spans.opened.insert(node.id(), units.len());
                     }
@@ -198,7 +203,7 @@ impl Leaves {
                     }
                 }
                 Token::Leave(node) => {
-                    let marked = marks_of(node);
+                    let (marked, units) = (marks_of(marks, node), &mut leaves.units);
                     if marked.group {
                         units.push(Unit::mark(node.end_byte(), Mark::Close));
                     }
@@ -210,6 +215,108 @@ impl Leaves {
             ControlFlow::Continue(())
         });
         (leaves, spans)
+    }
+
+    /// Push the units of `node`, a token, as `marks` says by its id.
+    fn push_marked(
+        &mut self,
+        node: Node<'_>,
+        (text, lexicon): (&str, &Lexicon),
+        marks: &BTreeMap<usize, NodeMarks>,
+    ) {
+        match marks_of(marks, node) {
+            NodeMarks { tokens: true, .. } => self.push_tokens(node, (text, lexicon)),
+            NodeMarks { string: true, .. } => self.push_string(node, marks),
+            NodeMarks {
+                delimiter: true,
+                join,
+                ..
+            } => self.push_delimiter(node, join, text),
+            NodeMarks { literal: true, .. } => self.units.push(Unit::spelled(node, Mark::Literal)),
+            NodeMarks { chars: true, .. } => push_chars(&mut self.units, node, text),
+            NodeMarks { .. } => self.push(Token::Node(node), (text, lexicon)),
+        }
+    }
+
+    /// Push the unit of `node`, a string's text, and each escape among its
+    /// children that `marks` marks.
+    fn push_string(&mut self, node: Node<'_>, marks: &BTreeMap<usize, NodeMarks>) {
+        let mut cursor = node.walk();
+        let escapes = node
+            .children(&mut cursor)
+            .filter(|child| marks_of(marks, *child).escape);
+        self.escapes.extend(escapes.map(|child| child.byte_range()));
+        self.push_string_text(node.start_byte(), node.end_byte());
+    }
+
+    /// Push a string's text over bytes `from..to`: the rest of the last
+    /// unit when that is the text it continues, the bytes between them a
+    /// hole. Only a string's end or a joined string continues a text.
+    fn push_string_text(&mut self, from: usize, to: usize) {
+        match self.units.last_mut() {
+            Some(last) if last.mark == Mark::String => {
+                if last.to < from {
+                    self.holes.push(last.to..from);
+                }
+                last.to = to;
+            }
+            Some(_) | None => self.units.push(Unit {
+                from,
+                to,
+                mark: Mark::String,
+            }),
+        }
+    }
+
+    /// Push the units of `node`, a string's delimiter of `text`: the
+    /// escapes a raw string's end holds before its quotes are the string's
+    /// text, as written. A delimiter that `join`s a string to the one
+    /// before it is left out, with that one's end, when the two start
+    /// alike, so their texts are one.
+    fn push_delimiter(&mut self, node: Node<'_>, join: bool, text: &str) {
+        let (from, to) = (node.start_byte(), node.end_byte());
+        let token = text.as_bytes().get(from..to).unwrap_or_default();
+        if join && self.is_continued_by(token, text) {
+            self.units.pop();
+            return;
+        }
+        let quotes = from + spelling::escapes_before_quotes(token);
+        if quotes > from {
+            self.push_string_text(from, quotes);
+        }
+        self.units.push(Unit {
+            from: quotes,
+            to,
+            mark: Mark::Delimiter,
+        });
+    }
+
+    /// Whether a string whose start is `start` continues the one whose end
+    /// is the last unit: that one's start, the unit before its text or
+    /// before its end, spells as `start` does. The query joins no string
+    /// with an `f` or `t` prefix, so one that starts alike has none either:
+    /// its units are its start, its text if any, and its end.
+    fn is_continued_by(&self, start: &[u8], text: &str) -> bool {
+        let count = self.units.len();
+        let before_end = count.checked_sub(2).and_then(|at| self.units.get(at));
+        let first = match before_end {
+            Some(unit) if unit.mark == Mark::String => count.checked_sub(3),
+            Some(_) | None => count.checked_sub(2),
+        };
+        let ends = self
+            .units
+            .last()
+            .is_some_and(|end| end.mark == Mark::Delimiter);
+        first
+            .and_then(|at| self.units.get(at))
+            .is_some_and(|first| {
+                let spelled = text
+                    .as_bytes()
+                    .get(first.from..first.to)
+                    .unwrap_or_default();
+                ends && first.mark == Mark::Delimiter
+                    && spelling::delimiter(spelled) == spelling::delimiter(start)
+            })
     }
 
     /// Push the units of `token`, a token of bytes of `text`, or the hole
@@ -260,19 +367,16 @@ impl Leaves {
     }
 
     /// The bytes `unit` is hashed as after its length: a token's, but
-    /// for the holes inside it, or a delimiter's or a literal's spelling.
+    /// for the holes inside it, or a delimiter's, a string's text's or a
+    /// literal's spelling.
     fn bytes_of<'t>(&self, unit: &Unit, text: &'t str) -> Cow<'t, [u8]> {
         let bytes = text.as_bytes();
         let token = bytes.get(unit.from..unit.to).unwrap_or_default();
-        let first = self.holes.partition_point(|hole| hole.end <= unit.from);
-        let mut holes = self.holes.get(first..).unwrap_or_default().iter();
-        let mut holes = holes
-            .by_ref()
-            .take_while(|hole| hole.start < unit.to)
-            .peekable();
+        let mut holes = inside(&self.holes, unit).peekable();
         match unit.mark {
-            Mark::Delimiter => Cow::Owned(delimiter(token)),
-            Mark::Literal => Cow::Owned(literal(token)),
+            Mark::Delimiter => Cow::Owned(spelling::delimiter(token)),
+            Mark::String => Cow::Owned(self.string_text(unit, bytes)),
+            Mark::Literal => Cow::Owned(spelling::literal(token)),
             Mark::Text if holes.peek().is_none() => Cow::Borrowed(token),
             Mark::Text => {
                 let mut kept = Vec::with_capacity(token.len());
@@ -286,6 +390,29 @@ impl Leaves {
             }
             Mark::Open | Mark::Close => Cow::Borrowed(&[]),
         }
+    }
+
+    /// How `unit`, a string's text of `bytes`, is hashed: its bytes but
+    /// the holes in it, each escape in it spelled by what it means.
+    fn string_text(&self, unit: &Unit, bytes: &[u8]) -> Vec<u8> {
+        // Each cut of the text in order, and whether it is an escape.
+        let mut cuts: Vec<(&Range<usize>, bool)> = inside(&self.holes, unit)
+            .map(|hole| (hole, false))
+            .chain(inside(&self.escapes, unit).map(|escape| (escape, true)))
+            .collect();
+        cuts.sort_unstable_by_key(|(cut, _)| cut.start);
+        let mut spelled = Vec::with_capacity(unit.to.saturating_sub(unit.from));
+        let mut at = unit.from;
+        for (cut, is_escape) in cuts {
+            spelled.extend_from_slice(bytes.get(at..cut.start).unwrap_or_default());
+            if is_escape {
+                let escape = bytes.get(cut.start..cut.end).unwrap_or_default();
+                spelled.extend(spelling::escape(escape));
+            }
+            at = cut.end;
+        }
+        spelled.extend_from_slice(bytes.get(at..unit.to).unwrap_or_default());
+        spelled
     }
 
     /// The units within bytes `bytes`: each token wholly inside them. Read
@@ -396,55 +523,21 @@ fn push_text(units: &mut Vec<Unit>, token: Token<'_>, lexicon: &Lexicon) {
     }
 }
 
-/// How a string's delimiter `token` is hashed, by what it means: its
-/// prefix's letters lowercased, sorted and without `u`, which means
-/// nothing, then its quotes, each `'` as `"`. So `u'a'`, `"a"` and `'a'`
-/// hash alike, as do `Rb'a'` and `br"a"`. A raw string's end may hold the
-/// escapes before its quotes (`\'` of `r'\''`), which are its text, as
-/// written.
-fn delimiter(token: &[u8]) -> Vec<u8> {
-    let mut escapes = 0;
-    while token.get(escapes) == Some(&b'\\') {
-        escapes += 2;
-    }
-    let (text, rest) = token.split_at(escapes.min(token.len()));
-    let (letters, quotes): (Vec<u8>, Vec<u8>) =
-        rest.iter().partition(|byte| byte.is_ascii_alphabetic());
-    let mut prefix: Vec<u8> = letters
-        .iter()
-        .map(u8::to_ascii_lowercase)
-        .filter(|letter| *letter != b'u')
-        .collect();
-    prefix.sort_unstable();
-    let mut spelled = text.to_vec();
-    spelled.extend(prefix);
-    spelled.extend(quotes.iter().map(|quote| match quote {
-        b'\'' => b'"',
-        other => *other,
-    }));
-    spelled
+/// How `node` is marked, by its id in `marks`; a node no mark names is
+/// marked as no capture names it.
+fn marks_of(marks: &BTreeMap<usize, NodeMarks>, node: Node<'_>) -> NodeMarks {
+    marks.get(&node.id()).copied().unwrap_or_default()
 }
 
-/// How a number or an escape `token` is hashed, by what it means: its
-/// letters lowercased, and a `0` where a `.` has no digit before or after
-/// it. So `0XAB`, `0xab` and `0xAB` hash alike, as do `1.` and `1.0`, and
-/// `\xAB` and `\xab`; `1` and `1.0` stay apart.
-fn literal(token: &[u8]) -> Vec<u8> {
-    let mut spelled = Vec::with_capacity(token.len() + 2);
-    for (at, byte) in token.iter().enumerate() {
-        let digit = |at: Option<usize>| {
-            at.and_then(|at| token.get(at))
-                .is_some_and(u8::is_ascii_digit)
-        };
-        if *byte == b'.' && !digit(at.checked_sub(1)) {
-            spelled.push(b'0');
-        }
-        spelled.push(byte.to_ascii_lowercase());
-        if *byte == b'.' && !digit(Some(at + 1)) {
-            spelled.push(b'0');
-        }
-    }
-    spelled
+/// The ranges of `ranges`, in order and apart, that lie inside `unit`.
+fn inside<'r>(ranges: &'r [Range<usize>], unit: &Unit) -> impl Iterator<Item = &'r Range<usize>> {
+    let first = ranges.partition_point(|range| range.end <= unit.from);
+    let end = unit.to;
+    ranges
+        .get(first..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(move |range| range.start < end)
 }
 
 impl Unit {
@@ -505,7 +598,7 @@ impl Hashing<'_> {
             self.close_ended(self.next);
             if let Some(top) = self.open.last_mut() {
                 match unit.mark {
-                    Mark::Text | Mark::Delimiter | Mark::Literal => {
+                    Mark::Text | Mark::Delimiter | Mark::String | Mark::Literal => {
                         let token = self.leaves.bytes_of(unit, self.text);
                         top.units
                             .extend_from_slice(&(token.len() as u64).to_le_bytes());

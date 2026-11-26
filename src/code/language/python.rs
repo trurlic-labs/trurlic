@@ -1,8 +1,8 @@
-//! What tree-sitter-python's scanner needs checked before a parse: the
-//! indentation widths, past which the scanner aborts the process, which
-//! no budget of the parse can stop. It is the only rule of a language the
-//! general resolver reads that is code, not its query: no query runs
-//! before the parse.
+//! What tree-sitter-python's scanner needs of a file before a parse: its
+//! indentation widths checked, past which the scanner aborts the process,
+//! which no budget of the parse can stop, and its line ends read as Python
+//! reads them. They are the only rules of a language the general resolver
+//! reads that are code, not its query: no query runs before the parse.
 //!
 //! The scanner keeps the indentations of the open blocks on a stack and,
 //! after each token it makes, writes them two bytes each after the open
@@ -15,7 +15,12 @@
 //! distinct widths the file's lines start at, counted as the scanner
 //! counts them. A file with more than [`MAX_INDENTATIONS`] is refused:
 //! that many entries and every delimiter fit the buffer with room.
+//!
+//! The scanner ends no line at a carriage return that no line feed
+//! follows, so the parse reads a file's line ends as Python's tokenizer
+//! does ([`line_ends`]).
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use crate::code::index::IndexFault;
@@ -69,6 +74,26 @@ pub(in crate::code) fn check_indentations(text: &str) -> Result<(), IndexFault> 
     Ok(())
 }
 
+/// `text` as Python's tokenizer reads it: each carriage return that no
+/// line feed follows is a line feed, one byte for one, so every span of
+/// the file stays exact and its lines are Python's; `text` itself when it
+/// holds none. Python reads one so in a string too: `'''a\rb'''` is
+/// `'a\nb'`.
+pub(in crate::code) fn line_ends(text: &str) -> Cow<'_, str> {
+    // Each piece but the first follows a carriage return.
+    let follow_returns = || text.split('\r').skip(1);
+    if follow_returns().all(|piece| piece.starts_with('\n')) {
+        return Cow::Borrowed(text);
+    }
+    let mut read = String::with_capacity(text.len());
+    read.push_str(text.split('\r').next().unwrap_or_default());
+    for piece in follow_returns() {
+        read.push(if piece.starts_with('\n') { '\r' } else { '\n' });
+        read.push_str(piece);
+    }
+    Cow::Owned(read)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +140,11 @@ mod tests {
         assert_eq!(one(&format!("# c\0{}x\n", spaces(301))), PAST);
         // A width is 16 bits that wrap.
         assert_eq!(one(&format!("{}x\n", spaces(300 + 65_536))), Ok(()));
+    }
+
+    #[test]
+    fn a_lone_carriage_return_is_read_as_a_line_feed_and_no_other_byte_moves() {
+        assert_eq!(line_ends("a\rb\r\nc\r"), "a\nb\r\nc\n");
+        assert!(matches!(line_ends("a\r\nb\n"), Cow::Borrowed(_)));
     }
 }

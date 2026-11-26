@@ -1,4 +1,36 @@
 component = "code"
+choice = "A Python span hash groups statements, hashes strings and numbers by meaning, joins the strings Python joins, and leaves out docstrings, a ; between statements, and commas and parentheses of no meaning"
+reason = "Python's NEWLINE, INDENT and DEDENT lie in no node, so the query marks each statement a group: a statement moved into or out of a block, or split, moves the hash; a re-indented block or a ; between statements does not. Outside a raw string an escape hashes by meaning: a quote escape as its quote, hex digits and names in any case, an octal one as three digits; a raw string's text is as written. A delimiter hashes by prefix letters in any case or order, u none, either quote; a number by letters in any case, 1. as 1.0, no + after its exponent. Parts of an implicit concatenation that start alike, no f-string or template, hash as one string. A trailing comma is left out after the last argument, parameter, import, with item or display element, and after two or more elements of a tuple, subscript or type parameter list. Parentheses are left out where Python reads the expression bare alike: a primary; the whole expression of an assignment, return, yield, del, for, condition, assert or annotation; a tuple statement; an import list; with items; a comprehension's target; a lambda's body; a conditional expression as an argument, element, value or else branch; a class's empty (); never around a yield a comma follows. The query states each slot's grammar fact: no two programs of different meaning hash alike. Still moving: strings joined into an f-string or across unlike starts, a parenthesized docstring, an escape in a format specifier, a one-element type parameter list's comma, and parentheses around a with's one item with as, a conditional expression elsewhere or a whole expression statement. An = interpolation's text is its output, as written. A docstring, a plain string alone as a class's or function's first statement, is left out."
+alternatives = [
+    "Hash the leaves alone, as for Rust: rejected because a statement moved out of its block would leave the hash as it was",
+    "Hash docstrings: rejected because a documentation edit would read as a change to the code",
+    "Leave out every comma before a closing bracket and every parenthesis: rejected because (a,) and (a), x[a,] and x[a], f((yield a), b) and f((yield a, b)) would hash alike",
+    "Hash a string by its decoded value: rejected because a \\N{...} escape needs Unicode's name table, and the escapes formatters change hash alike in one spelling",
+    "Hash the parse tree with parentheses transparent: rejected because tree-sitter parses await a ** b as await (a ** b), so two programs of different meaning would hash alike",
+]
+tags = [
+    "anchors",
+    "python",
+]
+status = "proposed"
+origin = "languages as query files"
+created = "2026-11-25T16:53:23.387185487Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_formatters_quotes_prefix_case_and_trailing_commas_leave_the_hash" },
+    { file = "src/code/general/tests.rs", symbol = "a_reformat_a_comment_or_a_docstring_leaves_the_hash" },
+    { file = "src/code/general/tests.rs", symbol = "a_statement_moved_out_of_its_block_or_split_moves_the_hash" },
+    { file = "src/code/general/tests.rs", symbol = "concatenated_strings_keep_what_each_part_means" },
+    { file = "src/code/general/tests.rs", symbol = "implicitly_concatenated_strings_that_start_alike_hash_as_one" },
+    { file = "src/code/general/tests.rs", symbol = "what_a_string_or_a_comma_means_moves_the_hash" },
+    { file = "src/code/language/python.scm" },
+    { file = "src/code/units.rs", symbol = "Leaves::push_delimiter" },
+    { file = "src/code/units/spelling.rs" },
+]
+depends_on = [
+    "a-span-hash-is-t1-over-the-tokens-without-comments",
+]
+
+[accepted_text]
 choice = "A Python span hash groups statements and blocks, hashes delimiters, numbers and escapes by meaning, and leaves out docstrings, a ; between statements, and commas and parentheses of no meaning"
 reason = "Python's NEWLINE, INDENT and DEDENT are tokens of no width in no node, so the query marks each statement of a module or a block and each block a group: a statement moved into or out of a block, or split, moves the hash; a re-indented block or two statements joined by ; do not. A string's text is one token with its spaces, cut at each escape. A delimiter, a number and an escape hash by what they mean in Python 3: prefix letters in any case or order and u none, either quote, letters in any case, 1. as 1.0. A line continuation is whitespace wherever it stands. A trailing comma is left out in arguments, parameters, an import list, a parenthesized with, a list, set or dictionary and their patterns, and a tuple of two or more; a one-element tuple and a subscript keep it. Parentheses are left out around a primary, a power under a unary operator, the whole expression of an assignment, return, del, for or condition, a tuple or target there, an assert's message and its condition but a yield, and a class's empty (). Elsewhere they bind an operator, or a comma may follow that a yield inside takes in. Each rule is exact: no two programs of different meaning hash alike. So black and ruff format move a hash only by what no exact rule states: a quote escape added or dropped, strings joined, parentheses elsewhere. An = interpolation's text up to its format specifier is its output, kept as written but its comments; a format specifier is its text, its nested fields hashed as code. A docstring, a class's or function's first statement whose one child is a plain string, is left out."
 alternatives = [
@@ -7,23 +39,4 @@ alternatives = [
     "Leave out every comma before a closing bracket and every parenthesis: rejected because (a,) and (a), x[a,] and x[a], f((yield a), b) and f((yield a, b)) would hash alike",
     "Hash a string by its decoded value, joined strings as one: rejected because decoding needs Unicode's name table for an escape such as \\N{...}, for the few strings a formatter changes so",
     "State that a reformat moves the hash: rejected because every black or ruff run would then touch a third of a tree's definitions in a diff review",
-]
-tags = [
-    "anchors",
-    "python",
-]
-status = "accepted"
-origin = "languages as query files"
-created = "2026-11-25T16:53:23.387185487Z"
-anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_formatters_quotes_prefix_case_and_trailing_commas_leave_the_hash" },
-    { file = "src/code/general/tests.rs", symbol = "a_reformat_a_comment_or_a_docstring_leaves_the_hash" },
-    { file = "src/code/general/tests.rs", symbol = "a_statement_moved_out_of_its_block_or_split_moves_the_hash" },
-    { file = "src/code/general/tests.rs", symbol = "what_a_string_or_a_comma_means_moves_the_hash" },
-    { file = "src/code/language/python.scm" },
-    { file = "src/code/units.rs", symbol = "delimiter" },
-    { file = "src/code/units.rs", symbol = "literal" },
-]
-depends_on = [
-    "a-span-hash-is-t1-over-the-tokens-without-comments",
 ]
