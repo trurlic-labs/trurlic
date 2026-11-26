@@ -17,7 +17,7 @@ status = "proposed"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::beside" },
+    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::beside" },
     { file = "src/git/layout.rs", symbol = "work_tree_of" },
     { file = "src/git/revisions.rs", symbol = "changed_since" },
     { file = "src/sources/findings.rs", symbol = "elsewhere" },

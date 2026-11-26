@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::index::{FileIndex, FileKind};
+use crate::code::index::{FileIndex, FileKind};
 
 /// The manifest that makes a directory a crate.
 pub(crate) const MANIFEST: &str = "Cargo.toml";

@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::index::{Definition, Span, SpanHash};
+use crate::code::index::{Definition, Span, SpanHash};
 
 /// The definitions of one path, one at least. It holds their spans in
 /// file order, a span two share listed once, and how many they are. Its

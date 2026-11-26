@@ -21,7 +21,7 @@ anchors = [
     { file = "src/code/parse/language/mod.rs", symbol = "TYPESCRIPT" },
     { file = "src/code/parse/language/mod.rs", symbol = "a_test_place_is_a_directory_anywhere_above_or_a_file_name" },
     { file = "src/code/parse/language/mod.rs", symbol = "a_typescript_test_place_is_a_tests_directory_or_a_test_or_spec_file" },
-    { file = "src/code/roles.rs", symbol = "test_files" },
+    { file = "src/code/tree/roles.rs", symbol = "test_files" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",

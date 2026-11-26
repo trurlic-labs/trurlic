@@ -29,7 +29,7 @@
 use std::collections::BTreeSet;
 
 use super::crates::{Crates, Files, file_name, parent};
-use super::index::{DefinitionKind, FileIndex, FileKind, ModuleFile, Role, ScopeId, Segment};
+use crate::code::index::{DefinitionKind, FileIndex, FileKind, ModuleFile, Role, ScopeId, Segment};
 
 /// The files of a target's root in a crate, by their directory.
 const ROOT_FILES: [&str; 3] = ["src/lib.rs", "src/main.rs", "build.rs"];

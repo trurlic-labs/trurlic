@@ -15,7 +15,6 @@ status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::new" },
     { file = "src/code/mod.rs" },
     { file = "src/code/mod.rs", symbol = "each_path_to_the_outside_is_found_however_it_is_spelled" },
     { file = "src/code/purity.rs", symbol = "STD_MODULES" },
@@ -23,6 +22,7 @@ anchors = [
     { file = "src/code/purity.rs", symbol = "names_a_path" },
     { file = "src/code/purity.rs", symbol = "path_fault" },
     { file = "src/code/purity.rs", symbol = "test_files" },
+    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::new" },
     { file = "src/sources/reads.rs", symbol = "read_tree" },
 ]
 

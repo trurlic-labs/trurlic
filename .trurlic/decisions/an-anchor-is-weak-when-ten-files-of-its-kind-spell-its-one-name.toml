@@ -15,9 +15,9 @@ status = "accepted"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::lone_name" },
-    { file = "src/code/facts.rs", symbol = "CodeFacts::spread" },
     { file = "src/code/index/file.rs", symbol = "FileKind::is_code()" },
+    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::lone_name" },
+    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::spread" },
     { file = "src/lint/anchors.rs", symbol = "WEAK_FILES" },
     { file = "src/lint/anchors/tests.rs", symbol = "one_name_that_ten_files_of_its_kind_define_is_weak" },
 ]

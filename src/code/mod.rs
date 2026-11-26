@@ -15,26 +15,21 @@
 //! charges all an index holds to the file's room, its work under budgets
 //! per byte (`index/work.rs`), its cache entry a compact encoding
 //! (`index/encoding/`). What needs the whole tree is a second step over
-//! the indexes: the files that are test code whole (`roles.rs`). A macro
+//! the indexes: the files that are test code whole (`tree/`). A macro
 //! invocation defines nothing (`parse/rust/`).
 
-mod crates;
-mod definitions;
-mod facts;
 mod index;
 mod lexical;
 mod parse;
 #[cfg(test)]
 mod purity;
 mod resolver;
-mod roles;
 #[cfg(test)]
 pub(crate) mod testing;
+mod tree;
 
-pub(crate) use crates::MANIFEST;
 #[cfg(test)]
-pub(crate) use facts::Target;
-pub(crate) use facts::{Code, CodeFacts, Entry, FileFault, ReadFault, Resolution};
+pub(crate) use index::SpanHash;
 pub(crate) use index::{
     DefinitionKind, FileKind, HASH_SCHEME, Indexed, MAX_SOURCE_BYTES, decode as decode_index,
     encode as encode_index, max_entry_bytes,
@@ -43,7 +38,12 @@ pub(crate) use parse::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
     max_lexed_bytes,
 };
+#[cfg(test)]
+pub(crate) use purity::{AllowList, faults};
 pub(crate) use resolver::{BOUNDS, INDEX_FORMAT, index};
+#[cfg(test)]
+pub(crate) use tree::Target;
+pub(crate) use tree::{Code, CodeFacts, Entry, FileFault, MANIFEST, ReadFault, Resolution};
 
 /// Whether the query of the language named `name` (`c`, `cpp`, `python`,
 /// `typescript`, `tsx`) compiles within its contract, compiled afresh:
@@ -61,10 +61,6 @@ pub(crate) fn query_compiles(name: &str) -> bool {
     .find(|language| language.name == name)
     .is_some_and(|language| language.compile().is_ok())
 }
-#[cfg(test)]
-pub(crate) use index::SpanHash;
-#[cfg(test)]
-pub(crate) use purity::{AllowList, faults};
 
 #[cfg(test)]
 mod tests {
