@@ -32,13 +32,13 @@ mod silent;
 
 use tree_sitter::Node;
 
-use super::index::{
+use super::syntax::{self, Lexicon, text_of};
+use super::tree_index::TreeIndex;
+use super::units::Leaves;
+use crate::code::index::{
     DefinitionKind, FileIndex, IndexFault, Lines, ModuleFile, Role, ScopeId, ScopeTree, Segment,
     Visibility, What,
 };
-use super::syntax::{self, Lexicon, text_of};
-use super::tree::TreeIndex;
-use super::units::Leaves;
 
 use items::{Item, Within};
 use marks::Marks;
@@ -47,7 +47,7 @@ use marks::Marks;
 /// prefix, delimiters and suffix hashed with its content. A
 /// `negative_literal` is no lexical token: `-1` and `- 1` are one
 /// expression.
-pub(super) const LITERALS: [&str; 5] = [
+pub(in crate::code) const LITERALS: [&str; 5] = [
     "string_literal",
     "raw_string_literal",
     "char_literal",
@@ -57,7 +57,7 @@ pub(super) const LITERALS: [&str; 5] = [
 
 /// What tree-sitter-rust's tokens are made of beside its tree: its
 /// literal kinds, and Rust's comments, block comments nesting.
-pub(super) const LEXICON: Lexicon = Lexicon {
+pub(in crate::code) const LEXICON: Lexicon = Lexicon {
     literals: &LITERALS,
     line_comments: &["//"],
     block_comments: &[("/*", "*/")],
@@ -70,7 +70,7 @@ pub(super) const LEXICON: Lexicon = Lexicon {
 
 /// The index of `text`, a Rust file. Its hashes leave out the tokens of
 /// no meaning (`silent.rs`).
-pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
+pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
     let silent = silent::silent_tokens(tree.root_node());
     let mut walk = Walk {

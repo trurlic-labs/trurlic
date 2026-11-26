@@ -24,8 +24,8 @@ use std::ops::{ControlFlow, Range};
 
 use tree_sitter::{Node, Tree};
 
-use super::index::{CLOSE_MARK, NESTED_MARK, OPEN_MARK, SpanHash};
 use super::syntax::{Lexicon, Take, Token, tokens, walk_tokens};
+use crate::code::index::{CLOSE_MARK, NESTED_MARK, OPEN_MARK, SpanHash};
 use jsx::{JsxText, push_chars};
 
 /// The units of a tree's span hashes, in order: each token's bytes, and
@@ -34,7 +34,7 @@ use jsx::{JsxText, push_chars};
 /// units, in order, whose bytes no unit holds; and the escapes inside
 /// string text, in order.
 #[derive(Default)]
-pub(super) struct Leaves {
+pub(in crate::code) struct Leaves {
     units: Vec<Unit>,
     holes: Vec<Range<usize>>,
     escapes: Vec<Range<usize>>,
@@ -69,34 +69,34 @@ enum Mark {
 /// How the walk of a marked tree takes one node, by the general
 /// resolver's query: the facts of a node no query names are all `false`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct NodeMarks {
+pub(in crate::code) struct NodeMarks {
     /// One token whole.
-    pub(super) whole: bool,
+    pub(in crate::code) whole: bool,
     /// One token per token its lexicon's lexer finds in it.
-    pub(super) tokens: bool,
+    pub(in crate::code) tokens: bool,
     /// Its text as JSX renders it: a token a character, an empty one a
     /// space.
-    pub(super) chars: bool,
+    pub(in crate::code) chars: bool,
     /// One token, a string's delimiter, hashed by what it means.
-    pub(super) delimiter: bool,
+    pub(in crate::code) delimiter: bool,
     /// A string's start that continues the string before it in an
     /// implicit concatenation.
-    pub(super) join: bool,
+    pub(in crate::code) join: bool,
     /// One token, a string's text, with the text that continues it.
-    pub(super) string: bool,
+    pub(in crate::code) string: bool,
     /// An escape of a string's text, hashed by what it means.
-    pub(super) escape: bool,
+    pub(in crate::code) escape: bool,
     /// One token, a number, hashed by what it means.
-    pub(super) literal: bool,
+    pub(in crate::code) literal: bool,
     /// Left out of every hash.
-    pub(super) skip: bool,
+    pub(in crate::code) skip: bool,
     /// Its extent is part of the hash: a mark opens and closes it.
-    pub(super) group: bool,
+    pub(in crate::code) group: bool,
     /// A definition's span starts at it: the units before it are counted.
-    pub(super) opens: bool,
+    pub(in crate::code) opens: bool,
     /// A definition's span ends at it: the units up to its end are
     /// counted.
-    pub(super) closes: bool,
+    pub(in crate::code) closes: bool,
 }
 
 impl NodeMarks {
@@ -124,7 +124,7 @@ impl NodeMarks {
 /// to the end of each node a span closes at. A node the walk leaves out
 /// is in neither.
 #[derive(Debug, Default)]
-pub(super) struct SpanUnits {
+pub(in crate::code) struct SpanUnits {
     opened: BTreeMap<usize, usize>,
     closed: BTreeMap<usize, usize>,
 }
@@ -132,7 +132,7 @@ pub(super) struct SpanUnits {
 impl SpanUnits {
     /// The units from node `first`'s start to node `last`'s end; none
     /// when the walk left either out.
-    pub(super) fn between(&self, first: usize, last: usize) -> Range<usize> {
+    pub(in crate::code) fn between(&self, first: usize, last: usize) -> Range<usize> {
         match (self.opened.get(&first), self.closed.get(&last)) {
             (Some(&start), Some(&end)) if start <= end => start..end,
             (Some(_) | None, _) => 0..0,
@@ -163,7 +163,12 @@ impl Leaves {
     /// The tokens of `tree`, of a grammar of `lexicon`, but the leaves that
     /// start at a byte of `silent`, a sorted list of tokens that carry no
     /// meaning.
-    pub(super) fn of(tree: &Tree, text: &str, lexicon: &Lexicon, silent: &[usize]) -> Self {
+    pub(in crate::code) fn of(
+        tree: &Tree,
+        text: &str,
+        lexicon: &Lexicon,
+        silent: &[usize],
+    ) -> Self {
         let mut leaves = Self::default();
         tokens(tree.root_node(), text, lexicon, |token| {
             let is_silent = match token {
@@ -184,7 +189,7 @@ impl Leaves {
 
     /// The units of `tree`, each node taken as `marks` says by its id, and
     /// where the spans its marks open and close lie among them.
-    pub(super) fn of_marked(
+    pub(in crate::code) fn of_marked(
         tree: &Tree,
         (text, lexicon): (&str, &Lexicon),
         marks: &BTreeMap<usize, NodeMarks>,
@@ -424,7 +429,7 @@ impl Leaves {
 
     /// The units within bytes `bytes`: each token wholly inside them. Read
     /// only of a tree with no marks, whose units hold bytes.
-    pub(super) fn within(&self, bytes: &Range<usize>) -> Range<usize> {
+    pub(in crate::code) fn within(&self, bytes: &Range<usize>) -> Range<usize> {
         let first = self.units.partition_point(|unit| unit.from < bytes.start);
         let last = self.units.partition_point(|unit| unit.to <= bytes.end);
         first..last.max(first)
@@ -432,7 +437,7 @@ impl Leaves {
 
     /// The units within bytes `bytes` of `text`, each as it is hashed, a
     /// space between each two. Read only of a tree with no marks.
-    pub(super) fn spelled(&self, text: &str, bytes: &Range<usize>) -> String {
+    pub(in crate::code) fn spelled(&self, text: &str, bytes: &Range<usize>) -> String {
         let units = self.units.get(self.within(bytes)).unwrap_or_default();
         let tokens: Vec<String> = units
             .iter()
@@ -448,7 +453,7 @@ impl Leaves {
     /// is hashed alike; one that starts within another and ends past it
     /// is hashed as if it ended where that one does. Each unit goes into
     /// one hash, so the work is linear in the units and the ranges.
-    pub(super) fn hash_each(&self, text: &str, ranges: &[Range<usize>]) -> Vec<SpanHash> {
+    pub(in crate::code) fn hash_each(&self, text: &str, ranges: &[Range<usize>]) -> Vec<SpanHash> {
         let mut order: Vec<(usize, &Range<usize>)> = ranges.iter().enumerate().collect();
         order.sort_by_key(|(at, range)| (range.start, std::cmp::Reverse(range.end), *at));
         let mut hashing = Hashing {
@@ -614,8 +619,8 @@ impl Hashing<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::rust::LEXICON;
-    use crate::code::syntax::parse;
+    use crate::code::parse::rust::LEXICON;
+    use crate::code::parse::syntax::parse;
 
     fn rust_tree(text: &str) -> Tree {
         parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap()

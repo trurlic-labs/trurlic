@@ -3,42 +3,37 @@
 //! and bytes, or the facts a shell gathered (`sources`), and its output is
 //! values; at run time it reads no file and no clock.
 //!
-//! Rust is read with tree-sitter by a module of its own (`rust.rs`, over
-//! `syntax.rs` and the builder every tree-sitter resolver shares,
-//! `tree.rs`), since its attributes, impls, re-exports and module files
-//! need code. Every other language is a grammar and a query file, a row
-//! of `language.rs` read by the general resolver (`general.rs`, under the
-//! contract of `query.rs`). TOML, JSON, Makefiles and Markdown have
-//! lexical resolvers of their own (over `lexical.rs`). A file's index is a
-//! function of its kind and bytes ([`index`]): its paths a tree of scopes
-//! (`index/scope_tree.rs`), which charges all an index holds to the file's room, its
-//! work under budgets per byte (`index/work.rs`), its cache entry a compact
-//! encoding (`index/encoding/`). What needs the whole tree is a second step
-//! over the indexes: the files that are test code whole (`roles.rs`). A
-//! macro invocation defines nothing (`rust.rs`).
+//! Rust is read with tree-sitter by a module of its own (`parse/rust/`,
+//! over `parse/syntax.rs` and the builder every tree-sitter resolver
+//! shares, `parse/tree_index.rs`), since its attributes, impls, re-exports
+//! and module files need code. Every other language is a grammar and a
+//! query file, a row of `parse/language/` read by the general resolver
+//! (`parse/general/`, under the contract of `parse/query.rs`). TOML, JSON,
+//! Makefiles and Markdown have lexical resolvers of their own (over
+//! `lexical.rs`). A file's index is a function of its kind and bytes
+//! ([`index`]): its paths a tree of scopes (`index/scope_tree.rs`), which
+//! charges all an index holds to the file's room, its work under budgets
+//! per byte (`index/work.rs`), its cache entry a compact encoding
+//! (`index/encoding/`). What needs the whole tree is a second step over
+//! the indexes: the files that are test code whole (`roles.rs`). A macro
+//! invocation defines nothing (`parse/rust/`).
 
 mod crates;
 mod definitions;
 mod facts;
-mod general;
 mod index;
 mod json;
-mod language;
 mod lexical;
 mod make;
 mod markdown;
+mod parse;
 #[cfg(test)]
 mod purity;
-mod query;
 mod resolver;
 mod roles;
-mod rust;
-mod syntax;
 #[cfg(test)]
 pub(crate) mod testing;
 mod toml;
-mod tree;
-mod units;
 
 pub(crate) use crates::MANIFEST;
 #[cfg(test)]
@@ -48,7 +43,7 @@ pub(crate) use index::{
     DefinitionKind, FileKind, HASH_SCHEME, Indexed, MAX_SOURCE_BYTES, decode as decode_index,
     encode as encode_index, max_entry_bytes,
 };
-pub(crate) use language::c_family::{
+pub(crate) use parse::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
     max_lexed_bytes,
 };
@@ -60,11 +55,11 @@ pub(crate) use resolver::{BOUNDS, INDEX_FORMAT, index};
 #[cfg(feature = "bench")]
 pub(crate) fn query_compiles(name: &str) -> bool {
     [
-        &language::C,
-        &language::CPP,
-        &language::PYTHON,
-        &language::TYPESCRIPT,
-        &language::TSX,
+        &parse::C,
+        &parse::CPP,
+        &parse::PYTHON,
+        &parse::TYPESCRIPT,
+        &parse::TSX,
     ]
     .into_iter()
     .find(|language| language.name == name)

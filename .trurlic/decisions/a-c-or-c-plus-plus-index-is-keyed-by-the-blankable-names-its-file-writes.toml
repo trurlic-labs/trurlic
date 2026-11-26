@@ -15,7 +15,7 @@ status = "proposed"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"
 anchors = [
-    { file = "src/code/language/c_family/encoding.rs", symbol = "decode_lexed" },
+    { file = "src/code/parse/language/c_family/encoding.rs", symbol = "decode_lexed" },
     { file = "src/sources/cache.rs", symbol = "key" },
     { file = "src/sources/cache.rs", symbol = "lexed_key" },
     { file = "src/sources/lexical.rs", symbol = "Cached" },

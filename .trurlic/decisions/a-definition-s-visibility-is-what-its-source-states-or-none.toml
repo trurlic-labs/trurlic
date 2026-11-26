@@ -15,6 +15,6 @@ created = "2026-11-24T10:33:26.877207089Z"
 anchors = [
     { file = "src/code/index/kinds.rs", symbol = "Visibility" },
     { file = "src/code/index/kinds.rs", symbol = "Visibility::of_modifier" },
-    { file = "src/code/rust/items.rs", symbol = "Within" },
-    { file = "src/code/rust/marks.rs", symbol = "visibility_of" },
+    { file = "src/code/parse/rust/items.rs", symbol = "Within" },
+    { file = "src/code/parse/rust/marks.rs", symbol = "visibility_of" },
 ]

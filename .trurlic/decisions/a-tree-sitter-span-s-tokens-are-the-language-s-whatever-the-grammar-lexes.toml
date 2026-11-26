@@ -16,16 +16,16 @@ status = "proposed"
 origin = "code index review fixes"
 created = "2026-11-25T17:10:51.306704636Z"
 anchors = [
-    { file = "src/code/rust.rs", symbol = "LEXICON" },
-    { file = "src/code/rust/silent.rs", symbol = "a_trailing_comma_that_carries_no_meaning_moves_no_hash" },
-    { file = "src/code/rust/silent.rs", symbol = "braces_around_a_closure_or_arm_body_of_one_expression_move_no_hash" },
-    { file = "src/code/rust/silent.rs", symbol = "rustfmt_moves_only_the_hash_of_merged_derives_a_comma_in_a_macros_tokens_and_sorted_uses" },
-    { file = "src/code/rust/silent.rs", symbol = "silent_tokens" },
-    { file = "src/code/syntax.rs", symbol = "Lexicon" },
-    { file = "src/code/syntax.rs", symbol = "Lexicon::comment" },
-    { file = "src/code/syntax.rs", symbol = "every_byte_but_comments_and_whitespace_is_in_one_token" },
-    { file = "src/code/syntax.rs", symbol = "gaps" },
-    { file = "src/code/units.rs", symbol = "a_comment_among_bytes_no_node_holds_moves_no_hash" },
+    { file = "src/code/parse/rust/mod.rs", symbol = "LEXICON" },
+    { file = "src/code/parse/rust/silent.rs", symbol = "a_trailing_comma_that_carries_no_meaning_moves_no_hash" },
+    { file = "src/code/parse/rust/silent.rs", symbol = "braces_around_a_closure_or_arm_body_of_one_expression_move_no_hash" },
+    { file = "src/code/parse/rust/silent.rs", symbol = "rustfmt_moves_only_the_hash_of_merged_derives_a_comma_in_a_macros_tokens_and_sorted_uses" },
+    { file = "src/code/parse/rust/silent.rs", symbol = "silent_tokens" },
+    { file = "src/code/parse/syntax.rs", symbol = "Lexicon" },
+    { file = "src/code/parse/syntax.rs", symbol = "Lexicon::comment" },
+    { file = "src/code/parse/syntax.rs", symbol = "every_byte_but_comments_and_whitespace_is_in_one_token" },
+    { file = "src/code/parse/syntax.rs", symbol = "gaps" },
+    { file = "src/code/parse/units/mod.rs", symbol = "a_comment_among_bytes_no_node_holds_moves_no_hash" },
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",

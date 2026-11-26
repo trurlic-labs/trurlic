@@ -17,11 +17,11 @@ status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_call_of_a_runners_name_without_a_function_after_its_string_or_of_another_member_is_no_test" },
-    { file = "src/code/general/tests.rs", symbol = "a_member_chain_of_a_runner_is_a_test_when_a_function_follows_its_string" },
-    { file = "src/code/general/tests.rs", symbol = "a_test_call_is_named_by_its_strings_as_written" },
     { file = "src/code/index/kinds.rs", symbol = "DefinitionKind::Test" },
-    { file = "src/code/language/typescript.scm" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_call_of_a_runners_name_without_a_function_after_its_string_or_of_another_member_is_no_test" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_member_chain_of_a_runner_is_a_test_when_a_function_follows_its_string" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_test_call_is_named_by_its_strings_as_written" },
+    { file = "src/code/parse/language/typescript.scm" },
 ]
 depends_on = [
     "what-a-typescript-file-defines",

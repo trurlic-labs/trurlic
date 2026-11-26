@@ -4,17 +4,19 @@
 //! ([`INDEX_FORMAT`]) and every bound an index is built within
 //! ([`BOUNDS`]) are named here, over all of them.
 
-use super::general::{self, Source};
 use super::index::{
     Definition, ENTRY_OVERHEAD_BYTES, FileIndex, FileKind, IndexFault, LEXICAL_MAX_BYTES,
     LEXICAL_WORK_PER_BYTE, MAX_NESTING, MIN_PARSE_OPERATIONS, MIN_WORK, ModuleFile,
     PARSE_OPERATIONS_PER_BYTE, SCAN_WORK_PER_BYTE, SERVED_BYTES_PER_BYTE, Scope, ScopeTree,
     Segment, TREE_SITTER_MAX_BYTES, room_per_byte,
 };
-use super::language::c_family::{self, FileMacros};
-use super::language::python;
-use super::language::{C, CPP, PYTHON, TSX, TYPESCRIPT, TYPESCRIPT_DECLARATIONS};
-use super::{json, make, markdown, rust, syntax, toml};
+use super::parse::general::{self, Source};
+use super::parse::{
+    C, CHUNK_BYTES, CPP, FileMacros, Language, MAX_BLANK_ARGUMENT_BYTES, MAX_INDENTATIONS,
+    MAX_MACRO_BODY_TOKENS, OPERATIONS_PER_PROGRESS, PYTHON, TSX, TYPESCRIPT,
+    TYPESCRIPT_DECLARATIONS, blank, line_ends, rust,
+};
+use super::{json, make, markdown, toml};
 
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
@@ -34,8 +36,8 @@ pub(crate) const BOUNDS: [(&str, usize); 32] = [
     ("scan_work_per_byte", SCAN_WORK_PER_BYTE),
     ("lexical_work_per_byte", LEXICAL_WORK_PER_BYTE),
     ("min_work", MIN_WORK),
-    ("chunk_bytes", syntax::CHUNK_BYTES),
-    ("operations_per_progress", syntax::OPERATIONS_PER_PROGRESS),
+    ("chunk_bytes", CHUNK_BYTES),
+    ("operations_per_progress", OPERATIONS_PER_PROGRESS),
     ("max_nesting", MAX_NESTING),
     ("scope_bytes", size_of::<Scope>()),
     ("segment_bytes", size_of::<Segment>()),
@@ -60,18 +62,16 @@ pub(crate) const BOUNDS: [(&str, usize); 32] = [
     ("make_room_per_byte", room_per_byte(FileKind::Make)),
     ("markdown_room_per_byte", room_per_byte(FileKind::Markdown)),
     ("entry_overhead_bytes", ENTRY_OVERHEAD_BYTES),
-    ("max_indentations", python::MAX_INDENTATIONS),
+    ("max_indentations", MAX_INDENTATIONS),
     ("match_limit", general::MATCH_LIMIT as usize),
-    ("max_macro_body_tokens", c_family::MAX_MACRO_BODY_TOKENS),
-    (
-        "max_blank_argument_bytes",
-        c_family::MAX_BLANK_ARGUMENT_BYTES,
-    ),
+    ("max_macro_body_tokens", MAX_MACRO_BODY_TOKENS),
+    ("max_blank_argument_bytes", MAX_BLANK_ARGUMENT_BYTES),
 ];
 
 /// The index of `bytes`, a file of `kind`; a C or C++ file blanks
 /// `macros`, the part of its tree's set it writes, and a Python file is
-/// read with Python's line ends. Each resolver builds
+/// read with Python's line ends: each rewrite before the general
+/// resolver's parse. Each resolver builds
 /// it into the scope tree of the file's kind and size, which holds it to
 /// the file's room.
 pub(crate) fn index(
@@ -93,16 +93,14 @@ pub(crate) fn index(
     let plain = Source::plain(text);
     let mut index = match kind {
         FileKind::Rust => rust::index(text, scopes)?,
-        FileKind::Python => {
-            general::index(&PYTHON, &Source::plain(&python::line_ends(text)), scopes)?
-        }
+        FileKind::Python => general::index(&PYTHON, &Source::plain(&line_ends(text)), scopes)?,
         FileKind::TypeScript => general::index(&TYPESCRIPT, &plain, scopes)?,
         FileKind::TypeScriptDeclarations => {
             general::index(&TYPESCRIPT_DECLARATIONS, &plain, scopes)?
         }
         FileKind::Tsx => general::index(&TSX, &plain, scopes)?,
-        FileKind::C => c_family::index(&C, text, macros, scopes)?,
-        FileKind::Cpp => c_family::index(&CPP, text, macros, scopes)?,
+        FileKind::C => blanked(&C, text, macros, scopes)?,
+        FileKind::Cpp => blanked(&CPP, text, macros, scopes)?,
         FileKind::Toml => toml::index(text, scopes)?,
         FileKind::Json => json::index(text, scopes)?,
         FileKind::Make => make::index(text, scopes)?,
@@ -114,9 +112,27 @@ pub(crate) fn index(
     Ok(index)
 }
 
+/// The index of `text`, a C or C++ file of `language`, read by the
+/// general resolver with `macros` blanked, its lines counted as written.
+fn blanked(
+    language: &Language,
+    text: &str,
+    macros: &FileMacros,
+    scopes: ScopeTree,
+) -> Result<FileIndex, IndexFault> {
+    let blanked = blank(text, macros);
+    let source = Source {
+        parsed: &blanked.text,
+        written: text,
+        private: &blanked.private,
+    };
+    general::index(language, &source, scopes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::parse::{BlankMacros, Defines, is_header, lexed};
 
     /// The fingerprint of the fixture corpus's indexes under each
     /// [`INDEX_FORMAT`], oldest first. A change to how a file is indexed
@@ -233,18 +249,12 @@ mod tests {
                 Some((path, name, FileKind::of(name)?))
             })
             .collect();
-        let headers: Vec<(&str, c_family::Defines)> = kinds
+        let headers: Vec<(&str, Defines)> = kinds
             .iter()
-            .filter(|(_, name, kind)| kind.blanks_macros() && c_family::is_header(name))
-            .map(|(path, name, _)| {
-                (
-                    *name,
-                    c_family::lexed(&std::fs::read(path).unwrap()).into_defines(),
-                )
-            })
+            .filter(|(_, name, kind)| kind.blanks_macros() && is_header(name))
+            .map(|(path, name, _)| (*name, lexed(&std::fs::read(path).unwrap()).into_defines()))
             .collect();
-        let tree =
-            c_family::BlankMacros::of(headers.iter().map(|(name, defines)| (*name, defines)));
+        let tree = BlankMacros::of(headers.iter().map(|(name, defines)| (*name, defines)));
         let mut hasher = blake3::Hasher::new();
         for (path, name, kind) in kinds {
             let bytes = std::fs::read(path).unwrap();

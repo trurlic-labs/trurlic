@@ -15,12 +15,12 @@ status = "proposed"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
-    { file = "src/code/language.rs", symbol = "Language::is_test_place" },
-    { file = "src/code/language.rs", symbol = "PYTHON" },
-    { file = "src/code/language.rs", symbol = "TSX" },
-    { file = "src/code/language.rs", symbol = "TYPESCRIPT" },
-    { file = "src/code/language.rs", symbol = "a_test_place_is_a_directory_anywhere_above_or_a_file_name" },
-    { file = "src/code/language.rs", symbol = "a_typescript_test_place_is_a_tests_directory_or_a_test_or_spec_file" },
+    { file = "src/code/parse/language/mod.rs", symbol = "Language::is_test_place" },
+    { file = "src/code/parse/language/mod.rs", symbol = "PYTHON" },
+    { file = "src/code/parse/language/mod.rs", symbol = "TSX" },
+    { file = "src/code/parse/language/mod.rs", symbol = "TYPESCRIPT" },
+    { file = "src/code/parse/language/mod.rs", symbol = "a_test_place_is_a_directory_anywhere_above_or_a_file_name" },
+    { file = "src/code/parse/language/mod.rs", symbol = "a_typescript_test_place_is_a_tests_directory_or_a_test_or_spec_file" },
     { file = "src/code/roles.rs", symbol = "test_files" },
 ]
 depends_on = [

@@ -14,9 +14,9 @@ status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_wrapper_of_the_whole_file_is_the_module" },
-    { file = "src/code/general/tests.rs", symbol = "an_unnamed_default_export_is_named_default" },
-    { file = "src/code/language/typescript.scm" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_wrapper_of_the_whole_file_is_the_module" },
+    { file = "src/code/parse/general/tests.rs", symbol = "an_unnamed_default_export_is_named_default" },
+    { file = "src/code/parse/language/typescript.scm" },
 ]
 depends_on = [
     "what-a-typescript-file-defines",

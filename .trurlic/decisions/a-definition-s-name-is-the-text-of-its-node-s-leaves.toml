@@ -15,12 +15,12 @@ status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/name.rs", symbol = "parts" },
-    { file = "src/code/general/name.rs", symbol = "unquoted" },
-    { file = "src/code/general/tests.rs", symbol = "a_name_captured_on_several_nodes_is_their_segments_in_order" },
-    { file = "src/code/general/tests.rs", symbol = "a_name_splits_at_its_separator_and_drops_a_string_literals_quotes" },
-    { file = "src/code/general/tests.rs", symbol = "a_skipped_kind_is_no_part_of_a_name" },
-    { file = "src/code/general/tests.rs", symbol = "a_space_stands_in_a_name_only_between_two_words" },
+    { file = "src/code/parse/general/name.rs", symbol = "parts" },
+    { file = "src/code/parse/general/name.rs", symbol = "unquoted" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_name_captured_on_several_nodes_is_their_segments_in_order" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_name_splits_at_its_separator_and_drops_a_string_literals_quotes" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_skipped_kind_is_no_part_of_a_name" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_space_stands_in_a_name_only_between_two_words" },
 ]
 depends_on = [
     "a-query-file-is-held-to-the-general-resolver-s-contract",

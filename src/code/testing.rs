@@ -3,7 +3,7 @@
 //! text of its span.
 
 use super::index::{FileKind, Indexed, ScopeId, Scopes, Symbol};
-use super::language::c_family::{BlankMacros, FileMacros, lexed};
+use super::parse::{BlankMacros, FileMacros, lexed};
 
 /// The index of `bytes`, a file of `kind` alone in its tree: a C or C++
 /// file blanks what its own `#define`s make blankable.

@@ -1,56 +1,63 @@
 //! The languages the general resolver reads, each a row of data: its
-//! grammar, its query files (`language/<name>.scm`, compiled into the
+//! grammar, its query files (`<name>.scm` here, compiled into the
 //! binary by `include_str!`, the one include the index's purity admits,
 //! and read as one query), how a symbol on its files is spelled, the
-//! bounds its grammar needs checked before a parse (`language/<name>.rs`,
-//! for a grammar that has any), and the places of a tree that hold its
-//! test code. Adding a language is a grammar crate, a query file, a row
-//! here and a fixture corpus. C and C++ add the one rewrite before a
-//! parse, the tree's attribute macros blanked (`language/c_family.rs`).
+//! bounds its grammar needs checked before a parse (`<name>.rs`, for a
+//! grammar that has any), and the places of a tree that hold its test
+//! code. Adding a language is a grammar crate, a query file, a row here
+//! and a fixture corpus. C and C++ add the one rewrite before a parse,
+//! the tree's attribute macros blanked (`c_family/`).
+
+mod c_family;
+mod python;
 
 use std::sync::{LazyLock, OnceLock};
 
-use super::index::{FileKind, IndexFault, Syntax};
-
-pub(super) mod c_family;
-pub(super) mod python;
 use super::query::{QueryFault, Rules};
 use super::syntax::{Lexicon, grammar_identity};
+use crate::code::index::{FileKind, IndexFault, Syntax};
+
+pub(crate) use c_family::{
+    BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
+    max_lexed_bytes,
+};
+pub(in crate::code) use c_family::{MAX_BLANK_ARGUMENT_BYTES, MAX_MACRO_BODY_TOKENS, blank};
+pub(in crate::code) use python::{MAX_INDENTATIONS, line_ends};
 
 /// A check of a file's bytes before its parse.
 type Bound = fn(&str) -> Result<(), IndexFault>;
 
 /// A language the general resolver reads.
-pub(super) struct Language {
+pub(in crate::code) struct Language {
     /// Its name in a cache key.
-    pub(super) name: &'static str,
+    pub(in crate::code) name: &'static str,
     grammar: fn() -> tree_sitter::Language,
     node_types: &'static str,
     /// The query files, read as one query in this order.
     queries: &'static [&'static str],
     /// How a symbol on its files is spelled.
-    pub(super) syntax: Syntax,
+    pub(in crate::code) syntax: Syntax,
     /// What its tokens are made of beside its tree. Its literals are its
     /// query's `@hash.unit` captures, not kinds; a comment it declares is
     /// one its grammar leaves among tokens, which a grammar that lexes
     /// every comment as an extra has none of.
-    pub(super) lexicon: Lexicon,
+    pub(in crate::code) lexicon: Lexicon,
     /// The bounds the bytes must meet before the parse, each a cost of the
     /// grammar no budget stops during it.
-    pub(super) before_parse: &'static [Bound],
+    pub(in crate::code) before_parse: &'static [Bound],
     /// The places of a tree whose files of the language are test code
     /// whole: `dir/` a directory of that name anywhere above the file, any
     /// other a file name, where one `*` stands for any run of characters.
-    pub(super) test_places: &'static [&'static str],
+    pub(in crate::code) test_places: &'static [&'static str],
     rules: OnceLock<Result<Rules, QueryFault>>,
     identity: OnceLock<[u8; 32]>,
 }
 
-pub(super) static PYTHON: Language = Language {
+pub(in crate::code) static PYTHON: Language = Language {
     name: "python",
     grammar: || tree_sitter_python::LANGUAGE.into(),
     node_types: tree_sitter_python::NODE_TYPES,
-    queries: &[include_str!("language/python.scm")],
+    queries: &[include_str!("python.scm")],
     syntax: Syntax::Code,
     // tree-sitter-python lexes every comment as an extra, never as a
     // token or among bytes no node holds; a `#` at a token's start is a
@@ -74,7 +81,7 @@ pub(super) static PYTHON: Language = Language {
 
 /// TypeScript's rules, beside which TSX reads its own: what a file
 /// defines, how it is hashed, its test places.
-const TYPESCRIPT_QUERY: &str = include_str!("language/typescript.scm");
+const TYPESCRIPT_QUERY: &str = include_str!("typescript.scm");
 
 /// tree-sitter-typescript lexes every comment as an extra; a `//` at a
 /// token's start is a template string's text.
@@ -91,7 +98,7 @@ const TYPESCRIPT_LEXICON: Lexicon = Lexicon {
 
 /// `.ts`, `.mts` and `.cts`, read by the `typescript` grammar, which
 /// takes `<T>x` as a cast where `tsx` reads an element.
-pub(super) static TYPESCRIPT: Language = Language {
+pub(in crate::code) static TYPESCRIPT: Language = Language {
     name: "typescript",
     grammar: || tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
     node_types: tree_sitter_typescript::TYPESCRIPT_NODE_TYPES,
@@ -116,11 +123,11 @@ pub(super) static TYPESCRIPT: Language = Language {
 /// `typescript` grammar and TypeScript's query, with the rules of a
 /// declaration file's top beside them, which TypeScript reads as an
 /// ambient module's body.
-pub(super) static TYPESCRIPT_DECLARATIONS: Language = Language {
+pub(in crate::code) static TYPESCRIPT_DECLARATIONS: Language = Language {
     name: "typescript-declarations",
     grammar: || tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
     node_types: tree_sitter_typescript::TYPESCRIPT_NODE_TYPES,
-    queries: &[TYPESCRIPT_QUERY, include_str!("language/declarations.scm")],
+    queries: &[TYPESCRIPT_QUERY, include_str!("declarations.scm")],
     syntax: Syntax::Strings,
     lexicon: TYPESCRIPT_LEXICON,
     before_parse: &[],
@@ -132,11 +139,11 @@ pub(super) static TYPESCRIPT_DECLARATIONS: Language = Language {
 /// `.tsx`, and JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`): the `tsx`
 /// grammar reads JavaScript with its JSX, and TypeScript's query finds in
 /// it what JavaScript has of TypeScript's definitions.
-pub(super) static TSX: Language = Language {
+pub(in crate::code) static TSX: Language = Language {
     name: "tsx",
     grammar: || tree_sitter_typescript::LANGUAGE_TSX.into(),
     node_types: tree_sitter_typescript::TSX_NODE_TYPES,
-    queries: &[TYPESCRIPT_QUERY, include_str!("language/tsx.scm")],
+    queries: &[TYPESCRIPT_QUERY, include_str!("tsx.scm")],
     syntax: Syntax::Strings,
     lexicon: TYPESCRIPT_LEXICON,
     before_parse: &[],
@@ -172,11 +179,11 @@ const C_FAMILY_LEXICON: Lexicon = Lexicon {
 };
 
 /// `.c`, read by the `c` grammar.
-pub(super) static C: Language = Language {
+pub(in crate::code) static C: Language = Language {
     name: "c",
     grammar: || tree_sitter_c::LANGUAGE.into(),
     node_types: tree_sitter_c::NODE_TYPES,
-    queries: &[include_str!("language/c.scm")],
+    queries: &[include_str!("c.scm")],
     syntax: Syntax::Code,
     lexicon: C_FAMILY_LEXICON,
     before_parse: &[],
@@ -188,11 +195,11 @@ pub(super) static C: Language = Language {
 /// `.cc`, `.cpp`, `.cxx`, `.hpp`, `.hh`, and `.h`, a header of C or of
 /// C++, read by the `cpp` grammar. Its symbols are text, so `operator()`
 /// and `operator<` are spelled as written.
-pub(super) static CPP: Language = Language {
+pub(in crate::code) static CPP: Language = Language {
     name: "cpp",
     grammar: || tree_sitter_cpp::LANGUAGE.into(),
     node_types: tree_sitter_cpp::NODE_TYPES,
-    queries: &[include_str!("language/cpp.scm")],
+    queries: &[include_str!("cpp.scm")],
     syntax: Syntax::Strings,
     lexicon: C_FAMILY_LEXICON,
     before_parse: &[],
@@ -297,19 +304,19 @@ impl FileKind {
 impl Language {
     /// Its query's rules, compiled once per process, on the first file
     /// of the language the cache does not hold.
-    pub(super) fn rules(&self) -> Result<&Rules, &QueryFault> {
+    pub(in crate::code) fn rules(&self) -> Result<&Rules, &QueryFault> {
         self.rules.get_or_init(|| self.compile()).as_ref()
     }
 
     /// Its query compiled against its grammar and read by the contract:
     /// the cost a process pays once for the language.
-    pub(super) fn compile(&self) -> Result<Rules, QueryFault> {
+    pub(in crate::code) fn compile(&self) -> Result<Rules, QueryFault> {
         Rules::compile((self.grammar)(), &self.queries.concat())
     }
 
     /// The identity of its grammar and its query, in a cache key: a
     /// pattern of the query is a rule of the index.
-    pub(super) fn identity(&self) -> [u8; 32] {
+    pub(in crate::code) fn identity(&self) -> [u8; 32] {
         *self.identity.get_or_init(|| {
             let mut hasher = blake3::Hasher::new();
             hasher.update(&grammar_identity(&(self.grammar)(), self.node_types));
@@ -323,7 +330,7 @@ impl Language {
 
     /// Whether the file at `path`, a `/`-separated path of a tree, is in
     /// one of its test places.
-    pub(super) fn is_test_place(&self, path: &str) -> bool {
+    pub(in crate::code) fn is_test_place(&self, path: &str) -> bool {
         let (dirs, name) = path.rsplit_once('/').unwrap_or(("", path));
         self.test_places
             .iter()

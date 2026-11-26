@@ -13,8 +13,8 @@ status = "accepted"
 origin = "languages as query files"
 created = "2026-11-25T18:04:58.425308845Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_leading_underscore_is_private_and_a_dunder_public" },
-    { file = "src/code/language/python.scm" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_leading_underscore_is_private_and_a_dunder_public" },
+    { file = "src/code/parse/language/python.scm" },
 ]
 depends_on = [
     "a-python-name-with-a-leading-underscore-is-private",

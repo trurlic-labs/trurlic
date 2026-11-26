@@ -14,7 +14,7 @@ use std::ops::Range;
 use tree_sitter::Node;
 
 use crate::code::index::{DefinitionKind, IndexFault, ScopeId, Segment, Visibility, What};
-use crate::code::syntax::text_of;
+use crate::code::parse::syntax::text_of;
 
 use super::{Visit, Walk, marks};
 

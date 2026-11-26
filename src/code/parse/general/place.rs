@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 use super::{Extent, Found, NameNode, Site, SpanNode};
 use crate::code::index::{IndexFault, ScopeId, ScopeTree, Visibility, What, name_segments};
-use crate::code::query::{Container, Definer};
+use crate::code::parse::query::{Container, Definer};
 
 /// A definition placed in its file: its scope, its span and what it is.
 pub(super) struct Placed {

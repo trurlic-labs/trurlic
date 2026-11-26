@@ -14,13 +14,13 @@ status = "proposed"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_line_continuation_inside_a_token_joins_it_and_between_tokens_is_blank" },
-    { file = "src/code/general/tests.rs", symbol = "a_macros_body_is_hashed_by_its_tokens_whatever_their_spacing" },
-    { file = "src/code/language/c_family.rs", symbol = "tokens" },
-    { file = "src/code/language/c_family/lex.rs", symbol = "PUNCTUATORS" },
-    { file = "src/code/syntax.rs", symbol = "Lexicon::joins" },
-    { file = "src/code/units.rs", symbol = "Leaves::is_spliced" },
-    { file = "src/code/units.rs", symbol = "Leaves::push_tokens" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_line_continuation_inside_a_token_joins_it_and_between_tokens_is_blank" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_macros_body_is_hashed_by_its_tokens_whatever_their_spacing" },
+    { file = "src/code/parse/language/c_family/lex.rs", symbol = "PUNCTUATORS" },
+    { file = "src/code/parse/language/c_family/mod.rs", symbol = "tokens" },
+    { file = "src/code/parse/syntax.rs", symbol = "Lexicon::joins" },
+    { file = "src/code/parse/units/mod.rs", symbol = "Leaves::is_spliced" },
+    { file = "src/code/parse/units/mod.rs", symbol = "Leaves::push_tokens" },
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",

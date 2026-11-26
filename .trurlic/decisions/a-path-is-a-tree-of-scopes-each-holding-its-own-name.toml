@@ -20,8 +20,8 @@ anchors = [
     { file = "src/code/index/scope.rs", symbol = "Scopes::path_from_end" },
     { file = "src/code/index/scope_tree.rs", symbol = "ScopeTree::enter" },
     { file = "src/code/lexical.rs", symbol = "Lexical" },
+    { file = "src/code/parse/tree_index.rs", symbol = "TreeIndex" },
     { file = "src/code/resolver.rs", symbol = "index" },
-    { file = "src/code/tree.rs", symbol = "TreeIndex" },
 ]
 depends_on = [
     "an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost",

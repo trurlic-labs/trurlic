@@ -1,0 +1,29 @@
+//! How a file of a language is read with tree-sitter, the one place for
+//! it: the parse within its budgets and the tokens of its tree
+//! (`syntax.rs`), the units its span hashes are over (`units/`), the
+//! builder every tree-sitter resolver adds its definitions to
+//! (`tree_index.rs`), Rust's resolver (`rust/`), and the general resolver
+//! (`general/`), which reads every other language by its row
+//! (`language/`) under the contract of its query file (`query.rs`).
+
+pub(in crate::code) mod general;
+mod language;
+mod query;
+pub(in crate::code) mod rust;
+mod syntax;
+mod tree_index;
+mod units;
+
+pub(crate) use language::{
+    BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
+    max_lexed_bytes,
+};
+pub(in crate::code) use language::{
+    C, CPP, Language, MAX_BLANK_ARGUMENT_BYTES, MAX_INDENTATIONS, MAX_MACRO_BODY_TOKENS, PYTHON,
+    TSX, TYPESCRIPT, TYPESCRIPT_DECLARATIONS, blank, line_ends,
+};
+#[cfg(test)]
+pub(in crate::code) use rust::LEXICON as RUST_LEXICON;
+pub(in crate::code) use syntax::{CHUNK_BYTES, OPERATIONS_PER_PROGRESS};
+#[cfg(test)]
+pub(in crate::code) use syntax::{Token, is_comment, parse, text_of, tokens};

@@ -1,6 +1,6 @@
 //! Parsing a file with a tree-sitter grammar, within two budgets of work,
-//! and the tokens of its tree. Every tree-sitter resolver (`rust.rs`,
-//! `general.rs`) stands on these.
+//! and the tokens of its tree. Every tree-sitter resolver (`rust/`,
+//! `general/`) stands on these.
 //!
 //! A tree-sitter parse recovers from any input, at a cost the input
 //! chooses. Its lexer can scan the rest of the file again from each byte
@@ -26,13 +26,13 @@
 //! `macro_rules!` repetition's separator, what error recovery passes
 //! over). A node a query takes as text is one token of its bytes but the
 //! comments inside, cut at each child the query marks as well
-//! ([`Take::Text`]). The span hashes over them are `units.rs`'s.
+//! ([`Take::Text`]). The span hashes over them are `units/`'s.
 
 use std::ops::{ControlFlow, Range};
 
 use tree_sitter::{Language, Node, ParseOptions, Parser, Tree};
 
-use super::index::{
+use crate::code::index::{
     IndexFault, MIN_PARSE_OPERATIONS, MIN_WORK, PARSE_OPERATIONS_PER_BYTE, SERVED_BYTES_PER_BYTE,
     Work,
 };
@@ -40,15 +40,15 @@ use super::index::{
 /// The bytes the lexer is handed at a time. The lexer reads again within
 /// the chunk it holds without asking for it, so a rescan inside one chunk
 /// is uncounted: a small chunk keeps that uncounted rescan short.
-pub(super) const CHUNK_BYTES: usize = 64;
+pub(in crate::code) const CHUNK_BYTES: usize = 64;
 
 /// The progress operations between two calls of the progress callback,
 /// the runtime's own constant.
-pub(super) const OPERATIONS_PER_PROGRESS: usize = 100;
+pub(in crate::code) const OPERATIONS_PER_PROGRESS: usize = 100;
 
 /// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
 /// the parse runs past either of its budgets.
-pub(super) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault> {
+pub(in crate::code) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault> {
     // A parser per parse: a parser that parsed before reuses its pools and
     // counts fewer operations, so only a fresh one makes the verdict a
     // function of the file.
@@ -88,7 +88,7 @@ pub(super) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault>
 /// text and a comment inside it, or the walk entering or leaving a node it
 /// does not leave out.
 #[derive(Debug, Clone, Copy)]
-pub(super) enum Token<'n> {
+pub(in crate::code) enum Token<'n> {
     Node(Node<'n>),
     Gap {
         start: usize,
@@ -124,7 +124,7 @@ impl Token<'_> {
 /// How a walk of the tokens takes a node it marks; a node with no mark
 /// is walked, and inside a node taken as text is part of its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Take {
+pub(in crate::code) enum Take {
     /// Its children are walked; a leaf is a token.
     Walk,
     /// It is one token, whatever it holds.
@@ -154,7 +154,7 @@ enum Inside {
 /// comments `lexicon` delimits are left out. So are comments and every
 /// other extra but an error ([`is_comment`]), and tokens of no width (the
 /// parser's inserted missing tokens).
-pub(super) fn tokens<'n>(
+pub(in crate::code) fn tokens<'n>(
     node: Node<'n>,
     text: &str,
     lexicon: &Lexicon,
@@ -172,7 +172,7 @@ pub(super) fn tokens<'n>(
 /// The walk of [`tokens`], each node taken as `take` marks it, and each
 /// node it does not leave out entered and left, but the nodes of a text.
 /// One cursor walk: each node and each byte is visited once.
-pub(super) fn walk_tokens<'n>(
+pub(in crate::code) fn walk_tokens<'n>(
     node: Node<'n>,
     (text, lexicon): (&str, &Lexicon),
     take: impl Fn(Node<'n>) -> Option<Take>,
@@ -335,7 +335,7 @@ fn climb<'n>(
 /// Whether `node` is left out of the tokens: an extra (a comment), but
 /// not the error that recovery passes over, which the grammar may also
 /// make an extra.
-pub(super) fn is_comment(node: Node<'_>) -> bool {
+pub(in crate::code) fn is_comment(node: Node<'_>) -> bool {
     node.is_extra() && !node.is_error()
 }
 
@@ -343,35 +343,35 @@ pub(super) fn is_comment(node: Node<'_>) -> bool {
 /// kinds that are lexical literals, each one token whole. It names the
 /// comment delimiters, by which a comment the grammar lexes as tokens, or
 /// leaves among bytes no node holds, is dropped as whitespace is.
-pub(super) struct Lexicon {
-    pub(super) literals: &'static [&'static str],
-    pub(super) line_comments: &'static [&'static str],
+pub(in crate::code) struct Lexicon {
+    pub(in crate::code) literals: &'static [&'static str],
+    pub(in crate::code) line_comments: &'static [&'static str],
     /// Each opening and closing delimiter of a block comment.
-    pub(super) block_comments: &'static [(&'static str, &'static str)],
+    pub(in crate::code) block_comments: &'static [(&'static str, &'static str)],
     /// Whether a block comment holds another (Rust's do).
-    pub(super) nested_blocks: bool,
+    pub(in crate::code) nested_blocks: bool,
     /// Leaf kinds the grammar lexes as one token where the language has
     /// two, with the bytes of the first (Rust's metavariable `$a`, which
     /// may be written `$ a`): hashed as two, so the space between moves
     /// nothing.
-    pub(super) glued: &'static [(&'static str, usize)],
+    pub(in crate::code) glued: &'static [(&'static str, usize)],
     /// Whether a backslash right before a line break is blank, as C's and
     /// Python's line continuation is, in a gap and between two tokens.
-    pub(super) continuations: bool,
+    pub(in crate::code) continuations: bool,
     /// Whether a line continuation inside a token is spliced out of it,
     /// as C's preprocessor does before it reads a token, and not blank.
-    pub(super) splices: bool,
+    pub(in crate::code) splices: bool,
     /// The lexer of a node hashed by its tokens.
-    pub(super) tokens: Option<TokenLexer>,
+    pub(in crate::code) tokens: Option<TokenLexer>,
 }
 
 /// A lexer that hands its callback the range of each token of a text.
-pub(super) type TokenLexer = fn(&str, &mut dyn FnMut(Range<usize>));
+pub(in crate::code) type TokenLexer = fn(&str, &mut dyn FnMut(Range<usize>));
 
 impl Lexicon {
     /// The bytes of the line continuation `rest` opens with; 0 when it
     /// opens with none or the lexicon has none.
-    pub(super) fn continuation(&self, rest: &str) -> usize {
+    pub(in crate::code) fn continuation(&self, rest: &str) -> usize {
         match (self.continuations, rest.as_bytes()) {
             (true, [b'\\', b'\n', ..]) => 2,
             (true, [b'\\', b'\r', b'\n', ..]) => 3,
@@ -381,7 +381,7 @@ impl Lexicon {
 
     /// The line continuations inside `bytes`, a token of `text`, that the
     /// lexicon splices out of it.
-    pub(super) fn spliced(&self, text: &str, bytes: Range<usize>) -> Vec<Range<usize>> {
+    pub(in crate::code) fn spliced(&self, text: &str, bytes: Range<usize>) -> Vec<Range<usize>> {
         let mut found = Vec::new();
         let mut at = bytes.start;
         while self.splices && at < bytes.end {
@@ -399,7 +399,7 @@ impl Lexicon {
     /// Whether the bytes of `text` from `end` to `start`, between two
     /// tokens, are line continuations the lexicon splices, alone and with
     /// a word's character on each side: the two are one token.
-    pub(super) fn joins(&self, text: &str, end: usize, start: usize) -> bool {
+    pub(in crate::code) fn joins(&self, text: &str, end: usize, start: usize) -> bool {
         let is_word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         let between = text.get(end..start).filter(|_| self.splices);
         let Some(between) = between.filter(|between| !between.is_empty()) else {
@@ -499,7 +499,7 @@ fn gaps<'n>(
 
 /// The identity of a grammar: its ABI, its version, the counts of its
 /// symbols, fields and parse states, and its node types, hashed.
-pub(super) fn grammar_identity(language: &Language, node_types: &str) -> [u8; 32] {
+pub(in crate::code) fn grammar_identity(language: &Language, node_types: &str) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     let version = language.metadata().map_or([0; 3], |found| {
         [
@@ -522,14 +522,14 @@ pub(super) fn grammar_identity(language: &Language, node_types: &str) -> [u8; 32
 }
 
 /// The text of `node` in `text`.
-pub(super) fn text_of<'t>(node: Node<'_>, text: &'t str) -> &'t str {
+pub(in crate::code) fn text_of<'t>(node: Node<'_>, text: &'t str) -> &'t str {
     text.get(node.byte_range()).unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::rust::LEXICON;
+    use crate::code::parse::rust::LEXICON;
 
     fn rust_tree(text: &str) -> Tree {
         parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap()

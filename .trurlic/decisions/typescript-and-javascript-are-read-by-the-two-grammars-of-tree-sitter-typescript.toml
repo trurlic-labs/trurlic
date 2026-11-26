@@ -18,10 +18,10 @@ created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-typescript" },
     { file = "src/code/index/file.rs", symbol = "FileKind::of" },
-    { file = "src/code/language.rs", symbol = "TSX" },
-    { file = "src/code/language.rs", symbol = "TYPESCRIPT" },
-    { file = "src/code/language.rs", symbol = "TYPESCRIPT_DECLARATIONS" },
-    { file = "src/code/language/tsx.scm" },
+    { file = "src/code/parse/language/mod.rs", symbol = "TSX" },
+    { file = "src/code/parse/language/mod.rs", symbol = "TYPESCRIPT" },
+    { file = "src/code/parse/language/mod.rs", symbol = "TYPESCRIPT_DECLARATIONS" },
+    { file = "src/code/parse/language/tsx.scm" },
     { file = "tests/fixtures/code/typescript/signatures.ts" },
 ]
 depends_on = [

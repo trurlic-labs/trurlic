@@ -13,7 +13,7 @@
 
 use tree_sitter::Node;
 
-use crate::code::syntax::is_comment;
+use crate::code::parse::syntax::is_comment;
 
 /// The kinds of the nodes whose last `,`, before their closing delimiter
 /// or at their end, carries no meaning.
@@ -181,9 +181,9 @@ fn bare_block(holder: Node<'_>) -> Vec<usize> {
 mod tests {
     use super::*;
     use crate::code::index::SpanHash;
-    use crate::code::rust::LEXICON;
-    use crate::code::syntax::parse;
-    use crate::code::units::Leaves;
+    use crate::code::parse::rust::LEXICON;
+    use crate::code::parse::syntax::parse;
+    use crate::code::parse::units::Leaves;
 
     /// The hash of the whole of `text`, a Rust file.
     fn hash(text: &str) -> SpanHash {

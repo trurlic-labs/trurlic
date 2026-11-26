@@ -14,8 +14,8 @@ status = "accepted"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"
 anchors = [
-    { file = "src/code/language/c.scm" },
-    { file = "src/code/language/cpp.scm" },
+    { file = "src/code/parse/language/c.scm" },
+    { file = "src/code/parse/language/cpp.scm" },
     { file = "src/sources/tests.rs", symbol = "STATEMENTS" },
     { file = "tests/fixtures/code/cpp/shelf.hpp" },
 ]

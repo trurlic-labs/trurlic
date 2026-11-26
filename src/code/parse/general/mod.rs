@@ -1,5 +1,5 @@
 //! The general resolver: the definitions of a file of any language a
-//! query file describes (`language.rs`, `query.rs`), in one walk of its
+//! query file describes (`language/`, `query.rs`), in one walk of its
 //! tree and one sweep of what the walk found.
 //!
 //! The walk visits each node once, from an explicit cursor, and starts
@@ -34,34 +34,34 @@ use std::iter;
 
 use tree_sitter::{Node, QueryCursor, StreamingIterator, Tree};
 
-use super::index::{
-    FileIndex, IndexFault, Lines, MIN_WORK, Role, SCAN_WORK_PER_BYTE, ScopeTree, Visibility, Work,
-};
 use super::language::Language;
 use super::query::{Capture, Definer, Rules};
 use super::syntax;
-use super::tree::TreeIndex;
+use super::tree_index::TreeIndex;
 use super::units::{Leaves, NodeMarks};
+use crate::code::index::{
+    FileIndex, IndexFault, Lines, MIN_WORK, Role, SCAN_WORK_PER_BYTE, ScopeTree, Visibility, Work,
+};
 
 use frame::{Frame, VisibilityMark, Waiting};
 
 /// The matches a query may have in progress at once. A file that needs
 /// more is refused, not read in part.
-pub(super) const MATCH_LIMIT: u32 = 256;
+pub(in crate::code) const MATCH_LIMIT: u32 = 256;
 
 /// A file as the resolver reads it: the text its grammar parses and its
 /// hash reads, the text as written, of the same length, whose lines a
 /// span counts, and the places a rewrite before the parse marked private,
-/// in order (`language/c_family.rs`).
-pub(super) struct Source<'t> {
-    pub(super) parsed: &'t str,
-    pub(super) written: &'t str,
-    pub(super) private: &'t [usize],
+/// in order (`language/c_family/`).
+pub(in crate::code) struct Source<'t> {
+    pub(in crate::code) parsed: &'t str,
+    pub(in crate::code) written: &'t str,
+    pub(in crate::code) private: &'t [usize],
 }
 
 impl<'t> Source<'t> {
     /// `text` read as written.
-    pub(super) const fn plain(text: &'t str) -> Self {
+    pub(in crate::code) const fn plain(text: &'t str) -> Self {
         Self {
             parsed: text,
             written: text,
@@ -71,7 +71,7 @@ impl<'t> Source<'t> {
 }
 
 /// The index of `source`, a file of `language`, built into `scopes`.
-pub(super) fn index(
+pub(in crate::code) fn index(
     language: &Language,
     source: &Source<'_>,
     mut scopes: ScopeTree,

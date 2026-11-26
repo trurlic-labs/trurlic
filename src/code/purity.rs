@@ -44,7 +44,7 @@ use std::ops::Range;
 use tree_sitter::Node;
 
 use super::index::FileKind;
-use super::syntax::{self, Token, text_of};
+use super::parse::{RUST_LEXICON, Token, is_comment, parse, text_of};
 
 /// The modules of `std`, `core` and `alloc` a pure module may name: none
 /// reads or writes outside the process's memory, but for the hashed
@@ -188,7 +188,7 @@ struct Read {
 /// that declares it, so a `mod name;` inside an inline module, whose file
 /// is under that module's directory, is refused rather than placed.
 fn read(text: &str) -> Read {
-    let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
+    let tree = parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
     let mut marked: Vec<Range<usize>> = Vec::new();
     let mut modules = Vec::new();
     let mut unplaced = Vec::new();
@@ -230,7 +230,7 @@ fn read(text: &str) -> Read {
     }
     let held = |at: usize| marked.iter().any(|range| range.contains(&at));
     let mut tokens = Vec::new();
-    syntax::tokens(tree.root_node(), text, &super::rust::LEXICON, |token| {
+    super::parse::tokens(tree.root_node(), text, &RUST_LEXICON, |token| {
         if let Token::Node(node) = token
             && !held(node.start_byte())
         {
@@ -288,7 +288,7 @@ fn is_test_mark(node: Node<'_>, text: &str) -> bool {
 fn marked_item(node: Node<'_>) -> Option<Range<usize>> {
     let mut next = node.next_sibling();
     while let Some(sibling) =
-        next.filter(|sibling| sibling.kind() == "attribute_item" || syntax::is_comment(*sibling))
+        next.filter(|sibling| sibling.kind() == "attribute_item" || is_comment(*sibling))
     {
         next = sibling.next_sibling();
     }

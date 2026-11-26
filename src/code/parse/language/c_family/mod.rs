@@ -49,10 +49,6 @@ use std::sync::OnceLock;
 
 use lex::{Item, lex};
 
-use super::Language;
-use crate::code::general::{self, Source};
-use crate::code::index::{FileIndex, IndexFault, ScopeTree};
-
 pub(crate) use encoding::{decode_lexed, encode_lexed, max_lexed_bytes};
 pub(crate) use set::{BlankMacros, FileMacros};
 
@@ -412,23 +408,6 @@ pub(in crate::code) struct Blanked<'t> {
     /// the definitions it marks private start there or hold the place
     /// before their name.
     pub(in crate::code) private: Vec<usize>,
-}
-
-/// The index of `text`, a file of `language`, C or C++, that blanks
-/// `macros`, built into `scopes`.
-pub(in crate::code) fn index(
-    language: &Language,
-    text: &str,
-    macros: &FileMacros,
-    scopes: ScopeTree,
-) -> Result<FileIndex, IndexFault> {
-    let blanked = blank(text, macros);
-    let source = Source {
-        parsed: &blanked.text,
-        written: text,
-        private: &blanked.private,
-    };
-    general::index(language, &source, scopes)
 }
 
 /// `text`, a C or C++ file, as its parse reads it with `macros` blanked.

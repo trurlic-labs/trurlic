@@ -17,9 +17,9 @@ status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/rust.rs", symbol = "HOLD_NO_ITEMS" },
-    { file = "src/code/rust.rs", symbol = "Walk::define_macro" },
-    { file = "src/code/rust/tests.rs", symbol = "a_macro_rules_macro_is_a_definition_and_no_invocation_defines_anything" },
+    { file = "src/code/parse/rust/mod.rs", symbol = "HOLD_NO_ITEMS" },
+    { file = "src/code/parse/rust/mod.rs", symbol = "Walk::define_macro" },
+    { file = "src/code/parse/rust/tests.rs", symbol = "a_macro_rules_macro_is_a_definition_and_no_invocation_defines_anything" },
 ]
 
 [accepted_text]

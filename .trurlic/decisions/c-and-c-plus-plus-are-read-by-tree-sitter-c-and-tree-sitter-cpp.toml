@@ -17,10 +17,10 @@ anchors = [
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-c" },
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-cpp" },
     { file = "src/code/index/file.rs", symbol = "FileKind::of" },
-    { file = "src/code/language.rs", symbol = "C" },
-    { file = "src/code/language.rs", symbol = "CPP" },
-    { file = "src/code/language/c.scm" },
-    { file = "src/code/language/cpp.scm" },
+    { file = "src/code/parse/language/c.scm" },
+    { file = "src/code/parse/language/cpp.scm" },
+    { file = "src/code/parse/language/mod.rs", symbol = "C" },
+    { file = "src/code/parse/language/mod.rs", symbol = "CPP" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",
