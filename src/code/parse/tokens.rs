@@ -52,7 +52,7 @@ impl Token<'_> {
 /// How a walk of the tokens takes a node it marks; a node with no mark
 /// is walked, and inside a node taken as text is part of its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::code) enum Take {
+pub(super) enum Take {
     /// Its children are walked; a leaf is a token.
     Walk,
     /// It is one token, whatever it holds.
@@ -100,7 +100,7 @@ pub(crate) fn tokens<'n>(
 /// The walk of [`tokens`], each node taken as `take` marks it, and each
 /// node it does not leave out entered and left, but the nodes of a text.
 /// One cursor walk: each node and each byte is visited once.
-pub(in crate::code) fn walk_tokens<'n>(
+pub(super) fn walk_tokens<'n>(
     node: Node<'n>,
     (text, lexicon): (&str, &Lexicon),
     take: impl Fn(Node<'n>) -> Option<Take>,
@@ -272,34 +272,34 @@ pub(crate) fn is_comment(node: Node<'_>) -> bool {
 /// comment delimiters, by which a comment the grammar lexes as tokens, or
 /// leaves among bytes no node holds, is dropped as whitespace is.
 pub(crate) struct Lexicon {
-    pub(in crate::code) literals: &'static [&'static str],
-    pub(in crate::code) line_comments: &'static [&'static str],
+    pub(super) literals: &'static [&'static str],
+    pub(super) line_comments: &'static [&'static str],
     /// Each opening and closing delimiter of a block comment.
-    pub(in crate::code) block_comments: &'static [(&'static str, &'static str)],
+    pub(super) block_comments: &'static [(&'static str, &'static str)],
     /// Whether a block comment holds another (Rust's do).
-    pub(in crate::code) nested_blocks: bool,
+    pub(super) nested_blocks: bool,
     /// Leaf kinds the grammar lexes as one token where the language has
     /// two, with the bytes of the first (Rust's metavariable `$a`, which
     /// may be written `$ a`): hashed as two, so the space between moves
     /// nothing.
-    pub(in crate::code) glued: &'static [(&'static str, usize)],
+    pub(super) glued: &'static [(&'static str, usize)],
     /// Whether a backslash right before a line break is blank, as C's and
     /// Python's line continuation is, in a gap and between two tokens.
-    pub(in crate::code) continuations: bool,
+    pub(super) continuations: bool,
     /// Whether a line continuation inside a token is spliced out of it,
     /// as C's preprocessor does before it reads a token, and not blank.
-    pub(in crate::code) splices: bool,
+    pub(super) splices: bool,
     /// The lexer of a node hashed by its tokens.
-    pub(in crate::code) tokens: Option<TokenLexer>,
+    pub(super) tokens: Option<TokenLexer>,
 }
 
 /// A lexer that hands its callback the range of each token of a text.
-pub(in crate::code) type TokenLexer = fn(&str, &mut dyn FnMut(Range<usize>));
+type TokenLexer = fn(&str, &mut dyn FnMut(Range<usize>));
 
 impl Lexicon {
     /// The bytes of the line continuation `rest` opens with; 0 when it
     /// opens with none or the lexicon has none.
-    pub(in crate::code) fn continuation(&self, rest: &str) -> usize {
+    pub(super) fn continuation(&self, rest: &str) -> usize {
         match (self.continuations, rest.as_bytes()) {
             (true, [b'\\', b'\n', ..]) => 2,
             (true, [b'\\', b'\r', b'\n', ..]) => 3,
@@ -309,7 +309,7 @@ impl Lexicon {
 
     /// The line continuations inside `bytes`, a token of `text`, that the
     /// lexicon splices out of it.
-    pub(in crate::code) fn spliced(&self, text: &str, bytes: Range<usize>) -> Vec<Range<usize>> {
+    pub(super) fn spliced(&self, text: &str, bytes: Range<usize>) -> Vec<Range<usize>> {
         let mut found = Vec::new();
         let mut at = bytes.start;
         while self.splices && at < bytes.end {
@@ -327,7 +327,7 @@ impl Lexicon {
     /// Whether the bytes of `text` from `end` to `start`, between two
     /// tokens, are line continuations the lexicon splices, alone and with
     /// a word's character on each side: the two are one token.
-    pub(in crate::code) fn joins(&self, text: &str, end: usize, start: usize) -> bool {
+    pub(super) fn joins(&self, text: &str, end: usize, start: usize) -> bool {
         let is_word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
         let between = text.get(end..start).filter(|_| self.splices);
         let Some(between) = between.filter(|between| !between.is_empty()) else {

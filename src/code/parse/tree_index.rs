@@ -16,11 +16,11 @@ use crate::code::index::{
 /// The hash a definition holds until the end of the walk.
 const UNHASHED: SpanHash = SpanHash::from_bytes([0; 32]);
 
-pub(in crate::code) struct TreeIndex<'t> {
+pub(super) struct TreeIndex<'t> {
     text: &'t str,
     leaves: Leaves,
     lines: Lines,
-    pub(in crate::code) scopes: ScopeTree,
+    pub(super) scopes: ScopeTree,
     index: FileIndex,
     /// The units of each definition, in the order they were added.
     ranges: Vec<Range<usize>>,
@@ -29,12 +29,7 @@ pub(in crate::code) struct TreeIndex<'t> {
 impl<'t> TreeIndex<'t> {
     /// The builder of `text`'s index, whose lines are `lines` and whose
     /// tree's units are `leaves`, over `scopes`, the scopes entered so far.
-    pub(in crate::code) fn new(
-        text: &'t str,
-        lines: Lines,
-        leaves: Leaves,
-        scopes: ScopeTree,
-    ) -> Self {
+    pub(super) fn new(text: &'t str, lines: Lines, leaves: Leaves, scopes: ScopeTree) -> Self {
         Self {
             text,
             leaves,
@@ -46,13 +41,13 @@ impl<'t> TreeIndex<'t> {
     }
 
     /// The span of bytes `range`.
-    pub(in crate::code) fn span(&self, range: &Range<usize>) -> Span {
+    pub(super) fn span(&self, range: &Range<usize>) -> Span {
         self.lines.span(range.start, range.end)
     }
 
     /// Define `scope` over bytes `range` as `what` says, its hash over
     /// the tokens within them.
-    pub(in crate::code) fn define(
+    pub(super) fn define(
         &mut self,
         scope: ScopeId,
         range: Range<usize>,
@@ -64,7 +59,7 @@ impl<'t> TreeIndex<'t> {
 
     /// Define `scope` over bytes `bytes` as `what` says, its hash over
     /// `units`, the units of a marked tree its span node holds.
-    pub(in crate::code) fn define_units(
+    pub(super) fn define_units(
         &mut self,
         scope: ScopeId,
         bytes: &Range<usize>,
@@ -85,10 +80,7 @@ impl<'t> TreeIndex<'t> {
         Ok(())
     }
 
-    pub(in crate::code) fn add_module_file(
-        &mut self,
-        module: ModuleFile,
-    ) -> Result<(), IndexFault> {
+    pub(super) fn add_module_file(&mut self, module: ModuleFile) -> Result<(), IndexFault> {
         self.scopes.admit_module_file(&module)?;
         self.index.rust.module_files.push(module);
         Ok(())
@@ -96,17 +88,17 @@ impl<'t> TreeIndex<'t> {
 
     /// The tokens within bytes `bytes` as their hash holds them, a space
     /// between each two: no comment, and no token of no meaning.
-    pub(in crate::code) fn spelled(&self, bytes: &Range<usize>) -> String {
+    pub(super) fn spelled(&self, bytes: &Range<usize>) -> String {
         self.leaves.spelled(self.text, bytes)
     }
 
     /// The definitions added so far.
-    pub(in crate::code) fn definitions(&self) -> &[Definition] {
+    pub(super) fn definitions(&self) -> &[Definition] {
         &self.index.definitions
     }
 
     /// The index, each definition with its hash.
-    pub(in crate::code) fn finish(self) -> FileIndex {
+    pub(super) fn finish(self) -> FileIndex {
         let Self {
             text,
             leaves,

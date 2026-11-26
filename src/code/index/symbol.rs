@@ -321,7 +321,7 @@ fn segment(part: &str, syntax: Syntax) -> Result<Segment, SymbolFault> {
 /// but the one of a one-element tuple, `(u8,)`. The index spells the
 /// tokens of a definition's path and a symbol's text by it, so rustfmt's
 /// trailing commas and the spaces of an anchor name what the code does.
-pub(in crate::code) fn rust_spelling(text: &str) -> String {
+fn rust_spelling(text: &str) -> String {
     let mut spelled = String::with_capacity(text.len());
     // The open brackets, each with the commas written in it so far.
     let mut open: Vec<usize> = Vec::new();
@@ -411,7 +411,7 @@ fn split_outside_brackets(text: &str) -> Result<Vec<&str>, SymbolFault> {
 }
 
 /// `text` trimmed, with each run of whitespace in it made one space.
-pub(in crate::code) fn normalize_spaces(text: &str) -> String {
+fn normalize_spaces(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

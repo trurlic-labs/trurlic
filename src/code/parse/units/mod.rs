@@ -31,7 +31,7 @@ use jsx::{JsxText, push_chars};
 /// units, in order, whose bytes no unit holds; and the escapes inside
 /// string text, in order.
 #[derive(Default)]
-pub(in crate::code) struct Leaves {
+pub(super) struct Leaves {
     units: Vec<Unit>,
     holes: Vec<Range<usize>>,
     escapes: Vec<Range<usize>>,
@@ -66,34 +66,34 @@ enum Mark {
 /// How the walk of a marked tree takes one node, by the general
 /// resolver's query: the facts of a node no query names are all `false`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(in crate::code) struct NodeMarks {
+pub(super) struct NodeMarks {
     /// One token whole.
-    pub(in crate::code) whole: bool,
+    pub(super) whole: bool,
     /// One token per token its lexicon's lexer finds in it.
-    pub(in crate::code) tokens: bool,
+    pub(super) tokens: bool,
     /// Its text as JSX renders it: a token a character, an empty one a
     /// space.
-    pub(in crate::code) chars: bool,
+    pub(super) chars: bool,
     /// One token, a string's delimiter, hashed by what it means.
-    pub(in crate::code) delimiter: bool,
+    pub(super) delimiter: bool,
     /// A string's start that continues the string before it in an
     /// implicit concatenation.
-    pub(in crate::code) join: bool,
+    pub(super) join: bool,
     /// One token, a string's text, with the text that continues it.
-    pub(in crate::code) string: bool,
+    pub(super) string: bool,
     /// An escape of a string's text, hashed by what it means.
-    pub(in crate::code) escape: bool,
+    pub(super) escape: bool,
     /// One token, a number, hashed by what it means.
-    pub(in crate::code) literal: bool,
+    pub(super) literal: bool,
     /// Left out of every hash.
-    pub(in crate::code) skip: bool,
+    pub(super) skip: bool,
     /// Its extent is part of the hash: a mark opens and closes it.
-    pub(in crate::code) group: bool,
+    pub(super) group: bool,
     /// A definition's span starts at it: the units before it are counted.
-    pub(in crate::code) opens: bool,
+    pub(super) opens: bool,
     /// A definition's span ends at it: the units up to its end are
     /// counted.
-    pub(in crate::code) closes: bool,
+    pub(super) closes: bool,
 }
 
 impl NodeMarks {
@@ -121,7 +121,7 @@ impl NodeMarks {
 /// to the end of each node a span closes at. A node the walk leaves out
 /// is in neither.
 #[derive(Debug, Default)]
-pub(in crate::code) struct SpanUnits {
+pub(super) struct SpanUnits {
     opened: BTreeMap<usize, usize>,
     closed: BTreeMap<usize, usize>,
 }
@@ -129,7 +129,7 @@ pub(in crate::code) struct SpanUnits {
 impl SpanUnits {
     /// The units from node `first`'s start to node `last`'s end; none
     /// when the walk left either out.
-    pub(in crate::code) fn between(&self, first: usize, last: usize) -> Range<usize> {
+    pub(super) fn between(&self, first: usize, last: usize) -> Range<usize> {
         match (self.opened.get(&first), self.closed.get(&last)) {
             (Some(&start), Some(&end)) if start <= end => start..end,
             (Some(_) | None, _) => 0..0,
@@ -141,12 +141,7 @@ impl Leaves {
     /// The tokens of `tree`, of a grammar of `lexicon`, but the leaves that
     /// start at a byte of `silent`, a sorted list of tokens that carry no
     /// meaning.
-    pub(in crate::code) fn of(
-        tree: &Tree,
-        text: &str,
-        lexicon: &Lexicon,
-        silent: &[usize],
-    ) -> Self {
+    pub(super) fn of(tree: &Tree, text: &str, lexicon: &Lexicon, silent: &[usize]) -> Self {
         let mut leaves = Self::default();
         tokens(tree.root_node(), text, lexicon, |token| {
             let is_silent = match token {
@@ -167,7 +162,7 @@ impl Leaves {
 
     /// The units of `tree`, each node taken as `marks` says by its id, and
     /// where the spans its marks open and close lie among them.
-    pub(in crate::code) fn of_marked(
+    pub(super) fn of_marked(
         tree: &Tree,
         (text, lexicon): (&str, &Lexicon),
         marks: &BTreeMap<usize, NodeMarks>,
@@ -358,7 +353,7 @@ impl Leaves {
 
     /// The units within bytes `bytes`: each token wholly inside them. Read
     /// only of a tree with no marks, whose units hold bytes.
-    pub(in crate::code) fn within(&self, bytes: &Range<usize>) -> Range<usize> {
+    pub(super) fn within(&self, bytes: &Range<usize>) -> Range<usize> {
         let first = self.units.partition_point(|unit| unit.from < bytes.start);
         let last = self.units.partition_point(|unit| unit.to <= bytes.end);
         first..last.max(first)
@@ -366,7 +361,7 @@ impl Leaves {
 
     /// The units within bytes `bytes` of `text`, each as it is hashed, a
     /// space between each two. Read only of a tree with no marks.
-    pub(in crate::code) fn spelled(&self, text: &str, bytes: &Range<usize>) -> String {
+    pub(super) fn spelled(&self, text: &str, bytes: &Range<usize>) -> String {
         let units = self.units.get(self.within(bytes)).unwrap_or_default();
         let tokens: Vec<String> = units
             .iter()

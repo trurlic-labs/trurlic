@@ -96,7 +96,7 @@ use crate::code::index::{DefinitionKind, Visibility};
 
 /// What a capture of a query is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::code) enum Capture {
+pub(super) enum Capture {
     Definition,
     Name,
     Test,
@@ -126,7 +126,7 @@ pub(in crate::code) enum Capture {
 /// Where a definition may stand: at the file's top, in a container of a
 /// kind, or in an unnamed scope, which no `within` names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::code) enum Container {
+pub(super) enum Container {
     Top,
     Kind(DefinitionKind),
     Unnamed,
@@ -134,43 +134,43 @@ pub(in crate::code) enum Container {
 
 /// How a definition pattern makes a definition of what it captures.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::code) struct Definer {
-    pub(in crate::code) kind: DefinitionKind,
+pub(super) struct Definer {
+    pub(super) kind: DefinitionKind,
     /// Its kind in a container of a kind, by the container's.
-    pub(in crate::code) kind_in: Vec<(DefinitionKind, DefinitionKind)>,
+    kind_in: Vec<(DefinitionKind, DefinitionKind)>,
     /// What its span holds is under it.
-    pub(in crate::code) container: bool,
+    pub(super) container: bool,
     /// The containers it is kept in; `None` for every one.
-    pub(in crate::code) within: Option<Vec<Container>>,
+    pub(super) within: Option<Vec<Container>>,
     /// The growth of its span, by its place in [`Rules::growths`].
-    pub(in crate::code) growth: Option<usize>,
+    pub(super) growth: Option<usize>,
     /// The wrapping of its span, by its place in [`Rules::wraps`].
-    pub(in crate::code) wrap: Option<usize>,
+    pub(super) wrap: Option<usize>,
     /// The siblings its span takes in, by their place in
     /// [`Rules::precedings`].
-    pub(in crate::code) preceding: Option<usize>,
+    pub(super) preceding: Option<usize>,
     /// A match of it drops the matches of patterns without it that
     /// captured its `@definition` node.
-    pub(in crate::code) exclusive: bool,
+    pub(super) exclusive: bool,
     /// The text of a leaf of its name that separates two segments.
-    pub(in crate::code) separator: Option<String>,
+    pub(super) separator: Option<String>,
     /// The node kinds whose leaves its name leaves out.
-    pub(in crate::code) skip: Vec<u16>,
+    pub(super) skip: Vec<u16>,
     /// The text of its one segment, in place of its name node's.
-    pub(in crate::code) text: Option<String>,
-    pub(in crate::code) visibility: Option<Visibility>,
+    pub(super) text: Option<String>,
+    pub(super) visibility: Option<Visibility>,
 }
 
 impl Definer {
     /// Whether it is kept in `container`.
-    pub(in crate::code) fn admits(&self, container: Container) -> bool {
+    pub(super) fn admits(&self, container: Container) -> bool {
         self.within
             .as_ref()
             .is_none_or(|within| within.contains(&container))
     }
 
     /// Its kind in `container`.
-    pub(in crate::code) fn kind_in(&self, container: Container) -> DefinitionKind {
+    pub(super) fn kind_in(&self, container: Container) -> DefinitionKind {
         self.kind_in
             .iter()
             .find(|(outer, _)| Container::Kind(*outer) == container)
@@ -181,26 +181,26 @@ impl Definer {
 /// A span's growth: from the captured node up through ancestors of the
 /// `via` kinds to the first of a `to` kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::code) struct Growth {
-    pub(in crate::code) via: Vec<u16>,
-    pub(in crate::code) to: Vec<u16>,
+pub(super) struct Growth {
+    pub(super) via: Vec<u16>,
+    pub(super) to: Vec<u16>,
 }
 
 /// A language's query, compiled and read by its contract.
 #[derive(Debug)]
 pub(in crate::code) struct Rules {
-    pub(in crate::code) grammar: Language,
-    pub(in crate::code) query: Query,
+    pub(super) grammar: Language,
+    pub(super) query: Query,
     /// By capture index.
-    pub(in crate::code) captures: Vec<Capture>,
+    pub(super) captures: Vec<Capture>,
     /// By pattern index: the definer of a definition pattern.
-    pub(in crate::code) patterns: Vec<Option<Definer>>,
+    pub(super) patterns: Vec<Option<Definer>>,
     /// The distinct growths of the patterns.
-    pub(in crate::code) growths: Vec<Growth>,
+    pub(super) growths: Vec<Growth>,
     /// The distinct sets of kinds a span wraps over.
-    pub(in crate::code) wraps: Vec<Vec<u16>>,
+    pub(super) wraps: Vec<Vec<u16>>,
     /// The distinct sets of kinds of the siblings a span takes in.
-    pub(in crate::code) precedings: Vec<Vec<u16>>,
+    pub(super) precedings: Vec<Vec<u16>>,
 }
 
 /// Why a query file breaks its contract.

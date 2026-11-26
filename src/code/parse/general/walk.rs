@@ -37,7 +37,7 @@ pub(in crate::code) const MATCH_LIMIT: u32 = 256;
 /// A definition pattern's match, completed as the walk reaches the
 /// nodes it captured.
 #[derive(Debug, Clone)]
-pub(super) struct Candidate<'r> {
+struct Candidate<'r> {
     definer: &'r Definer,
     site: Option<Site>,
     name: Option<NameNode>,
@@ -52,7 +52,7 @@ pub(super) struct Candidate<'r> {
 /// private.
 #[derive(Default)]
 pub(super) struct Found<'r, 't> {
-    pub(super) candidates: Vec<Candidate<'r>>,
+    candidates: Vec<Candidate<'r>>,
     pub(super) unnamed: Vec<SpanNode>,
     pub(super) no_scope: BTreeSet<usize>,
     pub(super) marks: BTreeMap<usize, NodeMarks>,

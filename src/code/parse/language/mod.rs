@@ -37,19 +37,19 @@ pub(in crate::code) struct Language {
     /// The query files, read as one query in this order.
     queries: &'static [&'static str],
     /// How a symbol on its files is spelled.
-    pub(in crate::code) syntax: Syntax,
+    syntax: Syntax,
     /// What its tokens are made of beside its tree. Its literals are its
     /// query's `@hash.unit` captures, not kinds; a comment it declares is
     /// one its grammar leaves among tokens, which a grammar that lexes
     /// every comment as an extra has none of.
-    pub(in crate::code) lexicon: Lexicon,
+    pub(super) lexicon: Lexicon,
     /// The bounds the bytes must meet before the parse, each a cost of the
     /// grammar no budget stops during it.
-    pub(in crate::code) before_parse: &'static [Bound],
+    pub(super) before_parse: &'static [Bound],
     /// The places of a tree whose files of the language are test code
     /// whole: `dir/` a directory of that name anywhere above the file, any
     /// other a file name, where one `*` stands for any run of characters.
-    pub(in crate::code) test_places: &'static [&'static str],
+    test_places: &'static [&'static str],
     rules: OnceLock<Result<Rules, QueryFault>>,
     identity: OnceLock<[u8; 32]>,
 }
@@ -305,7 +305,7 @@ impl FileKind {
 impl Language {
     /// Its query's rules, compiled once per process, on the first file
     /// of the language the cache does not hold.
-    pub(in crate::code) fn rules(&self) -> Result<&Rules, &QueryFault> {
+    pub(super) fn rules(&self) -> Result<&Rules, &QueryFault> {
         self.rules.get_or_init(|| self.compile()).as_ref()
     }
 
@@ -317,7 +317,7 @@ impl Language {
 
     /// The identity of its grammar and its query, in a cache key: a
     /// pattern of the query is a rule of the index.
-    pub(in crate::code) fn identity(&self) -> [u8; 32] {
+    fn identity(&self) -> [u8; 32] {
         *self.identity.get_or_init(|| {
             let mut hasher = blake3::Hasher::new();
             hasher.update(&grammar_identity(&(self.grammar)(), self.node_types));

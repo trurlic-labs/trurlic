@@ -36,7 +36,7 @@ pub(in crate::code) const MAX_INDENTATIONS: usize = 256;
 /// break starts one, as the scanner sees it. Every line counts, a line
 /// inside a string or brackets too, so the widths the scanner can push
 /// are among the ones counted.
-pub(in crate::code) fn check_indentations(text: &str) -> Result<(), IndexFault> {
+pub(super) fn check_indentations(text: &str) -> Result<(), IndexFault> {
     let bytes = text.as_bytes();
     let mut widths = BTreeSet::new();
     // The file's start is a line's.

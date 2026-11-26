@@ -18,7 +18,7 @@ use crate::code::index::{
     Role, ScopeId, ScopeTree, SpanHash, Work, name_segments,
 };
 
-pub(super) struct Lexical<'t> {
+struct Lexical<'t> {
     text: &'t str,
     lines: Lines,
     scopes: ScopeTree,
@@ -28,7 +28,7 @@ pub(super) struct Lexical<'t> {
 
 impl<'t> Lexical<'t> {
     /// The builder of `text`'s index, into `scopes`.
-    pub(super) fn of(text: &'t str, scopes: ScopeTree) -> Self {
+    fn of(text: &'t str, scopes: ScopeTree) -> Self {
         Self {
             text,
             lines: Lines::of(text.as_bytes()),
@@ -49,13 +49,13 @@ impl<'t> Lexical<'t> {
     }
 
     /// The hash of bytes `range` of the text.
-    pub(super) fn hash(&mut self, range: Range<usize>) -> Result<SpanHash, IndexFault> {
+    fn hash(&mut self, range: Range<usize>) -> Result<SpanHash, IndexFault> {
         self.work.spend(range.len())?;
         Ok(SpanHash::of_text(self.text.get(range).unwrap_or_default()))
     }
 
     /// Define `scope` as a `kind` over bytes `range` whose hash is `hash`.
-    pub(super) fn define(
+    fn define(
         &mut self,
         scope: ScopeId,
         kind: DefinitionKind,
@@ -75,7 +75,7 @@ impl<'t> Lexical<'t> {
         Ok(())
     }
 
-    pub(super) fn finish(self) -> FileIndex {
+    fn finish(self) -> FileIndex {
         FileIndex {
             scopes: self.scopes.into_scopes(),
             definitions: self.definitions,

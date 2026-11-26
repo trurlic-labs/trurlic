@@ -169,7 +169,7 @@ fn relative_to_crate<'p>(path: &'p str, crates: &Crates<'_>) -> Option<&'p str> 
 }
 
 /// `Test` for a file under its crate's `tests/` directory.
-pub(super) fn role_of_place(path: &str, crates: &Crates<'_>) -> Role {
+fn role_of_place(path: &str, crates: &Crates<'_>) -> Role {
     match relative_to_crate(path, crates).is_some_and(|relative| relative.starts_with("tests/")) {
         true => Role::Test,
         false => Role::Code,

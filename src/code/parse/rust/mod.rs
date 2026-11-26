@@ -48,7 +48,7 @@ use marks::Marks;
 /// prefix, delimiters and suffix hashed with its content. A
 /// `negative_literal` is no lexical token: `-1` and `- 1` are one
 /// expression.
-pub(in crate::code) const LITERALS: [&str; 5] = [
+const LITERALS: [&str; 5] = [
     "string_literal",
     "raw_string_literal",
     "char_literal",

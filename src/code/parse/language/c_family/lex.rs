@@ -149,7 +149,7 @@ fn directive_end(bytes: &[u8], at: usize) -> (usize, bool) {
 
 /// The end of the comment at `at`: a block's close, or a line's end, its
 /// continuations followed.
-pub(super) fn comment_end(bytes: &[u8], at: usize) -> usize {
+fn comment_end(bytes: &[u8], at: usize) -> usize {
     let mut next = at + 2;
     match bytes.get(at + 1) {
         Some(b'*') => {
@@ -173,7 +173,7 @@ pub(super) fn comment_end(bytes: &[u8], at: usize) -> usize {
 
 /// The end of the string or character literal at `at`, at its closing
 /// quote or the line's end.
-pub(super) fn literal_end(bytes: &[u8], at: usize) -> usize {
+fn literal_end(bytes: &[u8], at: usize) -> usize {
     let quote = bytes.get(at).copied();
     let mut next = at + 1;
     while let Some(&byte) = bytes.get(next) {

@@ -76,7 +76,7 @@ pub(crate) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault>
 
 /// The identity of a grammar: its ABI, its version, the counts of its
 /// symbols, fields and parse states, and its node types, hashed.
-pub(in crate::code) fn grammar_identity(language: &Language, node_types: &str) -> [u8; 32] {
+pub(super) fn grammar_identity(language: &Language, node_types: &str) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     let version = language.metadata().map_or([0; 3], |found| {
         [

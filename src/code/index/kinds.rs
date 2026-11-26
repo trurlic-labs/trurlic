@@ -125,7 +125,7 @@ impl DefinitionKind {
     }
 
     /// Every kind, in the order of their codes in a cache entry.
-    pub(in crate::code) const ALL: [Self; 23] = [
+    pub(super) const ALL: [Self; 23] = [
         Self::Module,
         Self::Struct,
         Self::Union,

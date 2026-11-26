@@ -391,13 +391,13 @@ fn attributes(summaries: &Summaries, known: impl Fn(&str, bool) -> bool, settled
 #[cfg(test)]
 impl BlankMacros {
     /// The steps the fixpoint of the tree's code took.
-    pub(super) const fn steps(&self) -> usize {
+    const fn steps(&self) -> usize {
         self.code.settled.steps
     }
 
     /// The steps the judgement of the file at `path` that `lexed`
     /// describes took.
-    pub(super) fn file_steps(&self, path: &str, lexed: &Lexed) -> usize {
+    fn file_steps(&self, path: &str, lexed: &Lexed) -> usize {
         self.judged(path, lexed).1
     }
 }

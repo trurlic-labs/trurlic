@@ -80,7 +80,7 @@ impl<'b> Reader<'b> {
         Some(byte)
     }
 
-    pub(in crate::code) fn number(&mut self) -> Option<usize> {
+    fn number(&mut self) -> Option<usize> {
         let mut number: u64 = 0;
         for shift in (0..64).step_by(7) {
             let byte = self.byte()?;
