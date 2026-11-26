@@ -1,6 +1,5 @@
-//! A section of the `status` report: its items before the budget cuts
-//! them ([`Listed`]), and those that fit, as the report shows them
-//! ([`Part`]).
+//! A section's items: before the budget cuts them ([`Listed`]), and
+//! those that fit, as the report shows them ([`Part`]).
 
 use crate::tools::spec::output::{Count, Items, Nested, Str};
 use crate::tools::spec::{Output, Shown};
@@ -41,7 +40,7 @@ impl<T> Listed<T> {
     }
 }
 
-/// A section: the items that fit, out of `total`.
+/// The items of a section that fit, out of `total`.
 pub(crate) struct Part<T> {
     pub(crate) total: usize,
     pub(crate) items: Vec<T>,

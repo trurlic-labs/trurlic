@@ -24,7 +24,7 @@ use crate::store::Refusal;
 /// Why a tool call was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum ErrorKind {
+enum ErrorKind {
     /// An argument breaks the tool's spec; `field` names it.
     InvalidArgument,
     /// No `.trurlic/` above the server's directory; `trurlic init` makes one.

@@ -206,7 +206,7 @@ pub(super) fn shortfalls<'s>(
 }
 
 /// How far a call's patterns read, before the result's room is known.
-pub(in crate::tools::status) struct Reading<'s> {
+pub(super) struct Reading<'s> {
     verdict: Verdict,
     /// The decision of the first finding past those the pass kept.
     beyond: Option<&'s str>,

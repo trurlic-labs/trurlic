@@ -1,7 +1,7 @@
-//! The parts of the `status` report a call can ask for alone, by the name
+//! The sections of the `status` report a call can ask for alone, by the name
 //! `section` takes, and where each one's omitted items are.
 
-/// A part of the report that can be asked for alone.
+/// A section of the report that can be asked for alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Section {
     Issues,
