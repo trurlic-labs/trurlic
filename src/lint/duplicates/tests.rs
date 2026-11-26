@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use super::score::likely;
+use super::similarity::{Neighbour, Pair};
 use super::*;
 use crate::store::ProjectState;
 use crate::store::seeded::SplitMix64;
@@ -82,7 +84,7 @@ fn listed(state: &ProjectState) -> Vec<(&str, &str, String)> {
 
 /// A score in billionths, rounded down.
 fn nanos(score: Score) -> u128 {
-    (u128::from(score.0) * 1_000_000_000) >> 32
+    (u128::from(score.q32()) * 1_000_000_000) >> 32
 }
 
 #[test]
@@ -126,7 +128,7 @@ fn a_pair_at_exactly_the_threshold_is_listed_and_one_a_unit_below_is_not() {
     let similarity = built(&state);
     // `a1`'s one term is `a0`'s at the same weight: their dot product is
     // `a1`'s square.
-    let (all, one) = (&similarity.vectors[0], &similarity.vectors[1]);
+    let (all, one) = (&similarity.vectors()[0], &similarity.vectors()[1]);
 
     let half = "0.500000".to_owned();
     assert_eq!(
@@ -251,9 +253,9 @@ fn the_index_finds_every_pair_the_exact_test_over_all_pairs_finds() {
         let found = every(&similarity);
         let exact = every_pair(&similarity);
         assert!(!exact.is_empty());
-        assert!(similarity.vectors.iter().any(|vector| vector.square == 0));
+        assert!(similarity.vectors().iter().any(|vector| vector.square == 0));
         assert_eq!(found, exact);
-        for &name in &similarity.names {
+        for &name in similarity.names() {
             let mut paired: Vec<&str> = found
                 .iter()
                 .filter_map(|pair| match (pair.first == name, pair.second == name) {
@@ -297,7 +299,7 @@ fn the_pairs_touching_some_decisions_are_those_that_hold_one_of_them() {
         let state = graph_of(&drawn(&mut rng));
         let similarity = built(&state);
         let admitted: Vec<&str> = similarity
-            .names
+            .names()
             .iter()
             .copied()
             .filter(|_| rng.below(3) == 0)
@@ -387,7 +389,7 @@ fn on_a_dense_graph_the_best_pairs_are_kept_and_every_pair_counted() {
 /// Every pair the exact test passes, tried one by one with its dot
 /// product summed over a map of the weights, best first.
 fn every_pair<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
-    let (vectors, names) = (&similarity.vectors, &similarity.names);
+    let (vectors, names) = (similarity.vectors(), similarity.names());
     let weights: Vec<BTreeMap<usize, u64>> = vectors
         .iter()
         .map(|vector| vector.terms.iter().copied().collect())
@@ -417,17 +419,6 @@ fn every_pair<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
             .then_with(|| (x.first, x.second).cmp(&(y.first, y.second)))
     });
     pairs
-}
-
-#[test]
-fn a_score_prints_six_decimals_rounded_half_up() {
-    let shown = |units: u64| Score(units).to_string();
-    assert_eq!(shown(0), "0.000000");
-    assert_eq!(shown(1 << 31), "0.500000");
-    assert_eq!(shown(1 << 32), "1.000000");
-    // 0.0000005 is 2147.48 units: one above it rounds up, one below down.
-    assert_eq!(shown(2148), "0.000001");
-    assert_eq!(shown(2147), "0.000000");
 }
 
 /// The pass runs on the thread pool, and what it returns does not depend

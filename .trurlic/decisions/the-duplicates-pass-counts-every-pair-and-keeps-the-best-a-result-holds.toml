@@ -11,7 +11,7 @@ origin = "likely duplicates"
 created = "2026-11-24T10:58:17.033994352Z"
 anchors = [
     { file = "src/lint/duplicates/best.rs", symbol = "Best" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::selection" },
+    { file = "src/lint/duplicates/similarity.rs", symbol = "Similarity::selection" },
     { file = "src/lint/duplicates/tests.rs", symbol = "on_a_dense_graph_the_best_pairs_are_kept_and_every_pair_counted" },
     { file = "src/lint/duplicates/tests.rs", symbol = "the_pairs_are_the_same_on_any_number_of_threads" },
     { file = "src/tools/status/lint/finding.rs", symbol = "lint_limit" },
