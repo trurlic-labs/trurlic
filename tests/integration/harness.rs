@@ -35,7 +35,7 @@ impl Project {
 
     /// [`init`](Self::init) without the commit: git tracks nothing yet.
     pub fn init_uncommitted() -> Self {
-        let project = Self::without_store();
+        let project = Self::with_source();
         git(
             project.path(),
             &["init", "--quiet", "--initial-branch=main"],
@@ -46,8 +46,16 @@ impl Project {
 
     /// A directory in no git work tree holding a shared graph `init` made.
     pub fn shared() -> Self {
-        let project = Self::without_store();
+        let project = Self::with_source();
         project.run_ok(&["init", "--placement", "shared"]);
+        project
+    }
+
+    /// A temporary directory with no `.trurlic/`, holding the empty
+    /// `src/lib.rs` that [`record`] anchors, so its anchor resolves.
+    fn with_source() -> Self {
+        let project = Self::without_store();
+        project.source("src/lib.rs", "");
         project
     }
 
@@ -79,6 +87,13 @@ impl Project {
 
     pub fn read(&self, file: &str) -> String {
         std::fs::read_to_string(self.node(file)).unwrap()
+    }
+
+    /// Write `text` to `file` of the project's tree, its directories made.
+    pub fn source(&self, file: &str, text: &str) {
+        let path = self.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
     }
 
     /// Every graph file: see [`graph_files`].
@@ -225,6 +240,28 @@ pub fn isolated_git(dir: &Path) -> Command {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null");
     command
+}
+
+/// A `git` in `dir`/bin that runs `script`, the body of a shell script in
+/// which `$REAL` is the git `PATH` finds; and the `PATH` that finds it
+/// first.
+#[cfg(unix)]
+pub fn fake_git(dir: &Path, script: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = std::env::var_os("PATH").unwrap();
+    let real = std::env::split_paths(&path)
+        .map(|dir| dir.join("git"))
+        .find(|git| git.is_file())
+        .unwrap();
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let git = bin.join("git");
+    let text = format!("#!/bin/sh\nREAL='{}'\n{script}\n", real.display());
+    std::fs::write(&git, text).unwrap();
+    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let dirs = std::iter::once(bin).chain(std::env::split_paths(&path));
+    std::env::join_paths(dirs).unwrap().into_string().unwrap()
 }
 
 /// `git <args>` in the graph directory `graph`, which holds a shared

@@ -1,0 +1,79 @@
+//! Findings over the graph that refuse nothing: what a reader should look
+//! at. Pure: each part reads the graph's decisions and the facts handed to
+//! it, and touches no file and no clock. It is handed no
+//! [`ProjectState`](crate::store::ProjectState), whose code root is a path
+//! whose methods read the file system.
+
+pub(crate) mod anchors;
+pub(crate) mod duplicates;
+pub(crate) mod quality;
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use crate::code::{AllowList, faults};
+
+    /// What `lint` may name: the code index's facts, the graph's value
+    /// types, the bar, the store's constant limits, and the thread pool's
+    /// parallel iterators, whose schedule no result depends on (the passes'
+    /// tests at one thread and eight hold it). None of them holds a path.
+    const LINT: AllowList = AllowList {
+        modules: &["lint", "code"],
+        store_items: &[
+            "Anchor",
+            "Bar",
+            "Decision",
+            "QualityFault",
+            "Shortfall",
+            "Status",
+            "limits",
+        ],
+        std_items: &[],
+        crates: &[],
+        crate_items: &[("rayon", "prelude")],
+    };
+
+    #[test]
+    fn the_lint_module_names_nothing_but_what_its_allow_list_holds() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        // Without the parallel iterators, the check faults the passes'
+        // thread pool: it reads lint's files.
+        let without = AllowList {
+            crate_items: &[],
+            ..LINT
+        };
+        assert_ne!(faults(root, "src/lint", &without), Vec::<String>::new());
+
+        assert_eq!(faults(root, "src/lint", &LINT), Vec::<String>::new());
+    }
+
+    /// A read of the file system through the code root the loaded graph
+    /// holds names the graph's type, which the list refuses.
+    #[test]
+    fn lint_reaches_no_path_the_graph_holds() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let write = |path: &str, text: &str| {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        write("Cargo.toml", "[package]\n");
+        write("src/lib.rs", "mod lint;\n");
+        write(
+            "src/lint/mod.rs",
+            "use crate::store::ProjectState;\n\
+             pub(crate) fn listed(state: &ProjectState) -> usize {\n    \
+             state.code_root.read_dir().map_or(0, Iterator::count)\n}\n",
+        );
+
+        let found = faults(root, "src/lint", &LINT);
+
+        assert_eq!(
+            found,
+            ["src/lint/mod.rs:1: names `crate::store::ProjectState`"]
+        );
+    }
+}

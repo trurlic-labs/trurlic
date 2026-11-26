@@ -11,7 +11,7 @@ tags = [
     "performance",
     "placement",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [
     { file = "src/discovery.rs", symbol = "discover" },

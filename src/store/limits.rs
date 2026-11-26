@@ -58,10 +58,72 @@ pub(crate) const MAX_QUALITY_PATTERNS: usize = 32;
 /// Maximum byte length of one `[quality]` pattern's text.
 pub(super) const MAX_PATTERN_BYTES: usize = 500;
 
-/// Maximum bytes one compiled pattern and its lazy DFA's cache may take;
-/// a pattern that compiles past it is refused. A short text can still ask
-/// for a large automaton: `\w{50}` over Unicode needs about 2.5 MB.
+/// Maximum bytes the Thompson NFA of one pattern, forward or reverse, may
+/// take to compile; a pattern past it is refused. A short text can still
+/// ask for a large automaton: `\w{100}` over Unicode passes it.
 pub(super) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
+
+/// Code points the case-insensitive classes of one pattern may span:
+/// translating a pattern folds each class it reads under the flag code
+/// point by code point, and the sum is counted on its syntax tree before it
+/// is translated, the flag scoped as translation scopes it. A pattern past
+/// it is refused when compiled; a case-sensitive class, and a Perl class
+/// anywhere, fold nothing. The bound admits one class of every code point
+/// under the flag, `(?i)[\s\S]` (1,114,112), and nearly as much again
+/// beside it, and refuses what nested brackets fold many times over. A
+/// table of 32 patterns at the bound compiles in about 0.15 s on one core.
+pub(super) const MAX_PATTERN_FOLDED_CODE_POINTS: u64 = 1 << 21;
+
+/// Bytes of cache the lazy DFA of one pattern may hold in each direction
+/// over one call. A pattern whose automaton cannot start within it is
+/// refused when compiled (`\w{9}`); a search that would outgrow it gives up
+/// instead of clearing it. The costliest of 32 ordinary patterns, a list
+/// of 48 words under `(?i)`, grows its caches by about 224 KB over the 213
+/// decisions of English prose in `tests/fixtures/prose`, and by about 20 KB
+/// more each time the text doubles.
+pub(super) const MAX_PATTERN_CACHE_BYTES: usize = 320 * 1024;
+
+/// Bytes the caches of all the `[quality]` patterns, both directions, may
+/// grow by over one call: one `apply` batch, or one page of the `status`
+/// lint section. Growth is what building states costs, which the bytes
+/// read do not count. It is read from a pattern's caches after its search
+/// of each text, so it may pass the total by one search's growth, one
+/// pattern's two caches; past it the write is refused at that text and the
+/// page ends. What a search built stays charged, a repair the write leaves
+/// included. It holds a table of 32 ordinary patterns over a full batch of
+/// prose in many scripts.
+pub(crate) const MAX_PATTERN_CACHE_TOTAL_BYTES: usize = 1536 * 1024;
+
+/// Bytes the `[quality]` patterns may read over what one `apply` batch
+/// writes: each pattern charges the bytes of each text it searches, one
+/// more per search, before it runs. The search back from a match's end to
+/// its start reads the match again, so the patterns read at most twice
+/// what they charge. A write judges under the exclusive
+/// lock, which another reader or writer waits for at most `LOCK_TIMEOUT`
+/// (5 s), so the bound is the write's own and lower than a report's; with
+/// [`MAX_PATTERN_CACHE_TOTAL_BYTES`] it bounds what the patterns cost a
+/// write once compiled.
+pub(crate) const MAX_WRITE_PATTERN_BYTES: usize = 100_000_000;
+
+/// Bytes the `[quality]` patterns may read in one `status` lint section,
+/// counted as a write counts them. The section holds no lock; it reads
+/// the decisions by name while their bytes stay within the bound, and
+/// names the first it left in `next`.
+pub(crate) const MAX_REPORT_PATTERN_BYTES: usize = 2_500_000_000;
+
+/// The work the likely duplicates pass may do in one `status` call, in
+/// units of a posting entry read: each probe's entries and 16 for each
+/// pair it may test (`lint::duplicates`), counted before it runs. The pass
+/// grows with the square of the decisions, so only `section: "lint"`
+/// without `from` runs it: the default call, which an agent makes at the
+/// start of a task, compares no pair, as it judges no `[quality]` pattern.
+/// The pass probes the decisions by name while their work fits, and past
+/// the bound `counts.lint.pairs` says how many it compared. Decisions that
+/// share all their terms, the costliest shape per unit, take about 2 ns a
+/// unit on one core of the development machine: a pass at the bound costs
+/// about 12 s of CPU, which the thread pool shares. The seeded corpus does
+/// about 72 million units at 2,000 decisions.
+pub(crate) const MAX_DUPLICATE_WORK: usize = 6_000_000_000;
 
 /// Maximum byte length of a `[quality]` pattern's message, one line.
 pub(crate) const MAX_PATTERN_MESSAGE_BYTES: usize = 200;

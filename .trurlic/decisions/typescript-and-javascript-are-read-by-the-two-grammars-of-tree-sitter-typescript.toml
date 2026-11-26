@@ -1,0 +1,38 @@
+component = "code"
+choice = "A .ts, .mts or .cts file is read by the typescript grammar, a .tsx and every JavaScript file by the tsx grammar, each with TypeScript's query; a declaration file adds rules of its own"
+reason = "tree-sitter-typescript holds two grammars. The typescript one reads <T>x as a cast, which the tsx one reads as an element, so a .ts file needs it; the tsx one reads JSX, so a .tsx file needs it. JavaScript is a subset of TSX as a grammar sees it: the tsx grammar reads plain, CommonJS and JSX JavaScript with fewer error nodes than tree-sitter-javascript and the same definitions, so a JavaScript file is read by it with TypeScript's query, and no third grammar crate is compiled into the binary. A file kind is a grammar and its query files, so TypeScript and TSX are two kinds, a .js file shares the tsx kind with a .tsx file, and a declaration file (.d.ts, .d.mts, .d.cts), whose top TypeScript reads as an ambient context, is a third with a query file of its own beside TypeScript's. Flow is no JavaScript and is not read. The grammar misreads three forms of valid code, stated limits: a comparison chain that reads as a generic call (a < b > (c)), which changes no definition; a class field named abstract or accessor on a line of its own before another member, read as that member's modifier, so both are lost; and a type literal's call signatures on lines of their own without semicolons, where a < that starts a signature is read as type arguments of the return type before it, so the parse fails and may lose every definition after it, as the fixture signatures.ts does. TSX adds what only its grammar has (JSX) in a file read after TypeScript's."
+alternatives = [
+    "tree-sitter-javascript for JavaScript: rejected because it is a third grammar in the binary and reads JSX with more error nodes",
+    "The tsx grammar for .ts too: rejected because it reads a <T>x cast as an element",
+    "A file kind per extension: rejected because a .js and a .tsx file of one content would be indexed twice under one rule",
+    "A declaration file as a .ts file: rejected because its top's declarations would read as a module's private ones, which TypeScript exports",
+]
+tags = [
+    "dependencies",
+    "parsing",
+    "typescript",
+]
+status = "proposed"
+origin = "typescript and javascript"
+created = "2026-11-25T18:18:55.579282906Z"
+anchors = [
+    { file = "Cargo.toml", symbol = "dependencies::tree-sitter-typescript" },
+    { file = "src/code/index.rs", symbol = "FileKind::of" },
+    { file = "src/code/language.rs", symbol = "TSX" },
+    { file = "src/code/language.rs", symbol = "TYPESCRIPT" },
+    { file = "src/code/language.rs", symbol = "TYPESCRIPT_DECLARATIONS" },
+    { file = "src/code/language/tsx.scm" },
+    { file = "tests/fixtures/code/typescript/signatures.ts" },
+]
+depends_on = [
+    "a-language-beyond-rust-is-a-grammar-and-a-query-file",
+]
+
+[accepted_text]
+choice = "A .ts, .mts or .cts file is read by tree-sitter-typescript's typescript grammar, a .tsx file and every JavaScript file by its tsx grammar, each with TypeScript's query"
+reason = "tree-sitter-typescript holds two grammars. The typescript one reads <T>x as a cast, which the tsx one reads as an element, so a .ts file needs it; the tsx one reads JSX, so a .tsx file needs it. JavaScript is a subset of TSX as a grammar sees it: the tsx grammar reads plain, CommonJS and JSX JavaScript with fewer error nodes than tree-sitter-javascript and the same definitions, so a JavaScript file is read by it with TypeScript's query, and no third grammar crate is compiled into the binary. It reads two forms of valid JavaScript differently, stated limits: a comparison chain that reads as a generic call (a < b > (c)), which changes no definition, and a class field named abstract or accessor on a line of its own before another member, which it reads as that member's TypeScript modifier, so the field and the member after it are lost. Flow is no JavaScript and is not read. A file kind is a grammar and its query, so TypeScript and TSX are two kinds, and a .js file shares the tsx kind with a .tsx file, since the same bytes index alike. The query is one file for both grammars, and TSX adds what only its grammar has (JSX text) in a second file read after it."
+alternatives = [
+    "tree-sitter-javascript for JavaScript: rejected because it is a third grammar in the binary and reads JSX with more error nodes",
+    "The tsx grammar for .ts too: rejected because it reads a <T>x cast as an element",
+    "A file kind per extension: rejected because a .js and a .tsx file of one content would be indexed twice under one rule",
+]

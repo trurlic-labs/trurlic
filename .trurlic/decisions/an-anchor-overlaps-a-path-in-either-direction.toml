@@ -11,7 +11,7 @@ alternatives = [
 tags = [
     "matching",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/mcp/context.rs", symbol = "get_decisions_for_file" },

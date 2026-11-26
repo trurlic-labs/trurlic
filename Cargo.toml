@@ -10,6 +10,9 @@ readme = "README.md"
 description = "Structured architectural decisions that constrain AI code generation"
 keywords = ["architecture", "decisions", "mcp", "ai", "code-generation"]
 categories = ["command-line-utilities", "development-tools"]
+# The tree-sitter runtime is a path dependency (below), which crates.io
+# refuses: trurlic installs from its repository or a release binary.
+publish = false
 
 # The lib and bin carry no benches: `bench = false` keeps `cargo bench` from
 # running their libtest harnesses, which refuse criterion's arguments
@@ -59,17 +62,72 @@ blake3 = "1"
 # Parallel file I/O for load_state
 rayon = "1"
 
+# The code index (src/code/): an anchor's symbol is checked against the
+# definitions a file holds, with each definition's span and a hash of its
+# tokens. tree-sitter parses any bytes into a tree, recovering from syntax
+# errors, so an index of a file mid-edit is still a tree of items; a
+# hand-rolled Rust scanner would stand on regular expressions over text,
+# which cannot tell an item from a word in a string or a comment. The
+# grammars are C, compiled by the crate's build script. Without default
+# features: `std` adds only debug-graph output and the regex crate's
+# literal optimizations, which no query of ours needs. The runtime is
+# 0.27.2 vendored with a patch (vendor/tree-sitter-0.27.2-bounds.patch,
+# whose head states what it changes): its progress count sees error
+# recovery and allocation, and it releases its stack without recursion, so
+# a parse's work is counted against a budget and its stack is fixed. A path
+# dependency with no version, so no build can take the unpatched runtime
+# from crates.io.
+tree-sitter = { path = "vendor/tree-sitter", default-features = false }
+tree-sitter-rust = "0.24"
+# Python's grammar for the general resolver, which reads a language from
+# its grammar and a query file (src/code/language/python.scm): no Rust
+# module per language. Its C parser and scanner are compiled into the
+# binary (about 0.5 MB), since a grammar loaded at run time needs `unsafe`
+# or a runtime of its own. 0.25 is the newest release, and its ABI 15 is
+# one tree-sitter 0.27 reads.
+tree-sitter-python = "0.25"
+# TypeScript's two grammars for the general resolver: `typescript` reads
+# `.ts`, `.mts` and `.cts`, `tsx` reads `.tsx` and every JavaScript file
+# (src/code/language/typescript.scm), so JavaScript needs no grammar of
+# its own. Their C parsers and scanners add about 3 MB to a binary that
+# indexes. 0.23 is the newest release; its ABI 14 is one tree-sitter 0.27
+# reads.
+tree-sitter-typescript = "0.23"
+# C's and C++'s grammars for the general resolver: `c` reads `.c`, `cpp`
+# reads `.h`, `.cc`, `.cpp`, `.cxx`, `.hpp` and `.hh`
+# (src/code/language/c.scm, cpp.scm). 0.24 and 0.23 are the newest
+# releases; their ABIs 15 and 14 are ones tree-sitter 0.27 reads.
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+
 # The `[quality]` patterns of project.toml: a project states its decision
 # rules as regular expressions, which a hand-rolled matcher would hold to
-# a subset with its own edge cases. Unicode classes and case folding,
-# since a decision's text is in any script; the lazy DFA for speed; no
-# literal optimizations, whose crates a few short texts per write do not
-# repay.
-regex = { version = "1.13", default-features = false, features = ["std", "unicode", "perf-dfa"] }
+# a subset with its own edge cases. Every pattern runs on this crate's
+# lazy DFA alone (`hybrid`): its time is linear in the bytes it reads,
+# and its cache, a value the caller owns and caps, gives up when full
+# instead of clearing, so the construction of an automaton is bounded
+# too. The `regex` crate hides which engine it runs and falls back to the
+# PikeVM, whose time per byte follows the pattern. Unicode classes and
+# case folding, since a decision's text is in any script. The crate is in
+# the build already through tree-sitter's `regex`; its `hybrid` feature
+# gives that `regex` the lazy DFA too, in the release build and in tests
+# alike.
+regex-automata = { version = "0.4.19", default-features = false, features = ["std", "syntax", "nfa-thompson", "hybrid", "unicode"] }
+# The parser regex-automata builds on, for a pattern's syntax tree: what
+# translating it will cost (the code points its case-insensitive classes
+# fold) is bounded before it is translated, and it is parsed once for both
+# directions of its automaton. In the build already, with these features,
+# through regex-automata's `syntax` and `unicode`.
+regex-syntax = { version = "0.8.12", default-features = false, features = ["std", "unicode"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
 tempfile = "3"
+# The regex crate the patterns ran on before the lazy DFA alone: a test
+# holds the shipped table, rewritten for the lazy DFA, to the findings of
+# its first form. With the features tree-sitter's `regex` has in the
+# release build, so the tests run tree-sitter's queries on its engines.
+regex = { version = "1.13", default-features = false, features = ["unicode"] }
 
 # Invariants a tool can check. Tests opt out of the panicking lints through
 # clippy.toml's allow-*-in-tests keys; any other exception is an

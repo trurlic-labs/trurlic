@@ -34,6 +34,12 @@ impl Store {
         })
     }
 
+    /// `project.toml` as a read finds it: the graph's settings and its
+    /// `[quality]`, none of its nodes.
+    pub(super) fn load_project(&self) -> Result<Project> {
+        self.read(|project, _| Ok(project))
+    }
+
     /// Take the exclusive lock, finish what an interrupted write left, and
     /// load the graph under the lock. Every write to a current-format graph
     /// starts here and commits through the returned [`Writer`]; `init` and
@@ -105,6 +111,19 @@ impl Writer<'_> {
     #[must_use]
     pub fn state(&self) -> &ProjectState {
         &self.state
+    }
+
+    /// The store it writes, for what a write reads beside the graph.
+    #[must_use]
+    pub const fn store(&self) -> &Store {
+        self.store
+    }
+
+    /// The graph as the last commit left it on disk, the lock released: a
+    /// read of it that holds no other reader or writer up.
+    #[must_use]
+    pub fn into_state(self) -> ProjectState {
+        self.state
     }
 
     /// Rewrite each file whose bytes are not the canonical form of what it

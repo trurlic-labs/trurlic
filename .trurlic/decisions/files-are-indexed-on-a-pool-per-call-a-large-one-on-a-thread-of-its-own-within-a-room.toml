@@ -1,0 +1,40 @@
+component = "sources"
+choice = "Each Indexer::map indexes on a rayon pool it starts and ends, of 1 MiB stacks, a file past 8 KiB on a thread of its own, the files indexed at once holding 1 MiB at most"
+reason = "A parse takes a fixed call stack and allocates in proportion to its file: one that is read at most 2 KiB a byte up to its last progress check, a refused one a little over that in the costliest shapes measured, since it stops only at a check. glibc keeps in a live thread's arena the memory the thread freed, so what a call holds is the sum over its live threads of each one's largest parse, not the parses in flight. A worker indexes a file up to MAX_BYTES_INDEXED_BY_A_WORKER itself, keeping about 16 MiB, and starts a thread for a larger one, whose memory goes back as it ends. Each index first waits until the room of MAX_BYTES_INDEXED_AT_ONCE holds its bytes, so the parses in flight allocate about 2 GiB in the costliest shapes, and a file past the room is indexed alone. As measured, a call over hostile files, sixty-four of 1 MiB and a thousand of 8 KiB, peaked near 1.6 GB, and a tree of hostile files held two to three times as much without the room or without the threads of their own. The pool has as many workers as rayon's own pool, which RAYON_NUM_THREADS sets, and no more than the items, and it ends as map returns. Every thread has WORKER_STACK_BYTES, a wide margin over what the index of a hostile file at the cap takes in a test build. Whoever holds room only indexes, and code is pure and starts no parallel work, so a take always ends. Worker::index is the shell's one call of code::index, and only Indexer::map hands out a Worker. A system that starts no thread gives ReadFault::NoThread. None of these settings changes what an index holds, so none is in the cache key."
+alternatives = [
+    "One pool of long-lived workers for every file: rejected because each worker keeps the memory of its largest parse until the pool ends, many times what the room bounds",
+    "A thread of its own for every file: rejected because starting a thread costs more than parsing most small files",
+    "A room of 2 MiB and workers up to 32 KiB: rejected because the parses in flight may then allocate twice as much, and workers up to 32 KiB peaked near 2.1 GB against 1.55 GB on hostile files, no cold check measurably faster",
+    "Threads started by hand with an atomic counter: rejected because rayon's pool keeps the order, the panic and the stack, and honours RAYON_NUM_THREADS as every other parallel pass of a call does",
+    "A stack sized from the file: rejected because a parse's call stack no longer grows with its input",
+]
+tags = [
+    "reliability",
+    "security",
+]
+status = "proposed"
+origin = "typescript review fixes"
+created = "2026-11-25T22:06:05.133337210Z"
+anchors = [
+    { file = "src/sources/indexer.rs", symbol = "Indexer::map" },
+    { file = "src/sources/indexer.rs", symbol = "MAX_BYTES_INDEXED_AT_ONCE" },
+    { file = "src/sources/indexer.rs", symbol = "MAX_BYTES_INDEXED_BY_A_WORKER" },
+    { file = "src/sources/indexer.rs", symbol = "Room" },
+    { file = "src/sources/indexer.rs", symbol = "WORKER_STACK_BYTES" },
+    { file = "src/sources/indexer.rs", symbol = "Worker::index" },
+    { file = "src/sources/tests.rs", symbol = "a_file_at_the_cap_whose_parse_stack_runs_deep_is_indexed_on_the_worker_stack" },
+]
+depends_on = [
+    "a-tree-sitter-file-is-capped-at-1-mib-and-a-lexical-one-at-4-mib",
+    "a-tree-sitter-parse-is-held-to-32-progress-operations-a-byte-on-a-stack-it-does-not-grow",
+]
+
+[accepted_text]
+choice = "The shell indexes on workers it starts per call, a file past 32 KiB on a thread of its own with a 32 MiB stack, the files indexed at once holding at most 2 MiB between them"
+reason = "tree-sitter releases the stack of an ambiguous parse recursively, as deep as the ambiguity runs: a chain of a?(b):c=> keeps an arrow's and a conditional's readings alive and takes about 11 bytes of stack per byte, so a file of about 200 KB overflowed a 2 MiB thread and aborted the process, which no catch_unwind answers. Stack is stated at 32 bytes per byte, about three times that. A parse also holds memory in proportion to its file, about 900 bytes a byte on error-dense input, and a thread's allocator keeps what the thread freed until it ends: on a pool, eight such files of 1 MiB held about 6 GB after their parses. So Indexer::map runs a call's reads on workers it starts and ends, one a core, of WORKER_STACK_BYTES. A worker indexes a file up to MAX_BYTES_INDEXED_BY_A_WORKER itself, keeping about 30 MB at most, and starts a thread of PARSE_STACK_BYTES, which a parse at the cap fits in, for a larger one, whose memory goes back as it ends. Each index first waits until the room of MAX_BYTES_INDEXED_AT_ONCE holds its bytes, so the parses under way hold about 2 GB at most; a file past the room is indexed alone. Worker::index is the shell's one call of code::index, and only Indexer::map hands out a Worker, so no read parses on a stack no bound states. A system that starts no thread gives ReadFault::NoThread. The bounds are in BOUNDS: code states them and the shell starts the threads, so code stays pure."
+alternatives = [
+    "One pool of threads with a 32 MiB stack: rejected because each keeps the memory its largest parse freed until the pool ends",
+    "A thread of its own for every file: rejected because starting a thread costs more than parsing most files, and a cold index of many small files ran markedly slower",
+    "A lower size cap: rejected because the overflow starts near 200 KB, below many generated and bundled files",
+    "Fewer threads for less memory: rejected because a tree of small files would lose the parallelism large ones cost",
+]

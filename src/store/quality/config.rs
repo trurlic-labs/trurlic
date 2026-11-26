@@ -1,7 +1,8 @@
 //! `[quality]` of `project.toml` as a type: the project's limits and
 //! patterns, each optional, refused at load when no decision could meet
 //! one or a pattern is out of bounds. Patterns are held as text here and
-//! compiled only by a write (`bar.rs`): a read never runs them.
+//! compiled only by a write, `check` and the `status` lint section
+//! (`bar.rs`): a load never runs them.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -50,7 +51,8 @@ pub struct WordRange {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pattern {
-    /// A regular expression in the syntax of the `regex` crate.
+    /// A regular expression in the syntax of the `regex` crate, which
+    /// runs on a lazy DFA: no Unicode word boundary (`Bar::compile`).
     pub pattern: String,
     pub fields: BTreeSet<DecisionField>,
     pub level: Level,

@@ -1,0 +1,22 @@
+component = "code"
+choice = "A match of a pattern that sets exclusive drops each match of a pattern without it that captured the same @definition node, whatever the patterns' order"
+reason = "Two patterns can capture one node as a definition where a language means one: const f = () => 1 is a declarator every binding pattern takes, and only the pattern for a function bound to a name may define it. A query cannot say not this kind, so a pattern that sets exclusive claims its @definition node: a match of a pattern without it on that node is dropped. Every match that captures a node is recorded by the time the walk reaches the node, since a match's root is the node or above it, so the claim is settled there in one step and no order of the patterns carries meaning. Two exclusive matches of one node both stand, as definitions of one span."
+alternatives = [
+    "The earlier pattern wins a tie: rejected because the order of a query's patterns would carry a meaning no refusal shows",
+    "The widest span wins per name: rejected because a declarator's two readings have one span",
+    "A kind chosen by the value's node kind: rejected because the two readings differ in where they are kept, not in kind alone",
+]
+tags = [
+    "parsing",
+]
+status = "accepted"
+origin = "typescript and javascript"
+created = "2026-11-25T18:18:55.579282906Z"
+anchors = [
+    { file = "src/code/general.rs", symbol = "Walk::enter" },
+    { file = "src/code/general/tests.rs", symbol = "an_exclusive_pattern_claims_its_node_from_the_others" },
+    { file = "src/code/query.rs", symbol = "Definer" },
+]
+depends_on = [
+    "a-query-file-is-held-to-the-general-resolver-s-contract",
+]

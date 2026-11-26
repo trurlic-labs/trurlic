@@ -1,55 +1,158 @@
-//! What `apply` answers, declared once for its `outputSchema` and its
-//! JSON: each op's node and what it changed, the warnings, and the files
-//! written. The tests below hold the longest result and the longest
-//! refusal of a batch to the result budget.
+//! What `apply` returns, declared once for its `outputSchema` and its
+//! JSON: each op's node and what it changed, the warnings, the repairs
+//! written and the stale anchors left, the likely duplicates, and the
+//! files written. The lists a batch cannot bound fill the room the rest
+//! leaves ([`fit`]). The tests below hold the longest result and the
+//! longest refusal of a batch to the result budget.
 
+use crate::budget::MAX_TOOL_RESULT_BYTES;
+use crate::mcp::spec::output::{Count, Items, Nested, Str, Tag};
+use crate::mcp::spec::{Output, Shown, to_value};
+use crate::mcp::truncate::json_len;
 use crate::store::{Applied, Done, Field, OpKind, PatternNote, StatusName, Warning, WarningKind};
 
-use crate::mcp::spec::output::{Count, Items, Nested, Str, Tag};
-use crate::mcp::spec::{Output, Shown};
+use super::duplicates::Duplicates;
+use super::repairs::{self, Left, Repaired};
 
-impl Output for Applied {
+/// What `apply` returns: what the store's write did, the repairs it wrote
+/// and the stale anchors it left, and the likely duplicates of the
+/// decisions whose text it wrote, each list as many as the budget holds.
+#[derive(Debug)]
+pub(crate) struct Answer {
+    pub(crate) applied: Applied,
+    pub(crate) repaired: Vec<Repaired>,
+    /// The repairs written and not listed.
+    pub(crate) more_repaired: usize,
+    pub(crate) left: Vec<Left>,
+    /// The stale anchors left and not listed.
+    pub(crate) more_left: usize,
+    /// The warnings the result budget holds, in the order of the ops.
+    pub(crate) duplicates: Vec<Duplicates>,
+    /// The decisions with likely duplicates not listed.
+    pub(crate) more_duplicates: usize,
+}
+
+impl Output for Answer {
     fn declare(fields: &mut Shown<'_, Self>) {
         let ops = Items {
             item: Nested::<Done>::new(),
         };
-        fields.required("ops", "What each op did, in order.", &ops, |applied| {
-            &applied.ops
+        fields.required("ops", "What each op did, in order.", &ops, |answer| {
+            &answer.applied.ops
         });
-        let warnings = Items {
-            item: Nested::<Warning>::new(),
-        };
-        let about = "What the batch wrote but a `warn` pattern of `[quality]` warns of: each \
-                     pattern's first match per op, and the first of the origin's and of each \
-                     op's, in the order of the ops and the patterns; an op's `more_warnings` \
-                     counts the rest.";
-        fields.optional("warnings", about, &warnings, |applied| {
-            (!applied.warnings.is_empty()).then_some(&applied.warnings)
-        });
-        let more = "The origin's warnings not listed.";
-        fields.optional("more_origin_warnings", more, &Count, |applied| {
-            (applied.more_origin_warnings > 0).then_some(&applied.more_origin_warnings)
-        });
-        let patterns = Items {
-            item: Nested::<PatternNote>::new(),
-        };
-        let about = "The message of each pattern a warning names, once.";
-        fields.optional("patterns", about, &patterns, |applied| {
-            (!applied.patterns.is_empty()).then_some(&applied.patterns)
-        });
+        declare_warnings(fields);
+        repairs::declare(fields);
+        declare_duplicates(fields);
         fields.required(
             "written",
             "Files written, a rename's new file included.",
             &Count,
-            |applied| &applied.written,
+            |answer| &answer.applied.written,
         );
         fields.required(
             "removed",
             "Files removed, a rename's old file included.",
             &Count,
-            |applied| &applied.removed,
+            |answer| &answer.applied.removed,
         );
     }
+}
+
+fn declare_warnings(fields: &mut Shown<'_, Answer>) {
+    let warnings = Items {
+        item: Nested::<Warning>::new(),
+    };
+    let about = "What the batch wrote but a `warn` pattern of `[quality]` warns of: each \
+                 pattern's first match per op, and the first of the origin's and of each \
+                 op's, in the order of the ops and the patterns; an op's `more_warnings` \
+                 counts the rest.";
+    fields.optional("warnings", about, &warnings, |answer| {
+        let warnings = &answer.applied.warnings;
+        (!warnings.is_empty()).then_some(warnings)
+    });
+    let more = "The origin's warnings not listed.";
+    fields.optional("more_origin_warnings", more, &Count, |answer| {
+        let more = &answer.applied.more_origin_warnings;
+        (*more > 0).then_some(more)
+    });
+    let patterns = Items {
+        item: Nested::<PatternNote>::new(),
+    };
+    let about = "The message of each pattern a warning names, once.";
+    fields.optional("patterns", about, &patterns, |answer| {
+        let patterns = &answer.applied.patterns;
+        (!patterns.is_empty()).then_some(patterns)
+    });
+}
+
+fn declare_duplicates(fields: &mut Shown<'_, Answer>) {
+    let duplicates = Items {
+        item: Nested::<Duplicates>::new(),
+    };
+    let about = "Each decision the batch recorded or whose choice or reason it revised that \
+                 has likely duplicates, decisions whose choice and reason have a TF-IDF \
+                 cosine of 0.5 or more with its own, in the order of the ops: a warning, \
+                 never a refusal.";
+    fields.optional("duplicates", about, &duplicates, |answer| {
+        (!answer.duplicates.is_empty()).then_some(&answer.duplicates)
+    });
+    let more = "Decisions with likely duplicates not listed in `duplicates`. `status` with \
+                `section: \"lint\"` ranks the pairs: the section lists the best pairs; the ones \
+                left out rank at or below the last listed, and come into view as the listed ones \
+                are settled (merged, or revised apart).";
+    fields.optional("more_duplicates", more, &Count, |answer| {
+        (answer.more_duplicates > 0).then_some(&answer.more_duplicates)
+    });
+}
+
+/// The answer of `applied` listing the leading items of `repaired`,
+/// `left` and `warned` that fit the result budget beside it, in that
+/// order, each list cut where its next item does not fit and the rest
+/// counted.
+pub(super) fn fit(mut applied: Applied, warned: Vec<Duplicates>, left: Vec<Left>) -> Answer {
+    let repaired: Vec<Repaired> = std::mem::take(&mut applied.repaired)
+        .into_iter()
+        .map(Repaired::from)
+        .collect();
+    let mut answer = Answer {
+        applied,
+        repaired: Vec::new(),
+        more_repaired: repaired.len(),
+        left: Vec::new(),
+        more_left: left.len(),
+        duplicates: Vec::new(),
+        more_duplicates: warned.len(),
+    };
+    // Measured with every item counted, the most the counts can take, and
+    // the frames of the three lists.
+    let taken = json_len(&to_value(&answer)).saturating_add(3 * LIST_FRAME);
+    let mut room = MAX_TOOL_RESULT_BYTES.saturating_sub(taken);
+    answer.repaired = fitting(repaired, &mut room);
+    answer.more_repaired -= answer.repaired.len();
+    answer.left = fitting(left, &mut room);
+    answer.more_left -= answer.left.len();
+    answer.duplicates = fitting(warned, &mut room);
+    answer.more_duplicates -= answer.duplicates.len();
+    answer
+}
+
+/// The bytes of a list's key and brackets beyond its items, at the
+/// longest key: `,"duplicates":[]`.
+const LIST_FRAME: usize = 16;
+
+/// The leading `items` whose JSON fits `room`, each with the comma before
+/// it, taken from `room`.
+fn fitting<T: Output>(items: Vec<T>, room: &mut usize) -> Vec<T> {
+    let mut kept = Vec::new();
+    for item in items {
+        let bytes = json_len(&to_value(&item)).saturating_add(1);
+        if bytes > *room {
+            break;
+        }
+        *room -= bytes;
+        kept.push(item);
+    }
+    kept
 }
 
 const OP_KIND: Tag<OpKind> = Tag {
@@ -102,7 +205,8 @@ const STATUS: Tag<StatusName> = Tag {
 impl Output for Done {
     fn declare(fields: &mut Shown<'_, Self>) {
         fields.required("op", "The op's kind.", &OP_KIND, |done| &done.op);
-        let name = "The node it names first; a merge's survivor.";
+        let name = "The node it names first; a merge's survivor; the first decision a \
+                    repair changed, empty when it changed none.";
         fields.required("name", name, &Str, |done| &done.name);
         fields.optional("to", "A rename's new name.", &Str, |done| {
             done.to.as_deref()
@@ -118,7 +222,8 @@ impl Output for Done {
         let status = "The decision's new status, when the op changed it.";
         fields.optional("status", status, &STATUS, |done| done.status.as_ref());
         let rewrote = "Files of other nodes it rewrote: edges repointed, a component's \
-                       decisions and connections renamed.";
+                       decisions and connections renamed, the decisions a repair changed \
+                       after its first.";
         fields.optional("rewrote", rewrote, &Count, |done| {
             (done.rewrote > 0).then_some(&done.rewrote)
         });
@@ -133,7 +238,8 @@ impl Output for Done {
 mod tests {
     use super::*;
     use crate::budget::MAX_TOOL_RESULT_BYTES;
-    use crate::mcp::spec::to_value;
+    use crate::mcp::apply::duplicates::{NEAREST, Nearest};
+    use crate::store::Anchor;
     use crate::store::limits::{
         MAX_ALTERNATIVE_BYTES, MAX_BATCH_OPS, MAX_LIST_ITEMS, MAX_NAME_BYTES, MAX_TEXT_FIELD_BYTES,
     };
@@ -150,12 +256,20 @@ mod tests {
     /// its index and the offset, at most about 82 bytes: 4.2 KB for fifty
     /// ops and the origin. The message of each pattern a warning names is
     /// carried once: 32 frames of about 25 bytes and at most
-    /// `MAX_WARN_MESSAGES_BYTES` of escaped messages, 2.3 KB. About 24.1 KB
-    /// of the 24 KiB.
+    /// `MAX_WARN_MESSAGES_BYTES` of escaped messages, 2.3 KB. A likely
+    /// duplicate's warning names a decision and its three nearest with
+    /// their scores, about 700 bytes at `MAX_NAME_BYTES`. Fifty take 35 KB,
+    /// which no result holds beside the rest. The repairs written and the
+    /// stale anchors left, as many as the graph holds, take more still. So
+    /// these lists fill what room is left, in that order, and three counts
+    /// of at most 20 digits count the others, about 80 bytes. About 24.3
+    /// KB of the 24 KiB, with no room left for one item: the longest batch
+    /// counts them all.
     #[test]
     fn the_longest_result_of_a_full_batch_fits_the_budget() {
         use crate::store::limits::{
-            MAX_QUALITY_PATTERNS, MAX_WARN_MESSAGES_BYTES, MAX_WARNINGS_PER_OP,
+            MAX_ANCHOR_PATH_BYTES, MAX_ANCHOR_SYMBOL_BYTES, MAX_QUALITY_PATTERNS,
+            MAX_WARN_MESSAGES_BYTES, MAX_WARNINGS_PER_OP,
         };
 
         let name = || "n".repeat(MAX_NAME_BYTES);
@@ -185,6 +299,7 @@ mod tests {
                     OpKind::ReviseComponent => {
                         done.changed = Field::COMPONENT_CHANGEABLE.to_vec();
                     }
+                    OpKind::RepairAnchors => done.changed = vec![Field::Anchors],
                     OpKind::Record | OpKind::AddComponent | OpKind::RemoveComponent => {}
                 }
                 done
@@ -218,9 +333,45 @@ mod tests {
                 .collect(),
             written: usize::MAX,
             removed: usize::MAX,
+            repaired: Vec::new(),
+            left: Vec::new(),
         };
-        let bytes = to_value(&applied).to_string().len();
+        let anchor = || {
+            let file = "f".repeat(MAX_ANCHOR_PATH_BYTES);
+            Anchor::new(file, Some("s".repeat(MAX_ANCHOR_SYMBOL_BYTES))).unwrap()
+        };
+        let written = crate::store::Repaired {
+            decision: name(),
+            from: anchor(),
+            to: anchor(),
+        };
+        let left = Left {
+            decision: name(),
+            anchor: anchor().to_string(),
+            cause: "its file defines nothing its symbol names".into(),
+        };
+        let nearest = Nearest {
+            decision: name(),
+            score: "1.000000".into(),
+        };
+        let warned = Duplicates {
+            decision: name(),
+            nearest: vec![nearest; NEAREST],
+        };
+        // An op with no `repairs` repairs every decision that holds
+        // a stale anchor, as many as the graph holds.
+        let repairs = 10_000;
+        let applied = Applied {
+            repaired: vec![written; repairs],
+            ..applied
+        };
+        let answer = fit(applied, vec![warned; MAX_BATCH_OPS], vec![left; repairs]);
+
+        let bytes = to_value(&answer).to_string().len();
         assert!(bytes <= MAX_TOOL_RESULT_BYTES, "{bytes} bytes");
+        assert_eq!(answer.more_repaired, repairs);
+        assert_eq!(answer.more_left, repairs);
+        assert_eq!(answer.more_duplicates, MAX_BATCH_OPS);
     }
 
     /// The longest refusal of every rule whose message a batch bounds fits
@@ -271,6 +422,11 @@ mod tests {
                 bytes: usize::MAX,
                 max: usize::MAX,
             },
+            Rule::PatternWork,
+            Rule::Quality(QualityFault::GaveUp { index: usize::MAX }),
+            Rule::Quality(QualityFault::CacheTotal {
+                largest: usize::MAX,
+            }),
         ];
         for rule in rules {
             let refusal = Refusal {

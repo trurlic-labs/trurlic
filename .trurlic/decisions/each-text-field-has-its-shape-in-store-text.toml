@@ -9,7 +9,7 @@ tags = [
     "quality",
     "validation",
 ]
-status = "proposed"
+status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"
 anchors = [

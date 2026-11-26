@@ -12,7 +12,7 @@ tags = [
     "performance",
     "testing",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-23T20:24:02.826381615Z"
 anchors = [
     { file = "benches/corpus.rs" },

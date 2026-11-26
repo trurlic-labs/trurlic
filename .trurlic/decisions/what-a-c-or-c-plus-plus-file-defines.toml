@@ -1,0 +1,25 @@
+component = "code"
+choice = "A C or C++ prototype is a definition of its function's kind, function or method; a macro is a definition of kind macro where its #define stands; an inline namespace adds its own segment"
+reason = "A kind states what a thing is, not whether it has a body: no reader asks whether a function is defined in the file, and a symbol names every definition of its path, so a prototype in a header and its definition in a source file, two overloads or two arms of #if resolve as one set of one kind. A macro, object-like or function-like, is a definition of the file, and a reader finds it where its #define stands, under the namespace or class that holds the directive; each #define of one name under #if is a member of one set. An inline namespace is written as a namespace, so its name is a segment of what it holds, as any namespace's is. Where every other definition stands, and what defines nothing, is the-definitions-of-a-c-or-c-plus-plus-file-are-at-the-path-their-source-writes."
+alternatives = [
+    "A prototype of its own kind: rejected because no reader asks whether a function has a body, and the set already resolves both",
+    "Macros at the file's top, as the preprocessor scopes them: rejected because a reader finds a #define where it is written",
+    "An inline namespace as no segment: rejected because its name is written as any namespace's",
+]
+tags = [
+    "anchors",
+    "parsing",
+]
+status = "accepted"
+origin = "c and c++"
+created = "2026-11-25T23:03:16.297379871Z"
+anchors = [
+    { file = "src/code/language/c.scm" },
+    { file = "src/code/language/cpp.scm" },
+    { file = "src/sources/tests.rs", symbol = "STATEMENTS" },
+    { file = "tests/fixtures/code/cpp/shelf.hpp" },
+]
+depends_on = [
+    "a-symbol-names-every-definition-of-its-one-path",
+    "c-and-c-plus-plus-are-read-by-tree-sitter-c-and-tree-sitter-cpp",
+]

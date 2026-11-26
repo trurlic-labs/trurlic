@@ -10,33 +10,42 @@ use super::edit::Edit;
 use super::ops::{AnchorInput, Field, ListEdit};
 use super::refusal::{NodeKind, Rule};
 use crate::store::name::name_fault;
-use crate::store::quality::{DecisionField, Place, element};
+use crate::store::quality::{Breach, DecisionField, Place, element};
 use crate::store::schema::{Anchor, Decision};
 
 /// What an op breaks: the argument within it, `None` for the op as a
-/// whole, and the rule.
+/// whole, the rule, and the decision at fault when it is not the node the
+/// op names first: one a repair changed.
 #[derive(Debug)]
 pub(super) struct Fault {
     pub(super) field: Option<String>,
     pub(super) rule: Rule,
+    pub(super) target: Option<String>,
 }
 
 impl Fault {
     pub(super) const fn op(rule: Rule) -> Self {
-        Self { field: None, rule }
-    }
-
-    pub(super) fn at(field: Field, rule: Rule) -> Self {
         Self {
-            field: Some(field.as_str().to_owned()),
+            field: None,
             rule,
+            target: None,
         }
     }
 
+    pub(super) fn at(field: Field, rule: Rule) -> Self {
+        Self::named(field.as_str().to_owned(), rule)
+    }
+
     fn item(field: Field, index: usize, rule: Rule) -> Self {
+        Self::named(format!("{}[{index}]", field.as_str()), rule)
+    }
+
+    /// The fault of the argument at `path` within the op.
+    pub(super) const fn named(path: String, rule: Rule) -> Self {
         Self {
-            field: Some(format!("{}[{index}]", field.as_str())),
+            field: Some(path),
             rule,
+            target: None,
         }
     }
 }
@@ -70,10 +79,8 @@ pub(super) fn bar(
     held: &[DecisionField],
     sources: &Sources,
 ) -> Result<(), Fault> {
-    let hits = context.bar.judge(decision, held).map_err(|breach| Fault {
-        field: Some(sources.path(decision, breach.place)),
-        rule: breach.broken.into(),
-    })?;
+    let hits = context.bar.judge(decision, held, &mut context.scan);
+    let hits = hits.map_err(|breach| sources.fault(decision, breach))?;
     let located = hits
         .into_iter()
         .map(|(place, hit)| (sources.path(decision, place), hit));
@@ -114,9 +121,14 @@ impl Sources {
         }
     }
 
+    /// The fault of `breach` in `decision`, at its argument path.
+    pub(super) fn fault(&self, decision: &Decision, breach: Breach) -> Fault {
+        Fault::named(self.path(decision, breach.place), breach.broken.into())
+    }
+
     /// The argument path of `place` in `decision`: `add_tags[0]`, or the
     /// decision's field for a place no argument holds.
-    fn path(&self, decision: &Decision, place: Place) -> String {
+    pub(super) fn path(&self, decision: &Decision, place: Place) -> String {
         let named = element(decision, place).and_then(|element| {
             self.arguments
                 .iter()
@@ -141,7 +153,8 @@ pub(super) fn judged(changed: &[Field]) -> Vec<DecisionField> {
             Field::Anchors => Some(DecisionField::Anchors),
             // No rule of the bar reads these: the names an op gives, a
             // decision's component and edges, a component's fields, and the
-            // `add_*` and `remove_*` arguments, which no changed field is.
+            // `add_*` and `remove_*` arguments and a repair's list, which no
+            // changed field is.
             Field::Name
             | Field::To
             | Field::Survivor
@@ -160,7 +173,8 @@ pub(super) fn judged(changed: &[Field]) -> Vec<DecisionField> {
             | Field::Description
             | Field::ConnectsTo
             | Field::AddConnectsTo
-            | Field::RemoveConnectsTo => None,
+            | Field::RemoveConnectsTo
+            | Field::Repairs => None,
         })
         .collect()
 }

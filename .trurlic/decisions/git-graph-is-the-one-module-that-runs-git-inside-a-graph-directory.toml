@@ -9,7 +9,7 @@ tags = [
     "git",
     "module-boundary",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/git.rs" },

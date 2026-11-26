@@ -18,6 +18,7 @@ mod decision;
 mod edit;
 mod ops;
 mod refusal;
+mod repair;
 mod warning;
 
 use std::collections::BTreeMap;
@@ -28,10 +29,10 @@ use serde::de::DeserializeOwned;
 use crate::store::canonical::Canonical;
 use crate::store::commit::PendingWrite;
 use crate::store::history::{CommitMessage, Tool};
-use crate::store::quality::{Bar, DecisionField, Hit};
-use crate::store::schema::StatusName;
+
+use crate::store::quality::{Bar, DecisionField, Hit, PreparedBar, Scan};
+use crate::store::schema::{Anchor, StatusName};
 use crate::store::state::NodeFile;
-use crate::store::time::Timestamp;
 use crate::store::{Store, Writer};
 use crate::{Error, Result};
 
@@ -41,7 +42,7 @@ use edit::{Before, Edit};
 
 pub use ops::{
     AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
-    RemoveComponent, Rename, Revise, ReviseComponent,
+    RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent,
 };
 pub use refusal::{NodeKind, OpAt, Refusal, Rule};
 pub use warning::{PatternNote, Warning, WarningKind};
@@ -65,6 +66,29 @@ pub struct Applied {
     pub written: usize,
     /// Files removed, a rename's old file included.
     pub removed: usize,
+    /// Each anchor the `repair_anchors` ops replaced, in the order they
+    /// replaced them.
+    pub repaired: Vec<Repaired>,
+    /// Each repair of an op with no `repairs` that the bar did not admit,
+    /// in the order they were judged.
+    pub left: Vec<LeftRepair>,
+}
+
+/// An anchor a `repair_anchors` op replaced in a decision: `from` was held
+/// and `to` is, `from` dropped when the decision held `to` already.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repaired {
+    pub decision: String,
+    pub from: Anchor,
+    pub to: Anchor,
+}
+
+/// A repair of an op with no `repairs` the store did not write, since the
+/// bar refused it or could not judge it: the decision holds `from` still.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeftRepair {
+    pub repaired: Repaired,
+    pub rule: Rule,
 }
 
 /// What one op did, named, never echoed: the node, the nodes it names
@@ -72,7 +96,8 @@ pub struct Applied {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Done {
     pub op: OpKind,
-    /// The node the op names first; a merge's survivor.
+    /// The node the op names first; a merge's survivor; the first decision
+    /// a repair changed, empty when it changed none.
     pub name: String,
     /// A rename's new name.
     pub to: Option<String>,
@@ -86,7 +111,8 @@ pub struct Done {
     /// The decision's status, when the op changed it.
     pub status: Option<StatusName>,
     /// Files of other nodes the op rewrote: dependents repointed, a
-    /// component's decisions and connections renamed.
+    /// component's decisions and connections renamed, the decisions a
+    /// repair changed after its first.
     pub rewrote: usize,
     /// The op's warnings not listed in [`Applied::warnings`].
     pub more_warnings: usize,
@@ -113,19 +139,25 @@ impl Writer<'_> {
     /// whole with [`Error::Refused`], writing nothing. Every decision it
     /// records is `proposed`, with the batch's origin and one instant.
     /// The writer's graph follows the commit; a refused batch, or a commit
-    /// that fails before its commit point, leaves it as it was. A
+    /// that fails before its commit point, leaves it as it was. The batch
+    /// is held to `prepared`, the bar compiled before the lock, when the
+    /// `[quality]` loaded under the lock is the one it was compiled from;
+    /// else, the table edited in between, to that table compiled here. A
     /// `[quality]` pattern that does not compile refuses every batch with
     /// [`Error::QualityPattern`].
-    pub fn apply(&mut self, batch: Batch) -> Result<Applied> {
+    pub fn apply(&mut self, batch: Batch, prepared: &PreparedBar) -> Result<Applied> {
         let message = commit_message(&batch)?;
-        let bar = self.store.bar(&self.state.project.quality)?;
-        let mut context = Context {
-            origin: batch.origin.as_deref(),
-            created: Timestamp::now()?,
-            bar: &bar,
-            hits: origin_hits(&batch, &bar)?,
-            warnings: Vec::new(),
+        let compiled;
+        let bar = match prepared.of(&self.state.project.quality) {
+            Some(bar) => bar,
+            None => {
+                compiled = self.store.bar(&self.state.project.quality)?;
+                &compiled
+            }
         };
+        let mut scan = bar.scan();
+        let hits = origin_hits(&batch, bar, &mut scan)?;
+        let mut context = Context::new(batch.origin.as_deref(), bar, scan, hits)?;
         let more_origin_warnings = warning::report(None, &mut context.hits, &mut context.warnings);
         let mut edit = Edit::new(&mut self.state);
         let (done, named) = match run(&mut edit, batch.ops, &mut context) {
@@ -140,7 +172,9 @@ impl Writer<'_> {
         let (written, removed) = self.land(before, &changed_by, &message)?;
         Ok(Applied {
             ops: done,
-            patterns: warning::notes(&context.warnings, &bar),
+            repaired: context.repaired,
+            left: context.left,
+            patterns: warning::notes(&context.warnings, bar),
             warnings: context.warnings,
             more_origin_warnings,
             written,
@@ -278,24 +312,21 @@ impl Files<'_, '_> {
     }
 }
 
-/// The batch's own faults, before any op runs: no op, and an origin the
-/// bar refuses; else the origin's warn matches.
-fn origin_hits(batch: &Batch, bar: &Bar) -> Result<Vec<(String, Hit)>> {
+/// The batch's own faults, before any op runs: no op, no origin where the
+/// bar requires one, and an origin a pattern refuses; else the origin's
+/// `warn` matches, judged over `scan` before any op's.
+fn origin_hits(batch: &Batch, bar: &Bar, scan: &mut Scan) -> Result<Vec<(String, Hit)>> {
     if batch.ops.is_empty() {
         return Err(refused(None, Some("ops".to_owned()), Rule::EmptyBatch));
     }
+    let field = || DecisionField::Origin.as_str().to_owned();
     let records = batch.ops.iter().any(|op| matches!(op, Op::Record(_)));
-    match bar.judge_origin(batch.origin.as_deref(), records) {
-        Ok(hits) => Ok(hits
-            .into_iter()
-            .map(|hit| (DecisionField::Origin.as_str().to_owned(), hit))
-            .collect()),
-        Err(breach) => Err(refused(
-            None,
-            Some(DecisionField::Origin.as_str().to_owned()),
-            breach.broken.into(),
-        )),
-    }
+    let origin = batch.origin.as_deref();
+    let hits = bar
+        .origin_required(origin, records)
+        .and_then(|()| bar.judge_origin(origin, scan))
+        .map_err(|breach| refused(None, Some(field()), breach.broken.into()))?;
+    Ok(hits.into_iter().map(|hit| (field(), hit)).collect())
 }
 
 /// Run each op in order, refusing at the first fault, then the check of
@@ -315,24 +346,23 @@ fn run(
             kind: op.kind(),
             target: op.target().to_owned(),
         };
-        let outcome = match op {
-            Op::Record(op) => decision::record(edit, op, context),
-            Op::Revise(op) => decision::revise(edit, op, context),
-            Op::Rename(op) => decision::rename(edit, op),
-            Op::Merge(op) => decision::merge(edit, op, context),
-            Op::Remove(op) => decision::remove(edit, op),
-            Op::AddComponent(op) => component::add(edit, op),
-            Op::ReviseComponent(op) => component::revise(edit, op),
-            Op::RenameComponent(op) => component::rename(edit, op),
-            Op::RemoveComponent(op) => component::remove(edit, op),
-        };
-        match outcome {
+        match apply_op(edit, op, context) {
             Ok(mut outcome) => {
                 let (hits, warnings) = (&mut context.hits, &mut context.warnings);
                 outcome.more_warnings = warning::report(Some(index), hits, warnings);
                 done.push(outcome);
             }
-            Err(Fault { field, rule }) => return Err(refused(Some(at), field, rule)),
+            Err(Fault {
+                field,
+                rule,
+                target,
+            }) => {
+                let at = OpAt {
+                    target: target.unwrap_or(at.target),
+                    ..at
+                };
+                return Err(refused(Some(at), field, rule));
+            }
         }
         named.push(at);
     }
@@ -341,6 +371,26 @@ fn run(
         return Err(refused(at, None, Rule::Issue(issue)));
     }
     Ok((done, named))
+}
+
+/// One op on the graph `edit` holds.
+fn apply_op(
+    edit: &mut Edit<'_>,
+    op: Op,
+    context: &mut Context<'_>,
+) -> std::result::Result<Done, Fault> {
+    match op {
+        Op::Record(op) => decision::record(edit, op, context),
+        Op::Revise(op) => decision::revise(edit, op, context),
+        Op::Rename(op) => decision::rename(edit, op),
+        Op::Merge(op) => decision::merge(edit, op, context),
+        Op::Remove(op) => decision::remove(edit, op),
+        Op::AddComponent(op) => component::add(edit, op),
+        Op::ReviseComponent(op) => component::revise(edit, op),
+        Op::RenameComponent(op) => component::rename(edit, op),
+        Op::RemoveComponent(op) => component::remove(edit, op),
+        Op::RepairAnchors(op) => repair::repair_anchors(edit, op, context),
+    }
 }
 
 /// The batch's history message; an origin or a session that breaks the

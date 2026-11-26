@@ -1,0 +1,23 @@
+component = "mcp"
+choice = "status computes its anchors section, with counts.anchors by kind, only when section asks for it, judged in the calling tree alone; origin narrows it to the decisions recorded under it"
+reason = "The anchor findings read every source file of the tree, while the rest of status reads the graph's files: on the seeded corpus of 2000 decisions and its generated tree the findings take about three times a whole default status call warm and nine times cold, and status is called often. So the default report leaves the section out, and section: anchors gives it the whole budget, its items unresolved first, each with decision, anchor, kind and cause, and its counts by kind in counts.anchors; more names trurlic check, which prints every finding. status asks the project's git nothing, so the section holds what the calling tree alone shows: unresolved, malformed, ambiguous, unverified and weak. On a terminal the count line is printed even with no finding, so a clean tree is told from one not asked. origin narrows which decisions are judged, never the verdict on an anchor."
+alternatives = [
+    "Every report holds the section: rejected because each status call would read the whole tree for findings most calls do not use",
+    "A separate tool for the findings: rejected because status already carries sections fitted to the budget, and the surface is six tools",
+]
+tags = [
+    "anchors",
+    "budget",
+    "performance",
+]
+status = "accepted"
+origin = "anchor findings"
+created = "2026-11-24T10:39:08.594384541Z"
+anchors = [
+    { file = "benches/corpus.rs", symbol = "bench_code_index" },
+    { file = "src/mcp/status/anchors.rs", symbol = "AnchorItem" },
+    { file = "src/mcp/status/anchors.rs", symbol = "anchor_section" },
+    { file = "src/mcp/status/mod.rs", symbol = "Section::Anchors" },
+    { file = "tests/integration/anchors.rs", symbol = "status_asks_the_project_s_git_nothing" },
+    { file = "tests/integration/anchors.rs", symbol = "status_lists_each_finding_with_its_kind_and_cause" },
+]

@@ -1,0 +1,21 @@
+component = "code"
+choice = "TOML and JSON define every key path from the document root; an array's elements define their keys under the array's path with no index, so a key two elements hold is one path of two definitions"
+reason = "A configuration anchor names a key, workspace::lints or stages::order, and a suffix names it as a suffix names a Rust item. A TOML key's span runs from its key, or its table's header, to the end of its value and of everything below it, so a table holds its sub-tables wherever their headers are and an implicit table is defined once; its text is hashed whitespace-normalized. An array of tables, or of inline tables, or a JSON array of objects, is one definition of its key over every element, and each element defines its keys under the array's path: an index in the path would change with every insertion, so the key the elements share is one path, which a symbol resolves to with each element's span, and a change to any element moves its hash. A JSON key written twice in one object is the same. TOML is read with the toml crate's spans, whose parser refuses a nesting past its recursion limit; JSON with a scanner of its own that keeps spans, holds its containers on a stack of its own and refuses a nesting past MAX_NESTING and anything that is not JSON at the byte it fails."
+alternatives = [
+    "Index array elements (bin::0::name): rejected because an inserted element would move every later anchor",
+    "Merge a key of all elements into one span: rejected because it would span the unrelated keys between them, whose edits would move its hash",
+    "serde_json for JSON: rejected because it keeps no spans",
+]
+tags = [
+    "anchors",
+    "configuration",
+]
+status = "accepted"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/json.rs", symbol = "Scanner" },
+    { file = "src/code/json.rs", symbol = "index" },
+    { file = "src/code/toml.rs", symbol = "Keys::value" },
+    { file = "src/code/toml.rs", symbol = "index" },
+]

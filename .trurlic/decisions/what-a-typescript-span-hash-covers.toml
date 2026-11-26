@@ -1,0 +1,41 @@
+component = "code"
+choice = "A TypeScript span hash holds under prettier's layout and options: quotes, escaped quotes, semicolons and the commas, parentheses and operators of no meaning are out; JSX text as it renders"
+reason = "A line break carries syntax no token holds: return then x on the next line is two statements, return x one. So each statement of a block or a switch case and each member of a class, an interface or a type literal is a group whose marks enter the hash; then the ; that ends a statement, an empty statement in a block or a case (semicolon-free code's guard before [ or ( ) and the ; or , between members are left out. Any other token a formatter trades is left out only where no program of another meaning differs by it alone: a string's quotes, and its escapes, each spelled by what it means, an escaped quote as the quote (a JSX attribute's string has no escapes); a trailing comma in a list with no holes, but not where a hole precedes it ([a,,]) or after a rest element; the parentheses of an arrow's one parameter of no type, default or decorator, the arrow taking no type parameters or return type; parentheses around a return's or a throw's value, a conditional's branch but a sequence, a conditional arrow body, a JSX element, a tuple's element type and a conditional type's branch; a union's or an intersection's leading operator. A template string is walked, its text runs tokens with their spaces, never a quoted string's. JSX text is hashed as TypeScript's and Babel's transforms render it: spaces and tabs within a line as written, a run of whitespace that holds a line break one space between text and dropped at an end, character references among the text; {\" \"} is its spaces, and an empty or comment expression is left out. A jest each table prettier aligns moves its test's hash: a template's spaces are its text."
+alternatives = [
+    "Hash the leaves alone: rejected because a statement split by a line break would leave the hash as it was",
+    "Every comma and parenthesis in the hash: rejected because prettier writes them by line width and option, so a reformat of a tree would move most of its hashes",
+    "Leave out a trailing comma wherever a closer follows: rejected because [a,,] has a hole [a,] lacks, and a query's anchor cannot tell the last comma from the one before it",
+    "Each run of JSX whitespace as one space: rejected because JSX keeps the spaces within a line, which pre and React Native's Text render",
+    "A template string as one token: rejected because a space or a comment inside its ${} would move the hash",
+]
+tags = [
+    "anchors",
+    "typescript",
+]
+status = "proposed"
+origin = "typescript and javascript"
+created = "2026-11-25T18:18:55.579282906Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_reformat_a_comment_or_a_semicolon_leaves_a_typescript_hash" },
+    { file = "src/code/general/tests.rs", symbol = "a_statement_split_by_a_line_break_moves_a_typescript_hash" },
+    { file = "src/code/general/tests.rs", symbol = "a_token_the_hash_leaves_out_elsewhere_moves_it_where_it_means_something" },
+    { file = "src/code/general/tests.rs", symbol = "jsx_text_is_hashed_as_jsx_renders_it" },
+    { file = "src/code/general/tests.rs", symbol = "prettiers_quotes_trailing_commas_and_arrow_parentheses_leave_a_typescript_hash" },
+    { file = "src/code/general/tests.rs", symbol = "the_parentheses_and_operators_a_line_width_adds_leave_a_typescript_hash" },
+    { file = "src/code/language/tsx.scm" },
+    { file = "src/code/language/typescript.scm" },
+    { file = "src/code/units/jsx.rs", symbol = "push_chars" },
+    { file = "src/code/units/spelling.rs", symbol = "escape" },
+]
+depends_on = [
+    "a-span-hash-is-t1-over-the-tokens-without-comments",
+]
+
+[accepted_text]
+choice = "A TypeScript span hash takes a string or regex as one token, walks a template string, groups each statement and member, drops a ; or , ending one and an empty JSX expression"
+reason = "Automatic semicolon insertion makes a line break carry syntax that no token holds: return then x on the next line is two statements, return x one. The query marks each statement of a program, a block or a switch case, and each member of a class, an interface or a type literal, a group whose marks enter the hash, so the two hash apart; with groups in place the ; that ends a statement and the ; or , that separates two members carry nothing and are left out, so a file with and without semicolons hashes alike. A string and a regular expression are one token with their spaces, quotes as written: prettier's change of quotes, of a trailing comma and of the parentheses around an arrow function's one parameter moves the hash. A template string is walked: its text runs are tokens with their spaces, while a space or a comment inside its ${} moves nothing, and a definition inside one is found. A JSX comment is written {/* c */}, whose braces are tokens: a JSX expression that holds no expression, a comment or nothing, is left out whole. JSX text is hashed as JSX renders it, a token a character and an empty one a run of whitespace, a run at an end of the text that holds a line break dropped, so a reformat moves nothing, <b>Hi</b> there hashes apart from <b>Hi</b>there, and a{/* c */}b hashes as ab."
+alternatives = [
+    "Hash the leaves alone: rejected because a statement split by a line break would leave the hash as it was",
+    "A template string as one token: rejected because a space or a comment inside its ${} would move the hash",
+    "JSX text verbatim: rejected because a formatter that rewraps it would read as a change to the code",
+]

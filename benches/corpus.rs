@@ -9,7 +9,14 @@
 //! `apply` is timed with one op and with fifty, under each placement and,
 //! under `tracked`, with the shipped example `[quality]` (eleven patterns),
 //! whose patterns each batch compiles; `load_state` is timed with that
-//! table too, which a read parses and never compiles.
+//! table too, which a load parses and never compiles. `status` is timed
+//! with it whole, which judges the limits alone, and with its `lint`
+//! section alone, which compiles the patterns and judges them too.
+//!
+//! The code index is timed over this repository's own `src/`, cold (its
+//! cache emptied before each run) and warm (every file's index read from
+//! the cache): the anchor findings of the smallest corpus walk, read and
+//! index the whole tree, as `status` and `check` do.
 //!
 //! Read tools come from `tools/list`, so a new one is never skipped: setup
 //! panics until a request here fits it.
@@ -38,7 +45,7 @@ use criterion::{
 };
 use serde_json::{Value, json};
 
-use trurlic::bench::{Corpus, Server};
+use trurlic::bench::{Corpus, Server, likely_duplicates};
 use trurlic::store::{Placement, ProjectState, Store};
 
 /// The example `[quality]` table the repository ships.
@@ -217,6 +224,40 @@ fn bench_validate(c: &mut Criterion) {
     group.finish();
 }
 
+/// The pass over every pair of decisions that `status` makes for its
+/// likely duplicates, from the loaded graph: the index and the pairs.
+fn bench_duplicates(c: &mut Criterion) {
+    let mut group = c.benchmark_group("duplicates");
+    for fixture in CORPORA.iter() {
+        let state = fixture.store.load_state().unwrap();
+        group.bench_function(BenchmarkId::from_parameter(fixture.size), |b| {
+            b.iter(|| likely_duplicates(black_box(&state)));
+        });
+    }
+    group.finish();
+}
+
+/// `status` over a store with the shipped `[quality]`: the whole report,
+/// which judges the bar's limits alone, and the `lint` section alone,
+/// which compiles the patterns and judges them too.
+fn bench_status_lint(c: &mut Criterion) {
+    let mut group = c.benchmark_group("status_quality");
+    for &size in &Corpus::SIZES {
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("corpus-lint-{size}"));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        add_quality(&Corpus::new(size).write(&dir).unwrap());
+        let mut server = server_at(dir);
+        for (name, arguments) in [("all", json!({})), ("lint", json!({ "section": "lint" }))] {
+            let line = tool_call("status", arguments);
+            let id = BenchmarkId::new(name, size);
+            bench_request(&mut group, id, &mut server, &line);
+        }
+    }
+    group.finish();
+}
+
 fn bench_read_tools(c: &mut Criterion) {
     let mut group = c.benchmark_group("read_tool");
     for fixture in CORPORA.iter() {
@@ -389,11 +430,47 @@ fn bench_apply(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_code_index(c: &mut Criterion) {
+    let mut group = c.benchmark_group("code_index");
+    let fixture = CORPORA.first().unwrap();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let store = Store::reached_from(fixture.store.root().to_path_buf(), source);
+    let state = store.load_state().unwrap();
+    let cache = store.root().join(".state/symbols");
+    group.bench_function("src/cold", |b| {
+        b.iter_batched(
+            || {
+                if cache.exists() {
+                    fs::remove_dir_all(&cache).unwrap();
+                }
+            },
+            |()| trurlic::bench::anchor_findings(&store, &state),
+            BatchSize::PerIteration,
+        );
+    });
+    let _warm = trurlic::bench::anchor_findings(&store, &state);
+    group.bench_function("src/warm", |b| {
+        b.iter(|| trurlic::bench::anchor_findings(&store, &state));
+    });
+    group.finish();
+}
+
+fn bench_query_compile(c: &mut Criterion) {
+    let mut group = c.benchmark_group("query_compile");
+    for name in ["c", "cpp", "python", "typescript", "tsx"] {
+        group.bench_function(name, |b| {
+            b.iter(|| assert!(trurlic::bench::query_compiles(name)));
+        });
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(3));
-    targets = bench_load_state, bench_validate, bench_read_tools, bench_write, bench_apply
+    targets = bench_load_state, bench_validate, bench_duplicates, bench_status_lint,
+        bench_read_tools, bench_write, bench_apply, bench_code_index, bench_query_compile
 }
 criterion_main!(benches);

@@ -1,0 +1,862 @@
+//! A language's query file and the contract the general resolver holds it
+//! to. tree-sitter compiles a query against its grammar and refuses an
+//! unknown node kind or field, a syntax error and an impossible shape;
+//! it accepts any capture name, property and predicate it does not
+//! evaluate itself, so the contract refuses each of those here: a query
+//! is read as written or not at all.
+//!
+//! A pattern is a definition pattern or a mark pattern, and every pattern
+//! has one root node (the resolver starts each pattern at one node).
+//!
+//! - A definition pattern captures `@definition`, the node its span is,
+//!   once, and `@name`, the node its own path segments are, once or on
+//!   several nodes, whose segments follow one another in the order of the
+//!   file (`TEST(Suite, Name)` is `Suite::Name`), and sets its `kind`. Its other properties: `kind.in "class:method"` (its kind
+//!   in a container of a kind), `container "false"` (what its span holds
+//!   is not under it), `within "top class"` (kept only at the file's top
+//!   or in a container of those kinds), `definition.via` and
+//!   `definition.to` (its span grows from the captured node up through
+//!   ancestors of the `via` kinds to the first of a `to` kind, or it is
+//!   dropped), `definition.wrap` (its span grows over each ancestor of
+//!   those kinds right above it), `definition.preceding` (its span takes
+//!   in the run of siblings of those kinds right before it, comments
+//!   between them included), `exclusive "true"` (a match of it drops
+//!   every match of a pattern without it that captured the same node as
+//!   its `@definition`), `name.separator "."` (each leaf of the name with
+//!   that text ends one segment and starts the next), `name.skip
+//!   "template_argument_list"` (the leaves under nodes of those kinds are
+//!   no part of its name), `name.text "default"` (its one segment,
+//!   whatever its name node's text), and `visibility` (its visibility when
+//!   no mark states one).
+//! - A mark pattern captures any of `@role.test` (a definition whose name
+//!   lies inside is test code), `@visibility.<name>` (a definition whose
+//!   span holds the node, and the node its name, has that visibility; the
+//!   innermost such mark wins), `@visibility.within.<name>` (a definition
+//!   whose name lies inside has that visibility when no mark of the first
+//!   form or export states one; the innermost wins, and of two on one node
+//!   the one `Visibility` orders first), `@visibility.after.<name>` (a
+//!   label: a definition whose name lies in a later sibling of the node,
+//!   up to the next such label among them, has that visibility over a
+//!   mark of either other form: a C++ `public:`, or a class body's `{`
+//!   for its default), `@visibility.through` (a label among the
+//!   node's children holds for the node's later siblings too: a `#if`
+//!   arm's), `@export.name` (a definition named as the node's text,
+//!   directly in the container that holds the node, is public when no
+//!   mark of the first form or label states its visibility),
+//!   `@scope.unnamed` (a scope no name stands for: see below),
+//!   `@scope.none` (no scope, whatever `@scope.unnamed` captures),
+//!   `@hash.unit` (one token of its text, the comments in it left out, cut
+//!   where each of its children with a hash mark of its own is taken by
+//!   it), `@hash.tokens` (one token per token its
+//!   grammar's lexicon lexes in it: a C macro's body), `@hash.chars` (its text as JSX renders it, with the text
+//!   of such nodes only whitespace parts from it: a token a character, an
+//!   empty one a space, a run of whitespace that holds a line break one
+//!   space between text and none at an end), `@hash.delimiter` (a string's delimiter, hashed as what
+//!   it means: its prefix letters in any case and order, `u` none, each
+//!   quote `'` or `"` alike; the escapes a raw string's end holds are its
+//!   text), `@hash.join` (a delimiter that starts a string the one before
+//!   continues: left out with that one's end where both start alike, so
+//!   their texts are one), `@hash.string` (a string's text, one token with
+//!   the text that continues it, its escapes spelled as
+//!   `@hash.escape` captures them), `@hash.escape` (an escape of a string's
+//!   text, hashed as what it means: a quote escape as its quote, hex digits
+//!   and a name in any case, an octal one of three digits),
+//!   `@hash.literal` (a number, hashed as what it means: its letters in any
+//!   case, a `.` with no digit beside it as one with `0`, an exponent's
+//!   `+` none), `@hash.skip` (left out of every hash) and
+//!   `@hash.group` (a statement or block, whose extent the hash holds),
+//!   and sets no property. A definition pattern may capture these too.
+//!
+//! A definition is under the innermost definition or unnamed scope whose
+//! captured node holds its own `@definition` node. An unnamed scope that a
+//! definition captures as its `@definition` is that definition's. Any
+//! other is a container of its own that `within` never admits, whose path
+//! is the definition around it: a function's locals stay locals, and a
+//! function in a callback is under the definition that holds the callback.
+//! What an unnamed scope holds that no definition holds defines nothing.
+//!
+//! A name is the text of its node's leaves, comments left out, one space
+//! where bytes lie between two leaves that a word character ends and
+//! starts (`operator ==` is `operator==`, `operator bool` keeps its
+//! space); a name written as a string literal
+//! is the text between its quotes; and a `::` in a name splits it as it
+//! splits a symbol. A capture whose name starts with `_` is read by a text
+//! predicate alone (`#eq?`, `#match?`, `#any-of?` and their `not-` forms,
+//! which tree-sitter evaluates). Kinds and visibilities are named as
+//! `DefinitionKind::name` and `Visibility::name` write them. Which
+//! definition a match makes never depends on the order of the patterns.
+
+use std::collections::BTreeSet;
+use std::fmt;
+
+use tree_sitter::{CaptureQuantifier, Language, Query, QueryError};
+
+use super::kinds::{DefinitionKind, Visibility};
+
+/// What a capture of a query is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Capture {
+    Definition,
+    Name,
+    Test,
+    Visibility(Visibility),
+    Within(Visibility),
+    /// A label: the later siblings of the node have the visibility.
+    After(Visibility),
+    /// A label among the node's children holds for its later siblings.
+    Through,
+    Export,
+    Unnamed,
+    NoScope,
+    Unit,
+    Tokens,
+    Chars,
+    Delimiter,
+    Join,
+    String,
+    Escape,
+    Literal,
+    Skip,
+    Group,
+    /// Read by a text predicate alone.
+    Predicate,
+}
+
+/// Where a definition may stand: at the file's top, in a container of a
+/// kind, or in an unnamed scope, which no `within` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Container {
+    Top,
+    Kind(DefinitionKind),
+    Unnamed,
+}
+
+/// How a definition pattern makes a definition of what it captures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Definer {
+    pub(super) kind: DefinitionKind,
+    /// Its kind in a container of a kind, by the container's.
+    pub(super) kind_in: Vec<(DefinitionKind, DefinitionKind)>,
+    /// What its span holds is under it.
+    pub(super) container: bool,
+    /// The containers it is kept in; `None` for every one.
+    pub(super) within: Option<Vec<Container>>,
+    /// The growth of its span, by its place in [`Rules::growths`].
+    pub(super) growth: Option<usize>,
+    /// The wrapping of its span, by its place in [`Rules::wraps`].
+    pub(super) wrap: Option<usize>,
+    /// The siblings its span takes in, by their place in
+    /// [`Rules::precedings`].
+    pub(super) preceding: Option<usize>,
+    /// A match of it drops the matches of patterns without it that
+    /// captured its `@definition` node.
+    pub(super) exclusive: bool,
+    /// The text of a leaf of its name that separates two segments.
+    pub(super) separator: Option<String>,
+    /// The node kinds whose leaves its name leaves out.
+    pub(super) skip: Vec<u16>,
+    /// The text of its one segment, in place of its name node's.
+    pub(super) text: Option<String>,
+    pub(super) visibility: Option<Visibility>,
+}
+
+impl Definer {
+    /// Whether it is kept in `container`.
+    pub(super) fn admits(&self, container: Container) -> bool {
+        self.within
+            .as_ref()
+            .is_none_or(|within| within.contains(&container))
+    }
+
+    /// Its kind in `container`.
+    pub(super) fn kind_in(&self, container: Container) -> DefinitionKind {
+        self.kind_in
+            .iter()
+            .find(|(outer, _)| Container::Kind(*outer) == container)
+            .map_or(self.kind, |(_, kind)| *kind)
+    }
+}
+
+/// A span's growth: from the captured node up through ancestors of the
+/// `via` kinds to the first of a `to` kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Growth {
+    pub(super) via: Vec<u16>,
+    pub(super) to: Vec<u16>,
+}
+
+/// A language's query, compiled and read by its contract.
+#[derive(Debug)]
+pub(super) struct Rules {
+    pub(super) grammar: Language,
+    pub(super) query: Query,
+    /// By capture index.
+    pub(super) captures: Vec<Capture>,
+    /// By pattern index: the definer of a definition pattern.
+    pub(super) patterns: Vec<Option<Definer>>,
+    /// The distinct growths of the patterns.
+    pub(super) growths: Vec<Growth>,
+    /// The distinct sets of kinds a span wraps over.
+    pub(super) wraps: Vec<Vec<u16>>,
+    /// The distinct sets of kinds of the siblings a span takes in.
+    pub(super) precedings: Vec<Vec<u16>>,
+}
+
+/// Why a query file breaks its contract.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum QueryFault {
+    Compile(QueryError),
+    UnknownCapture(String),
+    NotRooted { pattern: usize },
+    UnknownPredicate { pattern: usize, operator: String },
+    UnknownProperty { pattern: usize, key: String },
+    BadValue { pattern: usize, key: String },
+    NotADefinition { pattern: usize },
+    UnknownNodeKind { pattern: usize, name: String },
+    UnknownContainer { pattern: usize, name: String },
+}
+
+/// How often a pattern captures a capture of one kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Count {
+    Never,
+    Once,
+    /// On several nodes, each once.
+    Many,
+    Otherwise,
+}
+
+impl fmt::Display for QueryFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Compile(error) => write!(f, "does not compile: {error}"),
+            Self::UnknownCapture(name) => {
+                write!(f, "captures `@{name}`, which the resolver does not read")
+            }
+            Self::NotRooted { pattern } => {
+                write!(f, "pattern {pattern} has more than one root node")
+            }
+            Self::UnknownPredicate { pattern, operator } => write!(
+                f,
+                "pattern {pattern} uses `#{operator}`, which the resolver does not evaluate"
+            ),
+            Self::UnknownProperty { pattern, key } => write!(
+                f,
+                "pattern {pattern} sets `{key}`, which the resolver does not read there"
+            ),
+            Self::BadValue { pattern, key } => write!(
+                f,
+                "pattern {pattern} sets `{key}` to a value the resolver does not read"
+            ),
+            Self::NotADefinition { pattern } => write!(
+                f,
+                "pattern {pattern} does not capture `@definition` and `@name` once each"
+            ),
+            Self::UnknownNodeKind { pattern, name } => write!(
+                f,
+                "pattern {pattern} names `{name}`, which is no kind of a node of the grammar's trees"
+            ),
+            Self::UnknownContainer { pattern, name } => write!(
+                f,
+                "pattern {pattern} names the container `{name}`, which no pattern defines"
+            ),
+        }
+    }
+}
+
+/// The definition-pattern properties, each read once.
+const PROPERTIES: [&str; 13] = [
+    "kind",
+    "kind.in",
+    "container",
+    "within",
+    "definition.via",
+    "definition.to",
+    "definition.wrap",
+    "definition.preceding",
+    "exclusive",
+    "name.separator",
+    "name.skip",
+    "name.text",
+    "visibility",
+];
+
+impl Rules {
+    /// The rules of `source`, a query of `grammar`.
+    pub(super) fn compile(grammar: Language, source: &str) -> Result<Self, QueryFault> {
+        let query = Query::new(&grammar, source).map_err(QueryFault::Compile)?;
+        let captures = query
+            .capture_names()
+            .iter()
+            .map(|name| capture_of(name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut rules = Self {
+            grammar,
+            query,
+            captures,
+            patterns: Vec::new(),
+            growths: Vec::new(),
+            wraps: Vec::new(),
+            precedings: Vec::new(),
+        };
+        for pattern in 0..rules.query.pattern_count() {
+            let definer = rules.pattern(pattern)?;
+            rules.patterns.push(definer);
+        }
+        rules.check_containers()?;
+        Ok(rules)
+    }
+
+    /// The definer of pattern `pattern`, `None` for a mark pattern.
+    fn pattern(&mut self, pattern: usize) -> Result<Option<Definer>, QueryFault> {
+        if !self.query.is_pattern_rooted(pattern) {
+            return Err(QueryFault::NotRooted { pattern });
+        }
+        if let Some(predicate) = self.query.general_predicates(pattern).first() {
+            return Err(QueryFault::UnknownPredicate {
+                pattern,
+                operator: predicate.operator.to_string(),
+            });
+        }
+        if let Some((property, _)) = self.query.property_predicates(pattern).first() {
+            return Err(QueryFault::UnknownPredicate {
+                pattern,
+                operator: format!("is? {}", property.key),
+            });
+        }
+        let settings = self.settings(pattern)?;
+        let definition = self.count(pattern, Capture::Definition);
+        let name = self.count(pattern, Capture::Name);
+        match (definition, name, settings) {
+            (Count::Never, Count::Never, None) => Ok(None),
+            (Count::Once, Count::Once | Count::Many, settings) => self
+                .definer(pattern, &settings.unwrap_or_default())
+                .map(Some),
+            (Count::Never, Count::Never, Some(settings)) => Err(QueryFault::UnknownProperty {
+                pattern,
+                key: settings.keys().next().cloned().unwrap_or_default(),
+            }),
+            // Every other mix: one of the two without the other, or either
+            // more than once.
+            (Count::Never | Count::Once | Count::Many | Count::Otherwise, _, _) => {
+                Err(QueryFault::NotADefinition { pattern })
+            }
+        }
+    }
+
+    /// How often pattern `pattern` captures a capture that is `wanted`.
+    fn count(&self, pattern: usize, wanted: Capture) -> Count {
+        let quantifiers = self.query.capture_quantifiers(pattern);
+        let mut captured = self
+            .captures
+            .iter()
+            .zip(quantifiers)
+            .filter(|(capture, quantifier)| {
+                **capture == wanted && **quantifier != CaptureQuantifier::Zero
+            })
+            .map(|(_, quantifier)| *quantifier);
+        match (captured.next(), captured.next()) {
+            (None, _) => Count::Never,
+            (Some(CaptureQuantifier::One), None) => Count::Once,
+            (Some(CaptureQuantifier::OneOrMore), None) => Count::Many,
+            // Quantified (`?`, `*`, `+`), or captured under two names.
+            (Some(_), _) => Count::Otherwise,
+        }
+    }
+
+    /// The properties pattern `pattern` sets, by key; `None` for none.
+    fn settings(&self, pattern: usize) -> Result<Option<Settings>, QueryFault> {
+        let mut settings = Settings::new();
+        for property in self.query.property_settings(pattern) {
+            let key = property.key.to_string();
+            let unknown = !PROPERTIES.contains(&key.as_str()) || property.capture_id.is_some();
+            let value = property
+                .value
+                .as_deref()
+                .filter(|value| !value.trim().is_empty());
+            let Some(value) = value.filter(|_| !unknown && !settings.contains_key(&key)) else {
+                return Err(match unknown {
+                    true => QueryFault::UnknownProperty { pattern, key },
+                    false => QueryFault::BadValue { pattern, key },
+                });
+            };
+            settings.insert(key, value.to_owned());
+        }
+        Ok((!settings.is_empty()).then_some(settings))
+    }
+
+    /// The definer of definition pattern `pattern`, which sets `settings`.
+    fn definer(&mut self, pattern: usize, settings: &Settings) -> Result<Definer, QueryFault> {
+        let read = Properties { pattern, settings };
+        let kind = read.kind("kind")?.ok_or(QueryFault::BadValue {
+            pattern,
+            key: "kind".to_owned(),
+        })?;
+        let growth = self.growth(&read)?;
+        let wrap = read
+            .node_kinds(&self.grammar, "definition.wrap")?
+            .map(|kinds| intern(&mut self.wraps, kinds));
+        let preceding = read
+            .node_kinds(&self.grammar, "definition.preceding")?
+            .map(|kinds| intern(&mut self.precedings, kinds));
+        Ok(Definer {
+            kind,
+            kind_in: read.kind_in()?,
+            container: read.flag("container", true)?,
+            within: read.within()?,
+            growth,
+            wrap,
+            preceding,
+            exclusive: read.flag("exclusive", false)?,
+            separator: settings.get("name.separator").cloned(),
+            skip: read
+                .node_kinds(&self.grammar, "name.skip")?
+                .unwrap_or_default(),
+            text: settings.get("name.text").cloned(),
+            visibility: read.visibility()?,
+        })
+    }
+
+    /// The growth `read` states, by its place in [`Rules::growths`];
+    /// `None` for none.
+    fn growth(&mut self, read: &Properties<'_>) -> Result<Option<usize>, QueryFault> {
+        match (
+            read.node_kinds(&self.grammar, "definition.via")?,
+            read.node_kinds(&self.grammar, "definition.to")?,
+        ) {
+            (via, Some(to)) => Ok(Some(intern(
+                &mut self.growths,
+                Growth {
+                    via: via.unwrap_or_default(),
+                    to,
+                },
+            ))),
+            (Some(_), None) => Err(read.bad("definition.via")),
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// Refuse a container a `within` or `kind.in` names that no pattern
+    /// defines.
+    fn check_containers(&self) -> Result<(), QueryFault> {
+        let defined: BTreeSet<DefinitionKind> = self
+            .patterns
+            .iter()
+            .flatten()
+            .flat_map(|definer| {
+                std::iter::once(definer.kind).chain(definer.kind_in.iter().map(|(_, kind)| *kind))
+            })
+            .collect();
+        for (pattern, definer) in self.patterns.iter().enumerate() {
+            let Some(definer) = definer else {
+                continue;
+            };
+            let named = definer
+                .within
+                .iter()
+                .flatten()
+                .filter_map(|container| match container {
+                    Container::Top | Container::Unnamed => None,
+                    Container::Kind(kind) => Some(*kind),
+                })
+                .chain(definer.kind_in.iter().map(|(outer, _)| *outer));
+            if let Some(missing) = named.into_iter().find(|kind| !defined.contains(kind)) {
+                return Err(QueryFault::UnknownContainer {
+                    pattern,
+                    name: missing.name().to_owned(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The properties a pattern sets, by key.
+type Settings = std::collections::BTreeMap<String, String>;
+
+/// The properties of one definition pattern, read.
+struct Properties<'a> {
+    pattern: usize,
+    settings: &'a Settings,
+}
+
+impl Properties<'_> {
+    fn bad(&self, key: &str) -> QueryFault {
+        QueryFault::BadValue {
+            pattern: self.pattern,
+            key: key.to_owned(),
+        }
+    }
+
+    /// The flag `key` sets: `unset` when the pattern does not set it, the
+    /// other of `"true"` and `"false"` when it does.
+    fn flag(&self, key: &str, unset: bool) -> Result<bool, QueryFault> {
+        match (self.settings.get(key).map(String::as_str), unset) {
+            (None, _) => Ok(unset),
+            (Some("false"), true) => Ok(false),
+            (Some("true"), false) => Ok(true),
+            (Some(_), _) => Err(self.bad(key)),
+        }
+    }
+
+    fn words(&self, key: &str) -> Option<impl Iterator<Item = &str>> {
+        self.settings.get(key).map(|value| value.split_whitespace())
+    }
+
+    fn unknown_kind(&self, name: &str) -> QueryFault {
+        QueryFault::UnknownNodeKind {
+            pattern: self.pattern,
+            name: name.to_owned(),
+        }
+    }
+
+    /// The definition kind `key` names.
+    fn kind(&self, key: &str) -> Result<Option<DefinitionKind>, QueryFault> {
+        self.settings
+            .get(key)
+            .map(|name| DefinitionKind::of_name(name).ok_or_else(|| self.bad(key)))
+            .transpose()
+    }
+
+    /// The node kinds `key` names, each a named kind of `grammar`.
+    fn node_kinds(&self, grammar: &Language, key: &str) -> Result<Option<Vec<u16>>, QueryFault> {
+        let Some(words) = self.words(key) else {
+            return Ok(None);
+        };
+        let mut kinds = Vec::new();
+        for name in words {
+            // A supertype (`expression`) names a class of kinds; no node of
+            // a tree is of it, so a growth to it would reach nothing.
+            match grammar.id_for_node_kind(name, true) {
+                0 => return Err(self.unknown_kind(name)),
+                id if grammar.node_kind_is_supertype(id) => return Err(self.unknown_kind(name)),
+                id => kinds.push(id),
+            }
+        }
+        Ok(Some(kinds))
+    }
+
+    fn visibility(&self) -> Result<Option<Visibility>, QueryFault> {
+        self.settings
+            .get("visibility")
+            .map(|name| Visibility::of_name(name).ok_or_else(|| self.bad("visibility")))
+            .transpose()
+    }
+
+    fn kind_in(&self) -> Result<Vec<(DefinitionKind, DefinitionKind)>, QueryFault> {
+        let Some(words) = self.words("kind.in") else {
+            return Ok(Vec::new());
+        };
+        words
+            .map(|pair| {
+                let (outer, kind) = pair.split_once(':').ok_or_else(|| self.bad("kind.in"))?;
+                let named = |name| DefinitionKind::of_name(name).ok_or_else(|| self.bad("kind.in"));
+                Ok((named(outer)?, named(kind)?))
+            })
+            .collect()
+    }
+
+    fn within(&self) -> Result<Option<Vec<Container>>, QueryFault> {
+        let Some(words) = self.words("within") else {
+            return Ok(None);
+        };
+        words
+            .map(|name| match name {
+                "top" => Ok(Container::Top),
+                name => DefinitionKind::of_name(name)
+                    .map(Container::Kind)
+                    .ok_or_else(|| self.bad("within")),
+            })
+            .collect::<Result<_, _>>()
+            .map(Some)
+    }
+}
+
+/// What the capture `name` is.
+fn capture_of(name: &str) -> Result<Capture, QueryFault> {
+    Ok(match name {
+        "definition" => Capture::Definition,
+        "name" => Capture::Name,
+        "role.test" => Capture::Test,
+        "export.name" => Capture::Export,
+        "scope.unnamed" => Capture::Unnamed,
+        "scope.none" => Capture::NoScope,
+        "hash.unit" => Capture::Unit,
+        "hash.tokens" => Capture::Tokens,
+        "visibility.through" => Capture::Through,
+        "hash.chars" => Capture::Chars,
+        "hash.delimiter" => Capture::Delimiter,
+        "hash.join" => Capture::Join,
+        "hash.string" => Capture::String,
+        "hash.escape" => Capture::Escape,
+        "hash.literal" => Capture::Literal,
+        "hash.skip" => Capture::Skip,
+        "hash.group" => Capture::Group,
+        _ if name.starts_with('_') => Capture::Predicate,
+        _ => match (
+            name.strip_prefix("visibility.within."),
+            name.strip_prefix("visibility.after."),
+        ) {
+            (Some(within), _) => Visibility::of_name(within).map(Capture::Within),
+            (None, Some(after)) => Visibility::of_name(after).map(Capture::After),
+            (None, None) => name
+                .strip_prefix("visibility.")
+                .and_then(Visibility::of_name)
+                .map(Capture::Visibility),
+        }
+        .ok_or_else(|| QueryFault::UnknownCapture(name.to_owned()))?,
+    })
+}
+
+/// The place of `value` in `values`, added when it is not there.
+fn intern<T: PartialEq>(values: &mut Vec<T>, value: T) -> usize {
+    match values.iter().position(|known| *known == value) {
+        Some(at) => at,
+        None => {
+            values.push(value);
+            values.len() - 1
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn python() -> Language {
+        tree_sitter_python::LANGUAGE.into()
+    }
+
+    fn fault(source: &str) -> QueryFault {
+        Rules::compile(python(), source).unwrap_err()
+    }
+
+    const FUNCTION: &str = "((function_definition name: (identifier) @name) @definition";
+
+    fn bad(pattern: usize, key: &str) -> QueryFault {
+        QueryFault::BadValue {
+            pattern,
+            key: key.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_query_is_refused_for_each_break_of_its_contract() {
+        let kind = "(#set! kind \"function\")";
+        let cases = [
+            (
+                "(identifier) @frobnicate".to_owned(),
+                QueryFault::UnknownCapture("frobnicate".to_owned()),
+            ),
+            (
+                "(identifier) @visibility.secret".to_owned(),
+                QueryFault::UnknownCapture("visibility.secret".to_owned()),
+            ),
+            (
+                "(identifier) @visibility.within.secret".to_owned(),
+                QueryFault::UnknownCapture("visibility.within.secret".to_owned()),
+            ),
+            (
+                "(identifier) @visibility.after.secret".to_owned(),
+                QueryFault::UnknownCapture("visibility.after.secret".to_owned()),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! name.skip \"arguments\"))"),
+                QueryFault::UnknownNodeKind {
+                    pattern: 0,
+                    name: "arguments".to_owned(),
+                },
+            ),
+            (
+                format!(
+                    "((function_definition name: (_) @definition body: (_) @definition) @name {kind})"
+                ),
+                QueryFault::NotADefinition { pattern: 0 },
+            ),
+            (
+                "(identifier) @scope.named".to_owned(),
+                QueryFault::UnknownCapture("scope.named".to_owned()),
+            ),
+            (
+                "((identifier) @_n (#frobnicate! @_n))".to_owned(),
+                QueryFault::UnknownPredicate {
+                    pattern: 0,
+                    operator: "frobnicate!".to_owned(),
+                },
+            ),
+            (
+                "((identifier) @_n (#is? local))".to_owned(),
+                QueryFault::UnknownPredicate {
+                    pattern: 0,
+                    operator: "is? local".to_owned(),
+                },
+            ),
+            (
+                format!("((identifier) @hash.unit {kind})"),
+                QueryFault::UnknownProperty {
+                    pattern: 0,
+                    key: "kind".to_owned(),
+                },
+            ),
+            (
+                format!("{FUNCTION} (#set! kidn \"function\"))"),
+                QueryFault::UnknownProperty {
+                    pattern: 0,
+                    key: "kidn".to_owned(),
+                },
+            ),
+            (format!("{FUNCTION})"), bad(0, "kind")),
+            (
+                format!("{FUNCTION} (#set! kind \"klass\"))"),
+                bad(0, "kind"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! container \"no\"))"),
+                bad(0, "container"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! definition.via \"block\"))"),
+                bad(0, "definition.via"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! visibility \"crate-ish\"))"),
+                bad(0, "visibility"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! definition.wrap \"decorated\"))"),
+                QueryFault::UnknownNodeKind {
+                    pattern: 0,
+                    name: "decorated".to_owned(),
+                },
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! definition.to \"expression\"))"),
+                QueryFault::UnknownNodeKind {
+                    pattern: 0,
+                    name: "expression".to_owned(),
+                },
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! exclusive \"false\"))"),
+                bad(0, "exclusive"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! container \"true\"))"),
+                bad(0, "container"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! name.separator \" \"))"),
+                bad(0, "name.separator"),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! definition.preceding \"decorators\"))"),
+                QueryFault::UnknownNodeKind {
+                    pattern: 0,
+                    name: "decorators".to_owned(),
+                },
+            ),
+            (
+                "((identifier) @export.names)".to_owned(),
+                QueryFault::UnknownCapture("export.names".to_owned()),
+            ),
+            (
+                format!("{FUNCTION} {kind} (#set! within \"top struct\"))"),
+                QueryFault::UnknownContainer {
+                    pattern: 0,
+                    name: "struct".to_owned(),
+                },
+            ),
+            (
+                format!("((function_definition name: (identifier) @name) {kind})"),
+                QueryFault::NotADefinition { pattern: 0 },
+            ),
+            (
+                format!("((block (expression_statement)* @name) @definition {kind})"),
+                QueryFault::NotADefinition { pattern: 0 },
+            ),
+            // A predicate outside the pattern's parentheses is a pattern
+            // of its own: the definition pattern before it sets no kind.
+            (format!("{FUNCTION}) {kind}"), bad(0, "kind")),
+            (
+                "((identifier) @hash.unit . (identifier) @hash.unit)".to_owned(),
+                QueryFault::NotRooted { pattern: 0 },
+            ),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(fault(&source), expected, "{source}");
+        }
+        assert!(matches!(
+            fault("(nonesuch) @hash.unit"),
+            QueryFault::Compile(_)
+        ));
+    }
+
+    #[test]
+    fn a_query_within_its_contract_reads_each_pattern() {
+        let source = format!(
+            "{FUNCTION} (#set! kind \"function\") (#set! kind.in \"class:method\") \
+             (#set! definition.wrap \"decorated_definition\") (#set! visibility \"public\"))\n\
+             ((class_definition name: (identifier) @name) @definition (#set! kind \"class\"))\n\
+             ((assignment left: (identifier) @name) @definition (#set! kind \"variable\") \
+             (#set! container \"false\") (#set! within \"top class\") \
+             (#set! definition.via \"assignment\") (#set! definition.to \"expression_statement\"))\n\
+             ((identifier) @visibility.private @_n (#match? @_n \"^_\"))\n\
+             ((class_definition name: (_) @name) @definition (#set! kind \"class\") \
+             (#set! exclusive \"true\") (#set! name.separator \".\") \
+             (#set! definition.preceding \"decorator comment\"))\n\
+             ([(identifier) @export.name (string) @hash.tokens])\n\
+             ([(lambda) @scope.unnamed (block) @visibility.within.public (string) @hash.chars])\n\
+             (lambda) @scope.none\n\
+             ((call function: (identifier) @name arguments: (argument_list (identifier) @name)) \
+             @definition (#set! kind \"function\") (#set! name.skip \"keyword_argument\") \
+             (#set! name.text \"default\"))\n\
+             (class_definition body: (block . (_) @visibility.after.protected))\n\
+             (if_statement) @visibility.through\n"
+        );
+        let rules = Rules::compile(python(), &source).unwrap();
+
+        let function = rules.patterns[0].as_ref().unwrap();
+        assert_eq!(
+            function.kind_in(Container::Kind(DefinitionKind::Class)),
+            DefinitionKind::Method
+        );
+        assert_eq!(function.kind_in(Container::Top), DefinitionKind::Function);
+        assert_eq!(function.visibility, Some(Visibility::Public));
+        assert_eq!(function.wrap, Some(0));
+        let variable = rules.patterns[2].as_ref().unwrap();
+        assert!(!variable.container);
+        assert!(variable.admits(Container::Top));
+        assert!(!variable.admits(Container::Kind(DefinitionKind::Function)));
+        assert_eq!(variable.growth, Some(0));
+        assert_eq!(rules.patterns[3], None);
+        let claimed = rules.patterns[4].as_ref().unwrap();
+        assert!(claimed.exclusive && !function.exclusive);
+        assert_eq!(claimed.separator.as_deref(), Some("."));
+        assert_eq!(claimed.preceding, Some(0));
+        assert_eq!(rules.precedings[0].len(), 2);
+        assert!(rules.captures.contains(&Capture::Export));
+        assert!(rules.captures.contains(&Capture::Tokens));
+        assert!(rules.captures.contains(&Capture::Unnamed));
+        assert!(
+            rules
+                .captures
+                .contains(&Capture::Within(Visibility::Public))
+        );
+        assert!(
+            rules
+                .captures
+                .contains(&Capture::Visibility(Visibility::Private))
+        );
+        let named_twice = rules.patterns[8].as_ref().unwrap();
+        assert_eq!(named_twice.skip.len(), 1);
+        assert_eq!(named_twice.text.as_deref(), Some("default"));
+        assert!(rules.captures.contains(&Capture::Chars));
+        assert!(rules.captures.contains(&Capture::NoScope));
+        assert!(rules.captures.contains(&Capture::Through));
+        assert!(
+            rules
+                .captures
+                .contains(&Capture::After(Visibility::Protected))
+        );
+    }
+}

@@ -1,15 +1,15 @@
 component = "mcp"
-choice = "status fits its sections to the budget by the level search, keeping each one's leading items; a section that leaves items out gives omitted and more, which names where the rest is"
-reason = "A broken graph can hold thousands of issues, and a large one hundreds of components, so a section's items can exceed the result budget alone. Each section's item sizes go to budget::level, so short sections stay whole and long ones keep a prefix; the section then carries total, the items kept, omitted and more (trurlic check lists every issue; the component and decision files hold every row). section returns one section with the whole budget. No status result is cut by the generic truncation, which a test over a graph of 400 issues and 300 components asserts."
+choice = "status fits its sections to the budget by the level search, keeping each one's leading items; a section that leaves items out gives omitted and more, naming where the rest is, or for lint how it ranks"
+reason = "A broken graph can hold thousands of issues, and a large one hundreds of components, so a section's items can exceed the result budget alone. Each section's item sizes go to budget::level, so short sections stay whole and long ones keep a prefix; the section then carries total, the items kept, omitted and more, which names where the rest is: trurlic check lists every issue, and the component and decision files hold every row. section returns one section with the whole budget. Only the lint section takes a cursor, from: no other surface judges a stored decision's patterns, so its result names in next the first decision whose quality findings the page did not list whole. No status result is cut by the generic truncation, which a test over a graph of 400 issues and 300 components asserts."
 alternatives = [
-    "A cursor argument to page a section: rejected because the surface lists none, and trurlic check and the files already hold every item",
+    "A cursor argument to page every section: rejected because trurlic check lists every issue and the files hold every row; the pattern findings, which no other surface judges, are the one place that takes from",
     "Fixed item counts per section: rejected because item sizes vary, so a count either wastes the budget or exceeds it",
 ]
 tags = [
     "api",
     "budget",
 ]
-status = "proposed"
+status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
@@ -20,4 +20,5 @@ anchors = [
 ]
 depends_on = [
     "every-tool-result-fits-max-tool-result-bytes-24-kib-a",
+    "the-lint-section-fits-each-kind-on-its-own-and-counts-each",
 ]

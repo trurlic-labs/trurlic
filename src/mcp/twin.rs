@@ -13,12 +13,15 @@ use super::result::result_text;
 use super::spec::to_value;
 use super::status::STATUS;
 use crate::discovery::discover;
-use crate::store::Applied;
 
+pub(crate) use super::apply::{Answer, Duplicates};
 pub(crate) use super::protocol::MAX_MESSAGE_BYTES as MAX_DOCUMENT_BYTES;
 pub(crate) use super::result::{ToolError, refusal_text};
 pub(crate) use super::spec::Output;
-pub(crate) use super::status::{Part, QualityCounts, Report, section_names};
+pub(crate) use super::status::{
+    AnchorCounts, Cut, LintItem, PAIRS_MORE, PairCounts, Part, PatternCounts, QualityCounts,
+    Report, section_names,
+};
 
 /// The arguments `document` holds: a JSON object, as a batch file holds
 /// the arguments of `apply`.
@@ -34,7 +37,7 @@ pub(crate) fn arguments(document: &[u8]) -> Result<Map<String, Value>, ToolError
 
 /// `apply` with `arguments`, a batch file's, on the store found from
 /// `cwd`.
-pub(crate) fn apply(cwd: &Path, arguments: &Map<String, Value>) -> Result<Applied, ToolError> {
+pub(crate) fn apply(cwd: &Path, arguments: &Map<String, Value>) -> Result<Answer, ToolError> {
     APPLY.run(&discover(cwd)?, arguments)
 }
 

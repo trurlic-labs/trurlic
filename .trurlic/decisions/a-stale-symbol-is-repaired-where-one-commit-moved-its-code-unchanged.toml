@@ -1,0 +1,37 @@
+component = "lint"
+choice = "A stale symbol is repaired to the one file the change that lost its code gave definitions of the same span hash, writing none before, and that kept an item of those kinds since"
+reason = "Names alone do not show where code went, and neither does a crate or target: the change that lost the code does. The loss is the newest of the anchor's file's MAX_LOSS_CHANGES newest changes, or the work tree's, whose blob before wrote the item and whose blob after writes none or is gone, both read in one git cat-file batch: a side branch's change that kept the item lost nothing, whatever a merge did later. Its candidates are the files that change added or changed, each followed by its blob to where it is now (sources::renames::History::lineage), of the anchor's file kind (.ts, .d.ts and .tsx, with JavaScript, are kinds apart), that write the symbol as an item's whole path now (CodeFacts::writers), at most MAX_LOSS_CANDIDATES, past which the anchor gets no repair rather than a judgement among some of them. A file git does not track is no candidate and no second one: the history names no change of it, and no process is spent on it. The repair is the one candidate that, across the loss, went from writing no item of the symbol to definitions of the span hash the anchor's file lost (lint::anchors::repair::moved_to), and held definitions of the kinds it gained after each of its changes since, at most MAX_SINCE_CHANGES read in a second batch, and holds them now; none, or two, and no repair. A namesake the change did not write, in another crate, target or test module, is so never one, while a file moved into another crate and edited in the same commit carries what it moved unchanged. The hash compares tokens, comments and whitespace aside: a move that edited the item is left stale, and an edit after the move keeps the repair."
+alternatives = [
+    "Search the one namesake of the anchor's crate target and follow a gone file's blob as two sources: rejected because the change that lost the code names its candidates itself, in any crate, and one rule covers both",
+    "Judge the move only at the commit where it happened: rejected because a candidate that later lost the item and gained an unrelated one of its name, or a type of it, kept a repair to code that is not the decision's",
+    "Require the same span hash now: rejected because every edit of the moved item since would then lose its repair",
+    "Judge a loss among some of its candidates when it changed many: rejected because the one left out could be the second file that gained the code",
+]
+tags = [
+    "anchors",
+    "lint",
+]
+status = "proposed"
+origin = "anchor repair review"
+created = "2026-11-26T07:48:25.688106240Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::writers" },
+    { file = "src/lint/anchors/repair.rs", symbol = "lost" },
+    { file = "src/lint/anchors/repair.rs", symbol = "moved_to" },
+    { file = "src/lint/anchors/tests.rs", symbol = "a_move_is_the_lost_code_arriving_where_it_was_not_and_kept_there" },
+    { file = "src/sources/renames.rs", symbol = "History::lineage" },
+    { file = "src/sources/repair.rs", symbol = "MAX_LOSS_CANDIDATES" },
+    { file = "tests/integration/repair.rs", symbol = "a_function_moved_across_crates_with_its_edited_file_is_repaired" },
+    { file = "tests/integration/repair.rs", symbol = "a_loss_that_changed_more_candidates_than_the_bound_is_never_repaired" },
+    { file = "tests/integration/repair.rs", symbol = "a_merge_repairs_only_a_move_one_of_its_branches_made" },
+    { file = "tests/integration/repair.rs", symbol = "a_namesake_or_a_rename_that_carried_no_code_is_never_written" },
+]
+
+[accepted_text]
+choice = "A stale Rust symbol is repaired to the one file of its target that writes it when the commit its file last lost it in gave that file the same span hash"
+reason = "Names alone do not show where code went: a function deleted for good in the commit that writes an unrelated function of its name elsewhere is no move. So the search, CodeFacts::namesakes, finds the one other walked Rust file of the same target by place (roles::target_of) that writes the symbol as a whole path, no re-export or module declaration, an item a macro invocation produces being no definition; never when the searched file still defines its last segment. The searched file is the anchor's, or the one a rename carried the symbol into. Its loss is the newest of its commits, read in rounds of the newest one, four and sixteen, whose parent wrote the item, or the work tree when HEAD wrote it; the repair is given when, across that loss, the candidate went from writing no such item to definitions of the span hash the searched file's had, and no later commit added or deleted the candidate. The hash compares tokens, comments and whitespace aside, and tolerates nothing else, not a changed visibility or attribute, not a rename of the item: an edited move is left stale rather than guessed. The reads are one walk for the searched files and their candidates and at most four blob batches, whatever the history's length."
+alternatives = [
+    "Follow the code through later commits and carrier files: rejected because a namesake written in the commit a carrier lost its own item was taken for the code, and one pickaxe walk per search cost minutes on a long history",
+    "Accept an edited move above a text similarity: rejected because no threshold separates an edited move from a rewrite by name without an owner's call",
+    "Judge the anchor's file at the parent of its last change: rejected because any later edit of the file then turns its repairs off",
+]

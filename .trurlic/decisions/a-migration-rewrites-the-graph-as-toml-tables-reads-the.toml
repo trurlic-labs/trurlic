@@ -15,7 +15,7 @@ tags = [
     "reliability",
     "storage",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-23T22:52:37.831647832Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::Unmigrated" },

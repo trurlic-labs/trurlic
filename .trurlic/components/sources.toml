@@ -1,0 +1,7 @@
+description = "The shell around the code index: the walk of the code root, bounded reads of source files, the index's cache in .state/symbols/ through the store, the other live worktrees, and the anchor findings of a graph gathered for status and check"
+connects_to = [
+    "code",
+    "git",
+    "lint",
+    "store",
+]

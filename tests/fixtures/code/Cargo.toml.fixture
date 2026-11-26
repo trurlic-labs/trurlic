@@ -1,0 +1,19 @@
+[workspace]
+members = ["crates/ledger"]
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+# expect_used = "deny"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+panic = "abort"
+lto = true
+
+[[bench]]
+name = "load"
+
+[[bench]]
+name = "store"

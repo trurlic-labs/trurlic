@@ -1,0 +1,21 @@
+component = "commands"
+choice = "check prints every issue and finding by severity, errors, then warnings, then notes; it fails counting the errors, a stale or ambiguous anchor among them, and is consistent only when silent"
+reason = "check is the gate before a commit, so what fails it must come first and be counted: the graph's and its placement's issues, a quality pattern that does not compile, a history finding that refuses writes, and a stale, malformed or ambiguous anchor are errors; a file not in canonical form, a history the next write mends, an unverified or weak anchor, and another worktree git could not say enough of, where a stale anchor may be pending, are warnings; a pending or a planned anchor is a note, which needs no action now. check exits 1 on an error and 0 otherwise. Each anchor kind's severity is stated once, by lint for check's own finding type, and Error::CheckFailed counts the errors. A graph is called consistent only when nothing was printed, so a note is never hidden behind that line."
+alternatives = [
+    "Fail on a planned or pending anchor too: rejected because a proposed decision may anchor code not written yet, and a branch may hold code a merge brings",
+    "An ambiguous anchor as a warning: rejected because an anchor that names several definitions has no span to verify, so it guards nothing until it is spelled to name one",
+    "Print the findings in the order found: rejected because an error would hide among the warnings of a large graph",
+]
+tags = [
+    "anchors",
+    "consistency",
+]
+status = "accepted"
+origin = "anchor findings"
+created = "2026-11-24T10:39:08.594384541Z"
+anchors = [
+    { file = "src/commands/check.rs", symbol = "Lines" },
+    { file = "src/commands/check.rs", symbol = "anchor_findings" },
+    { file = "src/commands/check.rs", symbol = "check" },
+    { file = "tests/integration/anchors.rs", symbol = "check_fails_on_a_stale_or_an_ambiguous_anchor" },
+]

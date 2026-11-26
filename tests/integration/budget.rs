@@ -7,6 +7,17 @@ use crate::harness::{McpClient, Project, decision};
 
 const MAX_TOOL_RESULT_BYTES: usize = 24 * 1024;
 
+/// What the `lint` section says of the findings it leaves out: where each
+/// kind's rest ranks or follows, and how it comes into view.
+const LINT_MORE: &str = "each kind lists what fits and `counts.lint` counts it: the \
+     duplicate pairs left out rank at or below the last listed; the quality findings and the \
+     decisions with only file anchors left out follow the last listed by decision name, and \
+     `section: \"lint\"` with `from` lists the quality findings from a decision on; they come \
+     into view as the listed ones are settled (pairs merged or revised apart, decisions brought \
+     to the bar or anchored to a symbol); `counts.lint.pairs` and `counts.lint.patterns` say \
+     which decisions the pairs' pass and the `[quality]` patterns did not read and how to read \
+     them";
+
 /// Decisions with reasons long enough that `auth`'s context and file queries
 /// each exceed the budget several times over.
 const DECISIONS: usize = 60;
@@ -68,8 +79,9 @@ fn every_tool_result_fits_the_budget() {
 /// A graph whose issues alone exceed the budget several times over, and
 /// whose components fill a good part of it: each status section fits, the
 /// issues section counts what it leaves out and says where the rest is,
-/// and asked for alone it shows more of them. Nothing is cut silently: no
-/// result carries a `truncated` notice.
+/// and asked for alone it shows more of them; so does the lint section,
+/// whose pairs grow with the square of the decisions. Nothing is cut
+/// silently: no result carries a `truncated` notice.
 #[test]
 fn status_fits_the_budget_and_counts_what_it_leaves_out() {
     const BROKEN: usize = 400;
@@ -111,4 +123,102 @@ fn status_fits_the_budget_and_counts_what_it_leaves_out() {
         whole["components"]["items"][0],
         json!({ "name": "project", "decisions": BROKEN, "proposed": 0 })
     );
+
+    // The decisions' texts differ only in digits, which no term holds, so
+    // every pair is a likely duplicate at a score of one; and each lacks an
+    // alternative and an anchor, two quality findings. The default call
+    // compares no pair; the lint section lists the best and counts all.
+    let lint_alone = fitted(&mut client, "status", json!({ "section": "lint" }));
+    let (pairs, shortfalls) = (BROKEN * (BROKEN - 1) / 2, 2 * BROKEN);
+    let counts = &whole["counts"]["lint"];
+    assert!(counts.get("duplicates").is_none(), "{counts}");
+    assert_eq!(counts["pairs"]["why"], "not_asked", "{counts}");
+    let counts = &lint_alone["counts"]["lint"];
+    assert_eq!(counts["duplicates"], pairs, "{counts}");
+    assert!(counts.get("pairs").is_none(), "{counts}");
+    for status in [&whole, &lint_alone] {
+        let lint = &status["lint"];
+        assert_eq!(status["counts"]["lint"]["quality"], shortfalls);
+        let items = lint["items"].as_array().unwrap();
+        let listed = lint["total"].as_u64().unwrap() as usize;
+        assert_eq!(lint["omitted"], listed - items.len());
+        assert_eq!(lint["more"], LINT_MORE);
+        assert_eq!(
+            items.iter().find(|item| item["kind"] == "quality").unwrap(),
+            &json!({
+                "kind": "quality", "decision": "rule-000", "field": "alternatives",
+                "rule": "alternative_required", "level": "refuse",
+                "limit": { "measured": 0, "bound": 1, "unit": "alternatives" },
+            })
+        );
+    }
+    // Each kind keeps its share of the budget: the pairs, far more, crowd
+    // out none of the quality findings' room.
+    let items = lint_alone["lint"]["items"].as_array().unwrap();
+    let of = |kind: &str| items.iter().filter(|item| item["kind"] == kind).count();
+    let (listed_pairs, listed_shortfalls) = (of("duplicate"), of("quality"));
+    assert!(
+        listed_pairs > 0 && listed_shortfalls * 3 > listed_pairs,
+        "{listed_pairs} {listed_shortfalls}"
+    );
+    assert_eq!(
+        items[0],
+        json!({
+            "kind": "duplicate", "decision": "rule-000", "other": "rule-001",
+            "score": "1.000000",
+        })
+    );
+    let shown = |status: &Value| status["lint"]["items"].as_array().unwrap().len();
+    assert!(shown(&lint_alone) > shown(&whole));
+}
+
+/// Anchor findings past the budget: the section fits, keeps the
+/// unresolved ones, which sort first, counts every finding by kind, and
+/// says how many it leaves out and where the rest is.
+#[test]
+fn the_anchors_section_fits_the_budget_and_counts_what_it_leaves_out() {
+    const UNRESOLVED: usize = 300;
+    const AMBIGUOUS: usize = 300;
+    let project = Project::init();
+    project.source(
+        "src/lib.rs",
+        "pub struct A { pages: u8 }\npub struct B { pages: u8 }\n",
+    );
+    let gone: Vec<String> = (0..UNRESOLVED)
+        .map(|i| format!("{{ file = \"src/gone/gone_{i:03}.rs\" }}"))
+        .collect();
+    project.write(
+        "decisions/kept.toml",
+        &decision(
+            "project",
+            "Kept",
+            &format!("anchors = [{}]\n", gone.join(", ")),
+        ),
+    );
+    let anchor = "anchors = [{ file = \"src/lib.rs\", symbol = \"pages\" }]\n";
+    for i in 0..AMBIGUOUS {
+        let name = format!("twice-{i:03}");
+        project.write(
+            &format!("decisions/{name}.toml"),
+            &decision("project", &name, anchor),
+        );
+    }
+    let (mut client, _) = McpClient::connect(&project);
+
+    let status = fitted(&mut client, "status", json!({ "section": "anchors" }));
+
+    assert!(status.get("truncated").is_none(), "{status}");
+    let section = &status["anchors"];
+    let shown = section["items"].as_array().unwrap();
+    assert_eq!(section["total"], UNRESOLVED + AMBIGUOUS);
+    assert!(
+        !shown.is_empty() && shown.len() < UNRESOLVED,
+        "{}",
+        shown.len()
+    );
+    assert!(shown.iter().all(|item| item["kind"] == "unresolved"));
+    assert_eq!(section["omitted"], UNRESOLVED + AMBIGUOUS - shown.len());
+    assert_eq!(section["more"], "`trurlic check` lists every finding");
+    assert_eq!(status["counts"]["anchors"]["unresolved"], UNRESOLVED);
+    assert_eq!(status["counts"]["anchors"]["ambiguous"], AMBIGUOUS);
 }

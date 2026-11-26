@@ -37,8 +37,27 @@ const FILES_PER_COMPONENT: usize = 64;
 
 const SYMBOLS_PER_FILE: usize = 8;
 
-/// Longer than any entry of [`WORDS`], so a sentence fits its room.
+/// Longer than any word drawn, so a sentence fits its room.
 const SHORTEST_SENTENCE: usize = 16;
+
+/// The vocabulary's ranks come in this many bands, the band `b` holding
+/// `2^b` ranks: [`WORDS`] first, then words coined from [`SYLLABLES`],
+/// 8,191 in all. A draw picks a band, then a rank in it, so rank `r` is
+/// drawn about `1 / (13 (r + 1))` of the time. That gives a few words in
+/// most texts and a long tail in few, as in prose; a uniform draw from a
+/// short list makes every two texts alike.
+const VOCABULARY_BANDS: usize = 13;
+
+/// What a coined word is spelled with: none of them a stop word of
+/// `lint::duplicates`, so a coined word is always a term.
+const SYLLABLES: [&str; 16] = [
+    "ba", "de", "fi", "go", "ku", "la", "me", "no", "pu", "ri", "sa", "te", "vo", "wu", "xe", "zo",
+];
+
+/// One decision in this many restates an earlier one: its reason opens
+/// with the first half of the earlier reason, a likely duplicate for
+/// `status` to report.
+const RESTATED_EVERY: usize = 25;
 
 const SENTENCE_BYTES: RangeInclusive<usize> = 40..=120;
 
@@ -126,7 +145,26 @@ impl Corpus {
     }
 }
 
-/// The corpus's text, drawn from [`WORDS`].
+/// Set `word` to the word of the vocabulary at `rank`: an entry of
+/// [`WORDS`], then a word coined from [`SYLLABLES`]. A coined word spells
+/// the digits of a number from 256 on in base 16, so it has three
+/// syllables or more and no two are spelled alike.
+fn spell(rank: usize, word: &mut String) {
+    word.clear();
+    if let Some(known) = WORDS.get(rank) {
+        word.push_str(known);
+        return;
+    }
+    let base = SYLLABLES.len();
+    let mut coined = rank - WORDS.len() + base * base;
+    while coined > 0 {
+        let syllable = SYLLABLES.get(coined % base);
+        word.push_str(syllable.copied().unwrap_or_default());
+        coined /= base;
+    }
+}
+
+/// The corpus's text, drawn from the vocabulary of [`VOCABULARY_BANDS`].
 impl SplitMix64 {
     fn prose_within(&mut self, bytes: &RangeInclusive<usize>) -> String {
         let length = self.within(bytes);
@@ -137,7 +175,7 @@ impl SplitMix64 {
         words[self.below(words.len())]
     }
 
-    /// Sentences of [`WORDS`], at most `bytes` long, on one line.
+    /// Sentences of the vocabulary, at most `bytes` long, on one line.
     fn prose(&mut self, bytes: usize) -> String {
         let mut text = String::with_capacity(bytes);
         while bytes.saturating_sub(text.len()) > SHORTEST_SENTENCE {
@@ -155,21 +193,42 @@ impl SplitMix64 {
         text
     }
 
-    /// Lowercase words of [`WORDS`], at most `bytes` long unless the first
-    /// word alone is longer.
+    /// Lowercase words of the vocabulary, at most `bytes` long unless the
+    /// first word alone is longer.
     fn phrase(&mut self, bytes: usize) -> String {
         let mut text = String::with_capacity(bytes);
+        let mut word = String::new();
         loop {
-            let word = self.pick(WORDS);
+            self.word(&mut word);
             if text.is_empty() {
-                text.push_str(word);
+                text.push_str(&word);
             } else if text.len() + 1 + word.len() <= bytes {
                 text.push(' ');
-                text.push_str(word);
+                text.push_str(&word);
             } else {
                 return text;
             }
         }
+    }
+
+    /// Set `word` to a word of the vocabulary, drawn by its rank's band.
+    fn word(&mut self, word: &mut String) {
+        let band = 1 << self.below(VOCABULARY_BANDS);
+        spell(band - 1 + self.below(band), word);
+    }
+
+    /// A reason of about `bytes` that restates `earlier`: its first half,
+    /// cut at a space, then sentences of its own.
+    fn restate(&mut self, earlier: &str, bytes: usize) -> String {
+        let half = earlier.get(..earlier.len() / 2).unwrap_or(earlier);
+        let kept = half.rfind(' ').and_then(|space| half.get(..space));
+        let mut text = kept.unwrap_or(half).to_owned();
+        let rest = self.prose(bytes.saturating_sub(text.len() + 1));
+        if !rest.is_empty() {
+            text.push(' ');
+            text.push_str(&rest);
+        }
+        text
     }
 }
 
@@ -194,6 +253,12 @@ impl Plan {
             let component = owner.map_or(PROJECT_COMPONENT, |c| components[c].as_str());
             let drawn = anchors.draw(&mut rng, owner, &components);
             let mut decision = plan_decision(&mut rng, index, component, created, drawn);
+            if index > 0 && rng.one_in(RESTATED_EVERY) {
+                let earlier = decisions.get(rng.below(index));
+                if let Some((_, earlier)) = earlier {
+                    decision.reason = rng.restate(&earlier.reason, decision.reason.len());
+                }
+            }
             // An earlier decision only, so `depends_on` has no cycle.
             if index > 0 && rng.one_in(2) {
                 let (target, _) = &decisions[rng.below(index)];
@@ -523,6 +588,25 @@ mod tests {
                 assert!(source.contains(&format!("pub fn {symbol}(")), "{anchor}");
             }
         }
+    }
+
+    /// Every rank the bands reach is a word of its own: 8,191 words, the
+    /// coined ones of three syllables or more, longer than no sentence's
+    /// least room.
+    #[test]
+    fn the_vocabulary_holds_one_word_per_rank() {
+        let ranks = (1 << VOCABULARY_BANDS) - 1;
+        let mut word = String::new();
+        let words: BTreeSet<String> = (0..ranks)
+            .map(|rank| {
+                spell(rank, &mut word);
+                assert!(word.len() < SHORTEST_SENTENCE, "{word}");
+                word.clone()
+            })
+            .collect();
+        assert_eq!(words.len(), 8191);
+        spell(WORDS.len(), &mut word);
+        assert_eq!(word.len(), 6);
     }
 
     #[test]

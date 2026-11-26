@@ -10,7 +10,7 @@ tags = [
     "api",
     "protocol",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-23T23:15:11.066734150Z"
 anchors = [
     { file = "src/mcp/peer.rs", symbol = "ClientCapabilities" },

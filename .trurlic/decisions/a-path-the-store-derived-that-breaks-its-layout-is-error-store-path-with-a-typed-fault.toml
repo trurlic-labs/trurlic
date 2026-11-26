@@ -8,7 +8,7 @@ alternatives = [
 tags = [
     "errors",
 ]
-status = "proposed"
+status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T07:46:56.158310508Z"
 anchors = [

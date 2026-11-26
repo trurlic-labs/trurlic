@@ -1,0 +1,28 @@
+component = "code"
+choice = "A query file is refused for any capture, property, predicate, node kind, definition kind or container the resolver does not read, by a test per language; it compiles once per process"
+reason = "Query::new refuses an unknown node kind or field, a syntax error and an impossible shape, but takes any capture name, any #set! key and any predicate it does not evaluate itself, so a misspelt key or a predicate outside its pattern's parentheses would define nothing without a sign. Rules::compile reads each pattern as a definition pattern, which captures @definition once and @name once or on several nodes and sets its kind, or a mark pattern, which sets no property, and refuses anything else, naming the pattern, a supertype named as a node kind among them, since no node of a tree is of one; every pattern has one root, since the resolver starts each pattern at one node. The check runs in each language's unit test: a build script would compile every grammar again for nothing a test misses. A query is a file of tree-sitter's query language, language/<name>.scm, compiled into the binary by include_str!, the one read at build time the index's purity admits. It compiles once per process, on the first file of its language the cache does not hold, a cost the query_compile benchmark holds, and its text enters the cache key with its grammar's identity, since its patterns are rules of the index."
+alternatives = [
+    "The query as a Rust string constant: rejected because the owner's decision names a query file, and a string in Rust is no file the query language's tools read",
+    "A build script that compiles the queries: rejected because it builds every grammar twice and checks nothing a unit test does not",
+    "Refuse a broken query per file at run time: rejected because a query is fixed when the binary is built, so its fault is the build's and no input causes it",
+    "Raise INDEX_FORMAT by hand on each query edit: rejected because an edit the fixtures do not show would keep a stale cache entry",
+]
+tags = [
+    "parsing",
+    "reliability",
+]
+status = "accepted"
+origin = "languages as query files"
+created = "2026-11-25T16:53:23.387185487Z"
+anchors = [
+    { file = "src/code/language.rs", symbol = "Language::identity()" },
+    { file = "src/code/language.rs", symbol = "Language::rules()" },
+    { file = "src/code/language.rs", symbol = "each_query_compiles_against_its_grammar_within_the_contract" },
+    { file = "src/code/purity.rs", symbol = "is_admitted_include" },
+    { file = "src/code/query.rs", symbol = "QueryFault" },
+    { file = "src/code/query.rs", symbol = "Rules::compile" },
+    { file = "src/code/query.rs", symbol = "a_query_is_refused_for_each_break_of_its_contract" },
+]
+depends_on = [
+    "a-language-beyond-rust-is-a-grammar-and-a-query-file",
+]

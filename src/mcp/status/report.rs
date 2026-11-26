@@ -4,6 +4,9 @@
 
 use crate::store::{IssueKind, Placement};
 
+use super::anchors::{self, AnchorCounts, AnchorItem};
+use super::lint::{LintCounts, LintItem};
+
 use crate::mcp::spec::output::{Count, Items, Nested, Str, Tag};
 use crate::mcp::spec::{Output, Shown};
 
@@ -20,6 +23,8 @@ pub(crate) struct Report {
     pub(crate) issues: Option<Part<IssueItem>>,
     pub(crate) history: Option<Part<HistoryItem>>,
     pub(crate) components: Option<Part<ComponentItem>>,
+    pub(crate) lint: Option<Part<LintItem>>,
+    pub(crate) anchors: Option<Part<AnchorItem>>,
 }
 
 pub(crate) struct Counts {
@@ -30,6 +35,9 @@ pub(crate) struct Counts {
     pub(crate) edges: usize,
     pub(crate) issues: usize,
     pub(crate) non_canonical: usize,
+    pub(crate) lint: Option<LintCounts>,
+    /// The anchor findings by kind, when the report has the section.
+    pub(crate) anchors: Option<AnchorCounts>,
 }
 
 /// What `[quality]` adds to the built-in rules, counted.
@@ -46,19 +54,6 @@ pub(crate) struct Part<T> {
     pub(crate) items: Vec<T>,
     pub(crate) omitted: usize,
     pub(crate) more: Option<&'static str>,
-}
-
-impl<T> Part<T> {
-    /// The section of `items` with none of them shown: what a report
-    /// measures before it is filled.
-    pub(super) fn frame(items: &[T]) -> Self {
-        Self {
-            total: items.len(),
-            items: Vec::new(),
-            omitted: 0,
-            more: None,
-        }
-    }
 }
 
 pub(crate) struct IssueItem {
@@ -102,6 +97,11 @@ const PLACEMENT: Tag<Placement> = Tag {
     name: Placement::as_str,
 };
 
+/// The `lint` section's description in the schema.
+const LINT: &str = "What to read that refuses nothing: the best likely duplicate pairs, best \
+                    first, then the quality findings and the decisions with only file \
+                    anchors by decision name, out of `total`.";
+
 impl Output for Report {
     fn declare(fields: &mut Shown<'_, Self>) {
         fields.required("project", "The project's name.", &Str, |report| {
@@ -140,6 +140,9 @@ impl Output for Report {
         fields.optional("components", components, &kind, |report| {
             report.components.as_ref()
         });
+        let kind = Nested::<Part<LintItem>>::new();
+        fields.optional("lint", LINT, &kind, |report| report.lint.as_ref());
+        anchors::declare(fields);
     }
 }
 
@@ -178,6 +181,13 @@ impl Output for Counts {
             &Count,
             |counts| &counts.non_canonical,
         );
+        let lint = "The `lint` findings of each kind, when the section is asked for.";
+        let kind = Nested::<LintCounts>::new();
+        fields.optional("lint", lint, &kind, |counts| counts.lint.as_ref());
+        let anchors = "The anchor findings by kind, under `origin` when given, when the \
+                       report has the `anchors` section.";
+        let kind = Nested::<AnchorCounts>::new();
+        fields.optional("anchors", anchors, &kind, |counts| counts.anchors.as_ref());
     }
 }
 

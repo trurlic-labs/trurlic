@@ -11,7 +11,7 @@ tags = [
     "performance",
     "reliability",
 ]
-status = "proposed"
+status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:35:48.715992075Z"
 anchors = [

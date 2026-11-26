@@ -46,7 +46,14 @@ fn batch(ops: Vec<Op>) -> Batch {
 }
 
 fn apply(store: &Store, ops: Vec<Op>) -> Result<Applied> {
-    store.begin_write()?.apply(batch(ops))
+    apply_batch(store, batch(ops))
+}
+
+/// `batch` written as the `apply` tool writes it: the bar compiled before
+/// the lock.
+fn apply_batch(store: &Store, batch: Batch) -> Result<Applied> {
+    let bar = store.prepare_bar()?;
+    store.begin_write()?.apply(batch, &bar)
 }
 
 /// The refusal of `ops`, after checking that it wrote nothing.
@@ -805,12 +812,17 @@ fn a_refused_batch_leaves_the_writers_graph_as_it_was() {
         }),
     ];
 
-    writer.apply(batch(ops)).unwrap_err();
+    writer
+        .apply(batch(ops), &PreparedBar::default())
+        .unwrap_err();
 
     assert_eq!(writer.state().decisions, loaded.decisions);
     assert_eq!(writer.state().components, loaded.components);
     writer
-        .apply(batch(vec![Op::Rename(rename("sign", "sign-tokens"))]))
+        .apply(
+            batch(vec![Op::Rename(rename("sign", "sign-tokens"))]),
+            &PreparedBar::default(),
+        )
         .unwrap();
     let committed = writer.state().clone();
     drop(writer);
@@ -1065,7 +1077,7 @@ fn an_empty_batch_and_an_origin_of_two_lines_are_refused() {
 
     let mut forged = batch(vec![Op::Record(record("new", "auth"))]);
     forged.origin = Some("row 7\nSession: forged".into());
-    let err = store.begin_write().unwrap().apply(forged).unwrap_err();
+    let err = apply_batch(&store, forged).unwrap_err();
     let Error::Refused(refusal) = err else {
         panic!("{err}");
     };
@@ -1118,6 +1130,7 @@ fn a_batch_is_one_history_commit_of_its_files() {
 }
 
 mod quality;
+mod repair;
 
 /// Lists grown op by op pass the cap a load reads: the batch is refused
 /// naming the op that last changed the file, its size and the cap, and

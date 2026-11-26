@@ -1,0 +1,38 @@
+component = "sources"
+choice = "A gone file is followed by its blob: it moved where it was the one path to lose a blob exactly one other path gained, judged against every later change of the path it reached"
+reason = "git pairs files by similarity alone, and a shared header pairs two unrelated files, so a gone file is followed by its bytes. The history is read once a call (sources::renames::History::read): one git log --raw --no-renames walk of the newest MAX_WALKED_COMMITS commits of HEAD, with no pathspec and in topological order, each change naming its blob before and after, and one git diff --raw HEAD of what is not committed. A gone path's file moved where it was the one path to lose its blob and exactly one other path gained it: in the work tree's change of it, else in the commit that last changed, so deleted, it. Each later change of the path it reached is then judged oldest first: a move of the blob onward follows it, whether that commit deleted the path or wrote a new file there; an edit in place keeps it there and follows the edited blob; a deletion, a blob two paths gained or two lost, or a change whose blob before is not the one followed leaves no answer, whatever fills the path later; what is not committed is judged last. A file moved and edited in one commit is no move of the file. Every read pins the settings that change what git prints (git::renames::PINNED); a git failure leaves the anchors stale without a repair; a merge's changes are not seen."
+alternatives = [
+    "Judge only the next commit that changed the new path: rejected because an edit there hid a later deletion and rewrite of the path, and the anchor then followed an unrelated file",
+    "Follow the renames git -M -C reports for files: rejected because similarity pairs unrelated files sharing boilerplate, and copy detection over every judged commit cost most of the time a check spent in git",
+    "One walk per hop, limited by literal pathspecs of the paths asked: rejected because each walk costs a whole history, and one walk with no pathspec, filtered in the process, answers every path at once",
+    "git log --follow per path: rejected because it takes one path per process and follows a path backward, not to where a gone file went",
+]
+tags = [
+    "anchors",
+    "git",
+]
+status = "proposed"
+origin = "anchor repair"
+created = "2026-11-24T11:34:48.414739583Z"
+anchors = [
+    { file = "src/git/renames.rs", symbol = "PINNED" },
+    { file = "src/git/renames.rs", symbol = "uncommitted" },
+    { file = "src/git/renames.rs", symbol = "walk" },
+    { file = "src/sources/renames.rs", symbol = "History::renamed" },
+    { file = "src/sources/renames.rs", symbol = "step" },
+    { file = "src/sources/renames/tests.rs", symbol = "a_gone_path_gets_the_path_its_blob_moved_to" },
+    { file = "src/sources/renames/tests.rs", symbol = "a_moved_file_is_followed_through_every_later_change_of_its_path" },
+    { file = "src/sources/renames/tests.rs", symbol = "a_users_configuration_changes_no_answer" },
+    { file = "tests/integration/repair.rs", symbol = "a_file_moved_on_while_another_takes_its_path_is_repaired_where_it_went" },
+    { file = "tests/integration/repair.rs", symbol = "code_that_left_the_file_it_moved_into_is_never_repaired_there" },
+]
+
+[accepted_text]
+choice = "A gone path's rename is a git mv not committed, else what the last commit changing it renamed it to, while the next commit changing the new path neither deleted, copied nor renamed it"
+reason = "git pairs files by similarity alone, between the two sides of a diff, so the question is asked of the diff that removed the path, and only for check and the repair_anchors op, for the files of stale anchors with nothing at their path: status asks the project's git nothing. What is not committed comes first: git diff HEAD with -M -C, so a git mv is seen; a file moved without git and not added is a deletion and an untracked file, which no diff pairs. Else one git log --name-status --no-renames walk over HEAD's history, limited to the asked paths as literal pathspecs, lists the commits that changed each, newest first; the newest for a path gone from HEAD deleted it, and git diff of that commit against its first parent says what it became, at git's default similarity: one rename is the answer, with its similarity and its commit; several records (a split shows as a copy beside the rename), a copy or a plain deletion are none. The new path is then judged by the next commit that changed it: an edit ends the chain there, and so does no commit while the path exists; a rename is followed the same way, at most MAX_RENAME_HOPS, one walk per hop; a deletion, a copy or several records, or no commit and nothing at the path, and the file left it, which another may fill now: no answer. Every history read pins the settings that change what git prints (git::renames::PINNED). Any git failure leaves the anchor stale without a repair. A merge's deletion is not seen."
+alternatives = [
+    "One walk per gone path: rejected because each walk costs a whole history even with changed-path filters, so many gone paths cost many times one walk",
+    "git log --follow per path: rejected because it takes one path per process and follows a path forward from its history, not to where a gone file went",
+    "Any similarity threshold of our own: rejected because git's default is what git status and git log show the user",
+    "Trust the newest commit that added the new path: rejected because a commit that renames the file away and writes a new one at the path leaves the path modified, never added, to git log --no-renames",
+]

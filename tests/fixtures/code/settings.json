@@ -1,0 +1,10 @@
+{
+  "stages": {"order": ["store", "mcp"], "parallel": true},
+  "rules": [{"name": "first"}, {"name": "second"}],
+  "esc\"aped": null,
+  "café": 1,
+  "f()": 1,
+  "g(x)": 2,
+  "dup": 1,
+  "dup": 2
+}

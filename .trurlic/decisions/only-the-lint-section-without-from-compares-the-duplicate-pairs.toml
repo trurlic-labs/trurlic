@@ -1,0 +1,25 @@
+component = "mcp"
+choice = "Only status with section lint and no from compares the likely duplicate pairs; the default call and a page read on from a decision compare none and say so in counts.lint.pairs"
+reason = "The pairs pass grows with the square of the decisions: decisions that share their terms reach MAX_DUPLICATE_WORK at a few thousand, seconds of CPU. The default status call starts most of an agent's tasks and must cost about a load, so it compares no pair, as it judges no [quality] pattern: counts.lint.pairs is not_asked with every decision uncompared, counts.lint.duplicates is absent, and more names the call that compares them. apply already names the likely duplicates of each decision a batch writes, so a new duplicate is seen at its write. A call with from reads the quality findings on from a decision and compares none either, since each page of a walk would redo the whole pass and list the same pairs again in the room its findings need. The lint section without from runs the pass under the full bound, lists the best pairs and counts every pair it found."
+alternatives = [
+    "A smaller bound for the default call: rejected because it is a second mechanism beside the patterns' not_asked, and the default call would still pay for a pass no one asked for",
+    "The full pass in every call: rejected because the call at the start of every task would cost seconds of CPU on a graph whose decisions share their terms",
+    "Compare the pairs on every page of the lint section: rejected because a walk would redo the whole pass on each page and list the same pairs in the room the quality findings need",
+]
+tags = [
+    "api",
+    "performance",
+]
+status = "proposed"
+origin = "duplicate pairs in one bounded pass"
+created = "2026-11-26T10:05:01.103143801Z"
+anchors = [
+    { file = "src/mcp/status/lint.rs", symbol = "gather" },
+    { file = "src/mcp/status/lint/pairs.rs", symbol = "compared" },
+    { file = "src/mcp/status/lint/pairs.rs", symbol = "tests::only_the_lint_section_without_from_compares_the_pairs" },
+    { file = "src/store/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
+]
+depends_on = [
+    "duplicate-pairs-come-from-an-inverted-index-over-every-term",
+    "the-lint-section-fits-each-kind-on-its-own-and-counts-each",
+]

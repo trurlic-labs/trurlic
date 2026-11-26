@@ -16,6 +16,7 @@ const AUTH_CANONICAL: &str =
 
 fn project_with_hand_edits() -> Project {
     let project = Project::init();
+    project.source("src/auth.rs", "pub fn sign() {}\n");
     project.write("components/auth.toml", AUTH_EDITED);
     for name in ["gateway", "store"] {
         project.write(&format!("components/{name}.toml"), "description = \"\"\n");

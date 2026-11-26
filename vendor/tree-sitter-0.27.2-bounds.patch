@@ -1,0 +1,351 @@
+The patch trurlic carries on the tree-sitter runtime, vendored in vendor/tree-sitter.
+
+Upstream: the crate tree-sitter 0.27.2 as published on crates.io (the binding crate and the
+C runtime it compiles, from tree-sitter's `lib/` at commit
+3fb7be49145acfb07e33b61ed5689e2b6771b2e9), MIT, its LICENSE kept. Vendored as published,
+less what a native build reads nothing of: Cargo.lock, Cargo.toml.orig,
+.cargo_vcs_info.json, and src/wasm-stdlib but its imports.txt (the libc the wasm32 target
+compiles). Every other file is upstream's, unchanged but by this patch.
+
+What the patch changes, in src/alloc.{c,h}, src/parser.c and src/stack.{c,h}, with no change
+to the API or to any tree a parse gives:
+1. A step of a walk of the parse stack, and a round of the reductions error recovery tries,
+   are progress operations, which the progress callback sees: the callback is called once
+   per 100 operations crossed, so the count of its calls is a parse's work divided by 100.
+2. The default allocator counts the bytes it gives each thread, and every 64 of them is one
+   progress operation, so what a parse allocates is counted with its work. The count is read
+   at the checks between steps; a step itself is not interrupted.
+3. stack_node_release and stack_node_add_link run over arrays on the heap in place of
+   recursion, in the recursion's order, so a parse takes a fixed call stack whatever its
+   input.
+
+To update the runtime: vendor the new release the same way, apply this patch from
+vendor/tree-sitter (`patch -p1 < ../tree-sitter-0.27.2-bounds.patch`), resolve what no longer
+applies, regenerate this patch, raise code::INDEX_FORMAT and pin the runtime's hash again
+(code::index's tests).
+
+--- a/src/alloc.c
++++ b/src/alloc.c
+@@ -2,7 +2,18 @@
+ #include "tree_sitter/api.h"
+ #include <stdlib.h>
+ 
++// The bytes this thread has asked the default allocator for since the parser last took the
++// count: a parse's allocation is progress the callback sees.
++static _Thread_local size_t ts_allocated_bytes = 0;
++
++size_t ts_take_allocated_bytes(void) {
++  size_t bytes = ts_allocated_bytes;
++  ts_allocated_bytes = 0;
++  return bytes;
++}
++
+ static void *ts_malloc_default(size_t size) {
++  ts_allocated_bytes += size;
+   void *result = malloc(size);
+   if (size > 0 && !result) {
+     fprintf(stderr, "tree-sitter failed to allocate %zu bytes", size);
+@@ -12,6 +23,7 @@
+ }
+ 
+ static void *ts_calloc_default(size_t count, size_t size) {
++  ts_allocated_bytes += count * size;
+   void *result = calloc(count, size);
+   if (count > 0 && !result) {
+     fprintf(stderr, "tree-sitter failed to allocate %zu bytes", count * size);
+@@ -21,6 +33,7 @@
+ }
+ 
+ static void *ts_realloc_default(void *buffer, size_t size) {
++  ts_allocated_bytes += size;
+   void *result = realloc(buffer, size);
+   if (size > 0 && !result) {
+     fprintf(stderr, "tree-sitter failed to reallocate %zu bytes", size);
+--- a/src/alloc.h
++++ b/src/alloc.h
+@@ -20,6 +20,9 @@
+ TS_PUBLIC extern void *(*ts_current_realloc)(void *ptr, size_t size);
+ TS_PUBLIC extern void (*ts_current_free)(void *ptr);
+ 
++// The bytes the default allocator gave this thread since the last call.
++size_t ts_take_allocated_bytes(void);
++
+ // Allow clients to override allocation functions
+ #ifndef ts_malloc
+ #define ts_malloc  ts_current_malloc
+--- a/src/parser.c
++++ b/src/parser.c
+@@ -103,6 +103,7 @@
+   FILE *dot_graph_file;
+   unsigned accept_count;
+   unsigned operation_count;
++  size_t allocated_bytes;
+   Subtree old_tree;
+   TSRangeArray included_range_differences;
+   TSParseOptions parse_options;
+@@ -1145,6 +1146,7 @@
+   for (unsigned i = 0; true; i++) {
+     uint32_t version_count = ts_stack_version_count(self->stack);
+     if (version >= version_count) break;
++    self->operation_count++;
+ 
+     bool merged = false;
+     for (StackVersion j = initial_version_count; j < version; j++) {
+@@ -1575,22 +1577,27 @@
+ }
+ 
+ static bool ts_parser__check_progress(TSParser *self, Subtree *lookahead, const uint32_t *position, unsigned operations) {
+-  self->operation_count += operations;
+-  if (self->operation_count >= OP_COUNT_PER_PARSER_CALLBACK_CHECK) {
+-    self->operation_count = 0;
+-  }
++  // Every step of a stack walk is an operation too, so error recovery, whose
++  // reductions walk the stack, is seen by the progress callback.
++  self->operation_count += operations + ts_stack_take_operation_count(self->stack);
++  // Every 64 bytes allocated is an operation too, so the count of operations
++  // bounds the memory a parse allocates.
++  self->allocated_bytes += ts_take_allocated_bytes();
++  self->operation_count += (unsigned)(self->allocated_bytes / 64);
++  self->allocated_bytes %= 64;
+   if (position != NULL) {
+     self->parse_state.current_byte_offset = *position;
+     self->parse_state.has_error = self->has_error;
+   }
+-  if (
+-    self->operation_count == 0 &&
+-    (self->parse_options.progress_callback && self->parse_options.progress_callback(&self->parse_state))
+-  ) {
+-    if (lookahead && lookahead->ptr) {
+-      ts_subtree_release(&self->tree_pool, *lookahead);
++  while (self->operation_count >= OP_COUNT_PER_PARSER_CALLBACK_CHECK) {
++    self->operation_count -= OP_COUNT_PER_PARSER_CALLBACK_CHECK;
++    if (self->parse_options.progress_callback && self->parse_options.progress_callback(&self->parse_state)) {
++      self->operation_count = 0;
++      if (lookahead && lookahead->ptr) {
++        ts_subtree_release(&self->tree_pool, *lookahead);
++      }
++      return false;
+     }
+-    return false;
+   }
+   return true;
+ }
+@@ -2142,6 +2149,9 @@
+   self->included_range_difference_index = 0;
+ 
+   self->operation_count = 0;
++  self->allocated_bytes = 0;
++  (void)ts_take_allocated_bytes();
++  (void)ts_stack_take_operation_count(self->stack);
+ 
+   if (ts_parser_has_outstanding_parse(self)) {
+     LOG("resume_parsing");
+--- a/src/stack.c
++++ b/src/stack.c
+@@ -68,6 +68,7 @@
+   StackNodeArray node_pool;
+   StackNode *base_node;
+   SubtreePool *subtree_pool;
++  uint32_t operation_count;
+ };
+ 
+ typedef unsigned StackAction;
+@@ -87,26 +88,18 @@
+   ts_assert(self->ref_count != 0);
+ }
+ 
+-static void stack_node_release(
++// Free `self`, whose count of references reached zero and whose links but the first are
++// released, with its first link's subtree. Returns the node that link leads to.
++static StackNode *stack_node_free(
+   StackNode *self,
+   StackNodeArray *pool,
+   SubtreePool *subtree_pool
+ ) {
+-recur:
+-  ts_assert(self->ref_count != 0);
+-  self->ref_count--;
+-  if (self->ref_count > 0) return;
+-
+   StackNode *first_predecessor = NULL;
+   if (self->link_count > 0) {
+-    for (unsigned i = self->link_count - 1; i > 0; i--) {
+-      StackLink link = self->links[i];
+-      if (link.subtree.ptr) ts_subtree_release(subtree_pool, link.subtree);
+-      stack_node_release(link.node, pool, subtree_pool);
+-    }
+     StackLink link = self->links[0];
+     if (link.subtree.ptr) ts_subtree_release(subtree_pool, link.subtree);
+-    first_predecessor = self->links[0].node;
++    first_predecessor = link.node;
+   }
+ 
+   if (pool->size < MAX_NODE_POOL_SIZE) {
+@@ -114,11 +107,49 @@
+   } else {
+     ts_free(self);
+   }
++  return first_predecessor;
++}
++
++// A node being released whose links from `next - 1` down to 1 are still to release.
++typedef struct {
++  StackNode *node;
++  uint32_t next;
++} StackReleaseFrame;
++
++// Release `self` and every predecessor no other node holds, in the order of a recursion that
++// releases each node's links from the last to the first. The links still to release wait on
++// the heap, not the call stack, so a stack of any depth takes a fixed amount of call stack.
++static void stack_node_release(
++  StackNode *self,
++  StackNodeArray *pool,
++  SubtreePool *subtree_pool
++) {
++  Array(StackReleaseFrame) frames = array_new();
++  StackNode *node = self;
++  for (;;) {
++    while (node) {
++      ts_assert(node->ref_count != 0);
++      node->ref_count--;
++      if (node->ref_count > 0) break;
++      if (node->link_count > 1) {
++        array_push(&frames, ((StackReleaseFrame) {.node = node, .next = node->link_count}));
++        break;
++      }
++      node = stack_node_free(node, pool, subtree_pool);
++    }
+ 
+-  if (first_predecessor) {
+-    self = first_predecessor;
+-    goto recur;
++    if (frames.size == 0) break;
++    StackReleaseFrame *top = array_back(&frames);
++    if (top->next > 1) {
++      top->next--;
++      StackLink link = top->node->links[top->next];
++      if (link.subtree.ptr) ts_subtree_release(subtree_pool, link.subtree);
++      node = link.node;
++    } else {
++      node = stack_node_free(array_pop(&frames).node, pool, subtree_pool);
++    }
+   }
++  array_delete(&frames);
+ }
+ 
+ /// Get the number of nodes in the subtree, for the purpose of measuring
+@@ -197,10 +228,24 @@
+   );
+ }
+ 
+-static void stack_node_add_link(
++// A merge in progress: `link` was to be added to `self`, which links to `target` through an
++// equivalent subtree, so the links of `link.node` from `next` on are added to `target`.
++typedef struct {
++  StackNode *self;
++  StackLink link;
++  StackNode *target;
++  uint32_t next;
++} StackMergeFrame;
++
++typedef Array(StackMergeFrame) StackMergeFrameArray;
++
++// Add `link` to `self`. Where `self` already links to a node equivalent to `link`'s, push the
++// merge of the two onto `merges` instead, for the caller to add that node's links.
++static void stack_node_add_link_one(
+   StackNode *self,
+   StackLink link,
+-  SubtreePool *subtree_pool
++  SubtreePool *subtree_pool,
++  StackMergeFrameArray *merges
+ ) {
+   if (link.node == self) return;
+ 
+@@ -231,16 +276,9 @@
+         existing_link->node->position.bytes == link.node->position.bytes &&
+         existing_link->node->error_cost == link.node->error_cost
+       ) {
+-        for (int j = 0; j < link.node->link_count; j++) {
+-          stack_node_add_link(existing_link->node, link.node->links[j], subtree_pool);
+-        }
+-        int32_t dynamic_precedence = link.node->dynamic_precedence;
+-        if (link.subtree.ptr) {
+-          dynamic_precedence += ts_subtree_dynamic_precedence(link.subtree);
+-        }
+-        if (dynamic_precedence > self->dynamic_precedence) {
+-          self->dynamic_precedence = dynamic_precedence;
+-        }
++        array_push(merges, ((StackMergeFrame) {
++          .self = self, .link = link, .target = existing_link->node, .next = 0,
++        }));
+         return;
+       }
+     }
+@@ -263,6 +301,34 @@
+   if (dynamic_precedence > self->dynamic_precedence) self->dynamic_precedence = dynamic_precedence;
+ }
+ 
++// Add `link` to `self`, merging equivalent predecessors in the order of a recursion that merges
++// each as it meets it. The merges in progress wait on the heap, not the call stack.
++static void stack_node_add_link(
++  StackNode *self,
++  StackLink link,
++  SubtreePool *subtree_pool
++) {
++  StackMergeFrameArray merges = array_new();
++  stack_node_add_link_one(self, link, subtree_pool, &merges);
++  while (merges.size > 0) {
++    StackMergeFrame *top = array_back(&merges);
++    if (top->next < top->link.node->link_count) {
++      StackLink next = top->link.node->links[top->next++];
++      stack_node_add_link_one(top->target, next, subtree_pool, &merges);
++      continue;
++    }
++    StackMergeFrame merged = array_pop(&merges);
++    int32_t dynamic_precedence = merged.link.node->dynamic_precedence;
++    if (merged.link.subtree.ptr) {
++      dynamic_precedence += ts_subtree_dynamic_precedence(merged.link.subtree);
++    }
++    if (dynamic_precedence > merged.self->dynamic_precedence) {
++      merged.self->dynamic_precedence = dynamic_precedence;
++    }
++  }
++  array_delete(&merges);
++}
++
+ static void stack_head_delete(
+   StackHead *self,
+   StackNodeArray *pool,
+@@ -352,6 +418,7 @@
+       StackIterator *iterator = array_get(&self->iterators, i);
+       StackNode *node = iterator->node;
+ 
++      self->operation_count++;
+       StackAction action = callback(payload, iterator);
+       bool should_pop = action & StackActionPop;
+       bool should_stop = action & StackActionStop || node->link_count == 0;
+@@ -456,6 +523,12 @@
+   ts_free(self);
+ }
+ 
++uint32_t ts_stack_take_operation_count(Stack *self) {
++  uint32_t count = self->operation_count;
++  self->operation_count = 0;
++  return count;
++}
++
+ uint32_t ts_stack_version_count(const Stack *self) {
+   return self->heads.size;
+ }
+--- a/src/stack.h
++++ b/src/stack.h
+@@ -36,6 +36,9 @@
+ // Get the stack's current number of versions.
+ uint32_t ts_stack_version_count(const Stack *self);
+ 
++// The steps the stack's walks have taken since this was last called.
++uint32_t ts_stack_take_operation_count(Stack *self);
++
+ // Get the stack's current number of halted versions.
+ uint32_t ts_stack_halted_version_count(Stack *self);
+ 

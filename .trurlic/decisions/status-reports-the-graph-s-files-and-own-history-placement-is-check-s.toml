@@ -1,13 +1,13 @@
 component = "mcp"
 choice = "status reports what the graph's files and a shared graph's own history hold; whether git contradicts the placement, which needs the project's git, is check's alone"
-reason = "status is a read an agent calls often, and the placement facts cost several git processes in the project's repository (toplevel, ls-files, check-ignore, worktree list) on every call; the history findings run git only in a shared graph's own repository, which the store asks already. One rule: status reads the store, check also asks the project's git. Its sections: the validation issues, the history findings, each component's decision counts; beside the counts, how many limits and refusing and warning patterns [quality] sets, read from project.toml without compiling a pattern. origin narrows the counts and the component rows to the decisions recorded under it."
+reason = "status is a read an agent calls often, and the placement facts cost several git processes in the project's repository (toplevel, ls-files, check-ignore, worktree list) on every call; the history findings run git only in a shared graph's own repository, which the store runs already. One rule: status reads the store, check also runs the project's git. Its sections: the validation issues, the history findings, each component's decision counts, the likely duplicate pairs, the quality findings and the decisions with only file anchors under lint; beside the counts, how many limits and refusing and warning patterns [quality] sets. origin narrows the counts, the component rows and the lint findings to the decisions recorded under it."
 alternatives = [
     "Placement issues in status: rejected because every status call would spawn git in the project's repository for a fact that changes only with git operations",
 ]
 tags = [
     "api",
 ]
-status = "proposed"
+status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [

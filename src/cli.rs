@@ -125,6 +125,12 @@ pub enum ToolCommand {
         #[arg(long)]
         origin: Option<String>,
 
+        /// With `--section lint`: the quality findings of the decisions
+        /// named this or after, where a call whose page ended said to read
+        /// on; such a call compares no likely duplicate pair.
+        #[arg(long)]
+        from: Option<String>,
+
         /// Print the tool's JSON result.
         #[arg(long)]
         json: bool,
@@ -196,8 +202,17 @@ fn run_tool(command: ToolCommand) -> std::result::Result<(), commands::ToolError
         ToolCommand::Status {
             section,
             origin,
+            from,
             json,
-        } => commands::status(&cwd, section.as_deref(), origin.as_deref(), format(json)),
+        } => commands::status(
+            &cwd,
+            commands::StatusFlags {
+                section: section.as_deref(),
+                origin: origin.as_deref(),
+                from: from.as_deref(),
+            },
+            format(json),
+        ),
     }
 }
 

@@ -1,0 +1,28 @@
+component = "code"
+choice = "A Rust path segment is spelled by rust_spelling, the index's from the tokens its hash keeps and a symbol's from its text, so the two spell one name alike"
+reason = "A trait impl's segment holds the trait's arguments, and an impl of a tuple, an array or a function pointer type is named by the whole type, so a segment can hold any token a type does. Spelled from the source text, it kept a comment and the trailing comma rustfmt adds when it breaks an impl header, so formatting a file moved its paths and their anchors stopped resolving. So the index spells such a segment from the units its span hash holds, without comments and without the tokens of no meaning (silent_tokens), a space between each two, and Symbol::parse hands each segment of a Rust symbol to the same function. It drops whitespace, reads a raw identifier as its name, since r#match and match name one item, and drops a comma before a closing >, ) or ], but the only comma of a parenthesized group, which makes (u8,) a tuple. Fn(u8,) is the one spelling it keeps apart from the source's Fn(u8), so a symbol that writes it names nothing. A Rust symbol splits at :: only outside angle brackets, parentheses and square brackets, so (a::B, C) is one segment."
+alternatives = [
+    "Keep the source text with its whitespace removed: rejected because a comment and rustfmt's trailing comma stayed in the path, so a reformat moved anchors",
+    "Parse a symbol's segment with tree-sitter to find its silent commas exactly: rejected because every anchor would then cost a parse within the grammar's bounds, to tell apart Fn(u8,), which no path the index spells holds",
+    "Keep r# in the path: rejected because r#Raw and Raw are one name in Rust, so a type and the members of an impl written the other way fell under two paths",
+    "Drop every comma before a closing delimiter: rejected because (u8,) is a tuple and (u8) is u8, and the path would show the tuple as the type",
+]
+tags = [
+    "anchors",
+    "grammar",
+    "rust",
+]
+status = "proposed"
+origin = "code index: rust paths spelled from tokens, invoked names removed"
+created = "2026-11-26T10:16:30.726089612Z"
+anchors = [
+    { file = "src/code/rust.rs", symbol = "type_segment" },
+    { file = "src/code/rust/tests.rs", symbol = "a_raw_identifier_is_defined_and_named_as_its_name" },
+    { file = "src/code/rust/tests.rs", symbol = "an_anchor_names_an_impl_whatever_its_spaces_and_trailing_commas" },
+    { file = "src/code/rust/tests.rs", symbol = "an_impls_path_is_spelled_from_its_tokens_so_rustfmt_and_a_comment_move_none" },
+    { file = "src/code/symbol.rs", symbol = "Segment::of_rust" },
+    { file = "src/code/symbol.rs", symbol = "Segment::of_trait" },
+    { file = "src/code/symbol.rs", symbol = "rust_spelling" },
+    { file = "src/code/symbol.rs", symbol = "split_outside_brackets" },
+    { file = "src/code/tree.rs", symbol = "TreeIndex::spelled" },
+]

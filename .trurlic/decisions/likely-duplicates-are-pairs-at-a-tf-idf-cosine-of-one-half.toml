@@ -1,0 +1,21 @@
+component = "lint"
+choice = "Two decisions are likely duplicates when the TF-IDF cosine of their choice and reason is at least 1/2: lowercased [a-z][a-z_]+ terms less 35 stop words, smoothed idf"
+reason = "The rule is a plain TF-IDF cosine that a few lines of any scripting language recompute, so a reader can check every pair listed: the text is the choice, a space and the reason, lowercased; a term is each run of the regular expression [a-z][a-z_]+, ASCII letters only, that is not one of 35 stop words; a weight is the term's count times ln((1 + n) / (1 + df)) + 1 over the graph's n decisions; the cosine of two weight vectors at 1/2 or more, compared with >=, marks a pair. A test pins the scores of a fixture to the same rule in double precision. The threshold is a named constant, not a [quality] key, since no project needs another. A high score selects a pair to read and does not prove one rule twice, so it warns and never refuses."
+alternatives = [
+    "A threshold in [quality]: rejected because no project sets another, and a key nobody uses is surface to keep",
+    "Jaccard similarity of word sets: rejected because it weighs a word every decision holds like a rare one, so shared filler makes pairs",
+    "Refuse a write that duplicates a decision: rejected because a score above the threshold selects a pair to read; it can be two rules on one subject",
+]
+tags = [
+    "quality",
+]
+status = "accepted"
+origin = "likely duplicates"
+created = "2026-11-24T09:53:20.687376285Z"
+anchors = [
+    { file = "src/lint/duplicates/mod.rs", symbol = "Score::THRESHOLD" },
+    { file = "src/lint/duplicates/terms.rs", symbol = "each_term" },
+    { file = "src/lint/duplicates/terms.rs", symbol = "is_stop_word" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "the_pairs_at_the_threshold_are_the_reference_cosines_best_first" },
+    { file = "src/lint/duplicates/vectors.rs", symbol = "inverse_frequency" },
+]

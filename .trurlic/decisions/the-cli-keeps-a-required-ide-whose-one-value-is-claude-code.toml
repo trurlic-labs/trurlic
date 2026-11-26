@@ -11,7 +11,7 @@ tags = [
     "developer-experience",
     "error-handling",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-23T19:44:31.562862530Z"
 anchors = [
     { file = "src/cli.rs", symbol = "ProjectCommand" },

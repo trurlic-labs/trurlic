@@ -1,0 +1,20 @@
+component = "code"
+choice = "An anchor resolves against the code root; a file-only anchor resolves when its path exists, a file or a directory, and carries no span and no hash"
+reason = "An anchor's path is relative to the tree the call comes from, so a linked worktree or a clone judges it by its own files, and its file may name a directory that a decision governs as a whole. A file-only anchor states that the file or directory matters, not which definition, so it resolves by existence: a file the index cannot read, of a kind no resolver reads, or over the size cap still exists, and a directory resolves to the directory. It has no span and no hash, so a diff review that compares two revisions sees it touched only as the file it names, which it reports as nearby rather than open. A symbol on a directory, which defines nothing, is an outcome of its own."
+alternatives = [
+    "Resolve against the graph's directory: rejected because a linked worktree would judge its anchors by another branch's files",
+    "Hash the whole file for a file-only anchor: rejected because every edit to the file would then touch the decision",
+    "Refuse an anchor on a directory: rejected because a decision can govern a module or a crate as a whole",
+]
+tags = [
+    "anchors",
+]
+status = "accepted"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::resolve" },
+    { file = "src/code/facts.rs", symbol = "Target" },
+    { file = "src/sources/mod.rs", symbol = "checked_findings" },
+    { file = "src/sources/walk.rs", symbol = "probe" },
+]

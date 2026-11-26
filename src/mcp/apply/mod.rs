@@ -1,9 +1,22 @@
 //! The `apply` tool: its arguments declared once for the schema and the
 //! parse, and a handler that hands the batch to the store's one write.
-//! Every rule a batch is held to is the store's. Its result is declared in
-//! [`result`].
+//! Every rule a batch is held to is the store's; every repair the tree
+//! shows, which the store cannot read, is read here before the write lock
+//! is taken and handed to the store as a map ([`repairs`]); the likely
+//! duplicates of what it wrote are looked for in the graph it left
+//! ([`duplicates`]). Its result is declared in [`result`].
 
+mod duplicates;
+mod repairs;
 mod result;
+
+pub(crate) use duplicates::Duplicates;
+pub(crate) use result::Answer;
+
+use std::collections::BTreeMap;
+
+use crate::sources::{self, Seen};
+use crate::store::failpoint::{self, Site};
 
 use crate::store::limits::{
     MAX_ALTERNATIVE_BYTES, MAX_ANCHOR_PATH_BYTES, MAX_ANCHOR_SYMBOL_BYTES, MAX_BATCH_OPS,
@@ -11,20 +24,25 @@ use crate::store::limits::{
     MAX_TRAILER_BYTES,
 };
 use crate::store::{
-    AddComponent, AnchorInput, Applied, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
-    RemoveComponent, Rename, Revise, ReviseComponent, Writer,
+    AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, PreparedBar, Record,
+    Remove, RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent, Store, Writer,
 };
+
+use repairs::Unrepaired;
 
 use super::spec::kinds::{List, Object, Text, Union, Variant};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
 use super::spec::{Args, Fields, Kind};
 
-pub(super) static APPLY: ToolSpec<ApplyArgs, Applied> = ToolSpec {
+pub(super) static APPLY: ToolSpec<ApplyArgs, Answer> = ToolSpec {
     name: "apply",
     title: "Apply",
     description: DESCRIPTION,
     destructive: Destructive::Yes,
-    access: Access::Write(apply),
+    access: Access::Write {
+        read: prepare,
+        write: apply,
+    },
 };
 
 const DESCRIPTION: &str = "The one write of the decision graph: a batch of ops, \
@@ -33,34 +51,37 @@ Each op is checked against the graph the earlier ops left, so add a component \
 before its decisions and a decision before those that depend on it. A refusal \
 names the first op at fault (`op`), the argument (`field`) and the `rule`.\n\
 Ops (`op` tag): record a decision (always `proposed`; carries `origin`); revise \
-any of a decision's fields, a list whole or by `add_*`/`remove_*` (never both for \
-one list; a removed element must be held); rename (rewrites every edge to it); \
-merge `absorbed` into `survivor` (edges repointed, anchors, tags and edges \
-unioned, the absorbed text dropped); remove (refused while decisions depend on it, \
-unless `repoint_to` names their new target); add_component, revise_component, \
-rename_component (carries its decisions and connections), remove_component \
-(refused while in use).\n\
-A revise that changes nothing, an edge to a missing node or to itself, and an \
-edge that closes a depends_on cycle are refused. Revising the choice, reason or \
-alternatives of an accepted decision proposes the new text and keeps the \
-accepted one; revising back to it accepts it again. Anchors, tags, edges and \
-renames leave the status alone.\n\
-Quality: each field a record, revise or merge changes meets the bar. Built in: a \
-one-line choice of at most 200 bytes, a reason of real text, at least one \
-alternative and one anchor, alternatives and tags of one line, no hidden \
-character in any text; then the limits and patterns of `[quality]` in \
-project.toml. A refusal names the argument (`ops[3].add_tags[0]`), the rule, the \
-measured value and the limit; a field the op leaves as it is is not judged. A \
-`warn` pattern writes the batch and warns at its first match per op: `warnings` \
-lists one per op, by argument, pattern index and offset, `more_warnings` counts \
-the rest, and `patterns` holds each named pattern's message.\n\
+any of its fields, a list whole or by `add_*`/`remove_*` (never both for one list); \
+rename (rewrites every edge to it); merge `absorbed` into `survivor` (its edges, \
+anchors and tags join the survivor, its text is dropped); remove (refused while \
+decisions depend on it, unless `repoint_to` names their new target); \
+add_component, revise_component, rename_component, remove_component (refused while \
+in use); repair_anchors (stale anchors replaced: the `repairs` given, or with none \
+every repair `trurlic check` shows but one the bar refuses or cannot judge, in every \
+decision ever accepted that holds the stale anchor; the result lists them and the \
+stale anchors left).\n\
+Refused too: a revise that changes nothing, an edge to a missing node or to itself, \
+an edge that closes a depends_on cycle. Revising the choice, reason or alternatives \
+of an accepted decision proposes the new text and keeps the accepted one; revising \
+back accepts it again. A repair leaves the status alone.\n\
+Quality: each field a record, revise, merge or repair changes meets the bar: built \
+in, a one-line choice of at most 200 bytes, a reason of real text, an alternative \
+and an anchor at least, no hidden character in any text; then `[quality]` in \
+project.toml. A `warn` pattern and a likely duplicate write the batch and warn in \
+the result.\n\
 The result names each op's node and what it changed, never the texts.";
 
-/// The arguments of `apply`: what a batch file holds too.
+/// The arguments of `apply`: what a batch file holds too, each op with no
+/// `repairs` given the map the tree shows before the write, the code each
+/// of those repairs named then, the stale anchors that read left without a
+/// repair, and the bar compiled before the write.
 #[derive(Debug)]
 pub(super) struct ApplyArgs {
     ops: Vec<Op>,
     origin: Option<String>,
+    seen: Seen,
+    unrepaired: Unrepaired,
+    bar: PreparedBar,
 }
 
 impl Args for ApplyArgs {
@@ -82,19 +103,51 @@ impl Args for ApplyArgs {
                     max_bytes: MAX_TRAILER_BYTES,
                 },
             ),
+            seen: Seen::default(),
+            unrepaired: Unrepaired::new(),
+            bar: PreparedBar::default(),
         }
     }
 }
 
-fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Applied> {
+/// Read and compile, holding no lock, what the write needs: the bar of the
+/// project's `[quality]`, and the repairs an op with no `repairs` writes,
+/// the tree walk and git run before the write lock is taken.
+fn prepare(store: &Store, mut arguments: ApplyArgs) -> Outcome<ApplyArgs> {
+    arguments.bar = store.prepare_bar()?;
+    (arguments.seen, arguments.unrepaired) = repairs::fill(store, &mut arguments.ops)?;
+    failpoint::hit(Site::RepairsRead);
+    Ok(arguments)
+}
+
+fn apply(mut writer: Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
+    let ApplyArgs {
+        mut ops,
+        origin,
+        seen,
+        mut unrepaired,
+        bar,
+    } = arguments;
+    // The tree may have changed since the repairs were read: each one is
+    // held again under the lock to the code it named then.
+    for op in &mut ops {
+        if let Op::RepairAnchors(RepairAnchors::Every(map)) = op {
+            unrepaired.extend(sources::still_holding(writer.store(), map, &seen));
+        }
+    }
     let batch = Batch {
-        ops: arguments.ops,
-        origin: arguments.origin,
+        ops,
+        origin,
         // No request names the agent's session: MCP over stdio carries
         // none, and `clientInfo` names the client program.
         session: None,
     };
-    Ok(writer.apply(batch)?)
+    let applied = writer.apply(batch, &bar)?;
+    let left = repairs::left(writer.state(), unrepaired, &applied.left);
+    // The warnings read the graph the write left, the lock released.
+    let state = writer.into_state();
+    let warned = duplicates::warned(&applied.ops, &state);
+    Ok(result::fit(applied, warned, left))
 }
 
 // -- Ops -------------------------------------------------------------------
@@ -129,7 +182,7 @@ const ANCHORS: List<Object<AnchorInput>> = List {
     max_items: MAX_LIST_ITEMS,
 };
 
-static VARIANTS: [Variant<Op>; 9] = [
+static VARIANTS: [Variant<Op>; 10] = [
     variant(OpKind::Record, record),
     variant(OpKind::Revise, revise),
     variant(OpKind::Rename, |fields| Op::Rename(rename(fields))),
@@ -145,6 +198,7 @@ static VARIANTS: [Variant<Op>; 9] = [
             name: fields.required(Field::Name.as_str(), "The component.", &NAME),
         })
     }),
+    variant(OpKind::RepairAnchors, repair_anchors),
 ];
 
 const fn variant(kind: OpKind, declare: fn(&mut Fields<'_, '_>) -> Op) -> Variant<Op> {
@@ -245,6 +299,40 @@ fn revise_component(fields: &mut Fields<'_, '_>) -> Op {
         description: fields.optional(Field::Description.as_str(), "Its new description.", &PROSE),
         connects_to: edit(fields, Field::ConnectsTo, &NAMES),
     })
+}
+
+const REPAIRS: List<Object<Repair>> = List {
+    item: Object::new(),
+    max_items: MAX_LIST_ITEMS,
+};
+
+/// The repairs given, or, when none are, every repair the tree shows,
+/// which [`prepare`] fills in.
+fn repair_anchors(fields: &mut Fields<'_, '_>) -> Op {
+    let about = "Each stale anchor to replace, in its decision; absent, every repair \
+                 `trurlic check` shows, in each decision ever accepted that holds the stale \
+                 anchor when the op runs.";
+    match fields.optional(Field::Repairs.as_str(), about, &REPAIRS) {
+        Some(repairs) => Op::RepairAnchors(RepairAnchors::Listed(repairs)),
+        None => Op::RepairAnchors(RepairAnchors::Every(BTreeMap::new())),
+    }
+}
+
+/// A repair as a batch writes it.
+impl Args for Repair {
+    fn declare(fields: &mut Fields<'_, '_>) -> Self {
+        let anchor = Object::<AnchorInput>::new();
+        Self {
+            decision: fields.required("decision", "The decision that holds the anchor.", &NAME),
+            from: fields.required("from", "The stale anchor it holds.", &anchor),
+            to: fields.required(
+                "to",
+                "The anchor it holds instead; when it holds this one already, the stale \
+                 one is dropped.",
+                &anchor,
+            ),
+        }
+    }
 }
 
 /// An optional list field, empty when absent.

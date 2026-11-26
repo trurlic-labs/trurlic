@@ -179,6 +179,11 @@ pub enum Error {
     #[error("`git {args}` printed {detail}")]
     GitOutput { args: String, detail: &'static str },
 
+    /// Git printed more than `max` bytes on its stdout, so it was killed
+    /// unread.
+    #[error("`git {args}` printed more than {max} bytes, the most a git command's output is read")]
+    GitOutputTooLarge { args: String, max: u64 },
+
     /// A symlink named `.trurlic` that leads to nothing: its target is
     /// gone, or the links loop.
     #[error(
@@ -294,8 +299,10 @@ pub enum Error {
     #[error("{0}")]
     Refused(Box<Refusal>),
 
-    /// A `[quality]` pattern of the `project.toml` at `path` that does not
-    /// compile, or compiles past its size limit; `message` is regex's.
+    /// A `[quality]` pattern of the `project.toml` at `path` the lazy DFA
+    /// does not run: a syntax error, classes that fold too many code points,
+    /// an automaton past its limits, a Unicode word boundary. `message`
+    /// says which, and the rewrite.
     #[error(
         "{}: `[quality] patterns[{index}].pattern` does not compile: {message}",
         path.display()

@@ -16,7 +16,7 @@ status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [
     { file = "src/store/mod.rs", symbol = "Store" },
-    { file = "src/store/mod.rs", symbol = "Store::code_root" },
+    { file = "src/store/mod.rs", symbol = "Store::code_root()" },
     { file = "src/store/mod.rs", symbol = "Store::reached_from" },
     { file = "src/store/state.rs", symbol = "ProjectState::code_root" },
     { file = "tests/integration/placement.rs", symbol = "a_commit_stopped_in_one_tree_is_finished_from_another" },

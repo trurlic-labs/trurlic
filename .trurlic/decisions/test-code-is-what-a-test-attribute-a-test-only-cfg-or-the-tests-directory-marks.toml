@@ -1,0 +1,24 @@
+component = "code"
+choice = "Test code is under an attribute whose path ends in test, or bench, or a cfg that holds only under test; a file is test code under its crate's tests/, or when only test code declares it"
+reason = "A diff review leaves tests out of the share of code no decision covers, and a decision's proof must be a test, so each definition says whether it is test code. #[test], #[tokio::test] and every attribute path ending in test mark a test function, and #[bench] a benchmark. A cfg predicate marks test code only when it holds under test alone: test, an all() that holds test, an any() whose every member does. Outer and inner attributes mark the item and everything under it, a plain comment between attribute and item included. The file rule reads the tree in the second step: from each crate's targets as cargo finds them without a manifest table (src/lib.rs, src/main.rs, build.rs, and the files of src/bin, tests, benches and examples) it follows each file's recorded mod name; declarations forward, to name.rs or name/mod.rs in the module's directory, which takes a segment for each inline mod around the declaration and none for a function or other item, or to the file a relative #[path] names; an absolute #[path] names no file of the tree. A file is test code when it is under its crate's tests/ or only test code reaches it, and one no target reaches keeps what its bytes say. A crate of its own under tests/ is code by this rule."
+alternatives = [
+    "Mark test code by file name or a tests segment anywhere in the path: rejected because a module named tests under src is not always test code, and the declaration says which",
+    "Treat any cfg that mentions test as test code: rejected because cfg(any(test, feature)) builds into a release with the feature",
+    "Guess the declaring file backward from a file's path: rejected because lib.rs beside main.rs, a module declared twice and #[path] all defeat the guess",
+    "Read the manifest's target tables: rejected because the index keeps no TOML values, and the conventional layout covers this repository and the production project",
+]
+tags = [
+    "anchors",
+    "testing",
+]
+status = "accepted"
+origin = "definition kinds"
+created = "2026-11-24T10:33:26.877207089Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::definitions" },
+    { file = "src/code/roles.rs", symbol = "Declaring::module_file" },
+    { file = "src/code/roles.rs", symbol = "test_files" },
+    { file = "src/code/rust/marks.rs", symbol = "attribute_role" },
+    { file = "src/code/rust/marks.rs", symbol = "holds_only_under_test" },
+    { file = "src/sources/tests.rs", symbol = "each_definition_of_the_fixture_corpus_states_its_kind_role_and_visibility" },
+]

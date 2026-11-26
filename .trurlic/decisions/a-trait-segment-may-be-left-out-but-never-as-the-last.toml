@@ -1,0 +1,34 @@
+component = "code"
+choice = "A symbol may leave out a <Trait> segment but never its own last one, may write a trait without its arguments to name every argument's impl, and names a trait by its last path segment"
+reason = "A method of a trait impl has the path Type::<Trait>::method, and most anchors name it as Type::method: when the type has one method of that name the shorter spelling is unambiguous, and when two impls define it the symbol is Ambiguous, which says to add the segment. The last segment is never skipped, so Table names the type and not its Table::<Display> impl, which only a symbol ending in <Display> names. A trait with arguments is written with them, <From<Kind>>, both sides spelled alike (a-rust-path-segment-is-spelled-by-one-function-from-the-tokens-its-hash-keeps); written without them, <From> names the impl of every argument, ambiguous when there are several. The trait is named by its last path segment, so <fmt::Display> and <Display> are one spelling, as the import a file uses decides nothing about the impl. A trait name written as a plain segment (Shape::area for the impl Shape for Circle) names nothing, since a plain segment is a type, module or item."
+alternatives = [
+    "Require every trait segment: rejected because Type::method is how a reader names a method, and an ambiguity is reported anyway",
+    "Let a plain segment match a trait segment: rejected because Shape::area would then name the impl of Shape for every type in the file",
+    "Keep the trait's full path: rejected because the same impl would have two spellings by how the file imports the trait",
+]
+tags = [
+    "anchors",
+    "grammar",
+    "rust",
+]
+status = "proposed"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/symbol.rs", symbol = "Segment::of_trait" },
+    { file = "src/code/symbol.rs", symbol = "Symbol::names" },
+    { file = "src/code/symbol.rs", symbol = "a_trait_segment_may_be_left_out_but_never_the_last" },
+    { file = "src/code/symbol.rs", symbol = "a_trait_without_arguments_names_the_impl_of_every_argument" },
+]
+depends_on = [
+    "a-rust-path-segment-is-spelled-by-one-function-from-the-tokens-its-hash-keeps",
+]
+
+[accepted_text]
+choice = "A symbol may leave out a <Trait> segment but never its own last one, may write a trait without its arguments to name every argument's impl, and names a trait by its last path segment"
+reason = "A method of a trait impl has the path Type::<Trait>::method, and most anchors name it as Type::method: when the type has one method of that name the shorter spelling is unambiguous, and when two impls define it the symbol is Ambiguous, which says to add the segment. The last segment is never skipped, so Table names the type and not its Table::<Display> impl, which only a symbol ending in <Display> names. A trait with arguments is written with them, <From<Kind>>, whitespace removed on both sides; written without them, <From> names the impl of every argument, ambiguous when there are several. The trait is named by its last path segment, so <fmt::Display> and <Display> are one spelling, as the import a file uses decides nothing about the impl. A trait name written as a plain segment (Shape::area for the impl Shape for Circle) names nothing, since a plain segment is a type, module or item."
+alternatives = [
+    "Require every trait segment: rejected because Type::method is how a reader names a method, and an ambiguity is reported anyway",
+    "Let a plain segment match a trait segment: rejected because Shape::area would then name the impl of Shape for every type in the file",
+    "Keep the trait's full path: rejected because the same impl would have two spellings by how the file imports the trait",
+]

@@ -9,8 +9,10 @@
 # `warn` pattern lets it through with a warning, for a rule a reader has to
 # judge. Words are runs of text between whitespace. Patterns are regular
 # expressions in the syntax of the Rust `regex` crate, matched anywhere in
-# the text of each field they name. `trurlic fmt` rewrites the table in its
-# canonical form, without these comments.
+# the text of each field they name. They run on a lazy DFA, which has no
+# Unicode word boundary: a whole word is `(?:^|\W)word(?:\W|$)`, and a
+# match then starts at the character before the word. `trurlic fmt`
+# rewrites the table in its canonical form, without these comments.
 
 [quality]
 # A reason says why the shape holds and what breaks without it: 30 to 80
@@ -28,25 +30,25 @@ anchors_max = 8
 require_origin = true
 
 [[quality.patterns]]
-pattern = '(?i)\b(?:we|our)\b'
+pattern = '(?i)(?:^|\W)(?:we|our)(?:\W|$)'
 fields = ["choice", "reason", "alternatives"]
 level = "refuse"
 message = "The subject is a code entity, the run or the reader, never \"we\"."
 
 [[quality.patterns]]
-pattern = '(?i)\butili[sz](?:e|es|ed|ing)\b'
+pattern = '(?i)(?:^|\W)utili[sz](?:e|es|ed|ing)(?:\W|$)'
 fields = ["choice", "reason", "alternatives"]
 level = "refuse"
 message = "Write \"use\", not \"utilize\"."
 
 [[quality.patterns]]
-pattern = '(?i)\b(?:simply|basically|essentially|actually|obviously|leverages?|leveraged)\b'
+pattern = '(?i)(?:^|\W)(?:simply|basically|essentially|actually|obviously|leverages?|leveraged)(?:\W|$)'
 fields = ["choice", "reason", "alternatives"]
 level = "warn"
 message = "Cut the filler: a decision states facts a reader can check."
 
 [[quality.patterns]]
-pattern = '\b\d+(?:[.,]\d+)?\s?(?:ns|us|ms|s|min|x|[KMGT]i?B)\b|\b\d+(?:[.,]\d+)?\s?%'
+pattern = '(?:^|\W)\d+(?:[.,]\d+)?\s?(?:(?:ns|us|ms|s|min|x|[KMGT]i?B)(?:\W|$)|%)'
 fields = ["reason"]
 level = "warn"
 message = "A reason holds no measurement: state the conclusion, keep the numbers with the benchmarks; a structural bound may state the rule."

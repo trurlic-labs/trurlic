@@ -1,0 +1,33 @@
+component = "code"
+choice = "Before a C or C++ parse, the tree's attribute, specifier and namespace macros, none named as a grammar's word, and the comments inside a #define a token follows, are blanked; no list is configured"
+reason = "The index runs no preprocessor, and a macro tree-sitter cannot read wrecks what follows it: class LEVELDB_EXPORT DB { reads as a function, FMT_BEGIN_NAMESPACE swallows its namespace, and a comment inside a #define ends the directive for tree-sitter-c. A name is blanked when every #define of it is empty, specifiers, attribute forms or other such names, a function-like one with one body not empty, or only namespace openings or closings and an opening is defined. A #define of a word either grammar reads as a token of its own (zlib's #define const, an inline or __attribute__ shim) names no macro: the parse reads the word already. A comment a token of its #define follows is blanked; a trailing one is kept, since blanked it leaves the blanks tree-sitter-c reads a body's end at. Blanking is spaces in place of the bytes outside directives, comments and literals, so offsets hold: the parse and the hash read the blanked text, and a span's lines are counted in the bytes as written, so a comment's line breaks blanked move no line. On the corpora measured the tree's own #defines recovered most of the definitions such macros damaged and halved the parse errors, where a list in project.toml recovered next to none past them. What stays unseen is stated where a user reads it: what a function-like macro writes, a macro defined outside the tree, and the segments of a namespace a macro opens. Which #defines reach a file is a-header-s-defines-reach-every-c-or-c-plus-plus-file-and-a-source-file-s-only-itself."
+alternatives = [
+    "A list of macros in project.toml: rejected because it recovered next to nothing past the tree's own",
+    "Nothing, tree-sitter's recovery and patterns per damage shape: rejected because a C++ project then loses a third of its definitions",
+]
+tags = [
+    "parsing",
+    "reliability",
+]
+status = "proposed"
+origin = "c and c++"
+created = "2026-11-25T23:03:16.297379871Z"
+anchors = [
+    { file = "README.md" },
+    { file = "src/code/general/tests.rs", symbol = "a_spans_lines_are_counted_in_the_bytes_as_written" },
+    { file = "src/code/language/c_family.rs", symbol = "blank" },
+    { file = "src/code/language/c_family/set.rs", symbol = "BlankMacros::of" },
+    { file = "src/code/language/c_family/tests.rs", symbol = "a_define_of_a_word_the_grammars_read_is_no_macro" },
+    { file = "src/code/language/c_family/tests.rs", symbol = "the_comments_inside_a_define_are_blanked_line_breaks_and_all" },
+]
+depends_on = [
+    "a-language-beyond-rust-is-a-grammar-and-a-query-file",
+]
+
+[accepted_text]
+choice = "Before a C or C++ parse, the macros the tree defines only as attributes, specifiers or namespace openings, and the comments inside a continued #define, are blanked; no list of macros is configured"
+reason = "The index runs no preprocessor, and a macro tree-sitter cannot read wrecks what follows it: class LEVELDB_EXPORT DB { reads as a function, FMT_BEGIN_NAMESPACE swallows its namespace, and a comment inside a continued #define ends the directive for tree-sitter-c. A name is blanked when every #define of it is empty, specifiers, attribute forms or other such names, a function-like one with one body not empty, or only namespace openings or closings and an opening is defined. Blanking is spaces in place of the bytes outside directives, comments and literals, so offsets hold, and the parse and the hash read the blanked text. On the corpora measured the tree's own #defines recovered most of the definitions such macros damaged and halved the parse errors, where a list in project.toml recovered next to none past them. What stays unseen is stated where a user reads it: what a function-like macro writes, a macro defined outside the tree, and the segments of a namespace a macro opens. Which #defines reach a file, and how its set is cached, is a-header-s-defines-reach-every-c-or-c-plus-plus-file-and-a-source-file-s-only-itself."
+alternatives = [
+    "A list of macros in project.toml: rejected because it recovered next to nothing past the tree's own",
+    "Nothing, tree-sitter's recovery and patterns per damage shape: rejected because a C++ project then loses a third of its definitions",
+]

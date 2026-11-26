@@ -2,10 +2,11 @@
 //!
 //! A tool's [`Access`] states what it runs on, and the call takes that
 //! access for it after its arguments parse: a read the graph loaded under
-//! the shared lock, a write a [`Writer`] under the exclusive one. So no
-//! read or write handler loads or locks, and its `readOnlyHint` is the lock
-//! it gets; an interactive handler, which waits on the client, loads or
-//! writes the store itself. Its result is an [`Output`], which gives both
+//! the shared lock, a write a [`Writer`] under the exclusive one, which a
+//! write may precede with a read of its own that holds no lock. So no
+//! write handler locks, and its `readOnlyHint` is the lock it gets; an
+//! interactive handler, which waits on the client, loads or writes the
+//! store itself. Its result is an [`Output`], which gives both
 //! its `outputSchema` and the JSON a call returns.
 
 use serde_json::{Map, Value, json};
@@ -22,8 +23,18 @@ pub(crate) type Outcome<O> = Result<O, ToolError>;
 pub(crate) enum Access<A, O> {
     /// The graph loaded under the shared lock, and the store it came from.
     Read(fn(&Store, &ProjectState, A) -> Outcome<O>),
-    /// A writer: the graph loaded under the exclusive lock.
-    Write(fn(&mut Writer<'_>, A) -> Outcome<O>),
+    /// A writer, `write`: the graph loaded under the exclusive lock, which
+    /// the handler may let go of once it has written, for a read of the
+    /// graph its write left that needs no lock. Before
+    /// it, `read` adds to the arguments what the write needs of the code
+    /// tree or the project's git, read holding no lock, so a slow git holds
+    /// no other writer and the index's cache can fill. The graph can change
+    /// between the two: what `read` adds must hold against whatever graph
+    /// `write` loads.
+    Write {
+        read: fn(&Store, A) -> Outcome<A>,
+        write: fn(Writer<'_>, A) -> Outcome<O>,
+    },
     /// The store and the client: a handler that asks the client and waits
     /// for the answer loads or writes the store itself, so it holds no
     /// lock while a person fills in a form.
@@ -62,7 +73,10 @@ impl<A: Args, O: Output> ToolSpec<A, O> {
         let arguments = parse::<A>(arguments, At::Root)?;
         match self.access {
             Access::Read(run) => run(store, &store.load_state()?, arguments),
-            Access::Write(run) => run(&mut store.begin_write()?, arguments),
+            Access::Write { read, write } => {
+                let arguments = read(store, arguments)?;
+                write(store.begin_write()?, arguments)
+            }
             Access::Interactive(_) => Err(ToolError::refused(format!(
                 "`{}` asks the MCP client, which a command has none of",
                 self.name
@@ -123,7 +137,7 @@ where
     ) -> Outcome<Value> {
         let result = match self.access {
             Access::Interactive(run) => run(store, peer, parse::<A>(arguments, At::Root)?),
-            Access::Read(_) | Access::Write(_) => self.run(store, arguments),
+            Access::Read(_) | Access::Write { .. } => self.run(store, arguments),
         };
         result.map(|result| to_value(&result))
     }
@@ -199,11 +213,20 @@ mod tests {
         })
     }
 
-    fn format(writer: &mut Writer<'_>, named: Named) -> Outcome<Probed> {
+    fn format(mut writer: Writer<'_>, named: Named) -> Outcome<Probed> {
         let formatted = writer.format()?;
         Ok(Probed {
             name: named.name,
             count: formatted.len(),
+        })
+    }
+
+    /// Take the exclusive lock and let it go: a read before a write holds
+    /// none, else this would wait out the lock's timeout and fail.
+    fn unlocked(store: &Store, named: Named) -> Outcome<Named> {
+        drop(store.lock()?);
+        Ok(Named {
+            name: format!("{}:free", named.name),
         })
     }
 
@@ -243,8 +266,9 @@ mod tests {
     fn the_definition_follows_the_access_and_carries_both_schemas() {
         let cases = [
             (spec(Destructive::No, Access::Read(count)), true, false),
-            (spec(Destructive::No, Access::Write(format)), false, false),
-            (spec(Destructive::Yes, Access::Write(format)), false, true),
+            (spec(Destructive::No, write(unread)), false, false),
+            (spec(Destructive::Yes, write(unread)), false, true),
+            (spec(Destructive::No, write(unlocked)), false, false),
             (
                 spec(Destructive::No, Access::Interactive(ask)),
                 false,
@@ -277,11 +301,7 @@ mod tests {
         let arguments = json!({ "name": "auth" });
         std::fs::write(store.component_path("auth"), "description='Auth'\n").unwrap();
 
-        let formatted = call(
-            &spec(Destructive::No, Access::Write(format)),
-            &store,
-            &arguments,
-        );
+        let formatted = call(&spec(Destructive::No, write(unread)), &store, &arguments);
         assert_eq!(formatted.unwrap(), json!({ "name": "auth", "count": 1 }));
         assert_eq!(store.load_state().unwrap().non_canonical, []);
 
@@ -298,6 +318,25 @@ mod tests {
             &arguments,
         );
         assert_eq!(asked.unwrap(), json!({ "name": "auth", "count": 0 }));
+
+        let read_then_written = call(&spec(Destructive::No, write(unlocked)), &store, &arguments);
+        assert_eq!(
+            read_then_written.unwrap(),
+            json!({ "name": "auth:free", "count": 0 })
+        );
+    }
+
+    /// The arguments as they came: a write that needs nothing read first.
+    fn unread(_: &Store, named: Named) -> Outcome<Named> {
+        Ok(named)
+    }
+
+    /// `format`, after `read`.
+    fn write(read: fn(&Store, Named) -> Outcome<Named>) -> Access<Named, Probed> {
+        Access::Write {
+            read,
+            write: format,
+        }
     }
 
     /// The CLI twin runs a read or a write as the call does, and has no
@@ -325,7 +364,7 @@ mod tests {
     #[test]
     fn a_refused_argument_is_refused_before_the_store_is_opened() {
         let store = Store::at("/nonexistent/.trurlic".into());
-        let tool = spec(Destructive::No, Access::Write(format));
+        let tool = spec(Destructive::No, write(unread));
         let refused = call(&tool, &store, &json!({ "name": 1 })).unwrap_err();
         let payload = serde_json::to_value(&refused).unwrap();
         assert_eq!(payload["kind"], "invalid_argument");

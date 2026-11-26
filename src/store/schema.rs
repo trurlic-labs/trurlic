@@ -107,6 +107,23 @@ impl Status {
     pub const fn name(&self) -> &'static str {
         self.kind().as_str()
     }
+
+    /// Whether the owner accepted the decision once: an accepted one, or a
+    /// proposed revision of one. The accepted text keeps no anchors, so all
+    /// of a revision's anchors, one the revising op added included, are
+    /// judged as the accepted decision's.
+    #[must_use]
+    pub const fn ever_accepted(&self) -> bool {
+        match self {
+            Self::Accepted { .. }
+            | Self::Proposed {
+                accepted_text: Some(_),
+            } => true,
+            Self::Proposed {
+                accepted_text: None,
+            } => false,
+        }
+    }
 }
 
 /// A [`Status`] without its fields: what the `status` key of a decision

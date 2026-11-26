@@ -8,7 +8,7 @@
         "readOnlyHint": false,
         "title": "Apply"
       },
-      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of a decision's fields, a list whole or by `add_*`/`remove_*` (never both for one list; a removed element must be held); rename (rewrites every edge to it); merge `absorbed` into `survivor` (edges repointed, anchors, tags and edges unioned, the absorbed text dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component (carries its decisions and connections), remove_component (refused while in use).\nA revise that changes nothing, an edge to a missing node or to itself, and an edge that closes a depends_on cycle are refused. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back to it accepts it again. Anchors, tags, edges and renames leave the status alone.\nQuality: each field a record, revise or merge changes meets the bar. Built in: a one-line choice of at most 200 bytes, a reason of real text, at least one alternative and one anchor, alternatives and tags of one line, no hidden character in any text; then the limits and patterns of `[quality]` in project.toml. A refusal names the argument (`ops[3].add_tags[0]`), the rule, the measured value and the limit; a field the op leaves as it is is not judged. A `warn` pattern writes the batch and warns at its first match per op: `warnings` lists one per op, by argument, pattern index and offset, `more_warnings` counts the rest, and `patterns` holds each named pattern's message.\nThe result names each op's node and what it changed, never the texts.",
+      "description": "The one write of the decision graph: a batch of ops, applied in order and committed together, or refused whole with nothing written. Each op is checked against the graph the earlier ops left, so add a component before its decisions and a decision before those that depend on it. A refusal names the first op at fault (`op`), the argument (`field`) and the `rule`.\nOps (`op` tag): record a decision (always `proposed`; carries `origin`); revise any of its fields, a list whole or by `add_*`/`remove_*` (never both for one list); rename (rewrites every edge to it); merge `absorbed` into `survivor` (its edges, anchors and tags join the survivor, its text is dropped); remove (refused while decisions depend on it, unless `repoint_to` names their new target); add_component, revise_component, rename_component, remove_component (refused while in use); repair_anchors (stale anchors replaced: the `repairs` given, or with none every repair `trurlic check` shows but one the bar refuses or cannot judge, in every decision ever accepted that holds the stale anchor; the result lists them and the stale anchors left).\nRefused too: a revise that changes nothing, an edge to a missing node or to itself, an edge that closes a depends_on cycle. Revising the choice, reason or alternatives of an accepted decision proposes the new text and keeps the accepted one; revising back accepts it again. A repair leaves the status alone.\nQuality: each field a record, revise, merge or repair changes meets the bar: built in, a one-line choice of at most 200 bytes, a reason of real text, an alternative and an anchor at least, no hidden character in any text; then `[quality]` in project.toml. A `warn` pattern and a likely duplicate write the batch and warn in the result.\nThe result names each op's node and what it changed, never the texts.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -493,6 +493,80 @@
                     "name"
                   ],
                   "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "op": {
+                      "const": "repair_anchors",
+                      "type": "string"
+                    },
+                    "repairs": {
+                      "description": "Each stale anchor to replace, in its decision; absent, every repair `trurlic check` shows, in each decision ever accepted that holds the stale anchor when the op runs.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "decision": {
+                            "description": "The decision that holds the anchor.",
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "from": {
+                            "additionalProperties": false,
+                            "description": "The stale anchor it holds.",
+                            "properties": {
+                              "file": {
+                                "description": "A file or directory, relative to the project root, `/`-separated.",
+                                "maxLength": 500,
+                                "type": "string"
+                              },
+                              "symbol": {
+                                "description": "A symbol in the file, its `::`-separated path.",
+                                "maxLength": 200,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "file"
+                            ],
+                            "type": "object"
+                          },
+                          "to": {
+                            "additionalProperties": false,
+                            "description": "The anchor it holds instead; when it holds this one already, the stale one is dropped.",
+                            "properties": {
+                              "file": {
+                                "description": "A file or directory, relative to the project root, `/`-separated.",
+                                "maxLength": 500,
+                                "type": "string"
+                              },
+                              "symbol": {
+                                "description": "A symbol in the file, its `::`-separated path.",
+                                "maxLength": 200,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "file"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "decision",
+                          "from",
+                          "to"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "op"
+                  ],
+                  "type": "object"
                 }
               ],
               "type": "object"
@@ -515,8 +589,90 @@
       "outputSchema": {
         "additionalProperties": false,
         "properties": {
+          "duplicates": {
+            "description": "Each decision the batch recorded or whose choice or reason it revised that has likely duplicates, decisions whose choice and reason have a TF-IDF cosine of 0.5 or more with its own, in the order of the ops: a warning, never a refusal.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "decision": {
+                  "description": "The decision the batch recorded or whose choice or reason it revised, by its name after the batch.",
+                  "type": "string"
+                },
+                "nearest": {
+                  "description": "Its likely duplicates, best first, at most three.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "decision": {
+                        "description": "The other decision.",
+                        "type": "string"
+                      },
+                      "score": {
+                        "description": "The TF-IDF cosine of the two choices and reasons, to six decimals.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "decision",
+                      "score"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "decision",
+                "nearest"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "left": {
+            "description": "For a `repair_anchors` op with no `repairs`: each stale anchor the tree shows no repair for, or whose repair a `[quality]` pattern refuses, left as it was.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "anchor": {
+                  "description": "The stale anchor, `file` or `file::symbol`.",
+                  "type": "string"
+                },
+                "cause": {
+                  "description": "Why it names nothing, or why its repair was not written.",
+                  "type": "string"
+                },
+                "decision": {
+                  "description": "The decision.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision",
+                "anchor",
+                "cause"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "more_duplicates": {
+            "description": "Decisions with likely duplicates not listed in `duplicates`. `status` with `section: \"lint\"` ranks the pairs: the section lists the best pairs; the ones left out rank at or below the last listed, and come into view as the listed ones are settled (merged, or revised apart).",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "more_left": {
+            "description": "Stale anchors left and not listed: `trurlic check` lists every one.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "more_origin_warnings": {
             "description": "The origin's warnings not listed.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "more_repaired": {
+            "description": "Repairs written and not listed: `trurlic check` shows the anchors as they are.",
             "minimum": 0,
             "type": "integer"
           },
@@ -553,7 +709,7 @@
                   "type": "integer"
                 },
                 "name": {
-                  "description": "The node it names first; a merge's survivor.",
+                  "description": "The node it names first; a merge's survivor; the first decision a repair changed, empty when it changed none.",
                   "type": "string"
                 },
                 "op": {
@@ -567,7 +723,8 @@
                     "add_component",
                     "revise_component",
                     "rename_component",
-                    "remove_component"
+                    "remove_component",
+                    "repair_anchors"
                   ],
                   "type": "string"
                 },
@@ -576,7 +733,7 @@
                   "type": "string"
                 },
                 "rewrote": {
-                  "description": "Files of other nodes it rewrote: edges repointed, a component's decisions and connections renamed.",
+                  "description": "Files of other nodes it rewrote: edges repointed, a component's decisions and connections renamed, the decisions a repair changed after its first.",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -628,6 +785,33 @@
             "description": "Files removed, a rename's old file included.",
             "minimum": 0,
             "type": "integer"
+          },
+          "repaired": {
+            "description": "Each anchor a `repair_anchors` op replaced, with what it replaced it by.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "anchor": {
+                  "description": "The anchor replaced, `file` or `file::symbol`.",
+                  "type": "string"
+                },
+                "decision": {
+                  "description": "The decision.",
+                  "type": "string"
+                },
+                "repair": {
+                  "description": "The anchor written instead.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "decision",
+                "anchor",
+                "repair"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "truncated": {
             "description": "Present only when the result was cut to fit the result budget: each cut, by JSON pointer, with what it omitted.",
@@ -696,10 +880,15 @@
         "readOnlyHint": true,
         "title": "Status"
       },
-      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, and the decisions of each component. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts to the decisions recorded under it. Where the graph sits in the project's git is reported by `trurlic check`.",
+      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: each rule of the quality bar a stored decision breaks, the decisions whose anchors all name a file and no symbol, and the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason of 0.5 or more), counted by kind. The call judges the bar's limits and compares no pair. `section: \"lint\"` compares the pairs too, by decision name within a bound on the work: past it `counts.lint.pairs` says how many decisions it compared, and `origin` narrows it. It also judges the bar's patterns, a `warn` pattern's included, over the decisions by name within a bound on the bytes they read: `counts.lint.patterns` says how many decisions they read and names in `next` the first left unread, and the same call with `from` set to it reads the quality findings on from there, comparing no pair. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts and the findings to the decisions recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are malformed, ambiguous, of a file no resolver reads (unverified), or are one name, not the whole path of what it names, that ten or more files define (weak). Where the graph sits in the project's git is reported by `trurlic check`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "from": {
+            "description": "With `section: \"lint\"`: the quality findings of the decisions named this or after, the `[quality]` patterns reading on from here: a previous call's `counts.lint.patterns.next`. A call with it compares no likely duplicate pair.",
+            "maxLength": 128,
+            "type": "string"
+          },
           "origin": {
             "description": "Count only the decisions recorded under this origin.",
             "maxLength": 200,
@@ -710,7 +899,9 @@
             "enum": [
               "issues",
               "history",
-              "components"
+              "components",
+              "lint",
+              "anchors"
             ],
             "type": "string"
           }
@@ -721,6 +912,70 @@
       "outputSchema": {
         "additionalProperties": false,
         "properties": {
+          "anchors": {
+            "additionalProperties": false,
+            "description": "The anchors that do not plainly resolve in this tree, by kind, decision, anchor.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "anchor": {
+                      "description": "The anchor, `file` or `file::symbol`.",
+                      "type": "string"
+                    },
+                    "cause": {
+                      "description": "What makes it one: the cause, or the count.",
+                      "type": "string"
+                    },
+                    "decision": {
+                      "description": "The decision.",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "`unresolved`: no file at its path or no definition its symbol names in this tree, on a decision ever accepted; stale, or pending on another worktree's branch, which only `trurlic check` tells apart; `malformed`: a symbol out of the grammar or on a directory, which fails `trurlic check`; `ambiguous`: its symbol names definitions of several paths, which fails it too; `unverified`: its file is of a kind no resolver reads or cannot be indexed; `weak`: its symbol is one name, not the whole path of what it names, that 10 or more files of its kind define.",
+                      "enum": [
+                        "unresolved",
+                        "malformed",
+                        "ambiguous",
+                        "unverified",
+                        "weak"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "decision",
+                    "anchor",
+                    "kind",
+                    "cause"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
           "code_root": {
             "description": "The tree anchors resolve against, when the graph is not its own.",
             "type": "string"
@@ -783,6 +1038,45 @@
             "additionalProperties": false,
             "description": "The graph's counts.",
             "properties": {
+              "anchors": {
+                "additionalProperties": false,
+                "description": "The anchor findings by kind, under `origin` when given, when the report has the `anchors` section.",
+                "properties": {
+                  "ambiguous": {
+                    "description": "Ambiguous anchors.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "malformed": {
+                    "description": "Malformed anchors.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "unresolved": {
+                    "description": "Anchors that do not resolve in this tree.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "unverified": {
+                    "description": "Unverified anchors.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "weak": {
+                    "description": "Weak anchors.",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "unresolved",
+                  "malformed",
+                  "ambiguous",
+                  "unverified",
+                  "weak"
+                ],
+                "type": "object"
+              },
               "components": {
                 "description": "Components.",
                 "minimum": 0,
@@ -802,6 +1096,169 @@
                 "description": "Validation issues.",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "lint": {
+                "additionalProperties": false,
+                "description": "The `lint` findings of each kind, when the section is asked for.",
+                "properties": {
+                  "duplicates": {
+                    "description": "Likely duplicate pairs the pass found, every one among the decisions it compared; absent when the call compares none.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "file_anchors_only": {
+                    "description": "Decisions whose anchors all name a file and no symbol.",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "pairs": {
+                    "additionalProperties": false,
+                    "description": "When the pairs' pass left decisions uncompared: how many it compared, why no more, and how to compare them.",
+                    "properties": {
+                      "compared": {
+                        "description": "Decisions the pass compared, the first by name: each with those before it, or under `origin` each recorded there with every other decision.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "more": {
+                        "description": "How the decisions left uncompared come to be compared.",
+                        "type": "string"
+                      },
+                      "uncompared": {
+                        "description": "Decisions it did not compare.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "why": {
+                        "description": "Why: `not_asked`, only `section: \"lint\"` without `from` compares the pairs; `work_limit`, the next decision's probe would take the work past the bound.",
+                        "enum": [
+                          "not_asked",
+                          "work_limit"
+                        ],
+                        "type": "string"
+                      },
+                      "work": {
+                        "additionalProperties": false,
+                        "description": "Past the bound: the work of the whole pass and the bound, in units, the posting entries the probes read and 16 for each pair they may test.",
+                        "properties": {
+                          "bound": {
+                            "description": "The most one call does.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "measured": {
+                            "description": "The work over every decision the pass wants.",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "measured",
+                          "bound"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "compared",
+                      "uncompared",
+                      "why",
+                      "more"
+                    ],
+                    "type": "object"
+                  },
+                  "patterns": {
+                    "additionalProperties": false,
+                    "description": "How far the `[quality]` patterns were judged, when it has any.",
+                    "properties": {
+                      "judged": {
+                        "description": "Decisions the patterns read on this page, by name.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "more": {
+                        "description": "How the decisions left unjudged come to be judged.",
+                        "type": "string"
+                      },
+                      "next": {
+                        "description": "The first decision whose findings this page did not list wholly: `from` set to it reads on.",
+                        "type": "string"
+                      },
+                      "uncompiled": {
+                        "additionalProperties": false,
+                        "description": "The pattern that does not compile; `trurlic check` reports it.",
+                        "properties": {
+                          "index": {
+                            "description": "Its index in `[quality] patterns`.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "message": {
+                            "description": "Why it does not compile.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "index",
+                          "message"
+                        ],
+                        "type": "object"
+                      },
+                      "unjudged": {
+                        "description": "Decisions they did not read on it.",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "why": {
+                        "description": "Why some went unjudged: `not_asked`, the call judged the limits alone; `work_limit`, the bytes the patterns read reached the bound; `gave_up`, a pattern's cache, or the caches together, filled over the page before `next`; `page`, the result's room ended the listing; `uncompiled`, a pattern does not compile.",
+                        "enum": [
+                          "not_asked",
+                          "work_limit",
+                          "gave_up",
+                          "page",
+                          "uncompiled"
+                        ],
+                        "type": "string"
+                      },
+                      "work": {
+                        "additionalProperties": false,
+                        "description": "The bytes the patterns would read over every decision and the bound: each pattern the texts of the fields it reads, one more per text.",
+                        "properties": {
+                          "bound": {
+                            "description": "The most one call does.",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "measured": {
+                            "description": "The work over every decision the pass wants.",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "measured",
+                          "bound"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "judged",
+                      "unjudged"
+                    ],
+                    "type": "object"
+                  },
+                  "quality": {
+                    "description": "Rules of the bar the stored decisions break: every limit's, and the patterns' in the decisions `patterns` says they read.",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "quality",
+                  "file_anchors_only"
+                ],
+                "type": "object"
               },
               "non_canonical": {
                 "description": "Files `trurlic fmt` would rewrite.",
@@ -928,6 +1385,118 @@
                   "required": [
                     "kind",
                     "message"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "more": {
+                "description": "Where the items left out are.",
+                "type": "string"
+              },
+              "omitted": {
+                "description": "The items left out.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "description": "The section's items.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "items"
+            ],
+            "type": "object"
+          },
+          "lint": {
+            "additionalProperties": false,
+            "description": "What to read that refuses nothing: the best likely duplicate pairs, best first, then the quality findings and the decisions with only file anchors by decision name, out of `total`.",
+            "properties": {
+              "items": {
+                "description": "The items that fit, in order.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "description": "The byte offset of the pattern's first match in the field's text.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "decision": {
+                      "description": "The decision it is about; a duplicate's first by name.",
+                      "type": "string"
+                    },
+                    "field": {
+                      "description": "A quality finding's field, an element by its index: `alternatives[1]`.",
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "The finding's kind: `duplicate`, two decisions whose choice and reason have a TF-IDF cosine of 0.5 or more; `quality`, a rule of the bar the stored decision breaks; `file_anchors_only`, a decision whose anchors all name a file and no symbol, so none says what part of it the decision constrains.",
+                      "enum": [
+                        "duplicate",
+                        "quality",
+                        "file_anchors_only"
+                      ],
+                      "type": "string"
+                    },
+                    "level": {
+                      "description": "`refuse` for a limit, a give-up and a `refuse` pattern, `warn` for a `warn` one.",
+                      "enum": [
+                        "refuse",
+                        "warn"
+                      ],
+                      "type": "string"
+                    },
+                    "limit": {
+                      "additionalProperties": false,
+                      "description": "A limit's measure and bound, in the rule's unit.",
+                      "properties": {
+                        "bound": {
+                          "description": "The limit it passes.",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "measured": {
+                          "description": "What the field measures.",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "unit": {
+                          "description": "What both count: `words`, `alternatives` or `anchors`.",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "measured",
+                        "bound",
+                        "unit"
+                      ],
+                      "type": "object"
+                    },
+                    "other": {
+                      "description": "A duplicate's other decision.",
+                      "type": "string"
+                    },
+                    "pattern": {
+                      "description": "A pattern's index in `[quality] patterns`.",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "rule": {
+                      "description": "The rule as a refusal names it: a limit's, `pattern`, `pattern_gave_up` where the pattern's cache filled before it could judge the field, or `pattern_cache_total` where the patterns' caches together passed their total over the decision, `pattern` naming the one that grew the most; a write of it refuses both.",
+                      "type": "string"
+                    },
+                    "score": {
+                      "description": "A duplicate's cosine, to six decimals.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "decision"
                   ],
                   "type": "object"
                 },

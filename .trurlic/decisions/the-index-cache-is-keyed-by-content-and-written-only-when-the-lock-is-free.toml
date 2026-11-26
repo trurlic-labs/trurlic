@@ -1,0 +1,29 @@
+component = "sources"
+choice = "Each file's index is cached in .state/symbols/ in a compact encoding under the hash of its kind, grammar, versions and bytes; a read writes its misses when the exclusive lock is free"
+reason = "Parsing every Rust file of a large tree on each status call costs more than reading cached indexes, and the gap grows with the tree. The key is by content, with the file's kind, the identity of the kind's tree-sitter grammar, the span hash scheme, INDEX_FORMAT and every bound the index is built within (BOUNDS), the sizes of its values and each kind's room among them. So an entry is never read under other rules or bounds, and the trees of one shared graph share entries. A fingerprint test of the fixture corpus, a case per rule and per bound, makes a change to how a file is indexed raise INDEX_FORMAT. An entry is a sum, its key and a binary encoding, within the room of its file (an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost). A read charges an entry as the write did before it allocates, within the room of the file it is read for, a fault's alone past the kind's size. So every entry a write makes reads back, and a forged one and its decode take no more memory than that room. A read takes no lock to read entries, which are renamed over their names. After its own work a read tries the exclusive lock without waiting and skips the write when it is busy: the cache is never authoritative. A torn, swapped or unreadable entry is a miss, and one entry that fails to write stops no other. The directory is bounded without a clock: past twice the call's live set and 256, every entry outside the set goes."
+alternatives = [
+    "No cache: rejected because each status call would parse the whole tree, which grows with the project",
+    "Key by path and modification time: rejected because a checkout can keep a time, and the trees of a shared graph would not share",
+    "Wait for the lock to write: rejected because a read would then stall behind a writer for an optional speedup",
+    "One read cap for every entry: rejected because a forged entry near a cap sized for the largest file cost every call seconds and gigabytes, whatever file it named",
+    "Prune by age: rejected because it needs a clock, which a read has no business reading",
+]
+tags = [
+    "concurrency",
+    "performance",
+]
+status = "accepted"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "benches/corpus.rs", symbol = "bench_code_index" },
+    { file = "src/code/encoding/read.rs", symbol = "decode" },
+    { file = "src/code/index.rs", symbol = "BOUNDS" },
+    { file = "src/code/index.rs", symbol = "INDEX_FORMAT" },
+    { file = "src/sources/cache.rs", symbol = "key" },
+    { file = "src/sources/mod.rs", symbol = "Reads::write" },
+    { file = "src/store/symbols.rs", symbol = "Store::write_symbols" },
+]
+depends_on = [
+    "an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost",
+]

@@ -95,6 +95,12 @@ depends_on = [
 ]
 ```
 
+An anchor names a file or directory relative to the project root, and a symbol in it: a `::`-separated path of names from the outermost container, as `Store::open` in Rust or Python, `Config::<Display>::fmt` for a Rust trait impl, `profile::release::panic` for a TOML or JSON key, `Install::From source` for a Markdown heading under its parents, or `ci` for a Makefile target. A bare name such as `sign` is enough when the file defines one thing of that name, and `Store::code_root()` names the function or method alone where a field shares its path. Rust, Python (`.py`, `.pyi`), TypeScript and JavaScript (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`, where a test is named by its `describe` and `it` strings, `Store::opens a file`), C (`.c`) and C++ (`.cc`, `.cpp`, `.cxx`, `.hpp`, `.hh`, and every `.h`), where a symbol is spelled as the source writes it (`Book::operator==`, `Book::~Book`, `Box::get` for a template and its specializations, `Suite::Name` for googletest's `TEST(Suite, Name)`), and those data and prose files are read; a symbol on any other file is reported as one no resolver reads.
+
+The index runs no preprocessor, so it reads every `#if` arm as written. Before a C or C++ file is parsed, the macros the tree's headers define as attributes or specifiers (`LEVELDB_EXPORT`, `FMT_CONSTEXPR`, `CURL_PRINTF(2, 3)`) and as a namespace's opening and closing (`FMT_BEGIN_NAMESPACE`) are blanked, so `class LEVELDB_EXPORT DB {` reads as the class it is; a source file's own such `#define`s are blanked in that file alone. A macro defined as `static` (`#define local static`) is blanked and keeps what it marks private, whatever its length. A `#define` of a keyword or specifier (`#define const`) is never taken for a macro, and a header in a test place (`tests/`, `test/`, `*_test.h`) blanks names in test code alone; any other header's macros reach every C and C++ file of the tree, a vendored library's included. Three things stay unseen: what a function-like macro writes (`BIT(flag);` in a struct defines no field `flag`), a macro defined outside the tree's headers (a system or generated header, or a source file another file includes), which may make the index misread the code around it, and the segments of a namespace a macro opens, which its definitions lack.
+
+The index runs no Rust macro either. A `macro_rules!` macro is a definition, but an item a macro invocation produces is not, whether the macro's body or the invocation's own tokens spell it (`bitflags!`, `proptest!`, `thread_local!`, a crate's own item macros). Anchor such code by an item written outside the invocation (a method in the type's `impl`), by the macro, or by the file. An anchor that names such an item does not resolve.
+
 The file stem is the decision's name. A component file holds `description` and `connects_to`. Write them through `apply`, a batch of ops (`record`, `revise`, `rename`, `merge`, `remove`, and the component ops) that lands whole in one commit or not at all, with every edge a rename or a merge touches rewritten; a decision it records is `proposed`. A hand edit is legal too: every load validates it, `trurlic check` reports what is wrong with the graph, and `trurlic fmt` puts each file in its canonical form (sorted sets, one element per line) so branches merge cleanly.
 
 ## Quality rules
@@ -110,13 +116,15 @@ anchors_max = 8                           # anchors of a decision
 require_origin = true                     # a batch that records a decision names its origin
 
 [[quality.patterns]]
-pattern = '(?i)\b(?:we|our)\b'            # a regular expression (Rust regex syntax)
+pattern = '(?i)(?:^|\W)(?:we|our)(?:\W|$)'  # a regular expression (Rust regex syntax)
 fields = ["choice", "reason", "alternatives"]  # also tags, anchors, origin
 level = "refuse"                          # or "warn": written, with a warning in the result
 message = "The subject is a code entity, never \"we\"."
 ```
 
-A word is a run of text between whitespace. An op is held to the bar only in the fields it changes, so a decision migrated or edited below the bar stays revisable, and a field it writes must meet the bar whole. A `warn` pattern warns once per op at its first match: the result lists one warning per op in `warnings`, by argument, pattern index and byte offset, counts the rest in the op's `more_warnings`, and carries each named pattern's message once in `patterns`; `trurlic apply` prints them on stderr. The bar is checked on writes alone: `trurlic check` reports the text rules of every file, not the bar, and fails when a pattern does not compile, which would refuse every write; `trurlic status` counts the rules the table sets. [`examples/quality.toml`](examples/quality.toml) is a complete bar for decisions that coding agents follow.
+A word is a run of text between whitespace. Patterns run on a lazy DFA, compiled before a write takes its lock. A Unicode word boundary (`\b`, `\B`) is refused, so write a whole word as `(?:^|\W)word(?:\W|$)` (or `(?-u:\b)` over ASCII text); so are case-insensitive classes that fold more than 2,097,152 code points (`(?i)[\s\S]` twice) and an automaton that cannot start within its cache (`\w{9}`), each naming the pattern and the rewrite. Each pattern charges the bytes of the texts it reads before it reads them, and builds its automaton in a cache of 320 KiB that gives up when full; a batch past 100 MB is refused at that op as `pattern_work`, one over whose texts a pattern's cache fills as `pattern_gave_up`, and one whose patterns' caches grow past 1.5 MiB together as `pattern_cache_total`, naming the pattern that grew the most; shorten the text, split the batch, or simplify the pattern. An op is held to the bar only in the fields it changes, so a decision migrated or edited below the bar stays revisable, and a field it writes must meet the bar whole. A `warn` pattern warns once per op at its first match: the result lists one warning per op in `warnings`, by argument, pattern index and byte offset, counts the rest in the op's `more_warnings`, and carries each named pattern's message once in `patterns`; `trurlic apply` prints them on stderr. The bar refuses writes alone: `trurlic check` reports the text rules of every file, not the bar, and fails when a pattern does not compile, which would refuse every write. `trurlic status` counts the rules the table sets and shows, under `lint`, every limit of the bar a stored decision breaks, with the field, the measure and the bound: the graph below its own bar, never an error. `trurlic status --section lint` judges the patterns too, a `warn` pattern's included, over the decisions by name while the bytes they read stay within a bound and the result has room; a pattern whose cache fills, or caches that grow past 1.5 MiB together, end the page before that decision, and one fresh caches cannot judge is listed as `pattern_gave_up` or `pattern_cache_total`. It counts the decisions it left unjudged and names in `next` where the page ended; `--from <name>` reads on from there. It lists there too each decision whose anchors all name a file and no symbol, none of which says what part of its file the decision constrains. [`examples/quality.toml`](examples/quality.toml) is a complete bar for decisions that coding agents follow.
+
+A likely duplicate is a warning, never a refusal. Two decisions are likely duplicates when the TF-IDF cosine of their `choice` and `reason` is 0.5 or more: the terms are lowercased runs of ASCII letters and underscores, two characters or more, starting with a letter, less 35 common stop words, weighted by count times ln((1 + n) / (1 + df)) + 1 over the graph's n decisions. `apply` names, in `duplicates`, each decision whose choice or reason the batch wrote with its three nearest, looked for once the write has released its lock, and `trurlic apply` prints them on stderr. `trurlic status --section lint` ranks the pairs under `lint`: the section lists the best pairs and `counts.lint.duplicates` counts them all; the ones left out rank at or below the last listed, and come into view as the listed ones are settled (merged, or revised apart). A term many decisions hold pairs most of them, so each decision's comparisons are counted as work before they run, and the decisions are compared by name while the work fits a fixed bound; past it `counts.lint.pairs` says how many were compared, and `origin` compares only the pairs of the decisions recorded under it. The default call, and one with `--from`, compare none. Scores are computed in integers, so every machine reports the same pairs and the same six decimals.
 
 ## Where the graph lives
 
@@ -142,7 +150,7 @@ git -C .trurlic log --stat
 curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/master/install.sh | bash
 ```
 
-Or with Rust: `cargo install trurlic` (requires Rust 1.90+).
+Or with Rust, from the repository, which holds the patched tree-sitter runtime the index is built on: `cargo install --locked --git https://github.com/trurlic-labs/trurlic` (requires Rust 1.90+).
 
 Pre-built binaries for Linux, macOS, and Windows are on the [Releases](https://github.com/trurlic-labs/trurlic/releases) page.
 
@@ -208,9 +216,10 @@ The agent reasons it out with you and records each decision you agree on through
 Before writing a line, the agent pulls the component's brief and generates code that respects every decision.
 
 ```bash
-trurlic status              # the graph at a glance: counts, issues, history, components
+trurlic status              # the graph at a glance: counts, issues, history, components, lint
+trurlic status --section anchors  # the anchors that do not plainly resolve in this tree
 trurlic apply batch.json    # a batch of ops, the JSON the apply tool takes, all or none
-trurlic check               # every issue, naming its file; fails when there is one
+trurlic check               # every issue and anchor finding; fails on an issue, a stale, malformed or ambiguous anchor
 trurlic fmt                 # rewrite the files that are not in canonical form
 ```
 
@@ -236,12 +245,28 @@ apply({ops: [{op: "record", ...}]})   →  a choice the graph did not cover yet
 trurlic check                         →  no issue
 ```
 
+## Anchor findings
+
+`trurlic check` resolves every anchor against the tree it runs in and reports each one that does not plainly resolve, with its cause:
+
+| Finding | When | `check` |
+|---|---|---|
+| `stale` | No file at its path, or no definition its symbol names, on an accepted decision or a proposed revision of one, and no other worktree holds it | error: fails |
+| `malformed` | Its symbol is out of the grammar of its file's kind, or on a directory, so it can never resolve as written, whatever the decision's status | error: fails |
+| `ambiguous` | Its symbol names definitions of several paths (`pages` with `Book::pages` and `Shelf::pages`), so a reader cannot tell which one the decision means | error: fails |
+| `unverified` | Its symbol is on a kind of file no resolver reads, or on a file that cannot be read or indexed: the code may exist, but trurlic cannot say | warning |
+| `weak` | Its symbol is one name that 10 or more code files of its kind define, and it is not the whole path of what it names (`run` for `Runner::run`): a module-level item named by its own name never is | warning |
+| `pending` | It would be stale, but another worktree of the repository resolves it, one whose work tree differs at the anchor's file from where its line forked from this tree's (committed there, edited and not committed, or a new file not yet added) and where the fork did not resolve it, so code this tree deleted since is never pending. It is named with its branch. Only that file is read there | note |
+| `planned` | No file at its path or no definition its symbol names, on a decision never accepted, which may anchor what is not written yet | note |
+
+A worktree whose work tree matches the fork at the anchor's file, such as one of an older branch or of a branch that left the file alone, makes nothing pending, and a worktree git cannot say enough of is a warning. A symbol that names one place's definitions of several kinds, a field and its getter, is no finding. A stale anchor shows its repair only when git's history shows its code itself there: the same tokens, comments and whitespace aside, by span hash, nothing else tolerated, not a changed visibility or attribute. A gone file is followed by its bytes: where the commit that deleted it, or the work tree (`git mv`), gave exactly one other path its unchanged blob, then through every later change of that path, an edit keeping it there, a move of its bytes taking it on, and a deletion ending it whatever fills the path again. A file anchor follows only such a move, into a file that defines an item. A symbol anchor is looked for only in the files the change that lost its code changed: the newest of its file's 8 newest changes, or the work tree's, whose file before wrote the item and after it writes none or was deleted (a side branch's edit that kept it lost nothing, whatever a merge did later). Each such file of the anchor's file kind (`.ts`, `.d.ts` and `.tsx`, with JavaScript, are kinds apart), followed by its bytes to where it is now, that writes the symbol as its whole path now, never a re-export or a `mod` declaration, is a candidate, at most 16 of them (past that, no repair). The repair is the one candidate that, across that change, went from writing no item of the symbol to the same code the anchor's file lost, and that held an item of those kinds after each of its changes since (at most 128 read) and holds one now; none, or two, and no repair. A file git does not track is neither a candidate nor a second one. A namesake the change did not write, in another crate, target or test module, is never one, while a file moved into another crate and edited in the same commit carries the functions it moved unchanged. The history is read in at most six git processes, from the 10000 newest commits, and none when no stale anchor can be repaired. `apply` with `{"op": "repair_anchors"}` writes every repair `check` shows, or the `repairs` you list, and leaves each decision's status alone; with no `repairs`, each repair is held once more under the write lock to the code it named when the op read it before taking the lock, and left when `HEAD` moved meanwhile, a repair the `[quality]` bar refuses or cannot judge is left, the rule its cause, and the rest are written, while a listed repair a pattern refuses refuses the batch, naming the decision. `status` with `section: "anchors"` asks the project's git nothing, so it reports what this tree alone shows: `unresolved` for an anchor that would be stale or pending, `malformed`, `ambiguous`, `unverified` and `weak`. It computes the section only when asked for it, since it reads every source file of the tree, and `origin` narrows it to the decisions recorded under it.
+
 ## MCP tools
 
 | Tool | Purpose |
 |------|---------|
 | `apply` | The one write: a batch of ops applied in order, all or none, in one commit; a refusal names the op, the argument and the rule; held to the [quality rules](#quality-rules) |
-| `status` | The graph at a glance: counts, the quality rules `[quality]` sets, validation issues, what a shared graph's history lacks, each component's decisions |
+| `status` | The graph at a glance: counts, the quality rules `[quality]` sets, validation issues, what a shared graph's history lacks, each component's decisions, and under `lint` each rule of the bar a decision breaks and the decisions with only file anchors; asked for, the likely duplicate pairs and the [anchor findings](#anchor-findings) |
 | `get_context` | Architectural brief for a component: decisions, rules, related constraints, health |
 | `get_decisions_for_file` | Every decision anchored on a file, on a file under a directory, or on a directory that holds the file |
 

@@ -1,0 +1,24 @@
+component = "code"
+choice = "A Python file whose lines start at more than 256 distinct indentation widths is refused before the parse as TooManyIndentations"
+reason = "tree-sitter-python's scanner keeps the widths of the open blocks on a stack and writes them, two bytes each, after the open string delimiters into tree-sitter's buffer of 1,024 bytes; its loop stops at the buffer's size only on an even count, so some 380 open blocks under an odd number of open strings write one byte past it, and tree-sitter's assertion aborts the process, which no unwind catches. The stack holds strictly increasing widths, each measured from a line break, so it is no deeper than the distinct widths the file's lines start at, counted as the scanner counts them: a space 1, a tab 8, in 16 bits that wrap, every line counted, one inside a string or brackets too. A backslash before a line break continues a width only while the width is open; after any other byte, a comment's last among them, the line break starts a width, since the scanner ends the comment there and pushes what follows. At 256 every entry and delimiter fits with room. The check runs before the parse, since the abort happens during it."
+alternatives = [
+    "A bound on the tree's nesting: rejected because the abort happens during the parse, before any tree",
+    "A patched copy of the grammar's scanner: rejected because a vendored fork of a C grammar must be kept in step with every release",
+    "Parse in a child process: rejected because it spawns a process per file and a call would no longer be one process",
+]
+tags = [
+    "python",
+    "reliability",
+]
+status = "accepted"
+origin = "languages as query files"
+created = "2026-11-25T16:53:23.387185487Z"
+anchors = [
+    { file = "src/code/general/tests.rs", symbol = "a_comment_ending_in_a_backslash_continues_no_width_the_bound_counts" },
+    { file = "src/code/general/tests.rs", symbol = "indentations_past_the_scanners_bound_are_refused_before_the_parse" },
+    { file = "src/code/language/python.rs", symbol = "MAX_INDENTATIONS" },
+    { file = "src/code/language/python.rs", symbol = "check_indentations" },
+]
+depends_on = [
+    "a-language-beyond-rust-is-a-grammar-and-a-query-file",
+]

@@ -1,0 +1,37 @@
+component = "code"
+choice = "C files (.c) are read by tree-sitter-c and every other C or C++ file (.h, .cc, .cpp, .cxx, .hpp, .hh) by tree-sitter-cpp, through c.scm and cpp.scm, with no bound of their own before the parse"
+reason = "A header cannot say whether C or C++ includes it, and the C++ grammar reads C headers about as well as the C grammar does (on curl and redis, within a percent of the definitions), so every .h is read as C++ and the two grammars meet the two languages once each. Both crates are at their newest releases whose ABIs tree-sitter 0.27 reads, and they add about 4.3 MB to the binary, which is the price of both languages. No bound of their own runs before the parse: tree-sitter-c has no scanner, tree-sitter-cpp caps its raw string delimiter itself, and the operations, stack and memory a parse may take are the bounds every grammar shares, which refuse the unclosed templates and casts whose ambiguity costs the most."
+alternatives = [
+    "Read .h by the C grammar: rejected because a C++ header then misreads its classes and templates, while the C++ grammar reads a C header within a percent of the C grammar",
+    "Decide a header's grammar by a sibling .cpp file: rejected because the index of a file would then depend on another file's name",
+    "A bound before the parse like Python's indentation widths: rejected because neither grammar has a scanner fault to guard, and the budget of operations bounds the cost of every shape",
+]
+tags = [
+    "dependencies",
+    "parsing",
+]
+status = "proposed"
+origin = "c and c++"
+created = "2026-11-25T23:03:16.297379871Z"
+anchors = [
+    { file = "Cargo.toml", symbol = "dependencies::tree-sitter-c" },
+    { file = "Cargo.toml", symbol = "dependencies::tree-sitter-cpp" },
+    { file = "src/code/index.rs", symbol = "FileKind::of" },
+    { file = "src/code/language.rs", symbol = "C" },
+    { file = "src/code/language.rs", symbol = "CPP" },
+    { file = "src/code/language/c.scm" },
+    { file = "src/code/language/cpp.scm" },
+]
+depends_on = [
+    "a-language-beyond-rust-is-a-grammar-and-a-query-file",
+    "a-tree-sitter-parse-is-held-to-32-progress-operations-a-byte-on-a-stack-it-does-not-grow",
+]
+
+[accepted_text]
+choice = "C files (.c) are read by tree-sitter-c and every other C or C++ file (.h, .cc, .cpp, .cxx, .hpp, .hh) by tree-sitter-cpp, through c.scm and cpp.scm, with no bound of their own before the parse"
+reason = "A header cannot say whether C or C++ includes it, and the C++ grammar reads C headers about as well as the C grammar does (on curl and redis, within a percent of the definitions), so every .h is read as C++ and the two grammars meet the two languages once each. Both crates are at their newest releases whose ABIs tree-sitter 0.27 reads, and they add about 4.3 MB to the binary, which is the price of both languages. No bound of their own runs before the parse: tree-sitter-c has no scanner, tree-sitter-cpp caps its raw string delimiter itself, and thirty hostile shapes at the 1 MiB cap, nested parentheses, casts, unclosed templates, a most vexing parse, deep #if nesting and continued macros among them, each finish in linear time on a 128 KiB stack. The time, stack and memory a parse may take are the bounds every grammar shares, which a-file-is-indexed-on-a-stack-a-parse-at-the-cap-fits-in-within-a-bound-of-memory states."
+alternatives = [
+    "Read .h by the C grammar: rejected because a C++ header then misreads its classes and templates, while the C++ grammar reads a C header within a percent of the C grammar",
+    "Decide a header's grammar by a sibling .cpp file: rejected because the index of a file would then depend on another file's name",
+    "A bound before the parse like Python's: rejected because no hostile shape measured needs one",
+]

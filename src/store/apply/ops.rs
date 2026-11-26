@@ -2,6 +2,10 @@
 //! with their values unchecked. [`Field`] names each argument as the batch
 //! spells it, for the surface that declares it and the refusal that cites it.
 
+use std::collections::BTreeMap;
+
+use crate::store::schema::Anchor;
+
 /// The ops of one `apply` call, applied in order, all or none, and the
 /// trailers of its history commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +30,7 @@ pub enum Op {
     ReviseComponent(ReviseComponent),
     RenameComponent(Rename),
     RemoveComponent(RemoveComponent),
+    RepairAnchors(RepairAnchors),
 }
 
 impl Op {
@@ -41,11 +46,12 @@ impl Op {
             Self::ReviseComponent(_) => OpKind::ReviseComponent,
             Self::RenameComponent(_) => OpKind::RenameComponent,
             Self::RemoveComponent(_) => OpKind::RemoveComponent,
+            Self::RepairAnchors(_) => OpKind::RepairAnchors,
         }
     }
 
     /// The node the op names first: the decision or component it changes,
-    /// a merge's survivor.
+    /// a merge's survivor, a repair's first decision (none for no repair).
     #[must_use]
     pub fn target(&self) -> &str {
         match self {
@@ -58,6 +64,10 @@ impl Op {
             | Self::ReviseComponent(ReviseComponent { name, .. })
             | Self::RemoveComponent(RemoveComponent { name }) => name,
             Self::Merge(Merge { survivor, .. }) => survivor,
+            Self::RepairAnchors(RepairAnchors::Listed(repairs)) => repairs
+                .first()
+                .map_or("", |repair| repair.decision.as_str()),
+            Self::RepairAnchors(RepairAnchors::Every(_)) => "",
         }
     }
 }
@@ -74,10 +84,11 @@ pub enum OpKind {
     ReviseComponent,
     RenameComponent,
     RemoveComponent,
+    RepairAnchors,
 }
 
 impl OpKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Record,
         Self::Revise,
         Self::Rename,
@@ -87,6 +98,7 @@ impl OpKind {
         Self::ReviseComponent,
         Self::RenameComponent,
         Self::RemoveComponent,
+        Self::RepairAnchors,
     ];
 
     #[must_use]
@@ -101,6 +113,7 @@ impl OpKind {
             Self::ReviseComponent => "revise_component",
             Self::RenameComponent => "rename_component",
             Self::RemoveComponent => "remove_component",
+            Self::RepairAnchors => "repair_anchors",
         }
     }
 }
@@ -119,7 +132,7 @@ pub struct Record {
 }
 
 /// An anchor as a batch writes it, checked by the store.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AnchorInput {
     pub file: String,
     pub symbol: Option<String>,
@@ -200,6 +213,28 @@ pub struct RemoveComponent {
     pub name: String,
 }
 
+/// Stale anchors replaced in their decisions. The store reads no code: a
+/// surface that offers the repairs the tree shows hands them in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepairAnchors {
+    /// The repairs a caller lists, in order, each checked against the
+    /// graph the earlier ops left: `repairs[j]` names one.
+    Listed(Vec<Repair>),
+    /// Each anchor a key names replaced by its value, in every decision
+    /// ever accepted that holds it at the op's place in the batch; one
+    /// that none holds is passed over.
+    Every(BTreeMap<Anchor, Anchor>),
+}
+
+/// `from`, an anchor `decision` holds, replaced by `to`; when the decision
+/// holds `to` already, `from` is dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repair {
+    pub decision: String,
+    pub from: AnchorInput,
+    pub to: AnchorInput,
+}
+
 /// An argument of an op, by the key a batch spells it with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Field {
@@ -227,6 +262,7 @@ pub enum Field {
     ConnectsTo,
     AddConnectsTo,
     RemoveConnectsTo,
+    Repairs,
 }
 
 impl Field {
@@ -299,6 +335,7 @@ impl Field {
             Self::ConnectsTo => "connects_to",
             Self::AddConnectsTo => "add_connects_to",
             Self::RemoveConnectsTo => "remove_connects_to",
+            Self::Repairs => "repairs",
         }
     }
 
@@ -331,7 +368,8 @@ impl Field {
             | Self::RemoveDependsOn
             | Self::Description
             | Self::AddConnectsTo
-            | Self::RemoveConnectsTo => None,
+            | Self::RemoveConnectsTo
+            | Self::Repairs => None,
         }
     }
 }

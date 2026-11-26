@@ -1,0 +1,28 @@
+component = "code"
+choice = "A Rust or Python symbol's last () names a function or method alone and (x) is refused; in TypeScript a last () names those or a segment written with it, other parentheses text"
+reason = "A struct field and its getter share a path (Store::code_root), and a decision may mean one of them, so the grammar needs a spelling that tells them apart without a second path syntax. A trailing () is how a reader writes a call: Store::code_root() names the function or method of that path and nothing else, while Store::code_root names every definition of the path, the field and the getter together as one set. The narrowing comes first: among a path's definitions () keeps the functions and methods, so a set of functions and other kinds is narrowed to its functions, and it is the one narrowing by kind. A function is a fn item, in a module or a body, and a method a fn of an impl or a trait; a tuple struct's constructor, a const of a fn type, a macro and a pub use leaf are not functions here. The parentheses hold nothing: a call's arguments are no part of a name, so (x) is refused, and so is a ) that closes no (. Whitespace before them is allowed as within a name, so open () is open(). A trait segment is no function, so <Display>() is refused. The suffix is a rule of the languages, by the syntax each language's row names: in a TOML or JSON key, a Makefile target or a Markdown heading parentheses are text. TypeScript names a test by a string that may hold anything, which a segment must spell as the file reads: there parentheses are text, and a last () names the functions of the path without it or any definition whose last segment is written with it."
+alternatives = [
+    "A kind prefix such as fn:Store::code_root: rejected because it is a second syntax to teach, and () is how a call is written",
+    "Let () hold an argument list to pick an overload: rejected because Rust has no overloads, and a list is no part of a name",
+    "Read () in every kind of file: rejected because a heading or a key may end in parentheses, which would then name nothing",
+    "Keep the migration's parentheses as a call: rejected because 0.4.1 parentheses never narrowed what a ref named",
+]
+tags = [
+    "anchors",
+    "grammar",
+]
+status = "accepted"
+origin = "call suffix"
+created = "2026-11-24T11:40:14.100318927Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "CodeFacts::find" },
+    { file = "src/code/kinds.rs", symbol = "DefinitionKind::is_function" },
+    { file = "src/code/symbol.rs", symbol = "Symbol::names" },
+    { file = "src/code/symbol.rs", symbol = "Symbol::parse" },
+    { file = "src/code/symbol.rs", symbol = "Syntax" },
+    { file = "src/code/symbol.rs", symbol = "a_call_suffix_is_empty_parentheses_after_a_name_in_a_kind_with_functions" },
+    { file = "src/code/symbol.rs", symbol = "a_strings_symbol_takes_parentheses_as_text_and_reads_a_last_pair_both_ways" },
+]
+depends_on = [
+    "a-symbol-is-a-path-of-names-from-the-outermost-container",
+]

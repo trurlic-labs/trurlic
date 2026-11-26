@@ -4,28 +4,41 @@ use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::console::out;
-use crate::mcp::twin::{self, Part, QualityCounts, Report, ToolError};
+use crate::mcp::twin::{
+    self, AnchorCounts, Cut, LintItem, PairCounts, Part, PatternCounts, QualityCounts, Report,
+    ToolError,
+};
 
 use super::{Format, answer};
 
-/// `trurlic status`: the `status` tool, its section and origin given as
-/// flags, printed for a terminal or as the tool's JSON. It writes nothing,
-/// to the graph's repository neither.
+/// The arguments of `status` that `trurlic status` takes as flags.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StatusFlags<'a> {
+    pub(crate) section: Option<&'a str>,
+    pub(crate) origin: Option<&'a str>,
+    pub(crate) from: Option<&'a str>,
+}
+
+/// `trurlic status`: the `status` tool, its arguments given as flags,
+/// printed for a terminal or as the tool's JSON. It writes nothing, to
+/// the graph's repository neither.
 pub(crate) fn status(
     cwd: &Path,
-    section: Option<&str>,
-    origin: Option<&str>,
+    flags: StatusFlags<'_>,
     format: Format,
 ) -> std::result::Result<(), ToolError> {
     let mut arguments = Map::new();
-    if let Some(section) = section {
-        arguments.insert("section".into(), Value::from(section));
-    }
-    if let Some(origin) = origin {
-        arguments.insert("origin".into(), Value::from(origin));
+    for (key, flag) in [
+        ("section", flags.section),
+        ("origin", flags.origin),
+        ("from", flags.from),
+    ] {
+        if let Some(flag) = flag {
+            arguments.insert(key.into(), Value::from(flag));
+        }
     }
     answer(twin::status(cwd, &arguments), format, |report| {
-        print(report, origin)
+        print(report, flags.origin)
     })
 }
 
@@ -64,7 +77,170 @@ fn print(report: &Report, origin: Option<&str>) -> Result<()> {
     for finding in report.history.iter().flat_map(|history| &history.items) {
         out!("history: {}", finding.message)?;
     }
-    Ok(())
+    lint(report)?;
+    anchors(report)
+}
+
+/// The anchor findings, counted by kind, then a line each, when the
+/// report has the section: the count line even with none, so a clean tree
+/// is told from one not asked.
+fn anchors(report: &Report) -> Result<()> {
+    let (Some(section), Some(counts)) = (&report.anchors, &report.counts.anchors) else {
+        return Ok(());
+    };
+    let AnchorCounts {
+        unresolved,
+        malformed,
+        ambiguous,
+        unverified,
+        weak,
+    } = counts;
+    out!(
+        "anchors: {unresolved} unresolved, {malformed} malformed, {ambiguous} ambiguous, \
+         {unverified} unverified, {weak} weak"
+    )?;
+    for item in &section.items {
+        let (kind, anchor, decision) = (item.kind.as_str(), &item.anchor, &item.decision);
+        out!("  {kind}: `{anchor}` of `{decision}`: {}", item.cause)?;
+    }
+    omitted(section)
+}
+
+/// The lint section's counts and findings, a line each, when it has any.
+fn lint(report: &Report) -> Result<()> {
+    let lint_counts = report.counts.lint.as_ref();
+    if let Some(patterns) = lint_counts.and_then(|counts| counts.patterns.as_ref()) {
+        unjudged(patterns, &report.quality)?;
+    }
+    if let Some(pairs) = lint_counts.and_then(|counts| counts.pairs.as_ref()) {
+        paired(pairs)?;
+    }
+    let (Some(lint), Some(counts)) = (report.lint.as_ref(), report.counts.lint.as_ref()) else {
+        return Ok(());
+    };
+    if lint.total == 0 {
+        return Ok(());
+    }
+    let duplicates = counts.duplicates.map_or_else(
+        || "likely duplicates not compared".to_owned(),
+        |count| format!("{count} likely duplicate pair(s)"),
+    );
+    out!(
+        "lint: {} ({duplicates}, {} quality finding(s), {} decision(s) with only file anchors)",
+        lint.total,
+        counts.quality,
+        counts.file_anchors_only
+    )?;
+    for item in &lint.items {
+        out!("  {}", finding(item))?;
+    }
+    omitted(lint)
+}
+
+fn finding(item: &LintItem) -> String {
+    match item {
+        LintItem::Duplicate {
+            decision,
+            other,
+            score,
+        } => format!("likely duplicates ({score}): `{decision}` and `{other}`"),
+        LintItem::Quality(found) => {
+            let (decision, field, level) = (&found.decision, &found.field, found.level.as_str());
+            let what = match (&found.limit, found.pattern) {
+                (Some(limit), _) => format!(
+                    "{}, {} {} against {}",
+                    found.rule, limit.measured, limit.unit, limit.bound
+                ),
+                (None, Some(matched)) => match (matched.index, matched.at) {
+                    (index, Some(at)) => {
+                        format!("matches `[quality] patterns[{index}]` at byte {at}")
+                    }
+                    (index, None) => {
+                        format!("{}, `[quality] patterns[{index}]`", found.rule)
+                    }
+                },
+                (None, None) => found.rule.to_owned(),
+            };
+            format!("`{decision}` `{field}`: {what} ({level})")
+        }
+        LintItem::FileAnchorsOnly { decision } => {
+            format!(
+                "`{decision}`: only file anchors, none naming the part of its file it constrains"
+            )
+        }
+    }
+}
+
+/// Why the `[quality]` patterns left decisions unjudged, if they did.
+fn unjudged(patterns: &PatternCounts, quality: &QualityCounts) -> Result<()> {
+    match &patterns.cut {
+        None => Ok(()),
+        Some(Cut::NotAsked) => out!(
+            "lint: the limits alone; `trurlic status --section lint` judges the {} [quality] \
+             pattern(s) too",
+            quality.refusing + quality.warning
+        ),
+        Some(Cut::WorkLimit(work)) => {
+            out!(
+                "lint: the [quality] patterns read {} of {} decision(s), by name, within {} \
+                 bytes of the {} they would read",
+                patterns.judged,
+                patterns.judged + patterns.unjudged,
+                work.bound,
+                work.measured
+            )?;
+            next_page(patterns)
+        }
+        Some(Cut::GaveUp) => {
+            out!(
+                "lint: the [quality] patterns read {} decision(s), by name, until a pattern's \
+                 cache, or their caches together, filled",
+                patterns.judged
+            )?;
+            next_page(patterns)
+        }
+        Some(Cut::Page) => {
+            out!(
+                "lint: this page lists the quality findings of {} decision(s) the [quality] \
+                 patterns read, by name",
+                patterns.judged
+            )?;
+            next_page(patterns)
+        }
+        Some(Cut::Uncompiled(uncompiled)) => out!(
+            "lint: `[quality] patterns[{}]` does not compile, so no pattern was judged: {}",
+            uncompiled.index,
+            uncompiled.message
+        ),
+    }
+}
+
+/// Why the likely duplicates' pass left decisions uncompared.
+fn paired(pairs: &PairCounts) -> Result<()> {
+    match &pairs.work {
+        Some(work) => out!(
+            "lint: the likely duplicates of {} of {} decision(s), by name, within {} units of the \
+             {} their pass would do; `--origin` compares only the pairs of its decisions",
+            pairs.compared,
+            pairs.compared + pairs.uncompared,
+            work.bound,
+            work.measured
+        ),
+        None => out!(
+            "lint: likely duplicates not compared; `trurlic status --section lint` without \
+             `--from` compares them"
+        ),
+    }
+}
+
+/// Where the next page of quality findings starts.
+fn next_page(patterns: &PatternCounts) -> Result<()> {
+    match &patterns.next {
+        Some(next) => {
+            out!("  `trurlic status --section lint --from {next}` reads on from `{next}`")
+        }
+        None => Ok(()),
+    }
 }
 
 /// The rules `[quality]` adds, counted, or that it adds none.

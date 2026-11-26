@@ -1,0 +1,24 @@
+component = "sources"
+choice = "A check reads the history its repairs need in at most six git processes, whatever the history, and in none when no stale anchor can be repaired"
+reason = "The history a repair is judged by must cost a bounded number of processes, independent of how many files moved or how often: one git log --raw walk with no pathspec over the newest MAX_WALKED_COMMITS commits, filtered in the process for every path asked; one git diff --raw HEAD of what is not committed; and two git cat-file reads of two processes each, the anchors' files before their newest changes, then the candidates around each loss and since. The blobs are indexed through the index's cache, keyed by content as a file of the tree is, so a warm call indexes none of them again. Git is asked nothing of the history when no stale anchor's file is gone and no stale symbol's search finds a file, so a check of a graph with no stale anchor runs none of these."
+alternatives = [
+    "A git diff per commit judged: rejected because the processes then grow with the gone paths and the moves of each",
+    "Index the blobs of the history apart from the cache: rejected because each call then parses again every blob it reads",
+]
+tags = [
+    "anchors",
+    "git",
+    "performance",
+]
+status = "proposed"
+origin = "anchor repair: one evidence path, bounded git"
+created = "2026-11-26T11:10:13.206285053Z"
+anchors = [
+    { file = "src/git/renames.rs", symbol = "MAX_WALKED_COMMITS" },
+    { file = "src/git/renames.rs", symbol = "blobs" },
+    { file = "src/git/renames.rs", symbol = "uncommitted" },
+    { file = "src/sources/blobs.rs", symbol = "Blobs::read" },
+    { file = "src/sources/repair.rs", symbol = "moves" },
+    { file = "src/sources/repair.rs", symbol = "with_history" },
+    { file = "tests/integration/repair.rs", symbol = "the_history_is_read_by_a_bounded_number_of_git_processes" },
+]

@@ -9,8 +9,9 @@
 //! one. The bar is a property of a write: at least one alternative and one
 //! anchor, and the project's limits and patterns. A graph migrated or edited
 //! by hand below it loads, passes `check` and stays revisable, since an op
-//! is held to the bar only in the fields it writes. [`Bar::judge`] runs
-//! both kinds for a write, so a write is refused for either in one order.
+//! is held to the bar only in the fields it writes. A write holds each
+//! decision an op writes to the text rules, the limits and the patterns as
+//! the op runs, in one order ([`Bar::judge`]).
 //!
 //! Words are counted one way everywhere: the runs of non-whitespace
 //! between Unicode whitespace ([`words`]). Bytes are bytes of UTF-8.
@@ -23,9 +24,12 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::store::Store;
+use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
 use crate::{Error, Result};
 
-pub(crate) use bar::{Bar, Broken, Hit, Place, element};
+pub(crate) use bar::{Bar, Breach, Broken, Hit, Place, Scan, element, texts};
+pub use bar::{PatternFault, Shortfall};
+
 pub use config::{ConfigFault, Level, Pattern, Quality, WordRange};
 
 /// The fields of a decision the bar reads, and the names a pattern's
@@ -97,7 +101,8 @@ impl Limit {
     }
 
     /// What the limit counts.
-    const fn unit(self) -> &'static str {
+    #[must_use]
+    pub const fn unit(self) -> &'static str {
         match self {
             Self::AlternativeRequired | Self::AlternativesMax => "alternatives",
             Self::AnchorRequired | Self::AnchorsMax => "anchors",
@@ -139,6 +144,13 @@ pub enum QualityFault {
     },
     /// A `refuse` pattern matched.
     Pattern(PatternMatch),
+    /// The pattern at `index` of `[quality] patterns` gave up, whatever its
+    /// level: its automaton outgrew its cache over the texts the call read
+    /// so far, so it judged no text after this one.
+    GaveUp { index: usize },
+    /// The automata of all the patterns grew past the total one call may
+    /// build over this text; the pattern at `largest` grew the most.
+    CacheTotal { largest: usize },
     /// The batch records a decision without an `origin`, and
     /// `require_origin` is set.
     OriginRequired,
@@ -151,9 +163,27 @@ impl QualityFault {
         match self {
             Self::Limit { limit, .. } => limit.as_str(),
             Self::Pattern(_) => "pattern",
+            Self::GaveUp { .. } => "pattern_gave_up",
+            Self::CacheTotal { .. } => "pattern_cache_total",
             Self::OriginRequired => "origin_required",
         }
     }
+}
+
+/// What fixes a cache that gave up or the caches past their total: less
+/// text over one call, or a pattern that builds fewer states.
+const REMEDY: &str = "shorten the text, split the batch, or simplify";
+
+/// A `measured` count past the `bound` of `limit`, with its unit and its
+/// source.
+fn past(f: &mut fmt::Formatter<'_>, limit: &Limit, measured: usize, bound: usize) -> fmt::Result {
+    let side = if limit.is_minimum() {
+        "under the minimum"
+    } else {
+        "over the maximum"
+    };
+    let (unit, source) = (limit.unit(), limit.source());
+    write!(f, "{measured} {unit}, {side} of {bound} ({source})")
 }
 
 impl fmt::Display for QualityFault {
@@ -163,20 +193,20 @@ impl fmt::Display for QualityFault {
                 limit,
                 measured,
                 bound,
-            } => {
-                let side = if limit.is_minimum() {
-                    "under the minimum"
-                } else {
-                    "over the maximum"
-                };
-                write!(
-                    f,
-                    "{measured} {}, {side} of {bound} ({})",
-                    limit.unit(),
-                    limit.source()
-                )
-            }
+            } => past(f, limit, *measured, *bound),
             Self::Pattern(found) => write!(f, "{found}"),
+            Self::GaveUp { index } => write!(
+                f,
+                "`[quality] patterns[{index}]` gave up here: its automaton outgrew the \
+                 {MAX_PATTERN_CACHE_BYTES} bytes of cache one pattern may fill; {REMEDY} the \
+                 pattern"
+            ),
+            Self::CacheTotal { largest } => write!(
+                f,
+                "the `[quality]` patterns' automata grew here past the \
+                 {MAX_PATTERN_CACHE_TOTAL_BYTES} bytes of cache one write may build, \
+                 `[quality] patterns[{largest}]` the most; {REMEDY} that pattern"
+            ),
             Self::OriginRequired => f.write_str(
                 "is required: the batch records a decision, and `[quality] require_origin` \
                  is set",
@@ -215,16 +245,53 @@ fn words(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
+/// The bar of a store's `[quality]` as a read found it, compiled before a
+/// write takes the lock: compiling holds no other caller back, and the
+/// write uses it when the table it loads under the lock is this one.
+#[derive(Debug)]
+pub struct PreparedBar {
+    quality: Quality,
+    bar: Bar,
+}
+
+/// The bar of an absent `[quality]`, which compiles no pattern: a write
+/// whose graph holds a table compiles that one under the lock.
+impl Default for PreparedBar {
+    fn default() -> Self {
+        let quality = Quality::default();
+        Self {
+            bar: Bar::limits_only(&quality),
+            quality,
+        }
+    }
+}
+
+impl PreparedBar {
+    /// The bar, when it was compiled from `quality`.
+    pub(crate) fn of(&self, quality: &Quality) -> Option<&Bar> {
+        (self.quality == *quality).then_some(&self.bar)
+    }
+}
+
 impl Store {
     /// The rules of `quality` compiled for a write: every pattern, once per
-    /// batch. A pattern that does not compile, or compiles past
-    /// `MAX_PATTERN_COMPILED_BYTES`, is [`Error::QualityPattern`].
+    /// batch. A pattern the lazy DFA does not run is
+    /// [`Error::QualityPattern`].
     pub(crate) fn bar(&self, quality: &Quality) -> Result<Bar> {
         Bar::compile(quality).map_err(|fault| Error::QualityPattern {
             path: self.project_path(),
             index: fault.index,
             message: fault.message,
         })
+    }
+
+    /// The bar of the `[quality]` the store holds now, compiled holding no
+    /// lock for the write that follows ([`Writer::apply`](crate::store::Writer::apply)).
+    /// A pattern that does not compile is [`Error::QualityPattern`].
+    pub fn prepare_bar(&self) -> Result<PreparedBar> {
+        let quality = self.load_project()?.quality;
+        let bar = self.bar(&quality)?;
+        Ok(PreparedBar { quality, bar })
     }
 }
 
@@ -273,13 +340,18 @@ mod tests {
         assert!(quality.require_origin);
         let bar = store.bar(quality).unwrap();
         let all = DecisionField::IN_FILE_ORDER;
-        assert_eq!(
-            bar.judge(&at_the_bar(), &all).map_err(|b| b.broken),
-            Ok(vec![])
-        );
+        let judged = |decision: &Decision| {
+            let mut scan = bar.scan();
+            bar.judge(decision, &all, &mut scan).map_err(|b| b.broken)
+        };
+        assert_eq!(judged(&at_the_bar()), Ok(vec![]));
         let mut we = at_the_bar();
         we.choice = "We take the file lock".into();
-        assert!(bar.judge(&we, &all).is_err());
+        let refused = judged(&we).unwrap_err();
+        assert!(
+            matches!(&refused, Broken::Quality(QualityFault::Pattern(found)) if found.index == 0),
+            "{refused:?}"
+        );
 
         let written = canonical(&state.project);
         assert!(!is_canonical(&state.project, header.as_bytes()));
@@ -287,7 +359,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), written);
         assert_eq!(store.load_state().unwrap().project, state.project);
         assert!(
-            written.contains("pattern = '(?i)\\b(?:we|our)\\b'\n"),
+            written.contains("pattern = '(?i)(?:^|\\W)(?:we|our)(?:\\W|$)'\n"),
             "{written}"
         );
     }
