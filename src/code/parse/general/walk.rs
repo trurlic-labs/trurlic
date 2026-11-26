@@ -458,3 +458,48 @@ impl<'r> Walk<'r, '_> {
         self.runs.truncate(depth * width);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code::parse::general::rules;
+    use crate::code::parse::syntax;
+    use crate::code::testing::nested_ifs;
+
+    fn collect_with(source: &str, text: &str) -> Result<usize, IndexFault> {
+        let rules = rules(source);
+        let tree = syntax::parse(text, &rules.grammar).unwrap();
+        collect(&rules, &tree, text).map(|found| found.candidates.len())
+    }
+
+    #[test]
+    fn a_match_limit_that_is_hit_is_a_fault_not_a_dropped_match() {
+        // Every pair of a module's statements is a match in progress: 129
+        // statements stay within the limit, and 130 pass it.
+        let pairs = "(module (_) @hash.group (_) @hash.group)";
+
+        assert!(collect_with(pairs, &"a\n".repeat(129)).is_ok());
+        assert_eq!(
+            collect_with(pairs, &"a\n".repeat(130)),
+            Err(IndexFault::TooComplex)
+        );
+    }
+
+    #[test]
+    fn the_text_a_predicate_reads_is_held_to_16_bytes_a_byte_of_the_file() {
+        // Every block's whole text is read once per block it is in: twenty
+        // blocks deep, a payload is read twenty times. A comment the query
+        // reads nothing of dilutes that: one byte shorter it is past the
+        // bound, and with that byte it is within.
+        let whole_blocks = "((block) @_b (#match? @_b \"never\"))";
+        let payload = format!("\"{}\"", "x".repeat(100_000));
+        let deep = nested_ifs(20).replace("f\"{z}\"", &payload);
+        let text = |comment: usize| format!("# {}\n{deep}", "p".repeat(comment));
+
+        assert!(collect_with(whole_blocks, &text(24_905)).is_ok());
+        assert_eq!(
+            collect_with(whole_blocks, &text(24_904)),
+            Err(IndexFault::TooComplex)
+        );
+    }
+}

@@ -401,3 +401,185 @@ impl BlankMacros {
         self.judged(path, lexed).1
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code::parse::language::c_family::lexed;
+    use crate::code::parse::language::c_family::testing::{blanked, file, names, tree, tree_at};
+
+    #[test]
+    fn a_macro_is_blanked_when_every_definition_in_the_tree_is_an_attribute() {
+        let header = "#if defined(_WIN32)\n#define API __declspec(dllexport)\n#else\n#define API __attribute__((visibility(\"default\")))\n#endif\n\
+                  #define CONSTEXPR constexpr\n#define EMPTY\n#define NODISCARD [[nodiscard]]\n\
+                  #define PRINTF(f, a) __attribute__((format(printf, f, a)))\n\
+                  #define GUARDED(x) ANNOTATE(guarded_by(x))\n#define ANNOTATE(x) __attribute__((x))\n#define ANNOTATE(x)\n\
+                  #define EXPORT API CONSTEXPR\n";
+        let other = "#define CAPACITY 40\n#define HALF(n) ((n) / 2)\n#define SAME(x) x\n#define STUB(x)\n\
+                 #define CALLED_ALONE ANNOTATE\n#define OUTSIDE SYSTEM_API\n#define CONSTEXPR 1\n";
+        let all = "API CONSTEXPR EMPTY NODISCARD PRINTF GUARDED ANNOTATE EXPORT CAPACITY HALF SAME STUB CALLED_ALONE OUTSIDE";
+        // `CONSTEXPR` is also `1`, so neither it nor `EXPORT`, which names it,
+        // is blanked.
+        let set = file(&tree(&[header, other]), all);
+
+        assert_eq!(
+            names(&set),
+            (
+                vec!["API", "EMPTY", "NODISCARD"],
+                vec!["ANNOTATE", "GUARDED", "PRINTF"]
+            )
+        );
+    }
+
+    #[test]
+    fn a_namespace_macro_is_blanked_when_the_tree_defines_an_opening() {
+        let opening = "#define BEGIN namespace shelf { inline namespace v1 {\n#define END } }\n#define C_BEGIN extern \"C\" {\n";
+        let closing_alone = "#define LOOP_END }\n";
+        let all = "BEGIN END C_BEGIN LOOP_END";
+
+        assert_eq!(
+            names(&file(&tree(&[opening, closing_alone]), all)).0,
+            ["BEGIN", "C_BEGIN", "END", "LOOP_END"]
+        );
+        assert!(file(&tree(&[closing_alone]), all).names.is_empty());
+    }
+
+    #[test]
+    fn a_cycle_or_a_name_no_file_defines_blanks_nothing() {
+        let set = file(
+            &tree(&["#define A B\n#define B A\n#define C D_OUTSIDE\n#define E A\n"]),
+            "A B C E",
+        );
+
+        assert!(set.names.is_empty() && set.calls.is_empty());
+    }
+
+    #[test]
+    fn a_source_files_define_blanks_in_that_file_alone() {
+        let local = "#define DONE\nDONE int f(void);\n";
+        let other = "enum { PORT, DONE };\n";
+        let headers = tree(&[]);
+
+        assert_eq!(names(&file(&headers, local)).0, ["DONE"]);
+        assert!(file(&headers, other).names.is_empty());
+    }
+
+    #[test]
+    fn a_files_own_define_of_a_header_name_is_judged_with_the_headers() {
+        let headers = tree(&["#define API\n#define EXPORT API\n"]);
+        let redefined = "#undef API\n#define API 1\nAPI EXPORT int f(void);\n";
+
+        assert_eq!(names(&file(&headers, redefined)).0, ["EXPORT"]);
+        assert_eq!(names(&file(&headers, "API EXPORT")).0, ["API", "EXPORT"]);
+    }
+
+    #[test]
+    fn a_files_own_define_naming_a_header_name_it_redefines_is_judged_by_its_own() {
+        let headers = tree(&["#define API\n"]);
+        let text = "#undef API\n#define API 1\n#define LOCAL API\nLOCAL int f(void);\n";
+
+        assert!(file(&headers, text).names.is_empty());
+    }
+
+    #[test]
+    fn a_files_own_closing_brace_is_blanked_when_a_header_opens_a_namespace() {
+        let headers = tree(&["#define BEGIN namespace shelf {\n"]);
+
+        assert_eq!(names(&file(&headers, "#define END }\nEND")).0, ["END"]);
+        assert!(file(&tree(&[]), "#define END }\nEND").names.is_empty());
+    }
+
+    #[test]
+    fn a_file_blanks_only_the_names_it_writes() {
+        let text = "API int f(void);\n";
+        let one = tree(&["#define API\n"]);
+        let two = tree(&["#define API\n#define UNUSED\n"]);
+
+        assert_eq!(file(&one, text), file(&two, text));
+        assert_ne!(
+            file(&one, text).identity(),
+            file(&tree(&[]), text).identity()
+        );
+    }
+
+    #[test]
+    fn a_set_is_known_by_its_names_and_their_forms() {
+        let alone = file(&tree(&["#define A\n"]), "A");
+        let called = file(&tree(&["#define A(x) __attribute__((x))\n"]), "A");
+        let static_one = file(&tree(&["#define ALWAYS_STATIC static\n"]), "ALWAYS_STATIC");
+        let plain = file(&tree(&["#define ALWAYS_STATIC inline\n"]), "ALWAYS_STATIC");
+
+        assert_ne!(alone.identity(), called.identity());
+        assert_eq!(
+            alone.identity(),
+            file(&tree(&["#define A\n#define A\n"]), "A").identity()
+        );
+        assert_ne!(alone.identity(), FileMacros::default().identity());
+        assert_ne!(static_one.identity(), plain.identity());
+    }
+
+    #[test]
+    fn hostile_defines_are_read_in_linear_work() {
+        let count = 100_000;
+        let chain: String = (0..count)
+            .map(|n| format!("#define M{n} M{}\n", n + 1))
+            .chain([format!("#define M{count}\n")])
+            .collect();
+        let star: String = (0..count)
+            .map(|n| format!("#define S{n} HUB\n"))
+            .chain(["#define HUB\n".to_owned()])
+            .collect();
+        let cycle: String = (0..count)
+            .map(|n| format!("#define C{n} C{}\n", (n + 1) % count))
+            .collect();
+        let long_body = format!("#define LONG {}\n", "inline ".repeat(1 << 17));
+        let calls = format!(
+            "#define ATTR(x) __attribute__((x))\n{}",
+            "ATTR(".repeat(1 << 18)
+        );
+
+        for set in [&chain, &star, &cycle] {
+            assert!(tree(&[set]).steps() <= 5 * (count + 1), "{}", &set[..20]);
+        }
+        assert!(tree(&[&long_body]).steps() == 0);
+        assert_eq!(blanked(&[&calls], &calls).len(), calls.len());
+    }
+
+    #[test]
+    fn a_files_own_defines_are_judged_in_work_its_own_bound() {
+        let wide: String = (0..MAX_MACRO_BODY_TOKENS)
+            .map(|n| format!("a{n} "))
+            .collect();
+        let headers: Vec<String> = (0..1000)
+            .flat_map(|n| {
+                [
+                    format!("#define DEBUG {wide}\n"),
+                    format!("#define WIDE w{n}\n"),
+                ]
+            })
+            .collect();
+        let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
+        let set = tree(&headers);
+        let own = lexed(b"#define DEBUG\n#define WIDE\nDEBUG WIDE int f(void);\n");
+
+        let steps: usize = (0..1000).map(|_| set.file_steps("src/f.c", &own)).sum();
+
+        // Each file's two names, each needing at most the bound's names; the
+        // thousand headers of each name cost nothing per file.
+        assert!(steps <= 1000 * 4 * (2 + MAX_MACRO_BODY_TOKENS), "{steps}");
+    }
+
+    #[test]
+    fn a_header_in_a_test_place_reaches_test_code_alone() {
+        let set = tree_at(&[
+            ("tests/fake.h", "#define DONE\n#define FAKE_API\n"),
+            ("include/api.h", "#define API\n"),
+        ]);
+        let text = lexed(b"API FAKE_API DONE");
+        let all = vec!["API", "DONE", "FAKE_API"];
+
+        assert_eq!(names(&set.of_file("src/state.c", &text)).0, ["API"]);
+        assert_eq!(names(&set.of_file("tests/state_check.c", &text)).0, all);
+        assert_eq!(names(&set.of_file("src/state_test.cc", &text)).0, all);
+    }
+}

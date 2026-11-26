@@ -243,3 +243,115 @@ fn inner_comments(directive: &str) -> Vec<Range<usize>> {
     });
     found
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code::parse::language::c_family::testing::{blanked, file, tree};
+
+    #[test]
+    fn a_tree_defined_attribute_is_blanked_where_code_writes_it_alone() {
+        let header = "#define API __attribute__((used))\n#define PRINTF(f, a) __attribute__((format(printf, f, a)))\n";
+        let text = "#ifdef API\n#define OTHER API\n#endif\n/* API */ API int f(const char *s, ...) PRINTF(1, 2);\nconst char *t = \"API\", *r = R\"x(API)x\";\nint PRINTF;\n";
+        let blanked = blanked(&[header], text);
+
+        assert_eq!(
+            blanked,
+            "#ifdef API\n#define OTHER API\n#endif\n/* API */     int f(const char *s, ...)             ;\nconst char *t = \"API\", *r = R\"x(API)x\";\nint PRINTF;\n"
+        );
+        assert!(matches!(
+            blank("int f();\n", &FileMacros::default()).text,
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn a_static_macro_of_any_length_marks_the_code_after_it_private() {
+        let header = "#ifdef TESTING\n#define STATIC\n#define SI\n#else\n#define STATIC static\n#define SI static inline\n#endif\n#define local static\n#define API\n";
+        let text = "STATIC int a;\nSI /* c */ int b(void);\nlocal API int c;\nint d; local\n#if X\n#endif\nint e;\n";
+        let blanked = blank(text, &file(&tree(&[header]), text));
+        let after = |code: &str| text.find(code).unwrap();
+
+        assert_eq!(
+            blanked.text,
+            "       int a;\n   /* c */ int b(void);\n          int c;\nint d;      \n#if X\n#endif\nint e;\n"
+        );
+        assert_eq!(
+            blanked.private,
+            [
+                after("int a"),
+                after("int b"),
+                after("int c"),
+                after("int e")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_call_is_blanked_within_its_bound_of_argument_bytes() {
+        let header = "#define ATTR(x) __attribute__((x))\n";
+        let call = |bytes: usize| format!("int f() ATTR({});\n", "a".repeat(bytes - 2));
+
+        let within = call(MAX_BLANK_ARGUMENT_BYTES);
+        assert!(!blanked(&[header], &within).contains("ATTR"));
+        let past = call(MAX_BLANK_ARGUMENT_BYTES + 1);
+        assert_eq!(blanked(&[header], &past), past);
+    }
+
+    #[test]
+    fn a_calls_arguments_end_at_their_parenthesis_past_literals_comments_and_lines() {
+        let header = "#define ATTR(x) __attribute__((x))\n";
+        let text = "int f() ATTR(\")\" /* ) */ ')',\n  (x));\n";
+
+        assert_eq!(
+            blanked(&[header], text),
+            format!("int f() {}\n{};\n", " ".repeat(21), " ".repeat(6))
+        );
+    }
+
+    #[test]
+    fn a_call_is_left_as_written_when_no_parenthesis_follows_its_name() {
+        let header = "#define ATTR(x) __attribute__((x))\n";
+        for text in [
+            "int ATTR;\n",
+            "int f() ATTR\n(x);\n",
+            "int f() ATTR /* c */ (x);\n",
+        ] {
+            assert_eq!(blanked(&[header], text), text);
+        }
+    }
+
+    #[test]
+    fn a_call_a_statement_ends_before_its_parenthesis_blanks_only_the_names_in_it() {
+        let header = "#define ATTR(x) __attribute__((x))\n#define API\n";
+        for stop in [";", "{", "}", "\n#if X\n"] {
+            let text = format!("int f() ATTR(API x{stop} int g(void));\n");
+            let blanked = blanked(&[header], &text);
+
+            assert!(
+                blanked.contains("ATTR(") && blanked.contains("g(void)"),
+                "{text}"
+            );
+            assert!(!blanked.contains("API"), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_comments_inside_a_define_are_blanked_line_breaks_and_all() {
+        let text = "#define SWAP(a, b) do { /* swap the\n two */ \\\n  t = a; \\\n } while (0) // last\n#define ONE 1 /* one */\n/* kept */\n";
+        let inside =
+            "#define M(a) ((a) /* c */ + 1)\n#define LIMIT(a) ((a) + \\\n    /* slack */ 1)\n";
+
+        assert_eq!(
+            blank(text, &FileMacros::default()).text,
+            format!(
+                "#define SWAP(a, b) do {{ {} \\\n  t = a; \\\n }} while (0) // last\n#define ONE 1 /* one */\n/* kept */\n",
+                " ".repeat(19)
+            )
+        );
+        assert_eq!(
+            blank(inside, &FileMacros::default()).text,
+            "#define M(a) ((a)         + 1)\n#define LIMIT(a) ((a) + \\\n                1)\n"
+        );
+    }
+}

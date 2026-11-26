@@ -48,6 +48,7 @@ fn a_trait_impl_is_a_definition_and_an_inherent_one_is_not() {
 /// defaults format them: a trailing comma added to the tuple and to the
 /// trait's arguments it breaks.
 const IMPLS: &str = "pub struct Table;\nimpl Shape for (TypeNameNumberOne, TypeNameNumberTwo, TypeNameNumberThree, TypeNameNumberFour) { fn area() {} }\nimpl Convert<TypeNameNumberOne, TypeNameNumberTwo, TypeNameNumberThree, TypeNameNumberFour, TypeNameNumberFive> for Table { fn go() {} }\nimpl Convert</* why */ u8> for Table {}\n";
+
 const IMPLS_FORMATTED: &str = "pub struct Table;\nimpl Shape\n    for (\n        TypeNameNumberOne,\n        TypeNameNumberTwo,\n        TypeNameNumberThree,\n        TypeNameNumberFour,\n    )\n{\n    fn area() {}\n}\nimpl\n    Convert<\n        TypeNameNumberOne,\n        TypeNameNumberTwo,\n        TypeNameNumberThree,\n        TypeNameNumberFour,\n        TypeNameNumberFive,\n    > for Table\n{\n    fn go() {}\n}\nimpl Convert</* why */ u8> for Table {}\n";
 
 #[test]
@@ -125,14 +126,6 @@ fn a_raw_identifier_is_defined_and_named_as_its_name() {
 }
 
 #[test]
-fn a_reexport_of_a_path_the_file_defines_is_no_second_definition() {
-    let text = "macro_rules! m { () => {} }\npub(crate) use m;\npub use inner::Thing;\nmod inner { pub struct Thing; }\npub use other::{self as renamed, *};\nuse private::Name;\npub use x::y as _;\n";
-    let paths: Vec<String> = defined(text).into_iter().map(|(path, _)| path).collect();
-
-    assert_eq!(paths, ["m", "Thing", "inner", "inner::Thing", "renamed"]);
-}
-
-#[test]
 fn a_macro_rules_macro_is_a_definition_and_no_invocation_defines_anything() {
     let text = "macro_rules! made { ($n:ident) => { pub struct $n; }; }\nmade!(Made);\nproptest! {\n    #[test]\n    fn holds(x in 0..9) { assert!(x < 9) }\n}\nview! { pub struct View { open: u8 } }\nthread_local! { static SLOT: u8 = 0; }\ncfg_if! { if #[cfg(unix)] { fn branch() {} } }\nimpl T { forward! { fn made() {} } }\nfn f() { local! { struct Local; } }\n";
     let defined: Vec<(String, DefinitionKind)> = {
@@ -171,22 +164,6 @@ fn a_file_mid_edit_still_defines_what_parses() {
     let paths: Vec<String> = defined(text).into_iter().map(|(path, _)| path).collect();
 
     assert!(paths.contains(&"Kept".to_owned()), "{paths:?}");
-}
-
-#[test]
-fn a_macro_is_exported_by_its_attribute_not_by_a_word_in_its_docs() {
-    let text = "/// Not #[macro_export]: local.\nmacro_rules! local { () => {} }\n#[cfg_attr(feature = \"x\", macro_export)]\nmacro_rules! maybe { () => {} }\n#[macro_export]\nmacro_rules! shared { () => {} }\n";
-    let indexed = index(text);
-    let visibility: Vec<_> = indexed.definitions.iter().map(|d| d.visibility).collect();
-
-    assert_eq!(
-        visibility,
-        [
-            Some(Visibility::Private),
-            Some(Visibility::Public),
-            Some(Visibility::Public)
-        ]
-    );
 }
 
 #[test]

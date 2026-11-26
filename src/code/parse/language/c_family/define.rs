@@ -339,3 +339,74 @@ fn skip_attribute(tokens: &[&str], at: usize) -> usize {
 fn is_identifier(word: &str) -> bool {
     word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code::parse::language::c_family::BlankMacros;
+    use crate::code::parse::language::c_family::testing::{file, names, tree};
+
+    #[test]
+    fn a_body_is_read_up_to_its_bound_of_tokens() {
+        let body = |tokens: usize| format!("#define AT {}\n", "inline ".repeat(tokens));
+
+        assert_eq!(
+            names(&file(&tree(&[&body(MAX_MACRO_BODY_TOKENS)]), "AT")).0,
+            ["AT"]
+        );
+        assert!(
+            file(&tree(&[&body(MAX_MACRO_BODY_TOKENS + 1)]), "AT")
+                .names
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_directive_is_a_define_only_spelled_so() {
+        let set = file(
+            &BlankMacros::default(),
+            "#defineA\n# define C\n#define D(x)\nA C D(1)",
+        );
+
+        assert_eq!(names(&set), (vec!["C"], vec![]));
+    }
+
+    #[test]
+    fn an_attribute_list_ends_at_its_double_bracket_and_a_parameter_is_no_name() {
+        let header =
+            "#define DEPRECATED [[deprecated(a[1])]] static\n#define x\n#define WRAP(x) static x\n";
+
+        assert_eq!(
+            names(&file(&tree(&[header]), "DEPRECATED WRAP")),
+            (vec!["DEPRECATED"], vec![])
+        );
+    }
+
+    #[test]
+    fn a_header_is_named_by_its_extension() {
+        assert!(["a.h", "b/c.hh", "d.hpp"].into_iter().all(is_header));
+        assert!(
+            !["a.c", "b.cc", "c.cpp", "d.cxx", "e.hpp.c"]
+                .into_iter()
+                .any(is_header)
+        );
+    }
+
+    #[test]
+    fn a_define_of_a_word_the_grammars_read_is_no_macro() {
+        let header = "#ifndef STDC\n#define const\n#define inline\n#endif\n#define __attribute__(x)\n#define restrict\n#define _Atomic\n#define API\n";
+        let set = file(
+            &tree(&[header]),
+            "const inline restrict _Atomic API __attribute__((x)) int f;",
+        );
+
+        assert_eq!(names(&set), (vec!["API"], vec![]));
+    }
+
+    #[test]
+    fn a_lexical_pass_holds_each_name_written_once_in_order() {
+        let lexed = lexed(b"b a b /* c */ \"d\" a\n#define E F\n");
+
+        assert_eq!(lexed.spelled().collect::<Vec<_>>(), ["a", "b"]);
+    }
+}

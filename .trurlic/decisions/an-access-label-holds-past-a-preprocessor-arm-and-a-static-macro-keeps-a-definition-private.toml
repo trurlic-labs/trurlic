@@ -19,7 +19,7 @@ anchors = [
     { file = "src/code/parse/general/tests.rs", symbol = "a_blanked_static_macro_makes_what_it_marks_private_as_static_does" },
     { file = "src/code/parse/general/tests.rs", symbol = "a_label_in_a_preprocessor_arm_holds_past_it_and_none_holds_in_a_body" },
     { file = "src/code/parse/language/c_family/blank.rs", symbol = "Blanked" },
-    { file = "src/code/parse/language/c_family/tests.rs", symbol = "a_static_macro_of_any_length_marks_the_code_after_it_private" },
+    { file = "src/code/parse/language/c_family/blank.rs", symbol = "a_static_macro_of_any_length_marks_the_code_after_it_private" },
     { file = "src/code/parse/language/cpp.scm" },
 ]
 depends_on = [

@@ -146,3 +146,20 @@ fn use_leaves<'n>(argument: Node<'n>, text: &str) -> Vec<(Node<'n>, Node<'n>)> {
 fn last_name(path: Node<'_>) -> Node<'_> {
     path.child_by_field_name("name").unwrap_or(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::code::index::FileKind;
+    use crate::code::testing;
+
+    #[test]
+    fn a_reexport_of_a_path_the_file_defines_is_no_second_definition() {
+        let text = "macro_rules! m { () => {} }\npub(crate) use m;\npub use inner::Thing;\nmod inner { pub struct Thing; }\npub use other::{self as renamed, *};\nuse private::Name;\npub use x::y as _;\n";
+        let paths: Vec<String> = testing::defined(FileKind::Rust, text)
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+
+        assert_eq!(paths, ["m", "Thing", "inner", "inner::Thing", "renamed"]);
+    }
+}

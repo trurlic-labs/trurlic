@@ -109,3 +109,33 @@ fn names(reader: &mut Reader<'_>) -> Option<Vec<String>> {
     }
     Some(found)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code::parse::language::c_family::{MAX_MACRO_BODY_TOKENS, lexed};
+
+    #[test]
+    fn a_lexical_pass_reads_back_from_its_bytes_within_its_room() {
+        let text = "#define API __attribute__((used))\n#define BEGIN namespace a {\n#define END }\n#define ST static\n#define N 1\nAPI int f(void); a b c\n";
+        let lexed = lexed(text.as_bytes());
+        let bytes = encode_lexed(&lexed);
+
+        assert_eq!(decode_lexed(&bytes, text.len()), Some(lexed));
+        assert!(bytes.len() <= max_lexed_bytes(text.len()));
+        assert_eq!(decode_lexed(&bytes[..bytes.len() - 1], text.len()), None);
+        assert_eq!(decode_lexed(&bytes, 0), None);
+    }
+
+    #[test]
+    fn a_dense_file_fits_its_lexical_room() {
+        let names: String = (0..20_000).map(|n| format!("a{n} ")).collect();
+        let defines = "#define A\n".repeat(10_000);
+        let bodies = format!("#define B {}\n", "a ".repeat(MAX_MACRO_BODY_TOKENS));
+        for text in [names, defines, bodies.repeat(1000)] {
+            let lexed = lexed(text.as_bytes());
+
+            assert_eq!(decode_lexed(&encode_lexed(&lexed), text.len()), Some(lexed));
+        }
+    }
+}

@@ -56,3 +56,15 @@ pub(crate) fn named<'t>(kind: FileKind, text: &'t str, symbol: &str) -> Vec<&'t 
         .map(|d| &text[d.span.start..d.span.end])
         .collect()
 }
+
+/// A file whose blocks nest `depth` deep, each one space deeper, whose
+/// innermost line holds an f-string: the input that, past some 380
+/// widths, makes tree-sitter-python's scanner abort the process.
+pub(crate) fn nested_ifs(depth: usize) -> String {
+    let mut text = String::new();
+    for level in 0..depth {
+        text.push_str(&format!("{}if x:\n", " ".repeat(level)));
+    }
+    text.push_str(&format!("{}y = f\"{{z}}\"\n", " ".repeat(depth)));
+    text
+}

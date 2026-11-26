@@ -358,6 +358,8 @@ fn matches_name(pattern: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::index::FileKind;
+    use crate::code::parse::{syntax, tokens};
 
     #[test]
     fn each_query_compiles_against_its_grammar_within_the_contract() {
@@ -429,6 +431,106 @@ mod tests {
             (&CPP, "src/shelf.h", false),
         ] {
             assert_eq!(language.is_test_place(path), expected, "{path}");
+        }
+    }
+
+    /// The fixture corpus of each language the general resolver reads, and a
+    /// file per language of comments, continued lines and strings that open
+    /// like a comment.
+    fn general_corpus() -> Vec<(String, FileKind, String)> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/code");
+        let mut found = vec![
+        (
+            "lexemes.py".to_owned(),
+            FileKind::Python,
+            "x = 1 + \\\n    2  # sum\ny = '#not' f'{x: >4} #' \\\n  \"\"\"# doc\"\"\"\n#!z\n"
+                .to_owned(),
+        ),
+        (
+            "lexemes.tsx".to_owned(),
+            FileKind::Tsx,
+            "#!/usr/bin/env node\nconst t = `//a ${b /* c */} /*d*/`; // e\nconst r = /\\/\\*x/g;\n<!-- f\nconst j = <p> a  // b </p>;\n"
+                .to_owned(),
+        ),
+        (
+            "lexemes.cc".to_owned(),
+            FileKind::Cpp,
+            "#define M(a) ((a) + \\\n  1) // m\nint x = 1 + \\\n  2; /* c */\nauto s = R\"x(/* no */)x\" \"//\";\n"
+                .to_owned(),
+        ),
+    ];
+        let mut pending = vec![root];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if let Some(kind) =
+                    FileKind::of(path.to_str().unwrap()).filter(|kind| kind.language().is_some())
+                {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    found.push((path.display().to_string(), kind, text));
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn every_byte_but_comments_and_whitespace_is_in_one_token() {
+        for (file, kind, text) in general_corpus() {
+            let language = kind.language().unwrap();
+            let rules = language.rules().unwrap();
+            let tree = syntax::parse(&text, &rules.grammar).unwrap();
+            let mut covered = vec![false; text.len()];
+            tokens::tokens(tree.root_node(), &text, &language.lexicon, |token| {
+                let (from, to) = match token {
+                    tokens::Token::Node(node) => (node.start_byte(), node.end_byte()),
+                    tokens::Token::Gap { start, end } | tokens::Token::Run { start, end } => {
+                        (start, end)
+                    }
+                    tokens::Token::Hole { .. }
+                    | tokens::Token::Enter(_)
+                    | tokens::Token::Leave(_) => (0, 0),
+                };
+                for byte in &mut covered[from..to] {
+                    assert!(!*byte, "{file}: byte {from} in two tokens");
+                    *byte = true;
+                }
+                std::ops::ControlFlow::Continue(())
+            });
+            let mut extras = vec![false; text.len()];
+            let mut cursor = tree.walk();
+            'walk: loop {
+                let node = cursor.node();
+                if tokens::is_comment(node) {
+                    assert!(
+                        matches!(
+                            node.kind(),
+                            "comment" | "html_comment" | "line_continuation"
+                        ),
+                        "{file}: an extra {}",
+                        node.kind()
+                    );
+                    extras[node.byte_range()].fill(true);
+                } else if cursor.goto_first_child() {
+                    continue;
+                }
+                while !cursor.goto_next_sibling() {
+                    if !cursor.goto_parent() {
+                        break 'walk;
+                    }
+                }
+            }
+            for (at, c) in text.char_indices() {
+                assert!(
+                    covered[at]
+                        || extras[at]
+                        || c.is_whitespace()
+                        || language.lexicon.continuation(&text[at..]) > 0,
+                    "{file}: byte {at} ({c:?}) is in no token"
+                );
+            }
         }
     }
 }

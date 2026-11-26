@@ -50,5 +50,51 @@ pub(in crate::code) use define::{MAX_MACRO_BODY_TOKENS, tokens};
 pub(crate) use encoding::{decode_lexed, encode_lexed, max_lexed_bytes};
 pub(crate) use set::{BlankMacros, FileMacros};
 
+/// What the tests of the blank read a tree's sets and a file's blank
+/// through.
 #[cfg(test)]
-mod tests;
+mod testing {
+    use super::{BlankMacros, Defines, FileMacros, blank, lexed};
+
+    /// The sets of a tree whose headers are `headers`, each its path and its
+    /// text.
+    pub(super) fn tree_at(headers: &[(&str, &str)]) -> BlankMacros {
+        let defines: Vec<(&str, Defines)> = headers
+            .iter()
+            .map(|(path, text)| (*path, lexed(text.as_bytes()).into_defines()))
+            .collect();
+        BlankMacros::of(defines.iter().map(|(path, defines)| (*path, defines)))
+    }
+
+    /// The sets of a tree whose headers are `headers`, none in a test place.
+    pub(super) fn tree(headers: &[&str]) -> BlankMacros {
+        let named: Vec<String> = (0..headers.len())
+            .map(|n| format!("include/{n}.h"))
+            .collect();
+        let paths: Vec<(&str, &str)> = named
+            .iter()
+            .map(String::as_str)
+            .zip(headers.iter().copied())
+            .collect();
+        tree_at(&paths)
+    }
+
+    /// What `text`, a source file outside test places, blanks in a tree whose
+    /// sets are `tree`.
+    pub(super) fn file(tree: &BlankMacros, text: &str) -> FileMacros {
+        tree.of_file("src/f.cc", &lexed(text.as_bytes()))
+    }
+
+    /// `text` blanked in a tree whose headers are `headers`.
+    pub(super) fn blanked(headers: &[&str], text: &str) -> String {
+        blank(text, &file(&tree(headers), text)).text.into_owned()
+    }
+
+    /// The names `set` blanks: written alone, then called.
+    pub(super) fn names(set: &FileMacros) -> (Vec<&str>, Vec<&str>) {
+        (
+            set.names.iter().map(String::as_str).collect(),
+            set.calls.iter().map(String::as_str).collect(),
+        )
+    }
+}

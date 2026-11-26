@@ -242,3 +242,96 @@ fn enter_unnamed(open: &mut Vec<Open>, node: SpanNode) {
         parent,
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code::index::{FileKind, Scopes};
+    use crate::code::parse::general::{collect, rules};
+    use crate::code::parse::syntax;
+    use crate::code::testing::path;
+
+    /// The path of each definition `source`, a Python query of a test, places
+    /// in `text`, in the sweep's order.
+    fn placed_with(source: &str, text: &str) -> Vec<String> {
+        let rules = rules(source);
+        let tree = syntax::parse(text, &rules.grammar).unwrap();
+        let found = collect(&rules, &tree, text).unwrap();
+        let mut tree_of_scopes = ScopeTree::for_file(FileKind::Python, text.len());
+        let placed = place(&found, &mut tree_of_scopes).unwrap();
+        let file = tree_of_scopes.into_scopes();
+        let scopes = Scopes(&file);
+        placed.iter().map(|it| path(scopes, it.scope)).collect()
+    }
+
+    #[test]
+    fn of_two_within_marks_of_one_node_the_one_visibility_orders_first_holds() {
+        let function = "((function_definition name: (identifier) @name) @definition (#set! kind \"function\"))";
+        let within =
+            |visibility: Visibility| format!("(module) @visibility.within.{}", visibility.name());
+
+        // The order of `Visibility::ALL`, a cache entry's codes, is the order
+        // the rule reads: a private mark holds over any other.
+        for (first, one) in Visibility::ALL.iter().enumerate() {
+            for (second, other) in Visibility::ALL.iter().enumerate() {
+                let source = format!("{function}\n{}\n{}", within(*one), within(*other));
+                let rules = rules(&source);
+                let text = "def f(): pass\n";
+                let tree = syntax::parse(text, &rules.grammar).unwrap();
+                let found = collect(&rules, &tree, text).unwrap();
+                let placed = place(
+                    &found,
+                    &mut ScopeTree::for_file(FileKind::Python, text.len()),
+                )
+                .unwrap();
+                let expected = Visibility::ALL[first.min(second)];
+
+                assert_eq!(placed[0].what.visibility, Some(expected), "{source}");
+            }
+        }
+        assert_eq!(Visibility::ALL[0], Visibility::Private);
+    }
+
+    #[test]
+    fn two_definitions_of_one_node_are_siblings() {
+        let both = "((function_definition name: (identifier) @name) @definition (#set! kind \"function\"))\n\
+                ((function_definition name: (identifier) @name) @definition (#set! kind \"class\"))";
+
+        assert_eq!(
+            placed_with(both, "def f():\n    def g(): pass\n"),
+            ["f", "f", "f::g", "f::g"]
+        );
+    }
+
+    #[test]
+    fn of_two_definitions_from_one_byte_the_wider_holds_the_other() {
+        let calls = "((call function: [(identifier) @name (call function: (identifier) @name)]) @definition (#set! kind \"function\"))";
+
+        assert_eq!(placed_with(calls, "f(1)(2)\n"), ["f", "f::f"]);
+    }
+
+    #[test]
+    fn a_definition_its_container_drops_leaves_the_unnamed_scope_of_its_node() {
+        let dropped = "((function_definition name: (identifier) @name) @definition (#set! kind \"function\") (#set! within \"class\"))\n\
+                   ((class_definition name: (identifier) @name) @definition (#set! kind \"class\"))\n\
+                   ((assignment left: (identifier) @name) @definition (#set! kind \"variable\"))\n\
+                   (function_definition) @scope.unnamed";
+
+        assert_eq!(
+            placed_with(dropped, "def f():\n    x = 1\n"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_node_captured_as_no_scope_holds_what_it_holds_where_it_stands() {
+        let none = "((assignment left: (identifier) @name) @definition (#set! kind \"variable\"))\n\
+                (function_definition) @scope.unnamed\n\
+                (module (function_definition) @scope.none)";
+
+        assert_eq!(
+            placed_with(none, "def f():\n    x = 1\n    def g():\n        y = 2\n"),
+            ["x"]
+        );
+    }
+}

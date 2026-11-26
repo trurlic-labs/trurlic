@@ -203,6 +203,8 @@ pub(super) fn visibility_of(item: Node<'_>, text: &str) -> Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::index::{FileKind, Visibility};
+    use crate::code::testing;
 
     fn role(attribute: &str) -> Role {
         let tokens: Vec<&str> = attribute.split(' ').collect();
@@ -234,5 +236,21 @@ mod tests {
         ] {
             assert_eq!(role(attribute), expected, "{attribute}");
         }
+    }
+
+    #[test]
+    fn a_macro_is_exported_by_its_attribute_not_by_a_word_in_its_docs() {
+        let text = "/// Not #[macro_export]: local.\nmacro_rules! local { () => {} }\n#[cfg_attr(feature = \"x\", macro_export)]\nmacro_rules! maybe { () => {} }\n#[macro_export]\nmacro_rules! shared { () => {} }\n";
+        let indexed = testing::index(FileKind::Rust, text.as_bytes()).unwrap();
+        let visibility: Vec<_> = indexed.definitions.iter().map(|d| d.visibility).collect();
+
+        assert_eq!(
+            visibility,
+            [
+                Some(Visibility::Private),
+                Some(Visibility::Public),
+                Some(Visibility::Public)
+            ]
+        );
     }
 }

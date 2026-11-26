@@ -97,6 +97,8 @@ pub(in crate::code) fn line_ends(text: &str) -> Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code::index::FileKind;
+    use crate::code::testing::nested_ifs;
 
     /// A file whose lines start at `count` distinct widths of spaces.
     fn widths(count: usize) -> String {
@@ -146,5 +148,50 @@ mod tests {
     fn a_lone_carriage_return_is_read_as_a_line_feed_and_no_other_byte_moves() {
         assert_eq!(line_ends("a\rb\r\nc\r"), "a\nb\r\nc\n");
         assert!(matches!(line_ends("a\r\nb\n"), Cow::Borrowed(_)));
+    }
+
+    /// [`nested_ifs`], each `if` line ending in a comment that ends in a
+    /// backslash, after a newline or a CR and a newline.
+    fn commented_ifs(depth: usize, line_break: &str) -> String {
+        nested_ifs(depth).replace("if x:\n", &format!("if x:  # \\{line_break}"))
+    }
+
+    #[test]
+    fn a_comment_ending_in_a_backslash_continues_no_width_the_bound_counts() {
+        let refused = Err(IndexFault::TooManyIndentations {
+            max: MAX_INDENTATIONS,
+        });
+
+        for line_break in ["\n", "\r\n"] {
+            let text = commented_ifs(600, line_break);
+            assert_eq!(
+                crate::code::testing::index(FileKind::Python, text.as_bytes()),
+                refused
+            );
+        }
+        let own_line = nested_ifs(600).replace("if x:\n", "if x:\n# \\\n");
+        assert_eq!(
+            crate::code::testing::index(FileKind::Python, own_line.as_bytes()),
+            refused
+        );
+    }
+
+    #[test]
+    fn indentations_past_the_scanners_bound_are_refused_before_the_parse() {
+        assert!(
+            crate::code::testing::index(
+                FileKind::Python,
+                nested_ifs(MAX_INDENTATIONS - 1).as_bytes()
+            )
+            .is_ok()
+        );
+        for depth in [MAX_INDENTATIONS + 1, 600] {
+            assert_eq!(
+                crate::code::testing::index(FileKind::Python, nested_ifs(depth).as_bytes()),
+                Err(IndexFault::TooManyIndentations {
+                    max: MAX_INDENTATIONS
+                })
+            );
+        }
     }
 }

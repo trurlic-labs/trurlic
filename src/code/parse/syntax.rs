@@ -217,4 +217,16 @@ mod tests {
             Some(IndexFault::TooComplex)
         );
     }
+
+    #[test]
+    fn a_lexer_that_rescans_within_its_chunk_is_stopped_within_its_budget() {
+        // Each line continuation makes the scanner read ahead within the
+        // chunk the lexer holds; at 1,024 bytes a chunk this went uncounted.
+        let hostile = format!("{}x\n", "\\\n".repeat(500)).repeat(1_000);
+
+        assert_eq!(
+            parse(&hostile, &tree_sitter_python::LANGUAGE.into()).err(),
+            Some(IndexFault::TooComplex)
+        );
+    }
 }

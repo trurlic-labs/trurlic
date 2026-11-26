@@ -160,5 +160,11 @@ struct Site {
     span: Extent,
 }
 
+/// The rules of `source`, a Python query of a test.
+#[cfg(test)]
+fn rules(source: &str) -> super::query::Rules {
+    super::query::Rules::compile(tree_sitter_python::LANGUAGE.into(), source).unwrap()
+}
+
 #[cfg(test)]
 mod tests;

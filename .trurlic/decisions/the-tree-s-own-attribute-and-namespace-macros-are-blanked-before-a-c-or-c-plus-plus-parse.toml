@@ -16,9 +16,9 @@ anchors = [
     { file = "README.md" },
     { file = "src/code/parse/general/tests.rs", symbol = "a_spans_lines_are_counted_in_the_bytes_as_written" },
     { file = "src/code/parse/language/c_family/blank.rs", symbol = "blank" },
+    { file = "src/code/parse/language/c_family/blank.rs", symbol = "the_comments_inside_a_define_are_blanked_line_breaks_and_all" },
+    { file = "src/code/parse/language/c_family/define.rs", symbol = "a_define_of_a_word_the_grammars_read_is_no_macro" },
     { file = "src/code/parse/language/c_family/set.rs", symbol = "BlankMacros::of" },
-    { file = "src/code/parse/language/c_family/tests.rs", symbol = "a_define_of_a_word_the_grammars_read_is_no_macro" },
-    { file = "src/code/parse/language/c_family/tests.rs", symbol = "the_comments_inside_a_define_are_blanked_line_breaks_and_all" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",
