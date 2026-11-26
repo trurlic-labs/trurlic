@@ -17,15 +17,15 @@ use super::{File, Tree, format_0_5, loss};
 use crate::store::FormatVersion;
 
 /// One format change.
-pub(super) struct Step {
-    pub(super) from: FormatVersion,
-    pub(super) to: FormatVersion,
+pub(in crate::store) struct Step {
+    pub(in crate::store) from: FormatVersion,
+    pub(in crate::store) to: FormatVersion,
     /// The change, in a few words, as the report names it.
-    pub(super) change: &'static str,
-    pub(super) apply: fn(&mut Tree) -> Result<()>,
+    pub(in crate::store) change: &'static str,
+    pub(in crate::store) apply: fn(&mut Tree) -> Result<()>,
 }
 
-pub(super) const STEPS: [Step; 5] = [
+pub(in crate::store) const STEPS: [Step; 5] = [
     Step {
         from: FormatVersion::new(0, 1, 0),
         to: FormatVersion::new(0, 2, 0),

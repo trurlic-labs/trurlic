@@ -14,8 +14,8 @@ tags = [
 status = "accepted"
 created = "2026-11-23T22:52:37.882647533Z"
 anchors = [
-    { file = "src/store/migration/format_0_5.rs" },
-    { file = "src/store/migration/steps.rs" },
+    { file = "src/store/format/migration/format_0_5/mod.rs" },
+    { file = "src/store/format/migration/steps.rs" },
     { file = "tests/fixtures/formats" },
     { file = "tests/integration/migrate.rs", symbol = "migrates_and_passes_check" },
 ]

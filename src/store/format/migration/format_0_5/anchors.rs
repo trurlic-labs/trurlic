@@ -9,7 +9,7 @@
 //! its language. A spelling whose meaning the syntax does not settle is
 //! kept as written and reported. A ref whose path breaks the anchor rules
 //! is dropped, and a symbol 0.5 refuses or a key 0.5 does not hold is
-//! dropped from it; each drop is a [`Loss`](crate::store::migration::Loss).
+//! dropped from it; each drop is a [`Loss`](crate::store::format::migration::Loss).
 
 use toml::Value;
 

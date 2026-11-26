@@ -80,7 +80,7 @@ pub(crate) struct RefText {
 }
 
 impl RefText {
-    pub(super) fn to_value(&self) -> toml::Value {
+    pub(in crate::store) fn to_value(&self) -> toml::Value {
         let mut fields = toml::Table::new();
         fields.insert("file".into(), self.file.as_str().into());
         if let Some(symbol) = &self.symbol {

@@ -17,7 +17,7 @@ anchors = [
     { file = "src/git/layout.rs", symbol = "DotGit" },
     { file = "src/git/layout.rs", symbol = "dot_git" },
     { file = "src/git/layout.rs", symbol = "toplevel" },
-    { file = "src/store/migration/placement.rs", symbol = "PlacementDoubt::NoWorkTree" },
+    { file = "src/store/format/migration/placement.rs", symbol = "PlacementDoubt::NoWorkTree" },
     { file = "tests/integration/placement.rs", symbol = "a_worktree_whose_main_worktree_is_gone_says_what_git_says" },
 ]
 depends_on = [

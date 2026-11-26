@@ -25,7 +25,7 @@ pub(crate) trait Canonical {
     fn emit<W: Write>(&self, out: &mut Emitter<W>) -> fmt::Result;
 }
 
-pub(super) fn canonical<T: Canonical>(value: &T) -> String {
+pub(in crate::store) fn canonical<T: Canonical>(value: &T) -> String {
     let mut out = Emitter(String::with_capacity(1024));
     // Writing to a `String` cannot fail.
     let _ = value.emit(&mut out);
@@ -34,7 +34,7 @@ pub(super) fn canonical<T: Canonical>(value: &T) -> String {
 
 /// Whether `bytes` are the canonical text of `value`. Compares as it
 /// writes, so it allocates nothing and stops at the first difference.
-pub(super) fn is_canonical<T: Canonical>(value: &T, bytes: &[u8]) -> bool {
+pub(in crate::store) fn is_canonical<T: Canonical>(value: &T, bytes: &[u8]) -> bool {
     let mut out = Emitter(Compare { rest: bytes });
     value.emit(&mut out).is_ok() && out.0.rest.is_empty()
 }

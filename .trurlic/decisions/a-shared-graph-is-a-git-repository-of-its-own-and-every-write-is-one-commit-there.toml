@@ -21,7 +21,7 @@ anchors = [
     { file = "src/store/create.rs", symbol = "Store::create" },
     { file = "src/store/history.rs", symbol = "History" },
     { file = "src/store/history.rs", symbol = "Store::commit_history" },
-    { file = "src/store/migration/mod.rs", symbol = "Store::commit_migration" },
+    { file = "src/store/migrate.rs", symbol = "Store::commit_migration" },
 ]
 depends_on = [
     "node-files-carry-no-history",

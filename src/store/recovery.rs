@@ -17,8 +17,8 @@ use crate::console::diag;
 use crate::{Error, Result};
 
 use super::journal::{PendingHistory, Replayed};
-use super::load::read_dir_if_present;
 use super::{Store, StoreLock};
+use crate::store::format::read_dir_if_present;
 
 impl Store {
     /// Finish the write an interrupted commit left, its history commit

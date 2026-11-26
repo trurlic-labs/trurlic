@@ -10,9 +10,9 @@
 //! and is refused like one no chain of steps leads from to the current
 //! format.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::store::model::{FORMAT_VERSION, FormatVersion, PROJECT_FILE, Placement, Project};
+use crate::store::model::{FORMAT_VERSION, FormatVersion, Placement, Project};
 use crate::{Error, Result};
 
 use super::load::read_node_bytes;
@@ -51,7 +51,7 @@ fn stated_version(path: &Path, project: &toml::Table) -> Result<FormatVersion> {
 /// Whether the store whose `project.toml` at `path` has the table
 /// `project` is read as it is or migrated first. A newer format, and an
 /// older one the migration registry does not name, are refused.
-pub(super) fn standing(path: &Path, project: &toml::Table) -> Result<Standing> {
+pub(in crate::store) fn standing(path: &Path, project: &toml::Table) -> Result<Standing> {
     let found = stated_version(path, project)?;
     if found == FORMAT_VERSION {
         Ok(Standing::Current)
@@ -74,7 +74,7 @@ pub(super) fn standing(path: &Path, project: &toml::Table) -> Result<Standing> {
 
 /// Where a store stands against [`FORMAT_VERSION`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Standing {
+pub(in crate::store) enum Standing {
     Current,
     /// A format a migration step names.
     Older(FormatVersion),
@@ -94,21 +94,17 @@ fn ensure_current(path: &Path, project: &toml::Table) -> Result<()> {
 
 /// The TOML file at `path` as a table, with its bytes; `project.toml` and
 /// a node file are refused unread past their cap.
-pub(super) fn read_table(path: &Path) -> Result<(toml::Table, Vec<u8>)> {
+pub(in crate::store) fn read_table(path: &Path) -> Result<(toml::Table, Vec<u8>)> {
     let bytes = read_node_bytes(path)?;
     let table = toml::from_slice(&bytes).map_err(Error::toml(path))?;
     Ok((table, bytes))
 }
 
 impl Store {
-    pub(super) fn project_path(&self) -> PathBuf {
-        self.root.join(PROJECT_FILE)
-    }
-
     /// `project.toml` as a table and its bytes, refused unless it states
     /// [`FORMAT_VERSION`], before anything else in the store is read: an
     /// older format names `trurlic migrate`.
-    pub(super) fn read_current_table(&self) -> Result<(toml::Table, Vec<u8>)> {
+    pub(in crate::store) fn read_current_table(&self) -> Result<(toml::Table, Vec<u8>)> {
         let path = self.project_path();
         let (table, bytes) = read_table(&path)?;
         ensure_current(&path, &table)?;
@@ -119,7 +115,7 @@ impl Store {
     /// [`Project`].
     ///
     /// [`read_current_table`]: Self::read_current_table
-    pub(super) fn project_of(&self, table: toml::Table) -> Result<Project> {
+    pub(in crate::store) fn project_of(&self, table: toml::Table) -> Result<Project> {
         table.try_into().map_err(Error::toml(&self.project_path()))
     }
 
@@ -133,7 +129,7 @@ impl Store {
     /// `project.toml` in the current format and its bytes, read once. A
     /// store in another format is refused before the file is parsed as the
     /// current one, so the error names the version, not a missing key.
-    pub(super) fn read_current_project(&self) -> Result<(Project, Vec<u8>)> {
+    pub(in crate::store) fn read_current_project(&self) -> Result<(Project, Vec<u8>)> {
         let (table, bytes) = self.read_current_table()?;
         Ok((self.project_of(table)?, bytes))
     }

@@ -1,7 +1,7 @@
 component = "store"
 choice = "project.toml names its format in format_version, MAJOR.MINOR.PATCH apart from the crate version; a version that does not parse is refused by every load and by migrate"
 reason = """
-The key was trurlic_version, though the number is the format's, not the release's: format 0.4.0 was written by 0.3.x. The old check compared versions leniently, a part that was not a number counting as 0, so garbage passed for an older format and migrate rewrote the store as if it were one. FormatVersion::parse accepts only the exact text Display writes, and the error names the file and the text. The version is read under format_version, trurlic_version or trurl_version, newest first, so an old store is told to run trurlic migrate instead of failing on a missing key. The check has one home, store/version.rs, used by every read, every write and migrate: a newer format is refused naming both versions, an older one the registry names is told to run trurlic migrate, and one it does not name is Error::NoMigration.
+The key was trurlic_version, though the number is the format's, not the release's: format 0.4.0 was written by 0.3.x. The old check compared versions leniently, a part that was not a number counting as 0, so garbage passed for an older format and migrate rewrote the store as if it were one. FormatVersion::parse accepts only the exact text Display writes, and the error names the file and the text. The version is read under format_version, trurlic_version or trurl_version, newest first, so an old store is told to run trurlic migrate instead of failing on a missing key. The check has one home, store/format/check.rs, used by every read, every write and migrate: a newer format is refused naming both versions, an older one the registry names is told to run trurlic migrate, and one it does not name is Error::NoMigration.
 """
 alternatives = [
     "Keep the trurlic_version key - rejected: it reads as the release version, which the format has not followed since 0.3.x",
@@ -11,13 +11,23 @@ tags = [
     "migration",
     "storage",
 ]
-status = "accepted"
+status = "proposed"
 created = "2026-11-23T22:52:37.674454592Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::BadFormatVersion" },
+    { file = "src/store/format/check.rs", symbol = "Store::read_current_table" },
+    { file = "src/store/format/check.rs", symbol = "standing" },
     { file = "src/store/model/schema.rs", symbol = "Project" },
     { file = "src/store/model/version.rs", symbol = "FormatVersion" },
     { file = "src/store/model/version.rs", symbol = "FormatVersion::parse" },
-    { file = "src/store/version.rs", symbol = "Store::read_current_table" },
-    { file = "src/store/version.rs", symbol = "standing" },
+]
+
+[accepted_text]
+choice = "project.toml names its format in format_version, MAJOR.MINOR.PATCH apart from the crate version; a version that does not parse is refused by every load and by migrate"
+reason = """
+The key was trurlic_version, though the number is the format's, not the release's: format 0.4.0 was written by 0.3.x. The old check compared versions leniently, a part that was not a number counting as 0, so garbage passed for an older format and migrate rewrote the store as if it were one. FormatVersion::parse accepts only the exact text Display writes, and the error names the file and the text. The version is read under format_version, trurlic_version or trurl_version, newest first, so an old store is told to run trurlic migrate instead of failing on a missing key. The check has one home, store/version.rs, used by every read, every write and migrate: a newer format is refused naming both versions, an older one the registry names is told to run trurlic migrate, and one it does not name is Error::NoMigration.
+"""
+alternatives = [
+    "Keep the trurlic_version key - rejected: it reads as the release version, which the format has not followed since 0.3.x",
+    "Parse leniently and treat garbage as the oldest format - rejected: the old behavior, which migrated a store whose version was a typo",
 ]

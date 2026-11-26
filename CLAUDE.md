@@ -41,11 +41,11 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 |---|---|
 | Node types, `FORMAT_VERSION` (0.5.0) | `store/model/schema.rs` |
 | Text rules / write-only quality bar | `store/model/text.rs` / `store/quality/` |
-| Canonical serializer (the only one) | `store/canonical.rs` |
+| Canonical serializer (the only one) | `store/format/canonical.rs` |
 | The one write: ops, cascades, undo | `store/apply/` |
 | Commit, journal, recovery | `store/commit.rs`, `journal.rs`, `recovery.rs` |
 | Shared-graph history | `store/history.rs`, `git/graph/` |
-| Format check / migration registry | `store/version.rs` / `store/migration/` |
+| Format check / migration registry / carrying one out | `store/format/check.rs` / `store/format/migration/` / `store/migrate.rs` |
 | Size and count limits | `store/model/limits.rs` |
 | Tool specs (schema = parser) | `tools/spec/` |
 | Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |

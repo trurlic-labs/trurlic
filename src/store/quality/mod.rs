@@ -260,7 +260,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::store::canonical::{canonical, is_canonical};
+    use crate::store::format::{canonical, is_canonical};
     use crate::store::model::{Anchor, Decision, DecisionField};
     use crate::store::testing::{sample_decision, setup_store};
 

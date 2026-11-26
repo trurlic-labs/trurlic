@@ -13,7 +13,7 @@ status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
-    { file = "src/store/canonical.rs", symbol = "Emitter::pattern" },
+    { file = "src/store/format/canonical.rs", symbol = "Emitter::pattern" },
     { file = "src/store/model/quality.rs", symbol = "ConfigFault" },
     { file = "src/store/model/quality.rs", symbol = "DecisionField" },
     { file = "src/store/model/quality.rs", symbol = "Quality" },

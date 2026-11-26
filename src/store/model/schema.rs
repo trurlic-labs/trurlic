@@ -426,7 +426,7 @@ fn symbol_fault(symbol: &str) -> Option<AnchorFault> {
 
 /// The format this binary reads and writes. A change to the on-disk shape
 /// raises it and appends the step that reaches it to the migration registry
-/// (`store/migration/steps.rs`).
+/// (`store/format/migration/steps.rs`).
 pub const FORMAT_VERSION: FormatVersion = FormatVersion::new(0, 5, 0);
 
 /// The component every project has without a file: its decisions are the

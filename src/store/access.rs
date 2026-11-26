@@ -189,7 +189,7 @@ mod tests {
 
     use super::*;
     use crate::Error;
-    use crate::store::canonical::canonical;
+    use crate::store::format::canonical;
     use crate::store::testing::{
         sample_component, sample_decision, setup_store, setup_store_with_version, write_node,
     };

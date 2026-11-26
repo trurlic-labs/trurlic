@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use super::{anchor, apply, batch, graph, named, record, refused, revise};
 use crate::Error;
 use crate::store::apply::{Applied, Merge, Op, Record};
-use crate::store::canonical::canonical;
+use crate::store::format::canonical;
 use crate::store::limits::{MAX_QUALITY_PATTERNS, MAX_WRITE_PATTERN_BYTES};
 use crate::store::model::Anchor;
 use crate::store::model::NodeFile;

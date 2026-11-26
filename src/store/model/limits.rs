@@ -148,7 +148,7 @@ pub(crate) const MAX_WARN_MESSAGES_BYTES: usize = 1_536;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::canonical::canonical;
+    use crate::store::format::canonical;
     use crate::store::model::{AcceptedText, Anchor, Status};
     use crate::store::testing::sample_decision;
 

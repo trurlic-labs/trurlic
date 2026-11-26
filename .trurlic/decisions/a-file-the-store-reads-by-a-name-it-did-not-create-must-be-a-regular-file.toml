@@ -14,11 +14,11 @@ origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::NotAFile" },
+    { file = "src/store/format/load.rs", symbol = "Store::read_nodes" },
+    { file = "src/store/format/load.rs", symbol = "an_entry_that_is_no_regular_file_is_refused_unopened" },
+    { file = "src/store/format/load.rs", symbol = "ensure_regular" },
+    { file = "src/store/format/load.rs", symbol = "read_node_bytes" },
     { file = "src/store/journal.rs", symbol = "read_if_regular" },
-    { file = "src/store/load.rs", symbol = "Store::read_nodes" },
-    { file = "src/store/load.rs", symbol = "an_entry_that_is_no_regular_file_is_refused_unopened" },
-    { file = "src/store/load.rs", symbol = "ensure_regular" },
-    { file = "src/store/load.rs", symbol = "read_node_bytes" },
     { file = "src/store/lock.rs", symbol = "Store::open_lock_file" },
 ]
 depends_on = [

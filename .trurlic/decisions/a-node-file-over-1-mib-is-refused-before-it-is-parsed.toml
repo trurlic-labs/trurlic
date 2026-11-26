@@ -16,9 +16,9 @@ status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::NodeTooLarge" },
-    { file = "src/store/load.rs", symbol = "read_node_bytes" },
+    { file = "src/store/format/check.rs", symbol = "read_table" },
+    { file = "src/store/format/load.rs", symbol = "read_node_bytes" },
     { file = "src/store/model/limits.rs", symbol = "MAX_NODE_FILE_BYTES" },
-    { file = "src/store/version.rs", symbol = "read_table" },
     { file = "tests/integration/malformed_node.rs", symbol = "a_node_file_over_one_mib" },
 ]
 depends_on = [

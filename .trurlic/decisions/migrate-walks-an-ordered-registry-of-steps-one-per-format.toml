@@ -17,11 +17,11 @@ created = "2026-11-23T22:52:37.775489213Z"
 anchors = [
     { file = "src/commands/migrate.rs", symbol = "migrate" },
     { file = "src/error.rs", symbol = "Error::NoMigration" },
-    { file = "src/store/migration/mod.rs", symbol = "Store::migration_chain" },
-    { file = "src/store/migration/mod.rs", symbol = "chain" },
-    { file = "src/store/migration/report.rs", symbol = "Fact" },
-    { file = "src/store/migration/report.rs", symbol = "Loss" },
-    { file = "src/store/migration/report.rs", symbol = "MigrationReport" },
-    { file = "src/store/migration/steps.rs", symbol = "STEPS" },
-    { file = "src/store/migration/steps.rs", symbol = "Step" },
+    { file = "src/store/format/migration/mod.rs", symbol = "chain" },
+    { file = "src/store/format/migration/report.rs", symbol = "Fact" },
+    { file = "src/store/format/migration/report.rs", symbol = "Loss" },
+    { file = "src/store/format/migration/report.rs", symbol = "MigrationReport" },
+    { file = "src/store/format/migration/steps.rs", symbol = "STEPS" },
+    { file = "src/store/format/migration/steps.rs", symbol = "Step" },
+    { file = "src/store/migrate.rs", symbol = "Store::migration_chain" },
 ]

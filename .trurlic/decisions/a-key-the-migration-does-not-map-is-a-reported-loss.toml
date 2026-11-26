@@ -14,9 +14,9 @@ tags = [
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
-    { file = "src/store/migration/format_0_5.rs", symbol = "Notes::rest" },
-    { file = "src/store/migration/format_0_5.rs", symbol = "Notes::rest_top" },
-    { file = "src/store/migration/format_0_5.rs", symbol = "a_key_of_any_0_4_1_file_the_step_does_not_map_is_reported" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "Notes::rest" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "Notes::rest_top" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "a_key_of_any_0_4_1_file_the_step_does_not_map_is_reported" },
 ]
 depends_on = [
     "a-migration-rewrites-the-graph-as-toml-tables-reads-the",

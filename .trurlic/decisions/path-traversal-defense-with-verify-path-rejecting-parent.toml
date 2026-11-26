@@ -16,6 +16,6 @@ created = "2026-06-15T09:46:15.176073231Z"
 anchors = [
     { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
     { file = "src/store/commit.rs", symbol = "Store::prepare_write" },
+    { file = "src/store/format/layout.rs", symbol = "Store::verify_path" },
     { file = "src/store/journal.rs", symbol = "Journal" },
-    { file = "src/store/mod.rs", symbol = "Store::verify_path" },
 ]

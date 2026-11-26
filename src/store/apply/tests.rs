@@ -5,7 +5,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use super::*;
-use crate::store::canonical::canonical;
+use crate::store::format::canonical;
 use crate::store::model::{AcceptedText, AcceptedVia, Anchor, Decision, Status};
 use crate::store::testing::{
     changed_in, graph_log, sample_component, sample_decision, setup_store, shared_store, write_node,

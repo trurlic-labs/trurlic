@@ -16,9 +16,9 @@ status = "accepted"
 created = "2026-06-15T09:45:56.889052260Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_load_state" },
-    { file = "src/store/load.rs", symbol = "Store::read_graph" },
-    { file = "src/store/load.rs", symbol = "Store::read_nodes" },
-    { file = "src/store/load.rs", symbol = "read_node_bytes" },
+    { file = "src/store/format/load.rs", symbol = "Store::read_graph" },
+    { file = "src/store/format/load.rs", symbol = "Store::read_nodes" },
+    { file = "src/store/format/load.rs", symbol = "read_node_bytes" },
 ]
 depends_on = [
     "a-node-file-over-1-mib-is-refused-before-it-is-parsed",

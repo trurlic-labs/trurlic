@@ -469,7 +469,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::store::canonical::canonical;
+    use crate::store::format::canonical;
     use crate::store::limits::MAX_CHOICE_BYTES;
     use crate::store::{ProjectState, STATE_DIR};
     use tempfile::TempDir;

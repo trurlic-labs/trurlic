@@ -14,7 +14,7 @@ tags = [
 status = "proposed"
 created = "2026-06-15T09:45:30.508496747Z"
 anchors = [
-    { file = "src/store/load.rs", symbol = "read_node_bytes" },
+    { file = "src/store/format/load.rs", symbol = "read_node_bytes" },
     { file = "src/store/model/limits.rs" },
     { file = "src/store/model/schema.rs", symbol = "path_fault" },
     { file = "src/store/model/text.rs", symbol = "fault" },

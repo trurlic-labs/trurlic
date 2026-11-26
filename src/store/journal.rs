@@ -34,8 +34,8 @@ use super::commit::PendingWrite;
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
 use super::history::{CommitMessage, Head, HistoryStep};
-use super::load::ensure_regular;
 use super::{Store, StoreLock, StorePathFault};
+use crate::store::format::ensure_regular;
 
 /// A write's file operations and its history commit. Paths are relative to
 /// the store root.
@@ -673,7 +673,7 @@ id = "89abcdef0123456789abcdef0123456789abcdef"
 
     /// The bytes the write of [`stopped_after_its_renames`] put in place.
     fn written() -> String {
-        crate::store::canonical::canonical(&sample_component())
+        crate::store::format::canonical(&sample_component())
     }
 
     #[test]

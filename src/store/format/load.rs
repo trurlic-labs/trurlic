@@ -35,7 +35,7 @@ const READ_LIMIT: u64 = MAX_NODE_FILE_BYTES as u64 + 1;
 /// when it is no regular file ([`ensure_regular`]), and unread past
 /// [`MAX_NODE_FILE_BYTES`]: the read stops at the cap, so a file that grows
 /// while it is read costs no more.
-pub(super) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
+pub(in crate::store) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
     let hint = ensure_regular(path)?.len().min(READ_LIMIT);
     let file = File::open(path).map_err(Error::io(path))?;
     let mut bytes = Vec::with_capacity(usize::try_from(hint).unwrap_or(0));
@@ -54,7 +54,7 @@ pub(super) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
 /// The metadata of `path`, refused unless it is a regular file once its
 /// symlinks are followed: checked before it is opened, so a FIFO never
 /// blocks a read.
-pub(super) fn ensure_regular(path: &Path) -> Result<Metadata> {
+pub(in crate::store) fn ensure_regular(path: &Path) -> Result<Metadata> {
     let metadata = fs::metadata(path).map_err(Error::io(path))?;
     if metadata.is_file() {
         Ok(metadata)
@@ -66,7 +66,7 @@ pub(super) fn ensure_regular(path: &Path) -> Result<Metadata> {
 }
 
 /// The entries of `dir`; `None` when it is gone.
-pub(super) fn read_dir_if_present(dir: &Path) -> Result<Option<ReadDir>> {
+pub(in crate::store) fn read_dir_if_present(dir: &Path) -> Result<Option<ReadDir>> {
     match fs::read_dir(dir) {
         Ok(entries) => Ok(Some(entries)),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
@@ -83,7 +83,7 @@ pub(super) fn read_dir_if_present(dir: &Path) -> Result<Option<ReadDir>> {
 /// [`Error::NodeFileName`]. A stem that is no node name is listed, and
 /// validation reports it; an entry that is no regular file is refused by
 /// the read of it ([`read_node_bytes`]), which runs in parallel.
-pub(super) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
+pub(in crate::store) fn list_toml_stems(dir: &Path) -> Result<Vec<String>> {
     let Some(entries) = read_dir_if_present(dir)? else {
         return Ok(Vec::new());
     };
@@ -114,7 +114,7 @@ impl Store {
     /// The graph of `project`, read from `project_bytes`, and of every node
     /// file. The two kinds are read concurrently: listing a directory and
     /// waiting for its last file are serial steps of each.
-    pub(super) fn read_graph(
+    pub(in crate::store) fn read_graph(
         &self,
         project: Project,
         project_bytes: &[u8],
@@ -191,7 +191,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::store::canonical::canonical;
+    use crate::store::format::canonical;
     use crate::store::testing::{sample_component, sample_decision, setup_store, write_node};
     use tempfile::TempDir;
 

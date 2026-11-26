@@ -14,6 +14,6 @@ tags = [
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
-    { file = "src/store/migration/mod.rs", symbol = "PATTERNS_DIR" },
+    { file = "src/store/format/migration/mod.rs", symbol = "PATTERNS_DIR" },
     { file = "src/store/model/schema.rs" },
 ]

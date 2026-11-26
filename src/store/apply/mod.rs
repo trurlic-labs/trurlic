@@ -26,8 +26,8 @@ use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
 
-use crate::store::canonical::Canonical;
 use crate::store::commit::PendingWrite;
+use crate::store::format::Canonical;
 use crate::store::history::{CommitMessage, Tool};
 
 use crate::store::quality::{Bar, Hit, PreparedBar, Scan};

@@ -9,11 +9,11 @@ use serde::de::DeserializeOwned;
 
 use crate::{Error, Result};
 
-use super::canonical::{Canonical, canonical};
 use super::durable::{place, sync_dir};
 use super::failpoint::{self, Site};
 use super::history::History;
 use super::{Store, StoreLock, StorePathFault};
+use crate::store::format::{Canonical, canonical};
 use crate::store::limits::MAX_NODE_FILE_BYTES;
 
 /// A file write staged for batch commit.
