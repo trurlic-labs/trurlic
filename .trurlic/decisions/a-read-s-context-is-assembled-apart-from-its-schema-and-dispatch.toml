@@ -12,7 +12,7 @@ anchors = [
     { file = "src/tools/handwritten/context.rs", symbol = "get_context" },
     { file = "src/tools/handwritten/context.rs", symbol = "get_decisions_for_file" },
     { file = "src/tools/handwritten/context.rs", symbol = "health" },
-    { file = "src/tools/handwritten/mod.rs", symbol = "Handwritten::answer" },
+    { file = "src/tools/handwritten/tool.rs", symbol = "Handwritten::answer" },
 ]
 
 [accepted_text]
