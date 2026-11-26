@@ -16,6 +16,6 @@ anchors = [
     { file = "src/console.rs", symbol = "stdout" },
     { file = "src/console.rs", symbol = "write_diag" },
     { file = "src/console.rs", symbol = "write_out" },
-    { file = "src/mcp/mod.rs", symbol = "run_server" },
+    { file = "src/mcp/server.rs", symbol = "run_server" },
     { file = "tests/integration/output.rs" },
 ]

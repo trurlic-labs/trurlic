@@ -10,7 +10,7 @@ status = "proposed"
 created = "2026-11-23T22:27:34.236739142Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_load_state" },
-    { file = "src/mcp/mod.rs", symbol = "call_tool" },
+    { file = "src/mcp/call.rs", symbol = "call_tool" },
     { file = "src/store/write/access.rs", symbol = "Store::load_state" },
     { file = "src/store/write/access.rs", symbol = "Store::read" },
 ]

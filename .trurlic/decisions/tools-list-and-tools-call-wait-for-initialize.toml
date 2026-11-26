@@ -8,6 +8,6 @@ alternatives = [
 status = "accepted"
 created = "2026-06-15T09:45:44.800597540Z"
 anchors = [
-    { file = "src/mcp/mod.rs", symbol = "Server::reply" },
     { file = "src/mcp/peer.rs", symbol = "Client" },
+    { file = "src/mcp/server.rs", symbol = "Server::reply" },
 ]

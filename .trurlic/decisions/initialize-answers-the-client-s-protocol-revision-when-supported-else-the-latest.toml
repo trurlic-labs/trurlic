@@ -8,8 +8,8 @@ alternatives = [
 status = "proposed"
 created = "2026-11-23T23:15:11.132342073Z"
 anchors = [
-    { file = "src/mcp/mod.rs", symbol = "PROTOCOL_VERSIONS" },
-    { file = "src/mcp/mod.rs", symbol = "negotiate" },
+    { file = "src/mcp/server.rs", symbol = "PROTOCOL_VERSIONS" },
+    { file = "src/mcp/server.rs", symbol = "negotiate" },
 ]
 
 [accepted_text]
