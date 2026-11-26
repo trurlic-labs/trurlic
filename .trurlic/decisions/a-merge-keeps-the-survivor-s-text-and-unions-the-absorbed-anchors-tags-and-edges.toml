@@ -12,8 +12,8 @@ status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
+    { file = "src/store/apply/decision.rs", symbol = "a_merge_repoints_edges_and_unions_anchors_and_tags" },
     { file = "src/store/apply/decision.rs", symbol = "merge" },
-    { file = "src/store/apply/tests/mod.rs", symbol = "a_merge_repoints_edges_and_unions_anchors_and_tags" },
 ]
 depends_on = [
     "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",

@@ -6,12 +6,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::store::Store;
+use crate::store::apply::{
+    AnchorInput, Applied, Batch, ListEdit, Op, Record, Refusal, Rename, Revise,
+};
 use crate::store::format::{Canonical, canonical};
 use crate::store::model::{
     Anchor, COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, FORMAT_VERSION, NodeFile,
     PROJECT_COMPONENT, PROJECT_FILE, Placement, Project, ProjectState, Quality, STATE_DIR,
     STORE_DIR, Status, Timestamp,
 };
+use crate::{Error, Result};
 
 pub fn setup_store(dir: &Path) -> Store {
     setup_store_with_version(dir, &FORMAT_VERSION.to_string())
@@ -172,4 +176,130 @@ pub fn depends_on_state(edges: &[(&str, &str)]) -> ProjectState {
         }
     }
     state
+}
+
+// -- Batches ----------------------------------------------------------------
+
+/// `auth` and `billing`; `sign` and `rotate` of `auth`, `rotate`
+/// depending on `sign`; `audit`, project-wide, depending on `rotate`.
+pub fn graph(dir: &Path) -> Store {
+    let store = setup_store(dir);
+    for name in ["auth", "billing"] {
+        write_node(
+            &store,
+            &NodeFile::Component(name.into()),
+            &sample_component(),
+        );
+    }
+    let mut rotate = sample_decision("auth");
+    rotate.depends_on.insert("sign".into());
+    let mut audit = sample_decision("project");
+    audit.depends_on.insert("rotate".into());
+    for (name, decision) in [
+        ("sign", sample_decision("auth")),
+        ("rotate", rotate),
+        ("audit", audit),
+    ] {
+        write_node(&store, &NodeFile::Decision(name.into()), &decision);
+    }
+    store
+}
+
+pub fn batch(ops: Vec<Op>) -> Batch {
+    Batch {
+        ops,
+        origin: Some("row 7".into()),
+        session: None,
+    }
+}
+
+pub fn apply(store: &Store, ops: Vec<Op>) -> Result<Applied> {
+    apply_batch(store, batch(ops))
+}
+
+/// `batch` written as the `apply` tool writes it: the bar compiled before
+/// the lock.
+pub fn apply_batch(store: &Store, batch: Batch) -> Result<Applied> {
+    let bar = store.prepare_bar()?;
+    store.begin_write()?.apply(batch, &bar)
+}
+
+/// The refusal of `ops`, after checking that it wrote nothing.
+pub fn refused(store: &Store, ops: Vec<Op>) -> Refusal {
+    let before = files(store);
+    let err = apply(store, ops).unwrap_err();
+    assert_eq!(files(store), before, "a refused batch wrote");
+    match err {
+        Error::Refused(refusal) => *refusal,
+        other => panic!("not a refusal: {other}"),
+    }
+}
+
+/// Every graph file below the store, by path.
+pub fn files(store: &Store) -> BTreeMap<String, String> {
+    let mut files = BTreeMap::new();
+    for dir in ["components", "decisions"] {
+        for entry in fs::read_dir(store.root().join(dir)).unwrap() {
+            let path = entry.unwrap().path();
+            let key = format!("{dir}/{}", path.file_name().unwrap().to_str().unwrap());
+            files.insert(key, fs::read_to_string(&path).unwrap());
+        }
+    }
+    files
+}
+
+pub fn decision(store: &Store, name: &str) -> Decision {
+    store.load_state().unwrap().decisions.remove(name).unwrap()
+}
+
+pub fn record(name: &str, component: &str) -> Record {
+    Record {
+        name: name.into(),
+        component: component.into(),
+        choice: format!("Choice of {name}"),
+        reason: "The reason this choice holds".into(),
+        alternatives: vec!["Another way: rejected".into()],
+        tags: vec!["b".into(), "a".into()],
+        anchors: vec![anchor("src/lib.rs", None)],
+        depends_on: Vec::new(),
+    }
+}
+
+pub fn anchor(file: &str, symbol: Option<&str>) -> AnchorInput {
+    AnchorInput {
+        file: file.into(),
+        symbol: symbol.map(str::to_owned),
+    }
+}
+
+pub fn revise(name: &str) -> Revise {
+    Revise {
+        name: name.into(),
+        component: None,
+        choice: None,
+        reason: None,
+        alternatives: ListEdit::keep(),
+        tags: ListEdit::keep(),
+        anchors: ListEdit::keep(),
+        depends_on: ListEdit::keep(),
+    }
+}
+
+pub fn add(elements: &[&str]) -> ListEdit<String> {
+    ListEdit {
+        add: Some(elements.iter().map(|&e| e.to_owned()).collect()),
+        ..ListEdit::keep()
+    }
+}
+
+pub fn rename(name: &str, to: &str) -> Rename {
+    Rename {
+        name: name.into(),
+        to: to.into(),
+    }
+}
+
+/// The rule name, the path and the message of `refusal`.
+pub fn named(refusal: &Refusal) -> (&'static str, String, String) {
+    (refusal.rule.as_str(), refusal.path(), refusal.to_string())
 }

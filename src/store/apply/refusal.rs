@@ -316,3 +316,34 @@ fn listed(names: &[String]) -> String {
     }
     shown.join(", ")
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use crate::store::apply::*;
+    use crate::store::testing::{graph, named, record, refused};
+
+    #[test]
+    fn a_refusal_message_names_the_op_the_argument_and_the_rule() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let mut op = record("expire", "auth");
+        op.depends_on = vec!["gone".into()];
+
+        let refusal = refused(
+            &store,
+            vec![Op::Record(record("first", "auth")), Op::Record(op)],
+        );
+
+        assert_eq!(
+            named(&refusal),
+            (
+                "dependency_missing",
+                "ops[1].depends_on[0]".to_owned(),
+                "ops[1] (record `expire`), `depends_on[0]`: names `gone`, which is no decision"
+                    .to_owned()
+            )
+        );
+    }
+}

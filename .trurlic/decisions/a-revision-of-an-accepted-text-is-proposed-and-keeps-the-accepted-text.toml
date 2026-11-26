@@ -13,8 +13,8 @@ status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
+    { file = "src/store/apply/decision.rs", symbol = "a_revision_of_an_accepted_text_is_proposed_until_it_returns" },
     { file = "src/store/apply/decision.rs", symbol = "restatus" },
-    { file = "src/store/apply/tests/mod.rs", symbol = "a_revision_of_an_accepted_text_is_proposed_until_it_returns" },
     { file = "src/store/format/canonical.rs", symbol = "Decision::<Canonical>::emit" },
     { file = "src/store/model/schema.rs", symbol = "AcceptedText" },
 ]

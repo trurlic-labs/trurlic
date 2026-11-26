@@ -15,7 +15,7 @@ origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "print" },
-    { file = "src/store/apply/tests/quality.rs", symbol = "a_warn_pattern_warns_once_per_op_at_its_first_match" },
+    { file = "src/store/apply/check.rs", symbol = "a_warn_pattern_warns_once_per_op_at_its_first_match" },
     { file = "src/store/apply/warning.rs", symbol = "Warning" },
     { file = "src/store/apply/warning.rs", symbol = "report" },
     { file = "src/store/model/limits.rs", symbol = "MAX_WARNINGS_PER_OP" },

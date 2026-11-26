@@ -13,9 +13,9 @@ status = "proposed"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
+    { file = "src/store/apply/check.rs", symbol = "each_built_in_rule_refuses_naming_the_field_the_rule_and_the_measure" },
+    { file = "src/store/apply/check.rs", symbol = "each_quality_key_moves_its_limit" },
     { file = "src/store/apply/refusal.rs", symbol = "Rule" },
-    { file = "src/store/apply/tests/quality.rs", symbol = "each_built_in_rule_refuses_naming_the_field_the_rule_and_the_measure" },
-    { file = "src/store/apply/tests/quality.rs", symbol = "each_quality_key_moves_its_limit" },
     { file = "src/store/quality/mod.rs", symbol = "Limit" },
     { file = "src/store/quality/mod.rs", symbol = "QualityFault" },
 ]

@@ -16,7 +16,7 @@ anchors = [
     { file = "src/error.rs", symbol = "Error::CanonicalTooLarge" },
     { file = "src/store/apply/mod.rs", symbol = "Writer::files" },
     { file = "src/store/apply/refusal.rs", symbol = "Rule" },
-    { file = "src/store/apply/tests/mod.rs", symbol = "a_batch_that_leaves_a_file_over_the_cap_is_refused_naming_its_op" },
+    { file = "src/store/apply/tests.rs", symbol = "a_batch_that_leaves_a_file_over_the_cap_is_refused_naming_its_op" },
     { file = "src/store/write/access.rs", symbol = "format_refuses_a_rewrite_a_load_could_not_read" },
     { file = "src/store/write/commit.rs", symbol = "Store::prepare_write" },
 ]

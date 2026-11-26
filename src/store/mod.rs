@@ -68,13 +68,13 @@ mod tests {
     ];
 
     /// Append the non-test code of every Rust file at `path` to `code`: the
-    /// text before a file's `tests` or `testing` module, nothing of a file
-    /// under a `tests` directory, and no comment line.
+    /// text before a file's `tests` or `testing` module, nothing of a
+    /// `tests.rs`, and no comment line.
     fn code_under(path: &Path, code: &mut String) {
+        if path.ends_with("tests.rs") {
+            return;
+        }
         if path.is_dir() {
-            if path.ends_with("tests") {
-                return;
-            }
             for entry in fs::read_dir(path).unwrap() {
                 code_under(&entry.unwrap().path(), code);
             }

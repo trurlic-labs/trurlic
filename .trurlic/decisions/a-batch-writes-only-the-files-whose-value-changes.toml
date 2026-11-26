@@ -13,7 +13,7 @@ created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
     { file = "src/store/apply/edit.rs", symbol = "Before" },
     { file = "src/store/apply/mod.rs", symbol = "Writer::files" },
-    { file = "src/store/apply/tests/mod.rs", symbol = "only_the_files_whose_value_changes_are_written" },
+    { file = "src/store/apply/tests.rs", symbol = "only_the_files_whose_value_changes_are_written" },
 ]
 depends_on = [
     "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",
