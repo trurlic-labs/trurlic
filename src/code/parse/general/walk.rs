@@ -24,7 +24,8 @@ use tree_sitter::{Node, QueryCursor, StreamingIterator, Tree};
 
 use super::frame::{self, Frame, Waiting};
 use super::name;
-use super::{Extent, NameNode, Site, SpanNode};
+use super::name::NameNode;
+use super::site::{Extent, Site, SpanNode};
 use crate::code::index::{IndexFault, MIN_WORK, SCAN_WORK_PER_BYTE, Work};
 use crate::code::parse::query::{Capture, Definer, Rules};
 use crate::code::parse::tokens;
@@ -462,12 +463,11 @@ impl<'r> Walk<'r, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::parse::general::rules;
     use crate::code::parse::syntax;
-    use crate::code::testing::nested_ifs;
+    use crate::code::testing::{nested_ifs, python_rules};
 
     fn collect_with(source: &str, text: &str) -> Result<usize, IndexFault> {
-        let rules = rules(source);
+        let rules = python_rules(source);
         let tree = syntax::parse(text, &rules.grammar).unwrap();
         collect(&rules, &tree, text).map(|found| found.candidates.len())
     }

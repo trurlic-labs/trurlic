@@ -5,7 +5,7 @@
 //! through it too.
 
 use super::index::{FileKind, Indexed, ScopeId, Symbol};
-use super::parse::{BlankMacros, FileMacros, lexed, syntax_of};
+use super::parse::{BlankMacros, FileMacros, Rules, lexed, syntax_of};
 
 pub(crate) use super::index::Scopes;
 pub(crate) use super::parse::{RUST_LEXICON, Token, is_comment, parse, text_of, tokens};
@@ -60,6 +60,11 @@ pub(crate) fn named<'t>(kind: FileKind, text: &'t str, symbol: &str) -> Vec<&'t 
         .filter(|d| symbol.names(d.kind, scopes.path_from_end(d.scope)))
         .map(|d| &text[d.span.start..d.span.end])
         .collect()
+}
+
+/// The rules of `source`, a Python query of a test.
+pub(in crate::code) fn python_rules(source: &str) -> Rules {
+    Rules::compile(tree_sitter_python::LANGUAGE.into(), source).unwrap()
 }
 
 /// A file whose blocks nest `depth` deep, each one space deeper, whose

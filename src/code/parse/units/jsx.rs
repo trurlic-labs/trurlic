@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use tree_sitter::Node;
 
-use super::Unit;
+use super::unit::Unit;
 
 /// The JSX text a node marked by its characters ended: where it ended,
 /// whether a character but whitespace came before, and the run of

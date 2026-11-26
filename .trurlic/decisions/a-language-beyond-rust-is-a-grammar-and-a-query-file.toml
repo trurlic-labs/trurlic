@@ -16,9 +16,9 @@ created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-python" },
     { file = "src/code/parse/general/mod.rs", symbol = "index" },
-    { file = "src/code/parse/language/mod.rs", symbol = "Language" },
-    { file = "src/code/parse/language/mod.rs", symbol = "PYTHON" },
     { file = "src/code/parse/language/python.scm" },
+    { file = "src/code/parse/language/row.rs", symbol = "Language" },
+    { file = "src/code/parse/language/row.rs", symbol = "PYTHON" },
 ]
 
 [accepted_text]

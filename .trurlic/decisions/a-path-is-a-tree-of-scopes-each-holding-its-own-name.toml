@@ -15,7 +15,7 @@ status = "proposed"
 origin = "code index review"
 created = "2026-11-24T11:27:16.681896640Z"
 anchors = [
-    { file = "src/code/index/encoding/mod.rs", symbol = "room_of" },
+    { file = "src/code/index/encoding/room.rs", symbol = "room_of" },
     { file = "src/code/index/encoding/tests.rs", symbol = "an_entry_takes_no_more_than_its_parts_were_charged" },
     { file = "src/code/index/scope.rs", symbol = "Scopes::path_from_end" },
     { file = "src/code/index/scope_tree.rs", symbol = "ScopeTree::enter" },

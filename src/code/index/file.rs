@@ -25,6 +25,9 @@ pub(crate) const MAX_SOURCE_BYTES: usize = if TREE_SITTER_MAX_BYTES > LEXICAL_MA
     LEXICAL_MAX_BYTES
 };
 
+/// What indexing a file's bytes gave.
+pub(crate) type Indexed = Result<FileIndex, IndexFault>;
+
 /// A kind of file the index has a resolver for: Rust's own, a language
 /// the general resolver reads by its row (`parse/language/`, which also
 /// holds what a kind is read as), or a lexical kind.

@@ -13,10 +13,10 @@ use std::ops::Range;
 
 use tree_sitter::Node;
 
-use crate::code::index::{DefinitionKind, IndexFault, ScopeId, Segment, Visibility, What};
+use super::marks;
+use crate::code::index::{DefinitionKind, IndexFault, Role, ScopeId, Segment, Visibility, What};
 use crate::code::parse::syntax::text_of;
-
-use super::{Visit, Walk, marks};
+use crate::code::parse::tree_index::TreeIndex;
 
 /// A leaf of a `pub use`: its container, the bytes of its name, its own
 /// bytes and what it is.
@@ -27,75 +27,81 @@ pub(super) struct Reexport {
     what: What,
 }
 
-impl Walk<'_> {
-    /// Hold the leaves of a `use` with a visibility, each spanning the leaf,
-    /// for the end of the walk.
-    pub(super) fn hold_reexports(&mut self, visit: Visit<'_>) {
-        let Visit { node, context, .. } = visit;
-        let visibility = marks::visibility_of(node, self.text);
-        let Some(argument) = node
-            .child_by_field_name("argument")
-            .filter(|_| visibility != Visibility::Private)
-        else {
-            return;
-        };
-        let what = What {
-            kind: DefinitionKind::Reexport,
-            role: context.role,
-            visibility: Some(visibility),
-        };
-        for (name, leaf) in use_leaves(argument, self.text) {
-            self.reexports.push(Reexport {
-                container: context.scope,
-                name: name.byte_range(),
-                range: leaf.byte_range(),
-                what,
-            });
-        }
-    }
+/// The leaves of the `use` at `node`, standing in the module `container`
+/// with the role `role`, when it has a visibility: each spans its leaf,
+/// held for the end of the walk.
+pub(super) fn held(
+    node: Node<'_>,
+    container: Option<ScopeId>,
+    role: Role,
+    text: &str,
+) -> Vec<Reexport> {
+    let visibility = marks::visibility_of(node, text);
+    let Some(argument) = node
+        .child_by_field_name("argument")
+        .filter(|_| visibility != Visibility::Private)
+    else {
+        return Vec::new();
+    };
+    let what = What {
+        kind: DefinitionKind::Reexport,
+        role,
+        visibility: Some(visibility),
+    };
+    use_leaves(argument, text)
+        .into_iter()
+        .map(|(name, leaf)| Reexport {
+            container,
+            name: name.byte_range(),
+            range: leaf.byte_range(),
+            what,
+        })
+        .collect()
+}
 
-    /// Define each `pub use` leaf, once per container and name, whose path
-    /// the file does not define itself.
-    pub(super) fn define_reexports(&mut self) -> Result<(), IndexFault> {
-        let text = self.text;
-        let mut leaves = std::mem::take(&mut self.reexports);
-        leaves.sort_by_key(|leaf| leaf.range.start);
-        // The same name node, a `self` list's module, first; then the
-        // texts of the names left, each read once.
-        let mut nodes = BTreeSet::new();
-        let mut names: BTreeSet<(Option<ScopeId>, &str)> = BTreeSet::new();
-        let distinct: Vec<Reexport> = leaves
-            .into_iter()
-            .filter(|leaf| nodes.insert((leaf.container, leaf.name.start, leaf.name.end)))
-            .filter(|leaf| {
-                names.insert((
-                    leaf.container,
-                    text.get(leaf.name.start..leaf.name.end).unwrap_or_default(),
-                ))
-            })
-            .collect();
-        let defined: BTreeSet<(Option<ScopeId>, &[Segment])> = self
-            .build
-            .definitions()
-            .iter()
-            .filter_map(|d| self.build.scopes.get(d.scope))
-            .map(|scope| (scope.parent, scope.name.as_slice()))
-            .collect();
-        let new: Vec<(Reexport, Segment)> = distinct
-            .into_iter()
-            .map(|leaf| {
-                let name =
-                    Segment::of_rust(text.get(leaf.name.start..leaf.name.end).unwrap_or_default());
-                (leaf, name)
-            })
-            .filter(|(leaf, name)| !defined.contains(&(leaf.container, std::slice::from_ref(name))))
-            .collect();
-        for (leaf, name) in new {
-            let scope = self.build.scopes.enter(leaf.container, vec![name])?;
-            self.build.define(scope, leaf.range, leaf.what)?;
-        }
-        Ok(())
+/// Define in `build` each of `leaves`, the `pub use` leaves of `text`,
+/// once per container and name, whose path the file does not define
+/// itself.
+pub(super) fn define(
+    mut leaves: Vec<Reexport>,
+    build: &mut TreeIndex<'_>,
+    text: &str,
+) -> Result<(), IndexFault> {
+    leaves.sort_by_key(|leaf| leaf.range.start);
+    // The same name node, a `self` list's module, first; then the
+    // texts of the names left, each read once.
+    let mut nodes = BTreeSet::new();
+    let mut names: BTreeSet<(Option<ScopeId>, &str)> = BTreeSet::new();
+    let distinct: Vec<Reexport> = leaves
+        .into_iter()
+        .filter(|leaf| nodes.insert((leaf.container, leaf.name.start, leaf.name.end)))
+        .filter(|leaf| {
+            names.insert((
+                leaf.container,
+                text.get(leaf.name.start..leaf.name.end).unwrap_or_default(),
+            ))
+        })
+        .collect();
+    let defined: BTreeSet<(Option<ScopeId>, &[Segment])> = build
+        .definitions()
+        .iter()
+        .filter_map(|d| build.scopes.get(d.scope))
+        .map(|scope| (scope.parent, scope.name.as_slice()))
+        .collect();
+    let new: Vec<(Reexport, Segment)> = distinct
+        .into_iter()
+        .map(|leaf| {
+            let name =
+                Segment::of_rust(text.get(leaf.name.start..leaf.name.end).unwrap_or_default());
+            (leaf, name)
+        })
+        .filter(|(leaf, name)| !defined.contains(&(leaf.container, std::slice::from_ref(name))))
+        .collect();
+    for (leaf, name) in new {
+        let scope = build.scopes.enter(leaf.container, vec![name])?;
+        build.define(scope, leaf.range, leaf.what)?;
     }
+    Ok(())
 }
 
 /// The names a `use` tree brings in, each with the node it is spelled at:

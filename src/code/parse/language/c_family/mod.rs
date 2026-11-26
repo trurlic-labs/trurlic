@@ -42,12 +42,11 @@
 mod blank;
 mod define;
 mod encoding;
-mod lex;
 mod set;
 
 pub(in crate::code) use blank::{MAX_BLANK_ARGUMENT_BYTES, blank};
+pub(in crate::code) use define::MAX_MACRO_BODY_TOKENS;
 pub(crate) use define::{Defines, Lexed, is_header, lexed};
-pub(in crate::code) use define::{MAX_MACRO_BODY_TOKENS, tokens};
 pub(crate) use encoding::{decode_lexed, encode_lexed, max_lexed_bytes};
 pub(crate) use set::{BlankMacros, FileMacros};
 

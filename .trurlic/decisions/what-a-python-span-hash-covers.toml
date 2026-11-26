@@ -23,7 +23,7 @@ anchors = [
     { file = "src/code/parse/general/tests.rs", symbol = "implicitly_concatenated_strings_that_start_alike_hash_as_one" },
     { file = "src/code/parse/general/tests.rs", symbol = "what_a_string_or_a_comma_means_moves_the_hash" },
     { file = "src/code/parse/language/python.scm" },
-    { file = "src/code/parse/units/mod.rs", symbol = "Leaves::push_delimiter" },
+    { file = "src/code/parse/units/leaves.rs", symbol = "Leaves::push_delimiter" },
     { file = "src/code/parse/units/spelling.rs" },
 ]
 depends_on = [

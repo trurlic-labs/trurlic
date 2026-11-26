@@ -8,7 +8,9 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use super::{Leaves, Mark, Unit, spelling};
+use super::leaves::Leaves;
+use super::spelling;
+use super::unit::{Mark, Unit};
 use crate::code::index::{CLOSE_MARK, NESTED_MARK, OPEN_MARK, SpanHash};
 
 /// A definition whose hash is being built: where it ends, the units of

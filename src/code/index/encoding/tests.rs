@@ -1,6 +1,6 @@
-use super::*;
-
-use crate::code::index::FileKind;
+use super::room::COUNTS_BYTES;
+use super::{Measure, decode, encode, max_entry_bytes};
+use crate::code::index::{FileIndex, FileKind, IndexFault};
 
 /// Every file of the fixture corpus and of `src/code`, with its kind
 /// and bytes.
@@ -99,7 +99,8 @@ fn generated() -> Vec<(String, FileKind, Vec<u8>)> {
 }
 
 /// A file of each kind as dense in definitions as the kind allows, of
-/// about `bytes` bytes: the form [`densest`] names for it, repeated.
+/// about `bytes` bytes: the form [`densest`](super::room::densest) names
+/// for it, repeated.
 fn densest_files(bytes: usize) -> Vec<(FileKind, String)> {
     let list = |open: &str, item: &str, close: &str| {
         format!("{open}{}{close}", item.repeat(bytes / item.len()))

@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use super::FileMacros;
 use super::define::define_of;
-use super::lex::{Item, lex};
+use crate::code::parse::language::c_lexer::{Item, lex};
 
 /// The bytes a blanked function-like macro's arguments may span, from its
 /// opening parenthesis; a call longer is left as written.

@@ -4,10 +4,10 @@
 //! [`MAX_MACRO_BODY_TOKENS`] tokens, so the pass is linear in its bytes.
 
 use std::collections::BTreeSet;
-use std::ops::Range;
 use std::sync::OnceLock;
 
-use super::lex::{Item, lex};
+use crate::code::parse::language::c_lexer::{Item, lex, tokens};
+use crate::code::parse::language::{C, CPP};
 
 /// The tokens of a `#define`'s body read to classify it; a longer body is
 /// no attribute.
@@ -166,7 +166,7 @@ fn grammar_words() -> &'static BTreeSet<String> {
     static WORDS: OnceLock<BTreeSet<String>> = OnceLock::new();
     WORDS.get_or_init(|| {
         let mut words = BTreeSet::new();
-        for language in [&super::super::C, &super::super::CPP] {
+        for language in [&C, &CPP] {
             let grammar = (language.grammar)();
             for id in 0..u16::try_from(grammar.node_kind_count()).unwrap_or(u16::MAX) {
                 let word = grammar.node_kind_for_id(id).filter(|kind| {
@@ -222,16 +222,6 @@ fn body_tokens(body: &str) -> Vec<&str> {
         }
     });
     found
-}
-
-/// Hand `each` the range of each token of `text`, a C or C++ text read
-/// with no directive in it (a macro's body): each identifier, literal,
-/// number and punctuation mark, comments and continuations left out.
-pub(in crate::code) fn tokens(text: &str, each: &mut dyn FnMut(Range<usize>)) {
-    lex(text, false, |item| match item {
-        Item::Token { start, end } | Item::Identifier { start, end } => each(start..end),
-        Item::Directive { .. } | Item::Comment { .. } => {}
-    });
 }
 
 /// What a body of `tokens` is, in a macro of `parameters`.

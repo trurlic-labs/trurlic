@@ -24,6 +24,8 @@ pub(in crate::code) use language::{
     TSX, TYPESCRIPT, TYPESCRIPT_DECLARATIONS, blank, language_of, line_ends, syntax_of,
 };
 #[cfg(test)]
+pub(in crate::code) use query::Rules;
+#[cfg(test)]
 pub(crate) use rust::LEXICON as RUST_LEXICON;
 pub(in crate::code) use syntax::{CHUNK_BYTES, OPERATIONS_PER_PROGRESS};
 #[cfg(test)]

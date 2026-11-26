@@ -11,8 +11,9 @@
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
+use super::name::NameNode;
+use super::site::{Extent, Site, SpanNode};
 use super::walk::Found;
-use super::{Extent, NameNode, Site, SpanNode};
 use crate::code::index::{IndexFault, ScopeId, ScopeTree, Visibility, What, name_segments};
 use crate::code::parse::query::{Container, Definer};
 
@@ -247,14 +248,14 @@ fn enter_unnamed(open: &mut Vec<Open>, node: SpanNode) {
 mod tests {
     use super::*;
     use crate::code::index::{FileKind, Scopes};
-    use crate::code::parse::general::{collect, rules};
+    use crate::code::parse::general::collect;
     use crate::code::parse::syntax;
-    use crate::code::testing::path;
+    use crate::code::testing::{path, python_rules};
 
     /// The path of each definition `source`, a Python query of a test, places
     /// in `text`, in the sweep's order.
     fn placed_with(source: &str, text: &str) -> Vec<String> {
-        let rules = rules(source);
+        let rules = python_rules(source);
         let tree = syntax::parse(text, &rules.grammar).unwrap();
         let found = collect(&rules, &tree, text).unwrap();
         let mut tree_of_scopes = ScopeTree::for_file(FileKind::Python, text.len());
@@ -275,7 +276,7 @@ mod tests {
         for (first, one) in Visibility::ALL.iter().enumerate() {
             for (second, other) in Visibility::ALL.iter().enumerate() {
                 let source = format!("{function}\n{}\n{}", within(*one), within(*other));
-                let rules = rules(&source);
+                let rules = python_rules(&source);
                 let text = "def f(): pass\n";
                 let tree = syntax::parse(text, &rules.grammar).unwrap();
                 let found = collect(&rules, &tree, text).unwrap();

@@ -22,9 +22,9 @@ anchors = [
     { file = "src/code/parse/general/tests.rs", symbol = "each_declarator_of_a_statement_holds_what_its_own_node_holds" },
     { file = "src/code/parse/general/tests.rs", symbol = "what_an_unnamed_function_holds_is_under_the_definition_around_it_or_nothing" },
     { file = "src/code/parse/general/walk.rs", symbol = "Walk::complete_span" },
-    { file = "src/code/parse/query/mod.rs", symbol = "Definer" },
-    { file = "src/code/parse/query/mod.rs", symbol = "Definer::admits" },
-    { file = "src/code/parse/query/mod.rs", symbol = "Definer::kind_in()" },
+    { file = "src/code/parse/query/rules.rs", symbol = "Definer" },
+    { file = "src/code/parse/query/rules.rs", symbol = "Definer::admits" },
+    { file = "src/code/parse/query/rules.rs", symbol = "Definer::kind_in()" },
 ]
 depends_on = [
     "a-query-file-is-held-to-the-general-resolver-s-contract",

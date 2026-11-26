@@ -15,11 +15,11 @@ origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "src/code/parse/rust/items.rs", symbol = "Item::of_node" },
-    { file = "src/code/parse/rust/mod.rs", symbol = "Walk::enter_impl" },
-    { file = "src/code/parse/rust/mod.rs", symbol = "Walk::visit" },
-    { file = "src/code/parse/rust/mod.rs", symbol = "push_children" },
-    { file = "src/code/parse/rust/mod.rs", symbol = "type_segment" },
-    { file = "src/code/parse/rust/reexports.rs", symbol = "Walk::define_reexports" },
+    { file = "src/code/parse/rust/reexports.rs", symbol = "define" },
     { file = "src/code/parse/rust/reexports.rs", symbol = "use_leaves" },
+    { file = "src/code/parse/rust/walk.rs", symbol = "Walk::enter_impl" },
+    { file = "src/code/parse/rust/walk.rs", symbol = "Walk::visit" },
+    { file = "src/code/parse/rust/walk.rs", symbol = "push_children" },
+    { file = "src/code/parse/rust/walk.rs", symbol = "type_segment" },
     { file = "tests/fixtures/code/crates/ledger/src/lib.rs" },
 ]

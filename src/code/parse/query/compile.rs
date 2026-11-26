@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use tree_sitter::{CaptureQuantifier, Language, Query};
 
-use super::{Capture, Container, Definer, Growth, QueryFault, Rules};
+use super::rules::{Capture, Container, Definer, Growth, QueryFault, Rules};
 use crate::code::index::{DefinitionKind, Visibility};
 
 /// How often a pattern captures a capture of one kind.

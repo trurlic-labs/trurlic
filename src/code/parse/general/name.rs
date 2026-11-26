@@ -8,8 +8,34 @@
 
 use tree_sitter::Node;
 
-use crate::code::index::{IndexFault, Work};
+use super::frame::VisibilityMark;
+use crate::code::index::{IndexFault, Role, Visibility, Work};
 use crate::code::parse::{syntax, tokens};
+
+/// What the walk found of a definition's name node: where its first one
+/// starts, the text of each of its segments, whether a test mark holds
+/// it, the innermost visibility mark that holds it, the visibility of the
+/// innermost `@visibility.within` mark that does, and of the label in
+/// force there.
+#[derive(Debug, Clone)]
+pub(super) struct NameNode {
+    pub(super) start: usize,
+    pub(super) parts: Vec<String>,
+    pub(super) test: bool,
+    pub(super) visibility: Option<VisibilityMark>,
+    pub(super) within: Option<Visibility>,
+    pub(super) label: Option<Visibility>,
+}
+
+impl NameNode {
+    /// Test code when a test mark holds it.
+    pub(super) const fn role(&self) -> Role {
+        match self.test {
+            true => Role::Test,
+            false => Role::Code,
+        }
+    }
+}
 
 /// The quotes a string literal opens and closes with.
 const QUOTES: [char; 3] = ['"', '\'', '`'];

@@ -17,7 +17,7 @@ use crate::code::index::{Role, Visibility};
 use crate::code::parse::syntax::text_of;
 use crate::code::parse::tokens::{self, Token};
 
-use super::LEXICON;
+use super::lexicon::LEXICON;
 
 /// What an attribute says of the item it is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

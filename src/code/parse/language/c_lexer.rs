@@ -3,6 +3,8 @@
 //! literals, identifiers and other tokens, in one pass in which each byte
 //! is read a bounded number of times.
 
+use std::ops::Range;
+
 /// What the lexer meets, by byte range.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Item {
@@ -39,6 +41,16 @@ impl Item {
             | Self::Token { start, .. } => start,
         }
     }
+}
+
+/// Hand `each` the range of each token of `text`, a C or C++ text read
+/// with no directive in it (a macro's body): each identifier, literal,
+/// number and punctuation mark, comments and continuations left out.
+pub(super) fn tokens(text: &str, each: &mut dyn FnMut(Range<usize>)) {
+    lex(text, false, |item| match item {
+        Item::Token { start, end } | Item::Identifier { start, end } => each(start..end),
+        Item::Directive { .. } | Item::Comment { .. } => {}
+    });
 }
 
 /// Hand `each` the items of `text`, in one pass: each byte is read a

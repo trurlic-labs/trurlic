@@ -20,9 +20,9 @@ anchors = [
     { file = "src/code/index/symbol.rs", symbol = "Segment::of_trait" },
     { file = "src/code/index/symbol.rs", symbol = "rust_spelling" },
     { file = "src/code/index/symbol.rs", symbol = "split_outside_brackets" },
-    { file = "src/code/parse/rust/mod.rs", symbol = "type_segment" },
     { file = "src/code/parse/rust/tests.rs", symbol = "a_raw_identifier_is_defined_and_named_as_its_name" },
     { file = "src/code/parse/rust/tests.rs", symbol = "an_anchor_names_an_impl_whatever_its_spaces_and_trailing_commas" },
     { file = "src/code/parse/rust/tests.rs", symbol = "an_impls_path_is_spelled_from_its_tokens_so_rustfmt_and_a_comment_move_none" },
+    { file = "src/code/parse/rust/walk.rs", symbol = "type_segment" },
     { file = "src/code/parse/tree_index.rs", symbol = "TreeIndex::spelled" },
 ]

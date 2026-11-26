@@ -15,12 +15,12 @@ status = "accepted"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
-    { file = "src/code/parse/language/mod.rs", symbol = "Language::identity()" },
-    { file = "src/code/parse/language/mod.rs", symbol = "Language::rules()" },
-    { file = "src/code/parse/language/mod.rs", symbol = "each_query_compiles_against_its_grammar_within_the_contract" },
+    { file = "src/code/parse/language/row.rs", symbol = "Language::identity()" },
+    { file = "src/code/parse/language/row.rs", symbol = "Language::rules()" },
+    { file = "src/code/parse/language/row.rs", symbol = "each_query_compiles_against_its_grammar_within_the_contract" },
     { file = "src/code/parse/query/compile.rs", symbol = "Rules::compile" },
     { file = "src/code/parse/query/compile.rs", symbol = "a_query_is_refused_for_each_break_of_its_contract" },
-    { file = "src/code/parse/query/mod.rs", symbol = "QueryFault" },
+    { file = "src/code/parse/query/rules.rs", symbol = "QueryFault" },
     { file = "src/purity.rs", symbol = "is_admitted_include" },
 ]
 depends_on = [

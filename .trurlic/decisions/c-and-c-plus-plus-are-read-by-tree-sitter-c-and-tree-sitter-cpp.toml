@@ -19,8 +19,8 @@ anchors = [
     { file = "src/code/index/file.rs", symbol = "FileKind::of" },
     { file = "src/code/parse/language/c.scm" },
     { file = "src/code/parse/language/cpp.scm" },
-    { file = "src/code/parse/language/mod.rs", symbol = "C" },
-    { file = "src/code/parse/language/mod.rs", symbol = "CPP" },
+    { file = "src/code/parse/language/row.rs", symbol = "C" },
+    { file = "src/code/parse/language/row.rs", symbol = "CPP" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",

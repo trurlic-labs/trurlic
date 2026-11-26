@@ -5,23 +5,21 @@
 //! The walk (`walk.rs`) visits each node once and records what each
 //! pattern captures, each node's frame keeping what its ancestors say of
 //! it (`frame.rs`). The sweep (`place.rs`) places the definitions and the
-//! unnamed scopes by the nodes they captured. A definition's path is its
-//! container's and its name's segments (`name.rs`).
+//! unnamed scopes by the nodes they captured (`site.rs`). A definition's
+//! path is its container's and its name's segments (`name.rs`).
 
 mod frame;
 mod name;
 mod place;
+mod site;
 mod walk;
-
-use tree_sitter::Node;
 
 use super::language::Language;
 use super::syntax;
 use super::tree_index::TreeIndex;
 use super::units::Leaves;
-use crate::code::index::{FileIndex, IndexFault, Lines, Role, ScopeTree, Visibility};
+use crate::code::index::{FileIndex, IndexFault, Lines, ScopeTree};
 
-use frame::VisibilityMark;
 use walk::collect;
 
 pub(in crate::code) use walk::MATCH_LIMIT;
@@ -85,85 +83,6 @@ pub(in crate::code) fn index(
         )?;
     }
     Ok(build.finish())
-}
-
-/// A node the walk passed: its id and its bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SpanNode {
-    id: usize,
-    start: usize,
-    end: usize,
-}
-
-impl SpanNode {
-    fn of(node: Node<'_>) -> Self {
-        Self {
-            id: node.id(),
-            start: node.start_byte(),
-            end: node.end_byte(),
-        }
-    }
-
-    /// Whether its bytes hold `other`'s.
-    const fn holds(&self, other: Self) -> bool {
-        self.start <= other.start && other.end <= self.end
-    }
-}
-
-/// A definition's span: from node `first`'s start to node `last`'s end,
-/// one node, or a run of siblings its node closes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Extent {
-    first: usize,
-    last: usize,
-    start: usize,
-    end: usize,
-}
-
-impl Extent {
-    /// Whether its bytes hold `start..end`.
-    const fn holds(&self, start: usize, end: usize) -> bool {
-        self.start <= start && end <= self.end
-    }
-}
-
-/// What the walk found of a definition's name node: where its first one
-/// starts, the text of each of its segments, whether a test mark holds
-/// it, the innermost visibility mark that holds it, the visibility of the
-/// innermost `@visibility.within` mark that does, and of the label in
-/// force there.
-#[derive(Debug, Clone)]
-struct NameNode {
-    start: usize,
-    parts: Vec<String>,
-    test: bool,
-    visibility: Option<VisibilityMark>,
-    within: Option<Visibility>,
-    label: Option<Visibility>,
-}
-
-impl NameNode {
-    /// Test code when a test mark holds it.
-    const fn role(&self) -> Role {
-        match self.test {
-            true => Role::Test,
-            false => Role::Code,
-        }
-    }
-}
-
-/// Where a definition stands: the node its pattern captured, which
-/// places it, and its span.
-#[derive(Debug, Clone, Copy)]
-struct Site {
-    node: SpanNode,
-    span: Extent,
-}
-
-/// The rules of `source`, a Python query of a test.
-#[cfg(test)]
-fn rules(source: &str) -> super::query::Rules {
-    super::query::Rules::compile(tree_sitter_python::LANGUAGE.into(), source).unwrap()
 }
 
 #[cfg(test)]

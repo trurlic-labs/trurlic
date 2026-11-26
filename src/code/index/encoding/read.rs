@@ -1,14 +1,14 @@
 //! Reading an index's entry back, taking nothing on trust.
 
 use crate::code::index::file::{
-    Definition, FileIndex, FileKind, IndexFault, ModuleFile, RustFacts,
+    Definition, FileIndex, FileKind, IndexFault, Indexed, ModuleFile, RustFacts,
 };
 use crate::code::index::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::index::scope::{MAX_NESTING, Scope, ScopeId};
 use crate::code::index::span::{Span, SpanHash};
 use crate::code::index::symbol::Segment;
 
-use super::{DEPTH_BYTES, Indexed, block, max_entry_bytes};
+use super::room::{DEPTH_BYTES, block, max_entry_bytes};
 
 /// The index `bytes` hold for a file of `kind` of `source_bytes` bytes;
 /// `None` when they are no encoding of one. A read charges each heap
@@ -42,7 +42,7 @@ pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Optio
     reader.is_done().then_some(indexed)
 }
 
-/// The role whose code is `code`, as [`role_code`](super::role_code)
+/// The role whose code is `code`, as [`role_code`](super::codes::role_code)
 /// writes it.
 fn role_of(code: u8) -> Option<Role> {
     [Role::Code, Role::Test].get(usize::from(code)).copied()

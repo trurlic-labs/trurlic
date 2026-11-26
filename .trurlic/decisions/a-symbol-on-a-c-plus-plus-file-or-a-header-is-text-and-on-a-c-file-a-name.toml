@@ -12,8 +12,8 @@ status = "accepted"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"
 anchors = [
-    { file = "src/code/parse/language/mod.rs", symbol = "C" },
-    { file = "src/code/parse/language/mod.rs", symbol = "CPP" },
+    { file = "src/code/parse/language/row.rs", symbol = "C" },
+    { file = "src/code/parse/language/row.rs", symbol = "CPP" },
 ]
 depends_on = [
     "c-and-c-plus-plus-are-read-by-tree-sitter-c-and-tree-sitter-cpp",

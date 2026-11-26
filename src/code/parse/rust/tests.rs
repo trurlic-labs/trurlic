@@ -1,5 +1,6 @@
-use super::*;
-use crate::code::index::{DefinitionKind, FileKind, MAX_NESTING, Role, Scopes, Visibility};
+use crate::code::index::{
+    DefinitionKind, FileIndex, FileKind, IndexFault, MAX_NESTING, Role, Scopes, Visibility,
+};
 use crate::code::testing;
 
 fn index(text: &str) -> FileIndex {
