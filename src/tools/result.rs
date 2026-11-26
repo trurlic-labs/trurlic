@@ -16,7 +16,6 @@ use std::fmt;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::spec::InvalidArgument;
 use super::truncate;
 use crate::Error;
 use crate::budget::MAX_TOOL_RESULT_BYTES;
@@ -79,8 +78,8 @@ impl ToolError {
         }
     }
 
-    /// An argument the handler refuses, which its spec alone cannot: one
-    /// that holds only beside another.
+    /// An argument refused: by its spec, or by the handler for what the
+    /// spec alone cannot hold, a value that holds only beside another.
     pub(super) fn invalid(field: &str, message: impl Into<String>) -> Self {
         Self::new(
             ErrorKind::InvalidArgument,
@@ -99,13 +98,6 @@ impl ToolError {
 impl fmt::Display for ToolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)
-    }
-}
-
-impl From<InvalidArgument> for ToolError {
-    fn from(invalid: InvalidArgument) -> Self {
-        let message = invalid.to_string();
-        Self::new(ErrorKind::InvalidArgument, Some(invalid.field), message)
     }
 }
 
@@ -206,7 +198,6 @@ mod tests {
 
     use super::*;
     use crate::store::{FORMAT_VERSION, FormatVersion};
-    use crate::tools::spec::Fault;
 
     fn refusal_payload(result: ToolResult) -> Value {
         let (text, kind) = result.into_parts();
@@ -216,11 +207,8 @@ mod tests {
 
     #[test]
     fn a_refusal_names_its_kind_field_and_message() {
-        let invalid = InvalidArgument {
-            field: "ops[2].name".into(),
-            fault: Fault::Missing,
-        };
-        let payload = refusal_payload(ToolResult::refusal(&invalid.into()));
+        let invalid = ToolError::invalid("ops[2].name", "`ops[2].name` is required");
+        let payload = refusal_payload(ToolResult::refusal(&invalid));
         assert_eq!(
             payload,
             json!({ "error": {

@@ -12,7 +12,7 @@ use crate::tools::spec::{Output, Shown, to_value};
 use crate::tools::truncate::json_len;
 
 use super::duplicates::Duplicates;
-use super::repairs::{self, Left, Repaired};
+use super::repairs::{Left, Repaired};
 
 /// What `apply` returns: what the store's write did, the repairs it wrote
 /// and the stale anchors it left, and the likely duplicates of the
@@ -41,7 +41,7 @@ impl Output for Answer {
             &answer.applied.ops
         });
         declare_warnings(fields);
-        repairs::declare(fields);
+        declare_repairs(fields);
         declare_duplicates(fields);
         fields.required(
             "written",
@@ -82,6 +82,34 @@ fn declare_warnings(fields: &mut Shown<'_, Answer>) {
     fields.optional("patterns", about, &patterns, |answer| {
         let patterns = &answer.applied.patterns;
         (!patterns.is_empty()).then_some(patterns)
+    });
+}
+
+/// The result's fields of the repairs: the lists and their counts.
+fn declare_repairs(fields: &mut Shown<'_, Answer>) {
+    let repaired = Items {
+        item: Nested::<Repaired>::new(),
+    };
+    let about = "Each anchor a `repair_anchors` op replaced, with what it replaced it by.";
+    fields.optional("repaired", about, &repaired, |answer| {
+        (!answer.repaired.is_empty()).then_some(&answer.repaired)
+    });
+    let more = "Repairs written and not listed: `trurlic check` shows the anchors as they are.";
+    fields.optional("more_repaired", more, &Count, |answer| {
+        (answer.more_repaired > 0).then_some(&answer.more_repaired)
+    });
+    let left = Items {
+        item: Nested::<Left>::new(),
+    };
+    let about = "For a `repair_anchors` op with no `repairs`: each stale anchor the tree \
+                 shows no repair for, or whose repair a `[quality]` pattern refuses, left as \
+                 it was.";
+    fields.optional("left", about, &left, |answer| {
+        (!answer.left.is_empty()).then_some(&answer.left)
+    });
+    let more = "Stale anchors left and not listed: `trurlic check` lists every one.";
+    fields.optional("more_left", more, &Count, |answer| {
+        (answer.more_left > 0).then_some(&answer.more_left)
     });
 }
 

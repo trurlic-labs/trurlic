@@ -23,12 +23,10 @@ use std::collections::BTreeMap;
 use crate::lint::anchors::{Checked, Kind, Repair};
 use crate::sources::{self, Seen};
 use crate::tools::result::ToolError;
-use crate::tools::spec::output::{Count, Items, Nested, Str};
+use crate::tools::spec::output::Str;
 use crate::tools::spec::{Output, Shown as Fields};
 
 use crate::store::{Anchor, LeftRepair, Op, ProjectState, RepairAnchors, Store};
-
-use super::result::Answer;
 
 /// The stale anchors the tree shows no repair for, or whose repair a
 /// pattern refuses, each with why.
@@ -150,34 +148,6 @@ pub(super) fn left(
             })
         })
         .collect()
-}
-
-/// The result's fields of the repairs: the lists and their counts.
-pub(super) fn declare(fields: &mut Fields<'_, Answer>) {
-    let repaired = Items {
-        item: Nested::<Repaired>::new(),
-    };
-    let about = "Each anchor a `repair_anchors` op replaced, with what it replaced it by.";
-    fields.optional("repaired", about, &repaired, |answer| {
-        (!answer.repaired.is_empty()).then_some(&answer.repaired)
-    });
-    let more = "Repairs written and not listed: `trurlic check` shows the anchors as they are.";
-    fields.optional("more_repaired", more, &Count, |answer| {
-        (answer.more_repaired > 0).then_some(&answer.more_repaired)
-    });
-    let left = Items {
-        item: Nested::<Left>::new(),
-    };
-    let about = "For a `repair_anchors` op with no `repairs`: each stale anchor the tree \
-                 shows no repair for, or whose repair a `[quality]` pattern refuses, left as \
-                 it was.";
-    fields.optional("left", about, &left, |answer| {
-        (!answer.left.is_empty()).then_some(&answer.left)
-    });
-    let more = "Stale anchors left and not listed: `trurlic check` lists every one.";
-    fields.optional("more_left", more, &Count, |answer| {
-        (answer.more_left > 0).then_some(&answer.more_left)
-    });
 }
 
 impl Output for Repaired {

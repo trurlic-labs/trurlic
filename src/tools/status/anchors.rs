@@ -12,10 +12,8 @@
 use crate::lint::anchors::{Finding, Kind, KindName, Unasked, WEAK_FILES};
 use crate::sources;
 use crate::store::{ProjectState, Store};
-use crate::tools::spec::output::{Count, Nested, Str, Tag};
+use crate::tools::spec::output::{Count, Str, Tag};
 use crate::tools::spec::{Output, Shown};
-
-use super::report::{Part, Report};
 
 /// One finding: its decision, its anchor as `file::symbol`, its kind, and
 /// what makes it one.
@@ -76,14 +74,6 @@ pub(super) fn anchor_section(
         })
         .collect();
     (items, counts)
-}
-
-/// The report's field this section fills: the findings.
-pub(super) fn declare(fields: &mut Shown<'_, Report>) {
-    let anchors = "The anchors that do not plainly resolve in this tree, by kind, decision, \
-                   anchor.";
-    let kind = Nested::<Part<AnchorItem>>::new();
-    fields.optional("anchors", anchors, &kind, |report| report.anchors.as_ref());
 }
 
 // The schema states the bound in words.

@@ -4,10 +4,11 @@
 
 use crate::store::{IssueKind, Placement};
 
-use super::anchors::{self, AnchorCounts, AnchorItem};
+use super::Part;
+use super::anchors::{AnchorCounts, AnchorItem};
 use super::lint::{LintCounts, LintItem};
 
-use crate::tools::spec::output::{Count, Items, Nested, Str, Tag};
+use crate::tools::spec::output::{Count, Nested, Str, Tag};
 use crate::tools::spec::{Output, Shown};
 
 /// What `status` answers.
@@ -46,14 +47,6 @@ pub(crate) struct QualityCounts {
     pub(crate) limits: usize,
     pub(crate) refusing: usize,
     pub(crate) warning: usize,
-}
-
-/// A section: the items that fit, out of `total`.
-pub(crate) struct Part<T> {
-    pub(crate) total: usize,
-    pub(crate) items: Vec<T>,
-    pub(crate) omitted: usize,
-    pub(crate) more: Option<&'static str>,
 }
 
 pub(crate) struct IssueItem {
@@ -125,25 +118,33 @@ impl Output for Report {
         let quality = "What `[quality]` in project.toml adds to the built-in write rules.";
         let kind = Nested::<QualityCounts>::new();
         fields.required("quality", quality, &kind, |report| &report.quality);
-        let issues = Nested::<Part<IssueItem>>::new();
-        fields.optional(
-            "issues",
-            "The validation issues, sorted.",
-            &issues,
-            |report| report.issues.as_ref(),
-        );
-        let history = "What a shared graph's own history lacks; empty under `tracked`.";
-        let kind = Nested::<Part<HistoryItem>>::new();
-        fields.optional("history", history, &kind, |report| report.history.as_ref());
-        let components = "The project-wide decisions, then each component's, by name.";
-        let kind = Nested::<Part<ComponentItem>>::new();
-        fields.optional("components", components, &kind, |report| {
-            report.components.as_ref()
-        });
-        let kind = Nested::<Part<LintItem>>::new();
-        fields.optional("lint", LINT, &kind, |report| report.lint.as_ref());
-        anchors::declare(fields);
+        declare_sections(fields);
     }
+}
+
+/// The fields of a [`Report`] that hold its sections.
+fn declare_sections(fields: &mut Shown<'_, Report>) {
+    let issues = Nested::<Part<IssueItem>>::new();
+    fields.optional(
+        "issues",
+        "The validation issues, sorted.",
+        &issues,
+        |report| report.issues.as_ref(),
+    );
+    let history = "What a shared graph's own history lacks; empty under `tracked`.";
+    let kind = Nested::<Part<HistoryItem>>::new();
+    fields.optional("history", history, &kind, |report| report.history.as_ref());
+    let components = "The project-wide decisions, then each component's, by name.";
+    let kind = Nested::<Part<ComponentItem>>::new();
+    fields.optional("components", components, &kind, |report| {
+        report.components.as_ref()
+    });
+    let kind = Nested::<Part<LintItem>>::new();
+    fields.optional("lint", LINT, &kind, |report| report.lint.as_ref());
+    let anchors = "The anchors that do not plainly resolve in this tree, by kind, \
+                   decision, anchor.";
+    let kind = Nested::<Part<AnchorItem>>::new();
+    fields.optional("anchors", anchors, &kind, |report| report.anchors.as_ref());
 }
 
 impl Output for Counts {
@@ -199,24 +200,6 @@ impl Output for QualityCounts {
         fields.required("refusing", refusing, &Count, |counts| &counts.refusing);
         let warning = "Patterns that warn in the result.";
         fields.required("warning", warning, &Count, |counts| &counts.warning);
-    }
-}
-
-impl<T: Output> Output for Part<T> {
-    fn declare(fields: &mut Shown<'_, Self>) {
-        fields.required("total", "The section's items.", &Count, |part| &part.total);
-        let items = Items {
-            item: Nested::<T>::new(),
-        };
-        fields.required("items", "The items that fit, in order.", &items, |part| {
-            &part.items
-        });
-        fields.optional("omitted", "The items left out.", &Count, |part| {
-            (part.omitted > 0).then_some(&part.omitted)
-        });
-        fields.optional("more", "Where the items left out are.", &Str, |part| {
-            part.more
-        });
     }
 }
 

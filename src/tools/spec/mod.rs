@@ -23,6 +23,8 @@ use std::fmt;
 
 use serde_json::{Map, Value};
 
+use super::result::ToolError;
+
 pub(crate) use output::{Output, to_value};
 pub(super) use output::{Shown, output_schema};
 pub(crate) use tool::Destructive;
@@ -261,6 +263,12 @@ impl InvalidArgument {
 impl fmt::Display for InvalidArgument {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "`{}` {}", self.field, self.fault)
+    }
+}
+
+impl From<InvalidArgument> for ToolError {
+    fn from(invalid: InvalidArgument) -> Self {
+        Self::invalid(&invalid.field, invalid.to_string())
     }
 }
 
