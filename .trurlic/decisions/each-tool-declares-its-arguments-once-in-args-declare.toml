@@ -9,8 +9,8 @@ alternatives = [
 status = "accepted"
 created = "2026-11-23T23:15:10.849084332Z"
 anchors = [
+    { file = "src/tools/spec/args.rs", symbol = "Args" },
+    { file = "src/tools/spec/args.rs", symbol = "Fields::field" },
     { file = "src/tools/spec/kinds.rs" },
-    { file = "src/tools/spec/mod.rs", symbol = "Args" },
-    { file = "src/tools/spec/mod.rs", symbol = "Fields::field" },
     { file = "src/tools/spec/tool.rs", symbol = "ToolSpec" },
 ]

@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 
 use serde_json::{Map, Value};
 
-use super::{SchemaWalk, schema};
+use super::args::{SchemaWalk, schema};
 
 /// A tool's result, or an object nested in it.
 pub(crate) trait Output {
