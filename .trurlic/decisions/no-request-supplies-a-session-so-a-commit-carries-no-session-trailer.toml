@@ -17,5 +17,5 @@ anchors = [
     { file = "src/tools/apply/mod.rs", symbol = "apply" },
 ]
 depends_on = [
-    "a-history-commit-names-the-tool-and-carries-origin-and-session-trailers",
+    "a-history-commit-names-the-tool-and-carries-its-batch-s-trailers",
 ]

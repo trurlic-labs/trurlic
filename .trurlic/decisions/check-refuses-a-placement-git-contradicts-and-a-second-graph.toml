@@ -23,5 +23,5 @@ anchors = [
 ]
 depends_on = [
     "trurlic-init-requires-placement",
-    "validation-issues-carry-an-issuekind-and-a-subject-and",
+    "validation-issues-carry-a-kind-and-a-subject-and-come-sorted",
 ]

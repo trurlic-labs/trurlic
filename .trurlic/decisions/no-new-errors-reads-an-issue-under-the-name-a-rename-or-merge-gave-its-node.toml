@@ -23,5 +23,5 @@ anchors = [
     { file = "src/store/graph/validate.rs", symbol = "introduced" },
 ]
 depends_on = [
-    "validation-issues-carry-an-issuekind-and-a-subject-and",
+    "validation-issues-carry-a-kind-and-a-subject-and-come-sorted",
 ]

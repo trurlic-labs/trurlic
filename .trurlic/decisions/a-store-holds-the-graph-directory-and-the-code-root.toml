@@ -23,5 +23,5 @@ anchors = [
     { file = "tests/integration/placement.rs", symbol = "writers_in_every_tree_of_one_graph_take_one_lock" },
 ]
 depends_on = [
-    "discovery-takes-the-walk-up-first-then-the-main-worktree-s-shared-graph",
+    "discovery-walks-up-within-the-work-tree-and-asks-git-only-at-a-linked-worktree-s-top",
 ]

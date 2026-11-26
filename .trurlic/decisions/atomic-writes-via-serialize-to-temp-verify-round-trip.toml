@@ -19,5 +19,5 @@ anchors = [
     { file = "src/store/write/durable.rs", symbol = "sync_dir" },
 ]
 depends_on = [
-    "canonical-rs-is-the-one-serializer-of-graph-files",
+    "one-serializer-writes-every-graph-file-and-no-node-type-derives-serialize",
 ]

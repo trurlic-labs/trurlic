@@ -18,5 +18,5 @@ anchors = [
     { file = "src/tools/apply/result.rs", symbol = "tests::the_longest_result_of_a_full_batch_fits_the_budget" },
 ]
 depends_on = [
-    "every-tool-result-fits-max-tool-result-bytes-24-kib-a",
+    "every-tool-result-fits-the-result-budget-and-names-each-cut",
 ]

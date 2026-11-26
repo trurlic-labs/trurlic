@@ -27,6 +27,6 @@ anchors = [
     { file = "tests/integration/migrate.rs", symbol = "a_migration_stopped_between_its_removals_lands_on_the_next_command" },
 ]
 depends_on = [
-    "canonical-rs-is-the-one-serializer-of-graph-files",
     "every-commit-goes-through-a-flushed-journal-in-state-txn",
+    "one-serializer-writes-every-graph-file-and-no-node-type-derives-serialize",
 ]

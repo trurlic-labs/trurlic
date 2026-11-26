@@ -19,5 +19,5 @@ anchors = [
     { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "a_key_of_any_0_4_1_file_the_step_does_not_map_is_reported" },
 ]
 depends_on = [
-    "a-migration-rewrites-the-graph-as-toml-tables-reads-the",
+    "a-migration-rewrites-the-graph-as-toml-tables-and-commits-it-whole",
 ]

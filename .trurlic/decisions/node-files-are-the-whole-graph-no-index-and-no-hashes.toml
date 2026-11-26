@@ -19,5 +19,5 @@ anchors = [
     { file = "tests/integration/stdio.rs", symbol = "the_next_call_sees_a_hand_edit" },
 ]
 depends_on = [
-    "toml-as-the-sole-serialization-format-with-one-file-per",
+    "toml-is-the-one-format-of-the-graph-one-file-per-node",
 ]

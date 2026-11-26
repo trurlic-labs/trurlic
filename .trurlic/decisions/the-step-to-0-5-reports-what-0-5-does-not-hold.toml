@@ -23,6 +23,6 @@ anchors = [
 ]
 depends_on = [
     "a-decision-s-status-is-one-typed-value",
+    "no-pattern-node-kind-a-rule-is-a-decision",
     "node-files-carry-no-history",
-    "patterns-are-deleted-as-a-node-kind",
 ]

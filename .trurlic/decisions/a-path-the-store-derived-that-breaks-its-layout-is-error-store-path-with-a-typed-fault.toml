@@ -18,5 +18,5 @@ anchors = [
     { file = "src/store/format/layout.rs", symbol = "StorePathFault" },
 ]
 depends_on = [
-    "path-traversal-defense-with-verify-path-rejecting-parent",
+    "every-path-a-commit-touches-stays-inside-the-store-root",
 ]

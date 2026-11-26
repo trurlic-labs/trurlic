@@ -19,5 +19,5 @@ anchors = [
     { file = "src/tools/apply/mod.rs", symbol = "ALTERNATIVES" },
 ]
 depends_on = [
-    "validation-holds-every-text-of-a-node-file-to-store-text",
+    "validation-holds-every-text-a-node-file-holds-to-the-text-rules",
 ]

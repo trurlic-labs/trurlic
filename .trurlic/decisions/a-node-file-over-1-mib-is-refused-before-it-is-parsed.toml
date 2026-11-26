@@ -22,5 +22,5 @@ anchors = [
     { file = "tests/integration/malformed_node.rs", symbol = "a_node_file_over_one_mib" },
 ]
 depends_on = [
-    "centralized-size-limits-in-limits-rs-shared-across-all",
+    "every-size-limit-lives-in-one-place-and-binds-the-read-the-types-and-validation",
 ]

@@ -25,6 +25,6 @@ anchors = [
     { file = "tests/integration/history.rs", symbol = "a_stopped_write_is_committed_as_it_was_and_removes_no_file_twice" },
 ]
 depends_on = [
-    "a-history-commit-names-the-tool-and-carries-origin-and-session-trailers",
+    "a-history-commit-names-the-tool-and-carries-its-batch-s-trailers",
     "every-commit-goes-through-a-flushed-journal-in-state-txn",
 ]

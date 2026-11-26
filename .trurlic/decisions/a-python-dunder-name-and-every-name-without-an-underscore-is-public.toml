@@ -17,5 +17,5 @@ anchors = [
     { file = "src/code/parse/language/python.scm" },
 ]
 depends_on = [
-    "a-python-name-with-a-leading-underscore-is-private",
+    "a-python-name-is-private-with-a-leading-underscore-unless-a-dunder-name",
 ]

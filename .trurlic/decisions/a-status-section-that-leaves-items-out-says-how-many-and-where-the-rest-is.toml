@@ -19,6 +19,6 @@ anchors = [
     { file = "tests/integration/budget.rs", symbol = "status_fits_the_budget_and_counts_what_it_leaves_out" },
 ]
 depends_on = [
-    "every-tool-result-fits-max-tool-result-bytes-24-kib-a",
+    "every-tool-result-fits-the-result-budget-and-names-each-cut",
     "the-lint-section-fits-each-kind-on-its-own-and-counts-each",
 ]

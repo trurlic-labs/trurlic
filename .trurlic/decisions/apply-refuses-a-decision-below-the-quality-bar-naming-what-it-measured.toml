@@ -21,5 +21,5 @@ anchors = [
 ]
 depends_on = [
     "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",
-    "store-text-binds-every-graph-file-and-the-quality-bar-binds-writes",
+    "the-text-rules-bind-every-graph-file-and-the-quality-bar-binds-writes",
 ]

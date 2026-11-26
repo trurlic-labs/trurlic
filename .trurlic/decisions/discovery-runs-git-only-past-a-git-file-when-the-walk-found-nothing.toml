@@ -20,5 +20,5 @@ anchors = [
     { file = "tests/integration/placement.rs", symbol = "discovery_runs_no_git_where_the_walk_finds_the_graph" },
 ]
 depends_on = [
-    "discovery-takes-the-walk-up-first-then-the-main-worktree-s-shared-graph",
+    "discovery-walks-up-within-the-work-tree-and-asks-git-only-at-a-linked-worktree-s-top",
 ]

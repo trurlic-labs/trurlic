@@ -22,5 +22,5 @@ anchors = [
 ]
 depends_on = [
     "one-canonical-form-for-every-graph-file",
-    "toml-as-the-sole-serialization-format-with-one-file-per",
+    "toml-is-the-one-format-of-the-graph-one-file-per-node",
 ]

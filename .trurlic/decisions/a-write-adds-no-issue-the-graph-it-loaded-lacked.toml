@@ -24,5 +24,5 @@ anchors = [
     { file = "tests/integration/invalid_graph.rs", symbol = "fmt_lands_beside_the_issues_and_keeps_them" },
 ]
 depends_on = [
-    "validation-issues-carry-an-issuekind-and-a-subject-and",
+    "validation-issues-carry-a-kind-and-a-subject-and-come-sorted",
 ]
