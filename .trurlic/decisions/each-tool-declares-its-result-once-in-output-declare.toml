@@ -9,11 +9,11 @@ status = "proposed"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
-    { file = "src/mcp/listing.rs", symbol = "tests::tool_list_is_the_registry_as_each_tool_declares_itself" },
     { file = "src/tools/result.rs", symbol = "ToolResult::structured" },
     { file = "src/tools/spec/output.rs", symbol = "Output" },
     { file = "src/tools/spec/output.rs", symbol = "Shown" },
     { file = "src/tools/spec/tool.rs", symbol = "ToolSpec" },
+    { file = "tests/integration/stdio.rs", symbol = "tools_list_matches_golden" },
 ]
 depends_on = [
     "each-tool-declares-its-arguments-once-in-args-declare",

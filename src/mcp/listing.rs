@@ -54,25 +54,6 @@ mod tests {
         tool_list()["tools"].as_array().unwrap()
     }
 
-    /// `tools/list` is the registry in its order, each tool with the
-    /// facts and schemas it states of itself.
-    #[test]
-    fn tool_list_is_the_registry_as_each_tool_declares_itself() {
-        assert_eq!(listed().len(), TOOLS.len());
-        for (entry, tool) in listed().iter().zip(TOOLS) {
-            assert_eq!(entry["name"], tool.name());
-            let hints = &entry["annotations"];
-            assert_eq!(hints["title"], tool.title(), "{entry}");
-            assert_eq!(hints["openWorldHint"], false, "{entry}");
-            assert_eq!(hints["readOnlyHint"], tool.is_read_only(), "{entry}");
-            assert_eq!(hints["idempotentHint"], tool.is_read_only(), "{entry}");
-            let destructive = tool.destructive() == Destructive::Yes;
-            assert_eq!(hints["destructiveHint"], destructive, "{entry}");
-            assert_eq!(entry["inputSchema"], tool.input_schema());
-            assert_eq!(entry.get("outputSchema"), tool.output_schema().as_ref());
-        }
-    }
-
     /// Claude Code cuts a tool description at 4,096 characters; half of
     /// that keeps a session's fixed cost small.
     #[test]
