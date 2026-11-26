@@ -5,7 +5,7 @@ use crate::tools::spec::output::{Str, Tag};
 use crate::tools::spec::{Output, Shown};
 
 pub(crate) struct IssueItem {
-    pub(crate) kind: IssueKind,
+    kind: IssueKind,
     pub(crate) message: String,
 }
 

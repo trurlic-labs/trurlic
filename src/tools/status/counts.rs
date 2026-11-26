@@ -15,7 +15,7 @@ pub(crate) struct Counts {
     pub(crate) project_wide: usize,
     pub(crate) proposed: usize,
     pub(crate) edges: usize,
-    pub(crate) issues: usize,
+    issues: usize,
     pub(crate) non_canonical: usize,
     pub(crate) lint: Option<LintCounts>,
     /// The anchor findings by kind, when the report has the section.

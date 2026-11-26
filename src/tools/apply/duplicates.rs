@@ -80,7 +80,7 @@ pub(super) fn warned(ops: &[Done], state: &ProjectState) -> Vec<Duplicates> {
 /// The decisions whose choice or reason `ops` wrote, by their names after
 /// the batch, in the order of the ops that first wrote them: a rename
 /// carries one, and a remove, or a merge that absorbs it, drops it.
-pub(super) fn text_written(ops: &[Done]) -> Vec<String> {
+fn text_written(ops: &[Done]) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     let text = |field: &Field| matches!(field, Field::Choice | Field::Reason);
     for done in ops {

@@ -20,7 +20,7 @@ use crate::store::{ProjectState, Store, Writer};
 use crate::tools::result::ToolError;
 
 /// A tool's outcome: its result, or why it refused.
-pub(crate) type Outcome<O> = Result<O, ToolError>;
+pub(in crate::tools) type Outcome<O> = Result<O, ToolError>;
 
 /// What a tool's handler runs on.
 pub(crate) enum Access<A, O> {

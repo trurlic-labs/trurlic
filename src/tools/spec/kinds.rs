@@ -73,7 +73,7 @@ impl<T: Copy> Kind for Choice<T> {
 }
 
 /// An array of at most `max_items` items, each of kind `item`.
-pub(crate) struct List<K> {
+pub(in crate::tools) struct List<K> {
     pub item: K,
     pub max_items: usize,
 }

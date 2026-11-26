@@ -6,13 +6,13 @@ use crate::tools::spec::output::{Str, Tag};
 use crate::tools::spec::{Output, Shown};
 
 pub(crate) struct HistoryItem {
-    pub(crate) kind: HistoryKind,
+    kind: HistoryKind,
     pub(crate) message: String,
 }
 
 /// The kind of a history finding, one per `HistoryFinding` variant.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum HistoryKind {
+enum HistoryKind {
     Missing,
     IndexLocked,
     Uncommitted,

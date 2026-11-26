@@ -18,7 +18,7 @@ pub(super) mod tool;
 pub(super) use args::Kind;
 #[cfg(test)]
 pub(super) use args::parse;
-pub(crate) use args::{Args, Fields};
+pub(super) use args::{Args, Fields};
 #[cfg(test)]
 pub(super) use invalid::At;
 pub(super) use output::Shown;

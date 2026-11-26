@@ -183,10 +183,10 @@ impl<K: Show<Value: Sized>> Show for Items<K> {
 }
 
 /// A nested object whose fields `O` declares.
-pub(crate) struct Nested<O>(PhantomData<fn() -> O>);
+pub(in crate::tools) struct Nested<O>(PhantomData<fn() -> O>);
 
 impl<O> Nested<O> {
-    pub(crate) const fn new() -> Self {
+    pub(in crate::tools) const fn new() -> Self {
         Self(PhantomData)
     }
 }
