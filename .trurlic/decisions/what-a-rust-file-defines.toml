@@ -6,10 +6,6 @@ alternatives = [
     "Leave functions out of the container path: rejected because a nested item and a module-level one of the same name would collide",
     "Count every use as a definition: rejected because importing a name is no definition of it",
 ]
-tags = [
-    "anchors",
-    "rust",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

@@ -6,10 +6,6 @@ alternatives = [
     "A definition named default for export default x too: rejected because x is already defined, and its span holds its body",
     "default for a named module.exports function too: rejected because export default function createApp() keeps createApp, and the two forms of one export would name it apart",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

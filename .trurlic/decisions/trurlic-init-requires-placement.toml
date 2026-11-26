@@ -8,10 +8,6 @@ alternatives = [
     "Detect it from git at init: rejected because a new store has no files whose tracking could tell",
     "Keep placement out of project.toml and ask git on every call: rejected because the answer would change with the state of the working tree",
 ]
-tags = [
-    "developer-experience",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

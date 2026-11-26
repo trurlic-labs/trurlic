@@ -7,9 +7,6 @@ alternatives = [
     "Keep the history field: rejected because it grows every file and conflicts on merge, for what git keeps",
     "A history file beside each decision: rejected because it is a second file per node to keep in step for the same record",
 ]
-tags = [
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

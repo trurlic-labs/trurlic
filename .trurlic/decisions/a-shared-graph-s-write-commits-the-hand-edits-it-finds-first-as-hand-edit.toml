@@ -7,10 +7,6 @@ alternatives = [
     "Commit hand edits only at a write that changes files: rejected because the owner would have no command but git to settle the history",
     "A trurlic commit command: rejected because fmt is the command that settles the files",
 ]
-tags = [
-    "git",
-    "history",
-]
 status = "proposed"
 created = "2026-11-24T12:00:00Z"
 anchors = [

@@ -8,11 +8,6 @@ alternatives = [
     "Re-parse an invocation's token tree as items: rejected because almost no item-position tree parses alone, and one that does is still the macro's to rewrite",
     "Expand with rustc: rejected because it needs a compiler, the crate's dependencies and its cfg, far past what an anchor needs",
 ]
-tags = [
-    "anchors",
-    "macros",
-    "rust",
-]
 status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

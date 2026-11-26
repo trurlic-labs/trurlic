@@ -6,9 +6,6 @@ alternatives = [
     "f64 rounded to six decimals before comparing: rejected because rounding moves the boundary without removing it",
     "A big-number or decimal crate: rejected because a 256-bit product and a series of twenty terms are a few dozen lines",
 ]
-tags = [
-    "determinism",
-]
 status = "accepted"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"

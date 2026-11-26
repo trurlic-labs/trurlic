@@ -8,11 +8,6 @@ alternatives = [
     "Leave the stale anchors left out of the result: rejected because the reader then cannot tell repaired all from repaired some",
     "Sift the repairs before the lock over a scan of their own: rejected because the write's caches, filled by the ops before, can still give up on a repair the sift passed",
 ]
-tags = [
-    "anchors",
-    "apply",
-    "budget",
-]
 status = "proposed"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"

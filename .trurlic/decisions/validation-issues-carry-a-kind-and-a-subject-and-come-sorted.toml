@@ -8,10 +8,6 @@ alternatives = [
     "Identify issues by message: rejected because counts and file names in a message make the same issue compare unequal across validations",
     "A severity per issue: rejected because a second field beside the kind can disagree with it; what is only a matter of form is a list of its own",
 ]
-tags = [
-    "determinism",
-    "integrity",
-]
 status = "accepted"
 created = "2026-10-02T12:57:55.359394005Z"
 anchors = [

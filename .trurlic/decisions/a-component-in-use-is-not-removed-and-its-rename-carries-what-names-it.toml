@@ -5,10 +5,6 @@ alternatives = [
     "Remove the component's decisions with it: rejected because a remove of one node would delete many decisions",
     "Move its decisions to project on remove: rejected because a component's rules would silently become project-wide",
 ]
-tags = [
-    "api",
-    "consistency",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

@@ -5,10 +5,6 @@ alternatives = [
     "Accept a no-op as a success that writes nothing: rejected because the caller learns nothing of the stale view that made it",
     "Compare the bytes on disk: rejected because a hand edit out of canonical form would make every revise of it a change",
 ]
-tags = [
-    "api",
-    "validation",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

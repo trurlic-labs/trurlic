@@ -10,11 +10,6 @@ alternatives = [
     "Write each file on its own with write_atomic: rejected because a crash leaves files of two formats",
     "Leave graph.toml and patterns/ for the user to delete: rejected because they would hold edges and rules nobody reads, with no word that they are dead",
 ]
-tags = [
-    "migration",
-    "reliability",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-23T22:52:37.831647832Z"
 anchors = [

@@ -8,11 +8,6 @@ alternatives = [
     "A session argument of apply: rejected because an agent cannot know its own session id",
     "The server process as the session: rejected because it matches no session a hook or a transcript names",
 ]
-tags = [
-    "git",
-    "history",
-    "protocol",
-]
 status = "proposed"
 created = "2026-11-24T12:00:00Z"
 anchors = [

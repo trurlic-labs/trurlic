@@ -7,10 +7,6 @@ alternatives = [
     "A name field in each file: rejected because stem and field can disagree, and a rename edits both",
     "Names unique per kind only: rejected because a name in a brief or a report would not say which node it is",
 ]
-tags = [
-    "storage",
-    "validation",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

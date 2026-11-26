@@ -7,10 +7,6 @@ alternatives = [
     "rust-analyzer as a library: rejected because it is a large, unstable dependency for a question a parse tree answers",
     "tree-sitter grammars for TOML, JSON, Make and Markdown: rejected because each adds C code and a crate for what a short scanner does",
 ]
-tags = [
-    "dependencies",
-    "parsing",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

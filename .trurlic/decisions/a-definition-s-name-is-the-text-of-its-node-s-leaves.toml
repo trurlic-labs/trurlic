@@ -7,10 +7,6 @@ alternatives = [
     "Split a name at its structure's fields: rejected because a leaf of the separator's text states the split in every grammar alike",
     "A computed name as written: rejected because [\"x\"]() and x() declare one member under two spellings, and an anchor of one would miss the other",
 ]
-tags = [
-    "anchors",
-    "parsing",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

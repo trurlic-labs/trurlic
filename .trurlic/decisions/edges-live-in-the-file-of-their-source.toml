@@ -8,10 +8,6 @@ alternatives = [
     "An edge in the files of both endpoints: rejected because two copies can disagree, and adding an edge would touch a file the change is not about",
     "Keep constrains as its own edge kind: rejected because it states depends_on from the other end, so every walk and the cycle check would handle two kinds for one relation",
 ]
-tags = [
-    "consistency",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

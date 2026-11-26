@@ -5,10 +5,6 @@ alternatives = [
     "Name the element by its index in the decision: rejected because a sorted set renumbers what the caller wrote",
     "Quote the element instead of an index: rejected because an element can be long, and the argument path is what a caller fixes",
 ]
-tags = [
-    "api",
-    "quality",
-]
 status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"

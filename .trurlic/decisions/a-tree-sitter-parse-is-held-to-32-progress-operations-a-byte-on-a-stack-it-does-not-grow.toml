@@ -8,11 +8,6 @@ alternatives = [
     "Parsing each top-level item alone: rejected because one large item costs what its file did, and TypeScript, C and C++ cannot be cut lexically",
     "32 bytes to an operation, 1 KiB a byte: rejected because it halves the headroom of the costliest generated sources, while the room already keeps the parses in flight to 1 MiB of files",
 ]
-tags = [
-    "parsing",
-    "reliability",
-    "security",
-]
 status = "proposed"
 origin = "every tree-sitter parse bounded by one count of work"
 created = "2026-11-26T09:47:30.725930774Z"

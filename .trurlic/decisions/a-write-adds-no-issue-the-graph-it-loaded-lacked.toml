@@ -9,10 +9,6 @@ alternatives = [
     "Validate only the changed part of the graph: rejected because cycles and names shared across kinds need the whole graph, and a whole validation is cheap at these sizes",
     "Refuse every write while the graph has any issue: rejected because one hand-edit mistake would block every write, the fix included",
 ]
-tags = [
-    "consistency",
-    "reliability",
-]
 status = "proposed"
 created = "2026-06-15T09:44:49.521491347Z"
 anchors = [

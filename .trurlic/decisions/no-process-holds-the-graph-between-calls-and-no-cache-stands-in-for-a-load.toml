@@ -6,10 +6,6 @@ alternatives = [
     "A JSON snapshot of the parsed graph keyed by node hashes: rejected, it needs invalidation against every node file and a fallback path, for a load that is not what bounds a call",
     "A binary serializer cache: rejected, the same coherence cost and a dependency the owner has not approved",
 ]
-tags = [
-    "performance",
-    "persistence",
-]
 status = "proposed"
 created = "2026-11-23T22:27:34.236739142Z"
 anchors = [

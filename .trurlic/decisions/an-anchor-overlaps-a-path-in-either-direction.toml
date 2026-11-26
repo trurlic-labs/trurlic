@@ -8,9 +8,6 @@ alternatives = [
     "The query as a prefix only: rejected because a directory anchor would miss every file under it",
     "Prefix match on raw strings: rejected because src/auth would match src/authz",
 ]
-tags = [
-    "matching",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

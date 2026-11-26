@@ -7,11 +7,6 @@ alternatives = [
     "A message string per site: rejected because its free text is nothing a caller or a test can match",
     "One variant per fault: rejected because the three are one concept, a derived path that breaks the layout",
 ]
-tags = [
-    "data-integrity",
-    "errors",
-    "security",
-]
 status = "proposed"
 created = "2026-06-15T09:46:15.176073231Z"
 anchors = [

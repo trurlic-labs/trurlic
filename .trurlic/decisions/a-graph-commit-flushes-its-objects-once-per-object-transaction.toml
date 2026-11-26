@@ -6,11 +6,6 @@ alternatives = [
     "hash-object -w --stdin-paths for a write's blobs: rejected because it opens no object transaction and flushes each blob on its own",
     "fsync the objects from trurlic after a hash-object that fsyncs none: rejected because an object would have its name before its data is durable, and git keeps a torn one",
 ]
-tags = [
-    "git",
-    "performance",
-    "reliability",
-]
 status = "proposed"
 origin = "apply and status"
 created = "2026-11-24T03:35:48.715992075Z"

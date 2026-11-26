@@ -8,10 +8,6 @@ alternatives = [
     "Parse first, then measure: rejected because the parse cost is what the cap exists to avoid",
     "No cap: rejected because one file could make every call slow or exhaust memory",
 ]
-tags = [
-    "performance",
-    "security",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

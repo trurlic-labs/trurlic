@@ -8,10 +8,6 @@ alternatives = [
     "Every declaration of an ambient module public: rejected because TypeScript exports only the marked ones once the body holds an export form (declare module \"*.svg\" { const c: string; function f(): void; export default c })",
     "A declaration file's top as a module's: rejected because TypeScript exports each declaration of a .d.ts module that holds no export form, and a script's are global",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

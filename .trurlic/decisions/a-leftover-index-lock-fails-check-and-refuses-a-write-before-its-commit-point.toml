@@ -8,11 +8,6 @@ alternatives = [
     "Remove a lock that looks stale: rejected because trurlic cannot tell a stopped git from a running one",
     "Let git find it at the commit: rejected because that fails after the commit point, leaving a write pending",
 ]
-tags = [
-    "git",
-    "history",
-    "reliability",
-]
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [

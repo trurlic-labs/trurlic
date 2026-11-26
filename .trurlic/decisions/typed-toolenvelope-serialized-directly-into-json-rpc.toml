@@ -5,10 +5,6 @@ alternatives = [
     "Serialize the text, then parse it back for structuredContent: rejected because it parses every result twice, and a parse that fails sent the uncut payload beside a cut text",
     "Serialize everything through a serde_json::Value intermediate: rejected because to_value then to_writer doubles the allocations on the hot path",
 ]
-tags = [
-    "performance",
-    "protocol",
-]
 status = "accepted"
 created = "2026-06-15T09:45:18.917975440Z"
 anchors = [

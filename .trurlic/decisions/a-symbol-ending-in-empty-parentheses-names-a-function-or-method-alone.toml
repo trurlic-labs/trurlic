@@ -7,10 +7,6 @@ alternatives = [
     "Read () in every kind of file: rejected because a heading or a key may end in parentheses, which would then name nothing",
     "Keep the migration's parentheses as a call: rejected because 0.4.1 parentheses never narrowed what a ref named",
 ]
-tags = [
-    "anchors",
-    "grammar",
-]
 status = "accepted"
 origin = "call suffix"
 created = "2026-11-24T11:40:14.100318927Z"

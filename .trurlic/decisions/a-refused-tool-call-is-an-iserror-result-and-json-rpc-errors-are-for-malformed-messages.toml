@@ -6,11 +6,6 @@ alternatives = [
     "JSON-RPC -32602 for an invalid argument: rejected, the specification sends input validation as a tool result so the model sees it",
     "structuredContent on a refusal: rejected, a tool's outputSchema describes its result, and a refusal does not conform to it",
 ]
-tags = [
-    "api",
-    "error-handling",
-    "protocol",
-]
 status = "accepted"
 created = "2026-11-23T23:15:10.921780295Z"
 anchors = [

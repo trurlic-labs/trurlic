@@ -6,10 +6,6 @@ alternatives = [
     "Decide a header's grammar by a sibling .cpp file: rejected because the index of a file would then depend on another file's name",
     "A bound before the parse like Python's indentation widths: rejected because neither grammar has a scanner fault to guard, and the budget of operations bounds the cost of every shape",
 ]
-tags = [
-    "dependencies",
-    "parsing",
-]
 status = "proposed"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"

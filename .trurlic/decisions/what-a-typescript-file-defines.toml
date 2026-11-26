@@ -7,10 +7,6 @@ alternatives = [
     "Variables at any depth: rejected because a function's locals are no part of what a module offers",
     "An unnamed class's members under the function around it: rejected because outer::m names a path the source does not have",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

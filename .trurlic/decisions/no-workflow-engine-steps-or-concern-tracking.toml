@@ -6,10 +6,6 @@ alternatives = [
     "Keep only concern coverage in get_context: rejected, keyword matching against fixed areas reports gaps nobody acted on and says nothing about what a given change leaves open",
     "Keep advance as a thin alias that returns get_context: rejected, a second name for one tool, and the one user is owed no backward compatibility",
 ]
-tags = [
-    "api",
-    "scope",
-]
 status = "proposed"
 created = "2026-11-23T20:06:23.818625901Z"
 anchors = [

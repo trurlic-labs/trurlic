@@ -5,9 +5,6 @@ alternatives = [
     "Union the alternatives too: rejected because it changes the survivor's text, which an accepted decision may not change outside a revise",
     "Keep the newer decision's text: rejected because the caller names the survivor and must get the one it named",
 ]
-tags = [
-    "api",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

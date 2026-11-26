@@ -7,10 +7,6 @@ alternatives = [
     "Skip the history when git is missing: rejected because the history would have a hole nothing reports",
     "Leave a half-made .trurlic/ after a failed init: rejected because the second init would refuse it as existing",
 ]
-tags = [
-    "git",
-    "history",
-]
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [

@@ -5,10 +5,6 @@ alternatives = [
     "Walk every unwalked directory an anchor points into: rejected because its manifests and declarations would then reach the walked files and move their roles",
     "Let every manifest read govern every file below it: rejected because anchoring a symlinked Cargo.toml then moved a walked file into another crate",
 ]
-tags = [
-    "anchors",
-    "determinism",
-]
 status = "accepted"
 origin = "code index review"
 created = "2026-11-24T11:27:16.681896640Z"

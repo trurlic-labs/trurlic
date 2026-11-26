@@ -7,10 +7,6 @@ alternatives = [
     "Accept any layout: rejected because each writer and each hand edit would leave its own, and a one-line list conflicts on every addition",
     "A git merge driver for node files: rejected because sorted one-per-line sets already merge with git's own, and a driver must be installed in every clone",
 ]
-tags = [
-    "determinism",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

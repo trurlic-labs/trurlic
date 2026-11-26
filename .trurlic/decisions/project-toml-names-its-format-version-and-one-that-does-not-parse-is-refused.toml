@@ -7,10 +7,6 @@ alternatives = [
     "Keep the trurlic_version key - rejected: it reads as the release version, which the format has not followed since 0.3.x",
     "Parse leniently and treat garbage as the oldest format - rejected: the old behavior, which migrated a store whose version was a typo",
 ]
-tags = [
-    "migration",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-23T22:52:37.674454592Z"
 anchors = [

@@ -7,10 +7,6 @@ alternatives = [
     "A clippy configuration that denies std's I/O items: rejected because a deny list of std is never complete, and thirteen items and a #[path] module passed it",
     "Compile code as a no_std crate in a test: rejected because every file would need alloc paths and code uses tree-sitter's std API",
 ]
-tags = [
-    "architecture",
-    "testing",
-]
 status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

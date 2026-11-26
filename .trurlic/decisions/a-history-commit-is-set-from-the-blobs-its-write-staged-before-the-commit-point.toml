@@ -7,10 +7,6 @@ alternatives = [
     "fast-import with marks: rejected because it writes a pack and loosens it in a child unpack-objects, slower than the scratch index for the blobs of a write",
     "A write id in a trailer looked up at HEAD: rejected because a reword drops it and a hand commit after the write hides it",
 ]
-tags = [
-    "history",
-    "reliability",
-]
 status = "proposed"
 created = "2026-11-24T12:00:00Z"
 anchors = [

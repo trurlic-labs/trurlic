@@ -6,12 +6,6 @@ alternatives = [
     "A tool writes TOML files directly: rejected because it would bypass the atomic writes, the file lock and validation in the store",
     "A separate write layer between the tools and the store: rejected because the Writer already is that layer",
 ]
-tags = [
-    "api",
-    "data-integrity",
-    "module-boundary",
-    "scope",
-]
 status = "proposed"
 created = "2026-06-15T09:44:59.411657570Z"
 anchors = [

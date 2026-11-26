@@ -6,11 +6,6 @@ alternatives = [
     "Let a plain segment match a trait segment: rejected because Shape::area would then name the impl of Shape for every type in the file",
     "Keep the trait's full path: rejected because the same impl would have two spellings by how the file imports the trait",
 ]
-tags = [
-    "anchors",
-    "grammar",
-    "rust",
-]
 status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

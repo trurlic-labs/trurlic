@@ -7,11 +7,6 @@ alternatives = [
     "A file kind per extension: rejected because a .js and a .tsx file of one content would be indexed twice under one rule",
     "A declaration file as a .ts file: rejected because its top's declarations would read as a module's private ones, which TypeScript exports",
 ]
-tags = [
-    "dependencies",
-    "parsing",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

@@ -5,10 +5,6 @@ alternatives = [
     "Drop accepted_via while a revision is proposed: rejected because undoing the revision would then restore an acceptance with no record of how it was given",
     "Stay proposed after a revise back to the accepted text: rejected because the decision would wait for the owner to re-accept text the owner accepted",
 ]
-tags = [
-    "api",
-    "review",
-]
 status = "proposed"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

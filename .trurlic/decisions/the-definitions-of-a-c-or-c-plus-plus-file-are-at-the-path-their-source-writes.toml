@@ -8,10 +8,6 @@ alternatives = [
     "A concept as a type alias: rejected because it names no type, only a requirement on one",
     "A misparsed body's locals at the top: rejected because the members of a class a macro hides then read as variables of the file",
 ]
-tags = [
-    "anchors",
-    "parsing",
-]
 status = "proposed"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"

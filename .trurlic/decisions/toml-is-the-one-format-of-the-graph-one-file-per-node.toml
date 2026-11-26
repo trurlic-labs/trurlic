@@ -8,10 +8,6 @@ alternatives = [
     "SQLite: rejected because a binary file is opaque in git diffs and adds a C library dependency for a store of a few thousand nodes",
     "YAML: rejected because its implicit typing (the Norway problem) makes values change meaning silently",
 ]
-tags = [
-    "developer-experience",
-    "storage",
-]
 status = "accepted"
 created = "2026-06-15T09:45:46.975613404Z"
 anchors = [

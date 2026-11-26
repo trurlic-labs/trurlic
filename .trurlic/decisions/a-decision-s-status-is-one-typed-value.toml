@@ -8,10 +8,6 @@ alternatives = [
     "Three independent optional fields with a validation issue for contradictions: rejected because every consumer would have to handle states the format forbids",
     "A nested status table in the file: rejected because the format is flat keys, which read and diff line by line",
 ]
-tags = [
-    "storage",
-    "validation",
-]
 status = "proposed"
 created = "2026-11-24T01:00:00Z"
 anchors = [

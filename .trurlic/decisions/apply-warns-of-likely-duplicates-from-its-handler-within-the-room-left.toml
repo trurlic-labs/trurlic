@@ -6,10 +6,6 @@ alternatives = [
     "A fixed count of warnings per batch: rejected because the longest batch leaves room for none while a usual one has room for all",
     "Only the best neighbour per decision: rejected because a decision can restate two others, and the caller then sees one",
 ]
-tags = [
-    "api",
-    "budget",
-]
 status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"

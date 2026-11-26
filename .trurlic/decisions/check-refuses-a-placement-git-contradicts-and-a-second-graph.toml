@@ -8,11 +8,6 @@ alternatives = [
     "Only an ignore rule contradicts tracked: rejected because a tracked graph never committed would pass while every linked worktree finds no graph",
     "Report a second graph only from the main worktree: rejected because a check run in the linked worktree, which reads its own graph, would pass",
 ]
-tags = [
-    "git",
-    "placement",
-    "validation",
-]
 status = "proposed"
 created = "2026-11-24T03:00:00Z"
 anchors = [

@@ -10,11 +10,6 @@ alternatives = [
     "A thread per request: rejected because stdio is one ordered stream, and a thread adds a join and a channel for what catch_unwind does in place",
     "A panic site under the exclusive lock only: rejected because a panic in a read, the path most calls take, would then go untested under the shared lock",
 ]
-tags = [
-    "error-handling",
-    "protocol",
-    "reliability",
-]
 status = "proposed"
 created = "2026-11-23T23:15:10.990884289Z"
 anchors = [

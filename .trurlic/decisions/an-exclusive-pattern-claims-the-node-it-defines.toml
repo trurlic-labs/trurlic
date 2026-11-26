@@ -6,9 +6,6 @@ alternatives = [
     "The widest span wins per name: rejected because a declarator's two readings have one span",
     "A kind chosen by the value's node kind: rejected because the two readings differ in where they are kept, not in kind alone",
 ]
-tags = [
-    "parsing",
-]
 status = "accepted"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

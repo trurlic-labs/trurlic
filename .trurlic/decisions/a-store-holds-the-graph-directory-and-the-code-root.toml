@@ -8,10 +8,6 @@ alternatives = [
     "Keep .state/ per tree: rejected because two trees writing one graph would not exclude each other, and a journal left in one tree would never be finished from another",
     "Hold the graph by the path through the symlink: rejected because migrate's backup and its git listing would land in the clone, which is another repository",
 ]
-tags = [
-    "concurrency",
-    "placement",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [

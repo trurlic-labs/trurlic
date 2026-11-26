@@ -7,10 +7,6 @@ alternatives = [
     "A /.trurlic/ line in .gitignore: rejected because a tracked file of the project would name a graph the project does not version, in every clone",
     "Write nothing under shared: rejected because git add --all would commit the graph, which check then refuses",
 ]
-tags = [
-    "git",
-    "placement",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [

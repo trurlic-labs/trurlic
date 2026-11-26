@@ -5,10 +5,6 @@ alternatives = [
     "Allow unsafe with clippy::allow annotations case by case: rejected because no use case requires it and the blanket deny is simpler to audit",
     "Use #![forbid(unsafe_code)] in lib.rs: rejected because Cargo.toml [lints] is the canonical location and applies to the entire crate uniformly",
 ]
-tags = [
-    "coding-standards",
-    "safety",
-]
 status = "accepted"
 created = "2026-06-15T09:47:15.801527744Z"
 anchors = [

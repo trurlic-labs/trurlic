@@ -6,10 +6,6 @@ alternatives = [
     "Merge a key of all elements into one span: rejected because it would span the unrelated keys between them, whose edits would move its hash",
     "serde_json for JSON: rejected because it keeps no spans",
 ]
-tags = [
-    "anchors",
-    "configuration",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

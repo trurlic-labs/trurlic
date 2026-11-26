@@ -8,10 +8,6 @@ alternatives = [
     "Hash the leaves alone: rejected because a repetition's separator and an error's bytes are in no leaf, so changing them moved no hash",
     "No scheme prefix: rejected because a stored hash would silently compare against one computed by other rules",
 ]
-tags = [
-    "anchors",
-    "hashing",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

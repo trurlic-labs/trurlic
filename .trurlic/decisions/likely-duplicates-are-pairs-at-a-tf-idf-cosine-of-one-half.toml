@@ -6,9 +6,6 @@ alternatives = [
     "Jaccard similarity of word sets: rejected because it weighs a word every decision holds like a rare one, so shared filler makes pairs",
     "Refuse a write that duplicates a decision: rejected because a score above the threshold selects a pair to read; it can be two rules on one subject",
 ]
-tags = [
-    "quality",
-]
 status = "accepted"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"

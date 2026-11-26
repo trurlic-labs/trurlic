@@ -5,9 +5,6 @@ alternatives = [
     "Answer one fixed revision: rejected, the specification requires echoing a supported requested revision",
     "Also list 2025-03-26 and 2024-11-05: rejected, neither has elicitation or structured tool output, which the server's own requests and the spec-built tools' results use",
 ]
-tags = [
-    "protocol",
-]
 status = "proposed"
 created = "2026-11-23T23:15:11.132342073Z"
 anchors = [

@@ -5,9 +5,6 @@ alternatives = [
     "Compare issues by kind alone for renamed nodes: rejected because a rename could then hide a new issue of an old kind",
     "Exempt renames and merges from the comparison: rejected because the rule would no longer hold for every write",
 ]
-tags = [
-    "validation",
-]
 status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"

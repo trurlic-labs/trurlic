@@ -7,10 +7,6 @@ alternatives = [
     "Keep InMemoryGraph with reverse adjacency: rejected because it is rebuilt on every load for lookups a scan of the maps answers",
     "Arc-wrap the nodes: rejected because nothing shares them once there is no second structure",
 ]
-tags = [
-    "data-structures",
-    "performance",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

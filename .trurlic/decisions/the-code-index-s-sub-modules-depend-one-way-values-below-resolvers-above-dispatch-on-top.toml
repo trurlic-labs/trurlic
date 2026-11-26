@@ -6,9 +6,6 @@ alternatives = [
     "Write what a kind is read as as FileKind methods beside the language rows: rejected because a method call names no path, so an edge from index/ or facts/ to parse/ would pass the check unseen",
     "Hold the direction by review alone: rejected because nothing then refuses an edge a change adds, and a cycle is found only once both ends depend on it",
 ]
-tags = [
-    "architecture",
-]
 status = "proposed"
 origin = "module structure"
 created = "2026-11-26T14:45:30.766338253Z"

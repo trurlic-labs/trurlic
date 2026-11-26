@@ -7,10 +7,6 @@ alternatives = [
     "Count per anchor over the tree: rejected because hundreds of anchors would each scan every definition of the tree",
     "A bound in project.toml: rejected because no project has asked to move it, and a constant is one place to change it",
 ]
-tags = [
-    "anchors",
-    "lint",
-]
 status = "accepted"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"

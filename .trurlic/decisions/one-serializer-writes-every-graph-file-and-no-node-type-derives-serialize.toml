@@ -6,10 +6,6 @@ alternatives = [
     "Format with a layout-preserving TOML editor: rejected because it is a new dependency that keeps a document's layout where the format needs one fixed layout",
     "Render the canonical text and compare strings at load: rejected because it allocates a file-sized string per node on every load for a yes or no",
 ]
-tags = [
-    "serialization",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

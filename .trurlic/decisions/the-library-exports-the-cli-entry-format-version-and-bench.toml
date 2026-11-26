@@ -7,9 +7,6 @@ alternatives = [
     "Export cli as a public module for its one entry: every pub item of cli becomes library API, and main is the only one a caller needs",
     "Export Error and Result too: nothing outside the crate names them, so they would widen the surface for no reader",
 ]
-tags = [
-    "coding-standards",
-]
 status = "proposed"
 origin = "module structure"
 created = "2026-06-15T09:47:29.037434435Z"

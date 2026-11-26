@@ -7,11 +7,6 @@ alternatives = [
     "Drop --ide or make it optional with a default: rejected because the first breaks trurlic install --ide claude-code as typed and the second adds a bare form to keep",
     "Accept --ide as a string checked against claude-code: rejected because the code never reads it, and a new target is no compile error",
 ]
-tags = [
-    "developer-experience",
-    "error-handling",
-    "maintainability",
-]
 status = "proposed"
 created = "2026-11-23T19:44:19.727447441Z"
 anchors = [

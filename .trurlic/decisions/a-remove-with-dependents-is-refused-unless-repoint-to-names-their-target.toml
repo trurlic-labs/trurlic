@@ -5,10 +5,6 @@ alternatives = [
     "Drop the dependents' edges with the decision: rejected because the dependents would silently lose a constraint",
     "Remove the dependents too: rejected because a cascade of deletes is not what one remove names",
 ]
-tags = [
-    "api",
-    "consistency",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

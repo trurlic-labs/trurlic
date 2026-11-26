@@ -7,10 +7,6 @@ alternatives = [
     "Build old stores in the test by downgrading the version of a current one: rejected because the old tests did this, and such a store holds none of the shapes the steps exist for",
     "Resurrect the 0.4 writer to produce the 0.4.1 fixture: rejected because it brings back deleted code for one file set that hand edits and the 0.4.1 step produce",
 ]
-tags = [
-    "migration",
-    "testing",
-]
 status = "accepted"
 created = "2026-11-23T22:52:37.882647533Z"
 anchors = [

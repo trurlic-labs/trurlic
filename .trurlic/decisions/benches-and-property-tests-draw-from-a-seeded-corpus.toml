@@ -6,10 +6,6 @@ alternatives = [
     "One commit per decision: rejected because thousands of journaled commits take minutes and stamp wall-clock times",
     "Commit a fixture corpus to the repo: rejected because it puts megabytes of generated TOML in git and fixes size and anchored share",
 ]
-tags = [
-    "performance",
-    "testing",
-]
 status = "accepted"
 created = "2026-10-03T13:55:20.745975078Z"
 anchors = [

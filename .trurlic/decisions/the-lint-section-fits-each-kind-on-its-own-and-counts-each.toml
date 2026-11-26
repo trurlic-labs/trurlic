@@ -5,10 +5,6 @@ alternatives = [
     "One list cut by its prefix: rejected because thousands of pairs would hide every quality finding",
     "A section per kind: rejected because the section argument would grow a value per kind, and the kinds share one budget anyway",
 ]
-tags = [
-    "api",
-    "budget",
-]
 status = "proposed"
 origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"

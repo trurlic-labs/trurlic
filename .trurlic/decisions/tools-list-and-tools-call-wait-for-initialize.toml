@@ -5,10 +5,6 @@ alternatives = [
     "No initialization gate, tools served at once: rejected because MCP requires capability negotiation before tool use",
     "Stateful session tracking with client identity: rejected because stdio is single-client by construction",
 ]
-tags = [
-    "protocol",
-    "security",
-]
 status = "accepted"
 created = "2026-06-15T09:45:44.800597540Z"
 anchors = [

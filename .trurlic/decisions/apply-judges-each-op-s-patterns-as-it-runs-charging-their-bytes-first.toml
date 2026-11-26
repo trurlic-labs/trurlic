@@ -8,10 +8,6 @@ alternatives = [
     "Bound the building of states by each cache's cap alone, small enough for 32 of them: rejected because the cap would starve a word list over a full batch while bounding nothing a smaller table needs",
     "Say whether the op's texts alone filled the caches, with a remedy for each case: rejected because two snapshots of every cache per op served the choice of one sentence",
 ]
-tags = [
-    "performance",
-    "quality",
-]
 status = "proposed"
 origin = "apply: a batch's pattern work is bounded"
 created = "2026-11-25T16:43:33.912873622Z"

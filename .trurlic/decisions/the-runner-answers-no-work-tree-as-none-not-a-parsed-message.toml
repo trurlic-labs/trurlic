@@ -7,10 +7,6 @@ alternatives = [
     "Parse stderr for not a git repository: rejected because the message is translated and other fatal errors share the status",
     "Treat any status 128 as no work tree: rejected because a broken or untrusted repository would pass for no repository, and a tracked graph in it for one outside git",
 ]
-tags = [
-    "git",
-    "reliability",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [

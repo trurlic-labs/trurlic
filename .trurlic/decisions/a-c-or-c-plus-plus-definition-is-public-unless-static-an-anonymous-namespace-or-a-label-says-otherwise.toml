@@ -5,10 +5,6 @@ alternatives = [
     "C linkage alone, functions and variables only: rejected because a struct in a .h and the same one in a .c would then differ",
     "Public only for what a header declares: rejected because which header is included is a build fact",
 ]
-tags = [
-    "anchors",
-    "visibility",
-]
 status = "accepted"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"

@@ -7,10 +7,6 @@ alternatives = [
     "Recursive walks: rejected because a nesting as deep as a file allows would overflow the stack",
     "Chunks of 1,024 bytes to the lexer: rejected because a run of Python line continuations rescans within one chunk, uncounted, for seconds",
 ]
-tags = [
-    "reliability",
-    "security",
-]
 status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

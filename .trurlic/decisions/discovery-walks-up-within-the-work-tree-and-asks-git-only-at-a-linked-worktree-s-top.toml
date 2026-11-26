@@ -8,11 +8,6 @@ alternatives = [
     "Read the .git file and the commondir file directly: rejected because that reimplements git's discovery, its gitdir files, commondir and separate git directories",
     "Cache the answer between calls: rejected because no process holds state between calls, and a cached answer would miss a new or moved graph",
 ]
-tags = [
-    "git",
-    "performance",
-    "placement",
-]
 status = "proposed"
 created = "2026-11-24T03:00:00Z"
 anchors = [

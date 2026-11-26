@@ -5,10 +5,6 @@ alternatives = [
     "A list of macros in project.toml: rejected because it recovered next to nothing past the tree's own",
     "Nothing, tree-sitter's recovery and patterns per damage shape: rejected because a C++ project then loses a third of its definitions",
 ]
-tags = [
-    "parsing",
-    "reliability",
-]
 status = "proposed"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"

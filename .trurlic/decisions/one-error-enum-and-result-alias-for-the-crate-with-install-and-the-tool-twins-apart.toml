@@ -8,10 +8,6 @@ alternatives = [
     "An Error::Install variant, or install's failures as plain variants of Error: rejected because error would depend on commands, and every match on Error would need arms for failures only install has",
     "A cli-level enum over the three errors, or Box<dyn std::error::Error>: rejected because it is a third type, or an erasure of two, whose only job is Display",
 ]
-tags = [
-    "error-handling",
-    "maintainability",
-]
 status = "proposed"
 created = "2026-06-15T09:47:24.656812573Z"
 anchors = [

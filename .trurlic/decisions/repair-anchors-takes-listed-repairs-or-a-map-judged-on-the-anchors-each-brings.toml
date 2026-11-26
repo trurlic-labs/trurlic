@@ -8,10 +8,6 @@ alternatives = [
     "Refuse the batch on a repair of the map the bar refuses: rejected because the caller wrote none of them, and an earlier op filling a cache would turn a repair into the batch's refusal",
     "Leave every repair of a decision once one of them is left: rejected because a decision holding one anchor whose repair the bar refuses would keep its other stale anchors at every run",
 ]
-tags = [
-    "anchors",
-    "apply",
-]
 status = "proposed"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"

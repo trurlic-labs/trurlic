@@ -6,10 +6,6 @@ alternatives = [
     "Pass a writer into every command: tests could assert on output, but it threads a parameter through every command signature for one destination",
     "A logging crate (log/tracing): a dependency for what two functions do, and stdout must stay protocol-only anyway",
 ]
-tags = [
-    "api",
-    "error-handling",
-]
 status = "accepted"
 created = "2026-10-03T13:55:11.254367052Z"
 anchors = [

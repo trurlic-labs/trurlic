@@ -5,10 +5,6 @@ alternatives = [
     "Put the graph repository's calls in store: rejected because spawning git and reading its output is the leaf's work, and the isolation belongs beside the runner it changes",
     "Pass extra arguments to the project runner at each call site: rejected because any call site could then run git in the graph without the isolation",
 ]
-tags = [
-    "git",
-    "module-boundary",
-]
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [

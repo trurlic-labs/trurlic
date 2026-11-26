@@ -5,10 +5,6 @@ alternatives = [
     "100 ops a batch: rejected because the result could then exceed the budget and be cut",
     "Counts only in the result: rejected because the caller needs to see which op did what, a status change most of all",
 ]
-tags = [
-    "api",
-    "budget",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

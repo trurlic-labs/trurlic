@@ -6,9 +6,6 @@ alternatives = [
     "A client trait in tools that mcp's Peer implements: rejected, it has one implementation, and no tool asks the client",
     "Build each tool's tools/list entry in tools: rejected, readOnlyHint and its siblings are MCP's words, which another surface would carry or strip",
 ]
-tags = [
-    "module-boundary",
-]
 status = "proposed"
 origin = "module structure"
 created = "2026-11-26T14:07:53.995149408Z"

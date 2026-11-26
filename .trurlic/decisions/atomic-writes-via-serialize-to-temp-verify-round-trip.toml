@@ -5,10 +5,6 @@ alternatives = [
     "Direct write to the final path: rejected because a crash mid-write leaves a truncated TOML file that fails every later load",
     "Read the staged file back before the rename: rejected because it reads the page cache, not the disk, so it proves nothing the flush does not",
 ]
-tags = [
-    "reliability",
-    "storage",
-]
 status = "accepted"
 created = "2026-06-15T09:44:23.486129858Z"
 anchors = [

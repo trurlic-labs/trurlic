@@ -6,10 +6,6 @@ alternatives = [
     "Methods of every object literal: rejected because an object a call takes defines nothing a reader names",
     "Methods of an object any const binds: rejected because a local's object is no part of the module",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "accepted"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

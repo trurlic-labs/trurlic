@@ -5,11 +5,6 @@ alternatives = [
     "A git diff per commit judged: rejected because the processes then grow with the gone paths and the moves of each",
     "Index the blobs of the history apart from the cache: rejected because each call then parses again every blob it reads",
 ]
-tags = [
-    "anchors",
-    "git",
-    "performance",
-]
 status = "proposed"
 origin = "anchor repair: one evidence path, bounded git"
 created = "2026-11-26T11:10:13.206285053Z"

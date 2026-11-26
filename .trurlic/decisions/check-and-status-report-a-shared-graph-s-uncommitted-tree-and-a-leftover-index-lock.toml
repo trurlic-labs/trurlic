@@ -7,10 +7,6 @@ alternatives = [
     "Run git status plainly: rejected because it saves a refreshed index when it can lock it, so a read would write to the repository",
     "Make them validation issues: rejected because validate runs on every read and every write without git, and the history is not the graph",
 ]
-tags = [
-    "git",
-    "history",
-]
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [

@@ -5,9 +5,6 @@ alternatives = [
     "An item of kind and message, as issues have: rejected because a caller merging a pair would parse names out of prose",
     "The score as a JSON number: rejected because a float's text is the printer's, and six fixed decimals are the same bytes everywhere",
 ]
-tags = [
-    "api",
-]
 status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"

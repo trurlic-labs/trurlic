@@ -5,10 +5,6 @@ alternatives = [
     "Keep the bar in a skill and clean the graph by script: rejected because nothing holds an agent to a skill at the write",
     "Refuse with a message only: rejected because a caller branches on the rule name and cuts by the measured value",
 ]
-tags = [
-    "quality",
-    "validation",
-]
 status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"

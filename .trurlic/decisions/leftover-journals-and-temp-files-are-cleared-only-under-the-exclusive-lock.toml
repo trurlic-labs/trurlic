@@ -6,10 +6,6 @@ alternatives = [
     "Read commands wait for the lock to recover: rejected, a status would stall up to the 5 s lock timeout behind a writer, for a recovery the writer makes unnecessary",
     "Recover only when a server starts: rejected, a crash would linger until a restart, and a write must apply a pending journal before it loads",
 ]
-tags = [
-    "concurrency",
-    "reliability",
-]
 status = "accepted"
 created = "2026-10-02T12:18:45.121734062Z"
 anchors = [

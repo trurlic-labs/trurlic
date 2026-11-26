@@ -6,10 +6,6 @@ alternatives = [
     "Apply the ops to a copy of the whole graph: rejected because the undo record holds only the touched nodes, and a 2000-decision copy costs more than the batch",
     "Validate the whole graph after every op: rejected because each op's own checks name its argument, and a batch of 50 would validate 50 times",
 ]
-tags = [
-    "api",
-    "consistency",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

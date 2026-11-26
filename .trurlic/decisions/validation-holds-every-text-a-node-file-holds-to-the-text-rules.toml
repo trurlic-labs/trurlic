@@ -6,10 +6,6 @@ alternatives = [
     "Fail the load on a text fault: rejected because one character in one file would stop status, check and every read",
     "Normalize instead of reporting: rejected because it silently changes what the author wrote and keeps a leaked tool-call fragment as content",
 ]
-tags = [
-    "security",
-    "validation",
-]
 status = "accepted"
 created = "2026-10-03T14:48:16.270508355Z"
 anchors = [

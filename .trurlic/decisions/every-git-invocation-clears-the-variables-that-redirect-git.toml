@@ -8,11 +8,6 @@ alternatives = [
     "Clear only GIT_DIR, GIT_INDEX_FILE and GIT_WORK_TREE: rejected because GIT_COMMON_DIR, the object directories and an inherited core.worktree redirect git as well",
     "Run git with an empty environment: rejected because git needs PATH and HOME, and the user's configuration, such as safe.directory, would be lost",
 ]
-tags = [
-    "git",
-    "reliability",
-    "security",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [

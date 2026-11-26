@@ -8,10 +8,6 @@ alternatives = [
     "Each run of JSX whitespace as one space: rejected because JSX keeps the spaces within a line, which pre and React Native's Text render",
     "A template string as one token: rejected because a space or a comment inside its ${} would move the hash",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

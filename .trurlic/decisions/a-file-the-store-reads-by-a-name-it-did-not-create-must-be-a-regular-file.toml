@@ -5,10 +5,6 @@ alternatives = [
     "Open with a non-blocking flag: rejected because std has no portable flag, and a constant per platform is a dependency on libc in all but name",
     "Skip what is not a regular file: rejected because the history would commit what the load never read",
 ]
-tags = [
-    "reliability",
-    "security",
-]
 status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"

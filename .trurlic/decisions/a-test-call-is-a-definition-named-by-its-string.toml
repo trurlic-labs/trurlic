@@ -8,11 +8,6 @@ alternatives = [
     "Any member named test with a function after a string: rejected because it cannot tell node:test's subtest from a project's own method named test",
     "The template literal with its interpolations evaluated: rejected because the index reads no value a program computes",
 ]
-tags = [
-    "anchors",
-    "testing",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"

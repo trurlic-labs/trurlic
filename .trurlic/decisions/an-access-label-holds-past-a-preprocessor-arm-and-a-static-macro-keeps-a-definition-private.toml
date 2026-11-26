@@ -6,10 +6,6 @@ alternatives = [
     "A static macro blanked as any specifier: rejected because what curl and zlib keep private then reads as public",
     "static written in the macro's place: rejected because only a name of six bytes or more holds the word, and local, STA and SI are shorter",
 ]
-tags = [
-    "anchors",
-    "visibility",
-]
 status = "proposed"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"

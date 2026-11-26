@@ -6,10 +6,6 @@ alternatives = [
     "A fixed count of pairs: rejected because the count a result holds follows from the budget and the size of a finding",
     "Keep the pairs of the earliest probes and page by probe: rejected because the first page then lists the decisions that sort first, not the strongest pairs, and its count is the page's alone",
 ]
-tags = [
-    "budget",
-    "performance",
-]
 status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T10:58:17.033994352Z"

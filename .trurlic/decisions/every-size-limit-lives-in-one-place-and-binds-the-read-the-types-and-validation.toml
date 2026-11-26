@@ -7,10 +7,6 @@ alternatives = [
     "Per-surface limit constants: rejected because they drifted, one surface accepting what another refused",
     "No explicit limits, relying on the TOML parser: rejected because the parser accepts any size, and explicit bounds keep one file from costing every load and force concise decisions",
 ]
-tags = [
-    "consistency",
-    "security",
-]
 status = "accepted"
 created = "2026-06-15T09:45:30.508496747Z"
 anchors = [

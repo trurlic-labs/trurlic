@@ -8,11 +8,6 @@ alternatives = [
     "Walk each worktree ahead whole: rejected because each check would read every source file of every such worktree for crates and module declarations the calling tree holds already in the usual case",
     "Ask the worktrees in status too: rejected because status is called often and asks the project's git nothing, so it names such an anchor unresolved instead",
 ]
-tags = [
-    "anchors",
-    "git",
-    "performance",
-]
 status = "proposed"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"

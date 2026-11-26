@@ -5,11 +5,6 @@ alternatives = [
     "Write Claude Code's config file directly (read, merge the trurlic entry by key, write atomically): rejected, the file's format and validation rules are not a stable public contract, so trurlic would duplicate format knowledge that breaks on a Claude Code update",
     "Print the configuration and leave registration to the user: rejected, Claude Code is the primary MCP client and one command is the setup step the quick start relies on; --dry-run already gives the manual path",
 ]
-tags = [
-    "error-handling",
-    "extensibility",
-    "security",
-]
 status = "accepted"
 created = "2026-11-23T19:44:01.521886914Z"
 anchors = [

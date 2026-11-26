@@ -7,11 +7,6 @@ alternatives = [
     "One open function that always takes the exclusive lock: rejected because status and check would wait on each other and on every MCP read",
     "Skip the reload when file fingerprints match: rejected because the store keeps no fingerprints, and the unconditional load is correct",
 ]
-tags = [
-    "concurrency",
-    "error-handling",
-    "reliability",
-]
 status = "proposed"
 created = "2026-10-02T11:35:08.670219118Z"
 anchors = [

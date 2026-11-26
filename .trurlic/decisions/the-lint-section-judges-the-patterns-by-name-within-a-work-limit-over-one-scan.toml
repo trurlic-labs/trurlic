@@ -8,10 +8,6 @@ alternatives = [
     "Reset a cache that gave up and retry the decision a few times a page, naming in a list apart the decisions a fresh cache gives up on: rejected because ending the page bounds it with less, and a give-up is a finding like any other",
     "One task per pattern over each decision, on the thread pool: rejected because every pattern's caches grow before the total is read, so a page passes it by all the patterns' caches, not by one's",
 ]
-tags = [
-    "performance",
-    "quality",
-]
 status = "proposed"
 origin = "quality findings: bounded pattern judging"
 created = "2026-11-25T15:38:56.432762268Z"

@@ -8,10 +8,6 @@ alternatives = [
     "A file's own include closure: rejected because a header used through the one that includes it (curl's easy.h, which curl.h includes after its CURL_EXTERN) then loses its blanks",
     "Another tree's own set for its files: rejected because it needs a walk of that tree for a few anchored files",
 ]
-tags = [
-    "parsing",
-    "reliability",
-]
 status = "proposed"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"

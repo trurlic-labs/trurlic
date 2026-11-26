@@ -7,10 +7,6 @@ alternatives = [
     "Discover the store in each command before the twin: rejected because a failed discovery then left the command's path, printing no JSON under --json",
     "A twin module in tools that wraps each tool's run for commands: rejected, it only forwards, and each later surface would want one of its own",
 ]
-tags = [
-    "api",
-    "cli",
-]
 status = "proposed"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

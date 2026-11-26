@@ -6,10 +6,6 @@ alternatives = [
     "Resolve an ambiguous symbol to its first definition: rejected because the order of a file is no statement of which one the decision meant",
     "A dotted path for TOML and JSON keys: rejected because a key may hold a dot, and one grammar for every kind is simpler to teach",
 ]
-tags = [
-    "anchors",
-    "grammar",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

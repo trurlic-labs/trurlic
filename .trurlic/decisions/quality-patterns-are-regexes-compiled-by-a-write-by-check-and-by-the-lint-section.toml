@@ -8,10 +8,6 @@ alternatives = [
     "Compile under the write lock: rejected because a table near its bounds would hold every other caller for its compile",
     "Bound compiling by a deadline: rejected because the answer would depend on the machine, and folding has a count to bound",
 ]
-tags = [
-    "dependencies",
-    "quality",
-]
 status = "proposed"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"

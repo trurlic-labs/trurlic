@@ -5,11 +5,6 @@ alternatives = [
     "Every report holds the section: rejected because each status call would read the whole tree for findings most calls do not use",
     "A separate tool for the findings: rejected because status already carries sections fitted to the budget, and a tool more is surface every client lists",
 ]
-tags = [
-    "anchors",
-    "budget",
-    "performance",
-]
 status = "proposed"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"

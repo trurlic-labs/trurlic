@@ -7,9 +7,6 @@ alternatives = [
     "Parse the line-based porcelain output: rejected because a path holding a line break would split a record",
     "Refuse an unknown attribute: rejected because every newer git that adds one would break discovery",
 ]
-tags = [
-    "git",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [

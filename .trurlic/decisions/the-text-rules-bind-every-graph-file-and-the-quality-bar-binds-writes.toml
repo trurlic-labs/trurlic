@@ -5,10 +5,6 @@ alternatives = [
     "Make the bar validation issues: rejected because every migrated graph and every tightened [quality] would fail check at once",
     "Move the text rules into the bar: rejected because a hand edit holding a bidi control or a leaked tool call would then pass check",
 ]
-tags = [
-    "quality",
-    "validation",
-]
 status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"

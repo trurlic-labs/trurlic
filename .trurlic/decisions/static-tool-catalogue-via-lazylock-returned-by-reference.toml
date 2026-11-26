@@ -5,9 +5,6 @@ alternatives = [
     "Rebuild tool definitions on each request: rejected because the data never changes at runtime",
     "Embed tool schemas as compiled-in byte slices: rejected because they are harder to maintain, with no advantage over JSON built once in a LazyLock",
 ]
-tags = [
-    "performance",
-]
 status = "accepted"
 created = "2026-06-15T09:45:07.215781733Z"
 anchors = [

@@ -8,11 +8,6 @@ alternatives = [
     "A history file in .state/ or beside each node: rejected because node files carry no history, and git already gives log, diff, blame and revert",
     "A bare repository beside the graph that a write copies into: rejected because every write would copy the graph, and the owner could not run git in .trurlic/",
 ]
-tags = [
-    "git",
-    "history",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [

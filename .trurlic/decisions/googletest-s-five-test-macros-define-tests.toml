@@ -5,9 +5,6 @@ alternatives = [
     "Catch2's and doctest's TEST_CASE and SECTION too: rejected because no project read so far uses them and their block needs an engine feature",
     "Any macro call with a block as a test: rejected because a project's helper would become a test",
 ]
-tags = [
-    "testing",
-]
 status = "proposed"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"

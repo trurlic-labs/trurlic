@@ -7,10 +7,6 @@ alternatives = [
     "Keep patterns as a node kind: rejected because their edges carried most of the deletion rules for little a brief used",
     "Turn each pattern into a tag: rejected because a tag states no rule",
 ]
-tags = [
-    "scope",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

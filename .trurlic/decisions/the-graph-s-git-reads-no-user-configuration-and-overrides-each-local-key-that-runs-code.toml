@@ -8,12 +8,6 @@ alternatives = [
     "Stage with git add: rejected because it passes over ignored paths, which a hand edit's commit must hold, and its porcelain defaults change between releases",
     "Commit with commit-tree and update-ref: rejected because it is four processes where git commit is one, and the repository's attributes make git commit read bytes unconverted",
 ]
-tags = [
-    "git",
-    "history",
-    "reliability",
-    "security",
-]
 status = "proposed"
 created = "2026-11-24T12:00:00Z"
 anchors = [

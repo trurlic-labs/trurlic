@@ -7,10 +7,6 @@ alternatives = [
     "Skip the entry and walk on: rejected because the graph found above is not the one the tree links to",
     "Follow a link one step at a time with a counter of trurlic's: rejected because canonicalize already bounds the chain",
 ]
-tags = [
-    "placement",
-    "validation",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [

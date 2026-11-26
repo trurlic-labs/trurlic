@@ -8,9 +8,6 @@ alternatives = [
     "Let the parts name each other through the store root's re-exports: shorter paths, but no reader or test can tell which part an item comes from",
     "Hold the order with a text scan for crate::store:: paths: it misses a use list, a chain of supers, a root re-export reached through super and an alias, which the purity reader reads",
 ]
-tags = [
-    "storage",
-]
 status = "proposed"
 origin = "module structure"
 created = "2026-11-26T14:24:18.276267316Z"

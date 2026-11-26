@@ -5,10 +5,6 @@ alternatives = [
     "Refuse to start: rejected, the client shows a failed server with no reason, and the fix is not named",
     "Find the store once at start: rejected, an init or a migrate while the server runs would need a restart",
 ]
-tags = [
-    "developer-experience",
-    "reliability",
-]
 status = "proposed"
 created = "2026-11-23T23:15:11.209076078Z"
 anchors = [

@@ -5,11 +5,6 @@ alternatives = [
     "panic = \"abort\": rejected, a panic in one tool call kills the MCP session; the lints make panics rare, not impossible",
     "Default release profile: rejected, the binary is distributed and its size and speed matter",
 ]
-tags = [
-    "build",
-    "performance",
-    "reliability",
-]
 status = "accepted"
 created = "2026-11-23T23:15:10.778578750Z"
 anchors = [

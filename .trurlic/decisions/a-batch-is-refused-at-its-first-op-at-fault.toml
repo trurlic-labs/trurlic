@@ -6,10 +6,6 @@ alternatives = [
     "Check every op against the loaded graph, ignoring earlier ops: rejected because a batch could not add a component and then decide in it",
     "Refuse with a message only: rejected because a caller branches on the rule and the op, not on prose",
 ]
-tags = [
-    "api",
-    "error-handling",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

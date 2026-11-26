@@ -5,9 +5,6 @@ alternatives = [
     "Hold the whole decision on every write: rejected because a migrated graph would need anchors and alternatives before any other change",
     "Refuse only a fault the op newly adds: rejected because a revise could then rewrite a field below the bar and leave it below",
 ]
-tags = [
-    "quality",
-]
 status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"

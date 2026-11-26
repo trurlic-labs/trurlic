@@ -8,10 +8,6 @@ alternatives = [
     "One hand-written function per pair of formats: rejected because it needs n squared paths where a chain of steps covers every start",
     "Run the steps there are and stamp the last version reached: rejected because the store would state a format this binary does not read, and every command would then refuse it",
 ]
-tags = [
-    "migration",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-23T22:52:37.775489213Z"
 anchors = [

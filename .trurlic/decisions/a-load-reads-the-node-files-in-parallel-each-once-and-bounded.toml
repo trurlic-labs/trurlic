@@ -8,10 +8,6 @@ alternatives = [
     "Memory-mapped files: rejected because it adds complexity for small files, and a bounded read already caps what one file costs",
     "Incremental loading of changed files only: rejected because it needs a persistent record of file state between calls, which the store does not keep",
 ]
-tags = [
-    "performance",
-    "storage",
-]
 status = "accepted"
 created = "2026-06-15T09:45:56.889052260Z"
 anchors = [

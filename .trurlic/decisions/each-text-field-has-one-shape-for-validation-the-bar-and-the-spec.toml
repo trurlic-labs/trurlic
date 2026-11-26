@@ -5,10 +5,6 @@ alternatives = [
     "Bound an alternative at the 50,000 bytes of a reason: rejected because a hundred of them make one record far larger than a load reads",
     "Let a tag hold any text: rejected because an empty tag or one on two lines is written and shown as no label",
 ]
-tags = [
-    "quality",
-    "validation",
-]
 status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"

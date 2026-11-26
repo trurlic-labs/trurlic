@@ -5,9 +5,6 @@ alternatives = [
     "Any heading holding the word: rejected because a word names no section to hash, and many headings hold it",
     "A Makefile variable as a definition: rejected because an anchor on configuration names a rule or a key, and a variable is neither",
 ]
-tags = [
-    "anchors",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

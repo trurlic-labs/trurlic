@@ -5,10 +5,6 @@ alternatives = [
     "Fold union into struct and static into constant: rejected because a report would then name a thing the source does not hold",
     "Call an associated function without self a function: rejected because it lives in its type's namespace, which is what method names for a reader",
 ]
-tags = [
-    "anchors",
-    "rust",
-]
 status = "accepted"
 origin = "definition kinds"
 created = "2026-11-24T10:33:26.877207089Z"

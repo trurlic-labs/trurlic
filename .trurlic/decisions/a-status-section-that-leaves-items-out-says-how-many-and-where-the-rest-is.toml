@@ -5,10 +5,6 @@ alternatives = [
     "A cursor argument to page every section: rejected because trurlic check lists every issue and the files hold every row; the pattern findings, which no other surface judges, are the one place that takes from",
     "Fixed item counts per section: rejected because item sizes vary, so a count either wastes the budget or exceeds it",
 ]
-tags = [
-    "api",
-    "budget",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

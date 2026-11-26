@@ -7,10 +7,6 @@ alternatives = [
     "Refuse a migration that meets an unknown key: rejected because a key 0.4.1 ignored would stop the migration of the whole store",
     "Drop unknown keys silently, as the old migrate did: rejected because a value would vanish without a word",
 ]
-tags = [
-    "migration",
-    "validation",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [

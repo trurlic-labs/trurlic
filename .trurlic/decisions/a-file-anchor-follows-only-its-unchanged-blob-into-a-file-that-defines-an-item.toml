@@ -6,10 +6,6 @@ alternatives = [
     "Take the file git -M pairs with a gone one by similarity as its symbols' candidate: rejected for good because a similarity threshold is a judgement about files, not code, it costs a process, and the change that lost the code already names every file that could hold it",
     "Compare the symbol before the move with the new path now: rejected because any later edit of the symbol would then lose the repair",
 ]
-tags = [
-    "anchors",
-    "lint",
-]
 status = "proposed"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"

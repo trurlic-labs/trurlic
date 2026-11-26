@@ -8,10 +8,6 @@ alternatives = [
     "Ask git which placement inside .trurlic/: rejected because a graph that is its own repository would answer for itself",
     "Run git from the store: rejected because the store would spawn processes where the command can hand it the answer",
 ]
-tags = [
-    "git",
-    "migration",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [

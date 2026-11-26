@@ -7,11 +7,6 @@ alternatives = [
     "Give each list an equal share of the budget - rejected: short lists lose entries to empty shares while long ones waste none; a common level keeps short lists whole",
     "A max_bytes or cursor argument on every tool - rejected: a cursor needs a ranking a later page resumes, which the lint section alone has (from), and the cap is what every tool needs",
 ]
-tags = [
-    "api",
-    "performance",
-    "reliability",
-]
 status = "proposed"
 created = "2026-10-02T16:33:52.329619019Z"
 anchors = [

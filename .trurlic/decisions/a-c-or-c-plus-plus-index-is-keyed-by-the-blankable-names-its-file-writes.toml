@@ -7,10 +7,6 @@ alternatives = [
     "The lexical pass inside the index's entry: rejected because two trees of one content and different sets would then overwrite each other's entry",
     "A header's digest from the first read keying its index, so a cached header is read once: rejected because the second read of a tree's headers costs a few milliseconds of one core on hundreds of headers, less than the code that avoided it",
 ]
-tags = [
-    "performance",
-    "storage",
-]
 status = "proposed"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"

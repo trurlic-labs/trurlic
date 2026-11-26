@@ -7,11 +7,6 @@ alternatives = [
     "Keep r# in the path: rejected because r#Raw and Raw are one name in Rust, so a type and the members of an impl written the other way fell under two paths",
     "Drop every comma before a closing delimiter: rejected because (u8,) is a tuple and (u8) is u8, and the path would show the tuple as the type",
 ]
-tags = [
-    "anchors",
-    "grammar",
-    "rust",
-]
 status = "proposed"
 origin = "code index: rust paths spelled from tokens, invoked names removed"
 created = "2026-11-26T10:16:30.726089612Z"

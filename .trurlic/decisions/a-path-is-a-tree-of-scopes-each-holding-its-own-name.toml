@@ -6,11 +6,6 @@ alternatives = [
     "Intern the path segments in a table: rejected because the copies of a path, not of its segments, are what grew",
     "Bound the entry by a test over the densest inputs found: rejected because the next rule's input is not among them",
 ]
-tags = [
-    "anchors",
-    "performance",
-    "reliability",
-]
 status = "proposed"
 origin = "code index review"
 created = "2026-11-24T11:27:16.681896640Z"

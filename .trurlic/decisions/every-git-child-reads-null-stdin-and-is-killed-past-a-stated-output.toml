@@ -6,10 +6,6 @@ alternatives = [
     "A wall-clock deadline per child: rejected because a loaded machine would then turn a slow correct answer into a failure, and a call's result would depend on the load",
     "Kill a child past a stderr bound too: rejected because a long list of warnings is no failure, and draining it keeps memory bounded without refusing the call",
 ]
-tags = [
-    "git",
-    "limits",
-]
 status = "proposed"
 origin = "anchor repair: one evidence path, bounded git"
 created = "2026-11-26T11:10:13.206285053Z"

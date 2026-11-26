@@ -7,11 +7,6 @@ alternatives = [
     "Leave every check to trurlic check: rejected because the graph would be made and refused in the next breath",
     "Allow a shared graph in a subdirectory and map the linked worktree's path: rejected because one place to look keeps discovery to one stat",
 ]
-tags = [
-    "developer-experience",
-    "git",
-    "placement",
-]
 status = "proposed"
 created = "2026-11-24T03:00:00Z"
 anchors = [

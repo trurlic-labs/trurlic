@@ -5,10 +5,6 @@ alternatives = [
     "Every symbol that names several definitions is Ambiguous: rejected because a module-level item that shares its name with any member could then be named by no symbol at all",
     "A leading :: for a path from the file's root: rejected because the whole path already is from the outermost container, and a second spelling of one path is what anchors avoid",
 ]
-tags = [
-    "anchors",
-    "grammar",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:48:56.156364956Z"

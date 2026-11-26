@@ -7,10 +7,6 @@ alternatives = [
     "Recover only on an explicit trurlic check: rejected because temp files and unfinished commits would linger after a crash until someone ran it",
     "Fail every command on an issue: rejected because one dangling edge from a hand edit would block status and every read while the files are still readable",
 ]
-tags = [
-    "data-integrity",
-    "error-handling",
-]
 status = "accepted"
 created = "2026-06-15T09:43:22.612061329Z"
 anchors = [

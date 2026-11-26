@@ -5,10 +5,6 @@ alternatives = [
     "Track .claude/skills/ next to CLAUDE.md so skill changes are reviewed: rejected by the owner, the skills are local working files",
     "Keep .trurlic/ ignored: rejected, the graph agents read would be unreviewed, unversioned and invisible to anyone cloning the repo",
 ]
-tags = [
-    "coding-standards",
-    "scope",
-]
 status = "accepted"
 created = "2026-10-02T09:47:31.816905883Z"
 anchors = [

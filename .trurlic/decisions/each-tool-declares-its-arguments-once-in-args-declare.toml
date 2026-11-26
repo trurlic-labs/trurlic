@@ -6,11 +6,6 @@ alternatives = [
     "schemars derive with serde: rejected, a new dependency, and serde's deny_unknown_fields error names no path",
     "Static schema data with getters by field name: rejected, a getter for a field the data does not declare compiles and fails only when called",
 ]
-tags = [
-    "api",
-    "protocol",
-    "validation",
-]
 status = "accepted"
 created = "2026-11-23T23:15:10.849084332Z"
 anchors = [

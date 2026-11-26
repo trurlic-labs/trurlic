@@ -7,11 +7,6 @@ alternatives = [
     "Sort each response at the MCP boundary: rejected because list order in the nested payloads carries meaning (relevance, priority), so a generic sort would reorder lists ranked on purpose",
     "Fix the hasher seed: rejected because output order would then follow hash values, which change with the hasher or the keys, and still not be an order a reader can predict",
 ]
-tags = [
-    "api",
-    "determinism",
-    "serialization",
-]
 status = "accepted"
 created = "2026-10-02T13:33:21.627819553Z"
 anchors = [

@@ -4,9 +4,6 @@ reason = "status is a read an agent calls often, and the placement facts cost se
 alternatives = [
     "Placement issues in status: rejected because every status call would spawn git in the project's repository for a fact that changes only with git operations",
 ]
-tags = [
-    "api",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

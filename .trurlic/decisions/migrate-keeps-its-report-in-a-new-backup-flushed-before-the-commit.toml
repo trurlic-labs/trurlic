@@ -9,10 +9,6 @@ alternatives = [
     "Commit the old files to the graph's repository before the migration instead of a backup: rejected because its history would hold a format no reader of it parses, and a tracked graph has no such repository",
     "A report file beside the backup directory: rejected because the two would be moved or deleted apart",
 ]
-tags = [
-    "migration",
-    "reliability",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [

@@ -7,10 +7,6 @@ alternatives = [
     "Stage one file after another: rejected because the flushes add up serially, to seconds for a store-wide commit",
     "Flush once with syncfs at the end: rejected because std has no syncfs, and it flushes the whole file system",
 ]
-tags = [
-    "performance",
-    "storage",
-]
 status = "proposed"
 created = "2026-11-24T01:30:00Z"
 anchors = [

@@ -4,9 +4,6 @@ reason = "Writing an untouched file would rewrite a hand edit out of form and ad
 alternatives = [
     "Write every file an op touched: rejected because a rename and its undo in one batch would rewrite both files and every dependent for nothing",
 ]
-tags = [
-    "performance",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

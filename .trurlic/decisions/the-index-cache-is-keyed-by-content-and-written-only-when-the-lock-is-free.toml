@@ -8,10 +8,6 @@ alternatives = [
     "One read cap for every entry: rejected because a forged entry near a cap sized for the largest file cost every call seconds and gigabytes, whatever file it named",
     "Prune by age: rejected because it needs a clock, which a read has no business reading",
 ]
-tags = [
-    "concurrency",
-    "performance",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"

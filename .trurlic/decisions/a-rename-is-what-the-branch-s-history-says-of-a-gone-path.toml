@@ -7,10 +7,6 @@ alternatives = [
     "One walk per hop, limited by literal pathspecs of the paths asked: rejected because each walk costs a whole history, and one walk with no pathspec, filtered in the process, answers every path at once",
     "git log --follow per path: rejected because it takes one path per process and follows a path backward, not to where a gone file went",
 ]
-tags = [
-    "anchors",
-    "git",
-]
 status = "proposed"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"

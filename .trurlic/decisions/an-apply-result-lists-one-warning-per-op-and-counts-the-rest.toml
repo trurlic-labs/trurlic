@@ -6,10 +6,6 @@ alternatives = [
     "A warning per match: rejected because one pattern over a long reason would fill the result",
     "Drop the messages and name the pattern alone: rejected because the caller would read project.toml to learn what a warning says",
 ]
-tags = [
-    "api",
-    "quality",
-]
 status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"

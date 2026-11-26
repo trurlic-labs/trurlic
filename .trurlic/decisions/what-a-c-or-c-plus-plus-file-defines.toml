@@ -6,10 +6,6 @@ alternatives = [
     "Macros at the file's top, as the preprocessor scopes them: rejected because a reader finds a #define where it is written",
     "An inline namespace as no segment: rejected because its name is written as any namespace's",
 ]
-tags = [
-    "anchors",
-    "parsing",
-]
 status = "accepted"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"

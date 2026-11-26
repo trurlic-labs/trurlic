@@ -6,9 +6,6 @@ alternatives = [
     "Accept a removal of an element the list lacks: rejected because a typo in an anchor to remove would pass silently and leave the stale one",
     "Whole lists only: rejected because a one-anchor change would carry, and race, every other anchor",
 ]
-tags = [
-    "api",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"

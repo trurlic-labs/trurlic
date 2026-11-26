@@ -6,10 +6,6 @@ alternatives = [
     "Rewrite every file on fmt: rejected because rewriting canonical files churns mtimes and open editor buffers for no change",
     "Format on every load or write: rejected because a read would write, and a write would touch files it is not about",
 ]
-tags = [
-    "consistency",
-    "developer-experience",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

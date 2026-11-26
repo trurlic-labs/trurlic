@@ -8,10 +8,6 @@ alternatives = [
     "Name the silent tokens as Lexicon data of every grammar: rejected because the rule reads each grammar's node kinds, Rust's in code and Python's in its query",
     "Hash a run of adjacent use declarations and a use list's entries as a sorted set: rejected because rustfmt sorts them only when its configuration or style edition changes, and a hash that reorders some tokens is a second order to keep right beside the one every hash holds",
 ]
-tags = [
-    "anchors",
-    "hashing",
-]
 status = "proposed"
 origin = "code index review fixes"
 created = "2026-11-25T17:10:51.306704636Z"

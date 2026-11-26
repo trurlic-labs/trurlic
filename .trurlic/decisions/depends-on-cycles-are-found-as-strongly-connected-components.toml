@@ -6,10 +6,6 @@ alternatives = [
     "Kosaraju's algorithm: rejected because it makes two passes over the graph where Tarjan needs one, for the same components",
     "One issue per decision on a cycle: rejected because a cycle of n decisions becomes n errors, and the members are not listed together",
 ]
-tags = [
-    "determinism",
-    "integrity",
-]
 status = "accepted"
 created = "2026-10-02T12:57:49.182012916Z"
 anchors = [

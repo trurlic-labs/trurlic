@@ -5,9 +5,6 @@ alternatives = [
     "A block in the README: rejected because no test reads it",
     "This repository's own table as the example: rejected because it holds this repository's rules, such as ASCII prose, not a general bar",
 ]
-tags = [
-    "quality",
-]
 status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"

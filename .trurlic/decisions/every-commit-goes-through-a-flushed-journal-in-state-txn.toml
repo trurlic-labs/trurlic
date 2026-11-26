@@ -8,11 +8,6 @@ alternatives = [
     "A journal holding the new file contents: rejected because it doubles the bytes written per commit and still needs every target flushed",
     "An undo log rolled back on recovery: rejected because a commit that failed after its journal would have to be undone by whoever opens next",
 ]
-tags = [
-    "concurrency",
-    "reliability",
-    "storage",
-]
 status = "accepted"
 created = "2026-10-02T12:18:34.628311449Z"
 anchors = [

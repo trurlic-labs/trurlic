@@ -7,10 +7,6 @@ alternatives = [
     "Require the same span hash now: rejected because every edit of the moved item since would then lose its repair",
     "Judge a loss among some of its candidates when it changed many: rejected because the one left out could be the second file that gained the code",
 ]
-tags = [
-    "anchors",
-    "lint",
-]
 status = "proposed"
 origin = "anchor repair review"
 created = "2026-11-26T07:48:25.688106240Z"

@@ -7,9 +7,6 @@ alternatives = [
     "Apply require_origin to stored decisions: rejected because every decision older than the key would be a finding nothing can fix but a rewrite",
     "Read the origin after the fields, one match per pattern: rejected because a write judges a batch's origin apart from its ops, and a match in the origin would hide behind one in a field",
 ]
-tags = [
-    "quality",
-]
 status = "proposed"
 origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"

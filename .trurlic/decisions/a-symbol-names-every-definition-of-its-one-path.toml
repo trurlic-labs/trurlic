@@ -7,10 +7,6 @@ alternatives = [
     "Hash the members in span order: rejected because two unchanged twins that swap places would move the hash, as moving one definition does not",
     "Print every span of a set: rejected because a key held by thousands of array elements printed a text far past a tool result's budget",
 ]
-tags = [
-    "anchors",
-    "grammar",
-]
 status = "proposed"
 origin = "symbol sets"
 created = "2026-11-25T16:09:32.096681384Z"

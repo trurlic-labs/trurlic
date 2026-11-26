@@ -7,10 +7,6 @@ alternatives = [
     "Guess the declaring file backward from a file's path: rejected because lib.rs beside main.rs, a module declared twice and #[path] all defeat the guess",
     "Read the manifest's target tables: rejected because the index keeps no TOML values, and the conventional layout covers this repository and the production project",
 ]
-tags = [
-    "anchors",
-    "testing",
-]
 status = "accepted"
 origin = "definition kinds"
 created = "2026-11-24T10:33:26.877207089Z"

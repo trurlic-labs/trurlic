@@ -6,10 +6,6 @@ alternatives = [
     "Keep chrono and ignore the advisory in deny.toml - rejected: an unmaintained crate stays in the build and the ignore entry stops cargo deny from guarding it",
     "SystemTime as the representation - rejected: its range and resolution are per platform (100 ns on Windows), so a 9-digit fraction would not round-trip byte for byte",
 ]
-tags = [
-    "dependencies",
-    "serialization",
-]
 status = "accepted"
 created = "2026-11-23T20:56:08.645435002Z"
 anchors = [

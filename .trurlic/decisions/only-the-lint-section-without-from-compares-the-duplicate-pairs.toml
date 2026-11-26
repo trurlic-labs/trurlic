@@ -6,10 +6,6 @@ alternatives = [
     "The full pass in every call: rejected because the call at the start of every task would cost seconds of CPU on a graph whose decisions share their terms",
     "Compare the pairs on every page of the lint section: rejected because a walk would redo the whole pass on each page and list the same pairs in the room the quality findings need",
 ]
-tags = [
-    "api",
-    "performance",
-]
 status = "proposed"
 origin = "duplicate pairs in one bounded pass"
 created = "2026-11-26T10:05:01.103143801Z"

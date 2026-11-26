@@ -8,9 +8,6 @@ alternatives = [
     "Locality-sensitive hashing: rejected because it can miss a pair, and the list must be the exact one",
     "A cache under .state: rejected because a read would then depend on state beside the files",
 ]
-tags = [
-    "performance",
-]
 status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"

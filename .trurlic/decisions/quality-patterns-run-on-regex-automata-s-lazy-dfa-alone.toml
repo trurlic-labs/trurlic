@@ -7,10 +7,6 @@ alternatives = [
     "Clear the cache when full, as the engine does by default: rejected because each clearing builds the states again, so the construction of one search has no bound",
     "ASCII word boundaries alone: rejected because a word would split at its first letter outside ASCII",
 ]
-tags = [
-    "dependencies",
-    "quality",
-]
 status = "proposed"
 origin = "quality findings: a work limit in state-bytes, paged with from"
 created = "2026-11-25T16:18:06.233347736Z"

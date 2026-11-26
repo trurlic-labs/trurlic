@@ -5,10 +5,6 @@ alternatives = [
     "Bound every stored list: rejected because the cap is on bytes, and a list bound would still let text pass it",
     "Check in apply alone: rejected because fmt and migrate write through the same function and can stage an oversize file too",
 ]
-tags = [
-    "reliability",
-    "storage",
-]
 status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"

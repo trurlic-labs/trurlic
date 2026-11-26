@@ -8,10 +8,6 @@ alternatives = [
     "Threads started by hand with an atomic counter: rejected because rayon's pool keeps the order, the panic and the stack, and honours RAYON_NUM_THREADS as every other parallel pass of a call does",
     "A stack sized from the file: rejected because a parse's call stack no longer grows with its input",
 ]
-tags = [
-    "reliability",
-    "security",
-]
 status = "proposed"
 origin = "typescript review fixes"
 created = "2026-11-25T22:06:05.133337210Z"

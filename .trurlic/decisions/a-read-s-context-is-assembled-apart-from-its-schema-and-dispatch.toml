@@ -5,9 +5,6 @@ alternatives = [
     "Inline context assembly in the tool dispatch functions: rejected because graph walks, brief generation and health reporting are enough to warrant their own module",
     "Move context assembly into store: rejected because the brief is agent-facing prose and JSON, and store stays free of MCP concerns",
 ]
-tags = [
-    "module-boundary",
-]
 status = "proposed"
 created = "2026-11-23T20:06:33.224278718Z"
 anchors = [

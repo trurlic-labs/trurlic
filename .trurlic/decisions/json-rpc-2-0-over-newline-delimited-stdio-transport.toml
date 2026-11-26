@@ -5,10 +5,6 @@ alternatives = [
     "HTTP transport: rejected because MCP stdio is the standard for local tool servers, and HTTP adds port management",
     "Length-prefixed framing (a Content-Length header, as LSP has it): rejected because newline-delimited JSON is sufficient for single-line messages and is MCP's convention",
 ]
-tags = [
-    "protocol",
-    "security",
-]
 status = "accepted"
 created = "2026-06-15T09:44:33.385781549Z"
 anchors = [

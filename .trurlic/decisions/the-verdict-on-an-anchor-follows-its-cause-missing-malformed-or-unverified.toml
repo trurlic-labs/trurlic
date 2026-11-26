@@ -7,10 +7,6 @@ alternatives = [
     "One kind type for status and check: rejected because status would then carry stale, pending and planned kinds it never yields, and check an unresolved one",
     "List planned anchors in status: rejected because the section reports what this tree shows to be wrong, and a planned anchor is not",
 ]
-tags = [
-    "anchors",
-    "lint",
-]
 status = "accepted"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"

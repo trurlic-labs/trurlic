@@ -8,10 +8,6 @@ alternatives = [
     "Keep patterns as project-wide decisions: rejected because a pattern names decisions and components, which is no choice, and the owner decides which of them states a rule",
     "Drop pattern and component tags without a record: rejected because they exist nowhere else after the migration",
 ]
-tags = [
-    "migration",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [

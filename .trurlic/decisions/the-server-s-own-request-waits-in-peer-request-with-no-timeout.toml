@@ -6,10 +6,6 @@ alternatives = [
     "A timeout on the wait: rejected, a person answers the form; cancellation and EOF already end the wait",
     "A reader thread with channels: rejected, reading the one line stream in place keeps its order and needs no synchronisation",
 ]
-tags = [
-    "api",
-    "protocol",
-]
 status = "proposed"
 created = "2026-11-23T23:15:11.066734150Z"
 anchors = [

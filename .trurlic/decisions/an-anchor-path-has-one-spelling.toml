@@ -8,10 +8,6 @@ alternatives = [
     "Resolve paths against the file system: rejected because the answer depends on the tree it runs in, follows symlinks, and fails for a file that does not exist yet",
     "Accept a backslash as a separator: rejected because a backslash is a legal file-name character on Linux, so the path would mean two things",
 ]
-tags = [
-    "security",
-    "validation",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [

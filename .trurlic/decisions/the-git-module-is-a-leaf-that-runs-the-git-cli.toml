@@ -8,11 +8,6 @@ alternatives = [
     "git inside store: rejected because a writer protocol and a command both need it, and process spawning would sit in the module that holds the graph",
     "git inside commands: rejected because the store's history commits will need it, and store may not import commands",
 ]
-tags = [
-    "dependencies",
-    "git",
-    "module-boundary",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [

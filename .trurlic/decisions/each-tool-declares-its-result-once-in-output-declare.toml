@@ -5,10 +5,6 @@ alternatives = [
     "serde Serialize on the result types and a hand-written schema: rejected because the two drift",
     "schemars: rejected, a new dependency for what the spec module already walks",
 ]
-tags = [
-    "api",
-    "protocol",
-]
 status = "proposed"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
