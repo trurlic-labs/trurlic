@@ -16,7 +16,7 @@ created = "2026-11-24T11:34:48.414739583Z"
 anchors = [
     { file = "src/lint/anchors/repair.rs", symbol = "followed" },
     { file = "src/lint/anchors/repair.rs", symbol = "missing" },
-    { file = "src/lint/anchors/tests.rs", symbol = "a_file_anchor_follows_its_file_into_one_that_defines_an_item" },
+    { file = "src/lint/anchors/repair.rs", symbol = "tests::a_file_anchor_follows_its_file_into_one_that_defines_an_item" },
     { file = "tests/integration/repair.rs", symbol = "a_file_anchor_does_not_follow_a_rename_git_pairs_by_a_shared_header" },
     { file = "tests/integration/repair.rs", symbol = "a_file_moved_on_while_another_takes_its_path_is_repaired_where_it_went" },
     { file = "tests/integration/repair.rs", symbol = "a_moved_symbol_and_a_renamed_file_are_repaired_by_one_op" },

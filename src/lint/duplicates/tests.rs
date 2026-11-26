@@ -419,26 +419,6 @@ fn every_pair<'s>(similarity: &Similarity<'s>) -> Vec<Pair<'s>> {
     pairs
 }
 
-/// Pinned bits, from 100-digit decimal arithmetic rounded to Q32.
-#[test]
-fn the_inverse_frequency_is_the_smoothed_one_in_q32() {
-    let cases = [
-        (1, 1, 1 << 32),
-        (3, 1, 7_272_011_768),
-        (3, 2, 5_530_552_389),
-        (763, 1, 29_830_354_371),
-        (763, 671, 4_846_052_182),
-        (2000, 1, 33_965_697_255),
-    ];
-    for (decisions, holding, expected) in cases {
-        assert_eq!(
-            vectors::inverse_frequency(decisions, holding),
-            expected,
-            "{decisions} {holding}"
-        );
-    }
-}
-
 #[test]
 fn a_score_prints_six_decimals_rounded_half_up() {
     let shown = |units: u64| Score(units).to_string();

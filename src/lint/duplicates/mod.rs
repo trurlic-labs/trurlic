@@ -53,11 +53,8 @@ use rayon::prelude::*;
 
 use crate::store::Decision;
 use best::Best;
-use vectors::Vector;
-
-/// One in Q32, the fixed point of the inverse frequencies and of a
-/// [`Score`].
-const ONE_Q32: u64 = 1 << 32;
+use fixed::ONE_Q32;
+use vectors::{PER_TASK, Vector};
 
 /// The work charged for a pair a probe may test, in posting entries: its
 /// threshold test, 256-bit products, the division of a score and its offer
@@ -65,10 +62,6 @@ const ONE_Q32: u64 = 1 << 32;
 /// where half the pairs pass the threshold (terms each held by half the
 /// decisions).
 const PAIR_WORK: usize = 16;
-
-/// The fewest decisions one task of the thread pool takes, so a small
-/// graph runs as one task rather than paying for threads it cannot use.
-const PER_TASK: usize = 32;
 
 /// A cosine in units of 2^-32, from 0 to 2^32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

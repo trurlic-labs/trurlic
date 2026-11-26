@@ -16,20 +16,12 @@ mod tests {
     use crate::purity::{AllowList, faults};
 
     /// What `lint` may name: the code index's facts, the graph's value
-    /// types, the bar, the store's constant limits, and the thread pool's
+    /// types, the bar, and the thread pool's
     /// parallel iterators, whose schedule no result depends on (the passes'
     /// tests at one thread and eight hold it). None of them holds a path.
     const LINT: AllowList = AllowList {
         modules: &["lint", "code"],
-        store_items: &[
-            "Anchor",
-            "Bar",
-            "Decision",
-            "QualityFault",
-            "Shortfall",
-            "Status",
-            "limits",
-        ],
+        store_items: &["Anchor", "Bar", "Decision", "Shortfall", "Status"],
         std_items: &[],
         crates: &[],
         crate_items: &[("rayon", "prelude")],

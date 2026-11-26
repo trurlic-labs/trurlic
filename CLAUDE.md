@@ -60,7 +60,7 @@ purity     → code (tests only)           the check that `code` and `lint` name
 | The threads files are indexed on (pool, stack, bytes at once) | `sources/indexer.rs` |
 | The tree-sitter runtime and the patch that bounds a parse | `vendor/tree-sitter/`, `vendor/tree-sitter-0.27.2-bounds.patch` |
 | Likely duplicates (scoring, pair index) / which `status` call compares them | `lint/duplicates/` / `tools/status/lint/pairs.rs` |
-| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/findings.rs`, `sources/worktrees.rs` / `tools/status/anchors.rs` |
+| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors/finding.rs`, `lint/anchors/judge.rs`, `lint/anchors/trees.rs` / `sources/findings.rs`, `sources/worktrees.rs` / `tools/status/anchors.rs` |
 | Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair/`, `git/renames.rs` / `store/apply/repair.rs` / `tools/apply/repairs.rs` |
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `tools/status/lint/mod.rs` |
 | A `[quality]` pattern's engine, its caches, the bytes it charges / what compiling it folds | `store/quality/bar/pattern.rs` / `store/quality/bar/folding.rs` |

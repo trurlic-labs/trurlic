@@ -13,6 +13,6 @@ status = "accepted"
 origin = "anchor findings review"
 created = "2026-11-25T20:47:20.288273807Z"
 anchors = [
-    { file = "src/lint/anchors.rs", symbol = "Class::of" },
+    { file = "src/lint/anchors/finding.rs", symbol = "Class::of" },
     { file = "src/lint/anchors/tests.rs", symbol = "several_paths_are_ambiguous_and_one_path_of_several_kinds_is_no_finding" },
 ]

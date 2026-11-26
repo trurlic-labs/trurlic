@@ -3,6 +3,9 @@
 //! from the platform's libm, which need not round it the same on two
 //! machines; this one gives the same integers everywhere.
 
+/// One in Q32, the fixed point of the inverse frequencies and of a score.
+pub(super) const ONE_Q32: u64 = 1 << 32;
+
 /// One in Q64, the fixed point of [`ln`].
 const ONE: u128 = 1 << 64;
 
