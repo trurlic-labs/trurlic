@@ -33,16 +33,6 @@ pub(super) struct History {
     uncommitted: Vec<Change>,
 }
 
-/// Where git's history shows a gone file now: its path, the blob that left
-/// the gone path, and the blob after each edit of it in place since, oldest
-/// first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Followed {
-    pub(super) to: String,
-    pub(super) moved: String,
-    pub(super) edits: Vec<String>,
-}
-
 /// Where a change leaves the file followed.
 enum Step {
     /// Its blob moved to this path.
@@ -92,9 +82,51 @@ impl History {
         self.uncommitted.iter().find(|change| change.path == path)
     }
 
+    /// The changes the commit at place `at` of the walk made, against its
+    /// first parent; none past the walk.
+    pub(super) fn made(&self, at: usize) -> &[Change] {
+        self.commits
+            .get(at)
+            .map_or(&[][..], |commit| &commit.changes)
+    }
+
+    /// The commits the file at `path` now came through, each with the path
+    /// it had there: each commit that changed it and, where one added it as
+    /// the one path to gain a blob one other path lost, those of that path
+    /// before.
+    pub(super) fn lineage(&self, path: &str) -> BTreeMap<usize, String> {
+        let mut lineage = BTreeMap::new();
+        // clone: the path followed changes as the file came from others.
+        let (mut path, mut older) = (path.to_owned(), None);
+        loop {
+            let mut added = None;
+            let changes = self.changes(&path);
+            for (at, change) in changes.filter(|&(at, _)| older.is_none_or(|than| at > than)) {
+                // clone: each commit names the path it changed.
+                lineage.insert(at, path.clone());
+                if change.status == b'A' {
+                    added = change.after.as_deref().map(|blob| (at, blob));
+                    break;
+                }
+            }
+            let Some((at, blob)) = added else {
+                return lineage;
+            };
+            let lost = |other: &&Change| {
+                other.before.as_deref() == Some(blob) && other.after.as_deref() != Some(blob)
+            };
+            let mut from = self.made(at).iter().filter(lost);
+            let (Some(from), None) = (from.next(), from.next()) else {
+                return lineage;
+            };
+            // clone: as above.
+            (path, older) = (from.path.clone(), Some(at));
+        }
+    }
+
     /// For each of `gone`, paths under the code root with nothing there,
     /// the path its file is at now, when its blob's moves show one.
-    pub(super) fn renamed(&self, gone: &BTreeSet<&str>) -> BTreeMap<String, Followed> {
+    pub(super) fn renamed(&self, gone: &BTreeSet<&str>) -> BTreeMap<String, String> {
         gone.iter()
             .filter_map(|&path| Some((path.to_owned(), self.followed(path)?)))
             .collect()
@@ -102,41 +134,36 @@ impl History {
 
     /// Where the file at `gone` is now: from the work tree's deletion of
     /// it, else from the commit that last changed, so deleted, it.
-    fn followed(&self, gone: &str) -> Option<Followed> {
+    fn followed(&self, gone: &str) -> Option<String> {
         if let Some(change) = self.uncommitted(gone) {
-            // clone: the blob followed is also the answer's.
-            let moved = change.before.clone()?;
-            let to = self.in_work_tree(gone, &moved)?;
-            let edits = Vec::new();
-            return Some(Followed { to, moved, edits });
+            return self.in_work_tree(gone, change.before.as_deref()?);
         }
         let (at, change) = self.changes(gone).next()?;
-        // clone: as above.
-        let moved = change.before.clone()?;
-        // clone: as above.
-        let (to, edits) = self.kept(gone.to_owned(), moved.clone(), at + 1)?;
-        Some(Followed { to, moved, edits })
+        // clone: the blob followed changes as the file moves.
+        let (to, _) = self.kept(gone.to_owned(), change.before.clone()?, at + 1)?;
+        Some(to)
     }
 
     /// Where the file that held `blob` at `path` after the commit before
     /// place `after` of the walk is now, and the blob after each edit on the
     /// way: each later change of its path judged, oldest first, then the
     /// work tree.
-    fn kept(
+    pub(super) fn kept(
         &self,
         mut path: String,
         mut blob: String,
-        mut after: usize,
+        after: usize,
     ) -> Option<(String, Vec<String>)> {
         let mut edits = Vec::new();
-        loop {
-            let next = self.changes(&path).take_while(|&(at, _)| at < after).last();
-            let Some((at, change)) = next else {
-                break;
-            };
+        let mut newer = self.newer(&path, after);
+        while let Some((at, place)) = newer.pop() {
             let changes = &self.commits.get(at)?.changes;
+            let change = changes.get(place)?;
             match step(changes, change, &blob) {
-                Step::Moved(to) => path = to,
+                Step::Moved(to) => {
+                    newer = self.newer(&to, at);
+                    path = to;
+                }
                 Step::Edited(to) => {
                     // clone: the blob followed is also the edit's.
                     edits.push(to.clone());
@@ -144,9 +171,19 @@ impl History {
                 }
                 Step::Left => return None,
             }
-            after = at;
         }
         Some((self.in_work_tree(&path, &blob)?, edits))
+    }
+
+    /// The places of `path`'s changes newer than the commit at place
+    /// `after` of the walk, newest first.
+    fn newer(&self, path: &str, after: usize) -> Vec<(usize, usize)> {
+        let places = self.by_path.get(path).map_or(&[][..], Vec::as_slice);
+        places
+            .iter()
+            .copied()
+            .take_while(|&(at, _)| at < after)
+            .collect()
     }
 
     /// Where the work tree left the file that holds `blob` at `path` in
@@ -179,15 +216,17 @@ fn step(changes: &[Change], change: &Change, blob: &str) -> Step {
     let mut gained = changes
         .iter()
         .filter(|other| other.path != change.path && holds(&other.after));
-    let lost = changes
-        .iter()
-        .filter(|other| holds(&other.before) && !holds(&other.after))
-        .count();
-    match (gained.next(), gained.next(), lost) {
+    let lost = || {
+        let lost = changes
+            .iter()
+            .filter(|other| holds(&other.before) && !holds(&other.after));
+        lost.count()
+    };
+    match (gained.next(), gained.next()) {
         // clone: the path followed outlives the history's borrow.
-        (Some(to), None, 1) => return Step::Moved(to.path.clone()),
-        (Some(_), _, _) => return Step::Left,
-        (None, _, _) => {}
+        (Some(to), None) if lost() == 1 => return Step::Moved(to.path.clone()),
+        (Some(_), _) => return Step::Left,
+        (None, _) => {}
     }
     match (change.status, &change.after) {
         // clone: as above.

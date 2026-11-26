@@ -179,29 +179,6 @@ pub(super) fn role_of_place(path: &str, crates: &Crates<'_>) -> Role {
     }
 }
 
-/// The target of its crate that `path` belongs to by its place, as the
-/// path of its directory or root file: `src` for a file of the library or
-/// the `src/main.rs` binary, `<dir>/<name>` for one of the `src/bin`,
-/// `tests`, `benches` or `examples` target `name` (`name.rs` or `name/`),
-/// and any other file of the crate its own; `None` outside every crate. A
-/// manifest's `path =` is not read.
-pub(super) fn target_of<'p>(path: &'p str, crates: &Crates<'_>) -> Option<&'p str> {
-    let relative = relative_to_crate(path, crates)?;
-    let start = path.len() - relative.len();
-    let in_dir = ROOT_DIRS.iter().find_map(|dir| {
-        let rest = relative.strip_prefix(dir)?.strip_prefix('/')?;
-        let first = rest.split_once('/').map_or(rest, |(first, _)| first);
-        let name = first.strip_suffix(".rs").unwrap_or(first);
-        Some(dir.len() + 1 + name.len())
-    });
-    let end = match in_dir {
-        Some(end) => end,
-        None if relative.starts_with("src/") => "src".len(),
-        None => relative.len(),
-    };
-    path.get(..start + end)
-}
-
 /// A file whose module declarations are followed.
 struct Declaring<'a> {
     path: &'a str,

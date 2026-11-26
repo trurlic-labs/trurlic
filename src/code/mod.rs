@@ -52,7 +52,7 @@ pub(crate) use encoding::{
 };
 #[cfg(test)]
 pub(crate) use facts::Target;
-pub(crate) use facts::{Code, CodeFacts, Entry, FileFault, Namesakes, ReadFault, Resolution};
+pub(crate) use facts::{Code, CodeFacts, Entry, FileFault, ReadFault, Resolution};
 pub(crate) use index::{BOUNDS, FileKind, INDEX_FORMAT, MAX_SOURCE_BYTES, index};
 pub(crate) use kinds::DefinitionKind;
 pub(crate) use language::c_family::{

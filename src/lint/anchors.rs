@@ -430,11 +430,12 @@ impl<'s> Asked<'s> {
         self.read.get(at).map(|tree| &tree.worktree)
     }
 
-    /// The files of the stale anchors with nothing at their path here:
-    /// those git's history is asked where they went.
+    /// The files of the stale file anchors with nothing at their path
+    /// here: those git's history is asked where they went.
     pub(crate) fn gone(&self, here: &Here<'s, '_>) -> BTreeSet<&'s str> {
         self.stale
             .iter()
+            .filter(|anchor| anchor.symbol().is_none())
             .filter(|anchor| here.resolutions.get(*anchor) == Some(&Resolution::FileMissing))
             .map(|anchor| anchor.file())
             .collect()

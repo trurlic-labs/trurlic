@@ -48,8 +48,7 @@ fn renamed(dir: &Path, gone: &[&str]) -> BTreeMap<String, String> {
     let Some(history) = History::read(dir) else {
         return BTreeMap::new();
     };
-    let found = history.renamed(&gone).into_iter();
-    found.map(|(from, followed)| (from, followed.to)).collect()
+    history.renamed(&gone)
 }
 
 fn to(from: &str, to: &str) -> (String, String) {
@@ -148,10 +147,10 @@ fn a_moved_file_is_followed_through_every_later_change_of_its_path() {
     );
 }
 
-/// The blob that left the gone path and the blob after each edit since,
-/// oldest first, are what a symbol on the file is judged by.
+/// A file is followed from the commit its blob reached a path in: through
+/// each later edit, whose blob it names, oldest first, to where it is now.
 #[test]
-fn a_followed_file_names_the_blob_that_moved_and_each_edit_since() {
+fn a_kept_file_names_each_edit_since() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     repository(dir, &["a.rs"]);
@@ -171,14 +170,10 @@ fn a_followed_file_names_the_blob_that_moved_and_each_edit_since() {
     };
 
     let history = History::read(dir).unwrap();
-    let found = history.renamed(&BTreeSet::from(["a.rs"]));
+    let kept = history.kept("b.rs".to_owned(), blob("HEAD~2"), 2);
 
-    let followed = Followed {
-        to: "b.rs".into(),
-        moved: blob("HEAD~2"),
-        edits: vec![blob("HEAD~1"), blob("HEAD")],
-    };
-    assert_eq!(found, BTreeMap::from([("a.rs".to_owned(), followed)]));
+    let edits = vec![blob("HEAD~1"), blob("HEAD")];
+    assert_eq!(kept, Some(("b.rs".to_owned(), edits)));
 }
 
 /// The changes of a path come newest first, each with its commit's place

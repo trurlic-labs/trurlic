@@ -11,7 +11,7 @@ use super::crates::{Crates, Files};
 use super::definitions::Definitions;
 use super::index::{Definition, FileIndex, FileKind, IndexFault};
 use super::kinds::{DefinitionKind, Role};
-use super::roles::{target_of, test_files};
+use super::roles::test_files;
 use super::scope::Scopes;
 use super::span::SpanHash;
 use super::symbol::{Segment, Symbol, SymbolFault};
@@ -380,90 +380,36 @@ impl CodeFacts {
         }
     }
 
-    /// For each of `anchors`, a symbol on a Rust file that may be gone,
-    /// where its code may have moved ([`Namesakes`]), whatever the role of
-    /// the item there, which the caller holds to the anchor's. One pass
-    /// over the tree's definitions serves them all, and none is made for no
-    /// anchor. A file of another language is not searched: its crate and
-    /// target are not known.
-    pub(crate) fn namesakes<'a>(
-        &self,
+    /// For each of `anchors` whose symbol another file of its kind here
+    /// writes as an item's whole path ([`CodeFacts::writes`]), those files:
+    /// the only ones its code can have moved into within this tree. One
+    /// pass over the tree's definitions finds the files to ask for them
+    /// all.
+    pub(crate) fn writers<'a, 'f>(
+        &'f self,
         anchors: impl IntoIterator<Item = &'a Anchor>,
-    ) -> BTreeMap<&'a Anchor, Namesakes> {
-        let wanted: Vec<(&Anchor, Symbol)> = anchors
-            .into_iter()
-            .filter(|anchor| FileKind::of(anchor.file()) == Some(FileKind::Rust))
-            .filter_map(|anchor| {
-                let symbol = Symbol::parse(anchor.symbol()?, FileKind::Rust.syntax());
-                Some((anchor, symbol.ok()?))
-            })
-            .collect();
-        if wanted.is_empty() {
-            return BTreeMap::new();
-        }
-        let last = wanted
-            .iter()
-            .filter_map(|(_, symbol)| symbol.segments().last())
-            .collect();
-        let holders = self.holders(&last);
-        let (tree, outside) = split(&self.entries, &self.walked);
-        let crates = Crates::of(&tree, &outside);
-        wanted
-            .into_iter()
-            .filter_map(|(anchor, symbol)| {
-                let own = symbol.segments().last()?;
-                let files = holders.get(own).into_iter().flatten().copied();
-                Some((anchor, self.namesakes_of(anchor, &symbol, files, &crates)))
-            })
-            .collect()
-    }
-
-    /// Where `anchor`'s code may have moved, of `files`, those that define
-    /// something whose own segment is its symbol's last.
-    fn namesakes_of<'f>(
-        &self,
-        anchor: &Anchor,
-        symbol: &Symbol,
-        files: impl Iterator<Item = &'f str>,
-        crates: &Crates<'_>,
-    ) -> Namesakes {
-        let mut at_home = false;
-        let mut elsewhere = Vec::new();
-        let place = target_of(anchor.file(), crates);
-        for file in files {
-            if file == anchor.file() {
-                at_home = true;
-            } else if self.walked.contains(file)
-                && FileKind::of(file) == Some(FileKind::Rust)
-                && place.is_some()
-                && target_of(file, crates) == place
-                && self.writes(file, symbol)
+    ) -> BTreeMap<&'a Anchor, BTreeSet<&'f str>> {
+        let mut holders: BTreeMap<(FileKind, &Segment), BTreeSet<&str>> = BTreeMap::new();
+        for (path, scopes, definition, _) in self.definitions() {
+            let held = self.entries.get(path).and_then(indexed);
+            if let (Some((kind, _)), Some(own)) =
+                (held, scopes.path_from_end(definition.scope).next())
             {
-                elsewhere.push(file.to_owned());
+                holders.entry((kind, own)).or_default().insert(path);
             }
         }
-        Namesakes { at_home, elsewhere }
-    }
-
-    /// The files that define something whose own segment, the last of its
-    /// path, is one of `last`, by that segment.
-    fn holders<'s>(
-        &'s self,
-        last: &BTreeSet<&Segment>,
-    ) -> BTreeMap<&'s Segment, BTreeSet<&'s str>> {
-        let mut holders: BTreeMap<&Segment, BTreeSet<&str>> = BTreeMap::new();
-        let definitions = self.definitions();
-        // A module declaration holds no code of its name: the module's
-        // file or body does.
-        let held =
-            definitions.filter(|(_, _, definition, _)| definition.kind != DefinitionKind::Module);
-        for (path, scopes, definition, _) in held {
-            let own = scopes.path_from_end(definition.scope).next();
-            if let Some(own) = own.filter(|own| last.contains(own)) {
-                holders.entry(own).or_default().insert(path);
-            }
-        }
-        holders
+        let writers = |anchor: &Anchor| -> Option<BTreeSet<&'f str>> {
+            let kind = FileKind::of(anchor.file())?;
+            let symbol = Symbol::parse(anchor.symbol()?, kind.syntax()).ok()?;
+            let files = holders.get(&(kind, symbol.segments().last()?))?.iter();
+            let other = files.filter(|path| **path != anchor.file() && self.writes(path, &symbol));
+            let other: BTreeSet<&str> = other.copied().collect();
+            (!other.is_empty()).then_some(other)
+        };
+        anchors
+            .into_iter()
+            .filter_map(|anchor| Some((anchor, writers(anchor)?)))
+            .collect()
     }
 
     /// Whether `anchor`'s file writes an item whose whole path its symbol
@@ -586,18 +532,6 @@ impl CodeFacts {
             (Some(_), others) => Resolution::Ambiguous(others + 1),
         }
     }
-}
-
-/// Where a symbol anchor's code may have moved, by what the tree holds.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Namesakes {
-    /// Whether the anchor's own file defines the symbol's last segment
-    /// under any path: the code may be there under another spelling.
-    pub(crate) at_home: bool,
-    /// The other walked Rust files of the anchor's crate target, by place
-    /// ([`target_of`]), that write an item whose whole path the symbol is
-    /// ([`CodeFacts::writes`]).
-    pub(crate) elsewhere: Vec<String>,
 }
 
 /// The `definitions` of each path, as `scopes` spells it: the first of the

@@ -427,10 +427,12 @@ fn never_repaired(project: &Project) {
 
 /// A wrong repair is worse than none: a namesake that stood beside the
 /// deleted code (another file's function, a test module's helper, another
-/// file's type), one written after the code was deleted (a function
-/// dropped from its file, a file deleted, a type of the library and a
-/// later one of the binary), a module declaration where a function went,
-/// a header-only or an empty file git pairs with the removed one, and a
+/// file's type, another crate's identical method, which the change that
+/// deleted the code did not touch), one written after the code was deleted
+/// (a function dropped from its file, a file deleted, a type of the library
+/// and a later one of the binary), a module declaration where a function
+/// went, the code written into two files by the change that removed it, a
+/// header-only or an empty file git pairs with the removed one, and a
 /// binary git pairs with another by shared boilerplate, whose `main` it
 /// edited, are each no repair; `check` shows none and the op writes none.
 #[test]
@@ -441,7 +443,28 @@ fn a_namesake_or_a_rename_that_carried_no_code_is_never_written() {
         .collect();
     let import = format!("{boilerplate}fn main() {{ import() }}\n");
     let report = format!("{boilerplate}fn main() {{ report() }}\n");
+    let config = "pub struct Config;\nimpl Config { pub fn new() {} }\n";
+    let foo = "pub fn foo() -> u32 { 7 }\n";
     let cases = [
+        changed(
+            &["crates/a/src/lib.rs::Config::new"],
+            &[
+                ("crates/a/Cargo.toml", "[package]\nname = \"a\"\n"),
+                ("crates/a/src/lib.rs", config),
+                ("crates/b/Cargo.toml", "[package]\nname = \"b\"\n"),
+                ("crates/b/src/lib.rs", config),
+            ],
+            &[("crates/a/src/lib.rs", Some("pub struct Config;\n"))],
+        ),
+        changed(
+            &["src/a.rs::foo"],
+            &[("src/a.rs", &format!("{foo}pub fn a() {{}}\n"))],
+            &[
+                ("src/a.rs", Some("pub fn a() {}\n")),
+                ("src/b.rs", Some(foo)),
+                ("src/c.rs", Some(foo)),
+            ],
+        ),
         changed(
             &["src/store.rs::retry_write"],
             &[(
@@ -891,8 +914,8 @@ fn what_every_repair_leaves_is_stated_against_the_written_graph() {
 /// functions moved out of one file in thirty commits and two files renamed
 /// unchanged it runs one walk, one diff of what is not committed and two
 /// reads of blobs, of two processes each. Each move is found from the
-/// sixteen newest changes of the anchor's file, so the sixteen newest
-/// moves are repaired, and both renames.
+/// eight newest changes of the anchor's file, so the eight newest moves
+/// are repaired, and both renames.
 #[cfg(unix)]
 #[test]
 fn the_history_is_read_by_a_bounded_number_of_git_processes() {
@@ -954,8 +977,77 @@ fn the_history_is_read_by_a_bounded_number_of_git_processes() {
     assert_eq!(stale.status.code(), Some(1));
     assert_eq!(read, [1, 1, 4]);
     let stderr = String::from_utf8(stale.stderr).unwrap();
-    assert_eq!(stderr.matches("; repair: ").count(), 18, "{stderr}");
+    assert_eq!(stderr.matches("; repair: ").count(), 10, "{stderr}");
     for repair in ["src/f29.rs::moved_29", "src/new_a.rs", "src/new_b.rs::held"] {
         assert!(stderr.contains(&format!("repair: `{repair}`")), "{stderr}");
     }
+}
+
+/// A function whose file moved into another crate and was edited on the
+/// way, in one commit, is repaired where its code went, as the one file
+/// that change gave its code, whatever the crate; the file anchor, which
+/// follows only an unchanged move, is not.
+#[test]
+fn a_function_moved_across_crates_with_its_edited_file_is_repaired() {
+    let layout = "pub fn layout() -> u32 {\n    1 + 2\n}\n";
+    let project = changed(
+        &["crates/a/src/layout.rs::layout", "crates/a/src/layout.rs"],
+        &[
+            ("crates/a/Cargo.toml", "[package]\nname = \"a\"\n"),
+            ("crates/a/src/lib.rs", "mod layout;\n"),
+            (
+                "crates/a/src/layout.rs",
+                &format!("{layout}pub fn width() -> u32 {{ 1 }}\n"),
+            ),
+            ("crates/b/Cargo.toml", "[package]\nname = \"b\"\n"),
+            ("crates/b/src/lib.rs", "mod layout;\n"),
+        ],
+        &[
+            ("crates/a/src/layout.rs", None),
+            ("crates/a/src/lib.rs", Some("")),
+            (
+                "crates/b/src/layout.rs",
+                Some(&format!("{layout}pub fn width() -> u32 {{ 2 }}\n")),
+            ),
+        ],
+    );
+
+    let stderr = project.run_refused(&["check"]);
+
+    let repaired = "`crates/a/src/layout.rs::layout` of `d` is stale: nothing is at its path; \
+                    repair: `crates/b/src/layout.rs::layout`\n";
+    assert!(stderr.contains(repaired), "{stderr}");
+    let file = "`crates/a/src/layout.rs` of `d` is stale: nothing is at its path\n";
+    assert!(stderr.contains(file), "{stderr}");
+}
+
+/// A change that gave the anchor's code to one file is judged only when it
+/// changed at most sixteen files that write the symbol now: past them the
+/// anchor gets no repair, never one judged among some of them.
+#[test]
+fn a_loss_that_changed_more_candidates_than_the_bound_is_never_repaired() {
+    let foo = "pub fn foo() -> u32 { 0 }\n";
+    let moved = |others: usize| {
+        let mut after: Vec<(String, Option<String>)> = vec![
+            ("src/a.rs".to_owned(), Some("pub fn a() {}\n".to_owned())),
+            ("src/b.rs".to_owned(), Some(foo.to_owned())),
+        ];
+        after.extend((1..=others).map(|n| {
+            let other = format!("pub fn foo() -> u32 {{ {n} }}\n");
+            (format!("src/o{n:02}.rs"), Some(other))
+        }));
+        let after: Vec<(&str, Option<&str>)> = after
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_deref()))
+            .collect();
+        let before = format!("{foo}pub fn a() {{}}\n");
+        changed(&["src/a.rs::foo"], &[("src/a.rs", &before)], &after)
+    };
+    let (within, past) = (moved(15), moved(16));
+
+    let within = within.run_refused(&["check"]);
+    let past = past.run_refused(&["check"]);
+
+    assert!(within.contains("; repair: `src/b.rs::foo`"), "{within}");
+    assert!(!past.contains("repair:"), "{past}");
 }

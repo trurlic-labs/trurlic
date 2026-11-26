@@ -18,7 +18,7 @@ anchors = [
     { file = "src/git/renames.rs", symbol = "blobs" },
     { file = "src/git/renames.rs", symbol = "uncommitted" },
     { file = "src/sources/blobs.rs", symbol = "Blobs::read" },
-    { file = "src/sources/repair.rs", symbol = "Judged::moves" },
+    { file = "src/sources/repair.rs", symbol = "moves" },
     { file = "src/sources/repair.rs", symbol = "with_history" },
     { file = "tests/integration/repair.rs", symbol = "the_history_is_read_by_a_bounded_number_of_git_processes" },
 ]

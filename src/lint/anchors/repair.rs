@@ -11,31 +11,28 @@
 //! blob moved, unchanged, as the shell follows it ([`Renames`]), into a
 //! file that defines an item: a file of comments or nothing alone is no
 //! code to follow, and a file git pairs with it by similarity alone, as a
-//! shared header pairs two, is no move of it. A symbol anchor on a gone
-//! file is judged on the file its file went to, by the code itself, as
-//! below.
+//! shared header pairs two, is no move of it.
 //!
-//! Any other symbol anchor on a Rust file whose file is gone or defines
-//! nothing its symbol names is searched for where its code may have moved
-//! ([`CodeFacts::namesakes`]): never when its file still defines its last
-//! segment, since the code is then there under another spelling, and only
-//! as the whole path of an item written in another file of the same target
-//! by place, never a re-export, a module declaration or an item a macro
-//! invocation produces. A file of another language is not searched, since
-//! no crate or target bounds where its code may go. The one such file is a
-//! [`Search`] candidate, repaired when git's history shows the move
-//! ([`Shown`]): where the anchor's file last lost an item of the symbol,
-//! the candidate gained definitions of the span hash the anchor's had, of
-//! an item it did not write before; and the candidate held an item of the
-//! kinds it gained at every commit that changed it since, and holds one
-//! now. A namesake that stood beside the code, one written after the code
-//! went, and one a later commit deleted or replaced by another kind of item
-//! are so no move, while an edit of the moved item since keeps its repair.
+//! A symbol anchor whose file is gone or defines nothing its symbol names
+//! ([`missing`]) is looked for only in the files the change that lost its
+//! code changed ([`lost`]), each followed by its blob to where it is now:
+//! the commit whose parent's file wrote the item, or the work tree. Each
+//! such file of the anchor's language that writes the symbol's whole path
+//! now is a [`Search`], and the move is the one of them that, across the
+//! loss, went from writing no item of the symbol to definitions of the
+//! span hash the anchor's file lost ([`moved_to`]): none, or two, and no
+//! repair. That evidence is the code itself in the commit it moved in, so
+//! a namesake elsewhere, in another crate, target or test module, which
+//! that change did not write, is never one, and no bound by crate or
+//! target is needed. The one that moved is the repair when it held
+//! definitions of the kinds it gained after every change since and holds
+//! them now: one a later change deleted, or replaced by another kind of
+//! item, is no move, while an edit of the moved item keeps its repair.
 //! With no git, or any git failure, no anchor is repaired.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::code::{Code, CodeFacts, DefinitionKind, Entry, Namesakes, Resolution};
+use crate::code::{Code, CodeFacts, DefinitionKind, Entry, Resolution};
 use crate::store::Anchor;
 
 use super::{Asked, Here};
@@ -57,16 +54,6 @@ pub(crate) struct Renames {
     pub(crate) facts: CodeFacts,
 }
 
-impl Renames {
-    /// No gone file followed.
-    pub(crate) fn none() -> Self {
-        Self {
-            to: BTreeMap::new(),
-            facts: CodeFacts::new(BTreeMap::new(), BTreeSet::new()),
-        }
-    }
-}
-
 /// Files of git's history, each read alone, by the name git read it by and
 /// its path.
 #[derive(Debug, Default)]
@@ -83,6 +70,11 @@ impl Prior {
             let facts = CodeFacts::new(BTreeMap::from([(path.clone(), entry)]), BTreeSet::new());
             self.files.insert((name, path), facts);
         }
+    }
+
+    /// Only the files of `keep`, each a name git read it by and its path.
+    pub(crate) fn retain(&mut self, keep: &BTreeSet<(String, String)>) {
+        self.files.retain(|file, _| keep.contains(file));
     }
 
     /// The facts of `anchor`'s file as `name` held it, when it was read.
@@ -142,8 +134,8 @@ pub(crate) fn followed<'s>(
         .collect()
 }
 
-/// A stale symbol anchor the search found one file for: its symbol on that
-/// file is the repair when git's history shows the move.
+/// A stale symbol anchor and its symbol on a file the change that lost
+/// its code changed: the repair when that file shows the move.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Search<'s> {
     pub(crate) anchor: &'s Anchor,
@@ -151,13 +143,13 @@ pub(crate) struct Search<'s> {
 }
 
 /// The stale symbol anchors whose file is gone or defines nothing their
-/// symbol names, each with the file its code may be in now: the one
-/// `renames` shows its gone file at, else the one its search finds.
-pub(crate) fn searched<'s>(
+/// symbol names, each with the other files of its kind that write its
+/// symbol here: those whose code is looked for where it moved, and the
+/// only files it can be in now.
+pub(crate) fn missing<'s, 'f>(
     asked: &Asked<'s>,
-    here: &Here<'s, '_>,
-    renames: &Renames,
-) -> Vec<Search<'s>> {
+    here: &Here<'s, 'f>,
+) -> BTreeMap<&'s Anchor, BTreeSet<&'f str>> {
     let missing = asked.stale.iter().copied().filter(|&anchor| {
         let missing = matches!(
             here.resolutions.get(anchor),
@@ -165,38 +157,20 @@ pub(crate) fn searched<'s>(
         );
         anchor.symbol().is_some() && missing
     });
-    let (carried, missing): (Vec<&'s Anchor>, Vec<&'s Anchor>) =
-        missing.partition(|anchor| renames.to.contains_key(anchor.file()));
-    let found = here.facts.namesakes(missing).into_iter().filter_map(
-        |(anchor, Namesakes { at_home, elsewhere })| {
-            let [target] = <[String; 1]>::try_from(elsewhere).ok()?;
-            (!at_home).then_some((anchor, target))
-        },
-    );
-    let carried = carried.into_iter().filter_map(|anchor| {
-        // clone: the search owns the path its symbol is looked for on.
-        Some((anchor, renames.to.get(anchor.file())?.clone()))
-    });
-    carried
-        .chain(found)
-        .filter_map(|(anchor, target)| {
-            let there = Anchor::new(target, anchor.symbol().map(str::to_owned)).ok()?;
-            Some(Search { anchor, there })
-        })
-        .collect()
+    here.facts.writers(missing)
 }
 
 /// Of `versions`, the anchor's file before each of its newest
 /// changes, newest first, as names of `prior`: the place of the first that
 /// wrote an item of the anchor's symbol, which the change after it lost.
 pub(crate) fn lost<'v>(
-    search: &Search<'_>,
+    anchor: &Anchor,
     versions: impl IntoIterator<Item = &'v str>,
     prior: &Prior,
 ) -> Option<usize> {
     versions
         .into_iter()
-        .position(|version| prior.wrote(version, search.anchor))
+        .position(|version| prior.wrote(version, anchor))
 }
 
 /// What git's history shows of a search's candidate, as names of
@@ -214,17 +188,47 @@ pub(crate) struct Shown {
     pub(crate) since: Vec<String>,
 }
 
-/// The repair of `search` when git's history shows the move, judged by
-/// `shown` and what the tree holds now, `here`: the candidate wrote no item
-/// of the symbol before the loss and, after it, held definitions with the
-/// span hash the anchor's had before it; and it held definitions of the
-/// same kinds after every change since and holds them now.
-pub(crate) fn moved(
+/// The repair of the one of `searches`, the files the loss changed, that
+/// git's history shows the code moved into, judged by `shown` and what the
+/// tree holds now, `here`: across the loss it went from writing no item of
+/// the symbol to definitions with the span hash the anchor's had before
+/// it; and it held definitions of the kinds it gained after every change
+/// since and holds them now. None when no file, or more than one, shows
+/// the move.
+pub(crate) fn moved_to(
+    searches: &[(Search<'_>, Shown)],
+    here: &CodeFacts,
+    prior: &Prior,
+) -> Option<Repair> {
+    let mut gained = searches.iter().filter_map(|(search, shown)| {
+        let kinds = gained(search, shown, here, prior)?;
+        Some((search, shown, kinds))
+    });
+    let (Some((search, shown, kinds)), None) = (gained.next(), gained.next()) else {
+        return None;
+    };
+    let there = &search.there;
+    let kept = shown.since.iter().all(|at| prior.kinds(at, there) == kinds);
+    if !kept || here.kinds(there) != kinds {
+        return None;
+    }
+    let code = here.code(there)?;
+    Some(Repair {
+        // clone: the repair owns its anchor.
+        to: there.clone(),
+        code,
+    })
+}
+
+/// The kinds of the definitions `search`'s candidate gained across the
+/// loss `shown`, when it wrote no item of the symbol before and holds the
+/// span hash the anchor's file lost after it.
+fn gained(
     search: &Search<'_>,
     shown: &Shown,
     here: &CodeFacts,
     prior: &Prior,
-) -> Option<Repair> {
+) -> Option<BTreeSet<DefinitionKind>> {
     let Search { anchor, there } = search;
     let held_before = shown
         .before
@@ -235,15 +239,5 @@ pub(crate) fn moved(
         None => (here.resolve(there), here.kinds(there)),
     };
     let same = prior.resolve(&shown.lost, anchor).same_code(&after);
-    let kept = shown.since.iter().all(|at| prior.kinds(at, there) == kinds);
-    let now = here.kinds(there) == kinds;
-    if held_before || !same || !kept || !now || kinds.is_empty() {
-        return None;
-    }
-    let code = here.code(there)?;
-    Some(Repair {
-        // clone: the repair owns its anchor.
-        to: there.clone(),
-        code,
-    })
+    (!held_before && same && !kinds.is_empty()).then_some(kinds)
 }

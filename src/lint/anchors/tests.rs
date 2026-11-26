@@ -564,124 +564,6 @@ fn a_file_no_walk_took_is_not_counted_for_weak() {
 /// The manifest of a package at the root of the tree.
 const MANIFEST: (&str, &str) = ("Cargo.toml", "[package]\nname = \"p\"\n");
 
-const BOOK: &str = "pub struct Book;\nimpl Book { fn pages() {} }\n";
-
-/// A clock whose `tick` is a method: its whole path is `Clock::tick`.
-const CLOCK: &str = "pub struct Clock;\nimpl Clock { fn tick() {} }\n";
-
-/// The searches of `decisions`' stale anchors in the tree `here`, the gone
-/// files followed by `renames`, no other worktree holding any: each anchor
-/// with the anchor it would be repaired as.
-fn searches(
-    decisions: &[(&str, Decision)],
-    here: &CodeFacts,
-    renames: &Renames,
-) -> Vec<(String, String)> {
-    let named: Vec<(&str, &Decision)> = decisions.iter().map(|(n, d)| (*n, d)).collect();
-    let here = Here::of(&named, here);
-    let asked = Asked::new(here.unresolved(&named));
-    let found = repair::searched(&asked, &here, renames).into_iter();
-    found
-        .map(|search| (search.anchor.to_string(), search.there.to_string()))
-        .collect()
-}
-
-/// A stale symbol anchor is searched for in the one other walked file of
-/// its crate target, by place, that writes its symbol as an item's whole
-/// path (a method named alone there is no namesake, nor a `use` of it),
-/// and, when its file is gone and the history shows that file's blob at
-/// another path, on that path whatever its kind or target. Not when its
-/// file still defines its last segment (a trait method spelled without its
-/// impl), nor when two files write it, nor on a file of another language;
-/// never in another target (a test, a binary, a crate of its own), as a
-/// re-export, a module declaration or an item a macro invocation produces;
-/// and never with no manifest above the anchor.
-#[test]
-fn the_search_finds_one_file_of_the_anchors_target_or_its_followed_file() {
-    let ticks = format!("{CLOCK}pub fn tick() {{}}\n");
-    let here = facts(
-        &[
-            MANIFEST,
-            (
-                "src/lib.rs",
-                "pub fn stay() {}\nmod refusal;\npub use refusal::Report;\n",
-            ),
-            ("src/moved.rs", BOOK),
-            ("src/clock.rs", &ticks),
-            ("src/twice_a.rs", "pub fn twice() {}\n"),
-            ("src/twice_b.rs", "pub fn twice() {}\n"),
-            ("src/moved.py", "def run():\n    pass\n"),
-            (
-                "src/spi.rs",
-                "pub trait Routing { fn route_cost(&self) -> u8; }\n",
-            ),
-            (
-                "src/fbqc.rs",
-                "pub struct Fbqc;\nimpl crate::spi::Routing for Fbqc { fn route_cost(&self) -> u8 { 0 } }\n",
-            ),
-            (
-                "src/refusal.rs",
-                "mirror! { Report in \"m\" from other::Report {} }\n",
-            ),
-            ("src/cli.rs", "pub fn main() {}\n"),
-            ("tests/cli.rs", "fn run(args: &[&str]) {}\n"),
-            ("src/bin/tool.rs", "fn main() {}\nfn usage() {}\n"),
-            ("src/api.rs", "pub use crate::inner::Engine;\n"),
-            (
-                "src/made.rs",
-                "macro_rules! make { ($n:ident) => { pub struct $n; }; }\nmake!(Widget);\n",
-            ),
-            ("src/b/mod.rs", "mod scale;\n"),
-            ("crates/b/Cargo.toml", "[package]\nname = \"b\"\n"),
-            (
-                "crates/b/src/lib.rs",
-                "pub struct Config;\nimpl Config { pub fn new() {} }\n",
-            ),
-            ("conf/new.toml", "[profile]\npanic = 1\n"),
-            ("lib/moved.rs", BOOK),
-        ],
-        &[],
-    );
-    let anchors = [
-        "src/gone.rs::Book",
-        "src/lib.rs::Book::pages",
-        "src/lib.rs::tick",
-        "src/lib.rs::twice",
-        "src/gone.py::run",
-        "src/fbqc.rs::Routing::route_cost",
-        "src/refusal.rs::Report",
-        "src/cli.rs::run",
-        "src/cli.rs::usage",
-        "src/cli.rs::Engine",
-        "src/cli.rs::Widget",
-        "src/a/scale.rs::scale",
-        "crates/a/src/lib.rs::Config::new",
-        "conf/old.toml::profile::panic",
-        "lib/gone.rs::Book",
-    ];
-    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
-    let renames = Renames {
-        to: BTreeMap::from([("conf/old.toml".to_owned(), "conf/new.toml".to_owned())]),
-        facts: facts(&[], &[]),
-    };
-
-    let found = searches(&decisions, &here, &renames);
-
-    let pair = |from: &str, to: &str| (from.to_owned(), to.to_owned());
-    assert_eq!(
-        found,
-        [
-            pair(
-                "conf/old.toml::profile::panic",
-                "conf/new.toml::profile::panic"
-            ),
-            pair("src/gone.rs::Book", "src/moved.rs::Book"),
-            pair("src/lib.rs::Book::pages", "src/moved.rs::Book::pages"),
-            pair("src/lib.rs::tick", "src/clock.rs::tick"),
-        ]
-    );
-}
-
 /// The anchor `src/a.rs::foo` searched on `src/b.rs`.
 fn foo_search(anchor: &Anchor) -> Search<'_> {
     Search {
@@ -725,6 +607,7 @@ fn shown(before: Option<&str>, after: Option<&str>, since: &[&str]) -> Shown {
 /// beside the code, other code of the name, one a later change deleted or
 /// gave way to another kind of item and wrote again, or another kind now,
 /// is no move. A loss in the work tree is judged against the tree's file.
+/// Two files of the loss that both gained the code are no move.
 #[test]
 fn a_move_is_the_lost_code_arriving_where_it_was_not_and_kept_there() {
     let edited = "pub fn foo() -> u32 { 2 }\n";
@@ -775,14 +658,18 @@ fn a_move_is_the_lost_code_arriving_where_it_was_not_and_kept_there() {
     for (at, (shown, now, moved)) in cases.into_iter().enumerate() {
         let now = tree(now);
 
-        let repair = repair::moved(&search, &shown, &now, &held);
+        // clone: the same search is judged alone and beside a twin.
+        let alone = repair::moved_to(&[(search.clone(), shown.clone())], &now, &held);
+        let twin = (search.clone(), shown.clone());
+        let twice = repair::moved_to(&[(search.clone(), shown), twin], &now, &held);
 
         let to = self::anchor("src/b.rs::foo");
         let expected = moved.then(|| Repair {
             code: now.code(&to).unwrap(),
             to,
         });
-        assert_eq!(repair, expected, "case {at}");
+        assert_eq!(alone, expected, "case {at}");
+        assert_eq!(twice, None, "case {at}");
     }
 }
 
@@ -796,10 +683,9 @@ fn the_loss_is_the_newest_change_whose_file_before_wrote_the_item() {
         ("w^", "src/a.rs", FOO),
     ]);
     let anchor = anchor("src/a.rs::foo");
-    let search = foo_search(&anchor);
 
-    assert_eq!(repair::lost(&search, ["y^", "x^", "w^"], &held), Some(1));
-    assert_eq!(repair::lost(&search, ["y^"], &held), None);
+    assert_eq!(repair::lost(&anchor, ["y^", "x^", "w^"], &held), Some(1));
+    assert_eq!(repair::lost(&anchor, ["y^"], &held), None);
 }
 
 /// A stale file anchor whose gone file the history shows moved unchanged
@@ -847,7 +733,7 @@ fn a_file_anchor_follows_its_file_into_one_that_defines_an_item() {
 
 /// The role a stale anchor's code had is that of its definition where its
 /// file is judged: a helper under `#[cfg(test)] mod tests` of a file of
-/// code is test code, searched for in the test module it moved into.
+/// code is test code, repaired to the test module it moved into.
 #[test]
 fn a_test_helper_follows_its_code_into_another_test_module() {
     let tests = "#[cfg(test)]\nmod tests { fn fixture() {} }\n";
@@ -860,10 +746,6 @@ fn a_test_helper_follows_its_code_into_another_test_module() {
         ],
         &[],
     );
-    let decisions = [(
-        "d",
-        decision(&["src/a.rs::tests::fixture"], StatusName::Accepted),
-    )];
     let lost = format!("pub fn a() {{}}\n{tests}");
     let held = prior(&[
         ("lost", "src/a.rs", &lost),
@@ -876,12 +758,10 @@ fn a_test_helper_follows_its_code_into_another_test_module() {
         there: self::anchor("src/b.rs::tests::fixture"),
     };
 
-    let found = searches(&decisions, &here, &Renames::none());
     let shown = shown(Some("none"), Some("gained"), &[]);
-    let repair = repair::moved(&search, &shown, &here, &held);
+    let repair = repair::moved_to(&[(search, shown)], &here, &held);
 
     let to = "src/b.rs::tests::fixture".to_owned();
-    assert_eq!(found, [("src/a.rs::tests::fixture".to_owned(), to.clone())]);
     assert_eq!(repair.map(|repair| repair.to.to_string()), Some(to));
 }
 
@@ -933,7 +813,7 @@ fn a_planned_or_pending_anchor_is_never_repaired() {
     let here = Here::of(&named, &here);
     let mut asked = Asked::new(here.unresolved(&named));
     asked.read(elsewhere);
-    let found = repair::searched(&asked, &here, &Renames::none());
+    let found = repair::missing(&asked, &here);
     let gone = anchor("src/lib.rs::gone");
     let to = anchor("src/moved.rs::gone");
     let code = here.facts.code(&to).unwrap();
@@ -944,10 +824,7 @@ fn a_planned_or_pending_anchor_is_never_repaired() {
         .map(ToString::to_string)
         .collect();
 
-    let searched: Vec<String> = found
-        .iter()
-        .map(|search| search.anchor.to_string())
-        .collect();
+    let searched: Vec<String> = found.keys().map(ToString::to_string).collect();
     assert_eq!(searched, ["src/lib.rs::gone"]);
     assert_eq!(
         lines,
