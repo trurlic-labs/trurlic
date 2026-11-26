@@ -1,4 +1,4 @@
-component = "project"
+component = "store"
 choice = "Node files carry no history: a decision file holds its current text, and version control holds the revisions"
 reason = """
 A history list in each decision grew the file with every revision, conflicted when two branches revised one decision, and duplicated what version control keeps; the store carried a cap and migration code for it. Under tracked placement the project's git holds every revision of every node file with its author and date. The one earlier state the format needs, the text the owner accepted while a revision is proposed, is accepted_text.

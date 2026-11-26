@@ -1,5 +1,4 @@
-description = "MCP server: JSON-RPC over stdio, version negotiation, the client and the server's own requests, the tool-result envelope and the tools/list entries, over the tool layer"
+description = "MCP server, the transport over the tool layer: JSON-RPC over stdio, version negotiation, the client record and the server's own requests, the tool-result envelope and the tools/list entries"
 connects_to = [
-    "store",
     "tools",
 ]

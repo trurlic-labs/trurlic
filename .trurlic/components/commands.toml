@@ -1,4 +1,4 @@
-description = "CLI command handlers: init, check, fmt, migrate, query, install, the CLI twins of the tools (apply, status), and the serve entry point"
+description = "CLI command handlers: init, check, fmt, migrate, query, install, the CLI twins of the tools (apply, status) and the serve entry point, with the clap definitions that dispatch them (cli)"
 connects_to = [
     "discovery",
     "git",

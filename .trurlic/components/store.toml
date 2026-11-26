@@ -1,4 +1,4 @@
-description = "Decision graph: TOML node files, their canonical form, validation, atomic writes, file locking, migrations, and a shared graph's history commits"
+description = "The decision graph on disk, in parts that depend one way: model (the values of the graph's files, their limits and text rules), graph (the loaded ProjectState, validation, cycles, queries, placement issues), format (the graph directory's layout, canonical text, the typed load, the format version and the migration registry), quality (the [quality] bar compiled), write (the locks, a read, the Writer, init, migrate, the journaled commit and a shared graph's history), then apply (the one write's ops), cache (the code index's entries) and corpus (the seeded corpus of tests and benches)"
 connects_to = [
     "git",
 ]

@@ -1,4 +1,4 @@
-description = "The code index, pure: what an index is (index/), the resolvers that build one with tree-sitter or lexically (parse/, lexical/), the dispatch by kind, and the facts over a whole tree, what an anchor names among them (tree/)"
+description = "The code index, pure: the values an index holds and its cache encoding (index/), the resolvers that build one, tree-sitter's per language (parse/) and trurlic's own for data and prose files (lexical/), the facts over a whole tree's indexes, among them what an anchor names (facts/), and the dispatch by file kind that alone names them all (dispatch.rs)"
 connects_to = [
     "store",
 ]

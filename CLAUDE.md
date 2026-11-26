@@ -14,7 +14,7 @@ store      → git                         graph files: schema, canonical form, 
                                          migrations, a shared graph's history
 tools      → store, lint, sources,       the tools, known to no surface: specs (schema = parser),
              budget, discovery           `apply`, `status`, the hand-written reads, registry, result cap
-mcp        → tools, store, budget        JSON-RPC stdio server: protocol, client, envelope, `tools/list`
+mcp        → tools, budget               JSON-RPC stdio server: protocol, client, envelope, `tools/list`
 commands   → store, tools, mcp (serve),  init, apply, status, query, check, fmt, migrate, install, serve
              sources, lint, git,
              discovery, budget
