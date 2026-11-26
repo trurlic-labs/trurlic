@@ -171,12 +171,7 @@ impl Server {
             "tools/list" => Reply::Success(Body::Listed(tools::tool_list())),
             "tools/call" => {
                 let mut peer = Peer::new(reader, writer, &mut self.client, &request.id);
-                let reply = call_tool(&self.cwd, params, &mut peer);
-                if peer.cancelled() {
-                    Reply::Cancelled
-                } else {
-                    reply
-                }
+                call_tool(&self.cwd, params, &mut peer)
             }
             method => Reply::Failure {
                 code: METHOD_NOT_FOUND,
@@ -256,7 +251,7 @@ static NO_ARGUMENTS: LazyLock<Value> = LazyLock::new(|| json!({}));
 /// A tool listed in `tools/list`, called on the store found from `cwd`. A
 /// malformed call or an unknown tool is a protocol error; anything the
 /// tool refuses, a missing store included, is a tool result with
-/// `isError`.
+/// `isError`; a call the client cancelled while it waited gets no answer.
 fn call_tool(cwd: &Path, params: Option<&Map<String, Value>>, peer: &mut Peer<'_>) -> Reply {
     let Some(params) = params else {
         return invalid_params("tools/call needs params");
@@ -274,18 +269,29 @@ fn call_tool(cwd: &Path, params: Option<&Map<String, Value>>, peer: &mut Peer<'_
     }
     #[cfg(feature = "failpoints")]
     if failpoint::triggers(Site::ServerRequest) {
-        return Reply::Success(Body::Tool(ask_the_client(peer)));
+        let envelope = ask_the_client(peer);
+        return answered(peer, envelope);
     }
     let envelope = match discover(cwd) {
         Err(e) => tool_error(&e.into()),
         Ok(store) => match spec_tool {
             Some(tool) => tool
-                .call(&store, peer, object)
+                .call(&store, object)
                 .map_or_else(|refused| tool_error(&refused), structured_result),
             None => call_unspecified(&store, name, arguments),
         },
     };
-    Reply::Success(Body::Tool(envelope))
+    answered(peer, envelope)
+}
+
+/// `envelope` as the call's reply, or none when the client cancelled the
+/// call while it waited.
+fn answered(peer: &Peer<'_>, envelope: ToolEnvelope) -> Reply {
+    if peer.cancelled() {
+        Reply::Cancelled
+    } else {
+        Reply::Success(Body::Tool(envelope))
+    }
 }
 
 /// A tool that predates specs, every one a read: it runs on the graph

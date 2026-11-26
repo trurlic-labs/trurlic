@@ -4,15 +4,13 @@
 //! access for it after its arguments parse: a read the graph loaded under
 //! the shared lock, a write a [`Writer`] under the exclusive one, which a
 //! write may precede with a read of its own that holds no lock. So no
-//! write handler locks, and its `readOnlyHint` is the lock it gets; an
-//! interactive handler, which waits on the client, loads or writes the
-//! store itself. Its result is an [`Output`], which gives both
-//! its `outputSchema` and the JSON a call returns.
+//! write handler locks, and its `readOnlyHint` is the lock it gets. Its
+//! result is an [`Output`], which gives both its `outputSchema` and the
+//! JSON a call returns.
 
 use serde_json::{Map, Value, json};
 
 use super::{Args, At, Output, input_schema, output_schema, parse, to_value};
-use crate::mcp::peer::Peer;
 use crate::mcp::result::ToolError;
 use crate::store::{ProjectState, Store, Writer};
 
@@ -35,17 +33,6 @@ pub(crate) enum Access<A, O> {
         read: fn(&Store, A) -> Outcome<A>,
         write: fn(Writer<'_>, A) -> Outcome<O>,
     },
-    /// The store and the client: a handler that asks the client and waits
-    /// for the answer loads or writes the store itself, so it holds no
-    /// lock while a person fills in a form.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no tool asks the client until `accept` asks through an elicitation form"
-        )
-    )]
-    Interactive(fn(&Store, &mut Peer<'_>, A) -> Outcome<O>),
 }
 
 /// Whether a write can remove what it does not replace, MCP's
@@ -67,8 +54,8 @@ pub(crate) struct ToolSpec<A, O> {
 }
 
 impl<A: Args, O: Output> ToolSpec<A, O> {
-    /// Parse `arguments` and run the tool without a client: the CLI twin
-    /// of a read or a write. A tool that asks the client is refused.
+    /// Parse `arguments`, then run the tool on its access to `store`. An
+    /// argument the spec refuses touches no file.
     pub(crate) fn run(&self, store: &Store, arguments: &Map<String, Value>) -> Outcome<O> {
         let arguments = parse::<A>(arguments, At::Root)?;
         match self.access {
@@ -77,10 +64,6 @@ impl<A: Args, O: Output> ToolSpec<A, O> {
                 let arguments = read(store, arguments)?;
                 write(store.begin_write()?, arguments)
             }
-            Access::Interactive(_) => Err(ToolError::refused(format!(
-                "`{}` asks the MCP client, which a command has none of",
-                self.name
-            ))),
         }
     }
 }
@@ -92,15 +75,8 @@ pub(crate) trait SpecTool: Sync {
     /// The tool's entry in `tools/list`.
     fn definition(&self) -> Value;
 
-    /// Parse `arguments`, then run the tool on its access to `store`, and
-    /// return its result as JSON. An argument the spec refuses touches no
-    /// file.
-    fn call(
-        &self,
-        store: &Store,
-        peer: &mut Peer<'_>,
-        arguments: &Map<String, Value>,
-    ) -> Outcome<Value>;
+    /// [`ToolSpec::run`], its result as JSON.
+    fn call(&self, store: &Store, arguments: &Map<String, Value>) -> Outcome<Value>;
 }
 
 impl<A: Args, O: Output> SpecTool for ToolSpec<A, O>
@@ -129,17 +105,8 @@ where
         })
     }
 
-    fn call(
-        &self,
-        store: &Store,
-        peer: &mut Peer<'_>,
-        arguments: &Map<String, Value>,
-    ) -> Outcome<Value> {
-        let result = match self.access {
-            Access::Interactive(run) => run(store, peer, parse::<A>(arguments, At::Root)?),
-            Access::Read(_) | Access::Write { .. } => self.run(store, arguments),
-        };
-        result.map(|result| to_value(&result))
+    fn call(&self, store: &Store, arguments: &Map<String, Value>) -> Outcome<Value> {
+        self.run(store, arguments).map(|result| to_value(&result))
     }
 }
 
@@ -175,7 +142,6 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::mcp::peer::Client;
     use crate::mcp::spec::Fields;
     use crate::mcp::spec::Shown;
     use crate::mcp::spec::kinds::Text;
@@ -230,13 +196,6 @@ mod tests {
         })
     }
 
-    fn ask(_: &Store, peer: &mut Peer<'_>, named: Named) -> Outcome<Probed> {
-        Ok(Probed {
-            name: named.name,
-            count: usize::from(peer.cancelled()),
-        })
-    }
-
     fn spec(destructive: Destructive, access: Access<Named, Probed>) -> ToolSpec<Named, Probed> {
         ToolSpec {
             name: "probe",
@@ -249,11 +208,7 @@ mod tests {
 
     /// Run `tool` on a fresh store with `arguments`.
     fn call(tool: &ToolSpec<Named, Probed>, store: &Store, arguments: &Value) -> Outcome<Value> {
-        let mut client = Client::default();
-        let (mut reader, mut writer) = (&b""[..], Vec::new());
-        let id = json!(1);
-        let mut peer = Peer::new(&mut reader, &mut writer, &mut client, &id);
-        tool.call(store, &mut peer, arguments.as_object().unwrap())
+        tool.call(store, arguments.as_object().unwrap())
     }
 
     fn store() -> (TempDir, Store) {
@@ -269,11 +224,6 @@ mod tests {
             (spec(Destructive::No, write(unread)), false, false),
             (spec(Destructive::Yes, write(unread)), false, true),
             (spec(Destructive::No, write(unlocked)), false, false),
-            (
-                spec(Destructive::No, Access::Interactive(ask)),
-                false,
-                false,
-            ),
         ];
         for (tool, read_only, destructive) in cases {
             let definition = tool.definition();
@@ -312,13 +262,6 @@ mod tests {
         );
         assert_eq!(counted.unwrap(), json!({ "name": "auth", "count": 1 }));
 
-        let asked = call(
-            &spec(Destructive::No, Access::Interactive(ask)),
-            &store,
-            &arguments,
-        );
-        assert_eq!(asked.unwrap(), json!({ "name": "auth", "count": 0 }));
-
         let read_then_written = call(&spec(Destructive::No, write(unlocked)), &store, &arguments);
         assert_eq!(
             read_then_written.unwrap(),
@@ -337,26 +280,6 @@ mod tests {
             read,
             write: format,
         }
-    }
-
-    /// The CLI twin runs a read or a write as the call does, and has no
-    /// client to ask.
-    #[test]
-    fn a_twin_runs_without_a_client_and_refuses_a_tool_that_asks_one() {
-        let (_tmp, store) = store();
-        let arguments = json!({ "name": "auth" });
-        let arguments = arguments.as_object().unwrap();
-
-        let counted = spec(Destructive::No, Access::Read(count))
-            .run(&store, arguments)
-            .unwrap();
-        assert_eq!((counted.name.as_str(), counted.count), ("auth", 0));
-        let refused = spec(Destructive::No, Access::Interactive(ask))
-            .run(&store, arguments)
-            .map(|_| ())
-            .unwrap_err();
-        let payload = serde_json::to_value(&refused).unwrap();
-        assert_eq!(payload["kind"], "refused", "{payload}");
     }
 
     /// A refused argument never reaches the store: with none there, the
