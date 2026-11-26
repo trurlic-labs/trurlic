@@ -9,7 +9,7 @@ tags = [
     "quality",
     "validation",
 ]
-status = "proposed"
+status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
@@ -22,12 +22,4 @@ anchors = [
 depends_on = [
     "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",
     "store-text-binds-every-graph-file-and-the-quality-bar-binds-writes",
-]
-
-[accepted_text]
-choice = "apply refuses a decision that breaks a quality rule, naming the field, the rule, the measured value and the limit in the rule's unit, on every surface"
-reason = "A bar kept in a skill holds no agent at the write, and a graph kept to it by cleanups drifts between them. Writer::apply holds every decision a record, revise or merge writes to the bar, so the MCP tool and trurlic apply refuse alike. Built in: the store::text rules, a one-line choice of at most 200 bytes among them, at least one alternative, at least one anchor. From [quality]: reason_words min and max, alternatives_max, alternative_words_max, anchors_max, require_origin and patterns. A refusal is a typed Rule::Quality(QualityFault): a Limit carries the measured value and the bound, so the MCP rule name (reason_words_max) and the message (6 words, over the maximum of 5) come from one value. A refusal that states no measure leaves the caller guessing how much to cut."
-alternatives = [
-    "Keep the bar in a skill and clean the graph by script: rejected because nothing holds an agent to a skill at the write",
-    "Refuse with a message only: rejected because a caller branches on the rule name and cuts by the measured value",
 ]

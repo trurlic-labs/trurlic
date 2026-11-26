@@ -8,9 +8,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use super::state::ProjectState;
 use super::validate::{Issue, IssueKind, issue, sort};
 use crate::store::model::Placement;
-use crate::store::model::ProjectState;
 
 /// The names a list of files shows before it counts the rest.
 const SHOWN_FILES: usize = 5;

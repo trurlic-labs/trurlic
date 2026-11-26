@@ -1,4 +1,5 @@
-//! The migration registry: one step per format change, oldest first.
+//! The migration registry: one step per format change, oldest first, and
+//! the walk of a chain of them over a [`Tree`].
 //!
 //! A step rewrites a [`Tree`] in one format into the next: it changes the
 //! tables of the files the change touches and records in [`Tree::losses`]
@@ -13,8 +14,10 @@ use toml::Value;
 
 use crate::Result;
 
-use super::{File, Tree, format_0_5, loss};
-use crate::store::model::FormatVersion;
+use super::format_0_5;
+use super::report::StepReport;
+use super::tree::{File, Tree, loss};
+use crate::store::model::{FORMAT_VERSION, FormatVersion};
 
 /// One format change.
 pub(in crate::store) struct Step {
@@ -57,6 +60,50 @@ pub(in crate::store) const STEPS: [Step; 5] = [
         apply: format_0_5::reshape,
     },
 ];
+
+/// Whether a migration step starts or ends at `version`: a format some
+/// trurlic wrote.
+pub(in crate::store) fn names(version: FormatVersion) -> bool {
+    STEPS
+        .iter()
+        .any(|step| step.from == version || step.to == version)
+}
+
+/// The steps that lead from `from` to [`FORMAT_VERSION`], one after the
+/// other, or `None` when `steps` hold no such chain.
+pub(in crate::store) fn chain(steps: &[Step], from: FormatVersion) -> Option<&[Step]> {
+    let start = steps.iter().position(|step| step.from == from)?;
+    let rest = steps.get(start..)?;
+    let end = rest.iter().position(|step| step.to == FORMAT_VERSION)?;
+    let chain = rest.get(..=end)?;
+    let linked = chain
+        .iter()
+        .zip(chain.iter().skip(1))
+        .all(|(step, next)| step.to == next.from);
+    linked.then_some(chain)
+}
+
+/// Walk `steps` over `tree`, stamping each step's version after it.
+pub(in crate::store) fn walk(tree: &mut Tree, steps: &[Step]) -> Result<Vec<StepReport>> {
+    let mut reports = Vec::with_capacity(steps.len());
+    for step in steps {
+        (step.apply)(tree)?;
+        tree.stamp(step.to);
+        // Sorted, so the report shows each kind of fact as one section; a
+        // fact two equal edges or refs gave is one.
+        let mut facts = mem::take(&mut tree.facts);
+        facts.sort_unstable();
+        facts.dedup();
+        reports.push(StepReport {
+            from: step.from,
+            to: step.to,
+            change: step.change,
+            losses: mem::take(&mut tree.losses),
+            facts,
+        });
+    }
+    Ok(reports)
+}
 
 /// In 0.1.0 a component listed the components it connects to and a
 /// decision named the decision it supersedes; 0.2.0 holds both as edges
@@ -181,7 +228,7 @@ fn rename_key(tree: &mut Tree, old: &str, new: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::fixture_tree;
+    use super::super::testing::{fixture_tree, step};
     use super::*;
     use crate::store::FORMAT_VERSION;
 
@@ -330,5 +377,26 @@ mod tests {
             tree.losses,
             [loss(&File::Project, "trurlic_version", &"0.4.0".into())]
         );
+    }
+
+    #[test]
+    fn a_chain_runs_from_a_version_to_the_current_one_unbroken() {
+        let current = (0, 5, 0);
+        let registry = [
+            step((0, 1, 0), (0, 2, 0)),
+            step((0, 2, 0), (0, 4, 0)),
+            step((0, 4, 0), current),
+        ];
+        let from = |at: (u32, u32, u32)| {
+            chain(&registry, FormatVersion::new(at.0, at.1, at.2)).map(<[Step]>::len)
+        };
+        assert_eq!(from((0, 1, 0)), Some(3));
+        assert_eq!(from((0, 4, 0)), Some(1));
+        assert_eq!(from((0, 3, 0)), None, "no step starts there");
+
+        let broken = [step((0, 1, 0), (0, 2, 0)), step((0, 3, 0), current)];
+        assert!(chain(&broken, FormatVersion::new(0, 1, 0)).is_none());
+        let short = [step((0, 1, 0), (0, 2, 0))];
+        assert!(chain(&short, FormatVersion::new(0, 1, 0)).is_none());
     }
 }

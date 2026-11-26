@@ -33,7 +33,7 @@ impl Quality {
     /// Whether the table adds nothing to the built-in rules, so the
     /// canonical form leaves it out.
     #[must_use]
-    pub(crate) fn is_default(&self) -> bool {
+    pub(in crate::store) fn is_default(&self) -> bool {
         *self == Self::default()
     }
 }
@@ -93,7 +93,7 @@ pub(crate) enum DecisionField {
 impl DecisionField {
     /// The fields of a decision file, in the order of its keys: the order
     /// the bar reads them in.
-    pub(crate) const IN_FILE_ORDER: [Self; 6] = [
+    pub(in crate::store) const IN_FILE_ORDER: [Self; 6] = [
         Self::Choice,
         Self::Reason,
         Self::Alternatives,
@@ -132,7 +132,7 @@ struct QualityFields {
 
 /// A `[quality]` table no write could meet, or one out of bounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ConfigFault {
+enum ConfigFault {
     /// A maximum of 0, which every decision breaks: each holds a reason,
     /// an alternative and an anchor.
     ZeroMax {

@@ -1,10 +1,11 @@
-//! Named sites in the store's lock-holding paths and the MCP server's tool
-//! calls, for crash-consistency and failure-mode tests.
+//! Named sites in the store's lock-holding paths, the `apply` tool's read
+//! of the tree and the MCP server's tool calls, for crash-consistency and
+//! failure-mode tests.
 //!
 //! With the `failpoints` feature, `TRURLIC_FAILPOINT=<site>:<n>` acts the
 //! `n`-th time execution reaches `<site>`: at a [`hit`] the process aborts,
 //! at a [`fail`] the call returns an injected I/O error, at a [`panic()`] the
-//! thread panics, and at a [`triggers`] site the caller acts in its place.
+//! thread panics, and at a `triggers` site the caller acts in its place.
 //! Without the feature the first three are empty inline functions, the
 //! last does not exist, and release builds carry no trace of them. The
 //! feature is enabled only in the test job.
@@ -176,7 +177,7 @@ fn pause(site: Site, n: u64, marker: &std::path::Path) {
 
 /// Return an injected I/O error here if this is the armed hit.
 #[cfg(feature = "failpoints")]
-pub(super) fn fail(site: Site) -> std::io::Result<()> {
+pub(crate) fn fail(site: Site) -> std::io::Result<()> {
     match reached(site) {
         Some(n) => {
             diag!("trurlic: failpoint {}:{n} hit, failing", site.as_str());
@@ -191,7 +192,7 @@ pub(super) fn fail(site: Site) -> std::io::Result<()> {
 
 /// Panic here if this is the armed hit.
 #[cfg(feature = "failpoints")]
-pub(super) fn panic(site: Site) {
+pub(crate) fn panic(site: Site) {
     if let Some(n) = reached(site) {
         #[expect(
             clippy::panic,
@@ -222,12 +223,12 @@ pub(crate) fn hit(_site: Site) {}
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
 #[inline]
-pub(super) fn panic(_site: Site) {}
+pub(crate) fn panic(_site: Site) {}
 
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
 #[inline]
-pub(super) fn fail(_site: Site) -> std::io::Result<()> {
+pub(crate) fn fail(_site: Site) -> std::io::Result<()> {
     Ok(())
 }
 

@@ -3,7 +3,9 @@
 //! allow list per module ([`AllowList`]), closed by construction, of what
 //! its non-test code may name. The same reading of a module's non-test
 //! code finds where it spells a name ([`places_spelling`]), which holds a
-//! module off another whatever else it names.
+//! module off another whatever else it names, and each path it names into
+//! the crate outside a list of modules ([`places_beyond`]), which holds the
+//! parts of a module to one order.
 //!
 //! Every token of every Rust file under the checked directory is read,
 //! macro arguments and bodies included, a raw identifier as its name.
@@ -114,15 +116,9 @@ const MACROS: [&str; 10] = [
 pub(crate) fn faults(root: &Path, dir: &str, allowed: &AllowList) -> Vec<String> {
     let texts = sources(root);
     let dependencies = dependencies(&texts);
-    let read: BTreeMap<&str, Read> = texts
-        .iter()
-        .filter(|(path, _)| path.ends_with(".rs"))
-        .map(|(path, text)| (path.as_str(), read(text)))
-        .collect();
-    let tests = test_files(&read);
     let mut found = Vec::new();
-    for (path, file) in &read {
-        if !path.starts_with(&format!("{dir}/")) || tests.contains(path) {
+    for (path, file) in shipped(&texts) {
+        if !path.starts_with(&format!("{dir}/")) {
             continue;
         }
         let place = Place { path, dir };
@@ -159,6 +155,44 @@ pub(crate) fn places_spelling(root: &Path, dir: &str, names: &[&str]) -> Vec<Str
         for (line, token) in read(&text).tokens {
             if names.contains(&token.as_str()) {
                 found.push(format!("{path}:{line}: names `{token}`"));
+            }
+        }
+    }
+    found
+}
+
+/// Each path the non-test code of the module `module` (`store::write`), a
+/// path from the crate root, names into the crate outside every path of
+/// `within`, as `file:line: names `path``, files sorted. A path goes into
+/// the crate as [`faults`] reads it: `crate`, `$crate`, or `super`s read
+/// from the file's own module, a `use` list read whole. Each path of
+/// `within` is a module or an item from the crate root (`store::model`,
+/// `Error`), so a path through a re-export of a module above them names
+/// that module's item and is outside. An alias of a module above them is
+/// outside too: what it names ends in `as`, which no listed path holds.
+pub(crate) fn places_beyond(root: &Path, module: &str, within: &[&str]) -> Vec<String> {
+    // The files of the module and of those that hold it, which are all
+    // that tell whether one of its files is test code: no other is parsed.
+    let holders: Vec<&str> = module.split("::").collect();
+    let texts: Vec<(String, String)> = sources(root)
+        .into_iter()
+        .filter(|(path, _)| {
+            let own = module_path(path);
+            is_within(&own, module) || holders.starts_with(&own)
+        })
+        .collect();
+    let mut found = Vec::new();
+    for (path, file) in shipped(&texts) {
+        let own = module_path(path);
+        if !is_within(&own, module) {
+            continue;
+        }
+        for (line, named) in paths(&file.tokens) {
+            let Some(from_root) = from_crate(&named, &own) else {
+                continue;
+            };
+            if !within.iter().any(|listed| is_within(&from_root, listed)) {
+                found.push(format!("{path}:{line}: names `{}`", named.join("::")));
             }
         }
     }
@@ -285,6 +319,20 @@ fn marked_item(node: Node<'_>) -> Option<Range<usize>> {
         next = sibling.next_sibling();
     }
     next.map(|item| node.start_byte()..item.end_byte())
+}
+
+/// What the check reads of each Rust file of `texts` that is not test code
+/// whole, by path.
+fn shipped(texts: &[(String, String)]) -> BTreeMap<&str, Read> {
+    let read: BTreeMap<&str, Read> = texts
+        .iter()
+        .filter(|(path, _)| path.ends_with(".rs"))
+        .map(|(path, text)| (path.as_str(), read(text)))
+        .collect();
+    let tests = test_files(&read);
+    read.into_iter()
+        .filter(|(path, _)| !tests.contains(path))
+        .collect()
 }
 
 /// The files of `read` that are test code whole: under an inner
@@ -451,15 +499,27 @@ fn file_faults(
             (name, "!", _) if MACROS.contains(&name) => found.push((line, format!("{name}!"))),
             _ => {}
         }
+    }
+    for (line, path) in paths(tokens) {
+        if let Some(fault) = path_fault(&path, module, dependencies, allowed) {
+            found.push((line, fault));
+        }
+    }
+    found
+}
+
+/// Each path `tokens` name, with its line: every path or `use` tree that
+/// starts at a token ([`starts_path`]), a list's entries each one.
+fn paths(tokens: &[(usize, String)]) -> Vec<(usize, Vec<String>)> {
+    let mut found = Vec::new();
+    for at in 0..tokens.len() {
         if !starts_path(tokens, at) {
             continue;
         }
+        let line = tokens.get(at).map_or(0, |(line, _)| *line);
         let mut next = at;
-        for path in read_path(tokens, &mut next, Vec::new()) {
-            if let Some(fault) = path_fault(&path, module, dependencies, allowed) {
-                found.push((line, fault));
-            }
-        }
+        let read = read_path(tokens, &mut next, Vec::new());
+        found.extend(read.into_iter().map(|path| (line, path)));
     }
     found
 }
@@ -586,15 +646,11 @@ fn read_path(tokens: &[(usize, String)], at: &mut usize, prefix: Vec<String>) ->
     }
 }
 
-/// Why `path`, in a file of the module `module`, reaches outside what
-/// `allowed` holds; `None` when it does not. A path of `super`s is read
-/// from the crate root, as the module it names.
-fn path_fault(
-    path: &[String],
-    module: &[&str],
-    dependencies: &[String],
-    allowed: &AllowList,
-) -> Option<String> {
+/// The segments `path`, in a file of the module `module`, names from the
+/// crate root, when it goes into the crate: `crate` or `$crate` first, or
+/// `super`s, read from the file's own module. `None` for a path that
+/// starts anywhere else. A `self` segment is no step.
+fn from_crate<'a>(path: &'a [String], module: &[&'a str]) -> Option<Vec<&'a str>> {
     let segments: Vec<&str> = path
         .iter()
         .map(String::as_str)
@@ -604,31 +660,53 @@ fn path_fault(
         .iter()
         .take_while(|segment| **segment == "super")
         .count();
-    let above = module
-        .get(..module.len().saturating_sub(supers))
-        .unwrap_or_default();
-    let from_root: Vec<&str> = above
-        .iter()
-        .chain(segments.get(supers..)?)
-        .copied()
-        .collect();
-    let (root, rest): (&str, &[&str]) = match segments.as_slice() {
-        [] => return None,
-        [_, ..] if supers > 0 => ("crate", &from_root),
-        [first, rest @ ..] => (first, rest),
-    };
+    match segments.as_slice() {
+        ["crate" | "$crate", rest @ ..] => Some(rest.to_vec()),
+        [_, ..] if supers > 0 => {
+            let above = module
+                .get(..module.len().saturating_sub(supers))
+                .unwrap_or_default();
+            Some(
+                above
+                    .iter()
+                    .chain(segments.get(supers..)?)
+                    .copied()
+                    .collect(),
+            )
+        }
+        [] | [_, ..] => None,
+    }
+}
+
+/// Why `path`, in a file of the module `module`, reaches outside what
+/// `allowed` holds; `None` when it does not. A path of `super`s is read
+/// from the crate root, as the module it names.
+fn path_fault(
+    path: &[String],
+    module: &[&str],
+    dependencies: &[String],
+    allowed: &AllowList,
+) -> Option<String> {
     let spelled = path.join("::");
     let refuse = || Some(format!("names `{spelled}`"));
-    match root {
+    if let Some(rest) = from_crate(path, module) {
+        return match rest.as_slice() {
+            rest if allowed.modules.iter().any(|module| is_within(rest, module)) => None,
+            ["store", item, ..] if allowed.store_items.contains(item) => None,
+            _ => refuse(),
+        };
+    }
+    let segments: Vec<&str> = path
+        .iter()
+        .map(String::as_str)
+        .filter(|segment| *segment != "self")
+        .collect();
+    let (root, rest) = segments.split_first()?;
+    match *root {
         "std" | "core" | "alloc" => match rest {
             [.., "as"] => refuse(),
             [module, ..] if STD_MODULES.contains(module) => None,
             [module, item, ..] if allowed.std_items.contains(&(*module, *item)) => None,
-            _ => refuse(),
-        },
-        "crate" | "$crate" => match rest {
-            _ if allowed.modules.iter().any(|module| is_within(rest, module)) => None,
-            ["store", item, ..] if allowed.store_items.contains(item) => None,
             _ => refuse(),
         },
         name if allowed.crates.contains(&name) => None,
@@ -643,8 +721,8 @@ fn path_fault(
     }
 }
 
-/// Whether `path`, segments from the crate root, is in `module`, a module
-/// path such as `code::index`.
+/// Whether `path`, segments from the crate root, is in `module`, a path
+/// from the crate root such as `code::index`.
 fn is_within(path: &[&str], module: &str) -> bool {
     let module: Vec<&str> = module.split("::").collect();
     path.starts_with(&module)
@@ -810,6 +888,82 @@ mod tests {
         assert_eq!(
             path_fault(&path("super::super::parse::Token"), &module, &[], &below),
             Some("names `super::super::parse::Token`".to_owned())
+        );
+    }
+
+    /// Each form a path into the crate above a part can take, one per file
+    /// of the part `index::high`, which may name `index::low` and `Error`.
+    const ABOVE: &[(&str, &str)] = &[
+        (
+            "below",
+            "use crate::index::low::Item;\nuse super::super::low;\nuse crate::Error;\nfn f() -> low::Item { super::super::low::Item }\nmod checks {\n    #![cfg(test)]\n    use crate::index::Root;\n}\n",
+        ),
+        ("supers", "fn f() { super::super::Root; }\n"),
+        ("supers_listed", "use super::super::{low, Root};\n"),
+        ("root_reexport", "use super::super::super::Root;\n"),
+        ("crate_root_reexport", "use crate::Root;\n"),
+        ("group", "use crate::{Error, index::Root};\n"),
+        (
+            "alias",
+            "use crate::index as above;\nfn f() { above::Root; }\n",
+        ),
+        ("self_alias", "use crate::index::{self as above};\n"),
+        ("super_alias", "use super::super as above;\n"),
+        (
+            "dollar_crate",
+            "macro_rules! m { () => { $crate::index::Root }; }\n",
+        ),
+        ("sibling", "fn f() { crate::other::g(); }\n"),
+    ];
+
+    #[test]
+    fn each_path_above_a_part_is_found_however_it_is_spelled() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let write = |path: &str, text: &str| {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        write("Cargo.toml", "[package]\n");
+        write(
+            "src/lib.rs",
+            "mod index;\nmod other;\npub use index::Root;\n",
+        );
+        write("src/other.rs", "pub fn g() {}\n");
+        write("src/index/low.rs", "pub struct Item;\n");
+        let modules: String = ABOVE
+            .iter()
+            .map(|(name, _)| format!("mod {name};\n"))
+            .collect();
+        write(
+            "src/index/high/mod.rs",
+            &format!("{modules}#[cfg(test)]\nmod tests;\n"),
+        );
+        write("src/index/high/tests.rs", "use crate::other::g;\n");
+        write(
+            "src/index/mod.rs",
+            "pub struct Root;\nmod low;\nmod high;\n",
+        );
+        for (name, text) in ABOVE {
+            write(&format!("src/index/high/{name}.rs"), text);
+        }
+
+        let found = places_beyond(root, "index::high", &["index::low", "index::high", "Error"]);
+
+        let faulted: std::collections::BTreeSet<&str> = found
+            .iter()
+            .map(|fault| fault.split(':').next().unwrap())
+            .collect();
+        let expected: std::collections::BTreeSet<String> = ABOVE
+            .iter()
+            .filter(|(name, _)| *name != "below")
+            .map(|(name, _)| format!("src/index/high/{name}.rs"))
+            .collect();
+        assert_eq!(
+            faulted,
+            expected.iter().map(String::as_str).collect(),
+            "{found:#?}"
         );
     }
 

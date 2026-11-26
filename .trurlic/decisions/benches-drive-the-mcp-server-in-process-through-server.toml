@@ -4,7 +4,7 @@ reason = "Server holds the directory it finds the store from and its record of t
 alternatives = [
     "Spawn `trurlic serve` per bench: every sample would add pipe round trips and a second process's scheduling to the request path it means to time",
     "Run the benches in a CI job on a hosted benchmarking service: CI minutes and a third-party account for numbers one user does not read",
-    "Make mcp a public module: widens the library surface the owner fixed at cli::main, FORMAT_VERSION and bench",
+    "Make mcp a public module: widens the library surface the owner fixed at main, FORMAT_VERSION and bench",
     "Self dev-dependency enabling the feature: refused by cargo-deny's wildcard ban",
 ]
 tags = [

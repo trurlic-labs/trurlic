@@ -23,7 +23,7 @@ pub(crate) const MAX_TAG_BYTES: usize = 128;
 
 /// Minimum byte length for a decision's `reason` field.
 /// Forces actual reasoning instead of rubber-stamp approvals.
-pub(in crate::store) const MIN_REASON_BYTES: usize = 10;
+pub(super) const MIN_REASON_BYTES: usize = 10;
 
 /// Maximum byte length for a decision's `choice` field.
 /// A choice is a concise title, not a paragraph.
@@ -56,7 +56,7 @@ pub(crate) const MAX_LIST_ITEMS: usize = 100;
 pub(crate) const MAX_QUALITY_PATTERNS: usize = 32;
 
 /// Maximum byte length of one `[quality]` pattern's text.
-pub(in crate::store) const MAX_PATTERN_BYTES: usize = 500;
+pub(super) const MAX_PATTERN_BYTES: usize = 500;
 
 /// Maximum bytes the Thompson NFA of one pattern, forward or reverse, may
 /// take to compile; a pattern past it is refused. A short text can still
@@ -92,7 +92,7 @@ pub(in crate::store) const MAX_PATTERN_CACHE_BYTES: usize = 320 * 1024;
 /// page ends. What a search built stays charged, a repair the write leaves
 /// included. It holds a table of 32 ordinary patterns over a full batch of
 /// prose in many scripts.
-pub(crate) const MAX_PATTERN_CACHE_TOTAL_BYTES: usize = 1536 * 1024;
+pub(in crate::store) const MAX_PATTERN_CACHE_TOTAL_BYTES: usize = 1536 * 1024;
 
 /// Bytes the `[quality]` patterns may read over what one `apply` batch
 /// writes: each pattern charges the bytes of each text it searches, one
@@ -103,7 +103,7 @@ pub(crate) const MAX_PATTERN_CACHE_TOTAL_BYTES: usize = 1536 * 1024;
 /// (5 s), so the bound is the write's own and lower than a report's; with
 /// [`MAX_PATTERN_CACHE_TOTAL_BYTES`] it bounds what the patterns cost a
 /// write once compiled.
-pub(crate) const MAX_WRITE_PATTERN_BYTES: usize = 100_000_000;
+pub(in crate::store) const MAX_WRITE_PATTERN_BYTES: usize = 100_000_000;
 
 /// Bytes the `[quality]` patterns may read in one `status` lint section,
 /// counted as a write counts them. The section holds no lock; it reads

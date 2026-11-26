@@ -22,7 +22,8 @@ use crate::Result;
 mod anchors;
 mod graph;
 
-use super::{Fact, File, Loss, PatternRecord, Tree, loss};
+use super::report::{Fact, Loss, PatternRecord};
+use super::tree::{File, Tree, loss};
 use crate::store::model::Placement;
 
 use anchors::anchors;
@@ -229,7 +230,7 @@ fn stem_is_name(
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::RefText;
+    use super::super::report::RefText;
     use super::super::testing::fixture_tree;
     use super::*;
     use crate::Error;
@@ -406,7 +407,7 @@ mod tests {
         assert_eq!(project["placement"].as_str(), Some("tracked"));
         assert!(tree.facts.contains(&Fact::Placement {
             placement: Placement::Tracked,
-            basis: super::super::PlacementBasis::Stated,
+            basis: super::super::report::PlacementBasis::Stated,
         }));
     }
 

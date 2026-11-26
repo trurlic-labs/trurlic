@@ -10,7 +10,7 @@ tags = [
     "serialization",
     "storage",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/store/format/canonical.rs", symbol = "Canonical" },
@@ -21,13 +21,4 @@ anchors = [
 ]
 depends_on = [
     "one-canonical-form-for-every-graph-file",
-]
-
-[accepted_text]
-choice = "store::canonical is the one serializer of graph files: node types derive Deserialize and no Serialize, and each write reads its text back as the value written"
-reason = "The form is defined by Trurlic, not by the TOML library's printer: the printer decides array layout, quoting and key order itself and may change them in a release, so a dependency update would rewrite files nobody edited. With no Serialize on Project, Component, Decision or Anchor, no other code can write one, and each type's canonical text is spelled out key by key in canonical.rs. prepare_write parses the text back and refuses it with Error::CanonicalUnreadable or Error::CanonicalDrift unless it reads as the value it came from. A load tells whether a file is canonical with is_canonical, which drives the same emitter into a sink that matches each piece against the file's bytes and stops at the first difference; a timestamp or a format version is written straight through its Display and a word range bound by bound, so the check allocates nothing and costs no more than the bytes it matches."
-alternatives = [
-    "Derive Serialize and print with the TOML library: rejected because the layout would follow the library, not the format, and could change on a dependency update",
-    "Format with a layout-preserving TOML editor: rejected because it is a new dependency that keeps a document's layout where the format needs one fixed layout",
-    "Render the canonical text and compare strings at load: rejected because it allocates a file-sized string per node on every load for a yes or no",
 ]

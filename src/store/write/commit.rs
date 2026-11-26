@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 
+use crate::failpoint::{self, Site};
 use crate::{Error, Result};
 
 use super::durable::{place, sync_dir};
-use super::failpoint::{self, Site};
 use super::history::History;
 use super::lock::StoreLock;
 use crate::store::format::{Canonical, canonical};

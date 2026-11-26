@@ -1,7 +1,7 @@
 //! Trurlic as a library: the binary's entry [`main`], the graph format
 //! the binary writes ([`FORMAT_VERSION`], which integration tests name)
-//! and, with the `bench` feature, the module `bench`. Every module is
-//! `pub(crate)`, so the compiler reports what nothing in the crate uses.
+//! and, with the `bench` feature, the module `bench`. No module is public,
+//! so the compiler reports what nothing in the crate uses.
 
 pub(crate) mod budget;
 pub(crate) mod cli;
@@ -10,6 +10,7 @@ pub(crate) mod commands;
 pub(crate) mod console;
 pub(crate) mod discovery;
 pub(crate) mod error;
+pub(crate) mod failpoint;
 pub(crate) mod git;
 pub(crate) mod lint;
 pub(crate) mod mcp;

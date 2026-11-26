@@ -23,7 +23,7 @@ use super::version::FormatVersion;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Project {
-    pub(crate) format_version: FormatVersion,
+    pub(in crate::store) format_version: FormatVersion,
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) placement: Placement,
@@ -78,7 +78,7 @@ pub struct Decision {
     pub(crate) status: Status,
     /// The task or plan row that recorded the decision, as its writer named it.
     pub(crate) origin: Option<String>,
-    pub(crate) created: Timestamp,
+    pub(in crate::store) created: Timestamp,
     pub anchors: BTreeSet<Anchor>,
     pub(crate) depends_on: BTreeSet<String>,
 }
@@ -96,7 +96,7 @@ pub(crate) enum Status {
 
 impl Status {
     #[must_use]
-    pub(crate) const fn kind(&self) -> StatusName {
+    pub(in crate::store) const fn kind(&self) -> StatusName {
         match self {
             Self::Proposed { .. } => StatusName::Proposed,
             Self::Accepted { .. } => StatusName::Accepted,
@@ -158,7 +158,7 @@ pub(crate) enum AcceptedVia {
 
 impl AcceptedVia {
     #[must_use]
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub(in crate::store) const fn as_str(self) -> &'static str {
         match self {
             Self::Elicitation => "elicitation",
             Self::Cli => "cli",
@@ -205,7 +205,7 @@ struct DecisionFields {
 
 /// A status its fields contradict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StatusFault {
+enum StatusFault {
     /// `accepted_via` on a proposed decision.
     ProposedWithVia,
     /// `accepted_text` on an accepted decision.
@@ -305,7 +305,7 @@ impl Anchor {
     /// other as a directory: a directory holds the anchors in it, and a
     /// directory anchor applies to every file under it.
     #[must_use]
-    pub(crate) fn overlaps(&self, path: &str) -> bool {
+    pub(in crate::store) fn overlaps(&self, path: &str) -> bool {
         let under = |inner: &str, outer: &str| {
             inner
                 .strip_prefix(outer)

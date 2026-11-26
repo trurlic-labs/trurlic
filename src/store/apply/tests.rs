@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::Error;
 use crate::store::TextFault;
-use crate::store::model::NodeFile;
+use crate::store::graph::NodeFile;
 use crate::store::testing::{
     anchor, apply, apply_batch, batch, changed_in, graph, graph_log, record, refused, rename,
     revise, shared_store,

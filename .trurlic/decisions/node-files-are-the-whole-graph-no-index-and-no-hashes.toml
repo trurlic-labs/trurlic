@@ -15,7 +15,7 @@ status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/store/format/load.rs", symbol = "Store::read_graph" },
-    { file = "src/store/model/state.rs", symbol = "ProjectState" },
+    { file = "src/store/graph/state.rs", symbol = "ProjectState" },
     { file = "tests/integration/stdio.rs", symbol = "the_next_call_sees_a_hand_edit" },
 ]
 depends_on = [

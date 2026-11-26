@@ -15,8 +15,8 @@ pub(crate) use result::Answer;
 
 use std::collections::BTreeMap;
 
+use crate::failpoint::{self, Site};
 use crate::sources::{self, Seen};
-use crate::store::failpoint::{self, Site};
 
 use crate::store::limits::{
     MAX_ALTERNATIVE_BYTES, MAX_ANCHOR_PATH_BYTES, MAX_ANCHOR_SYMBOL_BYTES, MAX_BATCH_OPS,

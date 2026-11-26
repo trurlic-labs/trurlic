@@ -10,7 +10,7 @@ tags = [
     "dependencies",
     "serialization",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-11-23T20:56:08.645435002Z"
 anchors = [
     { file = "clippy.toml" },
@@ -23,13 +23,4 @@ anchors = [
 depends_on = [
     "one-canonical-form-for-every-graph-file",
     "toml-as-the-sole-serialization-format-with-one-file-per",
-]
-
-[accepted_text]
-choice = "Timestamps are a std-only Timestamp type in the store, written as RFC 3339 UTC strings byte for byte as chrono wrote them"
-reason = "chrono, which typed every stamp, is flagged unmaintained for all versions (RUSTSEC-2026-0543), so cargo deny fails on it. The crate needs one UTC instant that parses, prints, orders and adds a duration, so store::time::Timestamp replaces it on std alone. It holds i64 seconds and u32 nanoseconds since the Unix epoch, within 0000-01-01T00:00:00Z to 9999-12-31T23:59:59.999999999Z: the derived order is time order and a value means the same on every platform. A decision's created stamp is part of its canonical form, and a stamp an older release wrote must read back canonical so that fmt and a migration leave it as it is, so Display writes exactly what chrono 0.4's serde wrote (write_rfc3339 with SecondsFormat::AutoSi and Z): YYYY-MM-DDTHH:MM:SS, then the fewest of 0, 3, 6 or 9 fraction digits that hold the nanoseconds, then Z. Before chrono was removed a differential test matched it on 2 million random instants, on every stamp in this repo's graph and on every mutated string the new parser accepts, and the seeded corpus kept its bytes. Parsing is RFC 3339's date-time and nothing else: T or t; 1 to 9 fraction digits; Z, z or a +HH:MM / -HH:MM offset folded into UTC. It refuses a space for T, UTC for Z, signed years, more than 9 fraction digits, the leap second :60, impossible dates and instants outside the range with a TimestampError, which a node file's TOML error reports with the file's path. Civil dates convert with Howard Hinnant's days_from_civil and civil_from_days. Timestamp::now is the crate's one clock read, enforced by a disallowed-methods lint on SystemTime::now, and fails with Error::Clock when the clock reads outside the range."
-alternatives = [
-    "A maintained datetime crate such as jiff or time - rejected: a new dependency and its tree for one instant type that only needs to parse, print, order and add a duration",
-    "Keep chrono and ignore the advisory in deny.toml - rejected: an unmaintained crate stays in the build and the ignore entry stops cargo deny from guarding it",
-    "SystemTime as the representation - rejected: its range and resolution are per platform (100 ns on Windows), so a 9-digit fraction would not round-trip byte for byte",
 ]

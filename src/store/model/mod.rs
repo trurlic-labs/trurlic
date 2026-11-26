@@ -1,15 +1,15 @@
-//! The graph's values: the types its files are read as, the rules every
-//! text and name in them meets, the limits every file and value is held
-//! to, and the state one load reads. Nothing here touches disk, runs a
-//! process or reads the clock but [`Timestamp::now`], so `code`, `lint` and
-//! `error` name the store's types from here alone, and every other part of
-//! the store depends on this one, never the other way.
+//! The values of the graph's files: the types they are read as, the rules
+//! every text and name in them meets, and the limits every file and value
+//! is held to. Nothing here touches disk, runs a process or reads the
+//! clock but [`Timestamp::now`]. `code` names the store's types from here
+//! alone; `lint` and `error` name these and a few verdicts of the parts
+//! after it. Every other part of the store depends on this one, never the
+//! other way.
 
 pub(crate) mod limits;
 mod name;
 mod quality;
 mod schema;
-mod state;
 mod text;
 mod time;
 mod version;
@@ -22,8 +22,6 @@ pub(crate) use schema::{
     Decision, PROJECT_COMPONENT, PROJECT_FILE, Project, STATE_DIR, STORE_DIR, Status, StatusName,
 };
 pub use schema::{FORMAT_VERSION, Placement};
-pub(crate) use state::NodeFile;
-pub use state::ProjectState;
 pub(in crate::store) use text::fault;
 pub(crate) use text::{TextFault, TextField};
 pub(crate) use time::{Timestamp, TimestampError};

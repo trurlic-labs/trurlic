@@ -180,7 +180,7 @@ mod tests {
     use super::*;
     use crate::store::Field;
     use crate::store::apply::*;
-    use crate::store::model::NodeFile;
+    use crate::store::graph::NodeFile;
     use crate::store::testing::{
         add, apply, graph, named, refused, rename, sample_component, write_node,
     };

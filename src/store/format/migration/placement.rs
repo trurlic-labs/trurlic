@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::{Error, Result};
 
-use super::{File, PlacementBasis};
+use super::report::PlacementBasis;
 use crate::store::format::Store;
 use crate::store::graph::{listed, partition};
 use crate::store::model::Placement;
@@ -63,12 +63,12 @@ impl fmt::Display for PlacementDoubt {
 }
 
 impl Store {
-    /// The placement `source` gives a store of `files`: git tracks all of
-    /// them, or none, or the owner stated it.
+    /// The placement `source` gives a store of `files`, paths under
+    /// `.trurlic/`: git tracks all of them, or none, or the owner stated it.
     pub(super) fn placement(
         &self,
         source: PlacementSource,
-        files: &[File],
+        files: impl Iterator<Item = String>,
     ) -> Result<(Placement, PlacementBasis)> {
         let tracked = match source {
             PlacementSource::Stated(placement) => return Ok((placement, PlacementBasis::Stated)),
@@ -77,7 +77,6 @@ impl Store {
                 tracked.map_err(|e| self.doubt(PlacementDoubt::Git(Box::new(e))))?
             }
         };
-        let files: Vec<String> = files.iter().map(ToString::to_string).collect();
         let (tracked, untracked) = partition(files, &tracked);
         match (tracked.len(), untracked.len()) {
             (files, 0) => Ok((Placement::Tracked, PlacementBasis::AllTracked { files })),

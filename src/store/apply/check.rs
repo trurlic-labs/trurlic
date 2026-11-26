@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::fmt::Display;
 
-use super::decision::Context;
+use super::context::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, ListEdit};
 use super::refusal::{NodeKind, Rule};
@@ -320,8 +320,9 @@ mod tests {
     use crate::Error;
     use crate::store::apply::*;
     use crate::store::format::canonical;
+    use crate::store::graph::NodeFile;
     use crate::store::limits::{MAX_QUALITY_PATTERNS, MAX_WRITE_PATTERN_BYTES};
-    use crate::store::model::{Anchor, NodeFile};
+    use crate::store::model::Anchor;
     use crate::store::testing::{
         OUTGROWS_ITS_CACHE, add, anchor, apply, apply_batch, batch, coin_flips, files, graph,
         named, record, refused, revise, sample_decision, write_node,

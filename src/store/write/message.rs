@@ -20,7 +20,7 @@ pub(crate) enum Tool {
 
 impl Tool {
     #[must_use]
-    pub(crate) const fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Init => "init",
             Self::Fmt => "fmt",
@@ -62,7 +62,11 @@ impl TryFrom<MessageFields> for CommitMessage {
 impl CommitMessage {
     /// Fails when the origin or the session breaks the one-line rule of
     /// `store::model::text`: a line break in either would forge a trailer.
-    pub(crate) fn new(tool: Tool, origin: Option<String>, session: Option<String>) -> Result<Self> {
+    pub(in crate::store) fn new(
+        tool: Tool,
+        origin: Option<String>,
+        session: Option<String>,
+    ) -> Result<Self> {
         for (field, value) in [(TextField::Origin, &origin), (TextField::Session, &session)] {
             if let Some(fault) = value.as_deref().and_then(|text| fault(field, text)) {
                 return Err(Error::TrailerText { field, fault });
@@ -77,7 +81,7 @@ impl CommitMessage {
 
     /// The message of a write that carries no trailer, such as a command's.
     #[must_use]
-    pub(crate) const fn of(tool: Tool) -> Self {
+    pub(in crate::store) const fn of(tool: Tool) -> Self {
         Self {
             tool,
             origin: None,
@@ -88,7 +92,7 @@ impl CommitMessage {
     /// The commit message: the subject, then the trailers the write has,
     /// as a paragraph of their own.
     #[must_use]
-    pub(crate) fn render(&self) -> String {
+    pub(super) fn render(&self) -> String {
         let mut message = self.tool.as_str().to_owned();
         let trailers = [("Origin", &self.origin), ("Session", &self.session)];
         let mut first = true;

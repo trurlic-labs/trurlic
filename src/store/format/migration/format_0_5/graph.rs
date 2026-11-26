@@ -9,7 +9,8 @@ use toml::{Table, Value};
 
 use crate::{Error, Result};
 
-use super::super::{Fact, File, PatternRecord};
+use super::super::report::{Fact, PatternRecord};
+use super::super::tree::File;
 use super::{Notes, component, decision, pattern, project};
 use crate::store::graph::cycles;
 use crate::store::model::{PROJECT_COMPONENT, Placement};

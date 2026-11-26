@@ -24,7 +24,7 @@ use serde_json::{Map, Value, json};
 use crate::Result;
 use crate::console::diag;
 #[cfg(feature = "failpoints")]
-use crate::store::failpoint::{self, Site};
+use crate::failpoint::{self, Site};
 #[cfg(feature = "failpoints")]
 use crate::tools::ToolError;
 use crate::tools::{Tool, ToolResult};

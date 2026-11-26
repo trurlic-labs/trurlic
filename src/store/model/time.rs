@@ -80,7 +80,7 @@ pub enum TimestampError {
 
 impl Timestamp {
     /// 1970-01-01T00:00:00Z.
-    pub(crate) const UNIX_EPOCH: Self = Self { secs: 0, nanos: 0 };
+    pub(in crate::store) const UNIX_EPOCH: Self = Self { secs: 0, nanos: 0 };
 
     /// The system clock's reading: the one place the crate reads it, as the
     /// `disallowed-methods` lint on `SystemTime::now` enforces. Fails when
@@ -93,7 +93,7 @@ impl Timestamp {
 
     /// `None` past 9999-12-31T23:59:59.999999999Z.
     #[must_use]
-    pub(crate) fn checked_add(self, duration: Duration) -> Option<Self> {
+    pub(in crate::store) fn checked_add(self, duration: Duration) -> Option<Self> {
         let mut secs = self
             .secs
             .checked_add(i64::try_from(duration.as_secs()).ok()?)?;
@@ -107,7 +107,7 @@ impl Timestamp {
 
     /// `None` before 0000-01-01T00:00:00Z.
     #[must_use]
-    pub(crate) fn checked_sub(self, duration: Duration) -> Option<Self> {
+    fn checked_sub(self, duration: Duration) -> Option<Self> {
         let mut secs = self
             .secs
             .checked_sub(i64::try_from(duration.as_secs()).ok()?)?;

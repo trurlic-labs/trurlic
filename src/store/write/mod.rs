@@ -10,7 +10,6 @@ mod access;
 mod commit;
 mod create;
 mod durable;
-pub(crate) mod failpoint;
 mod history;
 mod journal;
 mod lock;
@@ -24,5 +23,5 @@ pub(crate) use durable::sync_dir;
 #[cfg(any(test, feature = "bench"))]
 pub(in crate::store) use history::History;
 pub(crate) use history::HistoryFinding;
-pub(crate) use lock::StoreLock;
+pub(super) use lock::StoreLock;
 pub(in crate::store) use message::{CommitMessage, Tool};

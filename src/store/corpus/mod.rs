@@ -100,13 +100,13 @@ const HOUR: Duration = Duration::from_secs(60 * 60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Corpus {
     /// Decisions in the store, project-wide ones included.
-    pub(crate) decisions: usize,
+    decisions: usize,
     /// Share of the source files that anchors name, in percent, rounded
     /// down per component. It holds exactly while each component's
     /// anchors outnumber its anchored files, as they do at [`Corpus::SIZES`].
-    pub(crate) anchored_files_percent: u8,
+    anchored_files_percent: u8,
     /// Seeds every draw; two seeds give two corpora of the same shape.
-    pub(crate) seed: u64,
+    seed: u64,
 }
 
 impl Corpus {
@@ -127,7 +127,7 @@ impl Corpus {
     }
 
     /// Create the store in `project_dir/.trurlic` and the source tree in
-    /// `project_dir/src`. Fails like [`Store::create`] when a store is there.
+    /// `project_dir/src`. Fails like `Store::create` when a store is there.
     pub fn write(&self, project_dir: &Path) -> Result<Store> {
         self.write_as(project_dir, Placement::Tracked)
     }

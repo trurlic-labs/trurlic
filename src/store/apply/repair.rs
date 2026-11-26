@@ -15,13 +15,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::check::{Fault, Sources};
-use super::decision::Context;
+use super::context::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, OpKind, Repair, RepairAnchors};
 use super::refusal::{NodeKind, Rule};
 use super::{Done, LeftRepair, Repaired};
+use crate::store::graph::ProjectState;
 use crate::store::model::DecisionField;
-use crate::store::model::ProjectState;
 use crate::store::model::{Anchor, Decision};
 use crate::store::quality::{Bar, Breach, Hit, Place, Scan, texts};
 
@@ -302,7 +302,8 @@ mod tests {
 
     use super::*;
     use crate::store::apply::*;
-    use crate::store::model::{Anchor, NodeFile, Status};
+    use crate::store::graph::NodeFile;
+    use crate::store::model::{Anchor, Status};
     use crate::store::testing::{
         OUTGROWS_ITS_CACHE, anchor, apply, changed_in, coin_flips, files, graph, graph_log, named,
         refused, sample_decision, shared_store, write_node,

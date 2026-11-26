@@ -25,7 +25,7 @@ anchors = [
     { file = "src/store/quality/bar/mod.rs", symbol = "Bar::judge_patterns" },
     { file = "src/store/quality/bar/mod.rs", symbol = "tests::the_total_is_refused_at_the_text_whose_search_passed_it" },
     { file = "src/store/quality/bar/pattern.rs", symbol = "Scan" },
-    { file = "src/store/quality/mod.rs", symbol = "Store::prepare_bar" },
+    { file = "src/store/write/access.rs", symbol = "Store::prepare_bar" },
 ]
 depends_on = [
     "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",

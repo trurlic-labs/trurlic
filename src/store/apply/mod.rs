@@ -14,6 +14,7 @@
 
 mod check;
 mod component;
+mod context;
 mod decision;
 mod edit;
 mod ops;
@@ -33,14 +34,14 @@ use crate::store::write::{CommitMessage, Tool};
 use crate::store::quality::{Bar, Hit, PreparedBar, Scan};
 
 use crate::store::format::Store;
+use crate::store::graph::NodeFile;
 use crate::store::model::DecisionField;
-use crate::store::model::NodeFile;
 use crate::store::model::{Anchor, StatusName};
 use crate::store::write::Writer;
 use crate::{Error, Result};
 
 use check::Fault;
-use decision::Context;
+use context::Context;
 use edit::{Before, Edit};
 
 pub(crate) use ops::{

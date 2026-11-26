@@ -35,7 +35,7 @@ pub(crate) enum Op {
 
 impl Op {
     #[must_use]
-    pub(crate) const fn kind(&self) -> OpKind {
+    pub(super) const fn kind(&self) -> OpKind {
         match self {
             Self::Record(_) => OpKind::Record,
             Self::Revise(_) => OpKind::Revise,
@@ -53,7 +53,7 @@ impl Op {
     /// The node the op names first: the decision or component it changes,
     /// a merge's survivor, a repair's first decision (none for no repair).
     #[must_use]
-    pub(crate) fn target(&self) -> &str {
+    pub(super) fn target(&self) -> &str {
         match self {
             Self::Record(Record { name, .. })
             | Self::Revise(Revise { name, .. })

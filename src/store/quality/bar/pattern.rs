@@ -40,15 +40,15 @@ const UNICODE_WORD_BOUNDARY: &str = "holds a Unicode word boundary (`\\b`, `\\B`
 #[derive(Debug)]
 pub(super) struct Compiled {
     regex: Regex,
-    pub(super) fields: BTreeSet<DecisionField>,
+    fields: BTreeSet<DecisionField>,
     pub(super) level: Level,
     pub(super) message: String,
 }
 
 /// A pattern's match in a text: its byte offset and the text it matched.
 pub(super) struct Found<'t> {
-    pub(super) at: usize,
-    pub(super) text: &'t str,
+    at: usize,
+    text: &'t str,
 }
 
 impl Compiled {
@@ -91,7 +91,7 @@ impl Compiled {
     }
 
     /// An empty cache for this pattern's automaton.
-    pub(super) fn cache(&self) -> Cache {
+    fn cache(&self) -> Cache {
         self.regex.create_cache()
     }
 

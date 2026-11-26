@@ -29,10 +29,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::console::diag;
+use crate::failpoint::{self, Site};
 use crate::git::graph::{Committed, Oid, Repository, Status};
 use crate::{Error, Result};
 
-use super::failpoint::{self, Site};
 use super::lock::StoreLock;
 use super::message::{CommitMessage, Tool};
 use crate::store::format::Store;

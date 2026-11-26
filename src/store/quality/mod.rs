@@ -46,7 +46,7 @@ pub(crate) enum Limit {
 impl Limit {
     /// The rule as a refusal names it.
     #[must_use]
-    pub(crate) const fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::AlternativeRequired => "alternative_required",
             Self::AnchorRequired => "anchor_required",
@@ -225,8 +225,15 @@ impl Default for PreparedBar {
 }
 
 impl PreparedBar {
+    /// `quality` compiled for the write that follows. A pattern that does
+    /// not compile is [`Error::QualityPattern`].
+    pub(in crate::store) fn compile(store: &Store, quality: Quality) -> Result<Self> {
+        let bar = store.bar(&quality)?;
+        Ok(Self { quality, bar })
+    }
+
     /// The bar, when it was compiled from `quality`.
-    pub(crate) fn of(&self, quality: &Quality) -> Option<&Bar> {
+    pub(super) fn of(&self, quality: &Quality) -> Option<&Bar> {
         (self.quality == *quality).then_some(&self.bar)
     }
 }
@@ -241,15 +248,6 @@ impl Store {
             index: fault.index,
             message: fault.message,
         })
-    }
-
-    /// The bar of the `[quality]` the store holds now, compiled holding no
-    /// lock for the write that follows ([`Writer::apply`](crate::store::Writer::apply)).
-    /// A pattern that does not compile is [`Error::QualityPattern`].
-    pub(crate) fn prepare_bar(&self) -> Result<PreparedBar> {
-        let quality = self.load_project()?.quality;
-        let bar = self.bar(&quality)?;
-        Ok(PreparedBar { quality, bar })
     }
 }
 

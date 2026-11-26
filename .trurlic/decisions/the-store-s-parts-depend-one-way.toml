@@ -1,11 +1,12 @@
 component = "store"
-choice = "The store's parts depend one way, model, graph, format, write, then quality, apply, cache and corpus, and each names only the parts before it"
-reason = "src/store holds eight parts, each a sub-module whose mod.rs re-exports what the others use. model holds the values of the graph's files and the rules and limits they meet; graph judges a loaded state (validation, cycles, the tool reads, placement issues); format holds the files themselves: Store, where each file lives, the canonical text, the read of each as its type, the format check and the migration registry; write holds every way into the graph under its lock: a read, a Writer, init, migrate, and the journaled commit with its history. quality, the bar a write holds, apply, cache and corpus build on those. A part names another only by its sub-module path, such as crate::store::model::Anchor, never through the store root's re-exports, which serve code outside the store and hide the part an item comes from; a test in store/mod.rs holds every such path to the order, and a call of a Store method another part defines keeps to it too. The edges that crossed the order were settled where each item belongs. FormatVersion and the [quality] table (Quality, DecisionField) are values of project.toml, so model holds them and the check stays in format. Store is the layout of the graph directory, so format holds it. The migration registry is format's, since every read checks a store's version against it, and carrying a migration out is write's, since it commits through the journal, as init does. quality sits above write because preparing a bar reads project.toml under the shared lock."
+choice = "The store's parts depend one way, model, graph, format, quality, write, then apply, cache and corpus, and each names only the parts before it"
+reason = "src/store holds eight parts, each a sub-module whose mod.rs re-exports what the others use. model holds the values of the graph's files and the rules and limits they meet; graph holds the loaded state, ProjectState, and judges it (validation, cycles, the tool reads, placement issues); format holds the files themselves: Store, where each file lives, the canonical text, the read of each as its type, the format version check and the migration registry; quality compiles the bar of a [quality] table; write holds every way into the graph under its lock: a read, a Writer, init, migrate, and the journaled commit with its history. apply, cache and corpus build on those. A part names another only by its sub-module path, such as crate::store::model::Anchor, never through the store root's re-exports, which serve code outside the store and hide the part an item comes from; outside the store it names only the error, the console, git and the failpoints. A test in store/mod.rs holds every path a part's non-test code names to this order, read by crate::purity: a use list read whole, super chains read from the file's module, an alias of a module above the part outside. FormatVersion and the [quality] table (Quality, DecisionField) are values of project.toml, so model holds them and the check stays in format. Store is the layout of the graph directory, so format holds it. The migration registry is format's, since every read checks a store's version against it, and carrying a migration out is write's, since it commits through the journal, as init does. A bar compiles from a Quality value, so quality sits below write, and prepare_bar, which reads project.toml under the shared lock first, is write's."
 alternatives = [
     "Keep the store flat: its files have no order, so any file may call any other and a cycle between them goes unseen",
     "Keep the migration registry and its run together in format: the run commits through write, and every read in write checks the version against the registry, a cycle",
     "Keep FormatVersion and Quality beside the code that checks them: model would then name format and quality, a value depending on its reader",
     "Let the parts name each other through the store root's re-exports: shorter paths, but no reader or test can tell which part an item comes from",
+    "Hold the order with a text scan for crate::store:: paths: it misses a use list, a chain of supers, a root re-export reached through super and an alias, which the purity reader reads",
 ]
 tags = [
     "storage",
@@ -14,12 +15,14 @@ status = "proposed"
 origin = "module structure"
 created = "2026-11-26T14:24:18.276267316Z"
 anchors = [
+    { file = "src/purity.rs", symbol = "places_beyond" },
     { file = "src/store/format/layout.rs", symbol = "Store" },
-    { file = "src/store/format/migration/mod.rs", symbol = "names" },
+    { file = "src/store/format/migration/steps.rs", symbol = "names" },
     { file = "src/store/format/mod.rs" },
     { file = "src/store/graph/mod.rs" },
     { file = "src/store/mod.rs", symbol = "tests::each_part_of_the_store_names_only_the_parts_before_it" },
     { file = "src/store/model/mod.rs" },
+    { file = "src/store/write/access.rs", symbol = "Store::prepare_bar" },
     { file = "src/store/write/migrate.rs", symbol = "Store::plan_migration" },
     { file = "src/store/write/mod.rs" },
 ]

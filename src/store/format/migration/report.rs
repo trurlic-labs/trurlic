@@ -75,8 +75,8 @@ pub(crate) enum PlacementBasis {
 /// A code ref as format 0.4.1 or an anchor as 0.5 wrote it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct RefText {
-    pub(crate) file: String,
-    pub(crate) symbol: Option<String>,
+    pub(in crate::store) file: String,
+    pub(in crate::store) symbol: Option<String>,
 }
 
 impl RefText {

@@ -1,12 +1,13 @@
 //! Loading the graph from its files: `project.toml` and every node file,
-//! each read as its type, and nothing else.
+//! each read as its type or as a TOML table, and nothing else.
 //!
 //! A load fails only when a file cannot be read as its type: it cannot be
 //! read, it is no regular file, its name ends in `.toml` but is not UTF-8,
 //! it is larger than [`MAX_NODE_FILE_BYTES`], it is not TOML, or it holds a
-//! key, a value or a combination of values its type has no place for. Everything a loaded graph can hold but should not, such as an edge
-//! to no node or two nodes of one name, is an issue `validate.rs` reports,
-//! so a hand edit that breaks the graph leaves it readable to `check`.
+//! key, a value or a combination of values its type has no place for.
+//! Everything a loaded graph can hold but should not, such as an edge to
+//! no node or two nodes of one name, is an issue `validate.rs` reports, so
+//! a hand edit that breaks the graph leaves it readable to `check`.
 //!
 //! Nothing here takes a lock. Every load runs inside `access`, which holds
 //! the shared or the exclusive lock around it, so a load never reads a
@@ -24,9 +25,9 @@ use crate::{Error, Result};
 
 use super::Store;
 use super::canonical::{Canonical, is_canonical};
+use crate::store::graph::{NodeFile, ProjectState};
 use crate::store::model::limits::MAX_NODE_FILE_BYTES;
 use crate::store::model::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, Project};
-use crate::store::model::{NodeFile, ProjectState};
 
 /// One byte past the cap, so a read that fills it proves the file too large.
 const READ_LIMIT: u64 = MAX_NODE_FILE_BYTES as u64 + 1;
@@ -35,7 +36,7 @@ const READ_LIMIT: u64 = MAX_NODE_FILE_BYTES as u64 + 1;
 /// when it is no regular file ([`ensure_regular`]), and unread past
 /// [`MAX_NODE_FILE_BYTES`]: the read stops at the cap, so a file that grows
 /// while it is read costs no more.
-pub(in crate::store) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
+fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
     let hint = ensure_regular(path)?.len().min(READ_LIMIT);
     let file = File::open(path).map_err(Error::io(path))?;
     let mut bytes = Vec::with_capacity(usize::try_from(hint).unwrap_or(0));
@@ -49,6 +50,14 @@ pub(in crate::store) fn read_node_bytes(path: &Path) -> Result<Vec<u8>> {
         });
     }
     Ok(bytes)
+}
+
+/// The TOML file at `path` as a table, with its bytes; `project.toml` and
+/// a node file are refused unread past their cap.
+pub(in crate::store) fn read_table(path: &Path) -> Result<(toml::Table, Vec<u8>)> {
+    let bytes = read_node_bytes(path)?;
+    let table = toml::from_slice(&bytes).map_err(Error::toml(path))?;
+    Ok((table, bytes))
 }
 
 /// The metadata of `path`, refused unless it is a regular file once its

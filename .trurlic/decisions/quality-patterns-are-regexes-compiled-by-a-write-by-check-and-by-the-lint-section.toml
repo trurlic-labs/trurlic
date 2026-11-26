@@ -24,7 +24,7 @@ anchors = [
     { file = "src/store/quality/bar/mod.rs", symbol = "Bar::compile" },
     { file = "src/store/quality/bar/mod.rs", symbol = "Bar::limits_only" },
     { file = "src/store/quality/bar/pattern.rs", symbol = "Compiled::new" },
-    { file = "src/store/quality/mod.rs", symbol = "Store::prepare_bar" },
+    { file = "src/store/write/access.rs", symbol = "Store::prepare_bar" },
     { file = "src/tools/status/lint/patterns.rs", symbol = "Patterns::of" },
 ]
 depends_on = [

@@ -19,9 +19,9 @@ status = "accepted"
 created = "2026-11-23T23:15:10.990884289Z"
 anchors = [
     { file = "Cargo.toml" },
+    { file = "src/failpoint.rs", symbol = "Site::Loaded" },
     { file = "src/mcp/mod.rs", symbol = "Server::answer" },
     { file = "src/store/write/access.rs", symbol = "Store::begin_write" },
     { file = "src/store/write/access.rs", symbol = "Store::load_state" },
-    { file = "src/store/write/failpoint.rs", symbol = "Site::Loaded" },
     { file = "tests/integration/server_failpoints.rs", symbol = "a_panic_in_a_tool_call_is_answered_internal_error_and_the_server_serves_on" },
 ]

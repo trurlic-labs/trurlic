@@ -13,7 +13,8 @@
 
 use toml::Value;
 
-use super::super::{Fact, File, RefText};
+use super::super::report::{Fact, RefText};
+use super::super::tree::File;
 use super::Notes;
 use crate::store::model::Anchor;
 

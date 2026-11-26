@@ -27,7 +27,7 @@ check:
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
-# `failpoints` arms the crash sites in src/store/write/failpoint.rs; tests only.
+# `failpoints` arms the crash sites in src/failpoint.rs; tests only.
 test:
 	cargo test --workspace --locked --features failpoints
 

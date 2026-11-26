@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use super::schema::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, PROJECT_FILE, Project};
+use crate::store::model::{
+    COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, PROJECT_FILE, Project,
+};
 
 /// The graph as its files hold it, keyed by file stem (`"auth"`,
 /// `"error-strategy"`). Each edge is a field of the node it leaves; no edge
@@ -28,7 +30,7 @@ pub struct ProjectState {
 impl ProjectState {
     /// The path under `.trurlic/` of every file of the graph,
     /// `project.toml` first, then the components and the decisions by name.
-    pub(in crate::store) fn files(&self) -> Vec<String> {
+    pub(super) fn files(&self) -> Vec<String> {
         let components = self.components.keys().map(|name| {
             NodePath {
                 dir: COMPONENTS_DIR,

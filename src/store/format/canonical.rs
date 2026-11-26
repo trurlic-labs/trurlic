@@ -58,7 +58,7 @@ impl Write for Compare<'_> {
 }
 
 /// Writes keys and values in the canonical layout.
-pub(crate) struct Emitter<W>(W);
+pub(in crate::store) struct Emitter<W>(W);
 
 impl<W: Write> Emitter<W> {
     fn string(&mut self, key: &str, value: &str) -> fmt::Result {

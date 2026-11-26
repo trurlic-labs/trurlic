@@ -4,30 +4,20 @@
 //! The key holding the version ([`FormatVersion`]) was renamed with the
 //! format: `trurl_version` in the pre-release `trurl` builds,
 //! `trurlic_version` from 0.2.0 to 0.4.0, `format_version` since 0.4.1. It
-//! is read under any of them, so an old store is told to migrate instead of
-//! failing on a missing key. An older version the migration registry names
-//! is told to migrate; one it does not name was never written by trurlic,
-//! and is refused like one no chain of steps leads from to the current
-//! format.
+//! is read under any of them ([`version_key`]), so an old store is told to
+//! migrate instead of failing on a missing key. An older version the
+//! migration registry names is told to migrate; one it does not name was
+//! never written by trurlic, and is refused like one no chain of steps
+//! leads from to the current format.
 
 use std::path::Path;
 
 use crate::store::model::{FORMAT_VERSION, FormatVersion, Placement, Project};
 use crate::{Error, Result};
 
-use super::load::read_node_bytes;
-use super::{Store, migration};
-
-/// The keys that have held the format version, newest first.
-const VERSION_KEYS: [&str; 3] = ["format_version", "trurlic_version", "trurl_version"];
-
-/// The newest of the keys that have held the format version that
-/// `project`, a `project.toml` table, has.
-pub(super) fn version_key(project: &toml::Table) -> Option<&'static str> {
-    VERSION_KEYS
-        .into_iter()
-        .find(|key| project.contains_key(*key))
-}
+use super::Store;
+use super::load::read_table;
+use super::migration::{self, version_key};
 
 /// The version `project`, the table of the `project.toml` at `path`,
 /// states under [`version_key`].
@@ -90,14 +80,6 @@ fn ensure_current(path: &Path, project: &toml::Table) -> Result<()> {
             expected: FORMAT_VERSION,
         }),
     }
-}
-
-/// The TOML file at `path` as a table, with its bytes; `project.toml` and
-/// a node file are refused unread past their cap.
-pub(in crate::store) fn read_table(path: &Path) -> Result<(toml::Table, Vec<u8>)> {
-    let bytes = read_node_bytes(path)?;
-    let table = toml::from_slice(&bytes).map_err(Error::toml(path))?;
-    Ok((table, bytes))
 }
 
 impl Store {

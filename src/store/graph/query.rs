@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-use crate::store::model::ProjectState;
+use super::state::ProjectState;
 use crate::store::model::{Anchor, AnchorFault, Decision, PROJECT_COMPONENT};
 
 /// A decision as a query answers it: its name and its file.

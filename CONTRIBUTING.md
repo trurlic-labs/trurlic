@@ -74,9 +74,9 @@ cargo test -- a_hand_edited_non_canonical_file_loads_check_flags_it_and_fmt_fixe
 The `.trurlic/` format is the foundation. Changes to schemas or file operations require extra care:
 
 - Every write is a method of the `Writer` that `Store::begin_write` returns and commits through the journal; a write may add no validation issue the graph did not have.
-- Atomic protocol: canonical text (`src/store/canonical.rs`, the one serializer of node files) → read back in memory → tmp file → journal → rename.
-- A change to the on-disk shape raises `FORMAT_VERSION` (`src/store/schema.rs`) and appends the step that reaches it to the migration registry (`src/store/migration/steps.rs`), with a fixture test.
-- Validation (`src/store/validate.rs`) and the queries (`src/store/query.rs`) are pure: no I/O, testable with in-memory states.
+- Atomic protocol: canonical text (`src/store/format/canonical.rs`, the one serializer of node files) → read back in memory → tmp file → journal → rename.
+- A change to the on-disk shape raises `FORMAT_VERSION` (`src/store/model/schema.rs`) and appends the step that reaches it to the migration registry (`src/store/format/migration/steps.rs`), with a fixture test.
+- Validation (`src/store/graph/validate.rs`) and the queries (`src/store/graph/query.rs`) are pure: no I/O, testable with in-memory states.
 
 ## Working on the MCP server
 

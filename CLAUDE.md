@@ -6,7 +6,7 @@ The detail of every rule is in the decision graph (`.trurlic/decisions/`, one co
 
 ### Modules
 
-Single crate (`src/lib.rs`). `pub` only on `cli::main`, `FORMAT_VERSION` and, with the `bench` feature, `bench`; everything else `pub(crate)`.
+Single crate (`src/lib.rs`). `pub` only on `main` (the CLI entry), `FORMAT_VERSION` and, with the `bench` feature, `bench`; everything else `pub(crate)`.
 
 ```
 store      → git                         graph files: schema, canonical form, validation, text and
@@ -33,10 +33,13 @@ git        → —                           `git` as a child process; `git::gra
 budget     → —                           a tool call's byte limits, fitting output into a byte budget
 error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
-purity     → code (tests only)           the check that `code` and `lint` name only their allow lists
+failpoint  → console                     the named sites a test aborts, pauses, fails or panics at
+                                         (`failpoints` feature): store, `apply`, the MCP server
+purity     → code (tests only)           what a module's non-test code may name: `code`'s and `lint`'s
+                                         allow lists, the surfaces `tools` and `mcp` stay off, `store`'s parts
 ```
 
-`error` is used by every module but `code`, `lint` and `budget`; `console` by `store`, `tools`, `mcp`, `commands`, `cli` and `sources`.
+`error` is used by every module but `code`, `lint`, `budget` and `failpoint`; `console` by `store`, `tools`, `mcp`, `commands`, `cli`, `sources` and `failpoint`.
 
 ### Where things are
 
@@ -48,7 +51,7 @@ purity     → code (tests only)           the check that `code` and `lint` name
 | The one write: ops, cascades, undo | `store/apply/` |
 | Commit, journal, recovery | `store/write/commit.rs`, `journal.rs`, `recovery.rs` |
 | Shared-graph history | `store/write/history.rs`, `git/graph/` |
-| Format check / migration registry / carrying one out | `store/format/check.rs` / `store/format/migration/` / `store/write/migrate.rs` |
+| Format version check / migration registry / carrying one out | `store/format/standing.rs` / `store/format/migration/` / `store/write/migrate.rs` |
 | Size and count limits | `store/model/limits.rs` |
 | Tool specs (schema = parser) | `tools/spec/` |
 | Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |
@@ -68,7 +71,7 @@ purity     → code (tests only)           the check that `code` and `lint` name
 | C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/parse/language/c_family/define.rs`, `blank.rs` / `c_family/set.rs` / `sources/reads.rs`, `sources/lexical.rs` |
 | Span-hash units and hashing | `code/parse/units/` |
 | Query contract / general resolver | `code/parse/query/` / `code/parse/general/` |
-| Failpoint sites | `store/write/failpoint.rs` |
+| Failpoint sites | `failpoint.rs` |
 
 ### Invariants
 

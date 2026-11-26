@@ -6,15 +6,14 @@
 use std::fmt;
 use std::path::{self, Path, PathBuf};
 
-use crate::store::model::{
-    COMPONENTS_DIR, DECISIONS_DIR, NodeFile, PROJECT_FILE, STATE_DIR, STORE_DIR,
-};
+use crate::store::graph::NodeFile;
+use crate::store::model::{COMPONENTS_DIR, DECISIONS_DIR, PROJECT_FILE, STATE_DIR, STORE_DIR};
 use crate::{Error, Result};
 
 /// Handle to a graph directory and the code root it is read for. It holds
 /// no graph: a read loads one with [`Store::load_state`], and every write
-/// to a current-format graph goes through the
-/// [`Writer`](crate::store::Writer) that [`Store::begin_write`] returns.
+/// to a current-format graph goes through the `Writer` that
+/// [`Store::begin_write`] returns.
 ///
 /// The two roots differ when a tree reaches a graph it does not hold: a
 /// symlinked clone, a linked worktree of a shared graph. Anchors resolve
@@ -24,7 +23,7 @@ use crate::{Error, Result};
 #[derive(Debug)]
 pub struct Store {
     pub(in crate::store) root: PathBuf,
-    pub(in crate::store) code_root: PathBuf,
+    pub(super) code_root: PathBuf,
 }
 
 impl Store {
@@ -75,7 +74,7 @@ impl Store {
         self.root.join(COMPONENTS_DIR).join(format!("{name}.toml"))
     }
 
-    pub(crate) fn decision_path(&self, name: &str) -> PathBuf {
+    pub(in crate::store) fn decision_path(&self, name: &str) -> PathBuf {
         self.root.join(DECISIONS_DIR).join(format!("{name}.toml"))
     }
 

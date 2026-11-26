@@ -176,7 +176,7 @@ pub(in crate::store) fn fault(field: TextField, text: &str) -> Option<TextFault>
 
 /// The first character of `text` that no text may hold, and its byte
 /// offset: the character rule alone, a line break and a tab included.
-pub(in crate::store) fn hidden_character(text: &str) -> Option<(char, usize)> {
+pub(super) fn hidden_character(text: &str) -> Option<(char, usize)> {
     text.char_indices()
         .find(|&(_, found)| character_class(found).is_some())
         .map(|(at, found)| (found, at))
@@ -197,7 +197,7 @@ fn find_character(lines: &Lines, text: &str) -> Option<TextFault> {
 /// The class of a character no text may hold, or `None` for one it may.
 /// Line and tab are classed as controls here; a text of many lines allows
 /// them.
-pub(in crate::store) fn character_class(c: char) -> Option<&'static str> {
+pub(super) fn character_class(c: char) -> Option<&'static str> {
     match c {
         '\u{0}'..='\u{1F}' | '\u{7F}'..='\u{9F}' => Some("control character"),
         '\u{61C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => {

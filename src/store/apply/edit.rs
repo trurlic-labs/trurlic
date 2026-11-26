@@ -5,9 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 
+use crate::store::graph::ProjectState;
 use crate::store::graph::cycles;
 use crate::store::graph::{Issue, carry_members, introduced};
-use crate::store::model::ProjectState;
 use crate::store::model::{Component, Decision};
 
 /// The writer's graph while a batch applies to it.
@@ -255,7 +255,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::store::apply::*;
-    use crate::store::model::NodeFile;
+    use crate::store::graph::NodeFile;
     use crate::store::testing::{
         add, apply, decision, graph, record, refused, rename, revise, sample_component, write_node,
     };

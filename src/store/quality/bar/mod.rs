@@ -51,8 +51,8 @@ pub(crate) struct PatternFault {
 /// argument that brought it (`apply::check`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Place {
-    pub(crate) field: DecisionField,
-    pub(crate) index: Option<usize>,
+    pub(in crate::store) field: DecisionField,
+    index: Option<usize>,
 }
 
 impl Place {
@@ -85,16 +85,16 @@ pub(crate) enum Broken {
 /// The first rule a judged decision breaks, and where.
 #[derive(Debug)]
 pub(crate) struct Breach {
-    pub(crate) place: Place,
-    pub(crate) broken: Broken,
+    pub(in crate::store) place: Place,
+    pub(in crate::store) broken: Broken,
 }
 
 /// A `warn` pattern's first match: the pattern's index in `[quality]
 /// patterns` and the byte offset of the match in its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Hit {
-    pub(crate) pattern: usize,
-    pub(crate) at: usize,
+    pub(in crate::store) pattern: usize,
+    pub(in crate::store) at: usize,
 }
 
 impl Bar {
@@ -131,7 +131,7 @@ impl Bar {
     /// What one write's patterns may read and build: an empty cache for
     /// each, the bytes of `MAX_WRITE_PATTERN_BYTES` and the growth of
     /// `MAX_PATTERN_CACHE_TOTAL_BYTES`.
-    pub(crate) fn scan(&self) -> Scan {
+    pub(in crate::store) fn scan(&self) -> Scan {
         let (bytes, cache) = (MAX_WRITE_PATTERN_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES);
         Scan::of(&self.patterns, bytes, cache)
     }
@@ -148,7 +148,7 @@ impl Bar {
     /// it breaks, or the warnings of the `warn` patterns that match, each
     /// with where it matched. The text rules and the limits come first, in
     /// the order of the file's keys, then the patterns over `scan`.
-    pub(crate) fn judge(
+    pub(in crate::store) fn judge(
         &self,
         decision: &Decision,
         held: &[DecisionField],
@@ -173,7 +173,7 @@ impl Bar {
     /// Past the bound the write is refused, as it is at the text where a
     /// cache gives up or the growth of the caches passes their total; no
     /// pattern after it runs.
-    pub(crate) fn judge_patterns(
+    pub(in crate::store) fn judge_patterns(
         &self,
         texts: &[(Place, Cow<'_, str>)],
         scan: &mut Scan,
@@ -196,7 +196,7 @@ impl Bar {
 
     /// The batch's `origin` against the patterns that read it, over `scan`:
     /// the first `refuse` match, or the `warn` matches.
-    pub(crate) fn judge_origin(
+    pub(in crate::store) fn judge_origin(
         &self,
         origin: Option<&str>,
         scan: &mut Scan,
@@ -210,7 +210,7 @@ impl Bar {
     }
 
     /// The message of the pattern at `index` of `[quality] patterns`.
-    pub(crate) fn message(&self, index: usize) -> Option<&str> {
+    pub(in crate::store) fn message(&self, index: usize) -> Option<&str> {
         self.patterns
             .get(index)
             .map(|pattern| pattern.message.as_str())
@@ -218,7 +218,7 @@ impl Bar {
 
     /// The batch's `origin` against `require_origin`, when the batch
     /// `records` a decision.
-    pub(crate) fn origin_required(
+    pub(in crate::store) fn origin_required(
         &self,
         origin: Option<&str>,
         records: bool,

@@ -9,9 +9,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use super::state::{NodeFile, ProjectState};
 use crate::store::model::{Decision, PROJECT_COMPONENT, Status};
 use crate::store::model::{NameFault, name_fault};
-use crate::store::model::{NodeFile, ProjectState};
 use crate::store::model::{TextField, fault};
 
 /// What an [`Issue`] reports.
@@ -118,7 +118,7 @@ pub struct Issue {
     /// What the issue is about: a node name, an edge as `from -> to (kind)`,
     /// or a cycle's members, sorted and comma-separated. Stable across
     /// validations of the same graph, unlike `message`.
-    pub(crate) subject: String,
+    pub(in crate::store) subject: String,
     /// The file at fault, then what is wrong with it.
     pub(crate) message: String,
 }

@@ -13,17 +13,18 @@ use std::mem;
 use std::path::PathBuf;
 
 use crate::Result;
+use crate::failpoint::{self, Site};
 
 use super::commit::PendingWrite;
-use super::failpoint::{self, Site};
 use super::history::History;
 use super::journal::{PendingHistory, Replayed};
 use super::lock::StoreLock;
 use super::message::{CommitMessage, Tool};
 use crate::store::format::Store;
-use crate::store::model::NodeFile;
-use crate::store::model::ProjectState;
+use crate::store::graph::NodeFile;
+use crate::store::graph::ProjectState;
 use crate::store::model::{Placement, Project};
+use crate::store::quality::PreparedBar;
 
 impl Store {
     /// The graph as the files on disk hold it, loaded under the shared lock,
@@ -39,13 +40,20 @@ impl Store {
 
     /// `project.toml` as a read finds it: the graph's settings and its
     /// `[quality]`, none of its nodes.
-    pub(in crate::store) fn load_project(&self) -> Result<Project> {
+    fn load_project(&self) -> Result<Project> {
         self.read(|project, _| Ok(project))
+    }
+
+    /// The bar of the `[quality]` the store holds now, compiled holding no
+    /// lock for the write that follows ([`Writer::apply`]). A pattern that
+    /// does not compile is [`Error::QualityPattern`](crate::Error::QualityPattern).
+    pub(crate) fn prepare_bar(&self) -> Result<PreparedBar> {
+        PreparedBar::compile(self, self.load_project()?.quality)
     }
 
     /// Take the exclusive lock, finish what an interrupted write left, and
     /// load the graph under the lock. Every write to a current-format graph
-    /// starts here and commits through the returned [`Writer`]; `init` and
+    /// starts here and commits through the returned `Writer`; `init` and
     /// `migrate`, which write before one exists, take the lock themselves.
     pub fn begin_write(&self) -> Result<Writer<'_>> {
         let lock = self.lock()?;

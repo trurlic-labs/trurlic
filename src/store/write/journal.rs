@@ -28,11 +28,11 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::console::diag;
+use crate::failpoint::{self, Site};
 use crate::{Error, Result};
 
 use super::commit::PendingWrite;
 use super::durable::{place, sync_dir};
-use super::failpoint::{self, Site};
 use super::history::{Head, HistoryStep};
 use super::lock::StoreLock;
 use super::message::CommitMessage;
