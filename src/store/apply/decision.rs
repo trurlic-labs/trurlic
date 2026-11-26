@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use super::Done;
+use super::applied::Done;
 use super::check::{self, Fault, Sources, anchor_edit, edit_list, new_name};
 use super::context::Context;
 use super::edit::Edit;
@@ -397,7 +397,7 @@ mod tests {
     use crate::store::apply::*;
     use crate::store::format::canonical;
     use crate::store::graph::NodeFile;
-    use crate::store::model::{AcceptedText, AcceptedVia, Anchor, Status};
+    use crate::store::model::{AcceptedText, AcceptedVia, Anchor, Status, StatusName};
     use crate::store::testing::{
         add, anchor, apply, decision, graph, record, refused, rename, revise, sample_decision,
         write_node,

@@ -9,7 +9,7 @@ alternatives = [
 status = "proposed"
 created = "2026-06-15T09:44:59.411657570Z"
 anchors = [
-    { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
+    { file = "src/store/apply/run.rs", symbol = "Writer::apply" },
     { file = "src/tools/apply/tool.rs", symbol = "apply" },
     { file = "src/tools/registry.rs", symbol = "TOOLS" },
     { file = "src/tools/spec/tool.rs", symbol = "Access" },

@@ -13,8 +13,8 @@ origin = "apply: a batch's pattern work is bounded"
 created = "2026-11-25T16:43:33.912873622Z"
 anchors = [
     { file = "src/store/apply/check.rs", symbol = "bar" },
-    { file = "src/store/apply/mod.rs", symbol = "origin_hits" },
     { file = "src/store/apply/refusal.rs", symbol = "Rule::PatternWork" },
+    { file = "src/store/apply/run.rs", symbol = "origin_hits" },
     { file = "src/store/model/limits.rs", symbol = "MAX_PATTERN_CACHE_TOTAL_BYTES" },
     { file = "src/store/model/limits.rs", symbol = "MAX_WRITE_PATTERN_BYTES" },
     { file = "src/store/quality/bar/audit.rs", symbol = "tests::a_write_grows_its_caches_by_their_total_and_no_more" },

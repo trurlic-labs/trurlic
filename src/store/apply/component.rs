@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::Done;
+use super::applied::Done;
 use super::check::{Fault, edit_list, new_name};
 use super::edit::Edit;
 use super::ops::{AddComponent, Field, ListEdit, OpKind, RemoveComponent, Rename, ReviseComponent};

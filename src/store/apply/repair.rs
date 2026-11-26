@@ -14,12 +14,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::applied::{Done, LeftRepair, Repaired};
 use super::check::{Fault, Sources};
 use super::context::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, OpKind, Repair, RepairAnchors};
 use super::refusal::{NodeKind, Rule};
-use super::{Done, LeftRepair, Repaired};
 use crate::store::graph::ProjectState;
 use crate::store::model::DecisionField;
 use crate::store::model::{Anchor, Decision};

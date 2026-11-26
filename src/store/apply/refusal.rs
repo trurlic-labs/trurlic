@@ -5,6 +5,7 @@
 use std::fmt;
 
 use super::ops::{Field, OpKind};
+use crate::Error;
 use crate::store::graph::Issue;
 use crate::store::graph::NodeFile;
 use crate::store::model::AnchorFault;
@@ -40,6 +41,12 @@ impl Refusal {
         let op = self.op.as_ref().map(|op| op.index);
         argument_path(op, self.field.as_deref())
     }
+}
+
+/// The batch refused: `rule` broken by the op `op`, in its argument
+/// `field`.
+pub(super) fn refused(op: Option<OpAt>, field: Option<String>, rule: Rule) -> Error {
+    Error::Refused(Box::new(Refusal { op, field, rule }))
 }
 
 /// `field` within the op at index `op`, or within the batch for `None`, as

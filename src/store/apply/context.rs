@@ -2,8 +2,8 @@
 
 use crate::Result;
 
+use super::applied::{LeftRepair, Repaired};
 use super::warning::Warning;
-use super::{LeftRepair, Repaired};
 use crate::store::model::Timestamp;
 use crate::store::quality::{Bar, Hit, Scan};
 

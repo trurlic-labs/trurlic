@@ -12,8 +12,8 @@ created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "apply" },
     { file = "src/store/apply/edit.rs", symbol = "Edit" },
-    { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
     { file = "src/store/apply/ops.rs", symbol = "Batch" },
+    { file = "src/store/apply/run.rs", symbol = "Writer::apply" },
     { file = "src/tools/apply/tool.rs", symbol = "APPLY" },
     { file = "tests/integration/apply.rs", symbol = "one_batch_writes_the_same_bytes_over_mcp_and_from_a_file" },
 ]

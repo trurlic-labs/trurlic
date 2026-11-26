@@ -11,9 +11,9 @@ origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
     { file = "src/store/apply/check.rs", symbol = "Fault" },
-    { file = "src/store/apply/mod.rs", symbol = "run" },
     { file = "src/store/apply/refusal.rs", symbol = "Refusal" },
     { file = "src/store/apply/refusal.rs", symbol = "Rule" },
+    { file = "src/store/apply/run.rs", symbol = "run" },
     { file = "tests/integration/apply.rs", symbol = "a_fifty_op_batch_with_one_invalid_op_writes_nothing_and_names_it" },
 ]
 depends_on = [
