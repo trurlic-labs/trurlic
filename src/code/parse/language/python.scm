@@ -1,5 +1,5 @@
-; Python, read by the general resolver (src/code/parse/general/) under the
-; contract of src/code/parse/query/. Each name is captured by one pattern.
+; Python, read by the code index's general resolver under the contract
+; it holds every query file to. Each name is captured by one pattern.
 
 ; A `def` is a function, and a method directly in a class; a `class` is a
 ; class. A decorated one's span starts at its first decorator.

@@ -1,7 +1,6 @@
-; C++, and every C or C++ header, read by the general resolver
-; (src/code/parse/general/) under the contract of src/code/parse/query/,
-; after the tree's attribute and namespace macros are blanked
-; (src/code/parse/language/c_family/).
+; C++, and every C or C++ header, read by the code index's general
+; resolver under the contract it holds every query file to, after the
+; tree's attribute and namespace macros are blanked.
 ;
 ; As C (c.scm), plus namespaces, classes and their members, templates (a
 ; template's span grows over its `template <...>`, and its arguments are

@@ -1,6 +1,6 @@
-; TypeScript, and with tsx.scm TSX and JavaScript, read by the general
-; resolver (src/code/parse/general/) under the contract of
-; src/code/parse/query/.
+; TypeScript, and with tsx.scm TSX and JavaScript, read by the code
+; index's general resolver under the contract it holds every query file
+; to.
 ;
 ; A declaration's span grows over the `export`, `declare` or statement
 ; around it. A declaration at a module's or a namespace's top is private
