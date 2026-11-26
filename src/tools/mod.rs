@@ -6,7 +6,7 @@
 //! builds neither MCP's result envelope nor its tool listing.
 
 mod apply;
-mod reads;
+mod handwritten;
 mod registry;
 mod result;
 mod spec;

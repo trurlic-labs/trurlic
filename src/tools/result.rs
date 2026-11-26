@@ -148,7 +148,7 @@ pub(crate) struct ToolResult {
 pub(crate) enum ResultKind {
     /// A result built on a spec, with the JSON value its text serializes.
     Structured(Value),
-    /// The result of a read written by hand: its text alone.
+    /// The result of a tool written by hand: its text alone.
     Unstructured,
     /// A refusal: `{"error": ...}`.
     Refusal,

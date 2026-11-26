@@ -15,7 +15,7 @@ anchors = [
     { file = "src/store/model/schema.rs", symbol = "DecisionFields" },
     { file = "src/store/model/schema.rs", symbol = "Status" },
     { file = "src/store/model/schema.rs", symbol = "StatusFault" },
-    { file = "src/tools/reads/context.rs", symbol = "health" },
+    { file = "src/tools/handwritten/context.rs", symbol = "health" },
 ]
 
 [accepted_text]

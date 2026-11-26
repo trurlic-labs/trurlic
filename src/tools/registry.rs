@@ -1,5 +1,5 @@
 //! Every tool, in the order a surface lists them: the tools built on a
-//! spec, then the reads written by hand. A surface looks a call up here
+//! spec, then the tools written by hand. A surface looks a call up here
 //! by name and calls the tool it finds; a name not here is no tool.
 
 use std::path::Path;
@@ -7,7 +7,7 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use super::apply::APPLY;
-use super::reads::Read;
+use super::handwritten::Handwritten;
 use super::result::ToolResult;
 use super::spec::{Destructive, SpecTool};
 use super::status::STATUS;
@@ -17,17 +17,17 @@ use super::status::STATUS;
 pub(crate) enum Tool {
     /// Built on a spec: its schemas and its parse walk one declaration.
     Spec(&'static dyn SpecTool),
-    /// A read whose listing and arguments are written by hand, without a
+    /// A tool whose listing and arguments are written by hand, without a
     /// spec.
-    Read(Read),
+    Handwritten(Handwritten),
 }
 
 /// Every tool, spec-built first.
 pub(crate) static TOOLS: [Tool; 4] = [
     Tool::Spec(&APPLY),
     Tool::Spec(&STATUS),
-    Tool::Read(Read::Context),
-    Tool::Read(Read::DecisionsForFile),
+    Tool::Handwritten(Handwritten::Context),
+    Tool::Handwritten(Handwritten::DecisionsForFile),
 ];
 
 impl Tool {
@@ -39,21 +39,21 @@ impl Tool {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Spec(tool) => tool.name(),
-            Self::Read(read) => read.name(),
+            Self::Handwritten(tool) => tool.name(),
         }
     }
 
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::Spec(tool) => tool.title(),
-            Self::Read(read) => read.title(),
+            Self::Handwritten(tool) => tool.title(),
         }
     }
 
     pub(crate) fn description(self) -> &'static str {
         match self {
             Self::Spec(tool) => tool.description(),
-            Self::Read(read) => read.description(),
+            Self::Handwritten(tool) => tool.description(),
         }
     }
 
@@ -61,16 +61,16 @@ impl Tool {
     pub(crate) fn input_schema(self) -> Value {
         match self {
             Self::Spec(tool) => Value::Object(tool.input_schema()),
-            Self::Read(read) => read.input_schema(),
+            Self::Handwritten(tool) => tool.input_schema(),
         }
     }
 
-    /// The JSON Schema of the tool's result, `None` for a read written by
+    /// The JSON Schema of the tool's result, `None` for a tool written by
     /// hand, whose result no schema declares.
     pub(crate) fn output_schema(self) -> Option<Value> {
         match self {
             Self::Spec(tool) => Some(Value::Object(tool.output_schema())),
-            Self::Read(_) => None,
+            Self::Handwritten(_) => None,
         }
     }
 
@@ -79,14 +79,14 @@ impl Tool {
     pub(crate) fn is_read_only(self) -> bool {
         match self {
             Self::Spec(tool) => tool.is_read_only(),
-            Self::Read(_) => true,
+            Self::Handwritten(_) => true,
         }
     }
 
     pub(crate) fn destructive(self) -> Destructive {
         match self {
             Self::Spec(tool) => tool.destructive(),
-            Self::Read(_) => Destructive::No,
+            Self::Handwritten(_) => Destructive::No,
         }
     }
 
@@ -98,7 +98,7 @@ impl Tool {
                 |refused| ToolResult::refusal(&refused),
                 ToolResult::structured,
             ),
-            Self::Read(read) => read.call(cwd, arguments),
+            Self::Handwritten(tool) => tool.call(cwd, arguments),
         }
     }
 }

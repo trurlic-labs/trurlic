@@ -1,4 +1,4 @@
-description = "The tool layer, known to no surface: argument and result specs, the apply and status tools, the reads written by hand (get_context, get_decisions_for_file), the registry a surface calls a tool through, the result cap and the refusal shape"
+description = "The tool layer, known to no surface: argument and result specs, the apply and status tools, the tools written by hand (get_context, get_decisions_for_file), the registry a surface calls a tool through, the result cap and the refusal shape"
 connects_to = [
     "discovery",
     "lint",

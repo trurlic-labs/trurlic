@@ -1,4 +1,4 @@
-//! The reads whose listing and arguments are written by hand, without a
+//! The tools whose listing and arguments are written by hand, without a
 //! spec: their schemas, and the parsing of their arguments. [`context`]
 //! assembles what they answer.
 
@@ -11,9 +11,9 @@ use crate::discovery::discover;
 use crate::store::ProjectState;
 use crate::tools::result::{ToolError, ToolResult};
 
-/// A read whose listing and arguments are written by hand.
+/// A tool whose listing and arguments are written by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Read {
+pub(crate) enum Handwritten {
     /// `get_context`: a component's context and its brief.
     Context,
     /// `get_decisions_for_file`: the decisions anchored on a path.
@@ -31,7 +31,7 @@ const DECISIONS_FOR_FILE_DESCRIPTION: &str = "Reverse lookup: given a file or di
     with its matching anchors. Project-wide rules apply everywhere and are not listed unless \
     anchored there; get_context(\"project\") lists them.";
 
-impl Read {
+impl Handwritten {
     pub(super) const fn name(self) -> &'static str {
         match self {
             Self::Context => "get_context",
@@ -53,7 +53,7 @@ impl Read {
         }
     }
 
-    /// The JSON Schema of the read's arguments.
+    /// The JSON Schema of the tool's arguments.
     pub(super) fn input_schema(self) -> Value {
         match self {
             Self::Context => json!({
@@ -92,7 +92,7 @@ impl Read {
         }
     }
 
-    /// Call the read with `arguments` on the graph of the store found from
+    /// Call the tool with `arguments` on the graph of the store found from
     /// `cwd`, loaded under the shared lock; a failed load is a refusal.
     pub(super) fn call(self, cwd: &Path, arguments: &Map<String, Value>) -> ToolResult {
         let state = match discover(cwd).and_then(|store| store.load_state()) {
@@ -105,7 +105,7 @@ impl Read {
         }
     }
 
-    /// The read's payload on `state`, or why its arguments are refused.
+    /// The tool's payload on `state`, or why its arguments are refused.
     fn answer(self, state: &ProjectState, arguments: &Map<String, Value>) -> Result<Value, String> {
         match self {
             Self::Context => get_context(state, arguments),
@@ -149,7 +149,7 @@ mod tests {
         value.as_object().unwrap()
     }
 
-    /// A call the read refuses is a refusal of kind `refused` whose message
+    /// A call the tool refuses is a refusal of kind `refused` whose message
     /// names what is wrong: a missing argument, a path out of the project,
     /// a component the graph does not hold.
     #[test]
@@ -157,26 +157,26 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         Store::create(tmp.path(), "demo", Placement::Tracked).unwrap();
         let cases = [
-            (Read::Context, json!({}), "component"),
-            (Read::DecisionsForFile, json!({}), "file"),
+            (Handwritten::Context, json!({}), "component"),
+            (Handwritten::DecisionsForFile, json!({}), "file"),
             (
-                Read::DecisionsForFile,
+                Handwritten::DecisionsForFile,
                 json!({ "file": "../x" }),
                 "invalid file path",
             ),
             (
-                Read::Context,
+                Handwritten::Context,
                 json!({ "component": "nope" }),
                 "`nope` does not exist",
             ),
         ];
-        for (read, given, named) in cases {
-            let (text, kind) = read.call(tmp.path(), arguments(&given)).into_parts();
-            assert_eq!(kind, ResultKind::Refusal, "{}: {text}", read.name());
+        for (tool, given, named) in cases {
+            let (text, kind) = tool.call(tmp.path(), arguments(&given)).into_parts();
+            assert_eq!(kind, ResultKind::Refusal, "{}: {text}", tool.name());
             let refusal: Value = serde_json::from_str(&text).unwrap();
             assert_eq!(refusal["error"]["kind"], "refused", "{text}");
             let message = refusal["error"]["message"].as_str().unwrap();
-            assert!(message.contains(named), "{}: {message}", read.name());
+            assert!(message.contains(named), "{}: {message}", tool.name());
         }
     }
 
@@ -187,7 +187,7 @@ mod tests {
             "atomic".into(),
             anchored("project", &["src/store/commit.rs"]),
         );
-        let payload = Read::DecisionsForFile
+        let payload = Handwritten::DecisionsForFile
             .answer(&state, arguments(&json!({ "file": "src/store" })))
             .unwrap();
         assert_eq!(payload["decisions"][0]["name"], "atomic");

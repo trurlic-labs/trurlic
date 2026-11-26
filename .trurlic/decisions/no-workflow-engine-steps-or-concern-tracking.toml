@@ -10,7 +10,7 @@ alternatives = [
 status = "proposed"
 created = "2026-11-23T20:06:23.818625901Z"
 anchors = [
-    { file = "src/tools/reads/context.rs", symbol = "get_context" },
+    { file = "src/tools/handwritten/context.rs", symbol = "get_context" },
     { file = "src/tools/registry.rs", symbol = "TOOLS" },
 ]
 
