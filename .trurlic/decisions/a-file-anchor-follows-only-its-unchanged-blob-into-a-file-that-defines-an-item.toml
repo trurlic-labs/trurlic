@@ -21,6 +21,10 @@ anchors = [
     { file = "tests/integration/repair.rs", symbol = "a_file_moved_on_while_another_takes_its_path_is_repaired_where_it_went" },
     { file = "tests/integration/repair.rs", symbol = "a_moved_symbol_and_a_renamed_file_are_repaired_by_one_op" },
 ]
+depends_on = [
+    "a-rename-is-what-the-branch-s-history-says-of-a-gone-path",
+    "a-stale-symbol-is-repaired-where-one-commit-moved-its-code-unchanged",
+]
 
 [accepted_text]
 choice = "A stale anchor follows its gone file's rename only when the rename carried its code: the same span hash before the rename and in the file the rename made"

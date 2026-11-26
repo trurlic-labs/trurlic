@@ -28,7 +28,6 @@ anchors = [
     { file = "tests/integration/failpoints.rs", symbol = "the_journal_deletion_is_flushed_before_the_write_returns" },
 ]
 depends_on = [
-    "a-commit-stages-its-files-in-parallel",
     "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",
     "atomic-writes-via-serialize-to-temp-verify-round-trip",
 ]

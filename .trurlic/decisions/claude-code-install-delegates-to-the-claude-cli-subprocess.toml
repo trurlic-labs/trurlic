@@ -16,3 +16,6 @@ anchors = [
     { file = "src/commands/install.rs", symbol = "find_claude_cli" },
     { file = "src/commands/install.rs", symbol = "install" },
 ]
+depends_on = [
+    "install-has-one-target-claude-code-named-by-a-required-ide",
+]

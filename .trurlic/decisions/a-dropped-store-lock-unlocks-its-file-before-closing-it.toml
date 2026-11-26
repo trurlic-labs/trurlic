@@ -16,3 +16,6 @@ created = "2026-11-26T09:13:46.735825021Z"
 anchors = [
     { file = "src/store/write/lock.rs", symbol = "Held" },
 ]
+depends_on = [
+    "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",
+]

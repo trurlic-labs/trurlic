@@ -19,6 +19,3 @@ anchors = [
     { file = "src/git/layout.rs", symbol = "parse_worktrees" },
     { file = "src/git/layout.rs", symbol = "worktrees" },
 ]
-depends_on = [
-    "the-git-module-is-a-leaf-that-runs-the-git-cli",
-]

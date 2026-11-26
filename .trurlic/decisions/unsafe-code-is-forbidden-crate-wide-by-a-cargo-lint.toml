@@ -12,6 +12,6 @@ tags = [
 status = "accepted"
 created = "2026-06-15T09:47:15.801527744Z"
 anchors = [
-    { file = "Cargo.toml" },
-    { file = "tests/lints.rs" },
+    { file = "Cargo.toml", symbol = "lints::rust::unsafe_code" },
+    { file = "tests/lints.rs", symbol = "each_lint_refuses_its_seeded_violation" },
 ]

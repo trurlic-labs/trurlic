@@ -23,6 +23,5 @@ anchors = [
     { file = "tests/integration/migrate.rs", symbol = "a_graph_git_tracks_in_part_is_refused_naming_how_to_state_it" },
 ]
 depends_on = [
-    "the-git-module-is-a-leaf-that-runs-the-git-cli",
     "trurlic-init-requires-placement",
 ]

@@ -17,6 +17,3 @@ anchors = [
     { file = "src/code/parse/language/c.scm" },
     { file = "src/code/parse/language/cpp.scm" },
 ]
-depends_on = [
-    "what-a-c-or-c-plus-plus-file-defines",
-]

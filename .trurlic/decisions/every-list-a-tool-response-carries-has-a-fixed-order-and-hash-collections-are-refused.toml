@@ -15,9 +15,9 @@ tags = [
 status = "accepted"
 created = "2026-10-02T13:33:21.627819553Z"
 anchors = [
-    { file = "clippy.toml" },
+    { file = "clippy.toml", symbol = "disallowed-types" },
     { file = "src/store/graph/query.rs", symbol = "ProjectState::decisions_in" },
     { file = "src/store/graph/state.rs", symbol = "ProjectState" },
     { file = "tests/integration/determinism.rs", symbol = "read_tools_answer_the_same_bytes_in_two_servers" },
-    { file = "tests/lints.rs" },
+    { file = "tests/lints.rs", symbol = "each_lint_refuses_its_seeded_violation" },
 ]

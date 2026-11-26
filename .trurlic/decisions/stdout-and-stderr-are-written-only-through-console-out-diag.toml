@@ -13,7 +13,7 @@ tags = [
 status = "accepted"
 created = "2026-10-03T13:55:11.254367052Z"
 anchors = [
-    { file = "clippy.toml" },
+    { file = "clippy.toml", symbol = "disallowed-methods" },
     { file = "src/console.rs", symbol = "diag" },
     { file = "src/console.rs", symbol = "out" },
     { file = "src/console.rs", symbol = "stderr" },

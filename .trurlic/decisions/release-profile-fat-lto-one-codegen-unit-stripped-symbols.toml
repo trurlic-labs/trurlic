@@ -13,5 +13,6 @@ tags = [
 status = "accepted"
 created = "2026-11-23T23:15:10.778578750Z"
 anchors = [
-    { file = "Cargo.toml" },
+    { file = "Cargo.toml", symbol = "profile::dev" },
+    { file = "Cargo.toml", symbol = "profile::release" },
 ]

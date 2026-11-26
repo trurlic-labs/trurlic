@@ -12,7 +12,9 @@ tags = [
 status = "accepted"
 created = "2026-06-15T09:47:19.603880721Z"
 anchors = [
-    { file = "Cargo.toml" },
-    { file = "clippy.toml" },
-    { file = "tests/lints.rs" },
+    { file = "Cargo.toml", symbol = "lints::clippy" },
+    { file = "clippy.toml", symbol = "allow-expect-in-tests" },
+    { file = "clippy.toml", symbol = "allow-panic-in-tests" },
+    { file = "clippy.toml", symbol = "allow-unwrap-in-tests" },
+    { file = "tests/lints.rs", symbol = "each_lint_refuses_its_seeded_violation" },
 ]

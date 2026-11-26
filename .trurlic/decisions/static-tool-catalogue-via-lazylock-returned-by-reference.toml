@@ -1,6 +1,6 @@
 component = "mcp"
 choice = "The tools/list result is built once in a LazyLock, spec-built tools first, and returned by reference"
-reason = "The tool catalogue never changes while the server runs: listing::TOOL_LIST builds it on first access from every spec-built tool's entry (its input schema walked from its Args) followed by the hand-written schemas of the tools that predate specs, and every tools/list answer serializes it by reference. Tool::named looks a call up in the registry's TOOLS, which the list is built from, so a call is refused as an unknown tool exactly when tools/list does not list it. The initialize answer is built per request, since it carries the protocol revision negotiated with that client."
+reason = "The tool catalogue never changes while the server runs: listing::TOOL_LIST builds it on first access from every spec-built tool's entry (its input schema walked from its Args) followed by the schemas of the reads written by hand, and every tools/list answer serializes it by reference. Tool::named looks a call up in the registry's TOOLS, which the list is built from, so a call is refused as an unknown tool exactly when tools/list does not list it. The initialize answer is built per request, since it carries the protocol revision negotiated with that client."
 alternatives = [
     "Rebuild tool definitions on each request: rejected because the data never changes at runtime",
     "Embed tool schemas as compiled-in byte slices: rejected because they are harder to maintain, with no advantage over JSON built once in a LazyLock",

@@ -19,3 +19,6 @@ anchors = [
     { file = "src/lint/duplicates/mod.rs", symbol = "likely" },
     { file = "src/lint/duplicates/tests.rs", symbol = "a_pair_at_exactly_the_threshold_is_listed_and_one_a_unit_below_is_not" },
 ]
+depends_on = [
+    "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
+]

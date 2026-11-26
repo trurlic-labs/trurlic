@@ -28,6 +28,9 @@ anchors = [
     { file = "tests/integration/placement.rs", symbol = "a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending" },
     { file = "tests/integration/placement.rs", symbol = "code_another_worktree_has_not_committed_is_pending_there" },
 ]
+depends_on = [
+    "the-verdict-on-an-anchor-follows-its-cause-missing-malformed-or-unverified",
+]
 
 [accepted_text]
 choice = "Only check runs git for other worktrees; one holds a missing anchor when its work tree differs at the file from the fork and resolves the anchor where the fork did not"

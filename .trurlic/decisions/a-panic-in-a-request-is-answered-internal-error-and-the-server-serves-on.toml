@@ -25,6 +25,9 @@ anchors = [
     { file = "src/store/write/access.rs", symbol = "Store::load_state" },
     { file = "tests/integration/server_failpoints.rs", symbol = "a_panic_in_a_tool_call_is_answered_internal_error_and_the_server_serves_on" },
 ]
+depends_on = [
+    "release-profile-fat-lto-one-codegen-unit-stripped-symbols",
+]
 
 [accepted_text]
 choice = "A panic while a request is handled is caught in Server::answer, answered -32603, and the server serves the next request"

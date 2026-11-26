@@ -24,6 +24,7 @@ anchors = [
 depends_on = [
     "lint-is-a-pure-module-of-findings-no-rule-refuses",
     "quality-patterns-are-regexes-compiled-by-a-write-by-check-and-by-the-lint-section",
+    "the-text-rules-bind-every-graph-file-and-the-quality-bar-binds-writes",
 ]
 
 [accepted_text]

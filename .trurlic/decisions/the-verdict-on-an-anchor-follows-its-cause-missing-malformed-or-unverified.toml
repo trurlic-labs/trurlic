@@ -26,3 +26,6 @@ anchors = [
     { file = "src/lint/anchors/trees.rs", symbol = "Asked" },
     { file = "src/lint/anchors/trees.rs", symbol = "Here" },
 ]
+depends_on = [
+    "an-anchor-resolves-to-one-outcome-and-each-cause-is-its-own",
+]

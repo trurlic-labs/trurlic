@@ -28,6 +28,9 @@ anchors = [
     { file = "tests/integration/repair.rs", symbol = "every_repair_holds_against_the_ops_before_it" },
     { file = "tests/integration/repair.rs", symbol = "every_repair_leaves_a_repair_a_quality_pattern_refuses" },
 ]
+depends_on = [
+    "repair-anchors-takes-listed-repairs-or-a-map-judged-on-the-anchors-each-brings",
+]
 
 [accepted_text]
 choice = "repair_anchors with no repairs is filled before the write lock with every repair check shows, as a map the store applies where the op runs, leaving one the bar refuses or cannot judge"

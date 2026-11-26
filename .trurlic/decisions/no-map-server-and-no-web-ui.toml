@@ -10,7 +10,6 @@ alternatives = [
 status = "accepted"
 created = "2026-11-23T19:27:14.921666493Z"
 anchors = [
-    { file = "Cargo.toml" },
-    { file = "src/cli.rs" },
-    { file = "src/lib.rs" },
+    { file = "Cargo.toml", symbol = "dependencies" },
+    { file = "src/cli.rs", symbol = "Command" },
 ]

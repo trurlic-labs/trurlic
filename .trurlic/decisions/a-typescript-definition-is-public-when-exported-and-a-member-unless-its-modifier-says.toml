@@ -25,9 +25,6 @@ anchors = [
     { file = "src/code/parse/language/declarations.scm" },
     { file = "src/code/parse/language/typescript.scm" },
 ]
-depends_on = [
-    "what-a-typescript-file-defines",
-]
 
 [accepted_text]
 choice = "A TypeScript declaration is public when an export holds or names it or an ambient module with no export form holds it, else private; a member is public unless private, # or protected says so"

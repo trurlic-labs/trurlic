@@ -16,3 +16,6 @@ anchors = [
     { file = "src/lint/anchors/finding.rs", symbol = "Class::of" },
     { file = "src/lint/anchors/tests.rs", symbol = "several_paths_are_ambiguous_and_one_path_of_several_kinds_is_no_finding" },
 ]
+depends_on = [
+    "a-symbol-names-every-definition-of-its-one-path",
+]

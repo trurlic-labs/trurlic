@@ -29,7 +29,7 @@ anchors = [
 ]
 depends_on = [
     "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",
-    "the-lint-section-judges-the-patterns-by-name-within-a-work-limit-over-one-scan",
+    "quality-patterns-run-on-regex-automata-s-lazy-dfa-alone",
 ]
 
 [accepted_text]

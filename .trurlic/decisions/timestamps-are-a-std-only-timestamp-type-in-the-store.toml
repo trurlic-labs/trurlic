@@ -13,14 +13,12 @@ tags = [
 status = "accepted"
 created = "2026-11-23T20:56:08.645435002Z"
 anchors = [
-    { file = "clippy.toml" },
+    { file = "clippy.toml", symbol = "disallowed-methods" },
     { file = "src/store/model/schema.rs", symbol = "Decision" },
     { file = "src/store/model/time.rs", symbol = "Timestamp" },
     { file = "src/store/model/time.rs", symbol = "Timestamp::now" },
     { file = "src/store/model/time.rs", symbol = "TimestampError" },
-    { file = "tests/lints.rs" },
 ]
 depends_on = [
     "one-canonical-form-for-every-graph-file",
-    "toml-is-the-one-format-of-the-graph-one-file-per-node",
 ]
