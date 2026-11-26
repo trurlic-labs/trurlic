@@ -45,18 +45,6 @@ impl Definitions {
         }
     }
 
-    /// Each span, in file order.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the anchor findings and the diff review are the first callers"
-        )
-    )]
-    pub(crate) fn spans(&self) -> impl Iterator<Item = &Span> {
-        std::iter::once(&self.first).chain(&self.more)
-    }
-
     /// How many definitions, their shared spans counted once.
     fn count(&self) -> usize {
         self.more.len() + 1
@@ -65,6 +53,14 @@ impl Definitions {
     /// The hash of the set: one definition's own, or that of several.
     pub(crate) const fn hash(&self) -> SpanHash {
         self.hash
+    }
+}
+
+#[cfg(test)]
+impl Definitions {
+    /// Each span, in file order.
+    pub(crate) fn spans(&self) -> impl Iterator<Item = &Span> {
+        std::iter::once(&self.first).chain(&self.more)
     }
 }
 
