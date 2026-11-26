@@ -20,7 +20,7 @@ use std::process::Command;
 
 use crate::{Error, Result};
 
-use super::{MAX_OUTPUT_BYTES, command, run, shown};
+use super::process::{MAX_OUTPUT_BYTES, command, run, shown};
 
 /// The newest commits of `HEAD`'s history the walk lists, in topological
 /// order: what a repair is judged by. A file whose code moved before them

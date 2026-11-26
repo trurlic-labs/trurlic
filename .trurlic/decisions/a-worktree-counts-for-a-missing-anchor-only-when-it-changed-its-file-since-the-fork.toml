@@ -18,8 +18,8 @@ origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"
 anchors = [
     { file = "src/code/facts.rs", symbol = "CodeFacts::beside" },
-    { file = "src/git.rs", symbol = "changed_since" },
-    { file = "src/git.rs", symbol = "work_tree_of" },
+    { file = "src/git/layout.rs", symbol = "work_tree_of" },
+    { file = "src/git/revisions.rs", symbol = "changed_since" },
     { file = "src/sources/mod.rs", symbol = "elsewhere" },
     { file = "src/sources/worktrees.rs", symbol = "fork" },
     { file = "src/sources/worktrees.rs", symbol = "others" },

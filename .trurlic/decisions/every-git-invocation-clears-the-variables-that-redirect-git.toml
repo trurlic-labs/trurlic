@@ -16,8 +16,8 @@ tags = [
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
-    { file = "src/git.rs", symbol = "CLEARED" },
-    { file = "src/git.rs", symbol = "run" },
+    { file = "src/git/process.rs", symbol = "CLEARED" },
+    { file = "src/git/process.rs", symbol = "command" },
     { file = "tests/integration/migrate.rs", symbol = "the_callers_git_variables_do_not_redirect_the_placement" },
 ]
 depends_on = [

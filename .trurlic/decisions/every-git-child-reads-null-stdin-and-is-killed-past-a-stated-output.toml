@@ -1,6 +1,6 @@
 component = "git"
-choice = "Every git child reads null stdin unless given input, has its stdout read to at most git::MAX_OUTPUT_BYTES and is killed past them, and is waited for with no deadline"
-reason = "trurlic serve reads JSON-RPC on its stdin, so a git child that inherited it could take requests: each child gets a null stdin, or the input its caller writes from a thread of its own. A git, or any program named git on PATH, can print without end; git::finish reads the stdout through a bound of MAX_OUTPUT_BYTES and one byte more, and past it kills the child and fails with Error::GitOutputTooLarge, which names the bound, so memory stays bounded and the caller reports a typed error as it reports any git failure. The bound sits above the largest output trurlic asks for, the history walk of MAX_WALKED_COMMITS commits or one blob batch, which git::renames::blobs sizes within it. The stderr keeps its first MAX_STDERR_BYTES for the error message and drains the rest, so a command that warns at length neither fills memory nor blocks on a full pipe. No deadline bounds the wait: a git that never returns is the user's environment, as a file system that never returns is, and a deadline would make what a call answers depend on the machine's load."
+choice = "Every git child reads null stdin unless given input, has its stdout read to at most git::process::MAX_OUTPUT_BYTES and is killed past them, and is waited for with no deadline"
+reason = "trurlic serve reads JSON-RPC on its stdin, so a git child that inherited it could take requests: each child gets a null stdin, or the input its caller writes from a thread of its own. A git, or any program named git on PATH, can print without end; git::process::finish reads the stdout through a bound of MAX_OUTPUT_BYTES and one byte more, and past it kills the child and fails with Error::GitOutputTooLarge, which names the bound, so memory stays bounded and the caller reports a typed error as it reports any git failure. The bound sits above the largest output trurlic asks for, the history walk of MAX_WALKED_COMMITS commits or one blob batch, which git::renames::blobs sizes within it. The stderr keeps its first MAX_STDERR_BYTES for the error message and drains the rest, so a command that warns at length neither fills memory nor blocks on a full pipe. No deadline bounds the wait: a git that never returns is the user's environment, as a file system that never returns is, and a deadline would make what a call answers depend on the machine's load."
 alternatives = [
     "Read all a child prints, as wait_with_output does: rejected because a git printing without end grows memory with every byte it prints",
     "A wall-clock deadline per child: rejected because a loaded machine would then turn a slow correct answer into a failure, and a call's result would depend on the load",
@@ -15,9 +15,9 @@ origin = "anchor repair: one evidence path, bounded git"
 created = "2026-11-26T11:10:13.206285053Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::GitOutputTooLarge" },
-    { file = "src/git.rs", symbol = "MAX_OUTPUT_BYTES" },
-    { file = "src/git.rs", symbol = "bounded" },
-    { file = "src/git.rs", symbol = "finish" },
-    { file = "src/git.rs", symbol = "kept" },
+    { file = "src/git/process.rs", symbol = "MAX_OUTPUT_BYTES" },
+    { file = "src/git/process.rs", symbol = "bounded" },
+    { file = "src/git/process.rs", symbol = "finish" },
+    { file = "src/git/process.rs", symbol = "kept" },
     { file = "tests/integration/anchors.rs", symbol = "a_git_that_prints_without_end_is_cut_off_at_the_stated_bytes" },
 ]

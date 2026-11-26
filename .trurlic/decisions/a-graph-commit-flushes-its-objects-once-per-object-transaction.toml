@@ -15,9 +15,9 @@ status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:35:48.715992075Z"
 anchors = [
-    { file = "src/git/graph.rs", symbol = "OVERRIDES" },
     { file = "src/git/graph/index.rs", symbol = "Repository::stage" },
     { file = "src/git/graph/index.rs", symbol = "Repository::write_blobs" },
+    { file = "src/git/graph/mod.rs", symbol = "OVERRIDES" },
     { file = "tests/integration/history.rs", symbol = "a_commit_flushes_its_objects_in_one_batch_however_many_files_it_holds" },
 ]
 depends_on = [

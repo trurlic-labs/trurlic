@@ -16,7 +16,7 @@ created = "2026-11-24T03:00:00Z"
 anchors = [
     { file = "src/discovery.rs", symbol = "discover" },
     { file = "src/discovery.rs", symbol = "shared_graph_of" },
-    { file = "src/git.rs", symbol = "dot_git_in" },
+    { file = "src/git/layout.rs", symbol = "dot_git_in" },
     { file = "tests/integration/placement.rs", symbol = "discovery_runs_no_git_where_the_walk_finds_the_graph" },
 ]
 depends_on = [

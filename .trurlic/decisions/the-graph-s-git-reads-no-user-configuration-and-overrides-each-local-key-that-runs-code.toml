@@ -20,15 +20,15 @@ tags = [
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/git/graph.rs", symbol = "ATTRIBUTES" },
-    { file = "src/git/graph.rs", symbol = "DATES" },
-    { file = "src/git/graph.rs", symbol = "ENVIRONMENT" },
-    { file = "src/git/graph.rs", symbol = "OVERRIDES" },
-    { file = "src/git/graph.rs", symbol = "Repository::create" },
-    { file = "src/git/graph.rs", symbol = "isolated" },
     { file = "src/git/graph/index.rs", symbol = "Repository::stage" },
     { file = "src/git/graph/index.rs", symbol = "Repository::unset_conversions" },
     { file = "src/git/graph/index.rs", symbol = "Repository::update" },
+    { file = "src/git/graph/mod.rs", symbol = "ATTRIBUTES" },
+    { file = "src/git/graph/mod.rs", symbol = "DATES" },
+    { file = "src/git/graph/mod.rs", symbol = "ENVIRONMENT" },
+    { file = "src/git/graph/mod.rs", symbol = "OVERRIDES" },
+    { file = "src/git/graph/mod.rs", symbol = "Repository::create" },
+    { file = "src/git/graph/mod.rs", symbol = "isolated" },
     { file = "tests/integration/history.rs", symbol = "no_configuration_or_environment_breaks_or_redirects_a_commit" },
 ]
 depends_on = [

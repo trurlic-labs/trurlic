@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{Error, Result};
 
-use super::super::{path, path_bytes, run, shown};
+use super::super::encoding::{path, path_bytes};
+use super::super::process::{run, shown};
 use super::{ATTRIBUTES, Oid, Repository};
 
 impl Repository {

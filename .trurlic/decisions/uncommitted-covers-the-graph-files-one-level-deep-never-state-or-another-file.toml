@@ -15,8 +15,8 @@ tags = [
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/git/graph.rs", symbol = "Repository::status" },
-    { file = "src/git/graph.rs", symbol = "parse_status" },
+    { file = "src/git/graph/mod.rs", symbol = "Repository::status" },
+    { file = "src/git/graph/mod.rs", symbol = "parse_status" },
     { file = "src/store/history.rs", symbol = "graph_files" },
 ]
 depends_on = [

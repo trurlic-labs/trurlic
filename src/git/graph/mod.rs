@@ -29,7 +29,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
-use super::{command, failed, finish, path, run, shown};
+use super::encoding::path;
+use super::process::{command, failed, finish, run, shown};
 
 /// The author and committer of every commit: a program, at an address no
 /// mailbox can have (`.invalid` is reserved for that).

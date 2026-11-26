@@ -1,7 +1,7 @@
 component = "git"
 choice = "History commits are made with a fixed identity, --no-verify and commit.gpgsign=false, the variables that redirect git cleared, so a call from a git hook reaches only the graph's repository"
 reason = """
-trurlic runs inside a project's git hooks, where git exports GIT_DIR and GIT_INDEX_FILE for the repository running the hook; a history commit made there must land in the graph's repository and in no other, with no hook of its own run, no signing prompt, and an author that names the program. Every call clears what git::CLEARED lists and names the graph's repository outright; the author and the committer are trurlic <trurlic@trurlic.invalid>, an address no mailbox can have. tests/integration/history.rs runs fmt with GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and GIT_COMMON_DIR set to another repository, whose history and index stay as they were.
+trurlic runs inside a project's git hooks, where git exports GIT_DIR and GIT_INDEX_FILE for the repository running the hook; a history commit made there must land in the graph's repository and in no other, with no hook of its own run, no signing prompt, and an author that names the program. Every call clears what git::process::CLEARED lists and names the graph's repository outright; the author and the committer are trurlic <trurlic@trurlic.invalid>, an address no mailbox can have. tests/integration/history.rs runs fmt with GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and GIT_COMMON_DIR set to another repository, whose history and index stay as they were.
 """
 alternatives = [
     "The user's identity: rejected because a person did not make the commit, and useConfigOnly or a missing user.email would refuse it",
@@ -15,9 +15,9 @@ tags = [
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/git/graph.rs", symbol = "EMAIL" },
-    { file = "src/git/graph.rs", symbol = "NAME" },
-    { file = "src/git/graph.rs", symbol = "Repository::commit" },
+    { file = "src/git/graph/mod.rs", symbol = "EMAIL" },
+    { file = "src/git/graph/mod.rs", symbol = "NAME" },
+    { file = "src/git/graph/mod.rs", symbol = "Repository::commit" },
     { file = "tests/integration/history.rs", symbol = "a_write_with_git_dir_set_to_another_repository_commits_only_to_the_graph" },
 ]
 depends_on = [

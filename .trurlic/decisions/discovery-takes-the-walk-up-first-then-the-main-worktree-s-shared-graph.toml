@@ -16,7 +16,7 @@ anchors = [
     { file = "src/discovery.rs", symbol = "discover" },
     { file = "src/discovery.rs", symbol = "graph_in" },
     { file = "src/discovery.rs", symbol = "shared_graph_of" },
-    { file = "src/git.rs", symbol = "dot_git_in" },
+    { file = "src/git/layout.rs", symbol = "dot_git_in" },
     { file = "tests/integration/placement.rs", symbol = "a_nested_worktree_of_a_shared_graph_reads_it_for_itself" },
     { file = "tests/integration/placement.rs", symbol = "a_nested_worktree_of_a_tracked_graph_never_reaches_the_main_one" },
     { file = "tests/integration/placement.rs", symbol = "a_repository_inside_a_project_does_not_reach_its_graph" },

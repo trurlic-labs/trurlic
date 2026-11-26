@@ -17,11 +17,11 @@ status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::GitFailed" },
-    { file = "src/git.rs", symbol = "paths" },
-    { file = "src/git.rs", symbol = "run" },
-    { file = "src/git.rs", symbol = "toplevel" },
-    { file = "src/git.rs", symbol = "tracked" },
-    { file = "src/git.rs", symbol = "worktrees" },
-    { file = "src/git/graph.rs", symbol = "Repository" },
+    { file = "src/git/encoding.rs", symbol = "paths" },
+    { file = "src/git/files.rs", symbol = "tracked" },
+    { file = "src/git/graph/mod.rs", symbol = "Repository" },
+    { file = "src/git/layout.rs", symbol = "toplevel" },
+    { file = "src/git/layout.rs", symbol = "worktrees" },
+    { file = "src/git/process.rs", symbol = "run" },
     { file = "src/lib.rs" },
 ]
