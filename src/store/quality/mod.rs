@@ -20,9 +20,9 @@ mod bar;
 
 use std::fmt;
 
-use crate::store::Store;
-use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
+use crate::store::format::Store;
 use crate::store::model::Quality;
+use crate::store::model::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
 use crate::{Error, Result};
 
 pub use bar::Shortfall;

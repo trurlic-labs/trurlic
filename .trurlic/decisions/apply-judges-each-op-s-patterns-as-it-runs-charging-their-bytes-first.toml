@@ -21,9 +21,9 @@ anchors = [
     { file = "src/store/apply/refusal.rs", symbol = "Rule::PatternWork" },
     { file = "src/store/model/limits.rs", symbol = "MAX_PATTERN_CACHE_TOTAL_BYTES" },
     { file = "src/store/model/limits.rs", symbol = "MAX_WRITE_PATTERN_BYTES" },
-    { file = "src/store/quality/bar.rs", symbol = "Bar::judge_patterns" },
-    { file = "src/store/quality/bar.rs", symbol = "tests::the_total_is_refused_at_the_text_whose_search_passed_it" },
     { file = "src/store/quality/bar/audit.rs", symbol = "tests::a_write_grows_its_caches_by_their_total_and_no_more" },
+    { file = "src/store/quality/bar/mod.rs", symbol = "Bar::judge_patterns" },
+    { file = "src/store/quality/bar/mod.rs", symbol = "tests::the_total_is_refused_at_the_text_whose_search_passed_it" },
     { file = "src/store/quality/bar/pattern.rs", symbol = "Scan" },
     { file = "src/store/quality/mod.rs", symbol = "Store::prepare_bar" },
 ]

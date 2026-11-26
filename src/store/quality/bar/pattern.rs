@@ -24,7 +24,7 @@ use regex_syntax::hir::translate::Translator;
 
 use super::folding::folded_code_points;
 use super::{Breach, Broken, Hit, Place};
-use crate::store::limits::{
+use crate::store::model::limits::{
     MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_COMPILED_BYTES, MAX_PATTERN_FOLDED_CODE_POINTS,
 };
 use crate::store::model::{DecisionField, Level, Pattern};

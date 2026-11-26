@@ -24,7 +24,7 @@ use crate::{Error, Result};
 
 use super::Store;
 use super::canonical::{Canonical, is_canonical};
-use crate::store::limits::MAX_NODE_FILE_BYTES;
+use crate::store::model::limits::MAX_NODE_FILE_BYTES;
 use crate::store::model::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, Project};
 use crate::store::model::{NodeFile, ProjectState};
 

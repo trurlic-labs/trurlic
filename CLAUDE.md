@@ -118,7 +118,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 - Format fixtures: `tests/fixtures/formats/<version>/`, each migrated, loaded and checked.
 - Code fixtures: `tests/fixtures/code/`; manifests are named `Cargo.toml.fixture`.
 - Prose fixture: `tests/fixtures/prose/`, fixed English decision text the `[quality]` caches are sized on.
-- Seeded corpus (`store::corpus`, `store::seeded`) feeds property tests and benches.
+- Seeded corpus (`store::corpus`, `store::corpus::seeded`) feeds property tests and benches.
 - No test for coverage: each asserts a property someone could break.
 
 ### Skills

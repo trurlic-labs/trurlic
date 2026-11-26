@@ -32,10 +32,11 @@ use crate::store::write::{CommitMessage, Tool};
 
 use crate::store::quality::{Bar, Hit, PreparedBar, Scan};
 
+use crate::store::format::Store;
 use crate::store::model::DecisionField;
 use crate::store::model::NodeFile;
 use crate::store::model::{Anchor, StatusName};
-use crate::store::{Store, Writer};
+use crate::store::write::Writer;
 use crate::{Error, Result};
 
 use check::Fault;

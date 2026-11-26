@@ -20,7 +20,7 @@ use super::history::History;
 use super::journal::{PendingHistory, Replayed};
 use super::lock::StoreLock;
 use super::message::{CommitMessage, Tool};
-use crate::store::Store;
+use crate::store::format::Store;
 use crate::store::model::NodeFile;
 use crate::store::model::ProjectState;
 use crate::store::model::{Placement, Project};

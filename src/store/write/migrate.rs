@@ -23,7 +23,7 @@ use super::commit::PendingWrite;
 use super::history::History;
 use super::lock::StoreLock;
 use super::message::{CommitMessage, Tool};
-use crate::store::Store;
+use crate::store::format::Store;
 
 /// A planned migration: its report, and the commit that carries it out.
 #[must_use = "a planned migration is carried out by Store::commit_migration"]

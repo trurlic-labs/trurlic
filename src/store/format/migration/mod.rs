@@ -20,7 +20,7 @@ use std::fmt;
 use std::mem;
 use std::path::{Path, PathBuf};
 
-use crate::store::Store;
+use crate::store::format::Store;
 use crate::store::model::{
     COMPONENTS_DIR, DECISIONS_DIR, FORMAT_VERSION, FormatVersion, PROJECT_FILE, Placement,
 };

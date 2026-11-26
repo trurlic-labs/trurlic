@@ -4,9 +4,10 @@
 //!
 //! The store is written in one journaled commit of canonical files, the
 //! path every write takes, and its tests hold it valid. Every draw comes
-//! from the seeded generator (`store::seeded`): benches compare commits only
+//! from the seeded generator (`seeded.rs`): benches compare commits only
 //! while the corpus stays byte-identical across them.
 
+pub(crate) mod seeded;
 mod words;
 
 use std::collections::BTreeSet;
@@ -17,12 +18,13 @@ use std::time::Duration;
 
 use crate::{Error, Result};
 
-use super::seeded::SplitMix64;
-use super::{Store, Timestamp};
+use crate::store::format::Store;
+use crate::store::model::Timestamp;
 use crate::store::model::{
     AcceptedText, AcceptedVia, Anchor, Component, Decision, PROJECT_COMPONENT, Placement, Status,
 };
 use crate::store::write::{CommitMessage, History, PendingWrite, Tool};
+use seeded::SplitMix64;
 use words::{COMPONENT_WORDS, MODULE_WORDS, SYMBOL_WORDS, TAGS, WORDS};
 
 const DECISIONS_PER_COMPONENT: usize = 40;

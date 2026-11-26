@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use crate::{Error, Result};
 
-use crate::store::Store;
+use crate::store::format::Store;
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 

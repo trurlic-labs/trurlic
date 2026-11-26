@@ -35,7 +35,7 @@ use crate::{Error, Result};
 use super::failpoint::{self, Site};
 use super::lock::StoreLock;
 use super::message::{CommitMessage, Tool};
-use crate::store::Store;
+use crate::store::format::Store;
 use crate::store::graph::listed;
 use crate::store::model::{COMPONENTS_DIR, DECISIONS_DIR, PROJECT_FILE, Placement, STATE_DIR};
 

@@ -14,8 +14,8 @@ use super::failpoint::{self, Site};
 use super::history::History;
 use super::lock::StoreLock;
 use crate::store::format::{Canonical, canonical};
-use crate::store::limits::MAX_NODE_FILE_BYTES;
-use crate::store::{Store, StorePathFault};
+use crate::store::format::{Store, StorePathFault};
+use crate::store::model::limits::MAX_NODE_FILE_BYTES;
 
 /// A file write staged for batch commit.
 /// Created via [`Store::prepare_write`], executed via [`Store::commit_batch`].

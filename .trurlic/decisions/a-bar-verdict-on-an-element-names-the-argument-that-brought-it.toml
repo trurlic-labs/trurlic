@@ -16,7 +16,7 @@ anchors = [
     { file = "src/store/apply/check.rs", symbol = "Sources" },
     { file = "src/store/apply/check.rs", symbol = "bar" },
     { file = "src/store/apply/tests/quality.rs", symbol = "a_verdict_on_an_element_names_the_argument_that_brought_it" },
-    { file = "src/store/quality/bar.rs", symbol = "element" },
+    { file = "src/store/quality/bar/mod.rs", symbol = "element" },
 ]
 depends_on = [
     "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",

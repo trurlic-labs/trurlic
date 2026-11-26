@@ -13,10 +13,10 @@
 use std::borrow::Cow;
 
 use super::{Limit, QualityFault, words};
-use crate::store::limits::{
+use crate::store::model::Decision;
+use crate::store::model::limits::{
     MAX_PATTERN_CACHE_TOTAL_BYTES, MAX_QUOTED_MATCH_BYTES, MAX_WRITE_PATTERN_BYTES,
 };
-use crate::store::model::Decision;
 use crate::store::model::{DecisionField, Quality, WordRange};
 use crate::store::model::{TextFault, TextField, fault};
 

@@ -20,7 +20,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{Error, Result};
 
-use super::{Store, StoreLock};
+use crate::store::format::Store;
+use crate::store::write::StoreLock;
 
 /// The directory of the cache, in `.state/`.
 const SYMBOLS_DIR: &str = "symbols";

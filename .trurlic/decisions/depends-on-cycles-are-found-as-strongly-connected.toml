@@ -14,7 +14,7 @@ status = "proposed"
 created = "2026-10-02T12:57:49.182012916Z"
 anchors = [
     { file = "src/store/apply/edit.rs", symbol = "Edit::new_cycle" },
-    { file = "src/store/apply/tests.rs", symbol = "a_cycle_the_graph_began_with_is_known_under_its_members_new_names" },
+    { file = "src/store/apply/tests/mod.rs", symbol = "a_cycle_the_graph_began_with_is_known_under_its_members_new_names" },
     { file = "src/store/graph/cycles.rs", symbol = "ProjectState::depends_on_cycles" },
     { file = "src/store/graph/cycles.rs", symbol = "Search" },
     { file = "src/store/graph/cycles.rs", symbol = "cycles" },

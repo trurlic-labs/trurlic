@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use super::refusal::argument_path;
-use crate::store::limits::MAX_WARNINGS_PER_OP;
+use crate::store::model::limits::MAX_WARNINGS_PER_OP;
 use crate::store::quality::{Bar, Hit};
 
 /// A warning of an applied batch.

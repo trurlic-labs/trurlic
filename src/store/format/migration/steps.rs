@@ -14,7 +14,7 @@ use toml::Value;
 use crate::Result;
 
 use super::{File, Tree, format_0_5, loss};
-use crate::store::FormatVersion;
+use crate::store::model::FormatVersion;
 
 /// One format change.
 pub(in crate::store) struct Step {

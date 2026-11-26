@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use crate::{Error, Result};
 
 use super::{File, PlacementBasis};
-use crate::store::Store;
+use crate::store::format::Store;
 use crate::store::graph::{listed, partition};
 use crate::store::model::Placement;
 

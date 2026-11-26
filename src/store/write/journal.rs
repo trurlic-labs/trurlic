@@ -37,7 +37,7 @@ use super::history::{Head, HistoryStep};
 use super::lock::StoreLock;
 use super::message::CommitMessage;
 use crate::store::format::ensure_regular;
-use crate::store::{Store, StorePathFault};
+use crate::store::format::{Store, StorePathFault};
 
 /// A write's file operations and its history commit. Paths are relative to
 /// the store root.

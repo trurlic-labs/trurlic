@@ -15,7 +15,7 @@ created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
     { file = "src/store/graph/validate.rs", symbol = "check_text" },
     { file = "src/store/model/text.rs", symbol = "fault" },
-    { file = "src/store/quality/bar.rs", symbol = "Bar::judge" },
+    { file = "src/store/quality/bar/mod.rs", symbol = "Bar::judge" },
     { file = "src/store/quality/mod.rs" },
 ]
 depends_on = [
