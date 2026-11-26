@@ -74,7 +74,7 @@ purity     → code (tests only)           the check that `code` and `lint` name
 
 1. `unsafe_code = "forbid"`.
 2. Lints are the rules (`Cargo.toml [lints]`, `clippy.toml`; `tests/lints.rs` seeds a violation of each): no `unwrap`/`expect`/`panic!`/`todo!`/`unimplemented!`/`dbg!` outside tests; no `HashMap`/`HashSet`; stdout/stderr only via `console`; clock only via `Timestamp::now`. Exceptions: `#[expect(lint, reason = "...")]`; `#[allow]` is refused.
-3. Every graph write goes through a `Writer` (`Store::begin_write`), which owns the exclusive lock and the graph loaded under it. `init` and `migrate` take the lock themselves. `mcp` never writes directly.
+3. Every graph write goes through a `Writer` (`Store::begin_write`), which owns the exclusive lock and the graph loaded under it. `init` and `migrate` take the lock themselves. `tools` and `mcp` never write directly.
 4. A write adds no validation issue; a batch is one commit or nothing.
 5. Commit order: canonical text read back → staged temp files → (shared) blobs → journal = commit point → renames → (shared) history commit → journal deleted. Recovery rolls forward under the exclusive lock; after the commit point a failure is `WritePending`, never a rollback.
 6. `shared`: one commit per write in `.trurlic/.git`, after one `hand edit` commit, fixed identity, no user/system git config. `tracked`: trurlic never commits.

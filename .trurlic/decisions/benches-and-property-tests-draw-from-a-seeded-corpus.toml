@@ -10,7 +10,7 @@ tags = [
     "performance",
     "testing",
 ]
-status = "proposed"
+status = "accepted"
 created = "2026-10-03T13:55:20.745975078Z"
 anchors = [
     { file = "src/lib.rs", symbol = "bench" },
@@ -21,13 +21,4 @@ anchors = [
     { file = "src/store/corpus/seeded.rs", symbol = "SplitMix64" },
     { file = "src/store/write/commit.rs", symbol = "Store::commit_batch" },
     { file = "src/tools/truncate.rs" },
-]
-
-[accepted_text]
-choice = "Benches and property tests draw from a seeded corpus written as canonical files in one journaled commit"
-reason = "store::corpus writes a store shaped like a large real graph, plus a Rust source tree its anchors resolve in, with the share of anchored files a parameter. Reasons run from 600 to 1200 bytes, with up to 20 anchors; one decision in ten is proposed, and a quarter of those carry accepted_text. One decision in sixteen is project-wide, about one in two depends on an earlier one, and a component per 40 decisions connects to the next two. Words are drawn by rank band from a long-tailed vocabulary of 8,191, so a few words are in most texts and the rest in few. One decision in 25 opens its reason with half of an earlier one's, so the duplicates pass finds a few pairs as in a real graph; a uniform draw from a short list made nearly every pair one. Every node goes through prepare_write and one commit_batch, the path every write takes, and its tests hold the graph valid, every file canonical, and every node's bytes a fixpoint of read and write. Draws come from SplitMix64 in store::seeded and timestamps are a fixed epoch plus offsets, so the same Corpus value writes the same bytes on any machine, rand release or day: benches compare commits only while the corpus is byte-identical. The same generator is the one seeded source of the crate's unit property tests, such as the timestamps of store::time and the random payloads of mcp::truncate, so no test carries a second PRNG or a rand dependency. The corpus is crate-private and reaches benches as trurlic::bench::Corpus; both compile under cfg(test) and the bench feature only, so release builds carry neither the corpus nor the generator, and the store's public surface is the same with the feature."
-alternatives = [
-    "rand's StdRng: rejected because its algorithm is not guaranteed stable across releases, which would move every bench baseline on a dependency bump",
-    "One commit per decision: rejected because thousands of journaled commits take minutes and stamp wall-clock times",
-    "Commit a fixture corpus to the repo: rejected because it puts megabytes of generated TOML in git and fixes size and anchored share",
 ]
