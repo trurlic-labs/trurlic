@@ -1,11 +1,12 @@
 component = "code"
-choice = "The definitions a symbol names that share one full path are one thing it resolves to, every span and one hash; only definitions of several paths are Ambiguous(n), n the paths"
-reason = "Ambiguity is a property of names, not of how many definitions a name has. cfg twins of a function, a field and its getter, a key each element of an array holds, a heading or a Makefile target defined twice: each is one thing no spelling can split. The definitions a symbol matches, those whose path ends with it, those whose whole path it is winning, a trailing () first narrowing to functions and methods, are grouped by full path: one group resolves to all its definitions, several are Ambiguous with the number of paths. Kind takes no part in what is one thing, and () is the one narrowing. Definitions holds a first span and the rest in file order, so it is never empty, and one hash: a single definition's own, or the hash of the members' hashes in the order of the hashes, so twins that swap places move nothing. Its text is the count, the first span and the hash. A lossy path merges silently. Known approximations: a heading or a key holding :: beside the nested one, and an impl for &T beside one for &mut T."
+choice = "A symbol resolves to the definitions whose whole path it is, else to all whose path ends with it; those of one path are one thing, every span and one hash, several paths Ambiguous(n)"
+reason = "Ambiguity is a property of names, not of how many definitions a name has. A symbol names every definition whose path ends with it, so a module-level function open and a method Store::open are both named by open, and without a further rule no spelling would name the function alone; the same holds for a function and the test named after it, and for a type and one of its name in an inner module. So among the matches, after a trailing () narrows them to functions and methods, those whose whole path the symbol is, no segment left out, win, and only when none are does every suffix match count: a shorter suffix of a deeper path stays a shorthand. The matches left are grouped by full path. cfg twins of a function, a field and its getter, a key each element of an array holds, a heading or a Makefile target defined twice: each is one thing no spelling can split, so one group resolves to all its definitions, and several are Ambiguous with the number of paths rather than resolved to the first, so a span hash never covers the wrong one. Kind takes no part in what is one thing, and () is the one narrowing. Definitions holds a first span and the rest in file order, so it is never empty, and one hash: a single definition's own, or the hash of the members' hashes in the order of the hashes, so twins that swap places move nothing. Its text is the count, the first span and the hash. A lossy path merges silently. Known approximations: a heading or a key holding :: beside the nested one, and an impl for &T beside one for &mut T."
 alternatives = [
-    "Keep Ambiguous for every symbol of several definitions: rejected because cfg twins and a field with its getter could then be anchored by no symbol at all",
+    "Every symbol that names several definitions is Ambiguous: rejected because cfg twins, a field with its getter, and a module-level item that shares its name with a member could then be anchored by no symbol at all",
+    "Resolve an ambiguous symbol to its first definition: rejected because the order of a file is no statement of which one the decision meant",
     "Let kind split a path's definitions into things: rejected because a type and its value, or a property and its setter, are one name a reader means together, and () already narrows to functions",
     "Hash the members in span order: rejected because two unchanged twins that swap places would move the hash, as moving one definition does not",
-    "Print every span of a set: rejected because a key held by thousands of array elements printed a text far past a tool result's budget",
+    "Print every span of a set: rejected because a key held by every element of a long array prints a text far past a tool result's budget",
 ]
 status = "proposed"
 origin = "symbol sets"
@@ -16,9 +17,10 @@ anchors = [
     { file = "src/code/facts/definitions.rs", symbol = "Definitions" },
     { file = "src/code/facts/definitions.rs", symbol = "Definitions::of" },
     { file = "src/code/index/span.rs", symbol = "SpanHash::of_members" },
+    { file = "src/code/index/symbol.rs", symbol = "Symbol::is_path_of" },
+    { file = "src/code/index/symbol.rs", symbol = "Symbol::names" },
     { file = "src/sources/tests.rs", symbol = "a_symbol_of_one_path_resolves_to_each_of_its_definitions_with_one_hash" },
     { file = "src/sources/tests.rs", symbol = "each_construct_of_the_fixture_corpus_resolves_as_stated" },
-    { file = "tests/fixtures/code/crates/ledger/src/rules.rs", symbol = "flush" },
 ]
 depends_on = [
     "a-symbol-is-a-path-of-names-from-the-outermost-container",

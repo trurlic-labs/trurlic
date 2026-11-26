@@ -17,5 +17,5 @@ anchors = [
 ]
 depends_on = [
     "duplicate-pairs-come-from-an-inverted-index-over-every-term",
-    "the-lint-section-fits-each-kind-on-its-own-and-counts-each",
+    "status-lists-lint-findings-as-typed-items-best-first",
 ]

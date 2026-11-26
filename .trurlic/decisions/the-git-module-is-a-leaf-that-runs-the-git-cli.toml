@@ -6,7 +6,7 @@ The git CLI is the git the user runs, with the user's discovery and configuratio
 alternatives = [
     "libgit2 through the git2 crate: rejected because a C dependency brings its own discovery and configuration rules, which can answer otherwise than the git the user runs",
     "git inside store: rejected because a writer protocol and a command both need it, and process spawning would sit in the module that holds the graph",
-    "git inside commands: rejected because the store's history commits will need it, and store may not import commands",
+    "git inside commands: rejected because the store's history commits run git, and store may not import commands",
 ]
 status = "proposed"
 created = "2026-11-24T01:30:00Z"

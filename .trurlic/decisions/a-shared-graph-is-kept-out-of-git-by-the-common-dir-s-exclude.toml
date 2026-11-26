@@ -1,7 +1,7 @@
 component = "commands"
 choice = "init keeps a shared graph out of git with /.trurlic/ in the common dir's info/exclude, and a tracked graph's .state/ with the .gitignore beside it"
 reason = """
-A shared graph stays out of the project's git, which check holds it to, but an untracked directory shows in every git status and git add --all commits it. info/exclude of the common dir is read by every worktree of the repository and is no tracked file, so the project's history never names a graph it does not version and every clone decides for itself. The entry is anchored, /.trurlic/, so it matches the top of each work tree only. A tracked graph keeps its .state/, the lock and the journal, out of git with .trurlic/.state/ in the .gitignore of the directory that holds it, as before; outside any work tree nothing is written. Each entry is appended once.
+A shared graph stays out of the project's git, which check holds it to, but an untracked directory shows in every git status and git add --all commits it. info/exclude of the common dir is read by every worktree of the repository and is no tracked file, so the project's history never names a graph it does not version and every clone decides for itself. The entry is anchored, /.trurlic/, so it matches the top of each work tree only. A tracked graph keeps its .state/, the lock and the journal, out of git with .trurlic/.state/ in the .gitignore of the directory that holds it; outside any work tree nothing is written. Each entry is appended once.
 """
 alternatives = [
     "A /.trurlic/ line in .gitignore: rejected because a tracked file of the project would name a graph the project does not version, in every clone",

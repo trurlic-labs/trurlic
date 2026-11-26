@@ -1,4 +1,18 @@
 component = "store"
+choice = "There is no pattern node kind; a rule a pattern would state is a decision"
+reason = "A rule a pattern would state is a decision like any other, project-wide when it applies everywhere, and a brief carries the decisions themselves. A node kind that groups decisions under a named synthesis and applies it to components would bring edges of its own, and with them deletion rules a decision does not need: a pattern kept at two members, a removal that shrinks one. A store of an older format holds patterns; its migration reports every pattern with its description and edges, so the owner can record the rule it stated as a decision."
+alternatives = [
+    "A pattern node kind beside decisions: rejected because its edges carry most of the deletion rules for little a brief uses",
+    "Each pattern as a tag: rejected because a tag states no rule",
+]
+status = "proposed"
+created = "2026-11-24T01:00:00Z"
+anchors = [
+    { file = "src/store/format/migration/tree.rs", symbol = "PATTERNS_DIR" },
+    { file = "src/store/model/schema.rs" },
+]
+
+[accepted_text]
 choice = "Patterns are deleted as a node kind, with their member_of and applies_to edges; a rule a pattern stated is a decision"
 reason = """
 A pattern grouped decisions under a named synthesis and applied it to components, but a brief already carries the decisions themselves, agents rarely recorded one, and the pattern edges were the main source of the deletion rules (a pattern kept at two members, a removal that shrank one). A rule a pattern states is a decision like any other, project-wide when it applies everywhere; the migration reports every pattern with its description and edges so the owner can record such a decision. Each of this repository's three patterns stated a rule decisions already hold: the limits in store::limits, validation before a write, and the no-panic lints with the one error enum.
@@ -6,10 +20,4 @@ A pattern grouped decisions under a named synthesis and applied it to components
 alternatives = [
     "Keep patterns as a node kind: rejected because their edges carried most of the deletion rules for little a brief used",
     "Turn each pattern into a tag: rejected because a tag states no rule",
-]
-status = "accepted"
-created = "2026-11-24T01:00:00Z"
-anchors = [
-    { file = "src/store/format/migration/tree.rs", symbol = "PATTERNS_DIR" },
-    { file = "src/store/model/schema.rs" },
 ]

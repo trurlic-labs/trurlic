@@ -16,5 +16,5 @@ anchors = [
 ]
 depends_on = [
     "every-tool-result-fits-the-result-budget-and-names-each-cut",
-    "the-lint-section-fits-each-kind-on-its-own-and-counts-each",
+    "status-lists-lint-findings-as-typed-items-best-first",
 ]

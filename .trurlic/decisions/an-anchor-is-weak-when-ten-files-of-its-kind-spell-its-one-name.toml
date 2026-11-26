@@ -18,5 +18,5 @@ anchors = [
     { file = "src/lint/anchors/tests.rs", symbol = "one_name_that_ten_files_of_its_kind_define_is_weak" },
 ]
 depends_on = [
-    "a-symbol-that-is-a-definition-s-whole-path-names-it",
+    "a-symbol-names-every-definition-of-its-one-path",
 ]

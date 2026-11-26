@@ -1,17 +1,15 @@
 component = "lint"
-choice = "A file anchor follows only its file's unchanged blob into a file that defines an item; a symbol on a gone file is judged as any other, by the change that lost its code"
-reason = "A wrong repair hides the staleness it mends, and repair_anchors writes every repair unattended. A file anchor names a file, which git knows by nothing but its bytes, so it follows its gone file only where the history shows that file's blob moved unchanged (sources::repair::renames), and only into a file that now defines an item: a header of comments, or an empty file, has no identity to carry. A symbol anchor on a gone file needs no path of its own: the commit that deleted the file is the change that lost its code, and the file its blob or its code reached there is among that change's candidates, judged by the one move rule of the symbols (lint::anchors::repair::moved_to), whatever its crate or kind, and followed through its later moves to where it is now. A file moved and edited in one commit so carries the symbols whose code it holds unchanged, never the file anchor."
+choice = "A file anchor follows only its file's unchanged blob, and only into a file that defines an item"
+reason = "A wrong repair hides the staleness it mends, and repair_anchors writes every repair unattended. A file anchor names a file, which git knows by nothing but its bytes, so it follows its gone file only where the history shows that file's blob moved unchanged (sources::repair::renames), and only into a file that now defines an item: a header of comments, or an empty file, has no identity to carry. A file moved and edited in one commit carries the symbols whose code it holds unchanged, by the move rule of the symbols, never the file anchor."
 alternatives = [
     "Follow every rename git reports, file anchors included: rejected because a shared license header or boilerplate pairs unrelated files, and every binary resolves main",
-    "Take the file git -M pairs with a gone one by similarity as its symbols' candidate: rejected for good because a similarity threshold is a judgement about files, not code, it costs a process, and the change that lost the code already names every file that could hold it",
-    "Compare the symbol before the move with the new path now: rejected because any later edit of the symbol would then lose the repair",
+    "Follow the blob into any file, an empty one or a header of comments included: rejected because such a file has no identity of its own to carry",
 ]
 status = "proposed"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"
 anchors = [
     { file = "src/lint/anchors/repair.rs", symbol = "followed" },
-    { file = "src/lint/anchors/repair.rs", symbol = "missing" },
     { file = "src/lint/anchors/repair.rs", symbol = "tests::a_file_anchor_follows_its_file_into_one_that_defines_an_item" },
     { file = "tests/integration/repair.rs", symbol = "a_file_anchor_does_not_follow_a_rename_git_pairs_by_a_shared_header" },
     { file = "tests/integration/repair.rs", symbol = "a_file_moved_on_while_another_takes_its_path_is_repaired_where_it_went" },
