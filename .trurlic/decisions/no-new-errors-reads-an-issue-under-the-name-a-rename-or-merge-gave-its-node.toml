@@ -5,23 +5,20 @@ alternatives = [
     "Compare issues by kind alone for renamed nodes: rejected because a rename could then hide a new issue of an old kind",
     "Exempt renames and merges from the comparison: rejected because the rule would no longer hold for every write",
 ]
-tags = [
-    "validation",
-]
 status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"
 anchors = [
     { file = "src/store/apply/edit.rs", symbol = "Edit::carry" },
     { file = "src/store/apply/edit.rs", symbol = "Edit::end" },
-    { file = "src/store/apply/tests.rs", symbol = "a_new_issue_under_a_rename_is_refused_naming_its_op" },
-    { file = "src/store/apply/tests.rs", symbol = "a_rename_leaves_an_edge_that_names_a_node_of_the_other_kind_as_it_was" },
-    { file = "src/store/apply/tests.rs", symbol = "a_rename_of_a_node_made_under_an_old_name_carries_no_issue" },
-    { file = "src/store/apply/tests.rs", symbol = "a_rename_or_a_merge_carries_the_issues_a_node_had" },
-    { file = "src/store/validate.rs", symbol = "Issue::carried" },
-    { file = "src/store/validate.rs", symbol = "carry_members" },
-    { file = "src/store/validate.rs", symbol = "introduced" },
+    { file = "src/store/apply/edit.rs", symbol = "a_new_issue_under_a_rename_is_refused_naming_its_op" },
+    { file = "src/store/apply/edit.rs", symbol = "a_rename_leaves_an_edge_that_names_a_node_of_the_other_kind_as_it_was" },
+    { file = "src/store/apply/edit.rs", symbol = "a_rename_of_a_node_made_under_an_old_name_carries_no_issue" },
+    { file = "src/store/apply/edit.rs", symbol = "a_rename_or_a_merge_carries_the_issues_a_node_had" },
+    { file = "src/store/graph/validate.rs", symbol = "Issue::carried" },
+    { file = "src/store/graph/validate.rs", symbol = "carry_members" },
+    { file = "src/store/graph/validate.rs", symbol = "introduced" },
 ]
 depends_on = [
-    "validation-issues-carry-an-issuekind-and-a-subject-and",
+    "validation-issues-carry-a-kind-and-a-subject-and-come-sorted",
 ]

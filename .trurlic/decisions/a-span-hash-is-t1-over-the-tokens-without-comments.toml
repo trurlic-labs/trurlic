@@ -8,22 +8,18 @@ alternatives = [
     "Hash the leaves alone: rejected because a repetition's separator and an error's bytes are in no leaf, so changing them moved no hash",
     "No scheme prefix: rejected because a stored hash would silently compare against one computed by other rules",
 ]
-tags = [
-    "anchors",
-    "hashing",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_definitions_hash_is_its_own_whatever_follows_it_or_holds_it" },
-    { file = "src/code/lexical.rs", symbol = "Lexical::hash" },
-    { file = "src/code/rust.rs", symbol = "LITERALS" },
-    { file = "src/code/span.rs", symbol = "HASH_SCHEME" },
-    { file = "src/code/syntax.rs", symbol = "walk_tokens" },
-    { file = "src/code/units.rs", symbol = "Leaves::hash_each" },
-    { file = "src/code/units.rs", symbol = "Leaves::of_marked" },
-    { file = "src/code/units.rs", symbol = "a_hash_of_tokens_ignores_comments_and_layout" },
-    { file = "src/code/units.rs", symbol = "a_literal_is_hashed_with_its_prefix_and_delimiters" },
-    { file = "src/code/units.rs", symbol = "a_nested_definition_enters_its_parents_hash_by_its_own" },
+    { file = "src/code/index/span.rs", symbol = "HASH_SCHEME" },
+    { file = "src/code/lexical/mod.rs", symbol = "Lexical::hash" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_definitions_hash_is_its_own_whatever_follows_it_or_holds_it" },
+    { file = "src/code/parse/rust/lexicon.rs", symbol = "LITERALS" },
+    { file = "src/code/parse/tokens.rs", symbol = "walk_tokens" },
+    { file = "src/code/parse/units/hash.rs", symbol = "Leaves::hash_each" },
+    { file = "src/code/parse/units/leaves.rs", symbol = "Leaves::of_marked" },
+    { file = "src/code/parse/units/leaves.rs", symbol = "a_hash_of_tokens_ignores_comments_and_layout" },
+    { file = "src/code/parse/units/leaves.rs", symbol = "a_literal_is_hashed_with_its_prefix_and_delimiters" },
+    { file = "src/code/parse/units/leaves.rs", symbol = "a_nested_definition_enters_its_parents_hash_by_its_own" },
 ]

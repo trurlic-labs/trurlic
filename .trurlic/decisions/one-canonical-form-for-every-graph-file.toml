@@ -7,17 +7,13 @@ alternatives = [
     "Accept any layout: rejected because each writer and each hand edit would leave its own, and a one-line list conflicts on every addition",
     "A git merge driver for node files: rejected because sorted one-per-line sets already merge with git's own, and a driver must be installed in every clone",
 ]
-tags = [
-    "determinism",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
-    { file = "src/store/canonical.rs", symbol = "Emitter" },
+    { file = "src/store/format/canonical.rs", symbol = "Emitter" },
     { file = "tests/integration/canonical_form.rs" },
     { file = "tests/integration/git_merge.rs" },
 ]
 depends_on = [
-    "toml-as-the-sole-serialization-format-with-one-file-per",
+    "toml-is-the-one-format-of-the-graph-one-file-per-node",
 ]

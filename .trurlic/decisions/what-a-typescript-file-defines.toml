@@ -7,19 +7,15 @@ alternatives = [
     "Variables at any depth: rejected because a function's locals are no part of what a module offers",
     "An unnamed class's members under the function around it: rejected because outer::m names a path the source does not have",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_class_expression_is_a_class_where_a_name_holds_it" },
-    { file = "src/code/general/tests.rs", symbol = "a_wrapper_of_the_whole_file_is_the_module" },
-    { file = "src/code/general/tests.rs", symbol = "an_exclusive_pattern_claims_its_node_from_the_others" },
-    { file = "src/code/kinds.rs", symbol = "DefinitionKind" },
-    { file = "src/code/language/typescript.scm" },
+    { file = "src/code/index/kinds.rs", symbol = "DefinitionKind" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_class_expression_is_a_class_where_a_name_holds_it" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_wrapper_of_the_whole_file_is_the_module" },
+    { file = "src/code/parse/general/tests.rs", symbol = "an_exclusive_pattern_claims_its_node_from_the_others" },
+    { file = "src/code/parse/language/typescript.scm" },
     { file = "src/sources/tests.rs", symbol = "STATEMENTS" },
     { file = "src/sources/tests.rs", symbol = "TYPESCRIPT_CASES" },
 ]

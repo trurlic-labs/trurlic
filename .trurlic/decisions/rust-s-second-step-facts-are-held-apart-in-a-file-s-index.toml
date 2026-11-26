@@ -5,15 +5,12 @@ alternatives = [
     "Option of RustFacts: rejected because every reader would unwrap an option whose None and empty mean the same",
     "A trait or enum of per-language facts: rejected because Rust is the one language with such facts, and an abstraction with one implementation is none",
 ]
-tags = [
-    "rust",
-]
 status = "proposed"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
-    { file = "src/code/index.rs", symbol = "FileIndex" },
-    { file = "src/code/index.rs", symbol = "RustFacts" },
+    { file = "src/code/index/file.rs", symbol = "FileIndex" },
+    { file = "src/code/index/file.rs", symbol = "RustFacts" },
 ]
 
 [accepted_text]

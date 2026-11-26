@@ -8,16 +8,13 @@ alternatives = [
     "The query as a prefix only: rejected because a directory anchor would miss every file under it",
     "Prefix match on raw strings: rejected because src/auth would match src/authz",
 ]
-tags = [
-    "matching",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
-    { file = "src/mcp/context.rs", symbol = "get_decisions_for_file" },
-    { file = "src/store/query.rs", symbol = "ProjectState::decisions_in" },
-    { file = "src/store/query.rs", symbol = "anchors_in" },
-    { file = "src/store/schema.rs", symbol = "Anchor::overlaps" },
+    { file = "src/store/graph/query.rs", symbol = "ProjectState::decisions_in" },
+    { file = "src/store/graph/query.rs", symbol = "anchors_in" },
+    { file = "src/store/model/schema.rs", symbol = "Anchor::overlaps" },
+    { file = "src/tools/handwritten/context.rs", symbol = "get_decisions_for_file" },
 ]
 depends_on = [
     "an-anchor-path-has-one-spelling",

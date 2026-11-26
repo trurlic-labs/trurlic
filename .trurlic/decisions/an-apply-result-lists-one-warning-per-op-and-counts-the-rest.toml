@@ -6,21 +6,17 @@ alternatives = [
     "A warning per match: rejected because one pattern over a long reason would fill the result",
     "Drop the messages and name the pattern alone: rejected because the caller would read project.toml to learn what a warning says",
 ]
-tags = [
-    "api",
-    "quality",
-]
 status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "print" },
-    { file = "src/mcp/apply/result.rs" },
-    { file = "src/mcp/apply/result.rs", symbol = "the_longest_result_of_a_full_batch_fits_the_budget" },
-    { file = "src/store/apply/tests/quality.rs", symbol = "a_warn_pattern_warns_once_per_op_at_its_first_match" },
+    { file = "src/store/apply/check.rs", symbol = "a_warn_pattern_warns_once_per_op_at_its_first_match" },
     { file = "src/store/apply/warning.rs", symbol = "Warning" },
     { file = "src/store/apply/warning.rs", symbol = "report" },
-    { file = "src/store/limits.rs", symbol = "MAX_WARNINGS_PER_OP" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_WARNINGS_PER_OP" },
+    { file = "src/tools/apply/result.rs" },
+    { file = "src/tools/apply/result.rs", symbol = "the_longest_result_of_a_full_batch_fits_the_budget" },
 ]
 depends_on = [
     "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",

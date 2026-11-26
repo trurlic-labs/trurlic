@@ -6,18 +6,14 @@ alternatives = [
     "Drop a symbol whose spelling is not settled: rejected because the anchor would lose the place it names, where the kept spelling may still resolve or be repaired",
     "Keep every symbol as written: rejected because a key path would no longer name its key under the 0.5 grammar",
 ]
-tags = [
-    "matching",
-    "migration",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
-    { file = "src/store/migration/format_0_5.rs", symbol = "decision" },
-    { file = "src/store/migration/format_0_5/anchors.rs", symbol = "anchors" },
-    { file = "src/store/migration/format_0_5/anchors.rs", symbol = "keys" },
-    { file = "src/store/migration/format_0_5/anchors.rs", symbol = "spelling" },
-    { file = "src/store/migration/format_0_5/anchors.rs", symbol = "uncalled" },
+    { file = "src/store/format/migration/format_0_5/anchors.rs", symbol = "anchors" },
+    { file = "src/store/format/migration/format_0_5/anchors.rs", symbol = "keys" },
+    { file = "src/store/format/migration/format_0_5/anchors.rs", symbol = "spelling" },
+    { file = "src/store/format/migration/format_0_5/anchors.rs", symbol = "uncalled" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "decision" },
 ]
 depends_on = [
     "an-anchor-path-has-one-spelling",

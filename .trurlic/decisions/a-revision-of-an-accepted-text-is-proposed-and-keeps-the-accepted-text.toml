@@ -1,23 +1,27 @@
 component = "store"
 choice = "A revise of an accepted decision's choice, reason or alternatives proposes it and keeps the accepted text with its accepted_via; a later revise keeps it, and one back to it accepts again"
-reason = "No op writes accepted, accepted_via or accepted_text: acceptance is the owner's. A record is proposed. When an agent changes the text the owner accepted, the decision is proposed until the owner answers, and accepted_text keeps what the owner accepted and how (accepted_via inside [accepted_text], an optional key), so a later revise keeps the first accepted text, not an intermediate one, and a revise back to exactly that text returns the decision to accepted as it was accepted, which a reject in accept will do too. A change of the component, anchors, tags or edges, a rename and a merge into the decision leave the status alone. Each revise reports a status it changed."
+reason = "No op writes accepted, accepted_via or accepted_text: acceptance is the owner's. A record is proposed. When an agent changes the text the owner accepted, the decision is proposed until the owner answers, and accepted_text keeps what the owner accepted and how (accepted_via inside [accepted_text], an optional key), so a later revise keeps the first accepted text, not an intermediate one, and a revise back to exactly that text returns the decision to accepted as it was accepted. A change of the component, anchors, tags or edges, a rename and a merge into the decision leave the status alone. Each revise reports a status it changed."
 alternatives = [
     "Drop accepted_via while a revision is proposed: rejected because undoing the revision would then restore an acceptance with no record of how it was given",
     "Stay proposed after a revise back to the accepted text: rejected because the decision would wait for the owner to re-accept text the owner accepted",
 ]
-tags = [
-    "api",
-    "review",
-]
-status = "accepted"
+status = "proposed"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
+    { file = "src/store/apply/decision.rs", symbol = "a_revision_of_an_accepted_text_is_proposed_until_it_returns" },
     { file = "src/store/apply/decision.rs", symbol = "restatus" },
-    { file = "src/store/apply/tests.rs", symbol = "a_revision_of_an_accepted_text_is_proposed_until_it_returns" },
-    { file = "src/store/canonical.rs", symbol = "Decision::<Canonical>::emit" },
-    { file = "src/store/schema.rs", symbol = "AcceptedText" },
+    { file = "src/store/format/canonical.rs", symbol = "Decision::<Canonical>::emit" },
+    { file = "src/store/model/schema.rs", symbol = "AcceptedText" },
 ]
 depends_on = [
     "a-decision-s-status-is-one-typed-value",
+]
+
+[accepted_text]
+choice = "A revise of an accepted decision's choice, reason or alternatives proposes it and keeps the accepted text with its accepted_via; a later revise keeps it, and one back to it accepts again"
+reason = "No op writes accepted, accepted_via or accepted_text: acceptance is the owner's. A record is proposed. When an agent changes the text the owner accepted, the decision is proposed until the owner answers, and accepted_text keeps what the owner accepted and how (accepted_via inside [accepted_text], an optional key), so a later revise keeps the first accepted text, not an intermediate one, and a revise back to exactly that text returns the decision to accepted as it was accepted, which a reject in accept will do too. A change of the component, anchors, tags or edges, a rename and a merge into the decision leave the status alone. Each revise reports a status it changed."
+alternatives = [
+    "Drop accepted_via while a revision is proposed: rejected because undoing the revision would then restore an acceptance with no record of how it was given",
+    "Stay proposed after a revise back to the accepted text: rejected because the decision would wait for the owner to re-accept text the owner accepted",
 ]

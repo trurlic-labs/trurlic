@@ -5,17 +5,13 @@ alternatives = [
     "Remove the component's decisions with it: rejected because a remove of one node would delete many decisions",
     "Move its decisions to project on remove: rejected because a component's rules would silently become project-wide",
 ]
-tags = [
-    "api",
-    "consistency",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
+    { file = "src/store/apply/component.rs", symbol = "a_component_rename_carries_its_decisions_and_connections" },
     { file = "src/store/apply/component.rs", symbol = "remove" },
     { file = "src/store/apply/component.rs", symbol = "rename" },
-    { file = "src/store/apply/tests.rs", symbol = "a_component_rename_carries_its_decisions_and_connections" },
 ]
 depends_on = [
     "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",

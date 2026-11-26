@@ -5,14 +5,13 @@ alternatives = [
     "Warn of every set of mixed kinds: rejected because no spelling clears it for a field, so a decision about the data warns for good",
     "Warn only of a set that is not a field and a function: rejected because it needs a list of kind pairs that are fine, for sets no tree has shown",
 ]
-tags = [
-    "anchors",
-    "lint",
-]
 status = "accepted"
 origin = "anchor findings review"
 created = "2026-11-25T20:47:20.288273807Z"
 anchors = [
-    { file = "src/lint/anchors.rs", symbol = "Class::of" },
+    { file = "src/lint/anchors/finding.rs", symbol = "Class::of" },
     { file = "src/lint/anchors/tests.rs", symbol = "several_paths_are_ambiguous_and_one_path_of_several_kinds_is_no_finding" },
+]
+depends_on = [
+    "a-symbol-names-every-definition-of-its-one-path",
 ]

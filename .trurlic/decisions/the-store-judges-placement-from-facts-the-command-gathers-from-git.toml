@@ -6,19 +6,14 @@ alternatives = [
     "Judge in commands: rejected because the counting rule is shared with the migration, which lives in the store",
     "Make them validation issues: rejected because validate runs on every read and every write, which would all need git",
 ]
-tags = [
-    "git",
-    "module-boundary",
-    "placement",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [
     { file = "src/commands/placement.rs", symbol = "facts" },
     { file = "src/commands/placement.rs", symbol = "main_worktree" },
     { file = "src/discovery.rs", symbol = "worktree_graph" },
-    { file = "src/store/placement.rs", symbol = "MainWorktree" },
-    { file = "src/store/placement.rs", symbol = "PlacementFacts" },
+    { file = "src/store/graph/placement.rs", symbol = "MainWorktree" },
+    { file = "src/store/graph/placement.rs", symbol = "PlacementFacts" },
 ]
 depends_on = [
     "check-refuses-a-placement-git-contradicts-and-a-second-graph",

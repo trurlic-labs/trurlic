@@ -8,20 +8,16 @@ alternatives = [
     "Keep a constrains field in 0.5: rejected because it states depends_on from the other end, and every walk and the cycle check would handle two kinds for one relation",
     "Migrate a cycle and leave it to check: rejected because the migration would write a graph with an error that its own step made",
 ]
-tags = [
-    "migration",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::ConstrainsCycle" },
-    { file = "src/store/migration/format_0_5/graph.rs", symbol = "Graph::edge" },
-    { file = "src/store/migration/format_0_5/graph.rs", symbol = "Graph::refuse_new_cycles" },
-    { file = "src/store/migration/format_0_5/graph.rs", symbol = "Graph::write" },
+    { file = "src/store/format/migration/format_0_5/graph.rs", symbol = "Graph::edge" },
+    { file = "src/store/format/migration/format_0_5/graph.rs", symbol = "Graph::refuse_new_cycles" },
+    { file = "src/store/format/migration/format_0_5/graph.rs", symbol = "Graph::write" },
     { file = "tests/integration/migrate.rs", symbol = "a_constrains_edge_that_closes_a_cycle_is_refused_naming_its_members" },
 ]
 depends_on = [
-    "depends-on-cycles-are-found-as-strongly-connected",
+    "depends-on-cycles-are-found-as-strongly-connected-components",
     "edges-live-in-the-file-of-their-source",
 ]

@@ -7,21 +7,17 @@ alternatives = [
     "Refuse a broken query per file at run time: rejected because a query is fixed when the binary is built, so its fault is the build's and no input causes it",
     "Raise INDEX_FORMAT by hand on each query edit: rejected because an edit the fixtures do not show would keep a stale cache entry",
 ]
-tags = [
-    "parsing",
-    "reliability",
-]
 status = "accepted"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
-    { file = "src/code/language.rs", symbol = "Language::identity()" },
-    { file = "src/code/language.rs", symbol = "Language::rules()" },
-    { file = "src/code/language.rs", symbol = "each_query_compiles_against_its_grammar_within_the_contract" },
-    { file = "src/code/purity.rs", symbol = "is_admitted_include" },
-    { file = "src/code/query.rs", symbol = "QueryFault" },
-    { file = "src/code/query.rs", symbol = "Rules::compile" },
-    { file = "src/code/query.rs", symbol = "a_query_is_refused_for_each_break_of_its_contract" },
+    { file = "src/code/parse/language/row.rs", symbol = "Language::identity()" },
+    { file = "src/code/parse/language/row.rs", symbol = "Language::rules()" },
+    { file = "src/code/parse/language/row.rs", symbol = "each_query_compiles_against_its_grammar_within_the_contract" },
+    { file = "src/code/parse/query/compile.rs", symbol = "Rules::compile" },
+    { file = "src/code/parse/query/compile.rs", symbol = "a_query_is_refused_for_each_break_of_its_contract" },
+    { file = "src/code/parse/query/rules.rs", symbol = "QueryFault" },
+    { file = "src/purity/pure.rs", symbol = "is_admitted_include" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",

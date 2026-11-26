@@ -5,18 +5,11 @@ alternatives = [
     "C linkage alone, functions and variables only: rejected because a struct in a .h and the same one in a .c would then differ",
     "Public only for what a header declares: rejected because which header is included is a build fact",
 ]
-tags = [
-    "anchors",
-    "visibility",
-]
 status = "accepted"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_label_states_the_visibility_of_what_follows_it" },
-    { file = "src/code/language/c.scm" },
-    { file = "src/code/language/cpp.scm" },
-]
-depends_on = [
-    "what-a-c-or-c-plus-plus-file-defines",
+    { file = "src/code/parse/general/tests.rs", symbol = "a_label_states_the_visibility_of_what_follows_it" },
+    { file = "src/code/parse/language/c.scm" },
+    { file = "src/code/parse/language/cpp.scm" },
 ]

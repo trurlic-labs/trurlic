@@ -1,0 +1,25 @@
+component = "project"
+choice = "No workflow engine: no tool sequences an agent's steps, gates a read on them or scores concern coverage; the reads hand an agent the decisions and it works within them"
+reason = "A sequence of steps does not steer an agent: a gate it clears by passing done as evidence adds calls without adding review. The decisions that constrain code reach the agent through get_context and get_decisions_for_file; a second path of task types, gated steps, mode prompts and keyword-matched concern areas in front of them, with fields on the tool results that point agents at it, costs the surface and the code their weight for none of that. What is open for a change, the decisions it touches and the choices it makes that no decision covers, is a property of the diff, not of a step sequence computed from the graph alone, so it belongs to a review of the diff against the graph. An agent reads a component's decisions with get_context and a file's with get_decisions_for_file, implements within them, records a choice no decision covers with apply, and runs trurlic check before committing."
+alternatives = [
+    "Enforce a step sequence, refusing get_context or writes until the steps report ready: rejected, a gate an agent clears with done as evidence adds calls without adding review",
+    "Concern coverage in get_context: rejected, keyword matching against fixed areas reports gaps nobody acts on and says nothing about what a given change leaves open",
+    "A step tool that only returns get_context: rejected, a second name for one tool",
+    "A read that lists the decisions on each changed file as a verification: rejected because it judges nothing, and get_decisions_for_file already lists them",
+]
+status = "proposed"
+created = "2026-11-23T20:06:23.818625901Z"
+anchors = [
+    { file = "src/tools/handwritten/context.rs", symbol = "get_context" },
+    { file = "src/tools/registry.rs", symbol = "TOOLS" },
+]
+
+[accepted_text]
+choice = "No workflow engine: advance, get_step_prompt, steps, modes and concern tracking are deleted; what is open for a change will come from a diff review of the graph and the code"
+reason = "In real use the engine did not steer. Nearly every advance loop reached ready within a call or two, the next action the server named (get_step_prompt) was not followed, interactive mode was never used, and the step evidence agents passed was mostly \"done\" or \"none\". The decisions that do constrain code already reach the agent through get_context and get_decisions_for_file; the engine added a second path of seven task types, gated steps, mode-specific prompts, ten keyword-matched concern areas and a 90-day staleness clock in front of them, about ten thousand lines with its tests, two of fifteen tools and fields on four tool results (concern_coverage, coverage_impact, pattern_opportunity) that pointed agents at it. What is actually open for a change (the decisions it touches, the choices it makes that no decision covers) is a property of the diff, not of a step sequence computed from the graph alone, so a later diff-review tool will compute it from the graph and the code. Until then an agent reads the component's decisions with get_context and a file's with get_decisions_for_file, implements within them, writes a choice no decision covers as a decision file, and runs trurlic fmt and trurlic check before committing. The deletion is a surface break with no compatibility shim; nothing on disk changes."
+alternatives = [
+    "Keep the engine and enforce it (refuse get_context or writes until advance reports ready): rejected, a gate an agent clears with 'done' as evidence adds calls without adding review",
+    "Keep only concern coverage in get_context and the removal reports: rejected, keyword matching against ten fixed areas reports gaps nobody acted on and says nothing about what a given change leaves open",
+    "Keep advance as a thin alias that returns get_context: rejected, a second name for one tool, and the one user is owed no backward compatibility",
+    "Build the diff-review tool in the same change: rejected, it is a design of its own; deleting first means it starts from the graph and the code rather than from steps",
+]

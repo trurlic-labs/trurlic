@@ -8,34 +8,34 @@
 use std::collections::BTreeSet;
 
 use super::refusal::argument_path;
-use crate::store::limits::MAX_WARNINGS_PER_OP;
+use crate::store::model::limits::MAX_WARNINGS_PER_OP;
 use crate::store::quality::{Bar, Hit};
 
 /// A warning of an applied batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Warning {
+pub(crate) struct Warning {
     /// The index of the op it is about; `None` for the batch's `origin`.
-    pub op: Option<usize>,
+    pub(crate) op: Option<usize>,
     /// The argument path, as a refusal's: `ops[2].reason`, `origin`.
-    pub field: String,
-    pub kind: WarningKind,
+    pub(crate) field: String,
+    pub(crate) kind: WarningKind,
     /// The index of the pattern in `[quality] patterns`.
-    pub pattern: usize,
+    pub(crate) pattern: usize,
     /// The byte offset of the match in the argument's text.
-    pub at: usize,
+    pub(crate) at: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WarningKind {
+pub(crate) enum WarningKind {
     /// A `warn` pattern of `[quality]` matched.
     Pattern,
 }
 
 impl WarningKind {
-    pub const ALL: [Self; 1] = [Self::Pattern];
+    pub(crate) const ALL: [Self; 1] = [Self::Pattern];
 
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Pattern => "pattern",
         }
@@ -44,10 +44,10 @@ impl WarningKind {
 
 /// The message of a pattern a listed warning names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatternNote {
+pub(crate) struct PatternNote {
     /// The index of the pattern in `[quality] patterns`.
-    pub index: usize,
-    pub message: String,
+    pub(crate) index: usize,
+    pub(crate) message: String,
 }
 
 /// Move the first [`MAX_WARNINGS_PER_OP`] of `hits`, the warn matches of

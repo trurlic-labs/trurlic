@@ -1,0 +1,18 @@
+component = "code"
+choice = "The code index's sub-modules depend one way: index/ names no other, parse/ and lexical/ name index/ alone, facts/ names index/ and parse/, and only the root (dispatch.rs, mod.rs) names them all"
+reason = "A sub-module that names one above it closes a cycle with the edges down. The values an index holds could then not be built, read or tested without a resolver, nor a resolver without the facts over a tree, and no layer could change alone. index/ is what an index is, below every resolver; parse/ and lexical/ are the resolvers on it; facts/ is the step over a whole tree's indexes and reads parse/'s language rows for test places; dispatch.rs alone names every resolver. The test each_sub_module_names_no_module_above_it reads each path a sub-module's non-test code spells, a path of supers read from the module it is named in, and refuses one that goes into no module its row lists or into a dependency its row does not list: tree-sitter and its grammars are parse/'s alone, index/ names only the hash, lexical/ only the TOML reader, facts/ none. A module is no item of itself, so the dispatch function code::index is outside the sub-module index/. A method call is among what crate::purity states the check cannot see, so every impl stands in its type's sub-module: what a file of a kind is read as is a free function of parse/, never a FileKind method written there."
+alternatives = [
+    "Keep the values and the dispatch in one file: rejected because every resolver and every reader then depends on the module that depends on all of them, and no direction can be checked",
+    "Write what a kind is read as as FileKind methods beside the language rows: rejected because a method call names no path, so an edge from index/ or facts/ to parse/ would pass the check unseen",
+    "Hold the direction by review alone: rejected because nothing then refuses an edge a change adds, and a cycle is found only once both ends depend on it",
+]
+status = "proposed"
+origin = "module structure"
+created = "2026-11-26T14:45:30.766338253Z"
+anchors = [
+    { file = "src/code/dispatch.rs", symbol = "index" },
+    { file = "src/code/mod.rs", symbol = "each_sub_module_names_no_module_above_it" },
+    { file = "src/code/parse/language/kind.rs" },
+    { file = "src/purity/pure.rs", symbol = "goes_into" },
+    { file = "src/purity/pure.rs", symbol = "path_fault" },
+]

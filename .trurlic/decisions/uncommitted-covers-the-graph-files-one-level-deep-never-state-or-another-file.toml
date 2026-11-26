@@ -8,16 +8,12 @@ alternatives = [
     "Every .toml at any depth: rejected because a load reads one level, so a deeper file is no part of the graph",
     "Report files that are no graph file too: rejected because the history is the graph's, and the owner's own files are no finding",
 ]
-tags = [
-    "git",
-    "history",
-]
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/git/graph.rs", symbol = "Repository::status" },
-    { file = "src/git/graph.rs", symbol = "parse_status" },
-    { file = "src/store/history.rs", symbol = "graph_files" },
+    { file = "src/git/graph/repository.rs", symbol = "Repository::status" },
+    { file = "src/git/graph/repository.rs", symbol = "parse_status" },
+    { file = "src/store/write/history.rs", symbol = "graph_files" },
 ]
 depends_on = [
     "a-shared-graph-s-write-commits-the-hand-edits-it-finds-first-as-hand-edit",

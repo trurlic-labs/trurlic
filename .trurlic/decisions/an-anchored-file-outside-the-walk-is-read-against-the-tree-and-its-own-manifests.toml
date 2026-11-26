@@ -5,18 +5,14 @@ alternatives = [
     "Walk every unwalked directory an anchor points into: rejected because its manifests and declarations would then reach the walked files and move their roles",
     "Let every manifest read govern every file below it: rejected because anchoring a symlinked Cargo.toml then moved a walked file into another crate",
 ]
-tags = [
-    "anchors",
-    "determinism",
-]
 status = "accepted"
 origin = "code index review"
 created = "2026-11-24T11:27:16.681896640Z"
 anchors = [
-    { file = "src/code/crates.rs", symbol = "Crates::crate_of" },
-    { file = "src/code/crates.rs", symbol = "Crates::of" },
-    { file = "src/code/facts.rs", symbol = "CodeFacts::new" },
-    { file = "src/sources/mod.rs", symbol = "probe_anchored" },
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::new" },
+    { file = "src/code/facts/crates.rs", symbol = "Crates::crate_of" },
+    { file = "src/code/facts/crates.rs", symbol = "Crates::of" },
+    { file = "src/sources/reads.rs", symbol = "probe_anchored" },
     { file = "src/sources/tests.rs", symbol = "a_manifest_an_anchor_brings_governs_no_file_the_walk_took" },
     { file = "src/sources/walk.rs", symbol = "manifests_above" },
 ]

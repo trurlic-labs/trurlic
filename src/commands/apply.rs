@@ -2,10 +2,13 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
+use serde_json::{Map, Value};
+
 use crate::Result;
+use crate::budget::MAX_REQUEST_BYTES;
 use crate::console::{diag, out};
-use crate::mcp::twin::{self, Answer, Duplicates, MAX_DOCUMENT_BYTES, PAIRS_MORE, ToolError};
 use crate::store::{Applied, Done, Field, OpKind, Warning};
+use crate::tools::{APPLY, Answer, Duplicates, PAIRS_MORE, ToolError};
 
 use super::{Format, answer};
 
@@ -20,17 +23,29 @@ pub(crate) fn apply(cwd: &Path, file: &Path, format: Format) -> std::result::Res
 /// The batch is read before the store is found, as a call's request is,
 /// and parsed after it, as a call's arguments are.
 fn run(cwd: &Path, file: &Path) -> std::result::Result<Answer, ToolError> {
-    let arguments = twin::arguments(&read(file)?)?;
-    twin::apply(cwd, &arguments)
+    let arguments = arguments(&read(file)?)?;
+    APPLY.run(cwd, &arguments)
 }
 
-/// The bytes of `file`, or of stdin for `-`, refused past the size of one
-/// MCP message. A file that cannot be read holds no batch, as one that is
+/// The arguments `document` holds: a JSON object, as a batch file holds
+/// the arguments of `apply`.
+fn arguments(document: &[u8]) -> std::result::Result<Map<String, Value>, ToolError> {
+    match serde_json::from_slice(document) {
+        Ok(Value::Object(arguments)) => Ok(arguments),
+        Ok(_) => Err(ToolError::bad_document(
+            "a batch is a JSON object of `ops` and `origin`".into(),
+        )),
+        Err(e) => Err(ToolError::bad_document(format!("a batch is JSON: {e}"))),
+    }
+}
+
+/// The bytes of `file`, or of stdin for `-`, refused past the size of the
+/// request a tool call arrives in. A file that cannot be read holds no batch, as one that is
 /// not JSON holds none: the refusal is the batch's, not the store's. A
 /// pipe is read as a file is (`trurlic apply <(...)`), so a FIFO is not
 /// refused: no lock is held while it is read.
 fn read(file: &Path) -> std::result::Result<Vec<u8>, ToolError> {
-    let limit = u64::try_from(MAX_DOCUMENT_BYTES)
+    let limit = u64::try_from(MAX_REQUEST_BYTES)
         .unwrap_or(u64::MAX)
         .saturating_add(1);
     let mut document = Vec::new();
@@ -50,9 +65,9 @@ fn read(file: &Path) -> std::result::Result<Vec<u8>, ToolError> {
             "{shown}: cannot read the batch: {e}"
         )));
     }
-    if document.len() > MAX_DOCUMENT_BYTES {
+    if document.len() > MAX_REQUEST_BYTES {
         return Err(ToolError::bad_document(format!(
-            "{shown}: a batch is at most {MAX_DOCUMENT_BYTES} bytes"
+            "{shown}: a batch is at most {MAX_REQUEST_BYTES} bytes"
         )));
     }
     Ok(document)

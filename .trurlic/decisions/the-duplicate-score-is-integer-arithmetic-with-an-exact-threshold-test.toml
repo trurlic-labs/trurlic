@@ -6,16 +6,16 @@ alternatives = [
     "f64 rounded to six decimals before comparing: rejected because rounding moves the boundary without removing it",
     "A big-number or decimal crate: rejected because a 256-bit product and a series of twenty terms are a few dozen lines",
 ]
-tags = [
-    "determinism",
-]
 status = "accepted"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
     { file = "src/lint/duplicates/fixed.rs", symbol = "ln" },
     { file = "src/lint/duplicates/fixed.rs", symbol = "wide" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Score" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "likely" },
+    { file = "src/lint/duplicates/score.rs", symbol = "Score" },
+    { file = "src/lint/duplicates/score.rs", symbol = "likely" },
     { file = "src/lint/duplicates/tests.rs", symbol = "a_pair_at_exactly_the_threshold_is_listed_and_one_a_unit_below_is_not" },
+]
+depends_on = [
+    "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
 ]

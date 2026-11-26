@@ -1,26 +1,23 @@
 component = "lint"
 choice = "A stale symbol is repaired to the one file the change that lost its code gave definitions of the same span hash, writing none before, and that kept an item of those kinds since"
-reason = "Names alone do not show where code went, and neither does a crate or target: the change that lost the code does. The loss is the newest of the anchor's file's MAX_LOSS_CHANGES newest changes, or the work tree's, whose blob before wrote the item and whose blob after writes none or is gone, both read in one git cat-file batch: a side branch's change that kept the item lost nothing, whatever a merge did later. Its candidates are the files that change added or changed, each followed by its blob to where it is now (sources::renames::History::lineage), of the anchor's file kind (.ts, .d.ts and .tsx, with JavaScript, are kinds apart), that write the symbol as an item's whole path now (CodeFacts::writers), at most MAX_LOSS_CANDIDATES, past which the anchor gets no repair rather than a judgement among some of them. A file git does not track is no candidate and no second one: the history names no change of it, and no process is spent on it. The repair is the one candidate that, across the loss, went from writing no item of the symbol to definitions of the span hash the anchor's file lost (lint::anchors::repair::moved_to), and held definitions of the kinds it gained after each of its changes since, at most MAX_SINCE_CHANGES read in a second batch, and holds them now; none, or two, and no repair. A namesake the change did not write, in another crate, target or test module, is so never one, while a file moved into another crate and edited in the same commit carries what it moved unchanged. The hash compares tokens, comments and whitespace aside: a move that edited the item is left stale, and an edit after the move keeps the repair."
+reason = "Names alone do not show where code went, and neither does a crate or target: the change that lost the code does. The loss is the newest of the anchor's file's MAX_LOSS_CHANGES newest changes, or the work tree's, whose blob before wrote the item and whose blob after writes none or is gone, both read in one git cat-file batch: a side branch's change that kept the item lost nothing, whatever a merge did later. A symbol on a gone file needs no path of its own, since the commit that deleted the file is its loss. Its candidates are the files that change added or changed, each followed by its blob to where it is now, of the anchor's file kind, that write the symbol as an item's whole path now, at most MAX_LOSS_CANDIDATES, past which the anchor gets no repair rather than a judgement among some of them. A file git does not track is no candidate and no second one: the history names no change of it, and no process is spent on it. The repair is the one candidate that, across the loss, went from writing no item of the symbol to definitions of the span hash the anchor's file lost, and held definitions of the kinds it gained after each of its changes since, at most MAX_SINCE_CHANGES read in a second batch, and holds them now; none, or two, and no repair. A namesake the change did not write, in another crate, target or test module, is so never one, while a file moved into another crate and edited in the same commit carries what it moved unchanged. The hash compares tokens, comments and whitespace aside: a move that edited the item is left stale, and an edit after the move keeps the repair."
 alternatives = [
     "Search the one namesake of the anchor's crate target and follow a gone file's blob as two sources: rejected because the change that lost the code names its candidates itself, in any crate, and one rule covers both",
-    "Judge the move only at the commit where it happened: rejected because a candidate that later lost the item and gained an unrelated one of its name, or a type of it, kept a repair to code that is not the decision's",
+    "Judge the move only at the commit where it happened: rejected because a candidate that later lost the item and gained an unrelated one of its name, or a type of it, keeps a repair to code that is not the decision's",
     "Require the same span hash now: rejected because every edit of the moved item since would then lose its repair",
     "Judge a loss among some of its candidates when it changed many: rejected because the one left out could be the second file that gained the code",
-]
-tags = [
-    "anchors",
-    "lint",
+    "Take the file git -M pairs with a gone one by similarity as a symbol's candidate: rejected because a similarity threshold judges files, not code, it costs a process, and the loss already names every file that could hold the code",
 ]
 status = "proposed"
 origin = "anchor repair review"
 created = "2026-11-26T07:48:25.688106240Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::writers" },
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::writers" },
     { file = "src/lint/anchors/repair.rs", symbol = "lost" },
+    { file = "src/lint/anchors/repair.rs", symbol = "missing" },
     { file = "src/lint/anchors/repair.rs", symbol = "moved_to" },
-    { file = "src/lint/anchors/tests.rs", symbol = "a_move_is_the_lost_code_arriving_where_it_was_not_and_kept_there" },
-    { file = "src/sources/renames.rs", symbol = "History::lineage" },
-    { file = "src/sources/repair.rs", symbol = "MAX_LOSS_CANDIDATES" },
+    { file = "src/sources/repair/moves.rs", symbol = "MAX_LOSS_CANDIDATES" },
+    { file = "src/sources/repair/renames.rs", symbol = "History::lineage" },
     { file = "tests/integration/repair.rs", symbol = "a_function_moved_across_crates_with_its_edited_file_is_repaired" },
     { file = "tests/integration/repair.rs", symbol = "a_loss_that_changed_more_candidates_than_the_bound_is_never_repaired" },
     { file = "tests/integration/repair.rs", symbol = "a_merge_repairs_only_a_move_one_of_its_branches_made" },

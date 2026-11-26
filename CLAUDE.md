@@ -6,17 +6,19 @@ The detail of every rule is in the decision graph (`.trurlic/decisions/`, one co
 
 ### Modules
 
-Single crate (`src/lib.rs`). `pub` only on `cli` and `store`; everything else `pub(crate)`.
+Single crate (`src/lib.rs`). `pub` only on `main` (the CLI entry), `FORMAT_VERSION` and, with the `bench` feature, `bench`; everything else `pub(crate)`.
 
 ```
 store      → git                         graph files: schema, canonical form, validation, text and
                                          quality rules, apply, commit/journal/recovery, lock,
                                          migrations, a shared graph's history
-mcp        → store, lint, sources,       JSON-RPC stdio server, tool specs, `apply` and `status`
-             budget, discovery           and their CLI twins, context reads, result cap
-commands   → store, mcp, sources, lint,  init, apply, status, query, check, fmt, migrate, install, serve
-             git, discovery
-cli        → commands, store             clap definitions and dispatch
+tools      → store, lint, sources,       the tools, known to no surface: specs (schema = parser),
+             budget, discovery           `apply`, `status`, the hand-written tools, registry, result cap
+mcp        → tools, budget               JSON-RPC stdio server: protocol, client, envelope, `tools/list`
+commands   → store, tools, mcp (serve),  init, apply, status, query, check, fmt, migrate, install, serve
+             sources, lint, git,
+             discovery, budget
+cli        → commands, store, tools      clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
 lint       → store, code                 pure findings over the graph that refuse nothing: likely
                                          duplicate decisions, the bar a stored decision breaks,
@@ -24,51 +26,60 @@ lint       → store, code                 pure findings over the graph that ref
                                          their repairs
 sources    → code, lint, store, git      code-root walk, bounded reads, index cache, other worktrees,
                                          the anchor findings of `check` and `status`
-code       → store (types)               pure code index: definitions, spans, span hashes, symbols
+code       → store (types)               pure code index: its values (`index/`), resolvers (`parse/`,
+                                         `lexical/`), facts over a whole tree (`facts/`)
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
-budget     → —                           fitting output into a byte budget
+budget     → —                           a tool call's byte limits, fitting output into a byte budget
 error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
+failpoint  → console                     the named sites a test aborts, pauses, fails or panics at
+                                         (`failpoints` feature): store, `apply`, the MCP server
+bench      → mcp, store, sources,        what `benches/` drive (`bench` feature, inline in `lib.rs`)
+             code, lint
+purity     → code (tests only)           what a module's non-test code may name: `code`'s and `lint`'s
+                                         allow lists, the order of `code`'s and `store`'s parts, every
+                                         module's arrow and re-exports (`lib.rs`)
 ```
 
-`error` is used by every module but `code`, `lint` and `budget`; `console` by `store`, `mcp`, `commands`, `cli` and `sources`.
+`error` is used by every module but `code`, `lint`, `budget` and `failpoint`; `console` by `store`, `tools`, `mcp`, `commands`, `cli`, `sources` and `failpoint`.
 
 ### Where things are
 
 | Topic | Home |
 |---|---|
-| Node types, `FORMAT_VERSION` (0.5.0) | `store/schema.rs` |
-| Text rules / write-only quality bar | `store/text.rs` / `store/quality/` |
-| Canonical serializer (the only one) | `store/canonical.rs` |
+| Node types, `FORMAT_VERSION` (0.5.0) | `store/model/schema.rs` |
+| Text rules / write-only quality bar | `store/model/text.rs` / `store/quality/` |
+| Canonical serializer (the only one) | `store/format/canonical.rs` |
 | The one write: ops, cascades, undo | `store/apply/` |
-| Commit, journal, recovery | `store/commit.rs`, `journal.rs`, `recovery.rs` |
-| Shared-graph history | `store/history.rs`, `git/graph/` |
-| Format check / migration registry | `store/version.rs` / `store/migration/` |
-| Size and count limits | `store/limits.rs` |
-| Tool specs (schema = parser) | `mcp/spec/` |
-| Refusal JSON, result fitting | `mcp/result.rs`, `mcp/truncate.rs` |
-| Pre-spec reads (`get_context`, `get_decisions_for_file`) | `mcp/tools.rs`, `mcp/context.rs` |
+| Commit, journal, recovery | `store/write/commit.rs`, `journal.rs`, `recovery.rs` |
+| Shared-graph history | `store/write/history.rs`, `git/graph/` |
+| Format version check / migration registry / carrying one out | `store/format/standing.rs` / `store/format/migration/` / `store/write/migrate.rs` |
+| Size and count limits | `store/model/limits.rs` |
+| Tool specs (schema = parser) | `tools/spec/` |
+| Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |
+| Tool registry / its MCP listing and result envelope | `tools/registry.rs` / `mcp/listing.rs`, `mcp/envelope.rs` |
+| Tools written by hand (`get_context`, `get_decisions_for_file`) | `tools/handwritten/` |
 | Placement vs git (`check`) | `commands/placement.rs` |
-| Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
-| Rust tokens no span hash holds (rustfmt's commas and braces) | `code/rust/silent.rs` |
+| Index work budgets / cache encoding | `code/index/work.rs` / `code/index/encoding/` |
+| Rust tokens no span hash holds (rustfmt's commas and braces) | `code/parse/rust/silent.rs` |
 | The threads files are indexed on (pool, stack, bytes at once) | `sources/indexer.rs` |
 | The tree-sitter runtime and the patch that bounds a parse | `vendor/tree-sitter/`, `vendor/tree-sitter-0.27.2-bounds.patch` |
-| Likely duplicates (scoring, pair index) / which `status` call compares them | `lint/duplicates/` / `mcp/status/lint/pairs.rs` |
-| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/mod.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
-| Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair.rs`, `sources/renames.rs`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |
-| Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
-| A `[quality]` pattern's engine, its caches, the bytes it charges / what compiling it folds | `store/quality/bar/pattern.rs` / `store/quality/bar/folding.rs` |
-| A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/language.rs`, `code/language/<name>.scm`, `code/language/<name>.rs` |
-| C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/language/c_family.rs` / `c_family/set.rs` / `sources/lexical.rs` |
-| Span-hash units and hashing | `code/units.rs` |
-| Query contract / general resolver | `code/query.rs` / `code/general.rs` |
-| Failpoint sites | `store/failpoint.rs` |
+| Likely duplicates (scoring, pair index) / which `status` call compares them | `lint/duplicates/` / `tools/status/lint/pairs.rs` |
+| Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors/finding.rs`, `lint/anchors/judge.rs`, `lint/anchors/trees.rs` / `sources/findings.rs`, `sources/worktrees.rs` / `tools/status/anchors.rs` |
+| Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair/`, `git/renames.rs` / `store/apply/repair.rs` / `tools/apply/repairs.rs` |
+| Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/audit.rs`, `tools/status/lint/` |
+| A `[quality]` pattern's engine, its caches, the bytes it charges / what compiling it folds | `store/quality/pattern.rs` / `store/quality/folding.rs` |
+| A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/parse/language/row.rs`, `code/parse/language/<name>.scm`, `code/parse/language/<name>.rs` |
+| C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/parse/language/c_family/define.rs`, `blank.rs` / `c_family/set.rs` / `sources/reads.rs`, `sources/lexical.rs` |
+| Span-hash units and hashing | `code/parse/units/` |
+| Query contract / general resolver | `code/parse/query/` / `code/parse/general/` |
+| Failpoint sites | `failpoint.rs` |
 
 ### Invariants
 
 1. `unsafe_code = "forbid"`.
 2. Lints are the rules (`Cargo.toml [lints]`, `clippy.toml`; `tests/lints.rs` seeds a violation of each): no `unwrap`/`expect`/`panic!`/`todo!`/`unimplemented!`/`dbg!` outside tests; no `HashMap`/`HashSet`; stdout/stderr only via `console`; clock only via `Timestamp::now`. Exceptions: `#[expect(lint, reason = "...")]`; `#[allow]` is refused.
-3. Every graph write goes through a `Writer` (`Store::begin_write`), which owns the exclusive lock and the graph loaded under it. `init` and `migrate` take the lock themselves. `mcp` never writes directly.
+3. Every graph write goes through a `Writer` (`Store::begin_write`), which owns the exclusive lock and the graph loaded under it. `init` and `migrate` take the lock themselves. `tools` and `mcp` never write directly.
 4. A write adds no validation issue; a batch is one commit or nothing.
 5. Commit order: canonical text read back → staged temp files → (shared) blobs → journal = commit point → renames → (shared) history commit → journal deleted. Recovery rolls forward under the exclusive lock; after the commit point a failure is `WritePending`, never a rollback.
 6. `shared`: one commit per write in `.trurlic/.git`, after one `hand edit` commit, fixed identity, no user/system git config. `tracked`: trurlic never commits.
@@ -77,11 +88,11 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 9. A load fails only on an unreadable file; everything else is a validation issue (`check` fails, reads still answer).
 10. Every tool result fits 24 KiB (`budget::MAX_TOOL_RESULT_BYTES`) as valid JSON; cuts are named in `truncated`. Every refusal is an `isError` result `{"error": {"kind", ...}}`; JSON-RPC errors only for malformed messages, unknown methods/tools, panics.
 11. A panic in a request is answered `-32603` and the server keeps serving (`panic = "unwind"`, one `catch_unwind` in `mcp::Server::answer`).
-12. `code` is pure: its non-test code names only what an allow list holds (`code/purity.rs`, `code::tests`). Its cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
+12. Every module's non-test code names only what its arrow of the module map reaches and re-exports nothing of another module, `code` and `lint` only what their allow lists hold (`purity/`, read by the tests of `lib.rs`, `code`, `lint` and `store`; `purity/mod.rs` states what they cannot see). `code`'s cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
 13. A change to what an index holds raises `code::INDEX_FORMAT` (the fingerprint test says when).
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.
-16. A `[quality]` pattern compiles within `MAX_PATTERN_FOLDED_CODE_POINTS` and `MAX_PATTERN_COMPILED_BYTES`, before a write takes its lock, and runs on the lazy DFA alone, charging its bytes against `MAX_WRITE_PATTERN_BYTES` or `MAX_REPORT_PATTERN_BYTES` before it reads them, its cache giving up rather than outgrow `MAX_PATTERN_CACHE_BYTES`, and the caches of a call growing against `MAX_PATTERN_CACHE_TOTAL_BYTES` together (`store/limits.rs`). Past any of them a write is refused and a report reads no further.
+16. A `[quality]` pattern compiles within `MAX_PATTERN_FOLDED_CODE_POINTS` and `MAX_PATTERN_COMPILED_BYTES`, before a write takes its lock, and runs on the lazy DFA alone, charging its bytes against `MAX_WRITE_PATTERN_BYTES` or `MAX_REPORT_PATTERN_BYTES` before it reads them, its cache giving up rather than outgrow `MAX_PATTERN_CACHE_BYTES`, and the caches of a call growing against `MAX_PATTERN_CACHE_TOTAL_BYTES` together (`store/model/limits.rs`). Past any of them a write is refused and a report reads no further.
 17. `vendor/tree-sitter/` is upstream's crate but for `vendor/tree-sitter-0.27.2-bounds.patch`: a change to the runtime is a change to that patch, regenerated, and raises `code::INDEX_FORMAT`.
 
 ### Working with the graph
@@ -115,7 +126,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 - Format fixtures: `tests/fixtures/formats/<version>/`, each migrated, loaded and checked.
 - Code fixtures: `tests/fixtures/code/`; manifests are named `Cargo.toml.fixture`.
 - Prose fixture: `tests/fixtures/prose/`, fixed English decision text the `[quality]` caches are sized on.
-- Seeded corpus (`store::corpus`, `store::seeded`) feeds property tests and benches.
+- Seeded corpus (`store::corpus`, `store::corpus::seeded`) feeds property tests and benches.
 - No test for coverage: each asserts a property someone could break.
 
 ### Skills

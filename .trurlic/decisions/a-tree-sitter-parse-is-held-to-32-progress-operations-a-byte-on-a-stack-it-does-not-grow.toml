@@ -1,6 +1,6 @@
 component = "code"
 choice = "A tree-sitter parse is held to 32 progress operations a byte, its allocation and error recovery included, on a stack it does not grow; past them the file is TooComplex"
-reason = "In every grammar the index reads, error recovery walks the parse stack again at each error and an unresolved ambiguity keeps versions alive, so a parse's work can grow with the square of its file and its memory with its work. The released runtime's progress count sees neither the walks nor the allocation, and it releases its stack by recursion as deep as an ambiguity runs: a file of kilobytes held a call for minutes, and one at the cap aborted the process. The vendored runtime counts each parser action, each step of a stack walk, each round of the reductions error recovery tries and each 64 bytes its default allocator gives the thread as one progress operation, and it releases and merges its stack over arrays on the heap. syntax::parse spends 100 operations at each call of the progress callback against PARSE_OPERATIONS_PER_BYTE times the file's bytes, MIN_PARSE_OPERATIONS at least, and cancels the parse past them. So the budget decides which file is read, a parse takes a fixed call stack, and a file is refused on every machine or on none, as syntax::parse makes a parser per parse: one that parsed before counts fewer operations. The budget and its minimum are in BOUNDS, and the runtime's sources are pinned by hash, since both decide refusals. A known limit: the count is read between steps, and one step of error recovery can cost several times the whole budget, so a refused parse stops at the first check past it and can allocate past 2 KiB a byte. Making the walks cancellable inside a step is the runtime change that would close it. Error-dense compiler logs under a source suffix can pass the budget and are refused as TooComplex, cheaply: no budget tells them from hostile input."
+reason = "In every grammar the index reads, error recovery walks the parse stack again at each error and an unresolved ambiguity keeps versions alive, so a parse's work can grow with the square of its file and its memory with its work. The released runtime's progress count sees neither the walks nor the allocation, and it releases its stack by recursion as deep as an ambiguity runs: a file of kilobytes held a call for minutes, and one at the cap aborted the process. The vendored runtime counts each parser action, each step of a stack walk, each round of the reductions error recovery tries and each 64 bytes its default allocator gives the thread as one progress operation, and it releases and merges its stack over arrays on the heap. parser::parse spends 100 operations at each call of the progress callback against PARSE_OPERATIONS_PER_BYTE times the file's bytes, MIN_PARSE_OPERATIONS at least, and cancels the parse past them. So the budget decides which file is read, a parse takes a fixed call stack, and a file is refused on every machine or on none, as parser::parse makes a parser per parse: one that parsed before counts fewer operations. The budget and its minimum are in BOUNDS, and the runtime's sources are pinned by hash, since both decide refusals. A known limit: the count is read between steps, and one step of error recovery can cost several times the whole budget, so a refused parse stops at the first check past it and can allocate past 2 KiB a byte. Making the walks cancellable inside a step is the runtime change that would close it. Error-dense compiler logs under a source suffix can pass the budget and are refused as TooComplex, cheaply: no budget tells them from hostile input."
 alternatives = [
     "The released progress callback alone: rejected because the stack walks of error recovery never reach it, so the work between two of its calls grows with the file",
     "A scan before the parse per shape, as Python's bound on runs of line continuations was: rejected because the cost is errors times stack depth, which no lexer sees, and each scan caps one shape of many",
@@ -8,19 +8,14 @@ alternatives = [
     "Parsing each top-level item alone: rejected because one large item costs what its file did, and TypeScript, C and C++ cannot be cut lexically",
     "32 bytes to an operation, 1 KiB a byte: rejected because it halves the headroom of the costliest generated sources, while the room already keeps the parses in flight to 1 MiB of files",
 ]
-tags = [
-    "parsing",
-    "reliability",
-    "security",
-]
 status = "proposed"
 origin = "every tree-sitter parse bounded by one count of work"
 created = "2026-11-26T09:47:30.725930774Z"
 anchors = [
-    { file = "src/code/index.rs", symbol = "the_vendored_runtime_is_the_one_the_index_format_names" },
-    { file = "src/code/syntax.rs", symbol = "parse" },
-    { file = "src/code/work.rs", symbol = "MIN_PARSE_OPERATIONS" },
-    { file = "src/code/work.rs", symbol = "PARSE_OPERATIONS_PER_BYTE" },
+    { file = "src/code/dispatch.rs", symbol = "the_vendored_runtime_is_the_one_the_index_format_names" },
+    { file = "src/code/index/work.rs", symbol = "MIN_PARSE_OPERATIONS" },
+    { file = "src/code/index/work.rs", symbol = "PARSE_OPERATIONS_PER_BYTE" },
+    { file = "src/code/parse/parser.rs", symbol = "parse" },
     { file = "vendor/tree-sitter/src/alloc.c", symbol = "ts_take_allocated_bytes" },
     { file = "vendor/tree-sitter/src/parser.c", symbol = "ts_parser__check_progress" },
     { file = "vendor/tree-sitter/src/stack.c", symbol = "stack_node_add_link" },

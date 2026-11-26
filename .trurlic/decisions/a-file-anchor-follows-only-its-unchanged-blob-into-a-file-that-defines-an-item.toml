@@ -1,0 +1,30 @@
+component = "lint"
+choice = "A file anchor follows only its file's unchanged blob, and only into a file that defines an item"
+reason = "A wrong repair hides the staleness it mends, and repair_anchors writes every repair unattended. A file anchor names a file, which git knows by nothing but its bytes, so it follows its gone file only where the history shows that file's blob moved unchanged (sources::repair::renames), and only into a file that now defines an item: a header of comments, or an empty file, has no identity to carry. A file moved and edited in one commit carries the symbols whose code it holds unchanged, by the move rule of the symbols, never the file anchor."
+alternatives = [
+    "Follow every rename git reports, file anchors included: rejected because a shared license header or boilerplate pairs unrelated files, and every binary resolves main",
+    "Follow the blob into any file, an empty one or a header of comments included: rejected because such a file has no identity of its own to carry",
+]
+status = "proposed"
+origin = "anchor repair"
+created = "2026-11-24T11:34:48.414739583Z"
+anchors = [
+    { file = "src/lint/anchors/repair.rs", symbol = "followed" },
+    { file = "src/lint/anchors/repair.rs", symbol = "tests::a_file_anchor_follows_its_file_into_one_that_defines_an_item" },
+    { file = "tests/integration/repair.rs", symbol = "a_file_anchor_does_not_follow_a_rename_git_pairs_by_a_shared_header" },
+    { file = "tests/integration/repair.rs", symbol = "a_file_moved_on_while_another_takes_its_path_is_repaired_where_it_went" },
+    { file = "tests/integration/repair.rs", symbol = "a_moved_symbol_and_a_renamed_file_are_repaired_by_one_op" },
+]
+depends_on = [
+    "a-rename-is-what-the-branch-s-history-says-of-a-gone-path",
+    "a-stale-symbol-is-repaired-where-one-commit-moved-its-code-unchanged",
+]
+
+[accepted_text]
+choice = "A stale anchor follows its gone file's rename only when the rename carried its code: the same span hash before the rename and in the file the rename made"
+reason = "A wrong repair hides the staleness it mends, and repair_anchors writes every repair unattended, while git pairs files by similarity alone. So a symbol anchor follows a rename only when its definitions at the old path before the rename have the span hash they have in the blob the rename's commit wrote at the new path, read in the one git cat-file batch (for a rename not committed, the work tree's file), and its symbol resolves at the new path now to definitions of the kinds it named in that blob. The rename is judged where it happened, so a later edit of the file keeps the repair, and an edit since that moved the item out and left a declaration of its name does not land the anchor on the declaration. A file anchor follows an exact rename into a file that defines an item, or a rename one of its symbol anchors followed, and for an inexact rename only while no symbol anchor that resolved in the old file is missing from the blob the rename made: one boilerplate main carried unchanged does not carry a file whose own functions stayed behind. A symbol the rename carried that is no longer at the new path is searched for from that file."
+alternatives = [
+    "Trust an exact rename without comparing code: rejected because a later edit may have moved the item out of the new path and left a declaration of its name",
+    "Compare the symbol before the rename with the new path at HEAD: rejected because any later edit of the symbol in the renamed file would then lose the repair",
+    "Follow every rename git reports: rejected because a shared license header or boilerplate pairs unrelated files, and every binary resolves main",
+]

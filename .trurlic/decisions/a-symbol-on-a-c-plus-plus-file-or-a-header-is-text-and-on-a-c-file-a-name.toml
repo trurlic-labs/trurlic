@@ -5,15 +5,12 @@ alternatives = [
     "Names on every C and C++ file: rejected because operator() and ~Box could then not be named",
     "Text on every C and C++ file: rejected because a malformed symbol on a .c file would then name nothing instead of being refused",
 ]
-tags = [
-    "anchors",
-]
 status = "accepted"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"
 anchors = [
-    { file = "src/code/language.rs", symbol = "C" },
-    { file = "src/code/language.rs", symbol = "CPP" },
+    { file = "src/code/parse/language/row.rs", symbol = "C" },
+    { file = "src/code/parse/language/row.rs", symbol = "CPP" },
 ]
 depends_on = [
     "c-and-c-plus-plus-are-read-by-tree-sitter-c-and-tree-sitter-cpp",

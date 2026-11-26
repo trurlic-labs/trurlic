@@ -1,0 +1,18 @@
+component = "store"
+choice = "Validation issues carry an IssueKind and a subject, and ProjectState::validate returns them sorted once at its exit"
+reason = """
+An issue's identity is (kind, subject): the subject is a node name, an edge as `from -> to (field)`, or a cycle's sorted members. The message names the file at fault and what is wrong; it is for people and may change while the issue stays the same, so nothing matches on it. Every issue is an error; a file that is only not in canonical form is no issue but an entry of ProjectState::non_canonical. validate() sorts by kind, subject and message, so the order of the checks never reaches check output or the no-new-issues comparison, and one sort at the single exit holds for a check added later. A repeated tag, anchor or edge reads as one element of its set, and its file is listed as non-canonical until fmt rewrites it, so there is no duplicate-edge check.
+"""
+alternatives = [
+    "Iterate every check in BTree order: rejected because every site must stay sorted by convention, and a new check that iterates differently reintroduces nondeterminism silently",
+    "Identify issues by message: rejected because counts and file names in a message make the same issue compare unequal across validations",
+    "A severity per issue: rejected because a second field beside the kind can disagree with it; what is only a matter of form is a list of its own",
+]
+status = "accepted"
+created = "2026-10-02T12:57:55.359394005Z"
+anchors = [
+    { file = "src/store/graph/validate.rs", symbol = "Issue" },
+    { file = "src/store/graph/validate.rs", symbol = "IssueKind" },
+    { file = "src/store/graph/validate.rs", symbol = "ProjectState::validate" },
+    { file = "tests/integration/invalid_graph.rs", symbol = "check_reports_each_issue_once_and_identically_on_every_run" },
+]

@@ -1,0 +1,24 @@
+component = "project"
+choice = "The library exports main, FORMAT_VERSION and, with the bench feature, bench; no module is public"
+reason = "lib.rs declares no module public and exports three names: main, the CLI's entry, which lib.rs re-exports from cli and src/main.rs calls as trurlic::main; FORMAT_VERSION, which the integration tests write into the files they build; and pub mod bench, only under the bench feature that the bench target requires and no release build enables, which re-exports what benches/corpus.rs drives. Nothing else outside the crate names an item. A pub item reachable from the library's surface is exempt from the compiler's dead-code analysis, so while store and cli were public modules every pub item in them counted as used, whether or not anything called it. With this surface an item nothing in the crate uses is a warning, which make check refuses. An item that only tests name is re-exported under cfg(test), and one that only the bench feature needs under that feature, never kept public to silence the warning. A new user outside the crate adds its item to lib.rs and to this decision."
+alternatives = [
+    "Keep pub mod cli and pub mod store: every pub item of both is library API, so the compiler never reports one that nothing uses",
+    "Make every module pub: the internals become an API with no consumer, and no unused item is ever reported",
+    "Export cli as a public module for its one entry: every pub item of cli becomes library API, and main is the only one a caller needs",
+    "Export Error and Result too: nothing outside the crate names them, so they would widen the surface for no reader",
+]
+status = "proposed"
+origin = "module structure"
+created = "2026-06-15T09:47:29.037434435Z"
+anchors = [
+    { file = "src/cli.rs", symbol = "main" },
+    { file = "src/lib.rs" },
+]
+
+[accepted_text]
+choice = "Module visibility: pub(crate) default, only cli and store are pub"
+reason = "Enforced in lib.rs: pub mod cli and pub mod store are the only public modules. All others (budget, commands, console, error, git, mcp) are pub(crate). This keeps the library surface minimal and internal module boundaries enforced: external consumers can only reach the CLI entry point and the store API. One gated exception: with the `bench` feature, which only the bench target requires and no release build enables, lib.rs adds `pub mod bench` re-exporting mcp::Server, and store adds `pub mod corpus`, so benches/ can drive the server in process."
+alternatives = [
+    "Make all modules pub for maximum flexibility: rejected because it exposes internal implementation details and makes breaking changes harder to track",
+    "Make everything private and only expose a facade module: rejected because cli and store have legitimate external consumers (the binary and potential library users)",
+]

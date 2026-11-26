@@ -5,15 +5,12 @@ alternatives = [
     "A quality rule refusing file-only anchors: rejected because a directory or a file is the right anchor for some decisions, and the bar would refuse them",
     "Leave it to the review: rejected because a review sees only the decisions a diff touches",
 ]
-tags = [
-    "quality",
-]
 status = "accepted"
 origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"
 anchors = [
     { file = "src/lint/quality.rs", symbol = "file_anchors_only" },
-    { file = "src/mcp/status/lint.rs", symbol = "LintItem" },
+    { file = "src/tools/status/lint/finding.rs", symbol = "LintItem" },
     { file = "tests/integration/lint.rs", symbol = "graph" },
 ]
 depends_on = [

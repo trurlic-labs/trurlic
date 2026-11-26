@@ -8,21 +8,17 @@ alternatives = [
     "One read cap for every entry: rejected because a forged entry near a cap sized for the largest file cost every call seconds and gigabytes, whatever file it named",
     "Prune by age: rejected because it needs a clock, which a read has no business reading",
 ]
-tags = [
-    "concurrency",
-    "performance",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_code_index" },
-    { file = "src/code/encoding/read.rs", symbol = "decode" },
-    { file = "src/code/index.rs", symbol = "BOUNDS" },
-    { file = "src/code/index.rs", symbol = "INDEX_FORMAT" },
+    { file = "src/code/dispatch.rs", symbol = "BOUNDS" },
+    { file = "src/code/dispatch.rs", symbol = "INDEX_FORMAT" },
+    { file = "src/code/index/encoding/read.rs", symbol = "decode" },
     { file = "src/sources/cache.rs", symbol = "key" },
-    { file = "src/sources/mod.rs", symbol = "Reads::write" },
-    { file = "src/store/symbols.rs", symbol = "Store::write_symbols" },
+    { file = "src/sources/reads.rs", symbol = "Reads::write" },
+    { file = "src/store/cache.rs", symbol = "Store::write_symbols" },
 ]
 depends_on = [
     "an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost",

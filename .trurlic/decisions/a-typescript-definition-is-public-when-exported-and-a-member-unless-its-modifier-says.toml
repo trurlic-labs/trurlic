@@ -8,25 +8,18 @@ alternatives = [
     "Every declaration of an ambient module public: rejected because TypeScript exports only the marked ones once the body holds an export form (declare module \"*.svg\" { const c: string; function f(): void; export default c })",
     "A declaration file's top as a module's: rejected because TypeScript exports each declaration of a .d.ts module that holds no export form, and a script's are global",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/place.rs", symbol = "place" },
-    { file = "src/code/general/tests.rs", symbol = "a_declaration_files_top_exports_what_typescript_reads_as_exported" },
-    { file = "src/code/general/tests.rs", symbol = "an_ambient_module_or_namespace_exports_what_it_holds_at_any_depth" },
-    { file = "src/code/general/tests.rs", symbol = "an_ambient_module_with_an_export_form_exports_only_what_it_marks" },
-    { file = "src/code/general/tests.rs", symbol = "an_export_states_what_its_module_makes_public" },
-    { file = "src/code/kinds.rs", symbol = "Visibility" },
-    { file = "src/code/language/declarations.scm" },
-    { file = "src/code/language/typescript.scm" },
-]
-depends_on = [
-    "what-a-typescript-file-defines",
+    { file = "src/code/index/kinds.rs", symbol = "Visibility" },
+    { file = "src/code/parse/general/place.rs", symbol = "place" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_declaration_files_top_exports_what_typescript_reads_as_exported" },
+    { file = "src/code/parse/general/tests.rs", symbol = "an_ambient_module_or_namespace_exports_what_it_holds_at_any_depth" },
+    { file = "src/code/parse/general/tests.rs", symbol = "an_ambient_module_with_an_export_form_exports_only_what_it_marks" },
+    { file = "src/code/parse/general/tests.rs", symbol = "an_export_states_what_its_module_makes_public" },
+    { file = "src/code/parse/language/declarations.scm" },
+    { file = "src/code/parse/language/typescript.scm" },
 ]
 
 [accepted_text]

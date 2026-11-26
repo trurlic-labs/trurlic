@@ -1,0 +1,25 @@
+component = "commands"
+choice = "trurlic install registers trurlic serve with Claude Code alone, named by a required --ide whose one value is claude-code"
+reason = "Users reach Trurlic through their coding agent over MCP, and the installer's one job is to register trurlic serve with that agent. A target that only merges an entry into a client's JSON, TOML or YAML config, at a per-OS path guessed from the client's conventions, is tested against no real client and kept up to date by nobody, while an entry the user pastes from the README does the same. So install has one target, Claude Code, the client the quick start uses. --ide stays required with a one-variant ValueEnum (InstallIde::ClaudeCode): help lists the one accepted value, clap refuses any other with exit status 2, and main destructures the variant, so a second target fails to compile until it is handled, and trurlic install --ide claude-code works as typed."
+alternatives = [
+    "A target per MCP client: rejected because each is an untested guess at a client's config path and format, and one pulled in a YAML parser built on an unmaintained unsafe C translation",
+    "Delete trurlic install: rejected because registering with Claude Code is the second command of the quick start",
+    "Drop --ide or make it optional with a default: rejected because the first breaks trurlic install --ide claude-code as typed and the second adds a bare form to keep",
+    "Accept --ide as a string checked against claude-code: rejected because the code never reads it, and a new target is no compile error",
+]
+status = "proposed"
+created = "2026-11-23T19:44:19.727447441Z"
+anchors = [
+    { file = "src/cli.rs", symbol = "InstallIde" },
+    { file = "src/cli.rs", symbol = "main" },
+    { file = "src/commands/install.rs", symbol = "install" },
+]
+
+[accepted_text]
+choice = "trurlic install has one target, Claude Code, until the installer is rewritten; the other ten config writers are deleted"
+reason = "Users reach Trurlic through their coding agent over MCP, and the installer's only job is to register `trurlic serve` with that agent. Ten of the eleven targets (Claude Desktop, Cursor, Cline, Windsurf, Copilot, Codex, OpenCode, OpenClaw, Hermes Agent, Antigravity) did nothing but merge one `trurlic` entry into a JSON, TOML or YAML file at a per-OS path guessed from each client's conventions, with no test against any real client; an entry the user can paste from the README does the same. They carried about 800 lines of writers, path logic, error variants and tests, and the serde_yaml_ng dependency with the unmaintained unsafe-libyaml under it, for one target. Claude Code, the client the owner and the quick start use, stays, so `trurlic install --ide claude-code` works as typed until the installer is rewritten. With the targets gone, tempfile, which only the config writers used outside tests, leaves the release build."
+alternatives = [
+    "Keep all eleven targets: rejected, each is an untested guess at a client's config path and format, kept up to date by nobody, and one of them pulls in a YAML parser built on an unmaintained unsafe C translation",
+    "Keep the JSON-file targets and drop only YAML and TOML: rejected, it removes the dependency but keeps the untested per-client path logic and a shared writer for clients the owner does not use",
+    "Delete trurlic install altogether: rejected, registering with Claude Code is the second command of the quick start and the rewrite of the installer replaces it, not a gap",
+]

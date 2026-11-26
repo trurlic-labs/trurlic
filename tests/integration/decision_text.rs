@@ -1,4 +1,4 @@
-//! A decision's choice and reason are held to the rules of `store::text`
+//! A decision's choice and reason are held to the rules of `store::model::text`
 //! wherever they come from: a hand edit that breaks one still loads, and
 //! `check` reports it as an error naming the file, the field and the
 //! fault.

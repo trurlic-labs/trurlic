@@ -7,18 +7,12 @@ alternatives = [
     "Parse the line-based porcelain output: rejected because a path holding a line break would split a record",
     "Refuse an unknown attribute: rejected because every newer git that adds one would break discovery",
 ]
-tags = [
-    "git",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [
-    { file = "src/git.rs", symbol = "Head" },
-    { file = "src/git.rs", symbol = "Worktree" },
-    { file = "src/git.rs", symbol = "common_dir" },
-    { file = "src/git.rs", symbol = "parse_worktrees" },
-    { file = "src/git.rs", symbol = "worktrees" },
-]
-depends_on = [
-    "the-git-module-is-a-leaf-that-runs-the-git-cli",
+    { file = "src/git/layout.rs", symbol = "Head" },
+    { file = "src/git/layout.rs", symbol = "Worktree" },
+    { file = "src/git/layout.rs", symbol = "common_dir" },
+    { file = "src/git/layout.rs", symbol = "parse_worktrees" },
+    { file = "src/git/layout.rs", symbol = "worktrees" },
 ]

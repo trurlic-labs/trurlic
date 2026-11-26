@@ -7,17 +7,13 @@ alternatives = [
     "Refuse a migration that meets an unknown key: rejected because a key 0.4.1 ignored would stop the migration of the whole store",
     "Drop unknown keys silently, as the old migrate did: rejected because a value would vanish without a word",
 ]
-tags = [
-    "migration",
-    "validation",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
-    { file = "src/store/migration/format_0_5.rs", symbol = "Notes::rest" },
-    { file = "src/store/migration/format_0_5.rs", symbol = "Notes::rest_top" },
-    { file = "src/store/migration/format_0_5.rs", symbol = "a_key_of_any_0_4_1_file_the_step_does_not_map_is_reported" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "Notes::rest" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "Notes::rest_top" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "a_key_of_any_0_4_1_file_the_step_does_not_map_is_reported" },
 ]
 depends_on = [
-    "a-migration-rewrites-the-graph-as-toml-tables-reads-the",
+    "a-migration-rewrites-the-graph-as-toml-tables-and-commits-it-whole",
 ]

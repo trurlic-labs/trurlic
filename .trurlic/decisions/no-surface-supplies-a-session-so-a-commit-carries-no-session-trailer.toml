@@ -1,0 +1,17 @@
+component = "tools"
+choice = "No surface supplies a session: apply builds its Batch with session None on MCP and the CLI alike, so a history commit carries no Session: trailer"
+reason = "MCP's initialize carries clientInfo, which names the client program and its version, and tools/call carries _meta, whose only defined key is progressToken; stdio has no session id, and a command line names none. A client's own _meta key would be a protocol field no specification defines, and a session the server minted per process would match nothing a hook or a transcript records. So the apply tool, which the server and the CLI twin both run, sets Batch::session to None, and CommitMessage renders a Session: trailer only for a session a caller hands in."
+alternatives = [
+    "A session argument of apply: rejected because an agent cannot know its own session id",
+    "The server process as the session: rejected because it matches no session a hook or a transcript names",
+]
+status = "proposed"
+origin = "graph rebuild"
+created = "2026-11-26T18:08:51.908972147Z"
+anchors = [
+    { file = "src/store/apply/ops.rs", symbol = "Batch::session" },
+    { file = "src/tools/apply/tool.rs", symbol = "apply" },
+]
+depends_on = [
+    "a-history-commit-names-the-tool-and-carries-its-batch-s-trailers",
+]

@@ -1,0 +1,35 @@
+component = "discovery"
+choice = "Discovery walks up within the cwd's work tree, taking a .trurlic, a symlink followed, and stopping at the first .git; only a .git file with no graph found runs git, one worktree list"
+reason = "A graph serves the work tree it sits in, and serve finds it on every tool call, so the walk is on the per-call path. Under tracked every worktree checks out its own graph, so a linked worktree nested in the main one, on a branch without a graph, must find none instead of reading and writing the main checkout's; under shared the main worktree's graph serves each linked worktree. So the walk takes the .trurlic of each directory, a symlink followed for a clone or a copy outside the repository, at two metadata calls a directory, and stops at the first .git. A directory there is the top of a main worktree or of a repository cloned inside another project's tree, whose graph above is not its own, so the walk ends with none. A file is the top of a linked worktree or a submodule, the one place a graph the walk cannot see may serve: one git worktree list, read from the common dir, names the main worktree, whose graph serves when it states shared, and a submodule pays that process for no graph. A tree that holds its graph, a symlinked clone and a directory inside a graph spawn no process, and a tree with no git is walked to the root. A graph directory is passed through to its tree, and discovery never runs git inside one, where the graph's own repository would answer."
+alternatives = [
+    "Walk to the root and ask git last: rejected because a nested linked worktree then reads and writes the main checkout's graph, and its code root is the main tree",
+    "Stop only at a .git file: rejected because a repository cloned inside a project would read that project's graph as its own",
+    "Ask git on every call, or for the top first: rejected because a process per tool call is the cost serve should not pay, and a symlinked clone or a graph outside any repository has no git answer",
+    "Read the .git file and the commondir file directly: rejected because that reimplements git's discovery, its gitdir files, commondir and separate git directories",
+    "Cache the answer between calls: rejected because no process holds state between calls, and a cached answer would miss a new or moved graph",
+]
+status = "proposed"
+created = "2026-11-24T03:00:00Z"
+anchors = [
+    { file = "src/discovery.rs", symbol = "discover" },
+    { file = "src/discovery.rs", symbol = "graph_in" },
+    { file = "src/discovery.rs", symbol = "shared_graph_of" },
+    { file = "src/git/layout.rs", symbol = "dot_git_in" },
+    { file = "tests/integration/placement.rs", symbol = "a_nested_worktree_of_a_shared_graph_reads_it_for_itself" },
+    { file = "tests/integration/placement.rs", symbol = "a_nested_worktree_of_a_tracked_graph_never_reaches_the_main_one" },
+    { file = "tests/integration/placement.rs", symbol = "a_repository_inside_a_project_does_not_reach_its_graph" },
+    { file = "tests/integration/placement.rs", symbol = "discovery_runs_no_git_where_the_walk_finds_the_graph" },
+]
+depends_on = [
+    "no-process-holds-the-graph-between-calls-and-no-cache-stands-in-for-a-load",
+    "trurlic-init-requires-placement",
+]
+
+[accepted_text]
+choice = "Discovery walks up within the cwd's work tree: a .trurlic, a symlink followed; at a linked worktree's top the main worktree's graph if shared; a .git directory ends it"
+reason = "A graph serves the work tree it sits in. Under tracked every worktree checks out its own graph, so a linked worktree nested in the main one, on a branch without a graph, must find none instead of reading and writing the main checkout's; under shared the main worktree's graph serves each linked worktree, read for the calling tree. So the walk takes the .trurlic of each directory, a symlink followed for a clone or a copy outside the repository, and stops at the first .git. A file is the top of a linked worktree or a submodule, where git worktree list, read from the common dir, names the main worktree, whose graph serves when it states shared. A directory is the top of a main worktree or of a repository cloned inside another project's tree, and a graph above it is not that repository's, so the walk ends with none. A tree with no git is walked to the root. A graph directory is passed through to its tree, since its own .git is its history."
+alternatives = [
+    "Walk to the root and ask git last, as before: rejected because a nested linked worktree then reads and writes the main checkout's graph, and its code root is the main tree",
+    "Stop only at a .git file: rejected because a repository cloned inside a project would read that project's graph as its own",
+    "Ask git for the top first, then walk: rejected because every call would spawn git, and a symlinked clone or a graph outside any repository has no git answer",
+]

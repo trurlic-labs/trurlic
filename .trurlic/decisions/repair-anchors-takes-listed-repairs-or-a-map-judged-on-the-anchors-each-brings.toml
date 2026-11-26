@@ -8,24 +8,20 @@ alternatives = [
     "Refuse the batch on a repair of the map the bar refuses: rejected because the caller wrote none of them, and an earlier op filling a cache would turn a repair into the batch's refusal",
     "Leave every repair of a decision once one of them is left: rejected because a decision holding one anchor whose repair the bar refuses would keep its other stale anchors at every run",
 ]
-tags = [
-    "anchors",
-    "apply",
-]
 status = "proposed"
 origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"
 anchors = [
     { file = "src/store/apply/ops.rs", symbol = "Repair" },
     { file = "src/store/apply/ops.rs", symbol = "RepairAnchors" },
+    { file = "src/store/apply/repair.rs", symbol = "a_map_of_repairs_applies_where_its_op_runs" },
+    { file = "src/store/apply/repair.rs", symbol = "a_repair_is_judged_on_the_anchor_it_brings_alone" },
+    { file = "src/store/apply/repair.rs", symbol = "a_repair_of_the_map_a_pattern_gives_up_on_is_left_and_a_later_op_written" },
     { file = "src/store/apply/repair.rs", symbol = "admitted" },
+    { file = "src/store/apply/repair.rs", symbol = "each_fault_of_a_repair_is_refused_naming_it" },
     { file = "src/store/apply/repair.rs", symbol = "judge_listed" },
     { file = "src/store/apply/repair.rs", symbol = "repair_anchors" },
-    { file = "src/store/apply/tests/repair.rs", symbol = "a_map_of_repairs_applies_where_its_op_runs" },
-    { file = "src/store/apply/tests/repair.rs", symbol = "a_repair_is_judged_on_the_anchor_it_brings_alone" },
-    { file = "src/store/apply/tests/repair.rs", symbol = "a_repair_of_the_map_a_pattern_gives_up_on_is_left_and_a_later_op_written" },
-    { file = "src/store/apply/tests/repair.rs", symbol = "each_fault_of_a_repair_is_refused_naming_it" },
-    { file = "src/store/apply/tests/repair.rs", symbol = "two_repairs_of_the_map_to_one_refused_anchor_are_left_together" },
+    { file = "src/store/apply/repair.rs", symbol = "two_repairs_of_the_map_to_one_refused_anchor_are_left_together" },
 ]
 
 [accepted_text]

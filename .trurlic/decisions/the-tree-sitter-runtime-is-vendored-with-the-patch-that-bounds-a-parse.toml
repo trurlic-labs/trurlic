@@ -7,10 +7,6 @@ alternatives = [
     "A [patch.crates-io] entry over the released crate: rejected because cargo install ignores a package's patches, so an installed trurlic would parse on the unbounded runtime",
     "The upstream repository whole, as a submodule: rejected because it brings the CLI, the documentation and the wasm runtime for a library a fraction of its size",
 ]
-tags = [
-    "dependencies",
-    "parsing",
-]
 status = "accepted"
 origin = "every tree-sitter parse bounded by one count of work"
 created = "2026-11-26T09:47:30.725930774Z"

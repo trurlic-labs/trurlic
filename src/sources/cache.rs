@@ -17,7 +17,8 @@
 
 use crate::code::{
     BOUNDS, FileKind, FileMacros, HASH_SCHEME, INDEX_FORMAT, Indexed, Lexed, decode_index,
-    decode_lexed, encode_index, encode_lexed, max_entry_bytes as max_index_bytes, max_lexed_bytes,
+    decode_lexed, encode_index, encode_lexed, grammar_identity_of, lexed_grammars,
+    max_entry_bytes as max_index_bytes, max_lexed_bytes, name_of,
 };
 use crate::store::SymbolsKey;
 
@@ -51,8 +52,8 @@ pub(super) const fn max_lexed_entry_bytes(source_bytes: usize) -> usize {
 /// C or C++ file's holds the identity of `macros`, the part of its tree's
 /// blank set it writes.
 pub(super) fn key(kind: FileKind, content: Content, macros: &FileMacros) -> SymbolsKey {
-    let mut hasher = rules(kind.name());
-    hasher.update(&kind.grammar());
+    let mut hasher = rules(name_of(kind));
+    hasher.update(&grammar_identity_of(kind));
     if kind.blanks_macros() {
         hasher.update(macros.identity());
     }
@@ -61,11 +62,10 @@ pub(super) fn key(kind: FileKind, content: Content, macros: &FileMacros) -> Symb
 }
 
 /// The key of the lexical pass of a C or C++ file whose bytes are
-/// `content`: the pass reads both grammars' words.
+/// `content`: the pass reads both grammars' words and no query.
 pub(super) fn lexed_key(content: Content) -> SymbolsKey {
     let mut hasher = rules(LEXED);
-    hasher.update(&FileKind::C.grammar());
-    hasher.update(&FileKind::Cpp.grammar());
+    hasher.update(lexed_grammars());
     hasher.update(&content.0);
     SymbolsKey::new(*hasher.finalize().as_bytes())
 }

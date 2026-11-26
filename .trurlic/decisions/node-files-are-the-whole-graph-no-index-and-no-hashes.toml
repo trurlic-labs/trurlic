@@ -7,17 +7,13 @@ alternatives = [
     "Keep graph.toml as a cache rebuilt from the node files: rejected because a second representation conflicts across branches and must be kept coherent with every hand edit",
     "Keep per-node hashes for tamper detection: rejected because every hand edit would need a re-hash, and under tracked placement git already records every change",
 ]
-tags = [
-    "data-integrity",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
-    { file = "src/store/load.rs", symbol = "Store::read_graph" },
-    { file = "src/store/state.rs", symbol = "ProjectState" },
+    { file = "src/store/format/load.rs", symbol = "Store::read_graph" },
+    { file = "src/store/graph/state.rs", symbol = "ProjectState" },
     { file = "tests/integration/stdio.rs", symbol = "the_next_call_sees_a_hand_edit" },
 ]
 depends_on = [
-    "toml-as-the-sole-serialization-format-with-one-file-per",
+    "toml-is-the-one-format-of-the-graph-one-file-per-node",
 ]

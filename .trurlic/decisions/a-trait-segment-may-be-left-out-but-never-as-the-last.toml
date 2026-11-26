@@ -6,19 +6,14 @@ alternatives = [
     "Let a plain segment match a trait segment: rejected because Shape::area would then name the impl of Shape for every type in the file",
     "Keep the trait's full path: rejected because the same impl would have two spellings by how the file imports the trait",
 ]
-tags = [
-    "anchors",
-    "grammar",
-    "rust",
-]
 status = "proposed"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/symbol.rs", symbol = "Segment::of_trait" },
-    { file = "src/code/symbol.rs", symbol = "Symbol::names" },
-    { file = "src/code/symbol.rs", symbol = "a_trait_segment_may_be_left_out_but_never_the_last" },
-    { file = "src/code/symbol.rs", symbol = "a_trait_without_arguments_names_the_impl_of_every_argument" },
+    { file = "src/code/index/symbol.rs", symbol = "Segment::of_trait" },
+    { file = "src/code/index/symbol.rs", symbol = "Symbol::names" },
+    { file = "src/code/index/symbol.rs", symbol = "a_trait_segment_may_be_left_out_but_never_the_last" },
+    { file = "src/code/index/symbol.rs", symbol = "a_trait_without_arguments_names_the_impl_of_every_argument" },
 ]
 depends_on = [
     "a-rust-path-segment-is-spelled-by-one-function-from-the-tokens-its-hash-keeps",

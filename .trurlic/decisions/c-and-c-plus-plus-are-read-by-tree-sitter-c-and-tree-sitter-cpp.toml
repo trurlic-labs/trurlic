@@ -6,21 +6,17 @@ alternatives = [
     "Decide a header's grammar by a sibling .cpp file: rejected because the index of a file would then depend on another file's name",
     "A bound before the parse like Python's indentation widths: rejected because neither grammar has a scanner fault to guard, and the budget of operations bounds the cost of every shape",
 ]
-tags = [
-    "dependencies",
-    "parsing",
-]
 status = "proposed"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"
 anchors = [
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-c" },
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-cpp" },
-    { file = "src/code/index.rs", symbol = "FileKind::of" },
-    { file = "src/code/language.rs", symbol = "C" },
-    { file = "src/code/language.rs", symbol = "CPP" },
-    { file = "src/code/language/c.scm" },
-    { file = "src/code/language/cpp.scm" },
+    { file = "src/code/index/file.rs", symbol = "FileKind::of" },
+    { file = "src/code/parse/language/c.scm" },
+    { file = "src/code/parse/language/cpp.scm" },
+    { file = "src/code/parse/language/row.rs", symbol = "C" },
+    { file = "src/code/parse/language/row.rs", symbol = "CPP" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",

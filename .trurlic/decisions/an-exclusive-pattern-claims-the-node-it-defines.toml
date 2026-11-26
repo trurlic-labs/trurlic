@@ -6,16 +6,13 @@ alternatives = [
     "The widest span wins per name: rejected because a declarator's two readings have one span",
     "A kind chosen by the value's node kind: rejected because the two readings differ in where they are kept, not in kind alone",
 ]
-tags = [
-    "parsing",
-]
 status = "accepted"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general.rs", symbol = "Walk::enter" },
-    { file = "src/code/general/tests.rs", symbol = "an_exclusive_pattern_claims_its_node_from_the_others" },
-    { file = "src/code/query.rs", symbol = "Definer" },
+    { file = "src/code/parse/general/tests.rs", symbol = "an_exclusive_pattern_claims_its_node_from_the_others" },
+    { file = "src/code/parse/general/walk.rs", symbol = "Walk::enter" },
+    { file = "src/code/parse/query/rules.rs", symbol = "Definer" },
 ]
 depends_on = [
     "a-query-file-is-held-to-the-general-resolver-s-contract",

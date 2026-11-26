@@ -1,22 +1,18 @@
 component = "store"
 choice = "ProjectState holds the node files by name and nothing derived from them; queries walk its BTreeMaps, with no adjacency index and no Arc sharing"
 reason = """
-The graph lives for one call: every call loads it, answers and drops it. InMemoryGraph built forward and reverse adjacency maps of interned names on every load, and ProjectState wrapped each node in an Arc to share it with that graph; with the edges in the node files and a brief touching one component and its neighbours, a walk of the maps answers each query, so the index cost every load for lookups a scan does as well. The state holds the Project, BTreeMaps of Component and Decision by stem, and the files not in canonical form; store/query.rs walks them in name order, and make bench times the read tools with the load included.
+The graph lives for one call: every call loads it, answers and drops it. InMemoryGraph built forward and reverse adjacency maps of interned names on every load, and ProjectState wrapped each node in an Arc to share it with that graph; with the edges in the node files and a brief touching one component and its neighbours, a walk of the maps answers each query, so the index cost every load for lookups a scan does as well. The state holds the Project, BTreeMaps of Component and Decision by stem, and the files not in canonical form; store/graph/query.rs walks them in name order, and make bench times the read tools with the load included.
 """
 alternatives = [
     "Keep InMemoryGraph with reverse adjacency: rejected because it is rebuilt on every load for lookups a scan of the maps answers",
     "Arc-wrap the nodes: rejected because nothing shares them once there is no second structure",
 ]
-tags = [
-    "data-structures",
-    "performance",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_read_tools" },
-    { file = "src/store/query.rs" },
-    { file = "src/store/state.rs", symbol = "ProjectState" },
+    { file = "src/store/graph/query.rs" },
+    { file = "src/store/graph/state.rs", symbol = "ProjectState" },
 ]
 depends_on = [
     "node-files-are-the-whole-graph-no-index-and-no-hashes",

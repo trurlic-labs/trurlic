@@ -1,13 +1,9 @@
 component = "mcp"
 choice = "JSON-RPC 2.0 over newline-delimited stdio; every line gets at most one answer, and a line over 10 MiB is discarded whole"
-reason = "MCP requires JSON-RPC 2.0, and stdio is its transport for a local server: one JSON object per line, blank lines skipped, every line written whole from a buffer. protocol::read_message sorts a line into a request, a notification or a response, or answers it: invalid JSON -32700; valid JSON that is no message (no jsonrpc 2.0, a method that is not a string, params that are not an object, a null or non-integer id, which MCP forbids, a batch array) -32600, with the line's id when it is a string or an integer and the line has a method. A line without a method would be a response, whose id is from the server's own id space, so its error carries null whatever else is wrong with it. A notification and a response are never answered. read_line holds at most MAX_MESSAGE_BYTES (10 MiB) of a line; past it the line is read to its newline and dropped, and answered once."
+reason = "MCP requires JSON-RPC 2.0, and stdio is its transport for a local server: one JSON object per line, blank lines skipped, every line written whole from a buffer. protocol::read_message sorts a line into a request, a notification or a response, or answers it: invalid JSON -32700; valid JSON that is no message (no jsonrpc 2.0, a method that is not a string, params that are not an object, a null or non-integer id, which MCP forbids, a batch array) -32600, with the line's id when it is a string or an integer and the line has a method. A line without a method would be a response, whose id is from the server's own id space, so its error carries null whatever else is wrong with it. A notification and a response are never answered. read_line holds at most budget::MAX_REQUEST_BYTES (10 MiB) of a line; past it the line is read to its newline and dropped, and answered once."
 alternatives = [
     "HTTP transport: rejected because MCP stdio is the standard for local tool servers, and HTTP adds port management",
     "Length-prefixed framing (a Content-Length header, as LSP has it): rejected because newline-delimited JSON is sufficient for single-line messages and is MCP's convention",
-]
-tags = [
-    "protocol",
-    "security",
 ]
 status = "accepted"
 created = "2026-06-15T09:44:33.385781549Z"

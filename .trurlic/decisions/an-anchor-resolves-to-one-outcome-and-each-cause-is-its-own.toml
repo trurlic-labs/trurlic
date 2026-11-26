@@ -5,17 +5,13 @@ alternatives = [
     "Fold every failure into one stale outcome: rejected because the fix for a missing file, a file the index cannot read and a symbol needing a qualifier differ",
     "Report a file the index cannot read as symbol missing: rejected because the anchor may well be right, and the report would blame it",
 ]
-tags = [
-    "anchors",
-    "errors",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "FileFault" },
-    { file = "src/code/facts.rs", symbol = "ReadFault" },
-    { file = "src/code/facts.rs", symbol = "Resolution" },
-    { file = "src/code/index.rs", symbol = "IndexFault" },
-    { file = "src/code/symbol.rs", symbol = "SymbolFault" },
+    { file = "src/code/facts/code_facts.rs", symbol = "Resolution" },
+    { file = "src/code/facts/entry.rs", symbol = "FileFault" },
+    { file = "src/code/facts/entry.rs", symbol = "ReadFault" },
+    { file = "src/code/index/file.rs", symbol = "IndexFault" },
+    { file = "src/code/index/symbol.rs", symbol = "SymbolFault" },
 ]

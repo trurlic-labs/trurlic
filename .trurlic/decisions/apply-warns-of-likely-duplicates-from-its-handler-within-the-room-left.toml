@@ -1,4 +1,4 @@
-component = "mcp"
+component = "tools"
 choice = "apply's handler, not the store, warns of likely duplicates in the graph the write left: each decision whose text the batch wrote, its three nearest, listed while the result has room"
 reason = "store imports no module above it, so Writer::apply cannot call lint, and a likely duplicate is not a rule of the write. The batch is written first; the handler then releases the exclusive lock and looks for duplicates in the graph the write left, since a lookup over a large graph would hold every other reader and writer past LOCK_TIMEOUT. The lookup charges no bound: it costs at most a fixed multiple of the bytes the load read, as lint::duplicates shows. The CLI twin runs that handler too, so both surfaces warn alike. The decisions are those a record wrote or a revise changed the choice or reason of, followed through the batch's renames and dropped by a remove or a merge that absorbs them; an anchors-only revise warns of nothing. Each gets its three nearest at the threshold or above, best first. Fifty such warnings at 128-byte names exceed the 24 KiB result beside the longest ops, so the warnings fill the room the rest leaves, the repairs and stale anchors a repair_anchors op lists before them, in op order, and more_duplicates counts the others, whose pairs the status lint section ranks."
 alternatives = [
@@ -6,21 +6,17 @@ alternatives = [
     "A fixed count of warnings per batch: rejected because the longest batch leaves room for none while a usual one has room for all",
     "Only the best neighbour per decision: rejected because a decision can restate two others, and the caller then sees one",
 ]
-tags = [
-    "api",
-    "budget",
-]
 status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "print" },
-    { file = "src/mcp/apply/duplicates.rs", symbol = "text_written" },
-    { file = "src/mcp/apply/duplicates.rs", symbol = "warned" },
-    { file = "src/mcp/apply/result.rs", symbol = "Answer" },
-    { file = "src/mcp/apply/result.rs", symbol = "fit" },
-    { file = "src/mcp/apply/result.rs", symbol = "tests::the_longest_result_of_a_full_batch_fits_the_budget" },
-    { file = "src/store/access.rs", symbol = "Writer::into_state" },
+    { file = "src/store/write/access.rs", symbol = "Writer::into_state" },
+    { file = "src/tools/apply/duplicates.rs", symbol = "text_written" },
+    { file = "src/tools/apply/duplicates.rs", symbol = "warned" },
+    { file = "src/tools/apply/result.rs", symbol = "Answer" },
+    { file = "src/tools/apply/result.rs", symbol = "fit" },
+    { file = "src/tools/apply/result.rs", symbol = "tests::the_longest_result_of_a_full_batch_fits_the_budget" },
     { file = "tests/integration/apply.rs", symbol = "a_likely_duplicate_warns_over_both_surfaces" },
 ]
 depends_on = [

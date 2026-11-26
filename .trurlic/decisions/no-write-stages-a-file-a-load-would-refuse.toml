@@ -5,20 +5,16 @@ alternatives = [
     "Bound every stored list: rejected because the cap is on bytes, and a list bound would still let text pass it",
     "Check in apply alone: rejected because fmt and migrate write through the same function and can stage an oversize file too",
 ]
-tags = [
-    "reliability",
-    "storage",
-]
 status = "accepted"
 origin = "review findings of the stateless-server landing"
 created = "2026-11-24T05:11:14.670604818Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::CanonicalTooLarge" },
-    { file = "src/store/access.rs", symbol = "format_refuses_a_rewrite_a_load_could_not_read" },
-    { file = "src/store/apply/mod.rs", symbol = "Writer::files" },
+    { file = "src/store/apply/files.rs", symbol = "Writer::files" },
     { file = "src/store/apply/refusal.rs", symbol = "Rule" },
     { file = "src/store/apply/tests.rs", symbol = "a_batch_that_leaves_a_file_over_the_cap_is_refused_naming_its_op" },
-    { file = "src/store/commit.rs", symbol = "Store::prepare_write" },
+    { file = "src/store/write/access.rs", symbol = "format_refuses_a_rewrite_a_load_could_not_read" },
+    { file = "src/store/write/commit.rs", symbol = "Store::prepare_write" },
 ]
 depends_on = [
     "a-node-file-over-1-mib-is-refused-before-it-is-parsed",

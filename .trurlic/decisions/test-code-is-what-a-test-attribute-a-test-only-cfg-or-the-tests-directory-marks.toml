@@ -7,18 +7,14 @@ alternatives = [
     "Guess the declaring file backward from a file's path: rejected because lib.rs beside main.rs, a module declared twice and #[path] all defeat the guess",
     "Read the manifest's target tables: rejected because the index keeps no TOML values, and the conventional layout covers this repository and the production project",
 ]
-tags = [
-    "anchors",
-    "testing",
-]
 status = "accepted"
 origin = "definition kinds"
 created = "2026-11-24T10:33:26.877207089Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::definitions" },
-    { file = "src/code/roles.rs", symbol = "Declaring::module_file" },
-    { file = "src/code/roles.rs", symbol = "test_files" },
-    { file = "src/code/rust/marks.rs", symbol = "attribute_role" },
-    { file = "src/code/rust/marks.rs", symbol = "holds_only_under_test" },
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::definitions" },
+    { file = "src/code/facts/roles.rs", symbol = "Declaring::module_file" },
+    { file = "src/code/facts/roles.rs", symbol = "test_files" },
+    { file = "src/code/parse/rust/marks.rs", symbol = "attribute_role" },
+    { file = "src/code/parse/rust/marks.rs", symbol = "holds_only_under_test" },
     { file = "src/sources/tests.rs", symbol = "each_definition_of_the_fixture_corpus_states_its_kind_role_and_visibility" },
 ]

@@ -7,21 +7,17 @@ alternatives = [
     "Read () in every kind of file: rejected because a heading or a key may end in parentheses, which would then name nothing",
     "Keep the migration's parentheses as a call: rejected because 0.4.1 parentheses never narrowed what a ref named",
 ]
-tags = [
-    "anchors",
-    "grammar",
-]
 status = "accepted"
 origin = "call suffix"
 created = "2026-11-24T11:40:14.100318927Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::find" },
-    { file = "src/code/kinds.rs", symbol = "DefinitionKind::is_function" },
-    { file = "src/code/symbol.rs", symbol = "Symbol::names" },
-    { file = "src/code/symbol.rs", symbol = "Symbol::parse" },
-    { file = "src/code/symbol.rs", symbol = "Syntax" },
-    { file = "src/code/symbol.rs", symbol = "a_call_suffix_is_empty_parentheses_after_a_name_in_a_kind_with_functions" },
-    { file = "src/code/symbol.rs", symbol = "a_strings_symbol_takes_parentheses_as_text_and_reads_a_last_pair_both_ways" },
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::find" },
+    { file = "src/code/index/kinds.rs", symbol = "DefinitionKind::is_function" },
+    { file = "src/code/index/symbol.rs", symbol = "Symbol::names" },
+    { file = "src/code/index/symbol.rs", symbol = "Symbol::parse" },
+    { file = "src/code/index/symbol.rs", symbol = "Syntax" },
+    { file = "src/code/index/symbol.rs", symbol = "a_call_suffix_is_empty_parentheses_after_a_name_in_a_kind_with_functions" },
+    { file = "src/code/index/symbol.rs", symbol = "a_strings_symbol_takes_parentheses_as_text_and_reads_a_last_pair_both_ways" },
 ]
 depends_on = [
     "a-symbol-is-a-path-of-names-from-the-outermost-container",

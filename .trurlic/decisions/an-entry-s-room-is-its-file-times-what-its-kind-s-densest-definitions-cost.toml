@@ -7,22 +7,18 @@ alternatives = [
     "Charge requested bytes and state the bound as a factor of the room: rejected because the factor is the allocator's, and a forged entry of one-byte names took 1.6 times the stated room",
     "One size cap of 1 MiB for every kind: rejected by the owner, who keeps 4 MiB for data and prose files",
 ]
-tags = [
-    "performance",
-    "reliability",
-]
 status = "proposed"
 origin = "code index: a macro invocation defines nothing"
 created = "2026-11-26T08:06:23.435326427Z"
 anchors = [
-    { file = "src/code/encoding/mod.rs", symbol = "block" },
-    { file = "src/code/encoding/mod.rs", symbol = "densest" },
-    { file = "src/code/encoding/mod.rs", symbol = "room_per_byte" },
-    { file = "src/code/encoding/read.rs", symbol = "decode" },
-    { file = "src/code/encoding/tests.rs", symbol = "a_forged_entry_decodes_to_no_more_than_the_room_of_its_file_as_the_allocator_takes_it" },
-    { file = "src/code/encoding/tests.rs", symbol = "the_densest_file_of_each_kind_is_indexed_within_its_room" },
-    { file = "src/code/encoding/write.rs", symbol = "Measure" },
-    { file = "src/code/scope.rs", symbol = "ScopeTree::admit_definition" },
+    { file = "src/code/index/encoding/read.rs", symbol = "decode" },
+    { file = "src/code/index/encoding/room.rs", symbol = "block" },
+    { file = "src/code/index/encoding/room.rs", symbol = "densest" },
+    { file = "src/code/index/encoding/room.rs", symbol = "room_per_byte" },
+    { file = "src/code/index/encoding/tests.rs", symbol = "a_forged_entry_decodes_to_no_more_than_the_room_of_its_file_as_the_allocator_takes_it" },
+    { file = "src/code/index/encoding/tests.rs", symbol = "the_densest_file_of_each_kind_is_indexed_within_its_room" },
+    { file = "src/code/index/encoding/write.rs", symbol = "Measure" },
+    { file = "src/code/index/scope_tree.rs", symbol = "ScopeTree::admit_definition" },
 ]
 
 [accepted_text]

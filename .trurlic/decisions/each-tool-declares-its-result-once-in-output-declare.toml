@@ -1,24 +1,28 @@
-component = "mcp"
+component = "tools"
+choice = "Each tool declares its result once, in Output::declare, walked for its outputSchema and for the JSON a call returns, which is structuredContent and the same JSON as text"
+reason = "MCP clients read a result's structuredContent against the tool's outputSchema, and a schema written apart from the code that builds the result drifts as the 0.3 input schemas did. Output::declare reads each field through Shown::required or Shown::optional with a Show kind (Str, Count, Tag over a fixed list of names, Items, Nested) and an accessor; walked for the schema no accessor runs, walked over a value each accessor reads its field and the kind writes it, so a field cannot be written without being declared. ToolSpec<A, O> takes the result type, adds the truncated notice to its outputSchema, and the call returns structuredContent plus the same JSON as the text block. The tools written by hand return text only."
+alternatives = [
+    "serde Serialize on the result types and a hand-written schema: rejected because the two drift",
+    "schemars: rejected, a new dependency for what the spec module already walks",
+]
+status = "proposed"
+origin = "apply and status"
+created = "2026-11-24T03:12:39.892717421Z"
+anchors = [
+    { file = "src/tools/result.rs", symbol = "ToolResult::structured" },
+    { file = "src/tools/spec/output.rs", symbol = "Output" },
+    { file = "src/tools/spec/output.rs", symbol = "Shown" },
+    { file = "src/tools/spec/tool.rs", symbol = "ToolSpec" },
+    { file = "tests/integration/stdio.rs", symbol = "tools_list_matches_golden" },
+]
+depends_on = [
+    "each-tool-declares-its-arguments-once-in-args-declare",
+]
+
+[accepted_text]
 choice = "Each tool declares its result once, in Output::declare, walked for its outputSchema and for the JSON a call returns, which is structuredContent and the same JSON as text"
 reason = "MCP clients read a result's structuredContent against the tool's outputSchema, and a schema written apart from the code that builds the result drifts as the 0.3 input schemas did. Output::declare reads each field through Shown::required or Shown::optional with a Show kind (Str, Count, Tag over a fixed list of names, Items, Nested) and an accessor; walked for the schema no accessor runs, walked over a value each accessor reads its field and the kind writes it, so a field cannot be written without being declared. ToolSpec<A, O> takes the result type, adds the truncated notice to its outputSchema, and the call returns structuredContent plus the same JSON as the text block. The tools that predate specs return text only until brief replaces them."
 alternatives = [
     "serde Serialize on the result types and a hand-written schema: rejected because the two drift",
     "schemars: rejected, a new dependency for what the spec module already walks",
-]
-tags = [
-    "api",
-    "protocol",
-]
-status = "accepted"
-origin = "apply and status"
-created = "2026-11-24T03:12:39.892717421Z"
-anchors = [
-    { file = "src/mcp/result.rs", symbol = "structured_result" },
-    { file = "src/mcp/spec/output.rs", symbol = "Output" },
-    { file = "src/mcp/spec/output.rs", symbol = "Shown" },
-    { file = "src/mcp/spec/tool.rs", symbol = "ToolSpec" },
-    { file = "src/mcp/tools.rs", symbol = "tests::tool_list_is_the_specs_then_the_two_reads" },
-]
-depends_on = [
-    "each-tool-declares-its-arguments-once-in-args-declare",
 ]

@@ -6,15 +6,12 @@ alternatives = [
     "Hash the whole file for a file-only anchor: rejected because every edit to the file would then touch the decision",
     "Refuse an anchor on a directory: rejected because a decision can govern a module or a crate as a whole",
 ]
-tags = [
-    "anchors",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::resolve" },
-    { file = "src/code/facts.rs", symbol = "Target" },
-    { file = "src/sources/mod.rs", symbol = "checked_findings" },
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::resolve" },
+    { file = "src/code/facts/code_facts.rs", symbol = "Target" },
+    { file = "src/sources/findings.rs", symbol = "checked_findings" },
     { file = "src/sources/walk.rs", symbol = "probe" },
 ]

@@ -166,7 +166,7 @@ fn a_server_without_a_store_lists_its_tools_and_names_init() {
 /// refused as `unsupported_format` with a message naming `named`.
 fn assert_format_refused(version_line: &str, named: &str) {
     let project = Project::init();
-    let current = format!("format_version = \"{}\"\n", trurlic::store::FORMAT_VERSION);
+    let current = format!("format_version = \"{}\"\n", trurlic::FORMAT_VERSION);
     let text = project.read("project.toml");
     assert!(text.starts_with(&current), "{text}");
     project.write("project.toml", &text.replacen(&current, version_line, 1));

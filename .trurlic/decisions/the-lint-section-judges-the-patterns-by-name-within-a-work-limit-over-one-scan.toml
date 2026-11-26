@@ -8,10 +8,6 @@ alternatives = [
     "Reset a cache that gave up and retry the decision a few times a page, naming in a list apart the decisions a fresh cache gives up on: rejected because ending the page bounds it with less, and a give-up is a finding like any other",
     "One task per pattern over each decision, on the thread pool: rejected because every pattern's caches grow before the total is read, so a page passes it by all the patterns' caches, not by one's",
 ]
-tags = [
-    "performance",
-    "quality",
-]
 status = "proposed"
 origin = "quality findings: bounded pattern judging"
 created = "2026-11-25T15:38:56.432762268Z"
@@ -21,10 +17,10 @@ anchors = [
     { file = "src/lint/quality.rs", symbol = "shortfalls" },
     { file = "src/lint/quality.rs", symbol = "tests::a_give_up_ends_the_page_and_a_walk_lists_each_finding_once" },
     { file = "src/lint/quality.rs", symbol = "tests::a_page_runs_no_pattern_after_the_search_that_passes_the_total" },
-    { file = "src/mcp/status/lint/patterns.rs", symbol = "Reading::counts" },
-    { file = "src/store/limits.rs", symbol = "MAX_REPORT_PATTERN_BYTES" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_REPORT_PATTERN_BYTES" },
+    { file = "src/store/quality/audit.rs", symbol = "Bar::pattern_bytes" },
     { file = "src/store/quality/bar.rs", symbol = "Bar::page_scan" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::pattern_bytes" },
+    { file = "src/tools/status/lint/patterns.rs", symbol = "Reading::counts" },
     { file = "tests/integration/lint.rs", symbol = "a_walk_from_next_to_next_lists_every_finding_once" },
 ]
 depends_on = [

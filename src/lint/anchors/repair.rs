@@ -37,19 +37,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::code::{Code, CodeFacts, DefinitionKind, Entry, Resolution};
+use crate::code::{CodeFacts, DefinitionKind, Entry, Resolution};
 use crate::store::Anchor;
 
-use super::{Asked, Here};
-
-/// A stale anchor's repair: the anchor it is replaced by, and the code that
-/// anchor names in the tree it was judged in, which the write holds it to
-/// again.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Repair {
-    pub(crate) to: Anchor,
-    pub(crate) code: Code,
-}
+use super::finding::Repair;
+use super::trees::{Asked, Here};
 
 /// Where git's history says each gone file of a stale anchor is now, and
 /// the facts of those paths.
@@ -119,7 +111,7 @@ pub(crate) fn followed<'s>(
     renames: &Renames,
 ) -> BTreeMap<&'s Anchor, Repair> {
     asked
-        .stale
+        .stale()
         .iter()
         .copied()
         .filter(|&anchor| {
@@ -155,7 +147,7 @@ pub(crate) fn missing<'s, 'f>(
     asked: &Asked<'s>,
     here: &Here<'s, 'f>,
 ) -> BTreeMap<&'s Anchor, BTreeSet<&'f str>> {
-    let missing = asked.stale.iter().copied().filter(|&anchor| {
+    let missing = asked.stale().iter().copied().filter(|&anchor| {
         let missing = matches!(
             here.resolutions.get(anchor),
             Some(Resolution::SymbolMissing | Resolution::FileMissing)
@@ -249,4 +241,299 @@ fn gained(
     };
     let same = prior.resolve(&shown.lost, anchor).same_code(&after);
     (!held_before && same && !kinds.is_empty()).then_some(kinds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code::{Entry, FileFault, FileKind};
+    use crate::lint::anchors::testing::{anchor, decision, facts};
+    use crate::lint::anchors::{Asked, Elsewhere, Here, Worktree, findings, repair};
+    use crate::store::{Decision, Status, StatusName};
+
+    /// The manifest of a package at the root of the tree.
+    const MANIFEST: (&str, &str) = ("Cargo.toml", "[package]\nname = \"p\"\n");
+
+    /// The anchor `src/a.rs::foo` searched on `src/b.rs`.
+    fn foo_search(anchor: &Anchor) -> Search<'_> {
+        Search {
+            anchor,
+            there: self::anchor("src/b.rs::foo"),
+        }
+    }
+
+    const FOO: &str = "pub fn foo() -> u32 { 1 }\n";
+
+    /// What the history held, each a name of a blob, a path and its text.
+    fn prior(files: &[(&str, &str, &str)]) -> Prior {
+        let mut prior = Prior::default();
+        prior.extend(files.iter().map(|&(name, path, text)| {
+            let kind = FileKind::of(path).unwrap();
+            let index =
+                crate::code::testing::index(kind, text.as_bytes()).map_err(FileFault::Index);
+            (
+                name.to_owned(),
+                path.to_owned(),
+                Entry::File { kind, index },
+            )
+        }));
+        prior
+    }
+
+    /// What the history shows of `src/b.rs`: `before` the loss, `after` it,
+    /// and after each change `since`, the anchor's file `lost` before it.
+    fn shown(before: Option<&str>, after: Option<&str>, since: &[&str]) -> Shown {
+        Shown {
+            lost: "lost".to_owned(),
+            before: before.map(str::to_owned),
+            after: after.map(str::to_owned),
+            since: since.iter().map(|&name| name.to_owned()).collect(),
+        }
+    }
+
+    /// A move is shown when the candidate went, across the loss, from writing
+    /// no item of the symbol to definitions of the span hash the anchor's had
+    /// before it, and held definitions of the kinds it gained after every
+    /// change since and holds them now, however edited: a namesake that stood
+    /// beside the code, other code of the name, one a later change deleted or
+    /// gave way to another kind of item and wrote again, or another kind now,
+    /// is no move. A loss in the work tree is judged against the tree's file.
+    /// Two files of the loss that both gained the code are no move.
+    #[test]
+    fn a_move_is_the_lost_code_arriving_where_it_was_not_and_kept_there() {
+        let edited = "pub fn foo() -> u32 { 2 }\n";
+        let other = "pub fn foo(x: u8) -> String { String::new() }\n";
+        let lost = format!("{FOO}pub fn a() {{}}\n");
+        let held = prior(&[
+            ("lost", "src/a.rs", &lost),
+            ("none", "src/b.rs", "pub fn b() {}\n"),
+            ("beside", "src/b.rs", FOO),
+            ("gained", "src/b.rs", FOO),
+            ("other", "src/b.rs", other),
+            ("edited", "src/b.rs", edited),
+            ("dropped", "src/b.rs", "pub fn b() {}\n"),
+            ("struct", "src/b.rs", "pub struct foo;\n"),
+        ]);
+        let tree = |text: &str| facts(&[MANIFEST, ("src/b.rs", text)], &[]);
+        let anchor = anchor("src/a.rs::foo");
+        let search = foo_search(&anchor);
+        let cases = [
+            (shown(Some("none"), Some("gained"), &[]), FOO, true),
+            (shown(None, Some("gained"), &[]), FOO, true),
+            (
+                shown(Some("none"), Some("gained"), &["edited"]),
+                edited,
+                true,
+            ),
+            (shown(Some("beside"), Some("gained"), &[]), FOO, false),
+            (shown(Some("none"), Some("other"), &[]), other, false),
+            (
+                shown(Some("none"), Some("gained"), &["dropped", "edited"]),
+                edited,
+                false,
+            ),
+            (
+                shown(Some("none"), Some("gained"), &["struct", "gained"]),
+                FOO,
+                false,
+            ),
+            (
+                shown(Some("none"), Some("gained"), &[]),
+                "pub struct foo;\n",
+                false,
+            ),
+            (shown(Some("none"), None, &[]), FOO, true),
+            (shown(Some("beside"), None, &[]), FOO, false),
+        ];
+
+        for (at, (shown, now, moved)) in cases.into_iter().enumerate() {
+            let now = tree(now);
+
+            // clone: the same search is judged alone and beside a twin.
+            let alone = repair::moved_to(&[(search.clone(), shown.clone())], &now, &held);
+            let twin = (search.clone(), shown.clone());
+            let twice = repair::moved_to(&[(search.clone(), shown), twin], &now, &held);
+
+            let to = self::anchor("src/b.rs::foo");
+            let expected = moved.then(|| Repair {
+                code: now.code(&to).unwrap(),
+                to,
+            });
+            assert_eq!(alone, expected, "case {at}");
+            assert_eq!(twice, None, "case {at}");
+        }
+    }
+
+    /// Where a file lost the code is the newest of its changes whose file
+    /// before wrote an item of the symbol and after it writes none, or was
+    /// deleted: a change that kept the item, as a side branch's edit a merge
+    /// later dropped, lost nothing.
+    #[test]
+    fn the_loss_is_the_newest_change_whose_file_before_wrote_the_item_and_after_none() {
+        let held = prior(&[
+            ("y^", "src/a.rs", "pub fn a() {}\n"),
+            ("y", "src/a.rs", "pub fn b() {}\n"),
+            ("x^", "src/a.rs", FOO),
+            ("x", "src/a.rs", &format!("{FOO}pub fn more() {{}}\n")),
+            ("w^", "src/a.rs", FOO),
+            ("w", "src/a.rs", "pub fn a() {}\n"),
+        ]);
+        let anchor = anchor("src/a.rs::foo");
+        let versions = [("y^", Some("y")), ("x^", Some("x")), ("w^", Some("w"))];
+
+        assert_eq!(repair::lost(&anchor, versions, &held), Some(2));
+        assert_eq!(repair::lost(&anchor, [("x^", None)], &held), Some(0));
+        assert_eq!(repair::lost(&anchor, [("y^", None)], &held), None);
+    }
+
+    /// A stale file anchor whose gone file the history shows moved unchanged
+    /// to another path is repaired there when that file defines an item: a
+    /// file of comments or nothing has no code to follow. A symbol anchor on
+    /// the file is no file anchor.
+    #[test]
+    fn a_file_anchor_follows_its_file_into_one_that_defines_an_item() {
+        let here = facts(&[MANIFEST], &[]);
+        let renamed = |from: &str, to: &str| (from.to_owned(), to.to_owned());
+        let renames = Renames {
+            to: BTreeMap::from([
+                renamed("src/a.rs", "src/b.rs"),
+                renamed("src/alpha.rs", "src/beta.rs"),
+                renamed("src/void.rs", "src/empty.rs"),
+            ]),
+            facts: facts(
+                &[
+                    ("src/b.rs", "pub fn b() {}\n"),
+                    ("src/beta.rs", "// License.\n"),
+                    ("src/empty.rs", ""),
+                ],
+                &[],
+            ),
+        };
+        let anchors = [
+            "src/a.rs",
+            "src/a.rs::b",
+            "src/alpha.rs",
+            "src/void.rs",
+            "src/never.rs",
+        ];
+        let decisions = [("d", decision(&anchors, StatusName::Accepted))];
+        let named: Vec<(&str, &Decision)> = decisions.iter().map(|(n, d)| (*n, d)).collect();
+        let here = Here::of(&named, &here);
+        let asked = Asked::new(here.unresolved(&named));
+
+        let followed = repair::followed(&asked, &here, &renames);
+
+        let gone = anchor("src/a.rs");
+        let to = anchor("src/b.rs");
+        let code = renames.facts.code(&to).unwrap();
+        assert_eq!(followed, BTreeMap::from([(&gone, Repair { to, code })]));
+    }
+
+    /// The role a stale anchor's code had is that of its definition where its
+    /// file is judged: a helper under `#[cfg(test)] mod tests` of a file of
+    /// code is test code, repaired to the test module it moved into.
+    #[test]
+    fn a_test_helper_follows_its_code_into_another_test_module() {
+        let tests = "#[cfg(test)]\nmod tests { fn fixture() {} }\n";
+        let landed = format!("pub fn b() {{}}\n{tests}");
+        let here = facts(
+            &[
+                MANIFEST,
+                ("src/a.rs", "pub fn a() {}\n"),
+                ("src/b.rs", &landed),
+            ],
+            &[],
+        );
+        let lost = format!("pub fn a() {{}}\n{tests}");
+        let held = prior(&[
+            ("lost", "src/a.rs", &lost),
+            ("none", "src/b.rs", "pub fn b() {}\n"),
+            ("gained", "src/b.rs", &landed),
+        ]);
+        let anchor = anchor("src/a.rs::tests::fixture");
+        let search = Search {
+            anchor: &anchor,
+            there: self::anchor("src/b.rs::tests::fixture"),
+        };
+
+        let shown = shown(Some("none"), Some("gained"), &[]);
+        let repair = repair::moved_to(&[(search, shown)], &here, &held);
+
+        let to = "src/b.rs::tests::fixture".to_owned();
+        assert_eq!(repair.map(|repair| repair.to.to_string()), Some(to));
+    }
+
+    /// Only a stale anchor is repaired: a planned one names what is not
+    /// written yet, and a pending one's code is on a branch. A proposed
+    /// revision of an accepted decision is stale, so searched, and the finding
+    /// shows its repair.
+    #[test]
+    fn a_planned_or_pending_anchor_is_never_repaired() {
+        use crate::store::AcceptedText;
+
+        let here = facts(
+            &[
+                MANIFEST,
+                ("src/lib.rs", ""),
+                ("src/moved.rs", "pub fn gone() {}\npub fn planned() {}\n"),
+            ],
+            &[],
+        );
+        let elsewhere = Elsewhere {
+            worktree: Worktree {
+                path: "/w/branch".into(),
+                branch: Some("branch".into()),
+            },
+            facts: facts(&[("src/lib.rs", "pub fn branch() {}\n")], &[]),
+            fork: None,
+        };
+        let mut revised = decision(&["src/lib.rs::gone"], StatusName::Proposed);
+        revised.status = Status::Proposed {
+            accepted_text: Some(AcceptedText {
+                choice: "The accepted choice".into(),
+                reason: "The accepted reason".into(),
+                alternatives: Vec::new(),
+                via: None,
+            }),
+        };
+        let decisions = [
+            (
+                "planned",
+                decision(&["src/lib.rs::planned"], StatusName::Proposed),
+            ),
+            (
+                "pending",
+                decision(&["src/lib.rs::branch"], StatusName::Accepted),
+            ),
+            ("revised", revised),
+        ];
+        let named: Vec<(&str, &Decision)> = decisions.iter().map(|(n, d)| (*n, d)).collect();
+        let here = Here::of(&named, &here);
+        let mut asked = Asked::new(here.unresolved(&named));
+        asked.read(elsewhere);
+        let found = repair::missing(&asked, &here);
+        let gone = anchor("src/lib.rs::gone");
+        let to = anchor("src/moved.rs::gone");
+        let code = here.facts.code(&to).unwrap();
+        let asked = asked.with_repairs(BTreeMap::from([(&gone, Repair { to, code })]));
+
+        let lines: Vec<String> = findings(&named, &here, &asked)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+
+        let searched: Vec<String> = found.keys().map(ToString::to_string).collect();
+        assert_eq!(searched, ["src/lib.rs::gone"]);
+        assert_eq!(
+            lines,
+            [
+                "anchor `src/lib.rs::gone` of `revised` is stale: its file defines nothing its \
+                 symbol names; repair: `src/moved.rs::gone`",
+                "anchor `src/lib.rs::branch` of `pending` is pending: its file defines nothing its \
+                 symbol names here; it resolves in the worktree at /w/branch on branch `branch`",
+                "anchor `src/lib.rs::planned` of `planned` is planned: its file defines nothing its \
+                 symbol names",
+            ]
+        );
+    }
 }

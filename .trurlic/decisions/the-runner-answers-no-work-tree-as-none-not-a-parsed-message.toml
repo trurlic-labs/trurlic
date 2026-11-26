@@ -7,17 +7,13 @@ alternatives = [
     "Parse stderr for not a git repository: rejected because the message is translated and other fatal errors share the status",
     "Treat any status 128 as no work tree: rejected because a broken or untrusted repository would pass for no repository, and a tracked graph in it for one outside git",
 ]
-tags = [
-    "git",
-    "reliability",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [
-    { file = "src/git.rs", symbol = "DotGit" },
-    { file = "src/git.rs", symbol = "dot_git" },
-    { file = "src/git.rs", symbol = "toplevel" },
-    { file = "src/store/migration/placement.rs", symbol = "PlacementDoubt::NoWorkTree" },
+    { file = "src/git/layout.rs", symbol = "DotGit" },
+    { file = "src/git/layout.rs", symbol = "dot_git" },
+    { file = "src/git/layout.rs", symbol = "toplevel" },
+    { file = "src/store/format/migration/placement.rs", symbol = "PlacementDoubt::NoWorkTree" },
     { file = "tests/integration/placement.rs", symbol = "a_worktree_whose_main_worktree_is_gone_says_what_git_says" },
 ]
 depends_on = [

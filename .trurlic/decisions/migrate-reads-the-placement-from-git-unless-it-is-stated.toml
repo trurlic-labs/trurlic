@@ -8,21 +8,16 @@ alternatives = [
     "Ask git which placement inside .trurlic/: rejected because a graph that is its own repository would answer for itself",
     "Run git from the store: rejected because the store would spawn processes where the command can hand it the answer",
 ]
-tags = [
-    "git",
-    "migration",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
     { file = "src/cli.rs", symbol = "ProjectCommand::Migrate" },
     { file = "src/commands/placement.rs", symbol = "tracked" },
-    { file = "src/store/migration/placement.rs", symbol = "PlacementDoubt" },
-    { file = "src/store/migration/placement.rs", symbol = "PlacementSource" },
-    { file = "src/store/migration/placement.rs", symbol = "Store::placement" },
+    { file = "src/store/format/migration/placement.rs", symbol = "PlacementDoubt" },
+    { file = "src/store/format/migration/placement.rs", symbol = "PlacementSource" },
+    { file = "src/store/format/migration/placement.rs", symbol = "Store::placement" },
     { file = "tests/integration/migrate.rs", symbol = "a_graph_git_tracks_in_part_is_refused_naming_how_to_state_it" },
 ]
 depends_on = [
-    "the-git-module-is-a-leaf-that-runs-the-git-cli",
     "trurlic-init-requires-placement",
 ]

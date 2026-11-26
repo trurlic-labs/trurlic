@@ -15,7 +15,7 @@ use crate::store::{
     TimestampError,
 };
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -280,7 +280,7 @@ pub enum Error {
     GraphIndexLocked { lock: PathBuf },
 
     /// An `Origin:` or `Session:` for a history commit that breaks the
-    /// one-line rule of `store::text`.
+    /// one-line rule of `store::model::text`.
     #[error("`{field}` {fault}")]
     TrailerText { field: TextField, fault: TextFault },
 

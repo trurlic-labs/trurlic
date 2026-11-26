@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 
 use crate::console::diag;
 use crate::store::Placement;
+use crate::tools::{self, ToolError};
 use crate::{Error, Result, commands};
 
 #[derive(Parser, Debug)]
@@ -21,13 +22,13 @@ use crate::{Error, Result, commands};
                   Start with `trurlic init --placement tracked`, then record decisions\n\
                   with `trurlic apply <file>` or the `apply` tool, and run `trurlic check`."
 )]
-pub struct Cli {
+struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    command: Command,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum Command {
+enum Command {
     #[command(flatten)]
     Project(ProjectCommand),
 
@@ -53,7 +54,7 @@ pub enum Command {
 
 /// The agents `install` registers with.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum InstallIde {
+enum InstallIde {
     /// Claude Code, through `claude mcp add`
     ClaudeCode,
 }
@@ -61,7 +62,7 @@ pub enum InstallIde {
 /// The commands that act on the project's `.trurlic/`, found from the
 /// working directory.
 #[derive(Subcommand, Debug)]
-pub enum ProjectCommand {
+enum ProjectCommand {
     /// Initialize a new `.trurlic/` directory in the current project.
     Init {
         /// Whether the project's git versions `.trurlic/` (`tracked`) or
@@ -101,7 +102,7 @@ pub enum ProjectCommand {
 /// The CLI twins of the MCP tools: each runs the tool's own code on the
 /// project's graph and prints its result, `--json` as the tool returns it.
 #[derive(Subcommand, Debug)]
-pub enum ToolCommand {
+enum ToolCommand {
     /// Apply a batch of ops to the graph, all or none, in one commit.
     ///
     /// The file holds the JSON object the `apply` tool takes: `ops`, and an
@@ -118,7 +119,7 @@ pub enum ToolCommand {
     /// Show the graph at a glance: counts, issues, history, components.
     Status {
         /// Show this section alone, with the whole result budget.
-        #[arg(long, value_parser = PossibleValuesParser::new(commands::status_sections()))]
+        #[arg(long, value_parser = PossibleValuesParser::new(tools::section_names()))]
         section: Option<String>,
 
         /// Count only the decisions recorded under this origin.
@@ -139,7 +140,7 @@ pub enum ToolCommand {
 
 /// Where the graph is versioned, as `init` and `migrate` take it.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum PlacementArg {
+enum PlacementArg {
     /// The project's git versions `.trurlic/`.
     Tracked,
     /// `.trurlic/` stays out of the project's git.
@@ -156,7 +157,7 @@ impl From<PlacementArg> for Placement {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum QueryCommand {
+enum QueryCommand {
     /// Find decisions that constrain a file or directory.
     ///
     /// Matches decisions anchored on the given path, on any file under it as
@@ -188,7 +189,7 @@ pub fn main() -> ExitCode {
     }
 }
 
-fn run_tool(command: ToolCommand) -> std::result::Result<(), commands::ToolError> {
+fn run_tool(command: ToolCommand) -> std::result::Result<(), ToolError> {
     let cwd = std::env::current_dir().map_err(Error::system("read the working directory"))?;
     let format = |json: bool| {
         if json {

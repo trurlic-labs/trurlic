@@ -19,16 +19,14 @@ pub(crate) use query::query_file;
 pub(crate) use serve::serve;
 pub(crate) use status::{StatusFlags, status};
 
-pub(crate) use crate::mcp::twin::{ToolError, section_names as status_sections};
-
 use std::path::Path;
 
 use crate::Result;
 use crate::console::{diag, out};
 use crate::discovery::discover;
 
-use crate::mcp::twin::{self, Output};
 use crate::store::{ProjectState, STORE_DIR, Store};
+use crate::tools::{Output, ToolError, ToolResult, to_value};
 
 /// How a tool's CLI twin prints its result: for a terminal, or as the
 /// JSON the tool's call returns.
@@ -48,10 +46,13 @@ fn answer<O: Output>(
     print: impl FnOnce(&O) -> Result<()>,
 ) -> std::result::Result<(), ToolError> {
     match (outcome, format) {
-        (Ok(result), Format::Json) => Ok(out!("{}", twin::result_json(&result))?),
+        (Ok(result), Format::Json) => Ok(out!(
+            "{}",
+            ToolResult::structured(to_value(&result)).text()
+        )?),
         (Ok(result), Format::Text) => Ok(print(&result)?),
         (Err(refusal), Format::Json) => {
-            out!("{}", twin::refusal_text(&refusal))?;
+            out!("{}", ToolResult::refusal(&refusal).text())?;
             Err(refusal)
         }
         (Err(refusal), Format::Text) => Err(refusal),

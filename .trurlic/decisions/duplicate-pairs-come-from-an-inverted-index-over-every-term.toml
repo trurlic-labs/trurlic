@@ -8,21 +8,18 @@ alternatives = [
     "Locality-sensitive hashing: rejected because it can miss a pair, and the list must be the exact one",
     "A cache under .state: rejected because a read would then depend on state beside the files",
 ]
-tags = [
-    "performance",
-]
 status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
     { file = "benches/corpus.rs", symbol = "bench_duplicates" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "PAIR_WORK" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::of" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::pairs" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::works" },
+    { file = "src/lint/duplicates/similarity.rs", symbol = "PAIR_WORK" },
+    { file = "src/lint/duplicates/similarity.rs", symbol = "Similarity::of" },
+    { file = "src/lint/duplicates/similarity.rs", symbol = "Similarity::pairs" },
+    { file = "src/lint/duplicates/similarity.rs", symbol = "Similarity::works" },
     { file = "src/lint/duplicates/tests.rs", symbol = "the_index_finds_every_pair_the_exact_test_over_all_pairs_finds" },
     { file = "src/lint/duplicates/tests.rs", symbol = "the_probes_run_by_name_while_their_work_is_within_the_bound" },
-    { file = "src/store/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
 ]
 depends_on = [
     "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",

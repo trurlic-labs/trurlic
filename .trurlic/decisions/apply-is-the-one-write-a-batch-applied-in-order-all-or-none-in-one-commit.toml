@@ -6,21 +6,17 @@ alternatives = [
     "Apply the ops to a copy of the whole graph: rejected because the undo record holds only the touched nodes, and a 2000-decision copy costs more than the batch",
     "Validate the whole graph after every op: rejected because each op's own checks name its argument, and a batch of 50 would validate 50 times",
 ]
-tags = [
-    "api",
-    "consistency",
-]
 status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
     { file = "src/commands/apply.rs", symbol = "apply" },
-    { file = "src/mcp/apply/mod.rs", symbol = "APPLY" },
     { file = "src/store/apply/edit.rs", symbol = "Edit" },
-    { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
     { file = "src/store/apply/ops.rs", symbol = "Batch" },
+    { file = "src/store/apply/run.rs", symbol = "Writer::apply" },
+    { file = "src/tools/apply/tool.rs", symbol = "APPLY" },
     { file = "tests/integration/apply.rs", symbol = "one_batch_writes_the_same_bytes_over_mcp_and_from_a_file" },
 ]
 depends_on = [
-    "full-graph-validation-before-every-disk-write-via-commit",
+    "a-write-adds-no-issue-the-graph-it-loaded-lacked",
 ]

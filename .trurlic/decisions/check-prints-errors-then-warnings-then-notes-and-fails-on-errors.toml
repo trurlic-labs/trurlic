@@ -6,10 +6,6 @@ alternatives = [
     "An ambiguous anchor as a warning: rejected because an anchor that names several definitions has no span to verify, so it guards nothing until it is spelled to name one",
     "Print the findings in the order found: rejected because an error would hide among the warnings of a large graph",
 ]
-tags = [
-    "anchors",
-    "consistency",
-]
 status = "accepted"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"

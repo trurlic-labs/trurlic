@@ -1,0 +1,25 @@
+component = "code"
+choice = "TEST, TEST_F, TEST_P, TYPED_TEST and TYPED_TEST_P define a test Suite::Name whose block is test code; no other macro call is a test"
+reason = "A C++ test is a macro's call with a block, and a proof names the test it ran by its suite and its name, so googletest's five test macros define a test whose segments are their two arguments as written, and what the block holds is test code. Catch2 and doctest name their tests by strings beside a block the grammar parses as a node apart from the call, while the general resolver spans a definition by the one node its pattern captures, so it reads none of them. A project's own test macro (jemalloc's TEST_BEGIN) is not read as a test, since nothing in its call says it is one. Which C and C++ files are test code whole is a rule of the language rows (test-code-by-place-is-a-row-of-its-language)."
+alternatives = [
+    "Catch2's and doctest's TEST_CASE and SECTION too: rejected because their call and its block are two nodes, and the general resolver spans a definition by the one node its pattern captures",
+    "Any macro call with a block as a test: rejected because a project's helper would become a test",
+]
+status = "proposed"
+origin = "c and c++"
+created = "2026-11-25T23:03:16.297379871Z"
+anchors = [
+    { file = "src/code/parse/general/tests.rs", symbol = "a_name_captured_on_several_nodes_is_their_segments_in_order" },
+    { file = "src/code/parse/language/cpp.scm" },
+]
+depends_on = [
+    "test-code-by-place-is-a-row-of-its-language",
+]
+
+[accepted_text]
+choice = "TEST, TEST_F, TEST_P, TYPED_TEST and TYPED_TEST_P define a test Suite::Name; a C or C++ file under tests/ or test/, or named *_test.<ext> or *_unittest.<ext>, is test code"
+reason = "A C++ test is a macro's call with a block, and a proof names the test it ran by its suite and its name, so googletest's five test macros define a test whose segments are their two arguments as written, and what the block holds is test code. The list is the one both C++ corpora measured use; Catch2 and doctest name their tests by strings beside a block the grammar keeps apart, which no measured project needs, and a project's own test macro (jemalloc's TEST_BEGIN) is not read as a test. A file's bytes do not say whether a test runner builds it, so the places are data in each language's row: the tests/ and test/ directories, and the *_test and *_unittest names over each extension of the language."
+alternatives = [
+    "Catch2's and doctest's TEST_CASE and SECTION too: rejected because no measured project uses them and their block needs an engine feature",
+    "Any macro call with a block as a test: rejected because a project's helper would become a test",
+]

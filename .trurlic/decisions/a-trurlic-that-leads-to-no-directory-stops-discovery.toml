@@ -7,10 +7,6 @@ alternatives = [
     "Skip the entry and walk on: rejected because the graph found above is not the one the tree links to",
     "Follow a link one step at a time with a counter of trurlic's: rejected because canonicalize already bounds the chain",
 ]
-tags = [
-    "placement",
-    "validation",
-]
 status = "accepted"
 created = "2026-11-24T03:00:00Z"
 anchors = [
@@ -20,5 +16,5 @@ anchors = [
     { file = "tests/integration/placement.rs", symbol = "a_broken_symlink_is_refused_by_every_surface" },
 ]
 depends_on = [
-    "discovery-takes-the-walk-up-first-then-the-main-worktree-s-shared-graph",
+    "discovery-walks-up-within-the-work-tree-and-asks-git-only-at-a-linked-worktree-s-top",
 ]

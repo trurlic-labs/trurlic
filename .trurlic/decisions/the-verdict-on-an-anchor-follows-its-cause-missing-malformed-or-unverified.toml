@@ -7,22 +7,21 @@ alternatives = [
     "One kind type for status and check: rejected because status would then carry stale, pending and planned kinds it never yields, and check an unresolved one",
     "List planned anchors in status: rejected because the section reports what this tree shows to be wrong, and a planned anchor is not",
 ]
-tags = [
-    "anchors",
-    "lint",
-]
 status = "accepted"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"
 anchors = [
-    { file = "src/lint/anchors.rs", symbol = "Asked" },
-    { file = "src/lint/anchors.rs", symbol = "Class::of" },
-    { file = "src/lint/anchors.rs", symbol = "Here" },
-    { file = "src/lint/anchors.rs", symbol = "Kind" },
-    { file = "src/lint/anchors.rs", symbol = "findings" },
-    { file = "src/lint/anchors.rs", symbol = "judged" },
+    { file = "src/lint/anchors/finding.rs", symbol = "Class::of" },
+    { file = "src/lint/anchors/finding.rs", symbol = "Kind" },
+    { file = "src/lint/anchors/judge.rs", symbol = "findings" },
+    { file = "src/lint/anchors/judge.rs", symbol = "judged" },
     { file = "src/lint/anchors/tests.rs", symbol = "an_anchor_another_worktree_holds_is_pending_on_its_branch" },
     { file = "src/lint/anchors/tests.rs", symbol = "several_paths_are_ambiguous_and_one_path_of_several_kinds_is_no_finding" },
     { file = "src/lint/anchors/tests.rs", symbol = "the_verdict_on_an_anchor_that_names_nothing_follows_its_cause" },
     { file = "src/lint/anchors/tests.rs", symbol = "with_git_not_asked_an_anchor_that_names_nothing_is_unresolved" },
+    { file = "src/lint/anchors/trees.rs", symbol = "Asked" },
+    { file = "src/lint/anchors/trees.rs", symbol = "Here" },
+]
+depends_on = [
+    "an-anchor-resolves-to-one-outcome-and-each-cause-is-its-own",
 ]

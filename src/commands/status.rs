@@ -4,8 +4,8 @@ use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::console::out;
-use crate::mcp::twin::{
-    self, AnchorCounts, Cut, LintItem, PairCounts, Part, PatternCounts, QualityCounts, Report,
+use crate::tools::{
+    AnchorCounts, Cut, LintItem, PairCounts, Part, PatternCounts, QualityCounts, Report, STATUS,
     ToolError,
 };
 
@@ -37,7 +37,7 @@ pub(crate) fn status(
             arguments.insert(key.into(), Value::from(flag));
         }
     }
-    answer(twin::status(cwd, &arguments), format, |report| {
+    answer(STATUS.run(cwd, &arguments), format, |report| {
         print(report, flags.origin)
     })
 }

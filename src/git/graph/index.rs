@@ -13,8 +13,11 @@ use std::path::{Path, PathBuf};
 
 use crate::{Error, Result};
 
-use super::super::{path, path_bytes, run, shown};
-use super::{ATTRIBUTES, Oid, Repository};
+use super::super::encoding::{path, path_bytes};
+use super::super::process::{run, shown};
+use super::isolation::ATTRIBUTES;
+use super::oid::Oid;
+use super::repository::Repository;
 
 impl Repository {
     /// Put `paths`, relative to the work tree, in the index as they are on
@@ -45,7 +48,7 @@ impl Repository {
 
     /// Write the files `names` of the directory `dir` to the object store
     /// as blobs, each its bytes as they are, in one object transaction
-    /// ([`OVERRIDES`](super::OVERRIDES)), and return their ids in the order
+    /// (`core.fsyncMethod`, `isolation.rs`), and return their ids in the order
     /// of `names`. The ids are read back from `index`, a scratch index file
     /// this call writes and leaves to its caller to remove: the
     /// repository's own index and work tree are neither read nor written.
@@ -92,7 +95,7 @@ impl Repository {
         let mut info = Vec::new();
         for (path, oid) in entries {
             info.extend_from_slice(if oid.is_null() { b"0 " } else { b"100644 " });
-            info.extend_from_slice(oid.0.as_bytes());
+            info.extend_from_slice(oid.as_bytes());
             info.push(b'\t');
             info.extend(path_bytes(path));
             info.push(0);

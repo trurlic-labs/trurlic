@@ -1,22 +1,25 @@
 component = "code"
+choice = "A symbol is a ::-separated path of names from the outermost container, a Rust trait impl a <Trait> segment, in one grammar for every kind of file"
+reason = "One grammar serves every kind of file, so an agent spells an anchor the same way in Rust, TOML, JSON, Makefiles and Markdown: Store::open, Config::<Display>::fmt, profile::release::panic, Install::From source, ci. A definition's canonical path runs from the outermost container, and a symbol writes that path whole or its last segments; which definitions it then names is a-symbol-names-every-definition-of-its-one-path. In Rust, angle brackets group a trait's arguments, so :: splits only outside them; other kinds split on :: alone, and a heading, a key or a test's string that holds :: is split the same way, so a symbol can name it as the user reads it in the file; a name with a :: at an end or two in a row has an empty segment no symbol spells."
+alternatives = [
+    "A bare name matched against every definition of it in the file: rejected because two definitions of one name give no single span to hash",
+    "A dotted path for TOML and JSON keys: rejected because a key may hold a dot, and one grammar for every kind is simpler to teach",
+    "A leading :: for a path from the file's root: rejected because the whole path already is from the outermost container, and a second spelling of one path is what anchors avoid",
+]
+status = "proposed"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/index/symbol.rs", symbol = "Segment" },
+    { file = "src/code/index/symbol.rs", symbol = "Symbol" },
+    { file = "src/code/index/symbol.rs", symbol = "name_segments" },
+]
+
+[accepted_text]
 choice = "A symbol is a ::-separated path of names from the outermost container, a Rust trait impl a <Trait> segment; it names each definition whose path ends with it, those of one path together"
 reason = "One grammar serves every kind of file, so an agent spells an anchor the same way in Rust, TOML, JSON, Makefiles and Markdown: Store::open, Config::<Display>::fmt, profile::release::panic, Install::From source, ci. A definition's canonical path runs from the outermost container, and a symbol names every definition whose path ends with its segments, so a bare name resolves where the file defines it under one path and the qualified path where it does not. Definitions of one full path, cfg twins or a field and its getter, are one thing the symbol resolves to with every span (a-symbol-names-every-definition-of-its-one-path); definitions of several paths, one variant name in two enums or a function and a test of its name, are Ambiguous with the number of paths rather than resolved to the first, so a span hash never covers the wrong one, unless the symbol is the whole path of one of them (a-symbol-that-is-a-definition-s-whole-path-names-it). In Rust, angle brackets group a trait's arguments, so :: splits only outside them; other kinds split on :: alone, and a heading, a key or a test's string that holds :: is split the same way, so a symbol can name it as the user reads it in the file; a name with a :: at an end or two in a row has an empty segment no symbol spells."
 alternatives = [
     "Accept any definition of the name in the file: rejected because two definitions of one name give no single span to hash",
     "Resolve an ambiguous symbol to its first definition: rejected because the order of a file is no statement of which one the decision meant",
     "A dotted path for TOML and JSON keys: rejected because a key may hold a dot, and one grammar for every kind is simpler to teach",
-]
-tags = [
-    "anchors",
-    "grammar",
-]
-status = "accepted"
-origin = "code index"
-created = "2026-11-24T09:45:08.417022803Z"
-anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::find" },
-    { file = "src/code/symbol.rs", symbol = "Segment" },
-    { file = "src/code/symbol.rs", symbol = "Symbol" },
-    { file = "src/code/symbol.rs", symbol = "Symbol::names" },
-    { file = "src/code/symbol.rs", symbol = "name_segments" },
 ]

@@ -6,17 +6,13 @@ alternatives = [
     "A definition named default for export default x too: rejected because x is already defined, and its span holds its body",
     "default for a named module.exports function too: rejected because export default function createApp() keeps createApp, and the two forms of one export would name it apart",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_wrapper_of_the_whole_file_is_the_module" },
-    { file = "src/code/general/tests.rs", symbol = "an_unnamed_default_export_is_named_default" },
-    { file = "src/code/language/typescript.scm" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_wrapper_of_the_whole_file_is_the_module" },
+    { file = "src/code/parse/general/tests.rs", symbol = "an_unnamed_default_export_is_named_default" },
+    { file = "src/code/parse/language/typescript.scm" },
 ]
 depends_on = [
     "what-a-typescript-file-defines",

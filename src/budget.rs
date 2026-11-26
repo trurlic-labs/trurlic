@@ -1,4 +1,5 @@
-//! Fitting agent-facing output into a byte budget.
+//! The byte limits of a tool call on every surface, and fitting
+//! agent-facing output into a byte budget.
 //!
 //! An output is a fixed part plus [`Shrinkable`] parts: lists that drop
 //! trailing entries, texts that drop trailing characters. [`level`] finds the
@@ -6,6 +7,11 @@
 //! whole, a larger one is cut to it. A short list therefore survives intact
 //! while the longest ones give up their tails, and a cut part also pays for
 //! the note that reports what it lost.
+
+/// Bytes of the request one tool call arrives in, its framing apart: a
+/// message the MCP server reads, its newline not counted, and a batch
+/// document `trurlic apply` reads.
+pub(crate) const MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
 
 /// Bytes of one MCP tool result's text. Claude Code warns above 10,000
 /// tokens of tool output and moves a result above 25,000 tokens to a file;

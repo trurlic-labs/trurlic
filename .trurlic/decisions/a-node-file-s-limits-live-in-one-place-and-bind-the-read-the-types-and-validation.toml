@@ -1,0 +1,17 @@
+component = "store"
+choice = "The limits every node file and value is held to live in store::model::limits and are applied where every file passes: the read, the types and validation"
+reason = """
+A limit kept per surface drifts: one surface accepts what another refuses. store::model::limits holds MAX_NODE_FILE_BYTES (1 MiB, the cap of every node read), MAX_CHOICE_BYTES (200), MIN_REASON_BYTES (10) and MAX_TEXT_FIELD_BYTES (50,000) for a decision's text, and MAX_ANCHOR_PATH_BYTES (500) and MAX_ANCHOR_SYMBOL_BYTES (200) for an anchor. read_node_bytes caps each read, Anchor::new refuses at parse and store::model::text runs in validation, so a hand edit, a migration and apply meet the same bound with the same message, and a change of a constant reaches all of them through the compiler. A tool's argument limits on the wire are declared with its spec and bound what it accepts; a value it hands the store then meets these.
+"""
+alternatives = [
+    "Per-surface limit constants: rejected because they drift, one surface accepting what another refused",
+    "No explicit limits, relying on the TOML parser: rejected because the parser accepts any size, and explicit bounds keep one file from costing every load and force concise decisions",
+]
+status = "accepted"
+created = "2026-06-15T09:45:30.508496747Z"
+anchors = [
+    { file = "src/store/format/load.rs", symbol = "read_node_bytes" },
+    { file = "src/store/model/limits.rs" },
+    { file = "src/store/model/schema.rs", symbol = "path_fault" },
+    { file = "src/store/model/text.rs", symbol = "fault" },
+]

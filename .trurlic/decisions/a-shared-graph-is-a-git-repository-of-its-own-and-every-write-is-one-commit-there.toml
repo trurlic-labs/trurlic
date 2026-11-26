@@ -8,20 +8,15 @@ alternatives = [
     "A history file in .state/ or beside each node: rejected because node files carry no history, and git already gives log, diff, blame and revert",
     "A bare repository beside the graph that a write copies into: rejected because every write would copy the graph, and the owner could not run git in .trurlic/",
 ]
-tags = [
-    "git",
-    "history",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/store/access.rs", symbol = "Writer::commit" },
-    { file = "src/store/commit.rs", symbol = "Store::commit_batch" },
-    { file = "src/store/create.rs", symbol = "Store::create" },
-    { file = "src/store/history.rs", symbol = "History" },
-    { file = "src/store/history.rs", symbol = "Store::commit_history" },
-    { file = "src/store/migration/mod.rs", symbol = "Store::commit_migration" },
+    { file = "src/store/write/access.rs", symbol = "Writer::commit" },
+    { file = "src/store/write/commit.rs", symbol = "Store::commit_batch" },
+    { file = "src/store/write/create.rs", symbol = "Store::create" },
+    { file = "src/store/write/history.rs", symbol = "History" },
+    { file = "src/store/write/history.rs", symbol = "Store::commit_history" },
+    { file = "src/store/write/migrate.rs", symbol = "Store::commit_migration" },
 ]
 depends_on = [
     "node-files-carry-no-history",

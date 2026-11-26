@@ -8,17 +8,12 @@ alternatives = [
     "Remove a lock that looks stale: rejected because trurlic cannot tell a stopped git from a running one",
     "Let git find it at the commit: rejected because that fails after the commit point, leaving a write pending",
 ]
-tags = [
-    "git",
-    "history",
-    "reliability",
-]
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/error.rs", symbol = "Error::GraphIndexLocked" },
-    { file = "src/store/history.rs", symbol = "HistoryFinding::is_error" },
-    { file = "src/store/history.rs", symbol = "Store::prepare_history" },
+    { file = "src/store/write/history.rs", symbol = "HistoryFinding::is_error" },
+    { file = "src/store/write/history.rs", symbol = "Store::prepare_history" },
 ]
 depends_on = [
     "check-and-status-report-a-shared-graph-s-uncommitted-tree-and-a-leftover-index-lock",

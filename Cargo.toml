@@ -34,13 +34,14 @@ required-features = ["bench"]
 
 [features]
 # Test-only: `TRURLIC_FAILPOINT=<site>:<n>` acts at the n-th hit of a
-# named site of the store's commit path or the MCP server's tool calls
-# (src/store/failpoint.rs): it aborts, pauses, fails, panics or triggers
-# there. Enabled only in the test job; release builds never carry it.
+# named site of the store's commit path, the `apply` tool or the MCP
+# server's tool calls (src/failpoint.rs): it aborts, pauses, fails, panics
+# or triggers there. Enabled only in the test job; release builds never
+# carry it.
 failpoints = []
 # Bench-only: the seeded corpus (`store::corpus`) and the in-process MCP
-# server the benches in benches/ drive. The library's public surface
-# stays `cli` and `store` without it.
+# server the benches in benches/ drive. The library's public names are
+# `main` and `FORMAT_VERSION`; the feature adds `bench`.
 bench = []
 
 [dependencies]
@@ -80,7 +81,7 @@ rayon = "1"
 tree-sitter = { path = "vendor/tree-sitter", default-features = false }
 tree-sitter-rust = "0.24"
 # Python's grammar for the general resolver, which reads a language from
-# its grammar and a query file (src/code/language/python.scm): no Rust
+# its grammar and a query file (src/code/parse/language/python.scm): no Rust
 # module per language. Its C parser and scanner are compiled into the
 # binary (about 0.5 MB), since a grammar loaded at run time needs `unsafe`
 # or a runtime of its own. 0.25 is the newest release, and its ABI 15 is
@@ -88,14 +89,14 @@ tree-sitter-rust = "0.24"
 tree-sitter-python = "0.25"
 # TypeScript's two grammars for the general resolver: `typescript` reads
 # `.ts`, `.mts` and `.cts`, `tsx` reads `.tsx` and every JavaScript file
-# (src/code/language/typescript.scm), so JavaScript needs no grammar of
+# (src/code/parse/language/typescript.scm), so JavaScript needs no grammar of
 # its own. Their C parsers and scanners add about 3 MB to a binary that
 # indexes. 0.23 is the newest release; its ABI 14 is one tree-sitter 0.27
 # reads.
 tree-sitter-typescript = "0.23"
 # C's and C++'s grammars for the general resolver: `c` reads `.c`, `cpp`
 # reads `.h`, `.cc`, `.cpp`, `.cxx`, `.hpp` and `.hh`
-# (src/code/language/c.scm, cpp.scm). 0.24 and 0.23 are the newest
+# (src/code/parse/language/c.scm, cpp.scm). 0.24 and 0.23 are the newest
 # releases; their ABIs 15 and 14 are ones tree-sitter 0.27 reads.
 tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"

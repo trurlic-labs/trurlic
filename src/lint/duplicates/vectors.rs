@@ -4,10 +4,15 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use super::{ONE_Q32, PER_TASK, fixed, terms};
 use rayon::prelude::*;
 
+use super::fixed::{self, ONE_Q32};
+use super::terms;
 use crate::store::Decision;
+
+/// The fewest decisions one task of the thread pool takes, so a small
+/// graph runs as one task rather than paying for threads it cannot use.
+pub(super) const PER_TASK: usize = 32;
 
 /// A decision's terms and weights.
 pub(super) struct Vector {
@@ -96,7 +101,7 @@ fn vector(mut terms: Vec<(usize, u64)>, inverse: &[u64]) -> Vector {
 /// The inverse frequency, in Q32, of a term `holding` of `decisions`
 /// decisions hold: ln((1 + decisions) / (1 + holding)) + 1, rounded half
 /// up, within 2^-32 of the exact value.
-pub(super) fn inverse_frequency(decisions: u64, holding: u64) -> u64 {
+fn inverse_frequency(decisions: u64, holding: u64) -> u64 {
     let ln = |count: u64| fixed::ln(count.saturating_add(1));
     let ratio = ln(decisions).saturating_sub(ln(holding));
     // ratio < 45 * 2^64, so the Q32 value stays below 2^38.
@@ -141,4 +146,29 @@ fn found(decision: &Decision) -> Found {
         }
     }
     Found { text, terms }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pinned bits, from 100-digit decimal arithmetic rounded to Q32.
+    #[test]
+    fn the_inverse_frequency_is_the_smoothed_one_in_q32() {
+        let cases = [
+            (1, 1, 1 << 32),
+            (3, 1, 7_272_011_768),
+            (3, 2, 5_530_552_389),
+            (763, 1, 29_830_354_371),
+            (763, 671, 4_846_052_182),
+            (2000, 1, 33_965_697_255),
+        ];
+        for (decisions, holding, expected) in cases {
+            assert_eq!(
+                inverse_frequency(decisions, holding),
+                expected,
+                "{decisions} {holding}"
+            );
+        }
+    }
 }

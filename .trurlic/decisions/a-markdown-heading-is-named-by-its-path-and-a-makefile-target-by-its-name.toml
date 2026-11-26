@@ -5,16 +5,13 @@ alternatives = [
     "Any heading holding the word: rejected because a word names no section to hash, and many headings hold it",
     "A Makefile variable as a definition: rejected because an anchor on configuration names a rule or a key, and a variable is neither",
 ]
-tags = [
-    "anchors",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/make.rs", symbol = "index" },
-    { file = "src/code/make.rs", symbol = "targets" },
-    { file = "src/code/markdown.rs", symbol = "Fence" },
-    { file = "src/code/markdown.rs", symbol = "heading" },
-    { file = "src/code/markdown.rs", symbol = "index" },
+    { file = "src/code/lexical/make.rs", symbol = "index" },
+    { file = "src/code/lexical/make.rs", symbol = "targets" },
+    { file = "src/code/lexical/markdown.rs", symbol = "Fence" },
+    { file = "src/code/lexical/markdown.rs", symbol = "heading" },
+    { file = "src/code/lexical/markdown.rs", symbol = "index" },
 ]

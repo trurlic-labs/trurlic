@@ -7,15 +7,11 @@ alternatives = [
     "Pass over target, build and dist by name: rejected because a module or package of those names holds source, and the tools that fill them mark them or are marked otherwise",
     "Walk the data and prose files too: rejected because they are no code a count of definitions measures, and a lockfile of megabytes would be read on every call",
 ]
-tags = [
-    "performance",
-    "placement",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/index.rs", symbol = "FileKind::is_code" },
+    { file = "src/code/index/file.rs", symbol = "FileKind::is_code" },
     { file = "src/sources/walk.rs", symbol = "SKIPPED_MARKERS" },
     { file = "src/sources/walk.rs", symbol = "SKIPPED_NAMES" },
     { file = "src/sources/walk.rs", symbol = "manifests_above" },

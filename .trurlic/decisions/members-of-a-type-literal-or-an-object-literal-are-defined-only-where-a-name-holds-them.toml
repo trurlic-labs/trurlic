@@ -6,16 +6,12 @@ alternatives = [
     "Methods of every object literal: rejected because an object a call takes defines nothing a reader names",
     "Methods of an object any const binds: rejected because a local's object is no part of the module",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "accepted"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "an_object_literals_methods_are_defined_only_under_a_top_level_const" },
-    { file = "src/code/language/typescript.scm" },
+    { file = "src/code/parse/general/tests.rs", symbol = "an_object_literals_methods_are_defined_only_under_a_top_level_const" },
+    { file = "src/code/parse/language/typescript.scm" },
     { file = "src/sources/tests.rs", symbol = "TYPESCRIPT_CASES" },
 ]
 depends_on = [

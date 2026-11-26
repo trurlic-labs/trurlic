@@ -3,55 +3,14 @@
 
 use std::collections::BTreeSet;
 
+use super::applied::Done;
 use super::check::{self, Fault, Sources, anchor_edit, edit_list, new_name};
+use super::context::Context;
 use super::edit::Edit;
 use super::ops::{Field, ListEdit, Merge, OpKind, Record, Remove, Rename, Revise};
 use super::refusal::{NodeKind, Rule};
-use super::{Done, LeftRepair, Repaired, Warning};
-use crate::store::quality::{Bar, DecisionField, Hit, Scan};
-use crate::store::schema::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
-use crate::store::time::Timestamp;
-
-/// What the ops of one batch share: what every record carries, the bar
-/// each written decision meets and what its patterns may still read, the
-/// warnings, and what the repairs did.
-pub(super) struct Context<'b> {
-    pub(super) origin: Option<&'b str>,
-    pub(super) created: Timestamp,
-    pub(super) bar: &'b Bar,
-    pub(super) scan: Scan,
-    /// The `warn` matches of the op running now, each with the argument
-    /// it is in.
-    pub(super) hits: Vec<(String, Hit)>,
-    /// The batch's warnings so far.
-    pub(super) warnings: Vec<Warning>,
-    /// The anchors the batch's repairs replaced so far.
-    pub(super) repaired: Vec<Repaired>,
-    /// The repairs of the map the bar did not admit, so far.
-    pub(super) left: Vec<LeftRepair>,
-}
-
-impl<'b> Context<'b> {
-    /// A batch's context before its first op: its `origin`, the instant
-    /// now, the `bar` and its `scan`, and the origin's `hits`.
-    pub(super) fn new(
-        origin: Option<&'b str>,
-        bar: &'b Bar,
-        scan: Scan,
-        hits: Vec<(String, Hit)>,
-    ) -> crate::error::Result<Self> {
-        Ok(Self {
-            origin,
-            created: Timestamp::now()?,
-            bar,
-            scan,
-            hits,
-            warnings: Vec::new(),
-            repaired: Vec::new(),
-            left: Vec::new(),
-        })
-    }
-}
+use crate::store::model::DecisionField;
+use crate::store::model::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
 
 pub(super) fn record(
     edit: &mut Edit<'_>,
@@ -426,4 +385,438 @@ fn changed(before: &Decision, after: &Decision) -> Vec<Field> {
     .into_iter()
     .filter_map(|(field, differs)| differs.then_some(field))
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::store::apply::*;
+    use crate::store::format::canonical;
+    use crate::store::graph::NodeFile;
+    use crate::store::model::{AcceptedText, AcceptedVia, Anchor, Status, StatusName};
+    use crate::store::testing::{
+        add, anchor, apply, decision, graph, record, refused, rename, revise, sample_decision,
+        write_node,
+    };
+    use crate::store::{Field, Store};
+
+    #[test]
+    fn a_record_writes_a_proposed_decision_with_the_batch_origin() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let mut op = record("expire", "auth");
+        op.depends_on = vec!["sign".into()];
+
+        let applied = apply(&store, vec![Op::Record(op)]).unwrap();
+
+        assert_eq!(applied.ops, [Done::of(OpKind::Record, "expire".into())]);
+        assert_eq!((applied.written, applied.removed), (1, 0));
+        let written = decision(&store, "expire");
+        assert_eq!(
+            written.status,
+            Status::Proposed {
+                accepted_text: None
+            }
+        );
+        assert_eq!(written.origin.as_deref(), Some("row 7"));
+        assert_eq!(written.tags, ["a", "b"].map(String::from).into());
+        assert_eq!(written.depends_on, ["sign"].map(String::from).into());
+        let text = fs::read_to_string(store.decision_path("expire")).unwrap();
+        assert_eq!(text, canonical(&written));
+    }
+
+    #[test]
+    fn each_fault_of_a_record_is_refused_naming_its_argument() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let with = |change: fn(&mut Record)| {
+            let mut op = record("expire", "auth");
+            change(&mut op);
+            vec![Op::Record(op)]
+        };
+        let cases: Vec<(Vec<Op>, &str, &str)> = vec![
+            (
+                with(|op| op.name = "Expire".into()),
+                "name_invalid",
+                "ops[0].name",
+            ),
+            (
+                with(|op| op.name = "project".into()),
+                "name_reserved",
+                "ops[0].name",
+            ),
+            (
+                with(|op| op.name = "sign".into()),
+                "name_taken",
+                "ops[0].name",
+            ),
+            (
+                with(|op| op.name = "billing".into()),
+                "name_taken",
+                "ops[0].name",
+            ),
+            (
+                with(|op| op.component = "ledger".into()),
+                "component_missing",
+                "ops[0].component",
+            ),
+            (
+                with(|op| op.choice = "One\ntwo".into()),
+                "invalid_text",
+                "ops[0].choice",
+            ),
+            (
+                with(|op| op.anchors.push(anchor("../x.rs", None))),
+                "invalid_anchor",
+                "ops[0].anchors[1]",
+            ),
+            (
+                with(|op| op.depends_on = vec!["sign".into(), "gone".into()]),
+                "dependency_missing",
+                "ops[0].depends_on[1]",
+            ),
+            (
+                with(|op| op.depends_on = vec!["expire".into()]),
+                "self_edge",
+                "ops[0].depends_on[0]",
+            ),
+        ];
+        for (ops, rule, path) in cases {
+            let refusal = refused(&store, ops);
+            assert_eq!(
+                (refusal.rule.as_str(), refusal.path().as_str()),
+                (rule, path)
+            );
+            let at = refusal.op.as_ref().unwrap();
+            assert_eq!((at.index, at.kind), (0, OpKind::Record));
+        }
+    }
+
+    #[test]
+    fn a_revise_sets_whole_lists_and_edits_others_by_element() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let mut op = revise("rotate");
+        op.choice = Some("Rotate keys daily".into());
+        op.tags = ListEdit {
+            whole: Some(vec!["keys".into(), "keys".into()]),
+            ..ListEdit::keep()
+        };
+        op.anchors = ListEdit {
+            add: Some(vec![
+                anchor("src/a.rs", Some("f")),
+                anchor("src/a.rs", Some("f")),
+            ]),
+            ..ListEdit::keep()
+        };
+        op.depends_on = ListEdit {
+            remove: Some(vec!["sign".into()]),
+            add: Some(vec!["keys".into()]),
+            ..ListEdit::keep()
+        };
+
+        let applied = apply(
+            &store,
+            vec![Op::Record(record("keys", "auth")), Op::Revise(op)],
+        )
+        .unwrap();
+
+        let done = &applied.ops[1];
+        assert_eq!(
+            done.changed,
+            [Field::Choice, Field::Tags, Field::Anchors, Field::DependsOn]
+        );
+        let rotate = decision(&store, "rotate");
+        assert_eq!(rotate.tags, ["keys"].map(String::from).into());
+        assert_eq!(rotate.anchors.len(), 1);
+        assert_eq!(rotate.depends_on, ["keys"].map(String::from).into());
+    }
+
+    #[test]
+    fn a_revise_that_changes_nothing_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        // A hand edit out of canonical form, which only `fmt` rewrites.
+        let text = fs::read_to_string(store.decision_path("sign")).unwrap();
+        fs::write(store.decision_path("sign"), text.replace(" = ", "=")).unwrap();
+        let mut same = revise("sign");
+        same.choice = Some(sample_decision("auth").choice);
+        same.tags = add(&[]);
+        let mut back = revise("rotate");
+        back.depends_on = ListEdit {
+            remove: Some(vec!["sign".into()]),
+            add: Some(vec!["sign".into()]),
+            ..ListEdit::keep()
+        };
+
+        for op in [same, back] {
+            let refusal = refused(&store, vec![Op::Revise(op)]);
+            assert_eq!(refusal.rule, Rule::NoChange);
+            assert_eq!(refusal.path(), "ops[0]");
+        }
+    }
+
+    fn accepted_via(store: &Store, name: &str, via: Option<AcceptedVia>) {
+        let mut decision = decision(store, name);
+        decision.status = Status::Accepted { via };
+        write_node(store, &NodeFile::Decision(name.into()), &decision);
+    }
+
+    /// A text change proposes the revision and keeps the accepted text; a
+    /// second keeps the first accepted text; a change back accepts it again,
+    /// as it was accepted. A change of anchors leaves the status alone.
+    #[test]
+    fn a_revision_of_an_accepted_text_is_proposed_until_it_returns() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        accepted_via(&store, "sign", Some(AcceptedVia::Cli));
+        let accepted = decision(&store, "sign");
+        let choose = |choice: &str| {
+            let mut op = revise("sign");
+            op.choice = Some(choice.into());
+            vec![Op::Revise(op)]
+        };
+        let kept = Status::Proposed {
+            accepted_text: Some(AcceptedText {
+                choice: accepted.choice.clone(),
+                reason: accepted.reason.clone(),
+                alternatives: accepted.alternatives.clone(),
+                via: Some(AcceptedVia::Cli),
+            }),
+        };
+
+        let first = apply(&store, choose("Sign with Ed25519")).unwrap();
+        assert_eq!(first.ops[0].status, Some(StatusName::Proposed));
+        assert_eq!(decision(&store, "sign").status, kept);
+
+        let second = apply(&store, choose("Sign with Ed448")).unwrap();
+        assert_eq!(second.ops[0].status, None);
+        assert_eq!(decision(&store, "sign").status, kept);
+
+        let mut anchors = revise("sign");
+        anchors.anchors = ListEdit {
+            add: Some(vec![anchor("src/sign.rs", None)]),
+            ..ListEdit::keep()
+        };
+        apply(&store, vec![Op::Revise(anchors)]).unwrap();
+        assert_eq!(decision(&store, "sign").status, kept);
+
+        let back = apply(&store, choose(&accepted.choice)).unwrap();
+        assert_eq!(back.ops[0].status, Some(StatusName::Accepted));
+        assert_eq!(
+            decision(&store, "sign").status,
+            Status::Accepted {
+                via: Some(AcceptedVia::Cli)
+            }
+        );
+    }
+
+    #[test]
+    fn a_tag_or_edge_change_of_an_accepted_decision_keeps_it_accepted() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let mut op = revise("audit");
+        op.tags = add(&["security"]);
+        op.depends_on = add(&["sign"]);
+        op.component = Some("billing".into());
+
+        let applied = apply(&store, vec![Op::Revise(op)]).unwrap();
+
+        assert_eq!(applied.ops[0].status, None);
+        assert_eq!(
+            decision(&store, "audit").status,
+            Status::Accepted { via: None }
+        );
+    }
+
+    #[test]
+    fn a_rename_moves_the_file_and_rewrites_every_edge_to_it() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+
+        let applied = apply(&store, vec![Op::Rename(rename("rotate", "rotate-keys"))]).unwrap();
+
+        assert_eq!(applied.ops[0].to.as_deref(), Some("rotate-keys"));
+        assert_eq!(applied.ops[0].rewrote, 1);
+        assert_eq!((applied.written, applied.removed), (2, 1));
+        assert!(!store.decision_path("rotate").exists());
+        let state = store.load_state().unwrap();
+        assert_eq!(state.validate(), []);
+        assert!(state.decisions["audit"].depends_on.contains("rotate-keys"));
+        assert_eq!(
+            state.decisions["rotate-keys"].status,
+            Status::Accepted { via: None }
+        );
+    }
+
+    #[test]
+    fn a_rename_to_its_own_name_or_a_taken_one_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let cases = [
+            (rename("rotate", "rotate"), "no_change", "ops[0]"),
+            (rename("rotate", "sign"), "name_taken", "ops[0].to"),
+            (rename("rotate", "auth"), "name_taken", "ops[0].to"),
+            (rename("gone", "new"), "not_found", "ops[0].name"),
+        ];
+        for (op, rule, path) in cases {
+            let refusal = refused(&store, vec![Op::Rename(op)]);
+            assert_eq!(
+                (refusal.rule.as_str(), refusal.path().as_str()),
+                (rule, path)
+            );
+        }
+    }
+
+    /// The survivor keeps its text and status and takes the absorbed
+    /// decision's anchors, tags and edges; edges to the absorbed one point at
+    /// the survivor.
+    #[test]
+    fn a_merge_repoints_edges_and_unions_anchors_and_tags() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let mut rotate = decision(&store, "rotate");
+        rotate
+            .anchors
+            .insert(Anchor::new("src/rotate.rs".into(), None).unwrap());
+        rotate.tags.insert("keys".into());
+        rotate.status = Status::Proposed {
+            accepted_text: None,
+        };
+        write_node(&store, &NodeFile::Decision("rotate".into()), &rotate);
+        let sign = decision(&store, "sign");
+
+        let applied = apply(
+            &store,
+            vec![Op::Merge(Merge {
+                survivor: "sign".into(),
+                absorbed: "rotate".into(),
+            })],
+        )
+        .unwrap();
+
+        assert_eq!(applied.ops[0].absorbed.as_deref(), Some("rotate"));
+        assert_eq!(applied.ops[0].rewrote, 1);
+        let state = store.load_state().unwrap();
+        assert!(!state.decisions.contains_key("rotate"));
+        let merged = &state.decisions["sign"];
+        assert_eq!(
+            (&merged.choice, &merged.status),
+            (&sign.choice, &sign.status)
+        );
+        assert_eq!(merged.anchors, rotate.anchors);
+        assert_eq!(merged.tags, rotate.tags);
+        assert!(
+            merged.depends_on.is_empty(),
+            "the edge to itself is dropped"
+        );
+        assert_eq!(
+            state.decisions["audit"].depends_on,
+            ["sign"].map(String::from).into()
+        );
+        assert_eq!(state.validate(), []);
+    }
+
+    #[test]
+    fn a_merge_into_itself_or_one_that_closes_a_cycle_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let merge = |survivor: &str, absorbed: &str| {
+            vec![Op::Merge(Merge {
+                survivor: survivor.into(),
+                absorbed: absorbed.into(),
+            })]
+        };
+        let refusal = refused(&store, merge("sign", "sign"));
+        assert_eq!(
+            (refusal.path(), refusal.rule),
+            ("ops[0].absorbed".into(), Rule::SameNode)
+        );
+
+        // `audit` takes `rotate`'s edge to `sign`, and `sign` would then
+        // depend on `audit` through `x`.
+        let mut x = record("x", "auth");
+        x.depends_on = vec!["audit".into()];
+        let mut sign = revise("sign");
+        sign.depends_on = add(&["x"]);
+        let mut ops = vec![Op::Record(x)];
+        ops.extend(merge("audit", "rotate"));
+        ops.push(Op::Revise(sign));
+        let refusal = refused(&store, ops);
+        assert_eq!(refusal.op.as_ref().unwrap().index, 2);
+        assert_eq!(
+            refusal.rule,
+            Rule::Cycle {
+                members: ["audit", "sign", "x"].map(String::from).into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_remove_with_dependents_is_refused_unless_it_repoints_them() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let remove = |name: &str, repoint_to: Option<&str>| {
+            vec![Op::Remove(Remove {
+                name: name.into(),
+                repoint_to: repoint_to.map(str::to_owned),
+            })]
+        };
+
+        let refusal = refused(&store, remove("sign", None));
+        assert_eq!(
+            refusal.rule,
+            Rule::Dependents {
+                names: vec!["rotate".into()]
+            }
+        );
+        let refusal = refused(&store, remove("sign", Some("sign")));
+        assert_eq!(refusal.path(), "ops[0].repoint_to");
+
+        let applied = apply(&store, remove("rotate", Some("sign"))).unwrap();
+        assert_eq!(applied.ops[0].rewrote, 1);
+        assert_eq!((applied.written, applied.removed), (1, 1));
+        let state = store.load_state().unwrap();
+        assert_eq!(
+            state.decisions["audit"].depends_on,
+            ["sign"].map(String::from).into()
+        );
+        assert_eq!(state.validate(), []);
+    }
+
+    #[test]
+    fn a_repoint_that_closes_a_cycle_is_refused_and_an_heir_drops_its_own_edge() {
+        let tmp = TempDir::new().unwrap();
+        let store = graph(tmp.path());
+        let mut sign = revise("sign");
+        sign.depends_on = add(&["billing-rule"]);
+        let ops = vec![
+            Op::Record(record("billing-rule", "billing")),
+            Op::Revise(sign),
+            Op::Remove(Remove {
+                name: "billing-rule".into(),
+                repoint_to: Some("audit".into()),
+            }),
+        ];
+        let refusal = refused(&store, ops);
+        assert_eq!(
+            (refusal.op.as_ref().unwrap().index, refusal.path()),
+            (2, "ops[2].repoint_to".into())
+        );
+        assert_eq!(refusal.rule.as_str(), "depends_on_cycle");
+
+        apply(
+            &store,
+            vec![Op::Remove(Remove {
+                name: "sign".into(),
+                repoint_to: Some("rotate".into()),
+            })],
+        )
+        .unwrap();
+        assert!(decision(&store, "rotate").depends_on.is_empty());
+    }
 }

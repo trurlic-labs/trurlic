@@ -6,16 +6,12 @@ alternatives = [
     "No locking, last writer wins: rejected because concurrent writes that race lose data silently",
     "A database with built-in concurrency: rejected because it adds a heavy dependency for a file-based store",
 ]
-tags = [
-    "concurrency",
-    "reliability",
-]
 status = "accepted"
 created = "2026-06-15T09:44:30.756424330Z"
 anchors = [
-    { file = "src/store/lock.rs", symbol = "Store::lock" },
-    { file = "src/store/lock.rs", symbol = "Store::lock_shared" },
-    { file = "src/store/lock.rs", symbol = "Store::open_lock_file" },
-    { file = "src/store/lock.rs", symbol = "StoreLock" },
-    { file = "src/store/lock.rs", symbol = "poll" },
+    { file = "src/store/write/lock.rs", symbol = "Store::lock" },
+    { file = "src/store/write/lock.rs", symbol = "Store::lock_shared" },
+    { file = "src/store/write/lock.rs", symbol = "Store::open_lock_file" },
+    { file = "src/store/write/lock.rs", symbol = "StoreLock" },
+    { file = "src/store/write/lock.rs", symbol = "poll" },
 ]

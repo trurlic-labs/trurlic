@@ -6,18 +6,14 @@ alternatives = [
     "A patched copy of the grammar's scanner: rejected because a vendored fork of a C grammar must be kept in step with every release",
     "Parse in a child process: rejected because it spawns a process per file and a call would no longer be one process",
 ]
-tags = [
-    "python",
-    "reliability",
-]
 status = "accepted"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_comment_ending_in_a_backslash_continues_no_width_the_bound_counts" },
-    { file = "src/code/general/tests.rs", symbol = "indentations_past_the_scanners_bound_are_refused_before_the_parse" },
-    { file = "src/code/language/python.rs", symbol = "MAX_INDENTATIONS" },
-    { file = "src/code/language/python.rs", symbol = "check_indentations" },
+    { file = "src/code/parse/language/python.rs", symbol = "MAX_INDENTATIONS" },
+    { file = "src/code/parse/language/python.rs", symbol = "a_comment_ending_in_a_backslash_continues_no_width_the_bound_counts" },
+    { file = "src/code/parse/language/python.rs", symbol = "check_indentations" },
+    { file = "src/code/parse/language/python.rs", symbol = "indentations_past_the_scanners_bound_are_refused_before_the_parse" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",

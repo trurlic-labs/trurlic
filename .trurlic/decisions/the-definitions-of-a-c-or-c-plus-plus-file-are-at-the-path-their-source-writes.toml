@@ -8,16 +8,12 @@ alternatives = [
     "A concept as a type alias: rejected because it names no type, only a requirement on one",
     "A misparsed body's locals at the top: rejected because the members of a class a macro hides then read as variables of the file",
 ]
-tags = [
-    "anchors",
-    "parsing",
-]
 status = "proposed"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"
 anchors = [
-    { file = "src/code/language/c.scm" },
-    { file = "src/code/language/cpp.scm" },
+    { file = "src/code/parse/language/c.scm" },
+    { file = "src/code/parse/language/cpp.scm" },
     { file = "src/sources/tests.rs", symbol = "C_FAMILY_CASES" },
     { file = "src/sources/tests.rs", symbol = "STATEMENTS" },
     { file = "tests/fixtures/code/c/shelf.h" },

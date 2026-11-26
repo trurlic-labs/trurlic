@@ -8,24 +8,20 @@ alternatives = [
     "Each run of JSX whitespace as one space: rejected because JSX keeps the spaces within a line, which pre and React Native's Text render",
     "A template string as one token: rejected because a space or a comment inside its ${} would move the hash",
 ]
-tags = [
-    "anchors",
-    "typescript",
-]
 status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_reformat_a_comment_or_a_semicolon_leaves_a_typescript_hash" },
-    { file = "src/code/general/tests.rs", symbol = "a_statement_split_by_a_line_break_moves_a_typescript_hash" },
-    { file = "src/code/general/tests.rs", symbol = "a_token_the_hash_leaves_out_elsewhere_moves_it_where_it_means_something" },
-    { file = "src/code/general/tests.rs", symbol = "jsx_text_is_hashed_as_jsx_renders_it" },
-    { file = "src/code/general/tests.rs", symbol = "prettiers_quotes_trailing_commas_and_arrow_parentheses_leave_a_typescript_hash" },
-    { file = "src/code/general/tests.rs", symbol = "the_parentheses_and_operators_a_line_width_adds_leave_a_typescript_hash" },
-    { file = "src/code/language/tsx.scm" },
-    { file = "src/code/language/typescript.scm" },
-    { file = "src/code/units/jsx.rs", symbol = "push_chars" },
-    { file = "src/code/units/spelling.rs", symbol = "escape" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_reformat_a_comment_or_a_semicolon_leaves_a_typescript_hash" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_statement_split_by_a_line_break_moves_a_typescript_hash" },
+    { file = "src/code/parse/general/tests.rs", symbol = "a_token_the_hash_leaves_out_elsewhere_moves_it_where_it_means_something" },
+    { file = "src/code/parse/general/tests.rs", symbol = "jsx_text_is_hashed_as_jsx_renders_it" },
+    { file = "src/code/parse/general/tests.rs", symbol = "prettiers_quotes_trailing_commas_and_arrow_parentheses_leave_a_typescript_hash" },
+    { file = "src/code/parse/general/tests.rs", symbol = "the_parentheses_and_operators_a_line_width_adds_leave_a_typescript_hash" },
+    { file = "src/code/parse/language/tsx.scm" },
+    { file = "src/code/parse/language/typescript.scm" },
+    { file = "src/code/parse/units/jsx.rs", symbol = "push_chars" },
+    { file = "src/code/parse/units/spelling.rs", symbol = "escape" },
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",

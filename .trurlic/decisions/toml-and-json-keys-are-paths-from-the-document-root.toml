@@ -6,16 +6,12 @@ alternatives = [
     "Merge a key of all elements into one span: rejected because it would span the unrelated keys between them, whose edits would move its hash",
     "serde_json for JSON: rejected because it keeps no spans",
 ]
-tags = [
-    "anchors",
-    "configuration",
-]
 status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/json.rs", symbol = "Scanner" },
-    { file = "src/code/json.rs", symbol = "index" },
-    { file = "src/code/toml.rs", symbol = "Keys::value" },
-    { file = "src/code/toml.rs", symbol = "index" },
+    { file = "src/code/lexical/json.rs", symbol = "Scanner" },
+    { file = "src/code/lexical/json.rs", symbol = "index" },
+    { file = "src/code/lexical/toml.rs", symbol = "Keys::value" },
+    { file = "src/code/lexical/toml.rs", symbol = "index" },
 ]

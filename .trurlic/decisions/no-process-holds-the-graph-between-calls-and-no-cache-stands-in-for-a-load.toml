@@ -1,0 +1,25 @@
+component = "project"
+choice = "No process holds the graph between calls and no cache stands in for a load: every call finds the store and parses every node file from disk"
+reason = "What a call returns is a function of the files on disk. A server that kept the graph and reloaded it from a file watcher answered, inside the reload window, from the graph before a hand edit, a checkout or another process's commit, and keeping it coherent took a commit counter, an overtaking rule between the watcher and the server's own writes, and a second lock order. So the server holds only the directory it was started in: each call finds the store from it, a read loads with Store::load_state and a write through a Writer, and the next call after any change sees it. A cache of the parsed graph, on disk or in memory, would be a second representation to keep coherent with the node files and would bring back the state between calls, so every load parses every node file until make bench shows the parse is what bounds a call; a change to the load path is benched before and after it on the seeded corpus, since no CI job runs the benches. A binary format for such a cache is a dependency the owner has not approved."
+alternatives = [
+    "Keep the graph in the server and reload it from a file watcher: rejected, a call inside the reload window answers from the graph before the change, and coherence needs a counter, an overtaking rule and a second lock order",
+    "A JSON snapshot of the parsed graph keyed by node hashes: rejected, it needs invalidation against every node file and a fallback path, for a load that is not what bounds a call",
+    "A binary serializer cache: rejected, the same coherence cost and a dependency the owner has not approved",
+]
+status = "proposed"
+created = "2026-11-23T22:27:34.236739142Z"
+anchors = [
+    { file = "benches/corpus.rs", symbol = "bench_load_state" },
+    { file = "src/mcp/call.rs", symbol = "call_tool" },
+    { file = "src/store/write/access.rs", symbol = "Store::load_state" },
+    { file = "src/store/write/access.rs", symbol = "Store::read" },
+]
+
+[accepted_text]
+choice = "No process holds graph state between calls; every read loads under the shared lock and first finishes a commit an interrupted writer left"
+reason = "What a call returns is a function of the files on disk. The MCP server kept the graph in an Arc<RwLock<ProjectState>> that a notify watcher reloaded 100 ms after a change, so a call inside that window answered from the graph before a hand edit, a git checkout or another process's commit, and keeping it coherent took a commit counter, an overtaking rule between the watcher and the server's own writes, and a lock order between the state lock and the file lock. The server now holds only the directory it was started in and finds the store from it on every call: a read tool loads with Store::load_state and a write tool through a Writer, so the next call after any change sees it. A read takes the shared lock, so it waits for a commit in flight; a journal or a temp file seen under that lock was left by a writer that stopped, so the read takes the exclusive lock and finishes the commit before it loads. No read sees half of a commit. The load is on every call's path: about 16 ms at 2000 seeded decisions in make bench, against a budget of 50 ms."
+alternatives = [
+    "Keep the graph in the server and reload it from a file watcher: rejected, a call inside the reload window answers from the graph before the change, and coherence needs a counter, an overtaking rule and a second lock order",
+    "Cache the parsed graph keyed by file fingerprints: rejected, a second representation to keep coherent with the node files, for a load well under its 50 ms budget",
+    "Read without a lock: rejected, a read during a commit can see some of its renames and not the rest",
+]

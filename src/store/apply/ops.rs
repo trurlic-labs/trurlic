@@ -4,23 +4,23 @@
 
 use std::collections::BTreeMap;
 
-use crate::store::schema::Anchor;
+use crate::store::model::Anchor;
 
 /// The ops of one `apply` call, applied in order, all or none, and the
 /// trailers of its history commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Batch {
-    pub ops: Vec<Op>,
-    /// The task or plan row the batch belongs to: stored on each decision
-    /// it records, and the `Origin:` trailer of its commit.
-    pub origin: Option<String>,
+pub(crate) struct Batch {
+    pub(crate) ops: Vec<Op>,
+    /// The change the batch belongs to, as its caller names it: stored on
+    /// each decision it records, and the `Origin:` trailer of its commit.
+    pub(crate) origin: Option<String>,
     /// The `Session:` trailer of its commit.
-    pub session: Option<String>,
+    pub(crate) session: Option<String>,
 }
 
 /// One change of a batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Op {
+pub(crate) enum Op {
     Record(Record),
     Revise(Revise),
     Rename(Rename),
@@ -35,7 +35,7 @@ pub enum Op {
 
 impl Op {
     #[must_use]
-    pub const fn kind(&self) -> OpKind {
+    pub(super) const fn kind(&self) -> OpKind {
         match self {
             Self::Record(_) => OpKind::Record,
             Self::Revise(_) => OpKind::Revise,
@@ -53,7 +53,7 @@ impl Op {
     /// The node the op names first: the decision or component it changes,
     /// a merge's survivor, a repair's first decision (none for no repair).
     #[must_use]
-    pub fn target(&self) -> &str {
+    pub(super) fn target(&self) -> &str {
         match self {
             Self::Record(Record { name, .. })
             | Self::Revise(Revise { name, .. })
@@ -74,7 +74,7 @@ impl Op {
 
 /// An op's kind, as the batch's `op` tag names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum OpKind {
+pub(crate) enum OpKind {
     Record,
     Revise,
     Rename,
@@ -88,7 +88,7 @@ pub enum OpKind {
 }
 
 impl OpKind {
-    pub const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 10] = [
         Self::Record,
         Self::Revise,
         Self::Rename,
@@ -102,7 +102,7 @@ impl OpKind {
     ];
 
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Record => "record",
             Self::Revise => "revise",
@@ -120,51 +120,51 @@ impl OpKind {
 
 /// A new decision, `proposed`, carrying the batch's origin and instant.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Record {
-    pub name: String,
-    pub component: String,
-    pub choice: String,
-    pub reason: String,
-    pub alternatives: Vec<String>,
-    pub tags: Vec<String>,
-    pub anchors: Vec<AnchorInput>,
-    pub depends_on: Vec<String>,
+pub(crate) struct Record {
+    pub(crate) name: String,
+    pub(crate) component: String,
+    pub(crate) choice: String,
+    pub(crate) reason: String,
+    pub(crate) alternatives: Vec<String>,
+    pub(crate) tags: Vec<String>,
+    pub(crate) anchors: Vec<AnchorInput>,
+    pub(crate) depends_on: Vec<String>,
 }
 
 /// An anchor as a batch writes it, checked by the store.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AnchorInput {
-    pub file: String,
-    pub symbol: Option<String>,
+pub(crate) struct AnchorInput {
+    pub(crate) file: String,
+    pub(crate) symbol: Option<String>,
 }
 
 /// New values for the fields of a decision; a field left `None` and a
 /// list edit left empty keep what the decision holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Revise {
-    pub name: String,
-    pub component: Option<String>,
-    pub choice: Option<String>,
-    pub reason: Option<String>,
-    pub alternatives: ListEdit<String>,
-    pub tags: ListEdit<String>,
-    pub anchors: ListEdit<AnchorInput>,
-    pub depends_on: ListEdit<String>,
+pub(crate) struct Revise {
+    pub(crate) name: String,
+    pub(crate) component: Option<String>,
+    pub(crate) choice: Option<String>,
+    pub(crate) reason: Option<String>,
+    pub(crate) alternatives: ListEdit<String>,
+    pub(crate) tags: ListEdit<String>,
+    pub(crate) anchors: ListEdit<AnchorInput>,
+    pub(crate) depends_on: ListEdit<String>,
 }
 
 /// A change of one list: the whole list, or the elements to remove and
 /// to add. The store refuses `whole` beside either of the others.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListEdit<T> {
-    pub whole: Option<Vec<T>>,
-    pub add: Option<Vec<T>>,
-    pub remove: Option<Vec<T>>,
+pub(crate) struct ListEdit<T> {
+    pub(crate) whole: Option<Vec<T>>,
+    pub(crate) add: Option<Vec<T>>,
+    pub(crate) remove: Option<Vec<T>>,
 }
 
 impl<T> ListEdit<T> {
     /// No change.
     #[must_use]
-    pub const fn keep() -> Self {
+    pub(crate) const fn keep() -> Self {
         Self {
             whole: None,
             add: None,
@@ -174,49 +174,49 @@ impl<T> ListEdit<T> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Rename {
-    pub name: String,
-    pub to: String,
+pub(crate) struct Rename {
+    pub(crate) name: String,
+    pub(crate) to: String,
 }
 
 /// `absorbed` folded into `survivor`, which keeps its own text.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Merge {
-    pub survivor: String,
-    pub absorbed: String,
+pub(crate) struct Merge {
+    pub(crate) survivor: String,
+    pub(crate) absorbed: String,
 }
 
 /// A decision removed; with `repoint_to`, each edge that pointed at it
 /// points there instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Remove {
-    pub name: String,
-    pub repoint_to: Option<String>,
+pub(crate) struct Remove {
+    pub(crate) name: String,
+    pub(crate) repoint_to: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AddComponent {
-    pub name: String,
-    pub description: String,
-    pub connects_to: Vec<String>,
+pub(crate) struct AddComponent {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) connects_to: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReviseComponent {
-    pub name: String,
-    pub description: Option<String>,
-    pub connects_to: ListEdit<String>,
+pub(crate) struct ReviseComponent {
+    pub(crate) name: String,
+    pub(crate) description: Option<String>,
+    pub(crate) connects_to: ListEdit<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemoveComponent {
-    pub name: String,
+pub(crate) struct RemoveComponent {
+    pub(crate) name: String,
 }
 
 /// Stale anchors replaced in their decisions. The store reads no code: a
 /// surface that offers the repairs the tree shows hands them in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RepairAnchors {
+pub(crate) enum RepairAnchors {
     /// The repairs a caller lists, in order, each checked against the
     /// graph the earlier ops left: `repairs[j]` names one.
     Listed(Vec<Repair>),
@@ -229,15 +229,15 @@ pub enum RepairAnchors {
 /// `from`, an anchor `decision` holds, replaced by `to`; when the decision
 /// holds `to` already, `from` is dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Repair {
-    pub decision: String,
-    pub from: AnchorInput,
-    pub to: AnchorInput,
+pub(crate) struct Repair {
+    pub(crate) decision: String,
+    pub(crate) from: AnchorInput,
+    pub(crate) to: AnchorInput,
 }
 
 /// An argument of an op, by the key a batch spells it with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Field {
+pub(crate) enum Field {
     Name,
     To,
     Survivor,
@@ -268,7 +268,7 @@ pub enum Field {
 impl Field {
     /// The fields a `revise` of a decision reports as changed, in the order
     /// of the decision file's keys.
-    pub const DECISION_CHANGEABLE: [Self; 7] = [
+    pub(crate) const DECISION_CHANGEABLE: [Self; 7] = [
         Self::Component,
         Self::Choice,
         Self::Reason,
@@ -280,11 +280,11 @@ impl Field {
 
     /// The fields a `revise_component` reports as changed, in the order of
     /// the component file's keys.
-    pub const COMPONENT_CHANGEABLE: [Self; 2] = [Self::Description, Self::ConnectsTo];
+    pub(crate) const COMPONENT_CHANGEABLE: [Self; 2] = [Self::Description, Self::ConnectsTo];
 
     /// Every field a revise reports as changed: a decision's, then a
     /// component's.
-    pub const CHANGEABLE: [Self; 9] = {
+    pub(crate) const CHANGEABLE: [Self; 9] = {
         let [
             component,
             choice,
@@ -309,7 +309,7 @@ impl Field {
     };
 
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Name => "name",
             Self::To => "to",
@@ -342,7 +342,7 @@ impl Field {
     /// The `add_` and `remove_` fields of a list field, which edit it by
     /// element.
     #[must_use]
-    pub const fn by_element(self) -> Option<(Self, Self)> {
+    pub(crate) const fn by_element(self) -> Option<(Self, Self)> {
         match self {
             Self::Alternatives => Some((Self::AddAlternatives, Self::RemoveAlternatives)),
             Self::Tags => Some((Self::AddTags, Self::RemoveTags)),

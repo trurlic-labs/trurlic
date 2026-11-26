@@ -6,13 +6,12 @@ alternatives = [
     "Process-owned fcntl record locks, which a forked child does not inherit: rejected, two descriptors of one process would not contend, so a read's shared lock would not keep out a write of the same process",
     "Retry a try of the lock until the child execs: rejected, it turns a release that should be immediate into a wait without a bound",
 ]
-tags = [
-    "concurrency",
-    "reliability",
-]
 status = "proposed"
 origin = "store lock released on drop while a forked child holds its descriptor"
 created = "2026-11-26T09:13:46.735825021Z"
 anchors = [
-    { file = "src/store/lock.rs", symbol = "Held" },
+    { file = "src/store/write/lock.rs", symbol = "Held" },
+]
+depends_on = [
+    "advisory-file-locking-via-std-try-lock-with-a-5-second-timeout",
 ]

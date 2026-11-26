@@ -8,21 +8,17 @@ alternatives = [
     "Keep patterns as project-wide decisions: rejected because a pattern names decisions and components, which is no choice, and the owner decides which of them states a rule",
     "Drop pattern and component tags without a record: rejected because they exist nowhere else after the migration",
 ]
-tags = [
-    "migration",
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:30:00Z"
 anchors = [
-    { file = "src/store/migration/format_0_5.rs", symbol = "decision" },
-    { file = "src/store/migration/format_0_5.rs", symbol = "status" },
-    { file = "src/store/migration/format_0_5/graph.rs", symbol = "Graph::node" },
-    { file = "src/store/migration/report.rs", symbol = "Fact" },
-    { file = "src/store/migration/report.rs", symbol = "PatternRecord" },
+    { file = "src/store/format/migration/format_0_5/graph.rs", symbol = "Graph::node" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "decision" },
+    { file = "src/store/format/migration/format_0_5/mod.rs", symbol = "status" },
+    { file = "src/store/format/migration/report.rs", symbol = "Fact" },
+    { file = "src/store/format/migration/report.rs", symbol = "PatternRecord" },
 ]
 depends_on = [
     "a-decision-s-status-is-one-typed-value",
+    "no-pattern-node-kind-a-rule-is-a-decision",
     "node-files-carry-no-history",
-    "patterns-are-deleted-as-a-node-kind",
 ]

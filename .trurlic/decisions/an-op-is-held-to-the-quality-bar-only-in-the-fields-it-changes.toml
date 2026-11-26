@@ -5,18 +5,15 @@ alternatives = [
     "Hold the whole decision on every write: rejected because a migrated graph would need anchors and alternatives before any other change",
     "Refuse only a fault the op newly adds: rejected because a revise could then rewrite a field below the bar and leave it below",
 ]
-tags = [
-    "quality",
-]
 status = "accepted"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
+    { file = "src/store/apply/check.rs", symbol = "a_merge_that_takes_the_survivor_past_a_limit_is_refused" },
+    { file = "src/store/apply/check.rs", symbol = "a_revise_meets_the_bar_in_the_fields_it_changes_alone" },
     { file = "src/store/apply/check.rs", symbol = "judged" },
     { file = "src/store/apply/decision.rs", symbol = "merge" },
     { file = "src/store/apply/decision.rs", symbol = "revise" },
-    { file = "src/store/apply/tests/quality.rs", symbol = "a_merge_that_takes_the_survivor_past_a_limit_is_refused" },
-    { file = "src/store/apply/tests/quality.rs", symbol = "a_revise_meets_the_bar_in_the_fields_it_changes_alone" },
 ]
 depends_on = [
     "apply-refuses-a-decision-below-the-quality-bar-naming-what-it-measured",

@@ -1,0 +1,38 @@
+component = "mcp"
+choice = "A panic while a request is handled is caught in Server::answer, answered -32603, and the server serves the next request"
+reason = """
+Release builds unwind, so one catch_unwind per request turns a bug in a handler into an error the client can report instead of a dead session. The boundary is sound because nothing a request leaves half-done outlives it: the server holds no graph between calls; a Writer's file lock is released as unwinding drops it, and a commit it began is finished from the journal by the next opener, as after a crash; the client record changes only by whole steps (an id taken, a request queued or dequeued); and every line sent to the client is serialized into a buffer before it is written, so the stream never holds part of one. AssertUnwindSafe is justified at that site. The answer is written after the boundary.
+The graph.loaded failpoint panics right after a load, before its caller uses the graph, in both load paths: Store::load_state under the shared lock and Store::begin_write under the exclusive one, so one site places a panic under either lock. tests/integration/server_failpoints.rs panics a get_context under the shared lock, then runs trurlic fmt, which takes the exclusive lock and commits, and the next call is answered.
+"""
+alternatives = [
+    "panic = \"abort\": rejected because one bug ends the session and every call after it",
+    "catch_unwind around tools/call only: rejected because initialize and tools/list build values too; one boundary per request covers every handler",
+    "A thread per request: rejected because stdio is one ordered stream, and a thread adds a join and a channel for what catch_unwind does in place",
+    "A panic site under the exclusive lock only: rejected because a panic in a read, the path most calls take, would then go untested under the shared lock",
+]
+status = "proposed"
+created = "2026-11-23T23:15:10.990884289Z"
+anchors = [
+    { file = "Cargo.toml", symbol = "profile::release::panic" },
+    { file = "src/failpoint.rs", symbol = "Site::Loaded" },
+    { file = "src/mcp/server.rs", symbol = "Server::answer" },
+    { file = "src/store/write/access.rs", symbol = "Store::begin_write" },
+    { file = "src/store/write/access.rs", symbol = "Store::load_state" },
+    { file = "tests/integration/server_failpoints.rs", symbol = "a_panic_in_a_tool_call_is_answered_internal_error_and_the_server_serves_on" },
+]
+depends_on = [
+    "release-profile-fat-lto-one-codegen-unit-stripped-symbols",
+]
+
+[accepted_text]
+choice = "A panic while a request is handled is caught in Server::answer, answered -32603, and the server serves the next request"
+reason = """
+Release builds unwind, so one catch_unwind per request turns a bug in a handler into an error the client can report instead of a dead session. The boundary is sound because nothing a request leaves half-done outlives it: the server holds no graph between calls; a Writer's file lock is released as unwinding drops it, and a commit it began is finished from the journal by the next opener, as after a crash; the client record changes only by whole steps (an id taken, a request queued or dequeued); and every line sent to the client is serialized into a buffer before it is written, so the stream never holds part of one. AssertUnwindSafe is justified at that site. The answer is written after the boundary.
+The graph.loaded failpoint panics right after a load, before its caller uses the graph, in both load paths: Store::load_state under the shared lock and Store::begin_write under the exclusive one, so one site places a panic under either lock. tests/integration/server_failpoints.rs panics a get_context under the shared lock, then runs trurlic fmt, which takes the exclusive lock and commits, and the next call is answered.
+"""
+alternatives = [
+    "panic = \"abort\": rejected because one bug ends the session and every call after it",
+    "catch_unwind around tools/call only: rejected because initialize and tools/list build values too; one boundary per request covers every handler",
+    "A thread per request: rejected because stdio is one ordered stream, and a thread adds a join and a channel for what catch_unwind does in place",
+    "A panic site under the exclusive lock only, as before: rejected because every listed tool is now a read, so a server test could not reach it",
+]

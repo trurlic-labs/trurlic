@@ -57,7 +57,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
-- Every malformed JSON-RPC line is answered once, non-requests with `-32600`; a line over 10 MiB is discarded whole.
+- Every malformed JSON-RPC line is answered once, non-requests with `-32600`; a line over 10 MiB, its newline not counted, is discarded whole, so a message of exactly 10 MiB is read, as `trurlic apply` reads a batch of that size.
 - A panic no longer ends the MCP session: the request is answered `-32603`. A panicking CLI command exits 101.
 - A read never sees half of a commit: reads take the shared lock and finish an interrupted write first.
 - A finished write's journal cannot reappear after a power loss.

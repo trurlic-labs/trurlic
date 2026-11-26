@@ -1,29 +1,27 @@
 component = "lint"
 choice = "status lint shows each rule of the bar a stored decision breaks, warn patterns too, judged by the store's Bar::audit_limits and Bar::audit_patterns; never an error, never a refusal"
-reason = "A write holds an op to the bar only in the fields it changes, so a graph below its bar loads, passes check and stays revisable; the section makes that graph visible. The rules keep one home: Bar::audit_limits and Bar::audit_patterns in store::quality judge a whole stored decision and return every fault where a write stops at the first. Each fault carries the field, the element, the level and the typed QualityFault a refusal carries, so lint restates no rule or limit. A pattern that reads origin judges the stored origin on its own, as judge_origin judges a batch's, and the other fields it reads as judge_patterns does. So one pattern can give a finding in a field and one in the origin, as a write gives two; a test holds the audit to the write over the seeded corpus. The text rules of store::text are validation issues already, reported under issues and failed by check, so the audit leaves them out. require_origin binds a batch that records, and a stored decision without an origin predates it or was written by hand, so the audit does not apply it. A warn pattern is a finding marked with its level, since a graph below its own bar shows here first."
+reason = "A write holds an op to the bar only in the fields it changes, so a graph below its bar loads, passes check and stays revisable; the section makes that graph visible. The rules keep one home: Bar::audit_limits and Bar::audit_patterns in store::quality judge a whole stored decision and return every fault where a write stops at the first. Each fault carries the field, the element, the level and the typed QualityFault a refusal carries, so lint restates no rule or limit. A pattern that reads origin judges the stored origin on its own, as judge_origin judges a batch's, and the other fields it reads as judge_patterns does. So one pattern can give a finding in a field and one in the origin, as a write gives two; a test holds the audit to the write over the seeded corpus. The text rules of store::model::text are validation issues already, reported under issues and failed by check, so the audit leaves them out. require_origin binds a batch that records, and a stored decision without an origin predates it or was written by hand, so the audit does not apply it. A warn pattern is a finding marked with its level, since a graph below its own bar shows here first."
 alternatives = [
     "Report the first fault per decision, as a write does: rejected because a decision fixed in one field would show its next fault only on the next call",
     "Restate the limits in lint: rejected because two homes of a rule drift apart",
     "Apply require_origin to stored decisions: rejected because every decision older than the key would be a finding nothing can fix but a rewrite",
     "Read the origin after the fields, one match per pattern: rejected because a write judges a batch's origin apart from its ops, and a match in the origin would hide behind one in a field",
 ]
-tags = [
-    "quality",
-]
 status = "proposed"
 origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"
 anchors = [
     { file = "src/lint/quality.rs", symbol = "shortfalls" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::audit_limits" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::audit_patterns" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Shortfall" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "tests::an_audit_reports_what_a_write_reports_over_the_seeded_corpus" },
+    { file = "src/store/quality/audit.rs", symbol = "Bar::audit_limits" },
+    { file = "src/store/quality/audit.rs", symbol = "Bar::audit_patterns" },
+    { file = "src/store/quality/audit.rs", symbol = "Shortfall" },
+    { file = "src/store/quality/audit.rs", symbol = "tests::an_audit_reports_what_a_write_reports_over_the_seeded_corpus" },
     { file = "tests/integration/lint.rs", symbol = "the_section_shows_every_rule_a_stored_decision_breaks" },
 ]
 depends_on = [
     "lint-is-a-pure-module-of-findings-no-rule-refuses",
     "quality-patterns-are-regexes-compiled-by-a-write-by-check-and-by-the-lint-section",
+    "the-quality-bar-binds-writes-alone-and-never-a-stored-file",
 ]
 
 [accepted_text]

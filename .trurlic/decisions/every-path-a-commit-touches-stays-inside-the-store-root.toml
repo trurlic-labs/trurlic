@@ -1,0 +1,30 @@
+component = "store"
+choice = "Every path a commit writes or removes passes verify_path, which refuses a parent-directory component or a path outside the store root as Error::StorePath with a typed fault"
+reason = "Every store path is derived from the store root, so the check never fires in correct code; it guards against a programming error that would write or delete a file outside .trurlic/. prepare_write checks each target and commit_batch every write and removal before anything is staged, and replay refuses a journal that names a path outside the store (Error::BadJournal). The check rejects .. components before the prefix test, since starts_with on a path that is not canonical does not stop /root/../etc. A derived path that breaks the layout is Error::StorePath { path, fault }, its fault one of Traversal, Outside or NoParent, so verify_path, the journal's relative paths, write_atomic and Store::parent_and_name refuse alike, and a caller or a test matches the fault, never a formatted string. Control characters cannot corrupt a node file: the canonical form escapes every control character but tab, and a line break outside a multi-line string."
+alternatives = [
+    "Canonicalize paths before comparison: rejected because canonicalization follows symlinks, which could resolve to unexpected places; refusing components is predictable",
+    "No path check, trusting internal callers: rejected because one bug in path construction could delete arbitrary files, and the check is cheap",
+    "A message string per site: rejected because its free text is nothing a caller or a test can match",
+    "One variant per fault: rejected because the three are one concept, a derived path that breaks the layout",
+]
+status = "proposed"
+created = "2026-06-15T09:46:15.176073231Z"
+anchors = [
+    { file = "src/error.rs", symbol = "Error::StorePath" },
+    { file = "src/store/format/layout.rs", symbol = "Store::parent_and_name" },
+    { file = "src/store/format/layout.rs", symbol = "Store::verify_path" },
+    { file = "src/store/format/layout.rs", symbol = "StorePathFault" },
+    { file = "src/store/write/commit.rs", symbol = "Store::commit_batch" },
+    { file = "src/store/write/commit.rs", symbol = "Store::prepare_write" },
+    { file = "src/store/write/journal.rs", symbol = "Journal" },
+]
+
+[accepted_text]
+choice = "Every path a commit writes or removes passes verify_path, which refuses a parent-directory component and a path outside the store root"
+reason = """
+All store paths are derived from the store root, so the check should never fire in correct code; it guards against a programming error that would write or delete a file outside .trurlic/. prepare_write checks each target and commit_batch every write and removal before anything is staged, and replay refuses a journal that names a path outside the store (Error::BadJournal). The check rejects .. components before the prefix test, since starts_with on a path that is not canonical does not stop /root/../etc. Control characters cannot corrupt a node file: the canonical form escapes every control character but tab, and a line break outside a multi-line string.
+"""
+alternatives = [
+    "Canonicalize paths before comparison: rejected because canonicalization follows symlinks, which could resolve to unexpected places; refusing components is predictable",
+    "No path check, trusting internal callers: rejected because one bug in path construction could delete arbitrary files, and the check is cheap",
+]

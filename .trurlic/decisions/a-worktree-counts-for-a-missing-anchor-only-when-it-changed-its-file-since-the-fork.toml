@@ -8,25 +8,23 @@ alternatives = [
     "Walk each worktree ahead whole: rejected because each check would read every source file of every such worktree for crates and module declarations the calling tree holds already in the usual case",
     "Ask the worktrees in status too: rejected because status is called often and asks the project's git nothing, so it names such an anchor unresolved instead",
 ]
-tags = [
-    "anchors",
-    "git",
-    "performance",
-]
 status = "proposed"
 origin = "anchor findings"
 created = "2026-11-24T10:39:08.594384541Z"
 anchors = [
-    { file = "src/code/facts.rs", symbol = "CodeFacts::beside" },
-    { file = "src/git.rs", symbol = "changed_since" },
-    { file = "src/git.rs", symbol = "work_tree_of" },
-    { file = "src/sources/mod.rs", symbol = "elsewhere" },
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::beside" },
+    { file = "src/git/layout.rs", symbol = "work_tree_of" },
+    { file = "src/git/revisions.rs", symbol = "changed_since" },
+    { file = "src/sources/findings.rs", symbol = "elsewhere" },
     { file = "src/sources/worktrees.rs", symbol = "fork" },
     { file = "src/sources/worktrees.rs", symbol = "others" },
     { file = "tests/integration/anchors.rs", symbol = "a_worktree_git_cannot_say_enough_of_is_a_check_warning" },
     { file = "tests/integration/placement.rs", symbol = "a_submodule_s_main_and_linked_worktrees_read_each_other" },
     { file = "tests/integration/placement.rs", symbol = "a_worktree_that_did_not_change_the_file_since_the_fork_makes_nothing_pending" },
     { file = "tests/integration/placement.rs", symbol = "code_another_worktree_has_not_committed_is_pending_there" },
+]
+depends_on = [
+    "the-verdict-on-an-anchor-follows-its-cause-missing-malformed-or-unverified",
 ]
 
 [accepted_text]

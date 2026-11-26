@@ -1,26 +1,22 @@
 component = "store"
 choice = "Every [quality] pattern runs on regex-automata's lazy DFA alone, each direction's cache capped at 320 KiB and giving up instead of clearing; a Unicode word boundary is refused at compile"
-reason = "A search on the lazy DFA costs time linear in the bytes it reads once the states it walks are built, and it builds them in a cache the caller owns. Capped at MAX_PATTERN_CACHE_BYTES per direction, with minimum_cache_clear_count(Some(0)), the cache gives up when full instead of clearing, so the engine itself holds one search to one fill of each cache. The cost of a call is then the bytes its patterns read and the states their caches build, and a call bounds both: bytes, and a total of cache growth (MAX_PATTERN_CACHE_TOTAL_BYTES). The cap is 320 KiB because the costliest of 32 ordinary patterns, a 48-word case-insensitive list, grows its caches about 224 KB over the English prose of tests/fixtures/prose, a whole graph, and about 20 KB more each time the text doubles; a pattern past it gives up rather than starve the others, and the total, not the cap, bounds a write. A cache that gave up is emptied, so a call that goes on past the give-up builds its states again and charges them. The regex crate hides which engine it runs and falls back to the PikeVM, whose time per byte follows the pattern, after a give-up or for a Unicode word boundary over text outside ASCII. That boundary is the one construct the lazy DFA runs over ASCII text alone, so Compiled::new refuses it, naming the rewrite (?:^|\\W)word(?:\\W|$), or (?-u:\\b) over ASCII text. An automaton whose start states pass the cache is refused too. A search error is a give-up. The hybrid feature also gives tree-sitter's regex the lazy DFA, in a release build and in tests alike, so its #match? predicates run on one engine."
+reason = "A search on the lazy DFA costs time linear in the bytes it reads once the states it walks are built, and it builds them in a cache the caller owns. Capped at MAX_PATTERN_CACHE_BYTES per direction, with minimum_cache_clear_count(Some(0)), the cache gives up when full instead of clearing, so the engine itself holds one search to one fill of each cache. The cost of a call is then the bytes its patterns read and the states their caches build, and a call bounds both: bytes, and a total of cache growth (MAX_PATTERN_CACHE_TOTAL_BYTES). The cap is sized on the prose of tests/fixtures/prose: the costliest ordinary pattern, a long case-insensitive word list, judges a whole graph of it within its cache, with room for far longer text, which the audit tests hold; a pattern past the cap gives up rather than starve the others, and the total, not the cap, bounds a write. A cache that gave up is emptied, so a call that goes on past the give-up builds its states again and charges them. The regex crate hides which engine it runs and falls back to the PikeVM, whose time per byte follows the pattern, after a give-up or for a Unicode word boundary over text outside ASCII. That boundary is the one construct the lazy DFA runs over ASCII text alone, so Compiled::new refuses it, naming the rewrite (?:^|\\W)word(?:\\W|$), or (?-u:\\b) over ASCII text. An automaton whose start states pass the cache is refused too. A search error is a give-up. The hybrid feature also gives tree-sitter's regex the lazy DFA, in a release build and in tests alike, so its #match? predicates run on one engine."
 alternatives = [
     "The meta engine of the regex crate: rejected because it falls back to the PikeVM, whose cost per byte follows the pattern, so only a per-pattern estimate bounds a call",
     "Keep a Unicode word boundary on the PikeVM, charged by weighed NFA states: rejected because the weights are an estimate a constructed pattern outruns, and they overstate every ordinary pattern a thousandfold",
     "Clear the cache when full, as the engine does by default: rejected because each clearing builds the states again, so the construction of one search has no bound",
     "ASCII word boundaries alone: rejected because a word would split at its first letter outside ASCII",
 ]
-tags = [
-    "dependencies",
-    "quality",
-]
 status = "proposed"
 origin = "quality findings: a work limit in state-bytes, paged with from"
 created = "2026-11-25T16:18:06.233347736Z"
 anchors = [
     { file = "Cargo.toml", symbol = "dependencies::regex-automata" },
-    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_CACHE_BYTES" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "tests::a_full_batch_of_prose_fits_the_caches_and_the_total_of_an_ordinary_table" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "tests::each_ordinary_pattern_judges_a_whole_graph_of_prose_within_its_cache" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "tests::the_rewritten_tables_find_what_their_first_forms_found" },
-    { file = "src/store/quality/bar/pattern.rs", symbol = "Compiled::new" },
+    { file = "src/store/model/limits.rs", symbol = "MAX_PATTERN_CACHE_BYTES" },
+    { file = "src/store/quality/audit.rs", symbol = "tests::a_full_batch_of_prose_fits_the_caches_and_the_total_of_an_ordinary_table" },
+    { file = "src/store/quality/audit.rs", symbol = "tests::each_ordinary_pattern_judges_a_whole_graph_of_prose_within_its_cache" },
+    { file = "src/store/quality/audit.rs", symbol = "tests::the_rewritten_tables_find_what_their_first_forms_found" },
+    { file = "src/store/quality/pattern.rs", symbol = "Compiled::new" },
 ]
 depends_on = [
     "quality-patterns-are-regexes-compiled-by-a-write-by-check-and-by-the-lint-section",

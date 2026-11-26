@@ -8,19 +8,15 @@ alternatives = [
     "Skip a malformed file and load the rest: rejected because a decision would drop out of every brief without a word",
     "Read every file untyped and report type faults as issues too: rejected because every consumer would then handle values the format does not allow",
 ]
-tags = [
-    "reliability",
-    "validation",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/commands/check.rs", symbol = "check" },
-    { file = "src/store/load.rs", symbol = "Store::read_nodes" },
-    { file = "src/store/validate.rs", symbol = "ProjectState::validate" },
+    { file = "src/store/format/load.rs", symbol = "Store::read_nodes" },
+    { file = "src/store/graph/validate.rs", symbol = "ProjectState::validate" },
     { file = "tests/integration/invalid_graph.rs", symbol = "the_reads_answer_over_an_invalid_graph" },
     { file = "tests/integration/malformed_node.rs" },
 ]
 depends_on = [
-    "validation-issues-carry-an-issuekind-and-a-subject-and",
+    "validation-issues-carry-a-kind-and-a-subject-and-come-sorted",
 ]

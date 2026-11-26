@@ -1,4 +1,4 @@
-component = "project"
+component = "store"
 choice = "Node files carry no history: a decision file holds its current text, and version control holds the revisions"
 reason = """
 A history list in each decision grew the file with every revision, conflicted when two branches revised one decision, and duplicated what version control keeps; the store carried a cap and migration code for it. Under tracked placement the project's git holds every revision of every node file with its author and date. The one earlier state the format needs, the text the owner accepted while a revision is proposed, is accepted_text.
@@ -7,12 +7,9 @@ alternatives = [
     "Keep the history field: rejected because it grows every file and conflicts on merge, for what git keeps",
     "A history file beside each decision: rejected because it is a second file per node to keep in step for the same record",
 ]
-tags = [
-    "storage",
-]
 status = "accepted"
 created = "2026-11-24T01:00:00Z"
 anchors = [
-    { file = "src/store/schema.rs", symbol = "AcceptedText" },
-    { file = "src/store/schema.rs", symbol = "Decision" },
+    { file = "src/store/model/schema.rs", symbol = "AcceptedText" },
+    { file = "src/store/model/schema.rs", symbol = "Decision" },
 ]

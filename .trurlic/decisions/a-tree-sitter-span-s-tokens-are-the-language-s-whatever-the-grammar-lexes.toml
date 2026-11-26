@@ -8,24 +8,20 @@ alternatives = [
     "Name the silent tokens as Lexicon data of every grammar: rejected because the rule reads each grammar's node kinds, Rust's in code and Python's in its query",
     "Hash a run of adjacent use declarations and a use list's entries as a sorted set: rejected because rustfmt sorts them only when its configuration or style edition changes, and a hash that reorders some tokens is a second order to keep right beside the one every hash holds",
 ]
-tags = [
-    "anchors",
-    "hashing",
-]
 status = "proposed"
 origin = "code index review fixes"
 created = "2026-11-25T17:10:51.306704636Z"
 anchors = [
-    { file = "src/code/rust.rs", symbol = "LEXICON" },
-    { file = "src/code/rust/silent.rs", symbol = "a_trailing_comma_that_carries_no_meaning_moves_no_hash" },
-    { file = "src/code/rust/silent.rs", symbol = "braces_around_a_closure_or_arm_body_of_one_expression_move_no_hash" },
-    { file = "src/code/rust/silent.rs", symbol = "rustfmt_moves_only_the_hash_of_merged_derives_a_comma_in_a_macros_tokens_and_sorted_uses" },
-    { file = "src/code/rust/silent.rs", symbol = "silent_tokens" },
-    { file = "src/code/syntax.rs", symbol = "Lexicon" },
-    { file = "src/code/syntax.rs", symbol = "Lexicon::comment" },
-    { file = "src/code/syntax.rs", symbol = "every_byte_but_comments_and_whitespace_is_in_one_token" },
-    { file = "src/code/syntax.rs", symbol = "gaps" },
-    { file = "src/code/units.rs", symbol = "a_comment_among_bytes_no_node_holds_moves_no_hash" },
+    { file = "src/code/parse/rust/lexicon.rs", symbol = "LEXICON" },
+    { file = "src/code/parse/rust/silent.rs", symbol = "a_trailing_comma_that_carries_no_meaning_moves_no_hash" },
+    { file = "src/code/parse/rust/silent.rs", symbol = "braces_around_a_closure_or_arm_body_of_one_expression_move_no_hash" },
+    { file = "src/code/parse/rust/silent.rs", symbol = "rustfmt_moves_only_the_hash_of_merged_derives_a_comma_in_a_macros_tokens_and_sorted_uses" },
+    { file = "src/code/parse/rust/silent.rs", symbol = "silent_tokens" },
+    { file = "src/code/parse/tokens.rs", symbol = "Lexicon" },
+    { file = "src/code/parse/tokens.rs", symbol = "Lexicon::comment" },
+    { file = "src/code/parse/tokens.rs", symbol = "every_byte_but_comments_and_whitespace_is_in_one_token" },
+    { file = "src/code/parse/tokens.rs", symbol = "gaps" },
+    { file = "src/code/parse/units/leaves.rs", symbol = "a_comment_among_bytes_no_node_holds_moves_no_hash" },
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",

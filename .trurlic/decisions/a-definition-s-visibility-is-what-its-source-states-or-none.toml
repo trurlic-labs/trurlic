@@ -5,16 +5,12 @@ alternatives = [
     "Public for a trait impl and its members: rejected because a private trait's impl is no public API",
     "Keep the path of pub(in path): rejected because no reader asks which path, and it would add an owned string per definition",
 ]
-tags = [
-    "anchors",
-    "rust",
-]
 status = "accepted"
 origin = "definition kinds"
 created = "2026-11-24T10:33:26.877207089Z"
 anchors = [
-    { file = "src/code/kinds.rs", symbol = "Visibility" },
-    { file = "src/code/kinds.rs", symbol = "Visibility::of_modifier" },
-    { file = "src/code/rust/items.rs", symbol = "Within" },
-    { file = "src/code/rust/marks.rs", symbol = "visibility_of" },
+    { file = "src/code/index/kinds.rs", symbol = "Visibility" },
+    { file = "src/code/index/kinds.rs", symbol = "Visibility::of_modifier" },
+    { file = "src/code/parse/rust/items.rs", symbol = "Within" },
+    { file = "src/code/parse/rust/marks.rs", symbol = "visibility_of" },
 ]
