@@ -6,8 +6,9 @@
 //! response, a line that is no message one error (carrying the `id` of a
 //! line with a `method` when one can be read; a line without one would be
 //! a response, whose `id` is the server's), a notification or a response
-//! none. A line longer than [`MAX_MESSAGE_BYTES`] is read to its end and
-//! discarded whole, so its tail is never taken for a message of its own.
+//! none. A line longer than [`MAX_MESSAGE_BYTES`], its newline not
+//! counted, is read to its end and discarded whole, so its tail is never
+//! taken for a message of its own.
 
 use std::io::{self, BufRead, Write};
 
@@ -121,13 +122,15 @@ pub(super) fn read_message(
 }
 
 enum Line {
+    /// The line's bytes, its newline apart.
     Complete(Vec<u8>),
     /// Longer than the limit; consumed to its newline and dropped.
     Oversize,
 }
 
-/// One newline-terminated line, holding at most `limit` bytes of it in
-/// memory. `Ok(None)` at the end of the input with nothing read.
+/// One newline-terminated line of at most `limit` bytes, its newline not
+/// counted, never holding more than `limit` bytes of it in memory.
+/// `Ok(None)` at the end of the input with nothing read.
 fn read_line(reader: &mut (impl BufRead + ?Sized), limit: usize) -> io::Result<Option<Line>> {
     let mut line = Vec::new();
     let mut oversize = false;
@@ -141,15 +144,16 @@ fn read_line(reader: &mut (impl BufRead + ?Sized), limit: usize) -> io::Result<O
             });
         }
         let newline = available.iter().position(|&byte| byte == b'\n');
-        let take = newline.map_or(available.len(), |position| position + 1);
+        let end = newline.unwrap_or(available.len());
         if !oversize {
-            line.extend_from_slice(available.get(..take).unwrap_or_default());
-            if line.len() > limit {
+            if line.len().saturating_add(end) > limit {
                 oversize = true;
                 line = Vec::new();
+            } else {
+                line.extend_from_slice(available.get(..end).unwrap_or_default());
             }
         }
-        reader.consume(take);
+        reader.consume(newline.map_or(end, |position| position + 1));
         if newline.is_some() {
             return Ok(Some(if oversize {
                 Line::Oversize
@@ -499,13 +503,47 @@ mod tests {
         assert!(read_line(&mut reader, 16).unwrap().is_none());
     }
 
+    /// The limit counts a message's bytes, not its newline: a line of
+    /// exactly the limit is read whole across reads, one byte more is not.
     #[test]
-    fn a_line_at_the_limit_is_kept() {
-        let input = b"0123456789\n";
-        let Some(Line::Complete(line)) = read_line(&mut &input[..], 11).unwrap() else {
+    fn a_line_at_the_limit_is_kept_and_one_past_it_is_not() {
+        let input = b"0123456789\n0123456789x\n";
+        let mut reader = std::io::BufReader::with_capacity(4, &input[..]);
+        let Some(Line::Complete(line)) = read_line(&mut reader, 10).unwrap() else {
             panic!("a line at the limit was refused");
         };
-        assert_eq!(line, input);
+        assert_eq!(line, b"0123456789");
+        assert!(matches!(
+            read_line(&mut reader, 10).unwrap(),
+            Some(Line::Oversize)
+        ));
+        assert!(read_line(&mut reader, 10).unwrap().is_none());
+    }
+
+    /// A message of exactly [`MAX_MESSAGE_BYTES`] is read, as a batch of
+    /// that size is by `trurlic apply`; one byte more is refused.
+    #[test]
+    fn a_message_of_the_limit_is_read_and_one_past_it_is_refused() {
+        let message = |bytes: usize| {
+            let frame = br#"{"jsonrpc":"2.0","method":"n","params":{"p":""}}"#.len();
+            let padding = "x".repeat(bytes - frame);
+            format!(r#"{{"jsonrpc":"2.0","method":"n","params":{{"p":"{padding}"}}}}"#)
+        };
+        let at = message(MAX_MESSAGE_BYTES);
+        assert_eq!(at.len(), MAX_MESSAGE_BYTES);
+        let input = format!("{at}\n{}\n", message(MAX_MESSAGE_BYTES + 1));
+        let mut reader = input.as_bytes();
+
+        assert!(matches!(
+            read_message(&mut reader).unwrap(),
+            Some(Ok(Message::Notification(_)))
+        ));
+        let Some(Err(refused)) = read_message(&mut reader).unwrap() else {
+            panic!("a message past the limit was read");
+        };
+        assert_eq!((refused.code, refused.id), (INVALID_REQUEST, Value::Null));
+        let exceeds = format!("exceeds {MAX_MESSAGE_BYTES} bytes");
+        assert!(refused.message.contains(&exceeds), "{}", refused.message);
     }
 
     #[test]
