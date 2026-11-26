@@ -48,7 +48,7 @@ impl Repository {
 
     /// Write the files `names` of the directory `dir` to the object store
     /// as blobs, each its bytes as they are, in one object transaction
-    /// ([`OVERRIDES`](super::OVERRIDES)), and return their ids in the order
+    /// (`core.fsyncMethod`, `isolation.rs`), and return their ids in the order
     /// of `names`. The ids are read back from `index`, a scratch index file
     /// this call writes and leaves to its caller to remove: the
     /// repository's own index and work tree are neither read nor written.

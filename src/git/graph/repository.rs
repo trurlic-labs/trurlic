@@ -1,4 +1,4 @@
-//! The graph's repository and the questions trurlic asks it: made empty,
+//! The graph's repository and the git commands run in it: made empty,
 //! its status, a commit of its index, the branch's commits and what a
 //! commit's tree holds.
 

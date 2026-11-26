@@ -21,18 +21,6 @@ pub(crate) struct Elsewhere {
     pub(crate) fork: Option<CodeFacts>,
 }
 
-/// Whether `anchor` names what `facts` hold: one definition, or several.
-fn holds(facts: &CodeFacts, anchor: &Anchor) -> bool {
-    match facts.resolve(anchor) {
-        Resolution::Resolved(_) | Resolution::Ambiguous(_) => true,
-        Resolution::FileMissing
-        | Resolution::SymbolMissing
-        | Resolution::SymbolOnDirectory
-        | Resolution::NoResolver
-        | Resolution::Unindexable(_)
-        | Resolution::Malformed(_) => false,
-    }
-}
 /// The decisions whose anchors are judged, by name.
 pub(crate) type Decisions<'s> = [(&'s str, &'s Decision)];
 
@@ -146,5 +134,18 @@ impl<'s> Asked<'s> {
     /// stale anchors.
     pub(crate) fn with_repairs(self, repairs: BTreeMap<&'s Anchor, Repair>) -> Self {
         Self { repairs, ..self }
+    }
+}
+
+/// Whether `anchor` names what `facts` hold: one definition, or several.
+fn holds(facts: &CodeFacts, anchor: &Anchor) -> bool {
+    match facts.resolve(anchor) {
+        Resolution::Resolved(_) | Resolution::Ambiguous(_) => true,
+        Resolution::FileMissing
+        | Resolution::SymbolMissing
+        | Resolution::SymbolOnDirectory
+        | Resolution::NoResolver
+        | Resolution::Unindexable(_)
+        | Resolution::Malformed(_) => false,
     }
 }

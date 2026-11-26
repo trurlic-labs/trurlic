@@ -77,7 +77,8 @@ const fn number_bytes(bound: usize) -> usize {
 
 /// What a definition `densest` describes costs in a file of `max` bytes
 /// at most: its scope of one segment and itself, each number of their
-/// entry as long as `max` makes it, as [`Measure`] charges them.
+/// entry as long as `max` makes it, as [`Measure`](super::write::Measure)
+/// charges them.
 const fn definition_cost(densest: Densest, max: usize) -> usize {
     let number = number_bytes(max);
     // Its parent, its count of segments, the segment's tag, its name's

@@ -11,8 +11,8 @@ use crate::store::model::Anchor;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Batch {
     pub(crate) ops: Vec<Op>,
-    /// The task or plan row the batch belongs to: stored on each decision
-    /// it records, and the `Origin:` trailer of its commit.
+    /// The change the batch belongs to, as its caller names it: stored on
+    /// each decision it records, and the `Origin:` trailer of its commit.
     pub(crate) origin: Option<String>,
     /// The `Session:` trailer of its commit.
     pub(crate) session: Option<String>,

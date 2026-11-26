@@ -14,8 +14,8 @@ use crate::{Error, Result};
 
 /// The most bytes of a git command's stdout that are read: past them the
 /// command is killed and its call fails with [`Error::GitOutputTooLarge`].
-/// The largest output read is the code root's history walk, of
-/// at most [`super::renames::MAX_WALKED_COMMITS`] commits at about 140 bytes for
+/// The largest output read is the code root's history walk, of at most
+/// `MAX_WALKED_COMMITS` (`renames.rs`) commits at about 140 bytes for
 /// each file a commit changes, or one batch of blobs, which
 /// [`super::renames::blobs`] sizes within this bound; a git that prints without
 /// end is cut off here rather than filling memory.
