@@ -1,7 +1,7 @@
 component = "commands"
 choice = "init refuses tracked outside a work tree or under an ignore rule, shared in a work tree off the main worktree's top, and any graph a shared main graph serves"
 reason = """
-init is where a placement is stated, so it refuses what check would refuse at once, before it writes anything. Tracked needs a git work tree (Error::NoWorkTree) whose ignore rules do not match .trurlic/project.toml (git check-ignore, Error::GraphIgnored). Shared in a work tree belongs at the top of the main worktree, where linked worktrees look (Error::SharedOffMain naming it); a bare repository's worktree has none (Error::SharedInBare). Outside any work tree shared needs no git, and is served to symlinked trees. In a linked worktree that the main worktree's shared graph already serves, a new graph of either placement would be a second graph and is refused (Error::SharedGraphServes). The next row's history repository is not made here.
+init is where a placement is stated, so it refuses what check would refuse at once, before it writes anything. Tracked needs a git work tree (Error::NoWorkTree) whose ignore rules do not match .trurlic/project.toml (git check-ignore, Error::GraphIgnored). Shared in a work tree belongs at the top of the main worktree, where linked worktrees look (Error::SharedOffMain naming it); a bare repository's worktree has none (Error::SharedInBare). Outside any work tree shared needs no git, and is served to symlinked trees. In a linked worktree that the main worktree's shared graph already serves, a new graph of either placement would be a second graph and is refused (Error::SharedGraphServes).
 """
 alternatives = [
     "Leave every check to trurlic check: rejected because the graph would be made and refused in the next breath",
@@ -12,7 +12,7 @@ tags = [
     "git",
     "placement",
 ]
-status = "accepted"
+status = "proposed"
 created = "2026-11-24T03:00:00Z"
 anchors = [
     { file = "src/commands/init.rs", symbol = "init" },
@@ -24,4 +24,14 @@ anchors = [
 depends_on = [
     "check-refuses-a-placement-git-contradicts-and-a-second-graph",
     "trurlic-init-requires-placement",
+]
+
+[accepted_text]
+choice = "init refuses tracked outside a work tree or under an ignore rule, shared in a work tree off the main worktree's top, and any graph a shared main graph serves"
+reason = """
+init is where a placement is stated, so it refuses what check would refuse at once, before it writes anything. Tracked needs a git work tree (Error::NoWorkTree) whose ignore rules do not match .trurlic/project.toml (git check-ignore, Error::GraphIgnored). Shared in a work tree belongs at the top of the main worktree, where linked worktrees look (Error::SharedOffMain naming it); a bare repository's worktree has none (Error::SharedInBare). Outside any work tree shared needs no git, and is served to symlinked trees. In a linked worktree that the main worktree's shared graph already serves, a new graph of either placement would be a second graph and is refused (Error::SharedGraphServes). The next row's history repository is not made here.
+"""
+alternatives = [
+    "Leave every check to trurlic check: rejected because the graph would be made and refused in the next breath",
+    "Allow a shared graph in a subdirectory and map the linked worktree's path: rejected because one place to look keeps discovery to one stat",
 ]

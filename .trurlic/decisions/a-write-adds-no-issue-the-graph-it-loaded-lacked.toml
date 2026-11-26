@@ -1,8 +1,8 @@
 component = "store"
 choice = "A write adds no issue: the graph it commits has no issue, matched on kind and subject, that the graph it loaded lacked"
 reason = """
-Every write is validated against the whole graph before it touches disk: validate::introduced keeps the issues of the graph a write would commit, matched on (IssueKind, subject), that the graph loaded under the writer's lock does not have, and apply refuses the batch at the first of them (Edit::first_introduced), naming the op that last changed a node the issue concerns. Issues the graph already had, from a hand edit or an older release, do not block a write that leaves them as they are, so one invalid file never freezes the store. A message can change with a count while the issue stays the same, so messages are not the key. A batch is validated once, after its last op, not once per op; the graph it began with, which the batch's undo record gives back in place, is validated only when the new graph has an issue, so a write to a valid store validates once (about 4 ms at 2000 decisions).
-Writer::format needs no check: it commits only canonical text that reads back as the value loaded, so the graph it commits is the one it loaded; tests/integration/invalid_graph.rs runs fmt over a graph with issues and finds them unchanged. This absorbs the rule of the deleted pattern on fail-closed validation.
+Every write is validated against the whole graph before it touches disk: validate::introduced keeps the issues of the graph a write would commit, matched on (IssueKind, subject), that the graph loaded under the writer's lock does not have, and apply refuses the batch at the first of them (Edit::first_introduced), naming the op that last changed a node the issue concerns. Issues the graph already had, from a hand edit or an older release, do not block a write that leaves them as they are, so one invalid file never freezes the store. A message can change with a count while the issue stays the same, so messages are not the key. A batch is validated once, after its last op, not once per op; the graph it began with, which the batch's undo record gives back in place, is validated only when the new graph has an issue, so a write to a valid store validates once.
+Writer::format needs no check: it commits only canonical text that reads back as the value loaded, so the graph it commits is the one it loaded; tests/integration/invalid_graph.rs runs fmt over a graph with issues and finds them unchanged.
 """
 alternatives = [
     "Validate only on read: rejected because a write would put an error on disk that every later reader inherits",
@@ -13,7 +13,7 @@ tags = [
     "consistency",
     "reliability",
 ]
-status = "accepted"
+status = "proposed"
 created = "2026-06-15T09:44:49.521491347Z"
 anchors = [
     { file = "src/store/apply/edit.rs", symbol = "Edit::first_introduced" },
@@ -25,4 +25,16 @@ anchors = [
 ]
 depends_on = [
     "validation-issues-carry-a-kind-and-a-subject-and-come-sorted",
+]
+
+[accepted_text]
+choice = "A write adds no issue: the graph it commits has no issue, matched on kind and subject, that the graph it loaded lacked"
+reason = """
+Every write is validated against the whole graph before it touches disk: validate::introduced keeps the issues of the graph a write would commit, matched on (IssueKind, subject), that the graph loaded under the writer's lock does not have, and apply refuses the batch at the first of them (Edit::first_introduced), naming the op that last changed a node the issue concerns. Issues the graph already had, from a hand edit or an older release, do not block a write that leaves them as they are, so one invalid file never freezes the store. A message can change with a count while the issue stays the same, so messages are not the key. A batch is validated once, after its last op, not once per op; the graph it began with, which the batch's undo record gives back in place, is validated only when the new graph has an issue, so a write to a valid store validates once (about 4 ms at 2000 decisions).
+Writer::format needs no check: it commits only canonical text that reads back as the value loaded, so the graph it commits is the one it loaded; tests/integration/invalid_graph.rs runs fmt over a graph with issues and finds them unchanged. This absorbs the rule of the deleted pattern on fail-closed validation.
+"""
+alternatives = [
+    "Validate only on read: rejected because a write would put an error on disk that every later reader inherits",
+    "Validate only the changed part of the graph: rejected because cycles and names shared across kinds need the whole graph, and a whole validation is cheap at these sizes",
+    "Refuse every write while the graph has any issue: rejected because one hand-edit mistake would block every write, the fix included",
 ]
