@@ -41,29 +41,24 @@ use crate::{Error, Result};
 
 pub use access::Writer;
 pub use apply::{
-    AddComponent, AnchorInput, Applied, Batch, Done, Field, LeftRepair, ListEdit, Merge, NodeKind,
-    Op, OpAt, OpKind, PatternNote, Record, Refusal, Remove, RemoveComponent, Rename, Repair,
-    RepairAnchors, Repaired, Revise, ReviseComponent, Rule, Warning, WarningKind,
+    AddComponent, AnchorInput, Applied, Batch, Done, Field, LeftRepair, ListEdit, Merge, Op,
+    OpKind, PatternNote, Record, Refusal, Remove, RemoveComponent, Rename, Repair, RepairAnchors,
+    Repaired, Revise, ReviseComponent, Warning, WarningKind,
 };
 pub(crate) use durable::sync_dir;
-pub use history::{CommitMessage, HistoryFinding, Tool};
+pub use history::HistoryFinding;
 pub use lock::StoreLock;
 pub use migration::PlacementDoubt;
 pub(crate) use migration::{
     Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, PlacementSource,
 };
-pub use name::NameFault;
 pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
 pub(crate) use quality::Bar;
-pub use quality::{
-    ConfigFault, DecisionField, Level, Limit, Pattern, PatternFault, PatternMatch, PreparedBar,
-    Quality, QualityFault, Shortfall, WordRange,
-};
+pub use quality::{Level, PreparedBar, Quality, QualityFault, Shortfall};
 pub use query::{Named, anchors_in, normalize_path};
 pub use schema::{
-    AcceptedText, AcceptedVia, Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR,
-    Decision, FORMAT_VERSION, PROJECT_COMPONENT, PROJECT_FILE, Placement, Project, STATE_DIR,
-    STORE_DIR, Status, StatusName,
+    Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, FORMAT_VERSION,
+    PROJECT_COMPONENT, PROJECT_FILE, Placement, STATE_DIR, STORE_DIR, Status, StatusName,
 };
 pub use state::{NodeFile, ProjectState};
 pub use symbols::SymbolsKey;
@@ -71,6 +66,15 @@ pub use text::{TextFault, TextField};
 pub use time::{Timestamp, TimestampError};
 pub use validate::{Issue, IssueKind};
 pub use version::FormatVersion;
+
+#[cfg(test)]
+pub(crate) use apply::{NodeKind, OpAt, Rule};
+#[cfg(test)]
+pub(crate) use name::NameFault;
+#[cfg(test)]
+pub(crate) use quality::{DecisionField, Pattern, PatternMatch, WordRange};
+#[cfg(test)]
+pub(crate) use schema::{AcceptedText, Project};
 
 /// Handle to a graph directory and the code root it is read for. It holds
 /// no graph: a read loads one with [`Store::load_state`], and every write

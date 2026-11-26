@@ -44,7 +44,9 @@ pub use ops::{
     AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
     RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent,
 };
-pub use refusal::{NodeKind, OpAt, Refusal, Rule};
+#[cfg(test)]
+pub(crate) use refusal::NodeKind;
+pub use refusal::{OpAt, Refusal, Rule};
 pub use warning::{PatternNote, Warning, WarningKind};
 
 /// What a batch wrote: each op's outcome, in order, its warnings, and the

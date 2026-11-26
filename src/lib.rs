@@ -1,3 +1,8 @@
+//! Trurlic as a library: the binary's entry [`cli::main`], the graph
+//! format the binary writes ([`FORMAT_VERSION`], which integration tests
+//! name) and, with the `bench` feature, [`bench`]. Every other module is
+//! `pub(crate)`, so the compiler reports what nothing in the crate uses.
+
 pub(crate) mod budget;
 pub mod cli;
 
@@ -10,20 +15,21 @@ pub(crate) mod git;
 pub(crate) mod lint;
 pub(crate) mod mcp;
 pub(crate) mod sources;
-pub mod store;
+pub(crate) mod store;
 pub(crate) mod tools;
 
-pub use error::{Error, Result};
+pub(crate) use error::{Error, Result};
+pub use store::FORMAT_VERSION;
 
 /// What `benches/` drives: the MCP server in process, over a store written
 /// by the seeded [`Corpus`](bench::Corpus), the code index and the likely
-/// duplicates pass. Built only with the `bench` feature.
+/// duplicates pass, and the store types its setup names. Built only with
+/// the `bench` feature.
 #[cfg(feature = "bench")]
 pub mod bench {
     pub use crate::mcp::Server;
     pub use crate::store::corpus::Corpus;
-
-    use crate::store::{ProjectState, Store};
+    pub use crate::store::{Placement, ProjectState, Store};
 
     /// The anchor findings of every decision of `state` in `store`'s code
     /// root, as `check` gathers them; how many there are.

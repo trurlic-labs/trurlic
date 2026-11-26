@@ -45,8 +45,7 @@ use criterion::{
 };
 use serde_json::{Value, json};
 
-use trurlic::bench::{Corpus, Server, likely_duplicates};
-use trurlic::store::{Placement, ProjectState, Store};
+use trurlic::bench::{Corpus, Placement, ProjectState, Server, Store, likely_duplicates};
 
 /// The example `[quality]` table the repository ships.
 const QUALITY: &str = include_str!("../examples/quality.toml");

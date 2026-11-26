@@ -6,7 +6,7 @@ The detail of every rule is in the decision graph (`.trurlic/decisions/`, one co
 
 ### Modules
 
-Single crate (`src/lib.rs`). `pub` only on `cli` and `store`; everything else `pub(crate)`.
+Single crate (`src/lib.rs`). `pub` only on `cli::main`, `FORMAT_VERSION` and, with the `bench` feature, `bench`; everything else `pub(crate)`.
 
 ```
 store      → git                         graph files: schema, canonical form, validation, text and

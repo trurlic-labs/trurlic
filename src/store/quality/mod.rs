@@ -27,10 +27,9 @@ use crate::store::Store;
 use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
 use crate::{Error, Result};
 
+pub use bar::Shortfall;
 pub(crate) use bar::{Bar, Breach, Broken, Hit, Place, Scan, element, texts};
-pub use bar::{PatternFault, Shortfall};
-
-pub use config::{ConfigFault, Level, Pattern, Quality, WordRange};
+pub use config::{Level, Pattern, Quality, WordRange};
 
 /// The fields of a decision the bar reads, and the names a pattern's
 /// `fields` gives them. `origin` is the batch's, read once per batch.

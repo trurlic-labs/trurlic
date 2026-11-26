@@ -152,7 +152,7 @@ refused!(
     "project.toml",
     format!(
         "format_version = \"{}\"\nname = \"x\"\ndescription = \"\"\n",
-        trurlic::store::FORMAT_VERSION
+        trurlic::FORMAT_VERSION
     ),
     "missing field `placement`"
 );
@@ -161,7 +161,7 @@ refused!(
     "project.toml",
     format!(
         "format_version = \"{}\"\nname = \"x\"\ndescription = \"\"\nplacement = \"cloud\"\n",
-        trurlic::store::FORMAT_VERSION
+        trurlic::FORMAT_VERSION
     ),
     "unknown variant `cloud`"
 );
@@ -171,7 +171,7 @@ fn quality(table: &str) -> String {
     format!(
         "format_version = \"{}\"\nname = \"x\"\ndescription = \"\"\nplacement = \"tracked\"\n\
          [quality]\n{table}\n",
-        trurlic::store::FORMAT_VERSION
+        trurlic::FORMAT_VERSION
     )
 }
 
