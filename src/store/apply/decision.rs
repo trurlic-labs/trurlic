@@ -7,7 +7,7 @@ use super::check::{self, Fault, Sources, anchor_edit, edit_list, new_name};
 use super::edit::Edit;
 use super::ops::{Field, ListEdit, Merge, OpKind, Record, Remove, Rename, Revise};
 use super::refusal::{NodeKind, Rule};
-use super::{Done, Repaired, Warning};
+use super::{Done, LeftRepair, Repaired, Warning};
 use crate::store::quality::{Bar, DecisionField, Hit, Scan};
 use crate::store::schema::{AcceptedText, Anchor, Decision, PROJECT_COMPONENT, Status};
 use crate::store::time::Timestamp;
@@ -27,6 +27,30 @@ pub(super) struct Context<'b> {
     pub(super) warnings: Vec<Warning>,
     /// The anchors the batch's repairs replaced so far.
     pub(super) repaired: Vec<Repaired>,
+    /// The repairs of the map the bar did not admit, so far.
+    pub(super) left: Vec<LeftRepair>,
+}
+
+impl<'b> Context<'b> {
+    /// A batch's context before its first op: its `origin`, the instant
+    /// now, the `bar` and its `scan`, and the origin's `hits`.
+    pub(super) fn new(
+        origin: Option<&'b str>,
+        bar: &'b Bar,
+        scan: Scan,
+        hits: Vec<(String, Hit)>,
+    ) -> crate::error::Result<Self> {
+        Ok(Self {
+            origin,
+            created: Timestamp::now()?,
+            bar,
+            scan,
+            hits,
+            warnings: Vec::new(),
+            repaired: Vec::new(),
+            left: Vec::new(),
+        })
+    }
 }
 
 pub(super) fn record(

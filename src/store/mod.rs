@@ -41,9 +41,9 @@ use crate::{Error, Result};
 
 pub use access::Writer;
 pub use apply::{
-    AddComponent, AnchorInput, Applied, Batch, Done, Field, ListEdit, Merge, NodeKind, Op, OpAt,
-    OpKind, PatternNote, Record, Refusal, Remove, RemoveComponent, Rename, Repair, RepairAnchors,
-    Repaired, Revise, ReviseComponent, Rule, Warning, WarningKind,
+    AddComponent, AnchorInput, Applied, Batch, Done, Field, LeftRepair, ListEdit, Merge, NodeKind,
+    Op, OpAt, OpKind, PatternNote, Record, Refusal, Remove, RemoveComponent, Rename, Repair,
+    RepairAnchors, Repaired, Revise, ReviseComponent, Rule, Warning, WarningKind,
 };
 pub(crate) use durable::sync_dir;
 pub use history::{CommitMessage, HistoryFinding, Tool};
@@ -54,10 +54,10 @@ pub(crate) use migration::{
 };
 pub use name::NameFault;
 pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
-pub(crate) use quality::{Bar, Breach, Broken, PatternCache};
+pub(crate) use quality::{Bar, PatternCache};
 pub use quality::{
-    ConfigFault, DecisionField, Level, Limit, Pattern, PatternFault, PatternMatch, Quality,
-    QualityFault, Shortfall, WordRange,
+    ConfigFault, DecisionField, Level, Limit, Pattern, PatternFault, PatternMatch, PreparedBar,
+    Quality, QualityFault, Shortfall, WordRange,
 };
 pub use query::{Named, anchors_in, normalize_path};
 pub use schema::{

@@ -791,6 +791,7 @@ dependencies = [
  "rayon",
  "regex",
  "regex-automata",
+ "regex-syntax",
  "serde",
  "serde_json",
  "tempfile",

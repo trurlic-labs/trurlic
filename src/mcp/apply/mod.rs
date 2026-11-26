@@ -21,8 +21,8 @@ use crate::store::limits::{
     MAX_TRAILER_BYTES,
 };
 use crate::store::{
-    AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
-    RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent, Store, Writer,
+    AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, PreparedBar, Record,
+    Remove, RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent, Store, Writer,
 };
 
 use repairs::Unrepaired;
@@ -37,7 +37,7 @@ pub(super) static APPLY: ToolSpec<ApplyArgs, Answer> = ToolSpec {
     description: DESCRIPTION,
     destructive: Destructive::Yes,
     access: Access::Write {
-        read: read_repairs,
+        read: prepare,
         write: apply,
     },
 };
@@ -54,7 +54,7 @@ anchors and tags join the survivor, its text is dropped); remove (refused while 
 decisions depend on it, unless `repoint_to` names their new target); \
 add_component, revise_component, rename_component, remove_component (refused while \
 in use); repair_anchors (stale anchors replaced: the `repairs` given, or with none \
-every repair `trurlic check` shows but one a `refuse` pattern matches, in every \
+every repair `trurlic check` shows but one the bar refuses or cannot judge, in every \
 decision ever accepted that holds the stale anchor; the result lists them and the \
 stale anchors left).\n\
 Refused too: a revise that changes nothing, an edge to a missing node or to itself, \
@@ -69,13 +69,15 @@ the result.\n\
 The result names each op's node and what it changed, never the texts.";
 
 /// The arguments of `apply`: what a batch file holds too, each op with no
-/// `repairs` given the map the tree shows before the write, and the stale
-/// anchors that read left without a repair.
+/// `repairs` given the map the tree shows before the write, the stale
+/// anchors that read left without a repair, and the bar compiled before
+/// the write.
 #[derive(Debug)]
 pub(super) struct ApplyArgs {
     ops: Vec<Op>,
     origin: Option<String>,
     unrepaired: Unrepaired,
+    bar: PreparedBar,
 }
 
 impl Args for ApplyArgs {
@@ -98,13 +100,16 @@ impl Args for ApplyArgs {
                 },
             ),
             unrepaired: Unrepaired::new(),
+            bar: PreparedBar::default(),
         }
     }
 }
 
-/// Read, holding no lock, the repairs an op with no `repairs` writes: the
-/// tree walk and git run before the write lock is taken.
-fn read_repairs(store: &Store, mut arguments: ApplyArgs) -> Outcome<ApplyArgs> {
+/// Read and compile, holding no lock, what the write needs: the bar of the
+/// project's `[quality]`, and the repairs an op with no `repairs` writes,
+/// the tree walk and git run before the write lock is taken.
+fn prepare(store: &Store, mut arguments: ApplyArgs) -> Outcome<ApplyArgs> {
+    arguments.bar = store.prepare_bar()?;
     arguments.unrepaired = repairs::fill(store, &mut arguments.ops)?;
     Ok(arguments)
 }
@@ -114,6 +119,7 @@ fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
         ops,
         origin,
         unrepaired,
+        bar,
     } = arguments;
     let batch = Batch {
         ops,
@@ -122,8 +128,8 @@ fn apply(writer: &mut Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
         // none, and `clientInfo` names the client program.
         session: None,
     };
-    let applied = writer.apply(batch)?;
-    let left = repairs::left(writer.state(), &unrepaired);
+    let applied = writer.apply(batch, &bar)?;
+    let left = repairs::left(writer.state(), unrepaired, &applied.left);
     let warned = duplicates::warned(&applied.ops, writer.state());
     Ok(result::fit(applied, warned, left))
 }
@@ -285,7 +291,7 @@ const REPAIRS: List<Object<Repair>> = List {
 };
 
 /// The repairs given, or, when none are, every repair the tree shows,
-/// which [`read_repairs`] fills in.
+/// which [`prepare`] fills in.
 fn repair_anchors(fields: &mut Fields<'_, '_>) -> Op {
     let about = "Each stale anchor to replace, in its decision; absent, every repair \
                  `trurlic check` shows, in each decision ever accepted that holds the stale \

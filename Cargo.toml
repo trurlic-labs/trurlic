@@ -100,16 +100,25 @@ tree-sitter-cpp = "0.23"
 # too. The `regex` crate hides which engine it runs and falls back to the
 # PikeVM, whose time per byte follows the pattern. Unicode classes and
 # case folding, since a decision's text is in any script. The crate is in
-# the build already through tree-sitter's `regex`.
+# the build already through tree-sitter's `regex`; its `hybrid` feature
+# gives that `regex` the lazy DFA too, in the release build and in tests
+# alike.
 regex-automata = { version = "0.4.19", default-features = false, features = ["std", "syntax", "nfa-thompson", "hybrid", "unicode"] }
+# The parser regex-automata builds on, for a pattern's syntax tree: what
+# translating it will cost (the code points its case-insensitive classes
+# fold) is bounded before it is translated, and it is parsed once for both
+# directions of its automaton. In the build already, with these features,
+# through regex-automata's `syntax` and `unicode`.
+regex-syntax = { version = "0.8.12", default-features = false, features = ["std", "unicode"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
 tempfile = "3"
 # The regex crate the patterns ran on before the lazy DFA alone: a test
 # holds the shipped table, rewritten for the lazy DFA, to the findings of
-# its first form over the seeded corpus.
-regex = { version = "1.13", default-features = false, features = ["std", "unicode", "perf-dfa"] }
+# its first form. With the features tree-sitter's `regex` has in the
+# release build, so the tests run tree-sitter's queries on its engines.
+regex = { version = "1.13", default-features = false, features = ["unicode"] }
 
 # Invariants a tool can check. Tests opt out of the panicking lints through
 # clippy.toml's allow-*-in-tests keys; any other exception is an

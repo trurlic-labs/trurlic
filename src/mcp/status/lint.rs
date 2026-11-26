@@ -389,7 +389,9 @@ const fn measure(fault: &QualityFault) -> (Option<Measure>, Option<Matched>) {
             let (index, at) = (found.index, Some(found.at));
             (None, Some(Matched { index, at }))
         }
-        &QualityFault::GaveUp { index } => (None, Some(Matched { index, at: None })),
+        &QualityFault::GaveUp { index, .. } | &QualityFault::CacheTotal { largest: index, .. } => {
+            (None, Some(Matched { index, at: None }))
+        }
         QualityFault::OriginRequired => (None, None),
     }
 }
@@ -477,9 +479,11 @@ fn declare_quality(fields: &mut Shown<'_, LintItem>) {
     fields.optional("field", field, &Str, |item| {
         quality(item).map(|found| found.field.as_str())
     });
-    let rule = "The rule as a refusal names it: a limit's, `pattern`, or `pattern_gave_up` where \
-                the pattern's cache filled before it could judge the field, which a write of it \
-                refuses.";
+    let rule = "The rule as a refusal names it: a limit's, `pattern`, `pattern_gave_up` where \
+                the pattern's cache filled before it could judge the field, or \
+                `pattern_cache_total` where the patterns' caches together passed their total \
+                over the decision, `pattern` naming the one that grew the most; a write of it \
+                refuses both.";
     fields.optional("rule", rule, &Str, |item| {
         quality(item).map(|found| found.rule)
     });

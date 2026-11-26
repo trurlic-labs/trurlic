@@ -334,6 +334,7 @@ mod tests {
             written: usize::MAX,
             removed: usize::MAX,
             repaired: Vec::new(),
+            left: Vec::new(),
         };
         let anchor = || {
             let file = "f".repeat(MAX_ANCHOR_PATH_BYTES);
@@ -421,8 +422,15 @@ mod tests {
                 bytes: usize::MAX,
                 max: usize::MAX,
             },
-            Rule::PatternWork { bound: usize::MAX },
-            Rule::Quality(QualityFault::GaveUp { index: usize::MAX }),
+            Rule::PatternWork,
+            Rule::Quality(QualityFault::GaveUp {
+                index: usize::MAX,
+                alone: false,
+            }),
+            Rule::Quality(QualityFault::CacheTotal {
+                largest: usize::MAX,
+                alone: false,
+            }),
         ];
         for rule in rules {
             let refusal = Refusal {

@@ -34,8 +34,8 @@ pub(crate) enum Cut {
     /// The decisions from `next` on, by name, would take the bytes the
     /// patterns read past the bound.
     WorkLimit(Work),
-    /// A pattern's cache gave up on `next`, filled over the decisions
-    /// before it on the page.
+    /// A pattern's cache, or the caches together, filled on `next`, over
+    /// the decisions before it on the page.
     GaveUp,
     /// The result's room ended the listing at `next`.
     Page,
@@ -301,7 +301,8 @@ impl Output for PatternCounts {
         };
         let why = "Why some went unjudged: `not_asked`, the call judged the limits alone; \
                    `work_limit`, the bytes the patterns read reached the bound; `gave_up`, a \
-                   pattern's cache filled over the page before `next`; `page`, the result's \
+                   pattern's cache, or the caches together, filled over the page before `next`; \
+                   `page`, the result's \
                    room ended the listing; `uncompiled`, a pattern does not compile.";
         fields.optional("why", why, &kind, |p| cut(p).map(Cut::kind));
         let about = "The bytes the patterns would read over every decision and the bound: \
@@ -351,7 +352,7 @@ mod tests {
     use crate::mcp::status::{StatusArgs, status};
     use crate::store::Store;
     use crate::store::corpus::Corpus;
-    use crate::store::limits::MAX_QUALITY_PATTERNS;
+    use crate::store::limits::{MAX_QUALITY_PATTERNS, MAX_TEXT_FIELD_BYTES};
     use crate::store::testing::OUTGROWS_ITS_CACHE;
 
     /// The patterns' reading of `d0` to `d5`, stopped for `why` before
@@ -543,6 +544,47 @@ mod tests {
         counts["lint"]["patterns"] = Value::Null;
         counts["non_canonical"] = Value::Null;
         counts
+    }
+
+    /// The lint section reads the decisions while the bytes its patterns
+    /// read stay within `MAX_REPORT_PATTERN_BYTES`: the most patterns over
+    /// reasons of the longest text, one more decision than the bound holds,
+    /// end the page at the last.
+    #[test]
+    fn the_lint_section_stops_at_its_bytes_bound() {
+        use crate::store::testing::{empty_state, sample_decision};
+        use crate::store::{Anchor, DecisionField, Level, Pattern, Quality};
+
+        let reason = "x".repeat(MAX_TEXT_FIELD_BYTES);
+        let per = MAX_QUALITY_PATTERNS * (reason.len() + 1)
+            + MAX_QUALITY_PATTERNS * ("Choice of the sample".len() + 1);
+        let count = MAX_REPORT_PATTERN_BYTES / per + 1;
+        let mut state = empty_state();
+        let pattern = Pattern {
+            pattern: "zz".into(),
+            fields: [DecisionField::Choice, DecisionField::Reason].into(),
+            level: Level::Warn,
+            message: "M".into(),
+        };
+        state.project.quality = Quality {
+            patterns: vec![pattern; MAX_QUALITY_PATTERNS],
+            ..Quality::default()
+        };
+        for index in 0..count {
+            let mut decision = sample_decision("project");
+            // clone: each decision owns its reason.
+            decision.reason = reason.clone();
+            decision.alternatives = vec!["None".into()];
+            decision.anchors = [Anchor::new("src/a.rs".into(), Some("f".into())).unwrap()].into();
+            state.decisions.insert(format!("d{index:05}"), decision);
+        }
+        let patterns = Patterns::Judged { from: None };
+
+        let (_, reading) = shortfalls(&state, patterns, usize::MAX, |_, _| true);
+
+        let counts = reading.unwrap().counts(None);
+        assert_eq!(counts.judged, count - 1);
+        assert_eq!(to_value(&counts)["why"], "work_limit");
     }
 
     /// No legal `[quality]` makes the default call slower. The table is at

@@ -9,6 +9,7 @@
 
 use rayon::prelude::*;
 
+use crate::store::limits::MAX_PATTERN_CACHE_TOTAL_BYTES;
 use crate::store::{Bar, Decision, PatternCache, ProjectState, QualityFault, Shortfall};
 
 /// The findings of one kind: how many there are, and the first of them, by
@@ -82,8 +83,8 @@ pub(crate) struct Next<'s> {
 pub(crate) enum Stop {
     /// Reading it would take their bytes past the bound.
     Bytes,
-    /// A pattern's cache gave up on it, filled over the decisions before
-    /// it on the page.
+    /// A pattern's cache gave up on it, or the caches grew past their
+    /// total over it, filled by the decisions before it on the page.
     GaveUp,
     /// The findings before it pass what a page lists.
     Listing,
@@ -98,6 +99,8 @@ enum Rank {
     /// A pattern's finding: the pattern's index, then the finding's order
     /// among that pattern's for the decision.
     Pattern { index: usize, order: usize },
+    /// The patterns' caches past their total over the decision.
+    Total,
 }
 
 /// A finding with its decision's position among those wanted.
@@ -195,118 +198,93 @@ fn limit_findings(bar: &Bar, decisions: &[(&str, &Decision)], limit: usize) -> F
         .reduce(Found::new, |earlier, later| earlier.then(later, limit))
 }
 
-/// One pattern's findings over a run of decisions: the first `limit`, the
-/// count of each decision's in order, and the run's decision its cache
-/// gave up on, past which it judged none.
-struct PatternRun {
-    found: Found<Placed>,
-    counts: Vec<usize>,
-    gave_up: Option<usize>,
-}
-
-impl PatternRun {
-    /// The findings of the first `judged` decisions of the run: a prefix
-    /// of those kept, since they come in decision order.
-    fn until(self, judged: usize) -> Found<Placed> {
-        let total = self.counts.iter().take(judged).sum();
-        let mut first = self.found.first;
-        first.truncate(total);
-        Found { total, first }
-    }
-}
-
-/// The matches of each pattern of `bar` in `decisions`, the first at
-/// position `start`, the first `limit` of each, each pattern over its
-/// cache of `caches`: on the thread pool, one task per pattern.
-fn pattern_findings(
-    bar: &Bar,
-    decisions: &[(&str, &Decision)],
-    start: usize,
-    caches: &mut [PatternCache],
-    limit: usize,
-) -> Vec<PatternRun> {
-    caches
-        .par_iter_mut()
-        .enumerate()
-        .map(|(index, cache)| {
-            let mut run = PatternRun {
-                found: Found::new(),
-                counts: Vec::with_capacity(decisions.len()),
-                gave_up: None,
-            };
-            for (at, &(_, decision)) in decisions.iter().enumerate() {
-                let each = bar.audit_pattern(index, decision, cache);
-                run.counts.push(each.len());
-                let gave_up = each.iter().any(is_give_up);
-                for (order, shortfall) in each.into_iter().enumerate() {
-                    let rank = Rank::Pattern { index, order };
-                    run.found.add(limit, (start + at, rank, shortfall));
-                }
-                if gave_up {
-                    run.gave_up = Some(at);
-                    break;
-                }
-            }
-            run
-        })
-        .collect()
-}
-
 /// Whether `shortfall` is a pattern's cache giving up.
 const fn is_give_up(shortfall: &Shortfall) -> bool {
     match shortfall.fault {
         QualityFault::GaveUp { .. } => true,
-        QualityFault::Limit { .. } | QualityFault::Pattern(_) | QualityFault::OriginRequired => {
-            false
-        }
+        QualityFault::Limit { .. }
+        | QualityFault::Pattern(_)
+        | QualityFault::CacheTotal { .. }
+        | QualityFault::OriginRequired => false,
     }
 }
 
-/// The matches of each pattern of `bar` in `read`, the first `kept` of
-/// each, judged in runs of decisions that double in length, each pattern
-/// over one cache for the whole call. Once the findings before the next
-/// run, `limits`' and the patterns', pass `kept`, a page cannot list past
-/// them, so the rest go unjudged. A cache that gives up on a decision ends
-/// the judging before it, so the next page judges it over a fresh cache;
-/// on the first decision read, which a fresh cache gave up on, the judging
-/// ends after it, its give-up a finding. So each page fills each cache at
-/// most once. The matches, how many of `read` the patterns judged, and why
-/// they stopped there.
+/// One decision judged by every pattern: each pattern's findings, in their
+/// order, and how much its caches grew.
+type Judged = Vec<(Vec<Shortfall>, usize)>;
+
+/// `decision` judged by each pattern of `bar` over its cache of `caches`:
+/// on the thread pool, one task per pattern, so a cache is one thread's.
+fn judged(bar: &Bar, decision: &Decision, caches: &mut [PatternCache]) -> Judged {
+    caches
+        .par_iter_mut()
+        .enumerate()
+        .map(|(index, cache)| {
+            let before = cache.memory_usage();
+            let found = bar.audit_pattern(index, decision, cache);
+            (found, cache.memory_usage().saturating_sub(before))
+        })
+        .collect()
+}
+
+/// The matches of the patterns of `bar` in `read`, the first `kept`,
+/// decision by decision, each pattern over one cache for the call. Once the
+/// findings before the next decision, `limits`' and the patterns', pass
+/// `kept`, a page cannot list past them, so the rest go unjudged. A cache
+/// that gives up on a decision, or caches that grow past
+/// `MAX_PATTERN_CACHE_TOTAL_BYTES` over it, end the judging before it, so
+/// the next page judges it first, over fresh caches. On the first decision
+/// read, the judging ends after it, the give-up or the total its finding.
+/// The matches, how many of `read` the patterns judged, and why they
+/// stopped there.
 fn pattern_runs(
     bar: &Bar,
     read: &[(&str, &Decision)],
     limits: &Found<Placed>,
     kept: usize,
-) -> (Vec<Found<Placed>>, usize, Option<Stop>) {
+) -> (Found<Placed>, usize, Option<Stop>) {
     let mut caches = bar.caches();
-    let mut found: Vec<Found<Placed>> = caches.iter().map(|_| Found::new()).collect();
-    let (mut judged, mut run) = (0, 1usize);
-    while judged < read.len() {
-        let end = judged.saturating_add(run).min(read.len());
-        let part = read.get(judged..end).unwrap_or_default();
-        let runs = pattern_findings(bar, part, judged, &mut caches, kept);
-        let gave_up = runs.iter().filter_map(|run| run.gave_up).min();
-        let here = match gave_up {
-            Some(0) if judged == 0 => 1,
-            Some(at) => at,
-            None => part.len(),
-        };
-        found = found
-            .into_iter()
-            .zip(runs)
-            .map(|(earlier, later)| earlier.then(later.until(here), kept))
-            .collect();
-        (judged, run) = (judged + here, run.saturating_mul(2));
-        if gave_up.is_some() {
-            return (found, judged, Some(Stop::GaveUp));
+    let mut grown = vec![0usize; caches.len()];
+    let mut found = Found::new();
+    for (position, &(_, decision)) in read.iter().enumerate() {
+        let each = judged(bar, decision, &mut caches);
+        let (over, gave_up) = filled(&mut grown, &each);
+        if position > 0 && (over || gave_up) {
+            return (found, position, Some(Stop::GaveUp));
         }
-        let limited = limits.first.iter().take_while(|&&(at, ..)| at < judged);
-        let matched = found.iter().map(|found| found.total);
-        if judged < read.len() && limited.count().saturating_add(matched.sum()) >= kept {
-            return (found, judged, Some(Stop::Listing));
+        for (index, (shortfalls, _)) in each.into_iter().enumerate() {
+            for (order, shortfall) in shortfalls.into_iter().enumerate() {
+                found.add(kept, (position, Rank::Pattern { index, order }, shortfall));
+            }
+        }
+        if over || gave_up {
+            if over {
+                let total = bar.cache_total(&grown);
+                found.add(kept, (position, Rank::Total, total));
+            }
+            return (found, 1, Some(Stop::GaveUp));
+        }
+        let limited = limits.first.iter().take_while(|&&(at, ..)| at <= position);
+        let listed = limited.count().saturating_add(found.total);
+        if position + 1 < read.len() && listed >= kept {
+            return (found, position + 1, Some(Stop::Listing));
         }
     }
-    (found, judged, None)
+    (found, read.len(), None)
+}
+
+/// The growth of each pattern's caches over a decision, `each`, added to
+/// `grown`, the page's: whether together they passed the page's total, and
+/// whether a cache gave up over the decision.
+fn filled(grown: &mut [usize], each: &Judged) -> (bool, bool) {
+    for (sum, &(_, more)) in grown.iter_mut().zip(each) {
+        *sum = sum.saturating_add(more);
+    }
+    let total = grown
+        .iter()
+        .fold(0, |sum: usize, &more| sum.saturating_add(more));
+    let gave_up = each.iter().any(|(found, _)| found.iter().any(is_give_up));
+    (total > MAX_PATTERN_CACHE_TOTAL_BYTES, gave_up)
 }
 
 /// The bytes the patterns of `bar` would read over every one of
@@ -327,14 +305,12 @@ fn reach(bar: &Bar, decisions: &[(&str, &Decision)], max_bytes: usize) -> (usize
     (spent, within.unwrap_or(decisions.len()))
 }
 
-/// The limits' findings and each pattern's, in order, the first `limit`
-/// of them: each part holds its own first `limit`, so the merge does.
-fn merged(limits: Found<Placed>, patterns: Vec<Found<Placed>>, limit: usize) -> Found<Placed> {
+/// The limits' findings and the patterns', in order, the first `limit` of
+/// them: each part holds its own first `limit`, so the merge does.
+fn merged(limits: Found<Placed>, patterns: Found<Placed>, limit: usize) -> Found<Placed> {
     let mut all = limits;
-    for found in patterns {
-        all.total = all.total.saturating_add(found.total);
-        all.first.extend(found.first);
-    }
+    all.total = all.total.saturating_add(patterns.total);
+    all.first.extend(patterns.first);
     all.first
         .sort_unstable_by_key(|&(position, rank, _)| (position, rank));
     all.first.truncate(limit);
@@ -580,19 +556,19 @@ mod tests {
 
     /// Ten decisions under a pattern no cache holds over a long random
     /// text: `d001` and `d002` fit a cache each but not together, `d005`
-    /// fits none. A page ends before the decision a cache gave up on, which
-    /// the next page judges first over fresh caches; one a fresh cache
-    /// gives up on is the give-up's finding, at `refuse`, and the page ends
-    /// after it. A walk judges every decision and lists what judging each
-    /// alone lists.
+    /// fits none, and `d006` fits one alone, which `d005` left full. A page
+    /// ends before the decision a cache gave up on, which the next page
+    /// judges first over fresh caches; one a fresh cache gives up on is the
+    /// give-up's finding, at `refuse`, and the page ends after it. A walk
+    /// judges every decision and lists what judging each alone lists.
     #[test]
     fn a_give_up_ends_the_page_and_a_walk_lists_each_finding_once() {
         let mut state = empty_state();
         for index in 0..10 {
             let mut decision = sample_decision("project");
             decision.reason = match index {
-                1 | 2 => coin_flips(1_000, index),
-                5 => coin_flips(4_000, index),
+                1 | 2 | 6 => coin_flips(2_500, index),
+                5 => coin_flips(12_000, index),
                 _ => decision.reason,
             };
             state.decisions.insert(format!("d{index:03}"), decision);
@@ -620,5 +596,63 @@ mod tests {
             })
             .collect();
         assert_eq!(listed, alone);
+    }
+
+    /// The patterns judge no further than the decision whose findings reach
+    /// what a page keeps: with one finding a decision, a page that keeps
+    /// three judges three decisions and reads on at the fourth.
+    #[test]
+    fn the_patterns_stop_at_the_decision_whose_findings_reach_the_kept() {
+        let mut state = empty_state();
+        for index in 0..10 {
+            let mut decision = sample_decision("project");
+            decision.alternatives = vec!["None".into()];
+            decision.anchors = [Anchor::new("src/a.rs".into(), Some("f".into())).unwrap()].into();
+            decision.reason = "A reason with zz.".into();
+            state.decisions.insert(format!("d{index:03}"), decision);
+        }
+        let (bar, _) = Bar::for_report(&table());
+
+        let page = shortfalls(&state, &bar, 2, usize::MAX, |_, _| true);
+
+        assert_eq!(page.reach.read, ["d000", "d001", "d002"]);
+        let next = page.reach.next.map(|next| (next.decision, next.why));
+        assert_eq!(next, Some(("d003", Stop::Listing)));
+    }
+
+    /// Decisions over which the patterns' caches together grow past
+    /// `MAX_PATTERN_CACHE_TOTAL_BYTES` end a page before them; the first of
+    /// a page that does so alone is the total's finding, at `refuse`, naming
+    /// the pattern that grew the most, and the page ends after it.
+    #[test]
+    fn caches_past_their_total_end_the_page() {
+        let mut state = empty_state();
+        for index in 0..3 {
+            let mut decision = sample_decision("project");
+            decision.reason = coin_flips(3_000, index);
+            state.decisions.insert(format!("d{index:03}"), decision);
+        }
+        let table = Quality {
+            patterns: vec![table_of(OUTGROWS_ITS_CACHE).patterns[0].clone(); 8],
+            ..Quality::default()
+        };
+        let (bar, _) = Bar::for_report(&table);
+
+        let page = shortfalls(&state, &bar, usize::MAX, usize::MAX, |_, _| true);
+
+        assert_eq!(page.reach.read, ["d000"]);
+        let next = page.reach.next.map(|next| (next.decision, next.why));
+        assert_eq!(next, Some(("d001", Stop::GaveUp)));
+        let total = QualityFault::CacheTotal {
+            largest: 0,
+            alone: true,
+        };
+        let found: Vec<&Shortfall> = page.found.first.iter().map(|(_, s)| s).collect();
+        assert!(
+            found
+                .iter()
+                .any(|s| s.fault == total && s.level == Level::Refuse),
+            "{found:?}"
+        );
     }
 }

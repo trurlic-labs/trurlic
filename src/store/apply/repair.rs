@@ -19,9 +19,9 @@ use super::decision::Context;
 use super::edit::Edit;
 use super::ops::{AnchorInput, Field, OpKind, Repair, RepairAnchors};
 use super::refusal::{NodeKind, Rule};
-use super::{Done, Repaired};
-use crate::store::quality::{DecisionField, texts};
-use crate::store::schema::Anchor;
+use super::{Done, LeftRepair, Repaired};
+use crate::store::quality::{Breach, DecisionField, Hit, texts};
+use crate::store::schema::{Anchor, Decision};
 
 /// One anchor replaced, and whether its decision gained the new anchor,
 /// which it did not hold before.
@@ -37,15 +37,15 @@ pub(super) fn repair_anchors(
     op: RepairAnchors,
     context: &mut Context<'_>,
 ) -> Result<Done, Fault> {
-    let (changes, given) = match op {
+    let changes = match op {
         RepairAnchors::Listed(repairs) => {
             let changes = listed(edit, repairs)?;
             let given = changes.iter().map(|c| c.repaired.to.to_string()).collect();
-            (changes, given)
+            judge_gained(edit, &changes, given, context)?;
+            changes
         }
-        RepairAnchors::Every(map) => (every(edit, &map), Vec::new()),
+        RepairAnchors::Every(map) => admitted(edit, &map, context),
     };
-    judge_gained(edit, &changes, given, context)?;
     let mut decisions: Vec<&str> = changes
         .iter()
         .map(|change| change.repaired.decision.as_str())
@@ -202,6 +202,65 @@ fn judge_gained(
         context.hits.extend(located);
     }
     Ok(())
+}
+
+/// The changes of the "every repair" `map` the patterns admit, each anchor a
+/// decision gained judged alone, its warnings joining the op's. The caller
+/// wrote none of them, so none refuses the batch: one the patterns refuse
+/// or cannot judge (a `refuse` match, a give-up, the cache total, the
+/// bytes bound) is undone and left, with its rule.
+fn admitted(
+    edit: &mut Edit<'_>,
+    map: &BTreeMap<Anchor, Anchor>,
+    context: &mut Context<'_>,
+) -> Vec<Change> {
+    let changes = every(edit, map);
+    let mut kept = Vec::with_capacity(changes.len());
+    for change in changes {
+        let Repaired { decision, from, to } = &change.repaired;
+        let held = edit.state().decisions.get(decision);
+        let judged = held
+            .filter(|_| change.gained)
+            .map(|held| judge_alone(held, to, context));
+        match judged {
+            Some(Err(breach)) => {
+                if let Some(held) = edit.decision_mut(decision) {
+                    held.anchors.remove(to);
+                    // clone: the decision holds the stale anchor again, and
+                    // the result names it.
+                    held.anchors.insert(from.clone());
+                }
+                let rule = breach.broken.into();
+                context.left.push(LeftRepair {
+                    repaired: change.repaired,
+                    rule,
+                });
+            }
+            Some(Ok(hits)) => {
+                context.hits.extend::<Vec<_>>(hits);
+                kept.push(change);
+            }
+            // A repair to an anchor the decision held already gains none.
+            None => kept.push(change),
+        }
+    }
+    kept
+}
+
+/// The anchor `to` that `held` gained, alone, held to the patterns over the
+/// batch's caches: its `warn` matches under the anchors field, or what
+/// stopped them.
+fn judge_alone(
+    held: &Decision,
+    to: &Anchor,
+    context: &mut Context<'_>,
+) -> Result<Vec<(String, Hit)>, Breach> {
+    let text = to.to_string();
+    let mut read = texts(held, DecisionField::Anchors);
+    read.retain(|(_, anchor)| *anchor == text);
+    let hits = context.bar.judge_patterns(&read, &mut context.scan)?;
+    let field = || DecisionField::Anchors.as_str().to_owned();
+    Ok(hits.into_iter().map(|(_, hit)| (field(), hit)).collect())
 }
 
 /// `input` as an anchor, or the rule it breaks.

@@ -34,6 +34,12 @@ impl Store {
         })
     }
 
+    /// `project.toml` as a read finds it: the graph's settings and its
+    /// `[quality]`, none of its nodes.
+    pub(super) fn load_project(&self) -> Result<Project> {
+        self.read(|project, _| Ok(project))
+    }
+
     /// Take the exclusive lock, finish what an interrupted write left, and
     /// load the graph under the lock. Every write to a current-format graph
     /// starts here and commits through the returned [`Writer`]; `init` and

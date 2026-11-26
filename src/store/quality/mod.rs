@@ -24,11 +24,12 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::store::Store;
-use crate::store::limits::MAX_PATTERN_CACHE_BYTES;
+use crate::store::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
 use crate::{Error, Result};
 
 pub(crate) use bar::{Bar, Breach, Broken, Hit, PatternCache, Place, Scan, element, texts};
 pub use bar::{PatternFault, Shortfall};
+
 pub use config::{ConfigFault, Level, Pattern, Quality, WordRange};
 
 /// The fields of a decision the bar reads, and the names a pattern's
@@ -143,11 +144,15 @@ pub enum QualityFault {
     },
     /// A `refuse` pattern matched.
     Pattern(PatternMatch),
-    /// The pattern at `index` of `[quality] patterns` gave up: its
-    /// automaton outgrew its cache, or a write's automata their total, over
-    /// the texts the call read, so it judged no text after this one.
-    /// Whatever its level.
-    GaveUp { index: usize },
+    /// The pattern at `index` of `[quality] patterns` gave up, whatever its
+    /// level: its automaton outgrew its cache over the texts it read, this
+    /// op's or decision's `alone` or those before them too, so it judged no
+    /// text after this one.
+    GaveUp { index: usize, alone: bool },
+    /// The automata of all the patterns grew past the total one call may
+    /// build, over this op's or decision's texts `alone` or those before
+    /// them too; the pattern at `largest` grew the most.
+    CacheTotal { largest: usize, alone: bool },
     /// The batch records a decision without an `origin`, and
     /// `require_origin` is set.
     OriginRequired,
@@ -161,9 +166,40 @@ impl QualityFault {
             Self::Limit { limit, .. } => limit.as_str(),
             Self::Pattern(_) => "pattern",
             Self::GaveUp { .. } => "pattern_gave_up",
+            Self::CacheTotal { .. } => "pattern_cache_total",
             Self::OriginRequired => "origin_required",
         }
     }
+}
+
+/// What filled, `what`, then the remedy when the texts of one op filled
+/// the caches `alone`, else when the ops before it did too, for the
+/// pattern `named`.
+fn remedy(f: &mut fmt::Formatter<'_>, what: &str, alone: bool, named: &str) -> fmt::Result {
+    write!(f, "{what}, ")?;
+    if alone {
+        write!(
+            f,
+            "on this op's texts alone; simplify {named}, or write the text shorter"
+        )
+    } else {
+        write!(
+            f,
+            "over this op's texts and the ops' before it; split the batch, or simplify {named}"
+        )
+    }
+}
+
+/// A `measured` count past the `bound` of `limit`, with its unit and its
+/// source.
+fn past(f: &mut fmt::Formatter<'_>, limit: &Limit, measured: usize, bound: usize) -> fmt::Result {
+    let side = if limit.is_minimum() {
+        "under the minimum"
+    } else {
+        "over the maximum"
+    };
+    let (unit, source) = (limit.unit(), limit.source());
+    write!(f, "{measured} {unit}, {side} of {bound} ({source})")
 }
 
 impl fmt::Display for QualityFault {
@@ -173,27 +209,24 @@ impl fmt::Display for QualityFault {
                 limit,
                 measured,
                 bound,
-            } => {
-                let side = if limit.is_minimum() {
-                    "under the minimum"
-                } else {
-                    "over the maximum"
-                };
-                write!(
-                    f,
-                    "{measured} {}, {side} of {bound} ({})",
-                    limit.unit(),
-                    limit.source()
-                )
-            }
+            } => past(f, limit, *measured, *bound),
             Self::Pattern(found) => write!(f, "{found}"),
-            Self::GaveUp { index } => write!(
-                f,
-                "`[quality] patterns[{index}]` gave up here: over the texts read with this one, \
-                 its automaton outgrew the {MAX_PATTERN_CACHE_BYTES} bytes of cache a pattern \
-                 may fill, or the patterns' automata their total; judge fewer texts at once \
-                 (split the batch), or simplify the pattern"
-            ),
+            &Self::GaveUp { index, alone } => {
+                let what = format!(
+                    "`[quality] patterns[{index}]` gave up here: its automaton outgrew the \
+                     {MAX_PATTERN_CACHE_BYTES} bytes of cache one pattern may fill"
+                );
+                remedy(f, &what, alone, "the pattern")
+            }
+            &Self::CacheTotal { largest, alone } => {
+                let named = format!("`[quality] patterns[{largest}]`");
+                let what = format!(
+                    "the `[quality]` patterns' automata grew here past the \
+                     {MAX_PATTERN_CACHE_TOTAL_BYTES} bytes of cache one write may build, {named} \
+                     the most"
+                );
+                remedy(f, &what, alone, &named)
+            }
             Self::OriginRequired => f.write_str(
                 "is required: the batch records a decision, and `[quality] require_origin` \
                  is set",
@@ -232,6 +265,34 @@ fn words(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
+/// The bar of a store's `[quality]` as a read found it, compiled before a
+/// write takes the lock: compiling holds no other caller back, and the
+/// write uses it when the table it loads under the lock is this one.
+#[derive(Debug)]
+pub struct PreparedBar {
+    quality: Quality,
+    bar: Bar,
+}
+
+/// The bar of an absent `[quality]`, which compiles no pattern: a write
+/// whose graph holds a table compiles that one under the lock.
+impl Default for PreparedBar {
+    fn default() -> Self {
+        let quality = Quality::default();
+        Self {
+            bar: Bar::limits_only(&quality),
+            quality,
+        }
+    }
+}
+
+impl PreparedBar {
+    /// The bar, when it was compiled from `quality`.
+    pub(crate) fn of(&self, quality: &Quality) -> Option<&Bar> {
+        (self.quality == *quality).then_some(&self.bar)
+    }
+}
+
 impl Store {
     /// The rules of `quality` compiled for a write: every pattern, once per
     /// batch. A pattern the lazy DFA does not run is
@@ -242,6 +303,15 @@ impl Store {
             index: fault.index,
             message: fault.message,
         })
+    }
+
+    /// The bar of the `[quality]` the store holds now, compiled holding no
+    /// lock for the write that follows ([`Writer::apply`](crate::store::Writer::apply)).
+    /// A pattern that does not compile is [`Error::QualityPattern`].
+    pub fn prepare_bar(&self) -> Result<PreparedBar> {
+        let quality = self.load_project()?.quality;
+        let bar = self.bar(&quality)?;
+        Ok(PreparedBar { quality, bar })
     }
 }
 
@@ -291,7 +361,7 @@ mod tests {
         let bar = store.bar(quality).unwrap();
         let all = DecisionField::IN_FILE_ORDER;
         let judged = |decision: &Decision| {
-            let mut scan = bar.scan(usize::MAX, usize::MAX);
+            let mut scan = bar.scan();
             bar.judge(decision, &all, &mut scan).map_err(|b| b.broken)
         };
         assert_eq!(judged(&at_the_bar()), Ok(vec![]));

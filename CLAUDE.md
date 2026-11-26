@@ -56,7 +56,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/mod.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
 | Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair.rs`, `sources/renames.rs`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |
 | Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `mcp/status/lint.rs` |
-| A `[quality]` pattern's engine, its cache, the bytes it charges | `store/quality/bar/pattern.rs` |
+| A `[quality]` pattern's engine, its caches, the bytes it charges / what compiling it folds | `store/quality/bar/pattern.rs` / `store/quality/bar/folding.rs` |
 | A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/language.rs`, `code/language/<name>.scm`, `code/language/<name>.rs` |
 | C and C++ macros blanked before the parse: the per-file pass / the tree's set gathered | `code/language/c_family.rs` / `sources/indexer.rs` |
 | Span-hash units and hashing | `code/units.rs` |
@@ -80,7 +80,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 13. A change to what an index holds raises `code::INDEX_FORMAT` (the fingerprint test says when).
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.
-16. A `[quality]` pattern runs on the lazy DFA alone, charging its bytes before it reads them against `MAX_WRITE_PATTERN_BYTES` or `MAX_REPORT_PATTERN_BYTES`, its cache giving up rather than outgrow `MAX_PATTERN_CACHE_BYTES`, and the growth of a write's caches charged together against `MAX_WRITE_PATTERN_CACHE_BYTES` (`store/limits.rs`). Past any of them a write is refused and a report reads no further.
+16. A `[quality]` pattern compiles within `MAX_PATTERN_FOLDED_CODE_POINTS` and `MAX_PATTERN_COMPILED_BYTES`, before a write takes its lock, and runs on the lazy DFA alone, charging its bytes against `MAX_WRITE_PATTERN_BYTES` or `MAX_REPORT_PATTERN_BYTES` before it reads them, its cache giving up rather than outgrow `MAX_PATTERN_CACHE_BYTES`, and the caches of a call growing against `MAX_PATTERN_CACHE_TOTAL_BYTES` together (`store/limits.rs`). Past any of them a write is refused and a report reads no further.
 
 ### Working with the graph
 

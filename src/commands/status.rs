@@ -160,7 +160,7 @@ fn finding(item: &LintItem) -> String {
                         format!("matches `[quality] patterns[{index}]` at byte {at}")
                     }
                     (index, None) => {
-                        format!("`[quality] patterns[{index}]` gave up: its cache filled")
+                        format!("{}, `[quality] patterns[{index}]`", found.rule)
                     }
                 },
                 (None, None) => found.rule.to_owned(),
@@ -198,7 +198,7 @@ fn unjudged(patterns: &PatternCounts, quality: &QualityCounts) -> Result<()> {
         Some(Cut::GaveUp) => {
             out!(
                 "lint: the [quality] patterns read {} decision(s), by name, until a pattern's \
-                 cache filled",
+                 cache, or their caches together, filled",
                 patterns.judged
             )?;
             next_page(patterns)

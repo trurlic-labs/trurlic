@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use super::{Bar, Breach, Broken, PatternCache, PatternFault, Place, searched, texts};
+use super::{Bar, Breach, Broken, PatternCache, PatternFault, Place, grown_most, searched, texts};
 use crate::store::quality::{DecisionField, Level, Quality, QualityFault};
 use crate::store::schema::Decision;
 
@@ -99,13 +99,35 @@ impl Bar {
                         field: place.field,
                         element: place.index,
                         level: Level::Refuse,
-                        fault: QualityFault::GaveUp { index },
+                        // A report lists a give-up only of a decision it
+                        // judged first, over empty caches.
+                        fault: QualityFault::GaveUp { index, alone: true },
                     });
                     break;
                 }
             }
         }
         found
+    }
+
+    /// The finding of a decision over whose texts alone the caches of the
+    /// patterns grew past their total, each pattern's growth in `grown`: at
+    /// `refuse`, in the first field the pattern that grew the most reads.
+    pub(crate) fn cache_total(&self, grown: &[usize]) -> Shortfall {
+        let largest = grown_most(grown.iter().copied());
+        let reads = self.patterns.get(largest).map(|pattern| &pattern.fields);
+        let first = DecisionField::IN_FILE_ORDER
+            .into_iter()
+            .find(|field| reads.is_some_and(|fields| fields.contains(field)));
+        Shortfall {
+            field: first.unwrap_or(DecisionField::Choice),
+            element: None,
+            level: Level::Refuse,
+            fault: QualityFault::CacheTotal {
+                largest,
+                alone: true,
+            },
+        }
     }
 }
 
@@ -133,7 +155,7 @@ fn limit_shortfall(breach: Breach) -> Option<Shortfall> {
             level: Level::Refuse,
             fault,
         }),
-        Broken::Text { .. } | Broken::Work { .. } => None,
+        Broken::Text { .. } | Broken::Work => None,
     }
 }
 
@@ -144,9 +166,9 @@ mod tests {
 
     use super::*;
     use crate::store::corpus::Corpus;
-    use crate::store::limits::{MAX_WRITE_PATTERN_BYTES, MAX_WRITE_PATTERN_CACHE_BYTES};
+    use crate::store::limits::MAX_PATTERN_CACHE_TOTAL_BYTES;
+    use crate::store::quality::Scan;
     use crate::store::quality::{Hit, Pattern};
-    use crate::store::schema::Anchor;
     use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision};
     use crate::store::{ProjectState, WordRange};
 
@@ -210,6 +232,7 @@ mod tests {
                     QualityFault::Pattern(found) => Some(found.at),
                     QualityFault::Limit { .. }
                     | QualityFault::GaveUp { .. }
+                    | QualityFault::CacheTotal { .. }
                     | QualityFault::OriginRequired => None,
                 };
                 (s.field, s.element, s.level, s.fault.as_str(), at)
@@ -267,13 +290,16 @@ mod tests {
         let bar = Bar::compile(&table).unwrap();
         let mut decision = sample_decision("project");
         decision.choice = format!("a{}", "b".repeat(20));
-        decision.origin = Some(coin_flips(4_000, 3));
+        decision.origin = Some(coin_flips(12_000, 3));
         let mut cache = bar.caches().remove(0);
 
         let found = bar.audit_pattern(0, &decision, &mut cache);
 
         let first = found.first().map(|s| (s.field, s.level, &s.fault));
-        let gave_up = QualityFault::GaveUp { index: 0 };
+        let gave_up = QualityFault::GaveUp {
+            index: 0,
+            alone: true,
+        };
         assert_eq!(
             (found.len(), first),
             (1, Some((DecisionField::Origin, Level::Refuse, &gave_up)))
@@ -319,7 +345,7 @@ mod tests {
         }
         let bar = Bar::compile(&table).unwrap();
         for decision in state.decisions.values() {
-            let mut scan = bar.scan(usize::MAX, usize::MAX);
+            let mut scan = Scan::of(&bar.patterns, usize::MAX, usize::MAX);
             let fields = DecisionField::IN_FILE_ORDER.into_iter();
             let texts: Vec<_> = fields.flat_map(|field| texts(decision, field)).collect();
 
@@ -373,6 +399,7 @@ mod tests {
             ),
             QualityFault::Limit { .. }
             | QualityFault::GaveUp { .. }
+            | QualityFault::CacheTotal { .. }
             | QualityFault::OriginRequired => panic!("{s:?}"),
         });
         Ok(hits.collect())
@@ -381,7 +408,7 @@ mod tests {
     fn breach(breach: Breach) -> (Place, QualityFault) {
         match breach.broken {
             Broken::Quality(fault) => (breach.place, fault),
-            Broken::Text { .. } | Broken::Work { .. } => panic!("{breach:?}"),
+            Broken::Text { .. } | Broken::Work => panic!("{breach:?}"),
         }
     }
 
@@ -398,7 +425,7 @@ mod tests {
             let (origin, fields): (Vec<Shortfall>, Vec<Shortfall>) = audit(&bar, decision)
                 .into_iter()
                 .partition(|s| s.field == DecisionField::Origin);
-            let mut scan = bar.scan(usize::MAX, usize::MAX);
+            let mut scan = Scan::of(&bar.patterns, usize::MAX, usize::MAX);
 
             let judged = bar.judge(decision, &DecisionField::IN_FILE_ORDER, &mut scan);
             let judged_origin = bar.judge_origin(decision.origin.as_deref(), &mut scan);
@@ -413,6 +440,7 @@ mod tests {
                     QualityFault::Pattern(matched) => Some(matched.index),
                     QualityFault::Limit { .. }
                     | QualityFault::GaveUp { .. }
+                    | QualityFault::CacheTotal { .. }
                     | QualityFault::OriginRequired => None,
                 };
                 fields
@@ -568,6 +596,7 @@ mod tests {
                         ),
                         QualityFault::Limit { .. }
                         | QualityFault::GaveUp { .. }
+                        | QualityFault::CacheTotal { .. }
                         | QualityFault::OriginRequired => panic!("{s:?}"),
                     })
                     .collect();
@@ -591,70 +620,103 @@ mod tests {
         matched
     }
 
-    /// The limits of a bar a batch's records are written at.
-    struct AtLimits {
-        reason_words: usize,
-        alternatives: usize,
-        alternative_words: usize,
-        anchors: usize,
+    /// A table of 32 ordinary patterns: the shipped table's 11, then word
+    /// and phrase lists, word shapes, addresses and scripts.
+    const ORDINARY: [&str; 32] = [
+        r"(?i)(?:^|\W)(?:we|our)(?:\W|$)",
+        r"(?i)(?:^|\W)utili[sz](?:e|es|ed|ing)(?:\W|$)",
+        r"(?i)(?:^|\W)(?:simply|basically|essentially|actually|obviously|leverages?|leveraged)(?:\W|$)",
+        r"(?:^|\W)\d+(?:[.,]\d+)?\s?(?:(?:ns|us|ms|s|min|x|[KMGT]i?B)(?:\W|$)|%)",
+        r"^(?:[^ ]+ +){25}[^ ]",
+        r";.*;",
+        r"^\s*(?:[^ \t\n]+[ \t\n]+){120}[^ \t\n]",
+        r"(?:[^ \t\n.;:!?]+[ \t\n]+){25}[^ \t\n.;:!?]",
+        r"^[^:]*$",
+        r"rejected:(?:[ \t\n]+[^ \t\n]+){16}",
+        r"(?:^|/)tests?/",
+        r"(?i)(?:^|\W)\w+ly(?:\W|$)",
+        r"(?i)(?:^|\W)(?:we|our|us)(?:\W|$)",
+        r"\w{3,}",
+        r"(?i)(?:^|\W)(?:todo|fixme|xxx|tbd)(?:\W|$)",
+        r"\p{Lu}{2,}\d+",
+        r"(?:^|\W)\d+(?:[.,]\d+)?\s?(?:ms|s)(?:\W|$)",
+        "(?i)(?:^|\\W)(?:bardzo|naprawd\u{119}|po prostu|w\u{142}a\u{15b}ciwie)(?:\\W|$)",
+        r"[\p{Han}\p{Hiragana}\p{Katakana}]",
+        r"(?i)(?:^|\W)\w+(?:ing|ed)(?:\W|$)",
+        r"\w+@\w+\.\w+",
+        r"https?://\S+",
+        r"(?i)\w+ment\w*",
+        "(?i)\\w+o\u{15b}\u{107}",
+        r"(?i)[^\x00-\x7f]",
+        r"\p{L}+\d+\p{L}+",
+        r"(?i)(?:^|\W)(?:very|really|quite|rather|somewhat|fairly|pretty|just|simply|basically|essentially|actually|obviously|clearly|literally|totally|completely|absolutely|definitely|certainly|probably|possibly|perhaps|maybe|arguably|virtually|practically|seemingly|apparently|generally|usually|typically|often|sometimes|frequently|rarely|hardly|barely|merely|only|even|still|already|yet|again|always|never|ever)(?:\W|$)",
+        r"(?i)(?:^|\W)(?:in order to|due to the fact that|at this point in time|in the event that|for the purpose of|with regard to|in terms of|it is important to note|as a matter of fact|a number of|the fact that|in spite of|in the case of|on the other hand|as well as|in addition to|by means of|for the most part)(?:\W|$)",
+        r"(?i)(?:^|\W)(?:should|must|may|might|could)(?:\W|$)",
+        r"(?:^|\W)[A-Z]{2,}(?:\W|$)",
+        r"\s{2,}",
+        r"(?i)(?:^|\W)(?:will|would)(?:\W|$)",
+    ];
+
+    /// [`ORDINARY`] as a table over the prose fields.
+    fn ordinary() -> Quality {
+        let prose = [
+            DecisionField::Choice,
+            DecisionField::Reason,
+            DecisionField::Alternatives,
+        ];
+        Quality {
+            patterns: ORDINARY
+                .iter()
+                .map(|text| pattern(text, &prose, Level::Warn))
+                .collect(),
+            ..Quality::default()
+        }
     }
 
-    /// The shipped table's limits.
-    const SHIPPED_LIMITS: AtLimits = AtLimits {
-        reason_words: 180,
-        alternatives: 4,
-        alternative_words: 30,
-        anchors: 8,
-    };
+    /// This repository's own decisions, English prose, in name order.
+    fn english() -> Vec<Decision> {
+        let graph = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".trurlic");
+        let state = crate::store::Store::at(graph).load_state().unwrap();
+        state.decisions.into_values().collect()
+    }
 
-    /// This repository's limits.
-    const OWN_LIMITS: AtLimits = AtLimits {
-        reason_words: 300,
-        alternatives: 5,
-        alternative_words: 50,
-        anchors: 10,
-    };
-
-    /// The fifty records of a full batch at `limits`, their prose the
-    /// words of the seeded corpus's reasons in turn.
-    fn full_batch(state: &ProjectState, limits: &AtLimits) -> Vec<Decision> {
-        let words: Vec<&str> = state
-            .decisions
-            .values()
-            .flat_map(|decision| decision.reason.split_whitespace())
-            .collect();
-        let mut at = 0;
-        let mut take = |count: usize| {
-            let taken: Vec<&str> = (0..count).map(|n| words[(at + n) % words.len()]).collect();
-            at += count;
-            taken.join(" ")
+    /// A reason of words in fifteen scripts, the letters of each drawn from
+    /// its block in an order fixed by `seed`.
+    fn many_scripts(seed: u64) -> String {
+        let blocks: [(u32, u32); 15] = [
+            (0x61, 26),
+            (0xE0, 31),
+            (0x100, 128),
+            (0x3B1, 25),
+            (0x430, 32),
+            (0x5D0, 27),
+            (0x627, 25),
+            (0x905, 50),
+            (0xE01, 46),
+            (0x10D0, 33),
+            (0x3041, 86),
+            (0x30A1, 90),
+            (0x4E00, 2000),
+            (0xAC00, 2000),
+            (0x531, 38),
+        ];
+        let mut state = seed;
+        let mut next = |below: u32| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            u32::try_from(state >> 33).unwrap() % below
         };
-        (0..50)
-            .map(|index| {
-                let mut decision = sample_decision("project");
-                let choice = take(15);
-                decision.choice = choice.chars().take(190).collect();
-                decision.reason = take(limits.reason_words);
-                decision.alternatives = (0..limits.alternatives)
-                    .map(|_| {
-                        let option = take(4);
-                        format!(
-                            "{option} - rejected: {}",
-                            take(limits.alternative_words - 6)
-                        )
-                    })
-                    .collect();
-                decision.tags = ["quality".into(), "apply".into()].into();
-                decision.anchors = (0..limits.anchors)
-                    .map(|k| {
-                        let file = format!("src/store/module_{index}/file_{k}.rs");
-                        Anchor::new(file, Some(format!("function_name_{k}"))).unwrap()
-                    })
-                    .collect();
-                decision.origin = Some("a full batch".into());
-                decision
-            })
-            .collect()
+        let mut words = Vec::new();
+        for _ in 0..400 {
+            let (start, len) = blocks[usize::try_from(next(15)).unwrap()];
+            let letters = 3 + next(7);
+            let word: String = (0..letters)
+                .map(|_| char::from_u32(start + next(len)).unwrap())
+                .collect();
+            words.push(word);
+        }
+        words.join(" ")
     }
 
     /// The cache the patterns of `quality`, at `warn` so that none stops at
@@ -666,52 +728,62 @@ mod tests {
             pattern.level = Level::Warn;
         }
         let bar = Bar::compile(&table).unwrap();
-        let mut scan = bar.scan(MAX_WRITE_PATTERN_BYTES, total);
+        let mut scan = Scan::of(&bar.patterns, usize::MAX, total);
+        let origin = batch
+            .first()
+            .and_then(|decision| decision.origin.as_deref());
+        let judged = bar.judge_origin(origin, &mut scan);
+        judged.map_err(|breach| breach.broken)?;
         for decision in batch {
-            bar.judge_origin(decision.origin.as_deref(), &mut scan)
-                .and_then(|_| {
-                    let all = DecisionField::IN_FILE_ORDER;
-                    let texts: Vec<_> = all.into_iter().flat_map(|f| texts(decision, f)).collect();
-                    bar.judge_patterns(&texts, &mut scan)
-                })
-                .map_err(|breach| breach.broken)?;
+            scan.begin_op();
+            let all = DecisionField::IN_FILE_ORDER;
+            let held = all.into_iter().filter(|&f| f != DecisionField::Origin);
+            let texts: Vec<_> = held.flat_map(|f| texts(decision, f)).collect();
+            let judged = bar.judge_patterns(&texts, &mut scan);
+            judged.map_err(|breach| breach.broken)?;
         }
         Ok(total - scan.cache_left)
     }
 
-    /// A full batch at its limits fits the write's total of cache four
-    /// times over under the shipped table, and passes under this
-    /// repository's table, and under the shipped patterns with this
-    /// repository's limits.
+    /// Every full batch of fifty of this repository's decisions, English
+    /// prose, and the same with a reason in fifteen scripts beside it, fits
+    /// each pattern's cache and the write's total under 32 ordinary
+    /// patterns; so do the shipped table and this repository's.
     #[test]
-    fn a_full_batch_of_an_ordinary_table_fits_the_write_total_of_cache() {
-        let (_tmp, state) = seeded();
-        let (shipped, own) = (shipped(), own());
-        let total = MAX_WRITE_PATTERN_CACHE_BYTES;
+    fn a_full_batch_of_prose_fits_the_caches_and_the_total_of_an_ordinary_table() {
+        let decisions = english();
+        let mut scripts = sample_decision("project");
+        scripts.reason = many_scripts(5);
+        let total = MAX_PATTERN_CACHE_TOTAL_BYTES;
+        let mut most = 0;
 
-        let at_its_limits = grown(&shipped, &full_batch(&state, &SHIPPED_LIMITS), total);
-        let own_batch = full_batch(&state, &OWN_LIMITS);
-
-        let grown_shipped = at_its_limits.unwrap();
-        assert!(4 * grown_shipped <= total, "{grown_shipped}");
-        grown(&own, &own_batch, total).unwrap();
-        grown(&shipped, &own_batch, total).unwrap();
+        for batch in decisions.chunks(50) {
+            let mut with_scripts = batch.to_vec();
+            with_scripts.push(scripts.clone());
+            for table in [ordinary(), shipped(), own()] {
+                let plain = grown(&table, batch, total);
+                let mixed = grown(&table, &with_scripts, total);
+                assert!(plain.is_ok() && mixed.is_ok(), "{plain:?} {mixed:?}");
+                most = most.max(mixed.unwrap_or(total));
+            }
+        }
+        assert!(most > total / 4, "{most}");
     }
 
     /// The total of cache is exact: a write that may grow the caches by
-    /// what a batch grows passes, and one byte less gives up as a full
-    /// cache does, naming the pattern.
+    /// what a batch grows passes, and one byte less is refused as the
+    /// total, naming the pattern that grew the most.
     #[test]
-    fn one_byte_of_cache_less_than_a_batch_grows_gives_up() {
-        let (_tmp, state) = seeded();
-        let (shipped, batch) = (shipped(), full_batch(&state, &SHIPPED_LIMITS));
-        let needed = grown(&shipped, &batch, usize::MAX).unwrap();
+    fn a_write_grows_its_caches_by_their_total_and_no_more() {
+        let decisions = english();
+        let batch = decisions.get(..50).unwrap();
+        let needed = grown(&ordinary(), batch, usize::MAX).unwrap();
 
-        let enough = grown(&shipped, &batch, needed);
-        let short = grown(&shipped, &batch, needed - 1);
+        let enough = grown(&ordinary(), batch, needed);
+        let short = grown(&ordinary(), batch, needed - 1);
 
         assert_eq!(enough, Ok(needed));
-        let Err(Broken::Quality(QualityFault::GaveUp { .. })) = short else {
+        let Err(Broken::Quality(QualityFault::CacheTotal { alone: false, .. })) = short else {
             panic!("{short:?}")
         };
     }

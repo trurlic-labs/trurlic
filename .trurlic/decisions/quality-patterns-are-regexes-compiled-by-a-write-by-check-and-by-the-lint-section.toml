@@ -1,12 +1,12 @@
 component = "store"
-choice = "A [quality] pattern is a regex compiled for the lazy DFA within stated bounds, once per batch by a write, by check, and by status only for its lint section asked for alone"
-reason = "A project rule such as a whole word, or a sentence past 25 words, needs classes and counts that a substring cannot state. Classes and case folding are Unicode's, since a decision's text is in any script and a word must not split at its first letter outside ASCII. load_state parses the table and compiles nothing. Writer::apply compiles every pattern once per batch and reuses it for every op, and check compiles them to report the one that fails. status compiles them only when its section argument is lint. Judging a pattern costs the bytes of every decision it reads; on every call the table, not the graph, would set the cost of a read agents call often. Every other status call takes Bar::limits_only, compiles nothing and says so in counts.lint.patterns. A short pattern can ask for a large automaton, so each is bounded: MAX_QUALITY_PATTERNS, MAX_PATTERN_BYTES of text, MAX_PATTERN_COMPILED_BYTES of NFA in each direction, and MAX_PATTERN_CACHE_BYTES of cache, which its start states must fit. One that fails is Error::QualityPattern naming project.toml, its index and why: the message of the engine, or the rewrite for a Unicode word boundary or an automaton past its cache. check reports it, every write is refused, and status still returns its report, its lint section judging the limits alone and naming the pattern."
+choice = "A [quality] pattern is a regex compiled for the lazy DFA within stated bounds, once per call: by a write before its lock, by check, and by status only for its lint section asked for alone"
+reason = "A project rule such as a whole word, or a sentence past 25 words, needs classes and counts that a substring cannot state. Classes and case folding are Unicode's, since a decision's text is in any script. load_state parses the table and compiles nothing. A write compiles every pattern once, before it takes the lock, and reuses the bar for every op, repairs included; check compiles them to report the one that fails; status compiles them only when its section argument is lint, since on every call the table, not the graph, would set the cost of a read agents call often. A short pattern can ask for a large automaton, so compiling is bounded by construction: MAX_QUALITY_PATTERNS, MAX_PATTERN_BYTES of text, parsed once for both directions; then, before translating, the code points its case-insensitive classes fold (MAX_PATTERN_FOLDED_CODE_POINTS, counted over the parsed pattern by regex-syntax), since folding is the one part of translation whose cost no other bound holds; then MAX_PATTERN_COMPILED_BYTES of NFA each way and start states within MAX_PATTERN_CACHE_BYTES. The worst legal table of 32 compiles in about 0.1 s of CPU, which bounds the compile of any call. One that fails is Error::QualityPattern naming project.toml, its index and why, with the remedy: the engine's message, a narrower class or a scoped (?i:...), the rewrite of a Unicode word boundary. check reports it, every write is refused, and status still answers, its lint section judging the limits alone."
 alternatives = [
     "Literal substrings: rejected because a whole word or a sentence length needs a class and a count",
     "ASCII classes: rejected because a word boundary would split a word at its first letter outside ASCII",
-    "Compile at every load: rejected because only a write, check and the lint section judge patterns, and a load serves every read",
     "Patterns in every status call: rejected because their cost follows the table and the text of every decision, so a legal table would make the most frequent read slow",
-    "A cache of verdicts keyed by a decision's content: rejected because the call that fills it pays the whole cost, and its files need rules of their own",
+    "Compile under the write lock: rejected because a table near its bounds would hold every other caller for its compile",
+    "Bound compiling by a deadline: rejected because the answer would depend on the machine, and folding has a count to bound",
 ]
 tags = [
     "dependencies",
@@ -18,11 +18,14 @@ created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
     { file = "src/commands/check.rs", symbol = "check" },
     { file = "src/mcp/status/lint/patterns.rs", symbol = "Patterns::of" },
-    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_CACHE_BYTES" },
     { file = "src/store/limits.rs", symbol = "MAX_PATTERN_COMPILED_BYTES" },
+    { file = "src/store/limits.rs", symbol = "MAX_PATTERN_FOLDED_CODE_POINTS" },
     { file = "src/store/quality/bar.rs", symbol = "Bar::compile" },
     { file = "src/store/quality/bar.rs", symbol = "Bar::limits_only" },
     { file = "src/store/quality/bar/audit.rs", symbol = "Bar::for_report" },
+    { file = "src/store/quality/bar/folding.rs", symbol = "folded_code_points" },
+    { file = "src/store/quality/bar/pattern.rs", symbol = "Compiled::new" },
+    { file = "src/store/quality/mod.rs", symbol = "Store::prepare_bar" },
 ]
 depends_on = [
     "quality-in-project-toml-is-typed-optional-and-written-canonical",

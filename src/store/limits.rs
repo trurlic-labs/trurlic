@@ -63,31 +63,38 @@ pub(super) const MAX_PATTERN_BYTES: usize = 500;
 /// ask for a large automaton: `\w{100}` over Unicode passes it.
 pub(super) const MAX_PATTERN_COMPILED_BYTES: usize = 1024 * 1024;
 
-/// Bytes of cache the lazy DFA of one pattern may fill in each direction
-/// over one call. Each state the search builds takes room, so the cap
-/// bounds the construction a call pays for, whatever the pattern. A
-/// pattern whose automaton cannot start within it is refused when
-/// compiled (`\w{8}`, `\p{L}{0,10}`); a search that would outgrow it gives
-/// up instead of clearing it.
-pub(super) const MAX_PATTERN_CACHE_BYTES: usize = 128 * 1024;
+/// Code points the case-insensitive classes of one pattern may span:
+/// translating a pattern folds each such class code point by code point,
+/// and the sum is counted on its syntax tree before it is translated. A
+/// pattern past it is refused when compiled (`(?i)[\s\S]` spans every code
+/// point); a case-sensitive class, and a Perl class anywhere, fold nothing.
+pub(super) const MAX_PATTERN_FOLDED_CODE_POINTS: u64 = 1 << 21;
+
+/// Bytes of cache the lazy DFA of one pattern may hold in each direction
+/// over one call. A pattern whose automaton cannot start within it is
+/// refused when compiled (`\w{9}`); a search that would outgrow it gives up
+/// instead of clearing it. It holds a word list of 48 words over a whole
+/// graph of English prose with room to spare.
+pub(super) const MAX_PATTERN_CACHE_BYTES: usize = 320 * 1024;
+
+/// Bytes the caches of all the `[quality]` patterns, both directions, may
+/// grow by over one call: one `apply` batch, or one page of the `status`
+/// lint section. Growth is what building states costs, which the bytes
+/// read do not count. It is read from a pattern's caches after its search
+/// of an op or a decision, so it may pass the total by one pattern's two
+/// caches; past it the write is refused and the page ends. It holds a
+/// table of 32 ordinary patterns over a full batch of prose in many
+/// scripts.
+pub(crate) const MAX_PATTERN_CACHE_TOTAL_BYTES: usize = 1536 * 1024;
 
 /// Bytes the `[quality]` patterns may read over what one `apply` batch
 /// writes: each pattern charges the bytes of each text it searches, one
 /// more per search, before it runs. A write judges under the exclusive
 /// lock, which another reader or writer waits for at most `LOCK_TIMEOUT`
 /// (5 s), so the bound is the write's own and lower than a report's; with
-/// [`MAX_WRITE_PATTERN_CACHE_BYTES`] it bounds what the patterns cost a
-/// write.
+/// [`MAX_PATTERN_CACHE_TOTAL_BYTES`] it bounds what the patterns cost a
+/// write once compiled.
 pub(crate) const MAX_WRITE_PATTERN_BYTES: usize = 100_000_000;
-
-/// Bytes the caches of all the `[quality]` patterns, both directions, may
-/// grow by over one `apply` batch: what building their states costs, which
-/// the bytes read do not count. The growth is read from each pattern's
-/// caches after its search of an op, so it may pass the total by one
-/// pattern's two caches; past it the batch is refused as when one cache
-/// gives up. Four times what `examples/quality.toml` grows over a batch at
-/// its limits.
-pub(crate) const MAX_WRITE_PATTERN_CACHE_BYTES: usize = 800 * 1024;
 
 /// Bytes the `[quality]` patterns may read in one `status` lint section,
 /// counted as a write counts them. The section holds no lock; it reads

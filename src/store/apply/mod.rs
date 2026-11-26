@@ -29,11 +29,10 @@ use serde::de::DeserializeOwned;
 use crate::store::canonical::Canonical;
 use crate::store::commit::PendingWrite;
 use crate::store::history::{CommitMessage, Tool};
-use crate::store::limits::{MAX_WRITE_PATTERN_BYTES, MAX_WRITE_PATTERN_CACHE_BYTES};
-use crate::store::quality::{Bar, DecisionField, Hit, Scan};
+
+use crate::store::quality::{Bar, DecisionField, Hit, PreparedBar, Scan};
 use crate::store::schema::{Anchor, StatusName};
 use crate::store::state::NodeFile;
-use crate::store::time::Timestamp;
 use crate::store::{Store, Writer};
 use crate::{Error, Result};
 
@@ -70,6 +69,9 @@ pub struct Applied {
     /// Each anchor the `repair_anchors` ops replaced, in the order they
     /// replaced them.
     pub repaired: Vec<Repaired>,
+    /// Each repair of an op with no `repairs` that the bar did not admit,
+    /// in the order they were judged.
+    pub left: Vec<LeftRepair>,
 }
 
 /// An anchor a `repair_anchors` op replaced in a decision: `from` was held
@@ -79,6 +81,14 @@ pub struct Repaired {
     pub decision: String,
     pub from: Anchor,
     pub to: Anchor,
+}
+
+/// A repair of an op with no `repairs` the store did not write, since the
+/// bar refused it or could not judge it: the decision holds `from` still.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeftRepair {
+    pub repaired: Repaired,
+    pub rule: Rule,
 }
 
 /// What one op did, named, never echoed: the node, the nodes it names
@@ -129,23 +139,25 @@ impl Writer<'_> {
     /// whole with [`Error::Refused`], writing nothing. Every decision it
     /// records is `proposed`, with the batch's origin and one instant.
     /// The writer's graph follows the commit; a refused batch, or a commit
-    /// that fails before its commit point, leaves it as it was. A
+    /// that fails before its commit point, leaves it as it was. The batch
+    /// is held to `prepared`, the bar compiled before the lock, when the
+    /// `[quality]` loaded under the lock is the one it was compiled from;
+    /// else, the table edited in between, to that table compiled here. A
     /// `[quality]` pattern that does not compile refuses every batch with
     /// [`Error::QualityPattern`].
-    pub fn apply(&mut self, batch: Batch) -> Result<Applied> {
+    pub fn apply(&mut self, batch: Batch, prepared: &PreparedBar) -> Result<Applied> {
         let message = commit_message(&batch)?;
-        let bar = self.store.bar(&self.state.project.quality)?;
-        let mut scan = bar.scan(MAX_WRITE_PATTERN_BYTES, MAX_WRITE_PATTERN_CACHE_BYTES);
-        let hits = origin_hits(&batch, &bar, &mut scan)?;
-        let mut context = Context {
-            origin: batch.origin.as_deref(),
-            created: Timestamp::now()?,
-            bar: &bar,
-            scan,
-            hits,
-            warnings: Vec::new(),
-            repaired: Vec::new(),
+        let compiled;
+        let bar = match prepared.of(&self.state.project.quality) {
+            Some(bar) => bar,
+            None => {
+                compiled = self.store.bar(&self.state.project.quality)?;
+                &compiled
+            }
         };
+        let mut scan = bar.scan();
+        let hits = origin_hits(&batch, bar, &mut scan)?;
+        let mut context = Context::new(batch.origin.as_deref(), bar, scan, hits)?;
         let more_origin_warnings = warning::report(None, &mut context.hits, &mut context.warnings);
         let mut edit = Edit::new(&mut self.state);
         let (done, named) = match run(&mut edit, batch.ops, &mut context) {
@@ -161,7 +173,8 @@ impl Writer<'_> {
         Ok(Applied {
             ops: done,
             repaired: context.repaired,
-            patterns: warning::notes(&context.warnings, &bar),
+            left: context.left,
+            patterns: warning::notes(&context.warnings, bar),
             warnings: context.warnings,
             more_origin_warnings,
             written,
@@ -360,12 +373,13 @@ fn run(
     Ok((done, named))
 }
 
-/// One op on the graph `edit` holds.
+/// One op on the graph `edit` holds, its patterns told that it begins.
 fn apply_op(
     edit: &mut Edit<'_>,
     op: Op,
     context: &mut Context<'_>,
 ) -> std::result::Result<Done, Fault> {
+    context.scan.begin_op();
     match op {
         Op::Record(op) => decision::record(edit, op, context),
         Op::Revise(op) => decision::revise(edit, op, context),

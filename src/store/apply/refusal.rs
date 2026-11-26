@@ -5,6 +5,7 @@
 use std::fmt;
 
 use super::ops::{Field, OpKind};
+use crate::store::limits::MAX_WRITE_PATTERN_BYTES;
 use crate::store::name::NameFault;
 use crate::store::quality::{Broken, QualityFault};
 use crate::store::schema::AnchorFault;
@@ -138,11 +139,10 @@ pub enum Rule {
     NoRepair,
     /// A rule of the quality bar, built in or of `[quality]`.
     Quality(QualityFault),
-    /// The `[quality]` patterns would read more than `bound` bytes over
-    /// what the batch writes, reading this argument.
-    PatternWork {
-        bound: usize,
-    },
+    /// The `[quality]` patterns would read more than
+    /// `MAX_WRITE_PATTERN_BYTES` over what the batch writes, reading this
+    /// argument.
+    PatternWork,
     /// An issue the resulting graph has and the loaded one lacks, which
     /// no rule above refused.
     Issue(Issue),
@@ -160,7 +160,7 @@ impl From<Broken> for Rule {
         match broken {
             Broken::Text { field, fault } => Self::Text { field, fault },
             Broken::Quality(fault) => Self::Quality(fault),
-            Broken::Work { bound } => Self::PatternWork { bound },
+            Broken::Work => Self::PatternWork,
         }
     }
 }
@@ -190,7 +190,7 @@ impl Rule {
             Self::NotHeld { .. } => "not_held",
             Self::NoRepair => "no_repair",
             Self::Quality(fault) => fault.as_str(),
-            Self::PatternWork { .. } => "pattern_work",
+            Self::PatternWork => "pattern_work",
             Self::Issue(issue) => issue.kind.as_str(),
             Self::FileTooLarge { .. } => "file_too_large",
         }
@@ -242,9 +242,9 @@ impl fmt::Display for Rule {
             }
             Self::NoRepair => f.write_str("gives no repair: the list is empty"),
             Self::Quality(fault) => write!(f, "{fault}"),
-            Self::PatternWork { bound } => write!(
+            Self::PatternWork => write!(
                 f,
-                "the `[quality]` patterns would read more than the {bound} bytes one batch may \
+                "the `[quality]` patterns would read more than the {MAX_WRITE_PATTERN_BYTES} bytes one batch may \
                  (each pattern the texts of the fields it reads); split the batch into batches \
                  of fewer ops"
             ),

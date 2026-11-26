@@ -173,11 +173,7 @@ fn require_origin_refuses_a_record_in_a_batch_without_an_origin() {
         batch
     };
 
-    let err = store
-        .begin_write()
-        .unwrap()
-        .apply(without(expire(|_| {})))
-        .unwrap_err();
+    let err = super::apply_batch(&store, without(expire(|_| {}))).unwrap_err();
 
     let Error::Refused(refusal) = err else {
         panic!("{err}")
@@ -194,10 +190,7 @@ fn require_origin_refuses_a_record_in_a_batch_without_an_origin() {
     );
     let mut tags = revise("sign");
     tags.tags = super::add(&["keys"]);
-    let writer = store
-        .begin_write()
-        .unwrap()
-        .apply(without(vec![Op::Revise(tags)]));
+    let writer = super::apply_batch(&store, without(vec![Op::Revise(tags)]));
     writer.expect("a batch that records nothing needs no origin");
     apply(&store, expire(|_| {})).expect("a batch with an origin records");
 }
@@ -242,11 +235,7 @@ fn a_pattern_matches_only_its_fields_at_its_level() {
     for (field, path, at) in cases {
         let tmp = TempDir::new().unwrap();
         let (store, ops) = under_pattern(&tmp, field, "refuse");
-        let err = store
-            .begin_write()
-            .unwrap()
-            .apply(with_origin(ops, "zz row"))
-            .unwrap_err();
+        let err = super::apply_batch(&store, with_origin(ops, "zz row")).unwrap_err();
         let Error::Refused(refusal) = err else {
             panic!("{err}")
         };
@@ -257,11 +246,7 @@ fn a_pattern_matches_only_its_fields_at_its_level() {
 
         let tmp = TempDir::new().unwrap();
         let (store, ops) = under_pattern(&tmp, field, "warn");
-        let applied: Applied = store
-            .begin_write()
-            .unwrap()
-            .apply(with_origin(ops, "zz row"))
-            .unwrap();
+        let applied: Applied = super::apply_batch(&store, with_origin(ops, "zz row")).unwrap();
         let [warning] = applied.warnings.as_slice() else {
             panic!("{field}: {:?}", applied.warnings)
         };
@@ -287,10 +272,7 @@ fn a_pattern_matches_only_its_fields_at_its_level() {
         let (store, ops) = under_pattern(&tmp, field, "refuse");
         let clean = ops_without_zz_in(ops, field);
         let origin = if field == "origin" { "row 7" } else { "zz row" };
-        store
-            .begin_write()
-            .unwrap()
-            .apply(with_origin(clean, origin))
+        super::apply_batch(&store, with_origin(clean, origin))
             .unwrap_or_else(|e| panic!("{field} matched another field: {e}"));
     }
 }
@@ -598,10 +580,7 @@ fn a_verdict_on_an_element_names_the_argument_that_brought_it() {
             let tmp = TempDir::new().unwrap();
             let (store, _) = under_pattern(&tmp, field, level);
             setup(&store);
-            let outcome = store
-                .begin_write()
-                .unwrap()
-                .apply(with_origin(ops.clone(), "row"));
+            let outcome = super::apply_batch(&store, with_origin(ops.clone(), "row"));
             let named = match outcome {
                 Err(Error::Refused(refusal)) => refusal.path(),
                 Ok(applied) => applied.warnings[0].field.clone(),
@@ -690,12 +669,7 @@ fn a_batch_past_the_write_bytes_is_refused_at_the_op_where_the_sum_passes() {
     let at = refusal.op.as_ref().map_or(0, |op| op.index);
     assert!(at > 0, "{refusal}");
     assert_eq!(refusal.path(), format!("ops[{at}].alternatives"));
-    assert_eq!(
-        refusal.rule,
-        Rule::PatternWork {
-            bound: MAX_WRITE_PATTERN_BYTES
-        }
-    );
+    assert_eq!(refusal.rule, Rule::PatternWork);
     assert_eq!(super::files(&store), before);
 }
 
@@ -734,34 +708,108 @@ fn a_pattern_refusal_comes_before_a_later_op_fault() {
     );
 }
 
+/// `copies` copies of a pattern no cache holds over random letters, at
+/// `warn` over the origin, which every batch of these tests holds, and
+/// `reason`: an op whose caches only the origin grew is judged alone.
+fn outgrowing(tmp: &TempDir, copies: usize) -> Store {
+    let one = format!(
+        "[[quality.patterns]]\npattern = '{OUTGROWS_ITS_CACHE}'\nfields = [\"origin\", \"reason\"]\n\
+         level = \"warn\"\nmessage = \"Random.\"\n"
+    );
+    store_under(tmp, Some(&vec![one; copies].join("\n")))
+}
+
+/// A record whose reason is `letters` random letters.
+fn random(index: u64, letters: usize) -> Op {
+    let mut op = record(&format!("random-{index}"), "auth");
+    op.reason = coin_flips(letters, index);
+    Op::Record(op)
+}
+
 /// The caches of a batch's patterns are the batch's: two records whose
 /// reasons each fit a pattern's cache, but not together, are refused at
-/// the second as `pattern_gave_up`, naming the pattern whatever its
-/// level, and each alone is written.
+/// the second as `pattern_gave_up`, naming the pattern whatever its level
+/// and the ops before as the cause, and each alone is written.
 #[test]
 fn a_pattern_whose_cache_fills_over_the_batch_refuses_it_at_that_op() {
     let tmp = TempDir::new().unwrap();
-    let table = format!(
-        "[[quality.patterns]]\npattern = '{OUTGROWS_ITS_CACHE}'\nfields = [\"reason\"]\n\
-         level = \"warn\"\nmessage = \"Random.\""
-    );
-    let store = store_under(&tmp, Some(&table));
-    let ops: Vec<Op> = (0..2)
-        .map(|index| {
-            let mut op = record(&format!("random-{index}"), "auth");
-            op.reason = coin_flips(1_000, index);
-            Op::Record(op)
-        })
-        .collect();
+    let store = outgrowing(&tmp, 1);
+    let ops = vec![random(0, 2_500), random(1, 2_500)];
 
     let refusal = refused(&store, ops.clone());
 
     assert_eq!(refusal.path(), "ops[1].reason");
-    assert_eq!(
-        refusal.rule,
-        Rule::Quality(QualityFault::GaveUp { index: 0 })
-    );
+    let gave_up = QualityFault::GaveUp {
+        index: 0,
+        alone: false,
+    };
+    assert_eq!(refusal.rule, Rule::Quality(gave_up));
+    assert!(refusal.to_string().contains("split the batch"), "{refusal}");
     for op in ops {
         apply(&store, vec![op]).unwrap();
     }
+}
+
+/// A pattern whose cache fills over one op's texts alone is refused there
+/// with the remedy for that op, not the batch's.
+#[test]
+fn a_pattern_whose_cache_fills_over_one_op_names_that_op_alone() {
+    let tmp = TempDir::new().unwrap();
+    let store = outgrowing(&tmp, 1);
+
+    let refusal = refused(&store, vec![random(0, 12_000)]);
+
+    let gave_up = QualityFault::GaveUp {
+        index: 0,
+        alone: true,
+    };
+    assert_eq!(refusal.rule, Rule::Quality(gave_up));
+    let message = refusal.to_string();
+    assert!(!message.contains("split the batch"), "{message}");
+}
+
+/// Patterns whose caches each hold an op's texts but grow past
+/// `MAX_PATTERN_CACHE_TOTAL_BYTES` together refuse the write as
+/// `pattern_cache_total`, naming the pattern that grew the most, the first
+/// of equals, and the one op alone; fewer of them write it.
+#[test]
+fn caches_that_grow_past_their_total_refuse_the_write() {
+    let tmp = TempDir::new().unwrap();
+    let store = outgrowing(&tmp, 8);
+
+    let refusal = refused(&store, vec![random(0, 3_000)]);
+
+    let total = QualityFault::CacheTotal {
+        largest: 0,
+        alone: true,
+    };
+    assert_eq!(refusal.rule, Rule::Quality(total));
+    let tmp = TempDir::new().unwrap();
+    apply(&outgrowing(&tmp, 4), vec![random(0, 3_000)]).unwrap();
+}
+
+/// A write holds its batch to the bar compiled before the lock while the
+/// table it loads under the lock is the same, and compiles the table
+/// again when it changed in between.
+#[test]
+fn a_bar_compiled_before_its_table_changed_is_compiled_again_under_the_lock() {
+    let tmp = TempDir::new().unwrap();
+    let store = store_under(&tmp, None);
+    let before = store.prepare_bar().unwrap();
+    with_quality(
+        &store,
+        "[[quality.patterns]]\npattern = 'zz'\nfields = [\"choice\"]\nlevel = \"refuse\"\n\
+         message = \"No zz.\"",
+    );
+
+    let ops = expire(|op| op.choice = "Choice zz".into());
+    let err = store
+        .begin_write()
+        .unwrap()
+        .apply(super::batch(ops), &before);
+
+    let Err(Error::Refused(refusal)) = err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(refusal.rule.as_str(), "pattern");
 }

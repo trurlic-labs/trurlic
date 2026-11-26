@@ -295,8 +295,9 @@ pub enum Error {
     Refused(Box<Refusal>),
 
     /// A `[quality]` pattern of the `project.toml` at `path` the lazy DFA
-    /// does not run: a syntax error, an automaton past its limits, a
-    /// Unicode word boundary. `message` says which, and the rewrite.
+    /// does not run: a syntax error, classes that fold too many code points,
+    /// an automaton past its limits, a Unicode word boundary. `message`
+    /// says which, and the rewrite.
     #[error(
         "{}: `[quality] patterns[{index}].pattern` does not compile: {message}",
         path.display()
