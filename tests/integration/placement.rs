@@ -463,49 +463,6 @@ fn a_worktree_git_does_not_list_warns_that_the_others_went_unread() {
     );
 }
 
-/// A file read in a worktree ahead is expanded with the calling tree's
-/// macros: a type that a macro of another file defines there, which only
-/// the branch invokes, is pending on it.
-#[test]
-fn a_type_a_macro_defines_on_a_branch_ahead_is_pending_there() {
-    let tmp = TempDir::new().unwrap();
-    let root = tmp.path().canonicalize().unwrap();
-    let main = root.join("main");
-    anchored_repository(&main);
-    fs::write(main.join("Cargo.toml"), "[package]\nname = \"p\"\n").unwrap();
-    let maker = "macro_rules! define { ($n:ident) => { pub struct $n; }; }\n";
-    fs::write(main.join("src/macros.rs"), maker).unwrap();
-    let anchor = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"Foo\" },\n]\n";
-    fs::write(
-        main.join(".trurlic/decisions/made.toml"),
-        decision("project", "A made type", anchor),
-    )
-    .unwrap();
-    trurlic_ok(&main, &["fmt"]);
-    git(&main, &["add", "--all"]);
-    git(&main, &["commit", "--quiet", "-m", "macros"]);
-    git(
-        &main,
-        &["worktree", "add", "--quiet", "-b", "feature", "../feature"],
-    );
-    let feature = root.join("feature");
-    fs::write(
-        feature.join("src/lib.rs"),
-        "pub fn foo() {}\ndefine!(Foo);\n",
-    )
-    .unwrap();
-    git(&feature, &["commit", "--quiet", "-a", "-m", "Foo"]);
-
-    let (code, _, stderr) = checked(&main);
-
-    assert_eq!(code, Some(0), "{stderr}");
-    assert!(
-        stderr.contains("`src/lib.rs::Foo` of `made` is pending")
-            && stderr.contains("on branch `feature`"),
-        "{stderr}"
-    );
-}
-
 /// A graph in a subdirectory of its work tree is read against that
 /// subdirectory in every worktree: alone in its repository, an anchor
 /// the top of the tree defines and the subdirectory does not is stale;

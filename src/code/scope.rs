@@ -10,23 +10,21 @@
 //! split at `::` included.
 //!
 //! The tree is also the one way into an index: every resolver enters
-//! its scopes and admits its definitions, macros, invocations and module
-//! files through it, and it charges each the bytes its entry takes
-//! against the room of the file ([`encoding::room_of`]), so no rule of any
-//! resolver can make an index outgrow its file.
-
-use std::sync::Arc;
+//! its scopes and admits its definitions, module files and invoked names
+//! through it, and it charges each what its entry costs against the room
+//! of the file ([`encoding::room_of`]), so no rule of any resolver can
+//! make an index outgrow its file.
 
 use super::encoding::{self, Measure};
-use super::index::{Definition, IndexFault, Invocation, ModuleFile, TypeMacro};
+use super::index::{Definition, FileKind, IndexFault, ModuleFile};
+use super::span::Span;
 use super::symbol::Segment;
 
 /// The segments a path may hold. A file that nests one deeper has no
 /// index.
 pub(crate) const MAX_NESTING: usize = 64;
 
-/// A scope of one file, by its place in the file's scopes, or past them
-/// in the scopes a macro expansion adds.
+/// A scope of one file, by its place in the file's scopes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ScopeId(u32);
 
@@ -50,20 +48,23 @@ pub(crate) struct Scope {
 }
 
 /// The scopes of a file as a resolver makes them, each with its depth,
-/// and the bytes the file's entry has left.
+/// what the file's entry has left of its room, and the span of the last
+/// definition admitted.
 pub(super) struct ScopeTree {
     scopes: Vec<Scope>,
     depths: Vec<usize>,
     room: usize,
+    previous: Option<Span>,
 }
 
 impl ScopeTree {
-    /// The tree of a file of `bytes` bytes.
-    pub(super) fn for_file(bytes: usize) -> Self {
+    /// The tree of a file of `kind` of `bytes` bytes.
+    pub(super) const fn for_file(kind: FileKind, bytes: usize) -> Self {
         Self {
             scopes: Vec::new(),
             depths: Vec::new(),
-            room: encoding::room_of(bytes),
+            room: encoding::room_of(kind, bytes),
+            previous: None,
         }
     }
 
@@ -86,22 +87,22 @@ impl ScopeTree {
         Ok(id)
     }
 
-    /// Charge `definition` its bytes; [`IndexFault::TooComplex`] past the
-    /// room.
+    /// Charge `definition` its cost; [`IndexFault::TooComplex`] past the
+    /// room. Its span is charged as one byte when it is the last one
+    /// admitted: a run of definitions of one span stays one run once the
+    /// index sorts them, so the entry shares at least as many.
     pub(super) fn admit_definition(&mut self, definition: &Definition) -> Result<(), IndexFault> {
-        self.charge(Measure::definition(definition))
-    }
-
-    pub(super) fn admit_macro(&mut self, found: &TypeMacro) -> Result<(), IndexFault> {
-        self.charge(Measure::type_macro(found))
-    }
-
-    pub(super) fn admit_invocation(&mut self, invocation: &Invocation) -> Result<(), IndexFault> {
-        self.charge(Measure::invocation(invocation))
+        self.charge(Measure::definition(definition, self.previous))?;
+        self.previous = Some(definition.span);
+        Ok(())
     }
 
     pub(super) fn admit_module_file(&mut self, module: &ModuleFile) -> Result<(), IndexFault> {
         self.charge(Measure::module_file(module))
+    }
+
+    pub(super) fn admit_invoked(&mut self, name: &str) -> Result<(), IndexFault> {
+        self.charge(Measure::invoked(name))
     }
 
     fn charge(&mut self, bytes: usize) -> Result<(), IndexFault> {
@@ -118,38 +119,11 @@ impl ScopeTree {
     }
 }
 
-/// A scope a macro expansion adds: its one segment, under its parent.
-/// A name the macro gives (a member, an item) is shared with the macro,
-/// so an invocation adds a fixed size whatever the name's length.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AddedScope {
-    pub(crate) parent: Option<ScopeId>,
-    pub(crate) name: Arc<Segment>,
-}
-
-/// The scopes a path is walked through: a file's, and those a macro
-/// expansion adds past them.
+/// The scopes of a file, which a path is walked through.
 #[derive(Clone, Copy)]
-pub(crate) struct Scopes<'a> {
-    pub(crate) file: &'a [Scope],
-    pub(crate) added: &'a [AddedScope],
-}
+pub(crate) struct Scopes<'a>(pub(crate) &'a [Scope]);
 
 impl<'a> Scopes<'a> {
-    /// The parent and the own segments of the scope `id`.
-    fn get(self, id: ScopeId) -> Option<(Option<ScopeId>, &'a [Segment])> {
-        match id.at().checked_sub(self.file.len()) {
-            None => self
-                .file
-                .get(id.at())
-                .map(|scope| (scope.parent, scope.name.as_slice())),
-            Some(past) => self
-                .added
-                .get(past)
-                .map(|scope| (scope.parent, std::slice::from_ref(&*scope.name))),
-        }
-    }
-
     /// The segments of the path of `id`, from its last: each scope's
     /// own, then its parent's. A parent's id is below its child's, so the
     /// walk ends.
@@ -157,9 +131,9 @@ impl<'a> Scopes<'a> {
         let mut next = Some(id);
         std::iter::from_fn(move || {
             let current = next?;
-            let (parent, name) = self.get(current)?;
-            next = parent.filter(|parent| *parent < current);
-            Some(name.iter().rev())
+            let scope = self.0.get(current.at())?;
+            next = scope.parent.filter(|parent| *parent < current);
+            Some(scope.name.iter().rev())
         })
         .flatten()
     }
@@ -171,21 +145,20 @@ mod tests {
 
     #[test]
     fn a_path_is_walked_through_its_parents_and_past_the_bound_is_refused() {
-        let mut tree = ScopeTree::for_file(64);
+        let mut tree = ScopeTree::for_file(FileKind::Rust, 64);
         let outer = tree.enter(None, vec![Segment::name("a")]).unwrap();
         let inner = tree
             .enter(Some(outer), vec![Segment::name("b"), Segment::name("c")])
             .unwrap();
         let scopes = tree.into_scopes();
-        let view = Scopes {
-            file: &scopes,
-            added: &[],
-        };
-        let spelled: Vec<String> = view.path_from_end(inner).map(ToString::to_string).collect();
+        let spelled: Vec<String> = Scopes(&scopes)
+            .path_from_end(inner)
+            .map(ToString::to_string)
+            .collect();
 
         assert_eq!(spelled, ["c", "b", "a"]);
 
-        let mut tree = ScopeTree::for_file(4096);
+        let mut tree = ScopeTree::for_file(FileKind::Rust, 4096);
         let wide: Vec<Segment> = (0..MAX_NESTING).map(|_| Segment::name("x")).collect();
         let full = tree.enter(None, wide).unwrap();
         assert_eq!(
@@ -196,8 +169,8 @@ mod tests {
 
     #[test]
     fn a_scope_past_the_files_room_is_refused() {
-        let mut tree = ScopeTree::for_file(1);
-        let name = "n".repeat(encoding::room_of(1));
+        let mut tree = ScopeTree::for_file(FileKind::Rust, 2);
+        let name = "n".repeat(encoding::room_of(FileKind::Rust, 2));
 
         assert_eq!(
             tree.enter(None, vec![Segment::name(&name)]),

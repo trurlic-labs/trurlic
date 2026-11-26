@@ -1,7 +1,7 @@
 //! What a Rust item is, from its node and the container it stands in:
 //! its kind, and whose visibility it and its members have.
 
-use crate::code::kinds::{Container, DefinitionKind, Visibility};
+use crate::code::kinds::{DefinitionKind, Visibility};
 
 /// The container a node stands in, as far as what it defines is
 /// concerned: whether a `fn` is a method, and whose visibility a member
@@ -23,10 +23,12 @@ pub(super) enum Within {
 }
 
 impl Within {
-    pub(super) const fn container(self) -> Container {
+    /// Whether what it holds are a type's members: a `fn` a method, a
+    /// `type` an associated type.
+    const fn holds_members(self) -> bool {
         match self {
-            Self::Impl | Self::TraitImpl | Self::Trait(_) => Container::Type,
-            Self::Items | Self::Enum(_) => Container::Items,
+            Self::Impl | Self::TraitImpl | Self::Trait(_) => true,
+            Self::Items | Self::Enum(_) => false,
         }
     }
 
@@ -87,7 +89,7 @@ impl Item {
     /// Its kind, standing in `within` with the modifier `own`, and the
     /// container its children stand in.
     pub(super) const fn kind(self, within: Within, own: Visibility) -> (DefinitionKind, Within) {
-        let member = matches!(within.container(), Container::Type);
+        let member = within.holds_members();
         match self {
             Self::Function if member => (DefinitionKind::Method, Within::Items),
             Self::Function => (DefinitionKind::Function, Within::Items),

@@ -31,7 +31,7 @@ error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
 ```
 
-`error` and `console` are used by every module but `code` and `lint`.
+`error` is used by every module but `code`, `lint` and `budget`; `console` by `store`, `mcp`, `commands`, `cli` and `sources`.
 
 ### Where things are
 
@@ -50,7 +50,6 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Pre-spec reads (`get_context`, `get_decisions_for_file`) | `mcp/tools.rs`, `mcp/context.rs` |
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
-| Macro expansion: rule matching / hand-offs / macro lookup | `code/expand/fit.rs` / `code/expand/resolve.rs` / `code/crates.rs` |
 | Rust tokens no span hash holds (rustfmt's commas and braces) | `code/rust/silent.rs` |
 | A file's index on a thread of its own (stack, bytes at once) | `sources/indexer.rs` |
 | Likely duplicates (scoring, pair index) | `lint/duplicates/` |

@@ -326,9 +326,9 @@ const RUN_METHOD: &str = "pub struct R;\nimpl R { pub fn run() {} }\n";
 
 /// A resolved symbol of one plain name that is not the whole path of what
 /// it names is weak when [`WEAK_FILES`] or more walked files of its kind
-/// hold a definition of it at any depth, a type a macro invocation defines
-/// included: a symbol that is the whole path of a module-level item, a
-/// qualified symbol, a file anchor and a kind that is no code never are.
+/// hold a definition of it at any depth: a symbol that is the whole path
+/// of a module-level item, a qualified symbol, a file anchor and a kind
+/// that is no code never are.
 #[test]
 fn one_name_that_ten_files_of_its_kind_define_is_weak() {
     let mut files: Vec<(String, String)> = (0..WEAK_FILES - 1)
@@ -341,10 +341,6 @@ fn one_name_that_ten_files_of_its_kind_define_is_weak() {
         .collect();
     files.push(("src/lib.rs".to_owned(), RUN_METHOD.to_owned()));
     files.push(("src/top.rs".to_owned(), "pub fn top() {}\n".to_owned()));
-    let maker = "macro_rules! make { ($name:ident) => { pub struct $name; }; }\n";
-    for n in 0..WEAK_FILES {
-        files.push((format!("src/made{n}.rs"), format!("{maker}make!(T{n});\n")));
-    }
     for n in 0..WEAK_FILES {
         files.push((format!("docs/d{n}.md"), "# run\n".to_owned()));
     }
@@ -362,7 +358,6 @@ fn one_name_that_ten_files_of_its_kind_define_is_weak() {
                 "src/m0.rs::S::run",
                 "src/lib.rs",
                 "docs/d0.md::run",
-                "src/made0.rs::T0",
             ],
             StatusName::Accepted,
         ),
@@ -436,13 +431,7 @@ fn each_kind_has_its_severity() {
         branch: None,
     };
     let kinds: [Kind<Checked>; 7] = [
-        Kind::Missing(
-            missing(),
-            Checked::Stale {
-                unexpanded: None,
-                repair: None,
-            },
-        ),
+        Kind::Missing(missing(), Checked::Stale { repair: None }),
         Kind::Malformed(Broken(Resolution::SymbolOnDirectory)),
         Kind::Ambiguous(2),
         Kind::Unverified(Unread(Resolution::NoResolver)),
@@ -526,63 +515,6 @@ fn a_file_no_walk_took_is_not_counted_for_weak() {
     let all = facts(&walked, &[]);
     let one = [("d", decision(&["src/lib.rs::run"], StatusName::Accepted))];
     assert_eq!(judged(&one, &all, ASKED).len(), 1);
-}
-
-/// A file read in another worktree is expanded with the calling tree's
-/// macros, which its walk holds: a type a macro of another file defines
-/// there is pending. When the file there invokes a macro this tree does
-/// not define, spelling the anchor's name, the stale finding says so.
-#[test]
-fn another_worktrees_file_is_expanded_with_the_calling_trees_macros() {
-    let maker = "macro_rules! define { ($n:ident) => { pub struct $n; }; }\n";
-    let here = facts(
-        &[
-            ("Cargo.toml", "[package]\nname = \"p\"\n"),
-            ("src/macros.rs", maker),
-            ("src/lib.rs", ""),
-        ],
-        &[],
-    );
-    let there = |text: &str| {
-        let entry = Entry::File {
-            kind: FileKind::Rust,
-            index: index(
-                FileKind::Rust,
-                text.as_bytes(),
-                &crate::code::BlankMacros::default(),
-            )
-            .map_err(FileFault::Index),
-        };
-        let read = BTreeMap::from([("src/lib.rs".to_owned(), Some(entry))]);
-        Elsewhere {
-            worktree: Worktree {
-                path: PathBuf::from("/w/feature"),
-                branch: Some("feature".to_owned()),
-            },
-            facts: here.beside(&read),
-        }
-    };
-    let decisions = [("d", decision(&["src/lib.rs::Foo"], StatusName::Accepted))];
-
-    let defined = judged(&decisions, &here, Some(vec![there("define!(Foo);\n")]));
-    let unknown = judged(&decisions, &here, Some(vec![there("elsewhere!(Foo);\n")]));
-
-    let missing = "its file defines nothing its symbol names";
-    assert_eq!(
-        defined,
-        [format!(
-            "anchor `src/lib.rs::Foo` of `d` is pending: {missing} here; it resolves in the \
-             worktree at /w/feature on branch `feature`"
-        )]
-    );
-    assert_eq!(
-        unknown,
-        [format!(
-            "anchor `src/lib.rs::Foo` of `d` is stale: {missing}; its file in the worktree at \
-             /w/feature spells it in a macro invocation this tree's macros do not expand, so \
-             it may be pending there"
-        )]
-    );
 }
 
 /// The findings of `decisions` with `renames` and what git's history held,

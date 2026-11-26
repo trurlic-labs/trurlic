@@ -22,15 +22,15 @@ use toml::de::{DeTable, DeValue};
 use super::index::{FileIndex, IndexFault};
 use super::kinds::DefinitionKind;
 use super::lexical::Lexical;
-use super::scope::{MAX_NESTING, ScopeId};
+use super::scope::{MAX_NESTING, ScopeId, ScopeTree};
 
 /// The index of `text`, a TOML file: its key paths.
-pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
+pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let document = DeTable::parse(text).map_err(|error| IndexFault::Syntax {
         at: error.span().map_or(0, |span| span.start),
     })?;
     let mut keys = Keys {
-        lexical: Lexical::of(text),
+        lexical: Lexical::of(text, scopes),
     };
     keys.table(None, document.get_ref(), 0)?;
     Ok(keys.lexical.finish())

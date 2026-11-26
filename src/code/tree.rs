@@ -1,37 +1,30 @@
 //! What a tree-sitter resolver builds an index with: the file's tokens
 //! and lines, its scope tree, which charges everything an index holds to
-//! the file's room, the budget of the resolver's lexical scans, and the
-//! definitions and invocations whose hashes are made at the end, all in
-//! one pass over the tokens (`Leaves::hash_each`).
+//! the file's room, and the definitions whose hashes are made at the end,
+//! all in one pass over the tokens (`Leaves::hash_each`).
 //!
 //! A resolver walks its grammar's tree and adds what it finds here; the
-//! bounds of size, work and hashing are this builder's, whatever the
-//! grammar.
+//! bounds of size and hashing are this builder's, whatever the grammar.
 
 use std::ops::Range;
 
-use super::index::{Definition, FileIndex, IndexFault, Invocation, ModuleFile, TypeMacro};
+use super::index::{Definition, FileIndex, IndexFault, ModuleFile};
 use super::kinds::What;
 use super::scope::{ScopeId, ScopeTree};
 use super::span::{Lines, Span, SpanHash};
 use super::units::Leaves;
-use super::work::{SCAN_WORK_PER_BYTE, Work};
 
-/// The hash a definition or invocation holds until the end of the walk.
-pub(super) const UNHASHED: SpanHash = SpanHash::from_bytes([0; 32]);
+/// The hash a definition holds until the end of the walk.
+const UNHASHED: SpanHash = SpanHash::from_bytes([0; 32]);
 
 pub(super) struct TreeIndex<'t> {
     text: &'t str,
     leaves: Leaves,
     lines: Lines,
     pub(super) scopes: ScopeTree,
-    /// The budget of the resolver's scans of token trees and texts.
-    pub(super) work: Work,
     index: FileIndex,
-    /// The units of each definition, then of each invocation, in the
-    /// order they were added.
+    /// The units of each definition, in the order they were added.
     ranges: Vec<Range<usize>>,
-    invocation_ranges: Vec<Range<usize>>,
 }
 
 impl<'t> TreeIndex<'t> {
@@ -43,10 +36,8 @@ impl<'t> TreeIndex<'t> {
             leaves,
             lines: Lines::of(text.as_bytes()),
             scopes,
-            work: Work::of(text.len(), SCAN_WORK_PER_BYTE),
             index: FileIndex::default(),
             ranges: Vec::new(),
-            invocation_ranges: Vec::new(),
         }
     }
 
@@ -90,27 +81,17 @@ impl<'t> TreeIndex<'t> {
         Ok(())
     }
 
-    /// Keep `invocation`, over bytes `range`, for the expansion.
-    pub(super) fn invoke(
-        &mut self,
-        invocation: Invocation,
-        range: Range<usize>,
-    ) -> Result<(), IndexFault> {
-        self.scopes.admit_invocation(&invocation)?;
-        self.index.rust.invocations.push(invocation);
-        self.invocation_ranges.push(self.leaves.within(&range));
-        Ok(())
-    }
-
-    pub(super) fn add_macro(&mut self, found: TypeMacro) -> Result<(), IndexFault> {
-        self.scopes.admit_macro(&found)?;
-        self.index.rust.macros.push(found);
-        Ok(())
-    }
-
     pub(super) fn add_module_file(&mut self, module: ModuleFile) -> Result<(), IndexFault> {
         self.scopes.admit_module_file(&module)?;
         self.index.rust.module_files.push(module);
+        Ok(())
+    }
+
+    /// Keep `name`, a name an invocation spells, after every one kept so
+    /// far.
+    pub(super) fn add_invoked(&mut self, name: &str) -> Result<(), IndexFault> {
+        self.scopes.admit_invoked(name)?;
+        self.index.rust.invoked.push(name.to_owned());
         Ok(())
     }
 
@@ -119,26 +100,19 @@ impl<'t> TreeIndex<'t> {
         &self.index.definitions
     }
 
-    /// The index, each definition and invocation with its hash.
+    /// The index, each definition with its hash.
     pub(super) fn finish(self) -> FileIndex {
         let Self {
             text,
             leaves,
             scopes,
             mut index,
-            mut ranges,
-            invocation_ranges,
+            ranges,
             ..
         } = self;
-        let definitions = ranges.len();
-        ranges.extend(invocation_ranges);
         let hashes = leaves.hash_each(text, &ranges);
-        let (own, invoked) = hashes.split_at(definitions.min(hashes.len()));
-        for (definition, hash) in index.definitions.iter_mut().zip(own) {
-            definition.hash = *hash;
-        }
-        for (invocation, hash) in index.rust.invocations.iter_mut().zip(invoked) {
-            invocation.hash = *hash;
+        for (definition, hash) in index.definitions.iter_mut().zip(hashes) {
+            definition.hash = hash;
         }
         index.scopes = scopes.into_scopes();
         index

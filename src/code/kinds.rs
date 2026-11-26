@@ -150,29 +150,6 @@ impl DefinitionKind {
         Self::Interface,
         Self::Test,
     ];
-
-    /// The kind of the item a Rust keyword opens (`fn`, `struct`, ...),
-    /// in a container whose `fn`s are methods or not; `None` for a word
-    /// that opens no item.
-    pub(super) const fn of_keyword(keyword: &str, container: Container) -> Option<Self> {
-        let member = matches!(container, Container::Type);
-        Some(match keyword.as_bytes() {
-            b"fn" if member => Self::Method,
-            b"fn" => Self::Function,
-            b"type" if member => Self::AssociatedType,
-            b"type" => Self::TypeAlias,
-            b"const" => Self::Constant,
-            // A type's members are its functions, types and constants alone.
-            _ if member => return None,
-            b"struct" => Self::Struct,
-            b"union" => Self::Union,
-            b"enum" => Self::Enum,
-            b"trait" => Self::Trait,
-            b"static" => Self::Static,
-            b"mod" => Self::Module,
-            _ => return None,
-        })
-    }
 }
 
 /// What a definition is, beside where.
@@ -181,14 +158,6 @@ pub(super) struct What {
     pub(super) kind: DefinitionKind,
     pub(super) role: Role,
     pub(super) visibility: Option<Visibility>,
-}
-
-/// Whether an item's keyword opens a member of a type (an `impl`, a
-/// trait) or an item of a module or a body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Container {
-    Type,
-    Items,
 }
 
 /// Whether a definition is test code or the code a project ships.

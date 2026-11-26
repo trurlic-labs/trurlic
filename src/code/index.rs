@@ -1,25 +1,25 @@
 //! A file's index: the scopes of its paths, the definitions it holds,
 //! each with its scope, what it is, its span and span hash, and for Rust
-//! the facts a second step expands macros from and follows modules by. An index is a function
-//! of the file's kind and bytes alone, so a cache keyed by the two holds
-//! it whatever path or tree the bytes are under.
+//! the module files a second step follows. An index is a function of the
+//! file's kind and bytes alone, so a cache keyed by the two holds it
+//! whatever path or tree the bytes are under.
 
 use std::fmt;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::language::c_family::{self, BlankMacros};
 use super::language::python;
 use super::language::{C, CPP, Language, PYTHON, TSX, TYPESCRIPT};
-use super::scope::{MAX_NESTING, Scope, ScopeId};
+use super::scope::{MAX_NESTING, Scope, ScopeId, ScopeTree};
 use super::span::{Span, SpanHash};
 use super::symbol::{Segment, Syntax};
-use super::{encoding, expand, general, json, make, markdown, rust, syntax, toml, work};
+use super::{encoding, general, json, make, markdown, rust, syntax, toml, work};
 
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 14;
+pub(crate) const INDEX_FORMAT: u32 = 15;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -58,9 +58,10 @@ pub(crate) const WORKER_STACK_BYTES: usize =
 /// about 2 GB; a file larger than it is indexed alone.
 pub(crate) const MAX_BYTES_INDEXED_AT_ONCE: usize = 2 * TREE_SITTER_MAX_BYTES;
 
-/// Every bound an index and its expansion are built within, by name and
-/// value: in a cache key, so an index built under other bounds is never
-/// read as one of these, whatever the fixture corpus shows of them.
+/// Every bound an index is built within, by name and value: in a cache
+/// key, so an index built under other bounds is never read as one of
+/// these, whatever the fixture corpus shows of them. The sizes of the
+/// values an index holds bound it through the room of its file.
 pub(crate) const BOUNDS: [(&str, usize); 33] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
@@ -74,28 +75,46 @@ pub(crate) const BOUNDS: [(&str, usize); 33] = [
     ("parse_work_per_byte", work::PARSE_WORK_PER_BYTE),
     ("scan_work_per_byte", work::SCAN_WORK_PER_BYTE),
     ("lexical_work_per_byte", work::LEXICAL_WORK_PER_BYTE),
-    ("resolution_work_per_byte", work::RESOLUTION_WORK_PER_BYTE),
-    ("expansion_bytes_per_byte", work::EXPANSION_BYTES_PER_BYTE),
     ("min_work", work::MIN_WORK),
-    ("min_expansion_bytes", work::MIN_EXPANSION_BYTES),
     ("chunk_bytes", syntax::CHUNK_BYTES),
     ("max_nesting", MAX_NESTING),
+    ("scope_bytes", size_of::<Scope>()),
+    ("segment_bytes", size_of::<Segment>()),
+    ("definition_bytes", size_of::<Definition>()),
+    ("module_file_bytes", size_of::<ModuleFile>()),
+    ("text_bytes", size_of::<String>()),
     (
-        "entry_bytes_per_source_byte",
-        encoding::MAX_ENTRY_BYTES_PER_SOURCE_BYTE,
+        "rust_room_per_byte",
+        encoding::room_per_byte(FileKind::Rust),
+    ),
+    (
+        "python_room_per_byte",
+        encoding::room_per_byte(FileKind::Python),
+    ),
+    (
+        "typescript_room_per_byte",
+        encoding::room_per_byte(FileKind::TypeScript),
+    ),
+    ("tsx_room_per_byte", encoding::room_per_byte(FileKind::Tsx)),
+    ("c_room_per_byte", encoding::room_per_byte(FileKind::C)),
+    ("cpp_room_per_byte", encoding::room_per_byte(FileKind::Cpp)),
+    (
+        "toml_room_per_byte",
+        encoding::room_per_byte(FileKind::Toml),
+    ),
+    (
+        "json_room_per_byte",
+        encoding::room_per_byte(FileKind::Json),
+    ),
+    (
+        "make_room_per_byte",
+        encoding::room_per_byte(FileKind::Make),
+    ),
+    (
+        "markdown_room_per_byte",
+        encoding::room_per_byte(FileKind::Markdown),
     ),
     ("entry_overhead_bytes", encoding::ENTRY_OVERHEAD_BYTES),
-    ("max_entry_bytes", encoding::MAX_ENTRY_BYTES),
-    ("scope_weight", encoding::weight::SCOPE),
-    ("segment_weight", encoding::weight::SEGMENT),
-    ("definition_weight", encoding::weight::DEFINITION),
-    ("invocation_weight", encoding::weight::INVOCATION),
-    ("module_file_weight", encoding::weight::MODULE_FILE),
-    ("element_weight", encoding::weight::ELEMENT),
-    ("macro_part_weight", encoding::weight::MACRO_PART),
-    ("max_opening", rust::MAX_OPENING),
-    ("max_group_tokens", rust::MAX_GROUP_TOKENS),
-    ("max_hand_offs", expand::MAX_HAND_OFFS),
     ("max_indentations", python::MAX_INDENTATIONS),
     ("max_continuations", python::MAX_CONTINUATIONS),
     ("match_limit", general::MATCH_LIMIT as usize),
@@ -255,148 +274,8 @@ pub(crate) struct Definition {
     /// file test code besides (`CodeFacts::definitions`).
     pub(crate) role: Role,
     /// `None` where the source states none: a trait impl and its members,
-    /// whose visibility is the trait's, a type a macro invocation
-    /// defines, and every lexical definition.
+    /// whose visibility is the trait's, and every lexical definition.
     pub(crate) visibility: Option<Visibility>,
-}
-
-/// A `macro_rules!` macro whose invocations can define a type: every
-/// rule, as an invocation or a hand-off from another macro meets it, with
-/// what its body gives a name it receives. The names it gives are shared,
-/// so each invocation's expansion holds them by reference.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TypeMacro {
-    pub(crate) name: String,
-    /// Marked `#[macro_export]`: its workspace invokes it, not its crate
-    /// alone.
-    pub(crate) exported: bool,
-    /// Every rule, in order: Rust takes the first one an invocation's
-    /// tokens match.
-    pub(crate) rules: Vec<Rule>,
-}
-
-/// A rule as an invocation or a hand-off meets it: the elements its
-/// pattern opens with, at most [`MAX_OPENING`](super::rust::MAX_OPENING),
-/// what each of its bindings of one name receives, and the macros its
-/// body hands a binding to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Rule {
-    pub(crate) opening: Vec<Element>,
-    /// Whether the opening is the whole pattern.
-    pub(crate) whole: bool,
-    /// Each place of an `ident` or `tt` binding whose body spells a type
-    /// of it or holds an `impl` of it, and what it does with the name.
-    pub(crate) receives: Vec<(usize, Receives)>,
-    /// Each distinct invocation at the body's top level that hands a
-    /// binding of the opening on.
-    pub(crate) hand_offs: Vec<HandOff>,
-    /// The items its body names at its top level but types (`pub fn
-    /// make()`), items of the invocation's container.
-    pub(crate) items: Vec<(Arc<Segment>, DefinitionKind)>,
-}
-
-/// One element of a pattern's opening, of a hand-off's arguments, or of
-/// an invocation's.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Element {
-    Word(String),
-    /// A punctuation token or a literal, which matches itself alone.
-    Token(String),
-    /// A delimited group, by its opening delimiter, and its tokens when
-    /// none is a group, a binding or a metavariable (`[summarized]`,
-    /// `(u32)`), at most [`MAX_GROUP_TOKENS`](super::rust::MAX_GROUP_TOKENS);
-    /// `None` when no literal states them.
-    Group(char, Option<Vec<String>>),
-    /// A pattern's binding of one fragment (`$x:ident`).
-    Binding(Fragment),
-    /// A hand-off's metavariable, which the rule's opening binds at this
-    /// place when it does, holding the fragment it binds (a `tt` when it
-    /// is not bound there).
-    Forwarded(Option<usize>, Fragment),
-    /// A repetition: what follows it cannot be lined up.
-    Many,
-}
-
-/// What a binding takes: one identifier, one token tree, one literal,
-/// one lifetime, or anything else (`expr`, `ty`, `vis` and the like),
-/// which a pattern may take as many tokens and a hand-off forwards
-/// opaque.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Fragment {
-    Ident,
-    Tree,
-    Literal,
-    Lifetime,
-    Other,
-}
-
-impl Fragment {
-    /// Every fragment, in the order of its code in an entry.
-    pub(crate) const ALL: [Self; 5] = [
-        Self::Ident,
-        Self::Tree,
-        Self::Literal,
-        Self::Lifetime,
-        Self::Other,
-    ];
-}
-
-/// What a rule's body does with a name it receives: the type it spells of
-/// it (`struct $name`), and each `impl` of it (`impl $name`, `impl<T>
-/// $name<T>`), whose items are the type's.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct Receives {
-    pub(crate) kind: Option<DefinitionKind>,
-    pub(crate) impls: Vec<TypeImpl>,
-}
-
-/// An invocation in a body that hands a binding on. It holds the macro,
-/// whether it is named through `$crate::` (the defining crate's macro),
-/// and its arguments, at most [`MAX_OPENING`](super::rust::MAX_OPENING);
-/// `whole` says whether they are all of them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HandOff {
-    pub(crate) macro_name: String,
-    pub(crate) from_crate: bool,
-    pub(crate) arguments: Vec<Element>,
-    pub(crate) whole: bool,
-}
-
-/// An `impl` of the type a name defines, `impl $name`: its trait's tokens
-/// for a trait impl, and the items it holds, the type's members.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct TypeImpl {
-    /// `None` for an inherent impl.
-    pub(crate) trait_tokens: Option<Vec<TraitToken>>,
-    pub(crate) members: Vec<(Arc<Segment>, DefinitionKind)>,
-}
-
-/// A token of the trait a macro's `impl` names: its text, or the name the
-/// invocation defines.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum TraitToken {
-    Text(String),
-    Name,
-}
-
-/// A macro invocation in item position: what a type-defining macro of
-/// the crate, or one of [`FOREIGN_TYPE_MACROS`](super::expand), would
-/// make of it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Invocation {
-    /// The macro's name, its path dropped (`ir::id!` is `id`).
-    pub(crate) macro_name: String,
-    /// The scope of the container the invocation is in; `None` at the top.
-    pub(crate) container: Option<ScopeId>,
-    pub(crate) span: Span,
-    pub(crate) hash: SpanHash,
-    /// Its first elements, its attributes and comments left out, at most
-    /// [`MAX_OPENING`](super::rust::MAX_OPENING).
-    pub(crate) arguments: Vec<Element>,
-    /// Whether the arguments are all of them.
-    pub(crate) whole: bool,
-    /// Test code when it stands in test code, or its attributes make it.
-    pub(crate) role: Role,
 }
 
 /// A `mod name;` whose items are in a file of their own: the module's
@@ -419,16 +298,16 @@ pub(crate) struct FileIndex {
     pub(crate) rust: RustFacts,
 }
 
-/// What a Rust file holds for the second step over its crate: the
-/// macros that can define a type, the invocations they expand, and the
-/// modules declared to be in files of their own.
+/// What a Rust file holds besides its definitions: the modules declared
+/// to be in files of their own, which the second step over its crate
+/// follows, and the names its invocations spell, which define nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RustFacts {
-    pub(crate) macros: Vec<TypeMacro>,
-    /// Sorted by span.
-    pub(crate) invocations: Vec<Invocation>,
     /// In the order of the file.
     pub(crate) module_files: Vec<ModuleFile>,
+    /// The distinct identifiers among the top-level tokens of the macro
+    /// invocations where an item stands, sorted.
+    pub(crate) invoked: Vec<String>,
 }
 
 /// Why a file's bytes give no index.
@@ -482,7 +361,8 @@ impl fmt::Display for IndexFault {
 }
 
 /// The index of `bytes`, a file of `kind`, in a tree whose C and C++
-/// files blank `macros`.
+/// files blank `macros`. Each resolver builds it into the scope tree of
+/// the file's kind and size, which holds it to the file's room.
 pub(crate) fn index(
     kind: FileKind,
     bytes: &[u8],
@@ -498,25 +378,22 @@ pub(crate) fn index(
     let text = std::str::from_utf8(bytes).map_err(|e| IndexFault::NotUtf8 {
         at: e.valid_up_to(),
     })?;
+    let scopes = ScopeTree::for_file(kind, bytes.len());
     let mut index = match kind {
-        FileKind::Rust => rust::index(text)?,
-        FileKind::Python => general::index(&PYTHON, text)?,
-        FileKind::TypeScript => general::index(&TYPESCRIPT, text)?,
-        FileKind::Tsx => general::index(&TSX, text)?,
-        FileKind::C => general::index(&C, &c_family::blank(text, macros))?,
-        FileKind::Cpp => general::index(&CPP, &c_family::blank(text, macros))?,
-        FileKind::Toml => toml::index(text)?,
-        FileKind::Json => json::index(text)?,
-        FileKind::Make => make::index(text)?,
-        FileKind::Markdown => markdown::index(text)?,
+        FileKind::Rust => rust::index(text, scopes)?,
+        FileKind::Python => general::index(&PYTHON, text, scopes)?,
+        FileKind::TypeScript => general::index(&TYPESCRIPT, text, scopes)?,
+        FileKind::Tsx => general::index(&TSX, text, scopes)?,
+        FileKind::C => general::index(&C, &c_family::blank(text, macros), scopes)?,
+        FileKind::Cpp => general::index(&CPP, &c_family::blank(text, macros), scopes)?,
+        FileKind::Toml => toml::index(text, scopes)?,
+        FileKind::Json => json::index(text, scopes)?,
+        FileKind::Make => make::index(text, scopes)?,
+        FileKind::Markdown => markdown::index(text, scopes)?,
     };
     index
         .definitions
         .sort_unstable_by_key(|definition| (definition.span, definition.scope));
-    index
-        .rust
-        .invocations
-        .sort_unstable_by_key(|invocation| invocation.span);
     Ok(index)
 }
 
@@ -560,7 +437,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 14] = [
+    const FINGERPRINTS: [(u32, &str); 15] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -616,6 +493,10 @@ mod tests {
         (
             14,
             "c134e6d6d4348dcb68d6ffe2c0f2a09a81950348e3cc07a8c228859d3d483070",
+        ),
+        (
+            15,
+            "36bdf51f6a436873ff2b9d5bff71ae04ee7822328b07ede46f67660458faa5c0",
         ),
     ];
 

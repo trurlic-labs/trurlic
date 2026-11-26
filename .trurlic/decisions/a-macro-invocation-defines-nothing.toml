@@ -1,0 +1,27 @@
+component = "code"
+choice = "In Rust a macro_rules! macro is a definition of kind macro, and no macro invocation defines anything, whatever the macro's body or the invocation's own tokens spell"
+reason = "A wrong definition is worse than a missing one, and only rustc knows what an invocation produces: its matcher parses fragments with rustc's parser and edition, matches nested repetitions, scopes a macro by textual order, #[macro_use] and $crate, and transcription can rename, wrap, paste or cfg what it emits. So a definition is an item tree-sitter parsed outside every token tree, and nothing wrong is defined by construction. An invocation where an item stands keeps the distinct identifiers among its top-level tokens (RustFacts::invoked), charged to its file's room, which define nothing: when an anchor's last name is one of them and its file defines nothing it names, the resolution is SymbolInInvocation, whose message names what to anchor instead: the macro, an item of the type written outside the invocation, such as a method of its impl, or the file. A stale anchor of that resolution is not searched for elsewhere, as its code is still in its file."
+alternatives = [
+    "Emulate macro_rules! by matching each invocation against the rules its crate's macros hold: rejected because each review of the matcher found new phantom definitions, its model of fragments, scope and transcription not being rustc's, and its uncached work took seconds a call",
+    "Define the items an invocation's own tokens spell: rejected because a macro may emit another item than it is handed, as a renaming or wrapping macro does and thread_local! makes a static a const",
+    "Define a spelled item only where the invocation stands as an item and the macro emits its input: rejected because no rule that reads only the invocation knows what its macro emits",
+    "Re-parse an invocation's token tree as items: rejected because almost no item-position tree parses alone, and one that does is still the macro's to rewrite",
+    "Expand with rustc: rejected because it needs a compiler, the crate's dependencies and its cfg, far past what an anchor needs",
+]
+tags = [
+    "anchors",
+    "macros",
+    "rust",
+]
+status = "proposed"
+origin = "code index"
+created = "2026-11-24T09:45:08.417022803Z"
+anchors = [
+    { file = "src/code/facts.rs", symbol = "Resolution::SymbolInInvocation" },
+    { file = "src/code/facts.rs", symbol = "spells_in_invocation" },
+    { file = "src/code/rust.rs", symbol = "Walk::define_macro" },
+    { file = "src/code/rust.rs", symbol = "Walk::read_invocation" },
+    { file = "src/code/rust/invocations.rs", symbol = "invoked_names" },
+    { file = "src/code/rust/invocations.rs", symbol = "the_names_an_invocation_where_an_item_stands_spells_at_its_top_are_kept_once" },
+    { file = "src/code/rust/tests.rs", symbol = "a_macro_rules_macro_is_a_definition_and_no_invocation_defines_anything" },
+]

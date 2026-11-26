@@ -15,25 +15,16 @@
 //! already defines (`pub(crate) use name;` after `macro_rules! name`). An
 //! item's span takes in the attributes and doc comments before it.
 //!
-//! A macro invocation where an item or a statement can stand is read by
-//! the lexical rule of `macros.rs`: an item it spells (`define! { struct
-//! Name { .. } }`, `proptest! { fn case() {} }`) is a definition under the
-//! invocation's container, and the invocation is kept for the expansion of
-//! the crate's type-defining macros (`expand.rs`).
+//! A `macro_rules!` macro is a definition of kind macro; a macro
+//! invocation defines nothing (`invocations.rs`).
 
-mod arms;
 mod invocations;
 mod items;
-mod macros;
 mod marks;
 mod reexports;
 mod silent;
-mod spelled;
 
-pub(super) use arms::{MAX_GROUP_TOKENS, MAX_OPENING};
-pub(super) use macros::is_name;
-#[cfg(test)]
-pub(super) use macros::is_word;
+use std::collections::BTreeSet;
 
 use tree_sitter::Node;
 
@@ -73,21 +64,27 @@ pub(super) const LEXICON: Lexicon = Lexicon {
 
 /// The index of `text`, a Rust file. Its hashes leave out the tokens of
 /// no meaning (`silent.rs`).
-pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
+pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
     let silent = silent::silent_tokens(tree.root_node());
     let mut walk = Walk {
         text,
-        build: TreeIndex::new(
-            text,
-            Leaves::of(&tree, text, &LEXICON, &silent),
-            ScopeTree::for_file(text.len()),
-        ),
+        build: TreeIndex::new(text, Leaves::of(&tree, text, &LEXICON, &silent), scopes),
         reexports: Vec::new(),
+        invoked: BTreeSet::new(),
     };
     walk.run(tree.root_node())?;
     walk.define_reexports()?;
+    for name in walk.invoked {
+        walk.build.add_invoked(name)?;
+    }
     Ok(walk.build.finish())
+}
+
+/// A run of letters, digits and underscores: an identifier or a keyword.
+#[cfg(test)]
+pub(super) fn is_word(token: &str) -> bool {
+    !token.is_empty() && token.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// One walk of a tree, which visits each node once, from an explicit
@@ -98,6 +95,8 @@ struct Walk<'t> {
     /// The leaves of the `pub use`s, defined after the walk, once the
     /// paths of the file's items are all found.
     reexports: Vec<reexports::Reexport>,
+    /// The names the invocations where an item stands spell.
+    invoked: BTreeSet<&'t str>,
 }
 
 /// Nodes whose tokens are no items: an attribute's, a macro body's, a
@@ -179,16 +178,12 @@ impl Walk<'_> {
                 None
             }
             "macro_invocation" => {
-                self.read_invocation(visit, visit)?;
+                self.read_invocation(node, visit.parent);
                 None
             }
             "expression_statement" => match node.named_child(0) {
                 Some(invocation) if invocation.kind() == "macro_invocation" => {
-                    let inner = Visit {
-                        node: invocation,
-                        ..visit
-                    };
-                    self.read_invocation(inner, visit)?;
+                    self.read_invocation(invocation, visit.parent);
                     None
                 }
                 Some(_) | None => Some(context),
@@ -249,9 +244,8 @@ impl Walk<'_> {
         })
     }
 
-    /// Define a `macro_rules!` macro, and keep its facts when it can define
-    /// a type. A macro is private to its module and those below unless an
-    /// attribute exports it.
+    /// Define a `macro_rules!` macro. A macro is private to its module and
+    /// those below unless an attribute exports it.
     fn define_macro(&mut self, visit: Visit<'_>) -> Result<(), IndexFault> {
         let Some(name) = visit.node.child_by_field_name("name") else {
             return Ok(());
@@ -267,12 +261,15 @@ impl Walk<'_> {
             }),
         };
         self.build
-            .define(scope, visit.start..visit.node.end_byte(), what)?;
-        let exported = visit.marks.macro_export;
-        let found = macros::type_macro(visit.node, self.text, exported, &mut self.build.work)?;
-        match found {
-            Some(found) => self.build.add_macro(found),
-            None => Ok(()),
+            .define(scope, visit.start..visit.node.end_byte(), what)
+    }
+
+    /// Keep the names `invocation`'s top-level tokens spell when it stands
+    /// where an item does, under a node of kind `parent`; one in a block
+    /// or an expression is passed over.
+    fn read_invocation(&mut self, invocation: Node<'_>, parent: &str) {
+        if matches!(parent, "source_file" | "declaration_list") {
+            invocations::invoked_names(invocation, self.text, &mut self.invoked);
         }
     }
 

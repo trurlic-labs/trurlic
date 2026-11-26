@@ -95,7 +95,9 @@ impl Class {
         let cause = || resolution.clone();
         match resolution {
             Resolution::Resolved(_) => Self::Resolved,
-            Resolution::FileMissing | Resolution::SymbolMissing => Self::Missing(Missing(cause())),
+            Resolution::FileMissing
+            | Resolution::SymbolMissing
+            | Resolution::SymbolInInvocation => Self::Missing(Missing(cause())),
             Resolution::Malformed(_) | Resolution::SymbolOnDirectory => {
                 Self::Broken(Broken(cause()))
             }
@@ -145,15 +147,10 @@ pub(crate) enum Kind<V> {
 /// anchor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Checked {
-    /// No other worktree holds it, on a decision ever accepted. When its
-    /// file in another worktree spells its name in a macro invocation this
-    /// tree's macros do not expand, `unexpanded` is that worktree's path:
-    /// it may be pending there. `repair` is the anchor it is repaired as,
-    /// when the tree and git's history show one.
-    Stale {
-        unexpanded: Option<PathBuf>,
-        repair: Option<Anchor>,
-    },
+    /// No other worktree holds it, on a decision ever accepted. `repair` is
+    /// the anchor it is repaired as, when the tree and git's history show
+    /// one.
+    Stale { repair: Option<Anchor> },
     /// It names what `0` holds, on a decision ever accepted.
     Pending(Worktree),
     /// It is on a decision never accepted.
@@ -232,16 +229,8 @@ impl Verdict for Checked {
     fn describe(&self, cause: &Missing, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Planned => fmt::Display::fmt(cause, f),
-            Self::Stale { unexpanded, repair } => {
+            Self::Stale { repair } => {
                 fmt::Display::fmt(cause, f)?;
-                if let Some(path) = unexpanded {
-                    write!(
-                        f,
-                        "; its file in the worktree at {} spells it in a macro invocation this \
-                         tree's macros do not expand, so it may be pending there",
-                        path.display()
-                    )?;
-                }
                 match repair {
                     Some(repair) => write!(f, "; repair: `{repair}`"),
                     None => Ok(()),
@@ -414,6 +403,7 @@ impl<'s> Asked<'s> {
                 Resolution::Resolved(_) | Resolution::Ambiguous(_) => true,
                 Resolution::FileMissing
                 | Resolution::SymbolMissing
+                | Resolution::SymbolInInvocation
                 | Resolution::SymbolOnDirectory
                 | Resolution::NoResolver
                 | Resolution::Unindexable(_)
@@ -431,16 +421,6 @@ impl<'s> Asked<'s> {
     fn holder(&self, anchor: &Anchor) -> Option<&Worktree> {
         let at = *self.holders.get(anchor)?;
         self.read.get(at).map(|tree| &tree.worktree)
-    }
-
-    /// The first worktree read whose file of `anchor`, which none holds,
-    /// spells its name in a macro invocation the calling tree's macros do
-    /// not expand.
-    fn unexpanded(&self, anchor: &Anchor) -> Option<&Worktree> {
-        self.read
-            .iter()
-            .find(|tree| tree.facts.spells_in_invocation(anchor))
-            .map(|tree| &tree.worktree)
     }
 
     /// The files of the stale anchors with nothing at their path here:
@@ -475,10 +455,6 @@ pub(crate) fn findings<'s>(
             // clone: a finding outlives the facts it is judged from.
             Some(worktree) => Checked::Pending(worktree.clone()),
             None => Checked::Stale {
-                unexpanded: asked
-                    .unexpanded(anchor)
-                    // clone: as above.
-                    .map(|worktree| worktree.path.clone()),
                 // clone: each finding owns its repair, which decisions share.
                 repair: asked.repairs.get(anchor).cloned(),
             },

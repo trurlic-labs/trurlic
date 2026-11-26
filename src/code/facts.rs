@@ -7,10 +7,9 @@ use std::io::ErrorKind;
 
 use crate::store::Anchor;
 
-use super::crates::Crates;
+use super::crates::{Crates, Files};
 use super::definitions::Definitions;
-use super::expand::{Expansion, Files, expand};
-use super::index::{Definition, Element, FileIndex, FileKind, IndexFault};
+use super::index::{Definition, FileIndex, FileKind, IndexFault};
 use super::kinds::{DefinitionKind, Role};
 use super::roles::{role_of_place, target_of, test_files};
 use super::scope::Scopes;
@@ -105,6 +104,10 @@ pub(crate) enum Resolution {
     FileMissing,
     /// The file defines nothing the symbol names.
     SymbolMissing,
+    /// The file defines nothing the symbol names, and a macro invocation
+    /// where an item stands spells its last name among its top-level
+    /// tokens: what an invocation produces is no definition.
+    SymbolInInvocation,
     /// The symbol names definitions of this many paths, two or more,
     /// which a fuller spelling tells apart.
     Ambiguous(usize),
@@ -124,6 +127,11 @@ impl fmt::Display for Resolution {
             Self::Resolved(target) => write!(f, "resolves to {target}"),
             Self::FileMissing => f.write_str("nothing is at its path"),
             Self::SymbolMissing => f.write_str("its file defines nothing its symbol names"),
+            Self::SymbolInInvocation => f.write_str(
+                "its file defines nothing its symbol names: a macro invocation there spells \
+                 the name, and an item an invocation produces is no definition; anchor the \
+                 macro, an item written outside the invocation, or the file",
+            ),
             Self::Ambiguous(paths) => write!(f, "its symbol names definitions of {paths} paths"),
             Self::SymbolOnDirectory => f.write_str("its symbol is on a directory"),
             Self::NoResolver => f.write_str("its symbol is on a kind of file no resolver reads"),
@@ -146,21 +154,18 @@ impl Resolution {
     }
 }
 
-/// The entries of one tree by path, `/`-separated from its root, the
-/// definitions the macro invocations of its Rust files add, and the Rust
+/// The entries of one tree by path, `/`-separated from its root, and the
 /// files that are test code whole.
 ///
-/// The tree's own facts, its macros, crates and test files, come from the
-/// files the walk takes alone, built once. A file indexed only because an
-/// anchor names it is read against those, its own macros and the
-/// manifests on its own path, which govern no walked file, and adds
-/// nothing any other file is read against, so what an anchor resolves
-/// to never depends on which other anchors there are.
+/// The tree's own facts, its crates and test files, come from the files
+/// the walk takes alone, built once. A file indexed only because an
+/// anchor names it is read against those and the manifests on its own
+/// path, which govern no walked file, and adds nothing any other file is
+/// read against, so what an anchor resolves to never depends on which
+/// other anchors there are.
 #[derive(Debug)]
 pub(crate) struct CodeFacts {
     entries: BTreeMap<String, Entry>,
-    /// What each Rust file's invocations add, or why they cannot.
-    expanded: BTreeMap<String, Result<Expansion, IndexFault>>,
     test_files: BTreeSet<String>,
     /// The paths the walk took, which a count over the tree reads.
     walked: BTreeSet<String>,
@@ -191,25 +196,18 @@ fn split<'i>(
 
 impl CodeFacts {
     /// The facts of `entries`, which hold every path an anchor to be
-    /// resolved names, every file of `walked` (the tree's Rust files and
-    /// manifests, whose macros a file can invoke) and the manifests above
-    /// each anchored Rust file outside them: a path absent from them is
-    /// missing.
+    /// resolved names, every file of `walked` (the tree's sources and
+    /// manifests) and the manifests above each anchored Rust file outside
+    /// them: a path absent from them is missing.
     pub(crate) fn new(entries: BTreeMap<String, Entry>, walked: BTreeSet<String>) -> Self {
         let (tree, outside) = split(&entries, &walked);
         let crates = Crates::of(&tree, &outside);
-        let expanded: BTreeMap<String, Result<Expansion, IndexFault>> = expand(&tree, &crates)
-            .into_iter()
-            .chain(expand(&outside, &crates))
-            .map(|(path, expansion)| (path.to_owned(), expansion))
-            .collect();
         let test_files: BTreeSet<String> = test_files(&tree, &outside, &crates)
             .into_iter()
             .map(str::to_owned)
             .collect();
         Self {
             entries,
-            expanded,
             test_files,
             walked,
         }
@@ -217,8 +215,9 @@ impl CodeFacts {
 
     /// The facts of `read`, paths of another tree read there with what was
     /// found, `None` where nothing was: each read against this tree's
-    /// macros and crates, which stand in for that tree's, so no walk of it
-    /// is needed. Only the read paths are in the facts, and none is walked.
+    /// crates and module declarations, which stand in for that tree's, so
+    /// no walk of it is needed. Only the read paths are in the facts, and
+    /// none is walked.
     pub(crate) fn beside(&self, read: &BTreeMap<String, Option<Entry>>) -> Self {
         let entries: BTreeMap<String, Entry> = read
             .iter()
@@ -236,10 +235,6 @@ impl CodeFacts {
             .filter_map(|(path, entry)| Some((path.as_str(), indexed(entry)?)))
             .collect();
         let crates = Crates::of(&tree, &outside);
-        let expanded = expand(&outside, &crates)
-            .into_iter()
-            .map(|(path, expansion)| (path.to_owned(), expansion))
-            .collect();
         let test_files = test_files(&tree, &outside, &crates)
             .into_iter()
             .filter(|path| entries.contains_key(*path))
@@ -247,7 +242,6 @@ impl CodeFacts {
             .collect();
         Self {
             entries,
-            expanded,
             test_files,
             walked: BTreeSet::new(),
         }
@@ -256,8 +250,8 @@ impl CodeFacts {
     /// For each of `anchors` whose symbol is one plain name on a code file
     /// and not the whole path of any definition there, so it resolves
     /// through a suffix, how many walked files of that file's kind hold a
-    /// definition of that name at any depth, those macro invocations add
-    /// included: whether the name alone picks out a place. A file only an
+    /// definition of that name at any depth: whether the name alone picks
+    /// out a place. A file only an
     /// anchor brought in is not counted. One pass over the tree serves them
     /// all, and none is made when no anchor is such a name.
     pub(crate) fn spread<'a>(
@@ -318,71 +312,22 @@ impl CodeFacts {
         kind.is_code().then(|| (*kind, name.clone()))
     }
 
-    /// Whether a macro invocation in item position in `anchor`'s file
-    /// spells the last name of its symbol among the arguments it keeps,
-    /// as a word or in a group's tokens: a type a macro the facts do not
-    /// hold defines may be there.
-    pub(crate) fn spells_in_invocation(&self, anchor: &Anchor) -> bool {
-        let Some(Entry::File {
-            kind,
-            index: Ok(index),
-        }) = self.entries.get(anchor.file())
-        else {
-            return false;
-        };
-        let symbol = anchor
-            .symbol()
-            .and_then(|symbol| Symbol::parse(symbol, kind.syntax()).ok());
-        let Some(Segment::Name(name)) = symbol.as_ref().and_then(|s| s.segments().last()) else {
-            return false;
-        };
-        index.rust.invocations.iter().any(|invocation| {
-            invocation.arguments.iter().any(|argument| match argument {
-                Element::Word(word) => word == name,
-                Element::Group(_, Some(tokens)) => tokens.contains(name),
-                Element::Token(_)
-                | Element::Group(_, None)
-                | Element::Binding(_)
-                | Element::Forwarded(..)
-                | Element::Many => false,
-            })
-        })
-    }
-
-    /// Every definition of the tree's indexed files, those its macro
-    /// invocations add included, with its file, the scopes its path is
-    /// walked through, and its role in the tree: test code when its file
-    /// is.
+    /// Every definition of the tree's indexed files, with its file, the
+    /// scopes its path is walked through, and its role in the tree: test
+    /// code when its file is.
     pub(crate) fn definitions(
         &self,
     ) -> impl Iterator<Item = (&str, Scopes<'_>, &Definition, Role)> {
         self.entries.iter().flat_map(move |(path, entry)| {
-            let expansion = self.expanded.get(path);
-            // A file whose expansion failed has no index, as it resolves.
-            let index = match (entry, expansion) {
-                (_, Some(Err(_))) => None,
-                (
-                    Entry::File {
-                        index: Ok(index), ..
-                    },
-                    None | Some(Ok(_)),
-                ) => Some(index),
-                (Entry::File { index: Err(_), .. } | Entry::Directory | Entry::Unindexed, _) => {
-                    None
-                }
-            };
-            let expansion = expansion.and_then(|expansion| expansion.as_ref().ok());
+            let index = indexed(entry).map(|(_, index)| index);
             let file_role = self.file_role(path);
-            let scopes = index.map(|index| self.scopes(index, expansion));
-            let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
             index
                 .map_or(&[][..], |index| &index.definitions)
                 .iter()
-                .chain(added)
                 .filter_map(move |definition| {
                     Some((
                         path.as_str(),
-                        scopes?,
+                        Scopes(&index?.scopes),
                         definition,
                         definition.role.or(file_role),
                     ))
@@ -405,9 +350,8 @@ impl CodeFacts {
     }
 
     /// The kind and the role of each definition of `anchor`'s file whose
-    /// whole path its symbol is, those its macro invocations add included:
-    /// test code when the definition is or its file is, as far as these
-    /// facts tell. Empty when there is none.
+    /// whole path its symbol is: test code when the definition is or its
+    /// file is, as far as these facts tell. Empty when there is none.
     pub(crate) fn whole(&self, anchor: &Anchor) -> BTreeSet<(DefinitionKind, Role)> {
         let Some((kind, index)) = self.entries.get(anchor.file()).and_then(indexed) else {
             return BTreeSet::new();
@@ -415,17 +359,11 @@ impl CodeFacts {
         let Some(Ok(symbol)) = anchor.symbol().map(|s| Symbol::parse(s, kind.syntax())) else {
             return BTreeSet::new();
         };
-        let expansion = self
-            .expanded
-            .get(anchor.file())
-            .and_then(|e| e.as_ref().ok());
-        let scopes = self.scopes(index, expansion);
-        let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
+        let scopes = Scopes(&index.scopes);
         let file_role = self.file_role(anchor.file());
         index
             .definitions
             .iter()
-            .chain(added)
             .filter(|definition| {
                 symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
             })
@@ -488,7 +426,8 @@ impl CodeFacts {
         files: impl Iterator<Item = &'f str>,
         crates: &Crates<'_>,
     ) -> Namesakes {
-        let (mut at_home, mut elsewhere) = (self.spells_in_invocation(anchor), Vec::new());
+        let mut at_home = false;
+        let mut elsewhere = Vec::new();
         let place = target_of(anchor.file(), crates);
         for file in files {
             if file == anchor.file() {
@@ -547,13 +486,12 @@ impl CodeFacts {
     }
 
     /// Whether the file at `path` writes an item whose whole path `symbol`
-    /// is: no re-export, no module, whose code is its file or its body, and
-    /// no type a macro invocation defines, whose code is the macro's.
+    /// is: no re-export, no module, whose code is its file or its body.
     fn writes(&self, path: &str, symbol: &Symbol) -> bool {
         let Some((_, index)) = self.entries.get(path).and_then(indexed) else {
             return false;
         };
-        let scopes = self.scopes(index, None);
+        let scopes = Scopes(&index.scopes);
         index.definitions.iter().any(|definition| {
             // Every other kind is an item whose code its own span holds.
             let code = !matches!(
@@ -562,14 +500,6 @@ impl CodeFacts {
             );
             code && symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
         })
-    }
-
-    /// The scopes the paths of `index`'s file are walked through.
-    fn scopes<'a>(&self, index: &'a FileIndex, expansion: Option<&'a Expansion>) -> Scopes<'a> {
-        Scopes {
-            file: &index.scopes,
-            added: expansion.map_or(&[][..], |expansion| &expansion.scopes),
-        }
     }
 
     /// What `anchor` names in this tree.
@@ -593,27 +523,20 @@ impl CodeFacts {
                 kind,
                 index: Ok(index),
             } => match Symbol::parse(symbol, kind.syntax()) {
-                Ok(symbol) => self.find(anchor.file(), index, &symbol),
+                Ok(symbol) => Self::find(index, &symbol),
                 Err(fault) => Resolution::Malformed(fault),
             },
         }
     }
 
-    /// The definitions of `file` that `symbol` names: those of the one
+    /// The definitions of `index` that `symbol` names: those of the one
     /// path among them, its whole path winning over paths it ends; with
     /// definitions of several paths, `Ambiguous`.
-    fn find(&self, file: &str, index: &FileIndex, symbol: &Symbol) -> Resolution {
-        let expansion = match self.expanded.get(file) {
-            Some(Err(fault)) => return Resolution::Unindexable(FileFault::Index(*fault)),
-            Some(Ok(expansion)) => Some(expansion),
-            None => None,
-        };
-        let scopes = self.scopes(index, expansion);
-        let added = expansion.map_or(&[][..], |expansion| &expansion.definitions);
+    fn find(index: &FileIndex, symbol: &Symbol) -> Resolution {
+        let scopes = Scopes(&index.scopes);
         let named: Vec<&Definition> = index
             .definitions
             .iter()
-            .chain(added)
             .filter(|definition| {
                 symbol.names(definition.kind, scopes.path_from_end(definition.scope))
             })
@@ -629,6 +552,7 @@ impl CodeFacts {
         };
         let mut sets = sets_by_path(chosen, scopes).into_values();
         match (sets.next(), sets.len()) {
+            (None, _) if spells_in_invocation(index, symbol) => Resolution::SymbolInInvocation,
             (None, _) => Resolution::SymbolMissing,
             (Some((first, rest)), 0) => {
                 Resolution::Resolved(Target::Symbol(Definitions::of(first, &rest)))
@@ -642,8 +566,7 @@ impl CodeFacts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Namesakes {
     /// Whether the anchor's own file defines the symbol's last segment
-    /// under any path, or spells it among the arguments a macro invocation
-    /// keeps: the code may be there under another spelling.
+    /// under any path: the code may be there under another spelling.
     pub(crate) at_home: bool,
     /// The other walked files of the anchor's crate target, by place
     /// ([`target_of`]), that write an item whose whole path the symbol is
@@ -655,6 +578,15 @@ pub(crate) struct Namesakes {
     /// The role of the anchor's file in this tree: test code whole by its
     /// place or by the module declarations that reach it, or code.
     pub(crate) file_role: Role,
+}
+
+/// Whether a macro invocation where an item stands in the file of `index`
+/// spells the last name of `symbol` among its top-level tokens.
+fn spells_in_invocation(index: &FileIndex, symbol: &Symbol) -> bool {
+    match symbol.segments().last() {
+        Some(Segment::Name(name)) => index.rust.invoked.binary_search(name).is_ok(),
+        Some(Segment::Impl { .. }) | None => false,
+    }
 }
 
 /// The `definitions` of each path, as `scopes` spells it: the first of the

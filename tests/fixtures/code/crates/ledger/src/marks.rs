@@ -23,11 +23,6 @@ pub fn also_built_for_benches() {}
 #[cfg(not(test))]
 fn never_under_test() {}
 
-proptest! {
-    #[test]
-    fn holds_for_any(x in 0..9u8) {}
-}
-
 pub(crate) mod nested {
     #![cfg(test)]
 

@@ -85,6 +85,10 @@ const TWO: &str = "2 definitions";
 const TWO_PATHS: &str = "its symbol names definitions of 2 paths";
 const DEEPER: &str = "its file nests a path deeper than 64 segments";
 const MISSING: &str = "its file defines nothing its symbol names";
+/// A symbol whose name only a macro invocation of its file spells.
+const INVOKED: &str = "its file defines nothing its symbol names: a macro invocation there spells \
+                       the name, and an item an invocation produces is no definition; anchor the \
+                       macro, an item written outside the invocation, or the file";
 const LEDGER: &str = "crates/ledger/src/lib.rs";
 const BOOKS: &str = "crates/ledger/src/books/mod.rs";
 const RULES: &str = "crates/ledger/src/rules.rs";
@@ -159,11 +163,11 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (LEDGER, "Shelf", MISSING),
     (LEDGER, "Imported", MISSING),
     (LEDGER, "external_total", SYMBOL),
-    (LEDGER, "LedgerView", SYMBOL),
-    (LEDGER, "CURRENT", SYMBOL),
+    (LEDGER, "LedgerView", INVOKED),
+    (LEDGER, "CURRENT", INVOKED),
     (LEDGER, "vanished", MISSING),
     (LEDGER, "Phantom", MISSING),
-    (LEDGER, "LedgerView::book", SYMBOL),
+    (LEDGER, "LedgerView::book", MISSING),
     (LEDGER, "SPELLINGS", SYMBOL),
     (
         LEDGER,
@@ -171,53 +175,15 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
         "its symbol has an angle bracket that does not pair",
     ),
     (LEDGER, "Book::", "its symbol has an empty segment"),
-    (BOOKS, "CatalogId", SYMBOL),
-    (BOOKS, "CatalogId::new", SYMBOL),
-    (BOOKS, "CatalogId::raw", SYMBOL),
-    (BOOKS, "Isbn", SYMBOL),
-    (BOOKS, "ShelfNumber", SYMBOL),
-    (BOOKS, "ShelfNumber::get", SYMBOL),
+    (BOOKS, "CatalogId", INVOKED),
+    (BOOKS, "CatalogId::new", MISSING),
     (BOOKS, "NotAType", MISSING),
     (BOOKS, "book_id", SYMBOL),
-    ("crates/shelf/src/lib.rs", "ShelfId", SYMBOL),
-    ("crates/shelf/src/lib.rs", "ShelfId::get", SYMBOL),
-    ("crates/shelf/src/lib.rs", "Hidden", MISSING),
-    ("crates/shelf/src/lib.rs", "ShelfFull", SYMBOL),
-    ("crates/shelf/src/lib.rs", "PyException", MISSING),
-    ("crates/ids/src/lib.rs", "Local", SYMBOL),
-    ("crates/ids/src/lib.rs", "numbered_id", SYMBOL),
     (RULES, "sign", SYMBOL),
-    (RULES, "Sixteenth", SYMBOL),
-    (RULES, "Seventeenth", MISSING),
-    (RULES, "EightTold", SYMBOL),
-    (RULES, "NineUntold", MISSING),
-    (RULES, "Owned", SYMBOL),
-    (RULES, "Owned::get", SYMBOL),
-    (RULES, "Owned::<Display>::fmt", SYMBOL),
-    (RULES, "Owned::fmt", SYMBOL),
-    (RULES, "Owned::from", MISSING),
-    (RULES, "Named", MISSING),
     (RULES, "commented::helper", SYMBOL),
     (RULES, "Listed", SYMBOL),
     (RULES, "flush", TWO),
     (RULES, "flush()", TWO),
-    (RULES, "Twin", TWO),
-    (RULES, "Twin::get", TWO),
-    (RULES, "Recorded", SYMBOL),
-    (RULES, "Recorded::declared", SYMBOL),
-    (RULES, "Relayed", SYMBOL),
-    (RULES, "Relayed::declared", SYMBOL),
-    (RULES, "get", "its symbol names definitions of 2 paths"),
-    (RULES, "First", SYMBOL),
-    (RULES, "First::<Tr<First>>::tr", SYMBOL),
-    (RULES, "First::only_second", MISSING),
-    (RULES, "Second::only_second", SYMBOL),
-    (RULES, "Plain::declared", SYMBOL),
-    (RULES, "Shown::declared", SYMBOL),
-    (RULES, "compared", MISSING),
-    (RULES, "Alias", MISSING),
-    (RULES, "Source", MISSING),
-    (RULES, "defaulted", SYMBOL),
     (RULES, "Disc::A::K", SYMBOL),
     (
         RULES,
@@ -225,8 +191,6 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
         "its symbol names definitions of 2 paths",
     ),
     (RULES, "x::a::spread", TWO),
-    ("loose/single.rs", "Alone", SYMBOL),
-    ("loose/single.rs", "Visible", SYMBOL),
 ];
 
 const SHELF: &str = "python/shelf.py";
@@ -970,11 +934,6 @@ const STATEMENTS: &[&str] = &[
     "cpp/shelf_test.cc shelf::model::BoxTest Class Test Public",
     "cpp/shelf_test.cc shelf::model::BoxTest::Holds Test Test -",
     "cpp/shelf_test.cc shelf::model::BoxTest::HoldsEach Test Test -",
-    "crates/ids/Cargo.toml package Key Code -",
-    "crates/ids/Cargo.toml package::name Key Code -",
-    "crates/ids/src/lib.rs numbered_id Macro Code Public",
-    "crates/ids/src/lib.rs crate_only_id Macro Code Private",
-    "crates/ids/src/lib.rs Local Struct Code -",
     "crates/ledger/Cargo.toml package Key Code -",
     "crates/ledger/Cargo.toml package::name Key Code -",
     "crates/ledger/src/abs.rs not_reached Function Code Public",
@@ -983,12 +942,6 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/books/mod.rs Shelf Struct Code Public",
     "crates/ledger/src/books/mod.rs Imported Struct Code Public",
     "crates/ledger/src/books/mod.rs call_only Function Code Public",
-    "crates/ledger/src/books/mod.rs CatalogId Struct Code -",
-    "crates/ledger/src/books/mod.rs CatalogId::new Method Code -",
-    "crates/ledger/src/books/mod.rs CatalogId::raw Method Code -",
-    "crates/ledger/src/books/mod.rs Isbn Struct Code -",
-    "crates/ledger/src/books/mod.rs ShelfNumber Struct Code -",
-    "crates/ledger/src/books/mod.rs ShelfNumber::get Method Code -",
     "crates/ledger/src/checks.rs balanced Function Test Public",
     "crates/ledger/src/lib.rs PAGE_SIZE Constant Code Public",
     "crates/ledger/src/lib.rs OPENED Static Code Private",
@@ -1041,9 +994,6 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/lib.rs Catalog Reexport Code Public",
     "crates/ledger/src/lib.rs Rack Reexport Code Public",
     "crates/ledger/src/lib.rs external_total Function Code Private",
-    "crates/ledger/src/lib.rs LedgerView Struct Code Crate",
-    "crates/ledger/src/lib.rs LedgerView::book Field Code Private",
-    "crates/ledger/src/lib.rs CURRENT Static Code Private",
     "crates/ledger/src/lib.rs tests Module Test Private",
     "crates/ledger/src/lib.rs tests::reconcile Function Test Private",
     "crates/ledger/src/marks.rs for_the_parent Function Code Super",
@@ -1055,14 +1005,9 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/marks.rs only_under_test_on_unix Function Test Private",
     "crates/ledger/src/marks.rs also_built_for_benches Function Code Public",
     "crates/ledger/src/marks.rs never_under_test Function Code Private",
-    "crates/ledger/src/marks.rs holds_for_any Function Test Private",
     "crates/ledger/src/marks.rs nested Module Test Crate",
     "crates/ledger/src/marks.rs nested::inside_a_test_module Function Test Public",
     "crates/ledger/src/rules.rs sign Function Code Public",
-    "crates/ledger/src/rules.rs listed Macro Code Private",
-    "crates/ledger/src/rules.rs worded Macro Code Private",
-    "crates/ledger/src/rules.rs grouped Macro Code Private",
-    "crates/ledger/src/rules.rs owned Macro Code Private",
     "crates/ledger/src/rules.rs commented Module Test Private",
     "crates/ledger/src/rules.rs commented::helper Function Test Private",
     "crates/ledger/src/rules.rs Listed Reexport Code Public",
@@ -1071,16 +1016,10 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs scoped::in_body Module Test Private",
     "crates/ledger/src/rules.rs flush Function Code Public",
     "crates/ledger/src/rules.rs flush Function Code Public",
-    "crates/ledger/src/rules.rs declare Macro Code Private",
-    "crates/ledger/src/rules.rs relay Macro Code Private",
-    "crates/ledger/src/rules.rs entity Macro Code Private",
     "crates/ledger/src/rules.rs Disc Enum Code Public",
     "crates/ledger/src/rules.rs Disc::A Variant Code Public",
     "crates/ledger/src/rules.rs Disc::A::K Constant Code Public",
     "crates/ledger/src/rules.rs recovered Function Code Private",
-    "crates/ledger/src/rules.rs defaulted Function Code Private",
-    "crates/ledger/src/rules.rs paired Macro Code Private",
-    "crates/ledger/src/rules.rs front Macro Code Private",
     "crates/ledger/src/rules.rs x Module Code Private",
     "crates/ledger/src/rules.rs x::a Module Code Public",
     "crates/ledger/src/rules.rs x::a::spread Function Code Public",
@@ -1088,41 +1027,9 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs y Module Code Private",
     "crates/ledger/src/rules.rs y::a Module Code Public",
     "crates/ledger/src/rules.rs y::a::spread Function Code Public",
-    "crates/ledger/src/rules.rs Sixteenth Struct Code -",
-    "crates/ledger/src/rules.rs EightTold Enum Code -",
-    "crates/ledger/src/rules.rs Owned Struct Code -",
-    "crates/ledger/src/rules.rs Owned::get Method Code -",
-    "crates/ledger/src/rules.rs Owned::<Display> Impl Code -",
-    "crates/ledger/src/rules.rs Owned::<Display>::fmt Method Code -",
-    "crates/ledger/src/rules.rs Twin Struct Code -",
-    "crates/ledger/src/rules.rs Twin::get Method Code -",
-    "crates/ledger/src/rules.rs Twin::<Display> Impl Code -",
-    "crates/ledger/src/rules.rs Twin::<Display>::fmt Method Code -",
-    "crates/ledger/src/rules.rs Twin Struct Code -",
-    "crates/ledger/src/rules.rs Twin::get Method Code -",
-    "crates/ledger/src/rules.rs Twin::<Display> Impl Code -",
-    "crates/ledger/src/rules.rs Twin::<Display>::fmt Method Code -",
-    "crates/ledger/src/rules.rs Recorded Struct Code -",
-    "crates/ledger/src/rules.rs Recorded::declared Method Code -",
-    "crates/ledger/src/rules.rs Relayed Struct Code -",
-    "crates/ledger/src/rules.rs Relayed::declared Method Code -",
-    "crates/ledger/src/rules.rs First Struct Code -",
-    "crates/ledger/src/rules.rs First::<Tr<First>> Impl Code -",
-    "crates/ledger/src/rules.rs First::<Tr<First>>::tr Method Code -",
-    "crates/ledger/src/rules.rs Second Struct Code -",
-    "crates/ledger/src/rules.rs Second::only_second Method Code -",
-    "crates/ledger/src/rules.rs Plain Struct Code -",
-    "crates/ledger/src/rules.rs Plain::declared Method Code -",
-    "crates/ledger/src/rules.rs Shown Struct Code -",
-    "crates/ledger/src/rules.rs Shown::declared Method Code -",
     "crates/ledger/src/rules/in_body.rs reached_by_test Function Test Public",
     "crates/ledger/tests/flow.rs opened_book Function Test Private",
     "crates/ledger/tests/flow.rs a_book_opens Function Test Private",
-    "crates/shelf/Cargo.toml package Key Code -",
-    "crates/shelf/Cargo.toml package::name Key Code -",
-    "crates/shelf/src/lib.rs ShelfId Struct Code -",
-    "crates/shelf/src/lib.rs ShelfId::get Method Code -",
-    "crates/shelf/src/lib.rs ShelfFull Struct Code -",
     "docs/guide.md Guide Heading Code -",
     "docs/guide.md Guide::Install Heading Code -",
     "docs/guide.md Guide::Install::From source Heading Code -",
@@ -1133,10 +1040,6 @@ const STATEMENTS: &[&str] = &[
     "docs/guide.md Guide::Install (Linux) Heading Code -",
     "docs/guide.md Guide::Notes Heading Code -",
     "docs/guide.md Guide::Notes Heading Code -",
-    "loose/single.rs solo Macro Code Private",
-    "loose/single.rs Alone Enum Code -",
-    "loose/single.rs Visible Struct Code -",
-    "loose/single.rs Visible::get Method Code -",
     "python/checks.py test_in_a_code_file Function Test Public",
     "python/checks.py test_in_a_code_file::inner Function Test Public",
     "python/checks.py TestAudit Class Test Public",
@@ -1343,59 +1246,14 @@ fn a_file_outside_the_walk_is_read_against_the_trees_macros() {
     assert_eq!(resolve_all(&store, &cases), expected(&cases));
 }
 
-#[test]
-fn an_anchor_resolves_alike_whatever_else_is_anchored() {
-    let tmp = TempDir::new().unwrap();
-    let files = [
-        ("Cargo.toml", "[package]\nname = 'root'\n"),
-        (
-            "src/lib.rs",
-            "macro_rules! id { (x $n:ident) => { pub struct $n; }; }\n",
-        ),
-        ("vendor/sub/.git", ""),
-        ("vendor/sub/Cargo.toml", "[package]\nname = 'sub'\n"),
-        ("vendor/sub/src/lib.rs", "id! { x Thing }\n"),
-        (
-            "vendor/sub/src/own.rs",
-            "macro_rules! id { (x $n:ident) => { pub struct $n; }; }\n",
-        ),
-    ];
-    for (path, text) in files {
-        let path = tmp.path().join(path);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, text).unwrap();
-    }
-    let store = setup_store(tmp.path());
-    let thing = anchor("vendor/sub/src/lib.rs", "Thing");
-    let resolve = |anchored: &[&str]| {
-        let facts = gather(&store, anchored.iter().copied());
-        outcome(&facts.resolve(&thing))
-    };
-
-    let alone = resolve(&["vendor/sub/src/lib.rs"]);
-    assert_eq!(alone, MISSING);
-    assert_eq!(
-        resolve(&["vendor/sub/Cargo.toml", "vendor/sub/src/lib.rs"]),
-        alone
-    );
-    assert_eq!(
-        resolve(&["vendor/sub/src/own.rs", "vendor/sub/src/lib.rs"]),
-        alone
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn a_manifest_an_anchor_brings_governs_no_file_the_walk_took() {
     let tmp = TempDir::new().unwrap();
     let files = [
         ("Cargo.toml", "[package]\n"),
-        (
-            "src/lib.rs",
-            "macro_rules! m { (x $n:ident) => { pub struct $n; }; }\n",
-        ),
         ("shared.toml", "[package]\n"),
-        ("sub/src/lib.rs", "m!(x T);\n"),
+        ("sub/src/lib.rs", "pub struct T;\n"),
         ("sub/tests/t.rs", "pub fn helper() {}\n"),
     ];
     for (path, text) in files {
@@ -1426,40 +1284,4 @@ fn a_manifest_an_anchor_brings_governs_no_file_the_walk_took() {
         facts_of(&["sub/Cargo.toml", "sub/src/lib.rs", "sub/tests/t.rs"]),
         without
     );
-}
-
-#[test]
-fn a_file_outside_the_walk_reaches_its_crates_macros_and_its_own() {
-    let tmp = TempDir::new().unwrap();
-    let rules: String = (0..2_000)
-        .map(|n| format!("(w{n} $n:ident) => {{ pub struct $n; }};\n"))
-        .collect();
-    fs::create_dir_all(tmp.path().join("src")).unwrap();
-    fs::create_dir_all(tmp.path().join(".gen")).unwrap();
-    fs::write(tmp.path().join("Cargo.toml"), "[package]\n").unwrap();
-    fs::write(
-        tmp.path().join("src/lib.rs"),
-        format!("macro_rules! m {{ {rules} }}\n"),
-    )
-    .unwrap();
-    let outside: Vec<String> = (0..200).map(|n| format!(".gen/g{n}.rs")).collect();
-    for path in &outside {
-        fs::write(
-            tmp.path().join(path),
-            "m!(w1 X);\nmacro_rules! own { (q $n:ident) => { pub struct $n; }; }\nown!(q Y);\n",
-        )
-        .unwrap();
-    }
-    let store = setup_store(tmp.path());
-    let facts = gather(&store, outside.iter().map(String::as_str));
-
-    for path in &outside {
-        for symbol in ["X", "Y"] {
-            assert_eq!(
-                outcome(&facts.resolve(&anchor(path, symbol))),
-                SYMBOL,
-                "{path}::{symbol}"
-            );
-        }
-    }
 }

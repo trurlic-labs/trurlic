@@ -7,10 +7,11 @@
 use super::index::{FileIndex, IndexFault};
 use super::kinds::DefinitionKind;
 use super::lexical::Lexical;
+use super::scope::ScopeTree;
 
 /// The index of `text`, a Makefile: its rule targets.
-pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
-    let mut lexical = Lexical::of(text);
+pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
+    let mut lexical = Lexical::of(text, scopes);
     let mut rule: Option<(Vec<&str>, usize, usize)> = None;
     let mut in_define = false;
     for (start, line) in logical_lines(text) {

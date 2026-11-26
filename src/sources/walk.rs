@@ -2,9 +2,9 @@
 //!
 //! The walk goes down from the code root and takes every source file of a
 //! language the index reads ([`FileKind::is_code`]) and every
-//! `Cargo.toml`: a Rust file's definitions can come from any crate's
-//! macros, and a count of the tree's definitions needs every one, so the
-//! tree's facts hold all of them. A data or prose file is read when an
+//! `Cargo.toml`: a count of the tree's definitions needs every source
+//! file, and a Rust file's role needs its crate's manifest and the module
+//! declarations that reach it, so the tree's facts hold all of them. A data or prose file is read when an
 //! anchor names it. The walk never leaves the tree the call comes from,
 //! and passes over what no one writes source in, each by a stated rule:
 //! every entry whose name starts with `.` (`.git`, `.trurlic`, `.venv`,

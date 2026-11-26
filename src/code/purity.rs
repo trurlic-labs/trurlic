@@ -6,9 +6,10 @@
 //! Every token of every Rust file under the checked directory is read,
 //! macro arguments and bodies included, a raw identifier as its name.
 //! Test code is left out by a rule of the check's own, never the index's.
-//! It is an item an exact `#[test]` or `#[cfg(test)]` marks, a file whose
-//! every `mod` declaration is such an item or in a test file, and a file
-//! under an inner `#![cfg(test)]`. A path's first segment says where it
+//! It is an item an exact `#[test]` or `#[cfg(test)]` marks, or whose body
+//! opens with an inner `#![cfg(test)]`, a file whose every `mod`
+//! declaration is such an item or in a test file, and a file whose root
+//! holds an inner `#![cfg(test)]`. A path's first segment says where it
 //! goes, a `use` list read whole. `std`, `core` and `alloc` go only to
 //! the modules of [`STD_MODULES`] and the items of the list. The crate
 //! (`crate`, `$crate`, or as many `super`s as reach its root) goes only to
@@ -17,8 +18,10 @@
 //! reads entropy, are refused, and so are the file system methods of a
 //! path where the list admits a path type. Refused outright: a glob or an
 //! alias of such a root, `extern crate`, an attribute that names a `path`
-//! (`#[path = ..]`, `#[cfg_attr(.., path = ..)]`), and the prelude macros
-//! of [`MACROS`], which read files or the environment or write a stream.
+//! (`#[path = ..]`, `#[cfg_attr(.., path = ..)]`), a `mod name` in a
+//! macro's tokens, which declares a module the check cannot see marked,
+//! and the prelude macros of [`MACROS`], which read files or the
+//! environment or write a stream.
 //! The one include admitted is `include_str!` of a plain string literal,
 //! a relative path that stays inside the checked directory: a language's
 //! query file, source of the index as its Rust files are.
@@ -176,16 +179,23 @@ pub(crate) fn faults(root: &Path, dir: &str, allowed: &AllowList) -> Vec<String>
             .into_iter()
             .map(|(line, what)| format!("{path}:{line}: {what}")),
         );
+        found.extend(
+            file.macro_modules
+                .iter()
+                .map(|line| format!("{path}:{line}: a module declared through a macro")),
+        );
     }
     found
 }
 
 /// What the check reads of a file: its tokens outside test items, each
 /// with its line, each `mod name;` it declares and whether a test mark
-/// holds it, and whether the whole file is test code.
+/// holds it, the line of each `mod name` a macro's tokens outside test
+/// items spell, and whether the whole file is test code.
 struct Read {
     tokens: Vec<(usize, String)>,
     modules: Vec<(String, bool)>,
+    macro_modules: Vec<usize>,
     test: bool,
 }
 
@@ -194,14 +204,21 @@ fn read(text: &str) -> Read {
     let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
     let mut marked: Vec<Range<usize>> = Vec::new();
     let mut modules = Vec::new();
+    let mut macro_modules = Vec::new();
     let mut test = false;
     let mut pending = vec![tree.root_node()];
     while let Some(node) = pending.pop() {
         let mut cursor = node.walk();
         pending.extend(node.children(&mut cursor));
         match node.kind() {
-            "inner_attribute_item" => test |= spelled(node, text) == "#![cfg(test)]",
+            "inner_attribute_item" if spelled(node, text) == "#![cfg(test)]" => {
+                match node.parent().filter(|body| body.kind() != "source_file") {
+                    Some(body) => marked.push(body.parent().unwrap_or(body).byte_range()),
+                    None => test = true,
+                }
+            }
             "attribute_item" if is_test_mark(node, text) => marked.extend(marked_item(node)),
+            "token_tree" => macro_modules.extend(declared_modules(node, text)),
             "mod_item" if node.child_by_field_name("body").is_none() => {
                 let name = node
                     .child_by_field_name("name")
@@ -229,8 +246,29 @@ fn read(text: &str) -> Read {
             .into_iter()
             .map(|(name, at)| (name, held(at)))
             .collect(),
+        macro_modules: macro_modules
+            .into_iter()
+            .filter(|&(_, at)| !held(at))
+            .map(|(line, _)| line)
+            .collect(),
         test,
     }
+}
+
+/// Each `mod name` among the tokens of `tree`, a token tree: its line and
+/// its first byte.
+fn declared_modules(tree: Node<'_>, text: &str) -> Vec<(usize, usize)> {
+    let mut cursor = tree.walk();
+    let tokens: Vec<Node<'_>> = tree.children(&mut cursor).collect();
+    tokens
+        .windows(2)
+        .filter_map(|pair| match pair {
+            [keyword, name] if text_of(*keyword, text) == "mod" && name.kind() == "identifier" => {
+                Some((keyword.start_position().row + 1, keyword.start_byte()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// `node`'s text without whitespace.
@@ -360,10 +398,7 @@ fn dependencies(texts: &[(String, String)]) -> Vec<String> {
         &crate::code::BlankMacros::default(),
     )
     .unwrap();
-    let scopes = super::scope::Scopes {
-        file: &manifest.scopes,
-        added: &[],
-    };
+    let scopes = super::scope::Scopes(&manifest.scopes);
     manifest
         .definitions
         .iter()

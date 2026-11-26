@@ -125,7 +125,7 @@ fn calling_tree(store: &Store, decisions: &Decisions<'_>, reads: &mut Reads) -> 
 /// anchors no earlier one holds at the paths its work tree changed since
 /// the fork, and no further worktree is read once every one is held. Those
 /// files alone are read, never a walk of the tree, against the calling
-/// tree's macros.
+/// tree's crates and module declarations.
 fn elsewhere(
     store: &Store,
     here: &CodeFacts,

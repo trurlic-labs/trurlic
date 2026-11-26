@@ -85,6 +85,7 @@ impl Renames {
             Resolution::FileMissing => self.facts.resolve(anchor),
             found @ (Resolution::Resolved(_)
             | Resolution::SymbolMissing
+            | Resolution::SymbolInInvocation
             | Resolution::Ambiguous(_)
             | Resolution::SymbolOnDirectory
             | Resolution::NoResolver

@@ -1,0 +1,26 @@
+component = "code"
+choice = "An index entry's room is its file's bytes times what its kind's densest definitions cost per byte, every heap block charged as glibc's malloc takes it"
+reason = "No file a kind's size cap admits may be refused for the definitions it holds, and a forged entry may take no more memory than its file's room. So the scope tree charges each part of an index, and a read charges it again before it allocates: its bytes in the entry, the slot of each value in its collection by size_of, and each heap block it owns at the allocator's minimum, at least 32 bytes and the request with an 8-byte header rounded to 16, a scope's depth too. A read charges each collection's block whole, and the overhead holds what they round. The room per byte is the cost of the densest definition a kind holds, a scope of one segment and the definition with each number as long as the kind's cap makes it, over the bytes it takes: a two-byte item `A,` of a tree-sitter kind, a one-byte table of a dotted TOML key, a Makefile target sharing its rule's span, an empty Markdown heading, an empty JSON key in five bytes. A definition is charged its span as one byte when it repeats the last one admitted, as the entry writes it. The sizes and each kind's room are in BOUNDS, so another target or rule is another cache key."
+alternatives = [
+    "A hand table of weights per value: rejected because it lumped a 24-byte token with a 104-byte rule and drifted from the types it stood for",
+    "One room of 64 bytes a byte for every kind: rejected because a variant of two bytes costs about 260, so dense legal files were refused",
+    "Charge requested bytes and state the bound as a factor of the room: rejected because the factor is the allocator's, and a forged entry of one-byte names took 1.6 times the stated room",
+    "One size cap of 1 MiB for every kind: rejected by the owner, who keeps 4 MiB for data and prose files",
+]
+tags = [
+    "performance",
+    "reliability",
+]
+status = "proposed"
+origin = "code index: a macro invocation defines nothing"
+created = "2026-11-26T08:06:23.435326427Z"
+anchors = [
+    { file = "src/code/encoding/mod.rs", symbol = "block" },
+    { file = "src/code/encoding/mod.rs", symbol = "densest" },
+    { file = "src/code/encoding/mod.rs", symbol = "room_per_byte" },
+    { file = "src/code/encoding/read.rs", symbol = "decode" },
+    { file = "src/code/encoding/tests.rs", symbol = "a_forged_entry_decodes_to_no_more_than_the_room_of_its_file_as_the_allocator_takes_it" },
+    { file = "src/code/encoding/tests.rs", symbol = "the_densest_file_of_each_kind_is_indexed_within_its_room" },
+    { file = "src/code/encoding/write.rs", symbol = "Measure" },
+    { file = "src/code/scope.rs", symbol = "ScopeTree::admit_definition" },
+]

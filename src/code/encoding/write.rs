@@ -1,17 +1,11 @@
-//! Writing an index's entry, and measuring what each part of it takes.
+//! Writing an index's entry, and measuring what each part of it costs.
 
-use std::sync::Arc;
-
-use crate::code::index::{
-    Definition, Element, FileIndex, Fragment, HandOff, IndexFault, Invocation, ModuleFile,
-    Receives, TraitToken, TypeMacro,
-};
-use crate::code::kinds::DefinitionKind;
-use crate::code::scope::ScopeId;
+use crate::code::index::{Definition, FileIndex, IndexFault, ModuleFile};
+use crate::code::scope::{Scope, ScopeId};
 use crate::code::span::{Span, SpanHash};
 use crate::code::symbol::Segment;
 
-use super::{Indexed, kind_code, role_code, visibility_code, weight};
+use super::{DEPTH_BYTES, Indexed, block, kind_code, role_code, visibility_code};
 
 /// The bytes of `indexed`.
 pub(crate) fn encode(indexed: &Indexed) -> Vec<u8> {
@@ -50,36 +44,37 @@ pub(crate) fn encode(indexed: &Indexed) -> Vec<u8> {
 }
 
 /// What each part of an index costs in an entry, as [`encode`] writes it
-/// and a read charges it: its bytes, and the [`weight`] of itself and of
-/// each value it holds. A definition's span is counted whole, shared or
-/// not.
+/// and a read charges it: its bytes, its slot in its collection, and each
+/// heap block it owns as the allocator takes it ([`block`]). A scope adds
+/// the depth a read keeps beside it.
 pub(in crate::code) struct Measure;
 
 impl Measure {
     pub(in crate::code) fn scope(parent: Option<ScopeId>, name: &[Segment]) -> usize {
-        Self::of(weight::SCOPE, |out| out.scope_entry(parent, name))
+        Self::of(size_of::<Scope>() + DEPTH_BYTES, |out| {
+            out.scope_entry(parent, name);
+        })
     }
 
-    pub(in crate::code) fn definition(definition: &Definition) -> usize {
-        Self::of(weight::DEFINITION, |out| out.definition(definition, None))
-    }
-
-    pub(in crate::code) fn type_macro(found: &TypeMacro) -> usize {
-        Self::of(weight::MACRO_PART, |out| out.type_macro(found))
-    }
-
-    pub(in crate::code) fn invocation(invocation: &Invocation) -> usize {
-        Self::of(weight::INVOCATION, |out| out.invocation(invocation))
+    /// `definition`, which comes after one of span `previous` in the entry.
+    pub(in crate::code) fn definition(definition: &Definition, previous: Option<Span>) -> usize {
+        Self::of(size_of::<Definition>(), |out| {
+            out.definition(definition, previous);
+        })
     }
 
     pub(in crate::code) fn module_file(module: &ModuleFile) -> usize {
-        Self::of(weight::MODULE_FILE, |out| out.module_file(module))
+        Self::of(size_of::<ModuleFile>(), |out| out.module_file(module))
     }
 
-    /// The cost of the part `write` writes, a value of `weight` in its
+    pub(in crate::code) fn invoked(name: &str) -> usize {
+        Self::of(size_of::<String>(), |out| out.text(name))
+    }
+
+    /// The cost of the part `write` writes, a value of `slot` bytes in its
     /// collection.
-    fn of(weight: usize, write: impl FnOnce(&mut Writer<Cost>)) -> usize {
-        let mut out = Writer(Cost(weight));
+    fn of(slot: usize, write: impl FnOnce(&mut Writer<Cost>)) -> usize {
+        let mut out = Writer(Cost(slot));
         write(&mut out);
         out.0.0
     }
@@ -89,8 +84,8 @@ impl Measure {
 trait Sink {
     fn put(&mut self, bytes: &[u8]);
 
-    /// Note `count` values of `weight` each.
-    fn weigh(&mut self, count: usize, weight: usize);
+    /// Note a heap block of `requested` bytes the value written owns.
+    fn own(&mut self, requested: usize);
 }
 
 impl Sink for Vec<u8> {
@@ -98,20 +93,19 @@ impl Sink for Vec<u8> {
         self.extend_from_slice(bytes);
     }
 
-    fn weigh(&mut self, _count: usize, _weight: usize) {}
+    fn own(&mut self, _requested: usize) {}
 }
 
-/// The cost of what a writer would write: its bytes, and each value's
-/// weight.
+/// The cost of what a writer would write: its bytes, and each block.
 struct Cost(usize);
 
 impl Sink for Cost {
     fn put(&mut self, bytes: &[u8]) {
-        self.0 += bytes.len();
+        self.0 = self.0.saturating_add(bytes.len());
     }
 
-    fn weigh(&mut self, count: usize, weight: usize) {
-        self.0 = self.0.saturating_add(count.saturating_mul(weight));
+    fn own(&mut self, requested: usize) {
+        self.0 = self.0.saturating_add(block(requested));
     }
 }
 
@@ -134,16 +128,11 @@ impl<S: Sink> Writer<S> {
         }
     }
 
-    /// The count of a collection of `count` values of `weight` each.
-    fn count(&mut self, count: usize, weight: usize) {
-        self.number(count);
-        self.0.weigh(count, weight);
-    }
-
-    /// A text: its length and its bytes.
+    /// A text: its length and its bytes, which a read holds in a block.
     fn text(&mut self, text: &str) {
         self.number(text.len());
         self.0.put(text.as_bytes());
+        self.0.own(text.len());
     }
 
     /// An optional scope: 0 for none, else its id and one.
@@ -160,33 +149,31 @@ impl<S: Sink> Writer<S> {
     }
 
     fn index(&mut self, index: &FileIndex) {
-        self.count(index.scopes.len(), weight::SCOPE);
+        self.number(index.scopes.len());
         for scope in &index.scopes {
             self.scope_entry(scope.parent, &scope.name);
         }
-        self.count(index.definitions.len(), weight::DEFINITION);
+        self.number(index.definitions.len());
         let mut previous: Option<Span> = None;
         for definition in &index.definitions {
             self.definition(definition, previous);
             previous = Some(definition.span);
         }
-        self.count(index.rust.macros.len(), weight::MACRO_PART);
-        for found in &index.rust.macros {
-            self.type_macro(found);
-        }
-        self.count(index.rust.invocations.len(), weight::INVOCATION);
-        for invocation in &index.rust.invocations {
-            self.invocation(invocation);
-        }
-        self.count(index.rust.module_files.len(), weight::MODULE_FILE);
+        self.number(index.rust.module_files.len());
         for module in &index.rust.module_files {
             self.module_file(module);
         }
+        self.number(index.rust.invoked.len());
+        for name in &index.rust.invoked {
+            self.text(name);
+        }
     }
 
+    /// A scope, whose segments a read holds in a block of their own.
     fn scope_entry(&mut self, parent: Option<ScopeId>, name: &[Segment]) {
         self.scope(parent);
-        self.count(name.len(), weight::SEGMENT);
+        self.number(name.len());
+        self.0.own(name.len().saturating_mul(size_of::<Segment>()));
         for segment in name {
             self.segment(segment);
         }
@@ -236,135 +223,5 @@ impl<S: Sink> Writer<S> {
                 }
             }
         }
-    }
-
-    fn type_macro(&mut self, found: &TypeMacro) {
-        self.text(&found.name);
-        self.byte(u8::from(found.exported));
-        self.count(found.rules.len(), weight::MACRO_PART);
-        for rule in &found.rules {
-            self.elements(&rule.opening);
-            self.byte(u8::from(rule.whole));
-            self.count(rule.receives.len(), weight::MACRO_PART);
-            for (place, receives) in &rule.receives {
-                self.number(*place);
-                self.receives(receives);
-            }
-            self.count(rule.hand_offs.len(), weight::MACRO_PART);
-            for hand_off in &rule.hand_offs {
-                self.hand_off(hand_off);
-            }
-            self.named(&rule.items);
-        }
-    }
-
-    /// Names a macro gives, each with its kind.
-    fn named(&mut self, named: &[(Arc<Segment>, DefinitionKind)]) {
-        self.count(named.len(), weight::MACRO_PART);
-        for (name, kind) in named {
-            self.segment(name);
-            self.byte(kind_code(*kind));
-        }
-    }
-
-    fn receives(&mut self, receives: &Receives) {
-        match receives.kind {
-            None => self.byte(0),
-            Some(kind) => {
-                self.byte(1);
-                self.byte(kind_code(kind));
-            }
-        }
-        self.count(receives.impls.len(), weight::MACRO_PART);
-        for found_impl in &receives.impls {
-            match &found_impl.trait_tokens {
-                None => self.byte(0),
-                Some(tokens) => {
-                    self.byte(1);
-                    self.count(tokens.len(), weight::MACRO_PART);
-                    for token in tokens {
-                        self.trait_token(token);
-                    }
-                }
-            }
-            self.named(&found_impl.members);
-        }
-    }
-
-    fn trait_token(&mut self, token: &TraitToken) {
-        match token {
-            TraitToken::Text(text) => {
-                self.byte(0);
-                self.text(text);
-            }
-            TraitToken::Name => self.byte(1),
-        }
-    }
-
-    fn hand_off(&mut self, hand_off: &HandOff) {
-        self.text(&hand_off.macro_name);
-        self.byte(u8::from(hand_off.from_crate));
-        self.elements(&hand_off.arguments);
-        self.byte(u8::from(hand_off.whole));
-    }
-
-    fn elements(&mut self, elements: &[Element]) {
-        self.count(elements.len(), weight::ELEMENT);
-        for element in elements {
-            match element {
-                Element::Word(word) => {
-                    self.byte(0);
-                    self.text(word);
-                }
-                Element::Token(token) => {
-                    self.byte(1);
-                    self.text(token);
-                }
-                Element::Group(open, tokens) => {
-                    self.byte(2);
-                    self.number(*open as usize);
-                    match tokens {
-                        None => self.byte(0),
-                        Some(tokens) => {
-                            self.byte(1);
-                            self.count(tokens.len(), weight::ELEMENT);
-                            for token in tokens {
-                                self.text(token);
-                            }
-                        }
-                    }
-                }
-                Element::Binding(fragment) => {
-                    self.byte(3);
-                    self.byte(fragment_code(*fragment));
-                }
-                Element::Forwarded(place, fragment) => {
-                    self.byte(4);
-                    self.number(place.map_or(0, |place| place + 1));
-                    self.byte(fragment_code(*fragment));
-                }
-                Element::Many => self.byte(5),
-            }
-        }
-    }
-
-    fn invocation(&mut self, invocation: &Invocation) {
-        self.text(&invocation.macro_name);
-        self.scope(invocation.container);
-        self.span(invocation.span, invocation.hash);
-        self.elements(&invocation.arguments);
-        self.byte(u8::from(invocation.whole));
-        self.byte(role_code(invocation.role));
-    }
-}
-
-/// A fragment's code, its place in [`Fragment::ALL`].
-const fn fragment_code(fragment: Fragment) -> u8 {
-    match fragment {
-        Fragment::Ident => 0,
-        Fragment::Tree => 1,
-        Fragment::Literal => 2,
-        Fragment::Lifetime => 3,
-        Fragment::Other => 4,
     }
 }

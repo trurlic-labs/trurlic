@@ -16,10 +16,7 @@ fn statements(text: &str) -> Vec<(String, &str)> {
 /// visibility` and the text of its span.
 fn statements_of(kind: FileKind, text: &str) -> Vec<(String, &str)> {
     let index = index_of(kind, text.as_bytes(), &BlankMacros::default()).unwrap();
-    let scopes = Scopes {
-        file: &index.scopes,
-        added: &[],
-    };
+    let scopes = Scopes(&index.scopes);
     index
         .definitions
         .iter()
@@ -47,10 +44,7 @@ fn hash_of(text: &str, wanted: &str) -> SpanHash {
 /// path is `wanted`.
 fn hash_in(kind: FileKind, text: &str, wanted: &str) -> SpanHash {
     let index = index_of(kind, text.as_bytes(), &BlankMacros::default()).unwrap();
-    let scopes = Scopes {
-        file: &index.scopes,
-        added: &[],
-    };
+    let scopes = Scopes(&index.scopes);
     let found: Vec<SpanHash> = index
         .definitions
         .iter()
@@ -445,13 +439,10 @@ fn placed_with(source: &str, text: &str) -> Vec<String> {
     let rules = rules(source);
     let tree = syntax::parse(text, &rules.grammar).unwrap();
     let found = collect(&rules, &tree, text).unwrap();
-    let mut tree_of_scopes = ScopeTree::for_file(text.len());
+    let mut tree_of_scopes = ScopeTree::for_file(FileKind::Python, text.len());
     let placed = place::place(&found, &mut tree_of_scopes).unwrap();
     let file = tree_of_scopes.into_scopes();
-    let scopes = Scopes {
-        file: &file,
-        added: &[],
-    };
+    let scopes = Scopes(&file);
     placed.iter().map(|it| path(scopes, it.scope)).collect()
 }
 
@@ -468,7 +459,11 @@ fn of_two_within_marks_of_one_node_the_one_visibility_orders_first_holds() {
         let text = "def f(): pass\n";
         let tree = syntax::parse(text, &rules.grammar).unwrap();
         let found = collect(&rules, &tree, text).unwrap();
-        let placed = place::place(&found, &mut ScopeTree::for_file(text.len())).unwrap();
+        let placed = place::place(
+            &found,
+            &mut ScopeTree::for_file(FileKind::Python, text.len()),
+        )
+        .unwrap();
 
         assert_eq!(
             placed[0].what.visibility,
@@ -1283,10 +1278,7 @@ fn a_tree_defined_attribute_macro_is_blanked_before_the_parse() {
     )]);
     let read = |macros: &BlankMacros| {
         let index = index_of(FileKind::Cpp, text.as_bytes(), macros).unwrap();
-        let scopes = Scopes {
-            file: &index.scopes,
-            added: &[],
-        };
+        let scopes = Scopes(&index.scopes);
         index
             .definitions
             .iter()

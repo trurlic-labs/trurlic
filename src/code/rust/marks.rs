@@ -7,15 +7,16 @@
 //! `cfg(test)`, an `all(..)` that holds `test`, an `any(..)` whose every
 //! member does. `cfg(any(test, feature = "x"))` is code a feature
 //! builds, and `cfg(not(test))` code no test builds: neither is test
-//! code. The attribute is read from its tokens, in the tree's attribute
-//! or in an invocation's token tree alike.
+//! code. The attribute is read from its tokens.
+
+use std::ops::ControlFlow;
 
 use tree_sitter::Node;
 
 use crate::code::kinds::{Role, Visibility};
-use crate::code::syntax::text_of;
+use crate::code::syntax::{self, Token, text_of};
 
-use super::macros::tokens_of;
+use super::LEXICON;
 
 /// What an attribute says of the item it is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +54,7 @@ pub(super) fn attribute_item_marks<'n>(attribute: Node<'n>, text: &str) -> Marks
             path: None,
         };
     };
-    let nodes = tokens_of(inner, text, usize::MAX);
+    let nodes = tokens_of(inner, text);
     let tokens: Vec<&str> = nodes.iter().map(|token| text_of(*token, text)).collect();
     let macro_export = match tokens.as_slice() {
         ["macro_export", ..] => true,
@@ -73,7 +74,7 @@ pub(super) fn attribute_item_marks<'n>(attribute: Node<'n>, text: &str) -> Marks
 
 /// What an attribute spelled by `tokens`, those between its brackets,
 /// makes of its item.
-pub(super) fn attribute_role(tokens: &[&str]) -> Role {
+fn attribute_role(tokens: &[&str]) -> Role {
     let arguments = tokens
         .iter()
         .position(|token| matches!(*token, "(" | "="))
@@ -167,6 +168,19 @@ pub(super) fn inner_role(node: Node<'_>, role: Role, text: &str) -> Role {
         .fold(role, Role::or)
 }
 
+/// The nodes of the tokens of `node`, in order: its leaves, a literal as
+/// one token, comments left out (`syntax::tokens`).
+fn tokens_of<'n>(node: Node<'n>, text: &str) -> Vec<Node<'n>> {
+    let mut found = Vec::new();
+    syntax::tokens(node, text, &LEXICON, |token| {
+        if let Token::Node(node) = token {
+            found.push(node);
+        }
+        ControlFlow::Continue(())
+    });
+    found
+}
+
 /// The visibility `item`'s modifier states, `Private` when it has none.
 /// The modifier is read from its tokens, so a comment inside it
 /// (`pub(/* why */ crate)`) changes nothing.
@@ -178,7 +192,7 @@ pub(super) fn visibility_of(item: Node<'_>, text: &str) -> Visibility {
     else {
         return Visibility::Private;
     };
-    let tokens: Vec<&str> = tokens_of(modifier, text, usize::MAX)
+    let tokens: Vec<&str> = tokens_of(modifier, text)
         .into_iter()
         .map(|token| text_of(token, text))
         .collect();

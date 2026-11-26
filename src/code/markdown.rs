@@ -9,14 +9,14 @@
 use super::index::{FileIndex, IndexFault};
 use super::kinds::DefinitionKind;
 use super::lexical::Lexical;
-use super::scope::ScopeId;
+use super::scope::{ScopeId, ScopeTree};
 
 /// The index of `text`, a Markdown file: its heading sections.
-pub(super) fn index(text: &str) -> Result<FileIndex, IndexFault> {
+pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let mut sections = Sections {
         text,
         open: Vec::new(),
-        lexical: Lexical::of(text),
+        lexical: Lexical::of(text, scopes),
     };
     let mut fence: Option<Fence> = None;
     let mut start = 0;

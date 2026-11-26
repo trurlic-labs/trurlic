@@ -1,10 +1,9 @@
 component = "code"
 choice = "A definition carries its kind: a Rust item by its node and container, a fn of an impl or trait a method; a query's definition as its pattern names it; a key, target or heading for a lexical file"
-reason = "A diff review names an uncovered definition by what it is, and a count of definitions separates functions from fields, so each definition states its kind, never a guess. A kind is a different thing in the source: a union is no struct, a static no constant, a pub use leaf a re-export of what another module defines, a trait impl the definition Type::<Trait>, a trait's type and the type an impl gives it an associated type, a type outside them a type alias. A fn in an impl or a trait is a method whether or not it takes self; one in a module, a body or an extern block is a function. Each node that defines a name is one case of an exhaustive match. An item an invocation spells takes the kind of its keyword in the container the invocation stands in, its fields and variants theirs. A type a macro invocation defines takes the kind of the keyword its arm's own body opens it with, or another arm's when its body hands the name on; the items of the macro's impls of that type take their keyword's kind as members of a type, a trait impl's under Type::<Trait>, an Impl as in a file, and the other items of the body their own. pyo3's exception macros define structs. The kinds are small Copy values on the definition itself, a byte each in the cache."
+reason = "A diff review names an uncovered definition by what it is, and a count of definitions separates functions from fields, so each definition states its kind, never a guess. A kind is a different thing in the source: a union is no struct, a static no constant, a pub use leaf a re-export of what another module defines, a trait impl the definition Type::<Trait>, a trait's type and the type an impl gives it an associated type, a type outside them a type alias. A fn in an impl or a trait is a method whether or not it takes self; one in a module, a body or an extern block is a function. Each node that defines a name is one case of an exhaustive match. A macro_rules! macro is a macro, and what an invocation produces has no kind, as it is no definition (a-macro-invocation-defines-nothing). The kinds are small Copy values on the definition itself, a byte each in the cache."
 alternatives = [
     "Fold union into struct and static into constant: rejected because a report would then name a thing the source does not hold",
     "Call an associated function without self a function: rejected because it lives in its type's namespace, which is what method names for a reader",
-    "Leave macro-defined types without a kind: rejected because the arm's body states it, and a count would lose them",
 ]
 tags = [
     "anchors",
@@ -14,11 +13,7 @@ status = "proposed"
 origin = "definition kinds"
 created = "2026-11-24T10:33:26.877207089Z"
 anchors = [
-    { file = "src/code/expand.rs", symbol = "FOREIGN_TYPE_MACROS" },
     { file = "src/code/kinds.rs", symbol = "DefinitionKind" },
     { file = "src/code/kinds.rs", symbol = "DefinitionKind::name" },
-    { file = "src/code/kinds.rs", symbol = "DefinitionKind::of_keyword" },
     { file = "src/code/rust/items.rs", symbol = "Item::kind" },
-    { file = "src/code/rust/macros.rs", symbol = "type_impl" },
-    { file = "src/code/rust/macros.rs", symbol = "type_macro" },
 ]

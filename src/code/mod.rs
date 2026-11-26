@@ -5,22 +5,21 @@
 //!
 //! Rust is read with tree-sitter by a module of its own (`rust.rs`, over
 //! `syntax.rs` and the builder every tree-sitter resolver shares,
-//! `tree.rs`), since its macros need code. Every other language is a
-//! grammar and a query file, a row of `language.rs` read by the general
-//! resolver (`general.rs`, under the contract of `query.rs`). TOML, JSON,
-//! Makefiles and Markdown have lexical resolvers of their own (over
-//! `lexical.rs`). A file's index is a function of its kind and bytes
-//! ([`index`]): its paths a tree of scopes (`scope.rs`), which charges all
-//! an index holds to the file's room, its work under budgets per byte
-//! (`work.rs`), its cache entry a compact encoding (`encoding.rs`). What
-//! needs the whole tree is a second step over the indexes: the types
-//! macro invocations define (`expand.rs`) and the files that are test
-//! code whole (`roles.rs`).
+//! `tree.rs`), since its attributes, impls, re-exports and module files
+//! need code. Every other language is a grammar and a query file, a row
+//! of `language.rs` read by the general resolver (`general.rs`, under the
+//! contract of `query.rs`). TOML, JSON, Makefiles and Markdown have
+//! lexical resolvers of their own (over `lexical.rs`). A file's index is a
+//! function of its kind and bytes ([`index`]): its paths a tree of scopes
+//! (`scope.rs`), which charges all an index holds to the file's room, its
+//! work under budgets per byte (`work.rs`), its cache entry a compact
+//! encoding (`encoding.rs`). What needs the whole tree is a second step
+//! over the indexes: the files that are test code whole (`roles.rs`). A
+//! macro invocation defines nothing (`rust/invocations.rs`).
 
 mod crates;
 mod definitions;
 mod encoding;
-mod expand;
 mod facts;
 mod general;
 mod index;
@@ -101,7 +100,7 @@ mod tests {
     const SEEDED: &[(&str, &str)] = &[
         (
             "pure",
-            "use std::collections::BTreeMap;\nuse std::io::ErrorKind;\nuse crate::store::Anchor;\nuse super::index::FileKind;\nuse tree_sitter::Node;\nfn f() -> core::fmt::Result { Ok(()) }\nconst Q: &str = include_str!(\"queries/q.scm\");\nconst R: &str = include_str!(\"./queries/../q.scm\");\nuse std::path::PathBuf;\nuse rayon::prelude::*;\nfn g(path: &PathBuf) -> bool { path.has_root() }\n",
+            "use std::collections::BTreeMap;\nuse std::io::ErrorKind;\nuse crate::store::Anchor;\nuse super::index::FileKind;\nuse tree_sitter::Node;\nfn f() -> core::fmt::Result { Ok(()) }\nconst Q: &str = include_str!(\"queries/q.scm\");\nconst R: &str = include_str!(\"./queries/../q.scm\");\nuse std::path::PathBuf;\nuse rayon::prelude::*;\nfn g(path: &PathBuf) -> bool { path.has_root() }\nmod checks {\n    #![cfg(test)]\n    fn probe() { std::fs::read(\"x\"); }\n}\n",
         ),
         (
             "path_method",
@@ -207,6 +206,14 @@ mod tests {
         (
             "test_file_shipped",
             "#[cfg(test)]\nmod hidden;\n#[cfg_attr(all(), path = \"test_file_shipped/hidden.rs\")]\nmod shipped;\n",
+        ),
+        (
+            "inner_test_module",
+            "mod hidden {\n    #![cfg(test)]\n}\npub(crate) fn leak() { let _ = std::fs::read(\"/x\"); }\n",
+        ),
+        (
+            "macro_module",
+            "macro_rules! ship { () => { mod shipped; }; }\n",
         ),
     ];
 

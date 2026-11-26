@@ -22,11 +22,12 @@ pub(super) struct Lexical<'t> {
 }
 
 impl<'t> Lexical<'t> {
-    pub(super) fn of(text: &'t str) -> Self {
+    /// The builder of `text`'s index, into `scopes`.
+    pub(super) fn of(text: &'t str, scopes: ScopeTree) -> Self {
         Self {
             text,
             lines: Lines::of(text.as_bytes()),
-            scopes: ScopeTree::for_file(text.len()),
+            scopes,
             definitions: Vec::new(),
             work: Work::of(text.len(), LEXICAL_WORK_PER_BYTE),
         }

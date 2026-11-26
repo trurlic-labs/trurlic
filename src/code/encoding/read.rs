@@ -1,31 +1,25 @@
 //! Reading an index's entry back, taking nothing on trust.
 
-use std::sync::Arc;
-
-use crate::code::index::{
-    Definition, Element, FileIndex, FileKind, Fragment, HandOff, IndexFault, Invocation,
-    ModuleFile, Receives, Rule, RustFacts, TraitToken, TypeImpl, TypeMacro,
-};
+use crate::code::index::{Definition, FileIndex, FileKind, IndexFault, ModuleFile, RustFacts};
 use crate::code::kinds::{DefinitionKind, Role, Visibility};
-use crate::code::rust::{MAX_GROUP_TOKENS, MAX_OPENING};
 use crate::code::scope::{MAX_NESTING, Scope, ScopeId};
 use crate::code::span::{Span, SpanHash};
 use crate::code::symbol::Segment;
 
-use super::{Indexed, max_entry_bytes, weight};
+use super::{DEPTH_BYTES, Indexed, block, max_entry_bytes};
 
 /// The index `bytes` hold for a file of `kind` of `source_bytes` bytes;
-/// `None` when they are no encoding of one. A read charges an entry as
-/// the scope tree charged its parts when the index was built: its bytes,
-/// and the [`weight`] of each value, before it allocates the value. An
-/// entry past the room of the file it is read for is no index. So every
-/// entry a write makes reads back, and the entry and what its decode
-/// allocates together take no more than that room.
+/// `None` when they are no encoding of one. A read charges each heap
+/// block before it allocates it, as the allocator takes it ([`block`]),
+/// against what [`max_entry_bytes`] leaves past the entry's own bytes.
+/// An entry past that is no index. So every entry a write makes reads
+/// back, and the entry and what its decode allocates together take no
+/// more than that.
 pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Option<Indexed> {
     let mut reader = Reader {
         bytes,
         at: 0,
-        weight: max_entry_bytes(kind, source_bytes).checked_sub(bytes.len())?,
+        left: max_entry_bytes(kind, source_bytes).checked_sub(bytes.len())?,
     };
     let indexed = match reader.byte()? {
         0 => Ok(reader.index()?),
@@ -54,8 +48,8 @@ pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Optio
 }
 
 struct Reader<'b> {
-    /// The weight of the values the index may still hold.
-    weight: usize,
+    /// The bytes the decode may still allocate.
+    left: usize,
     bytes: &'b [u8],
     at: usize,
 }
@@ -79,10 +73,16 @@ impl Reader<'_> {
         None
     }
 
-    /// A count of values of the index of `weight` each, charged.
-    fn items(&mut self, weight: usize) -> Option<usize> {
+    /// Charge a heap block of `requested` bytes.
+    fn own(&mut self, requested: usize) -> Option<()> {
+        self.left = self.left.checked_sub(block(requested))?;
+        Some(())
+    }
+
+    /// A count of values of `T`, the block of their collection charged.
+    fn items<T>(&mut self) -> Option<usize> {
         let count = self.count()?;
-        self.weight = self.weight.checked_sub(count.checked_mul(weight)?)?;
+        self.own(count.checked_mul(size_of::<T>())?)?;
         Some(count)
     }
 
@@ -93,6 +93,7 @@ impl Reader<'_> {
 
     fn text(&mut self) -> Option<String> {
         let length = self.count()?;
+        self.own(length)?;
         let bytes = self.bytes.get(self.at..self.at + length)?;
         self.at += length;
         String::from_utf8(bytes.to_vec()).ok()
@@ -127,20 +128,16 @@ impl Reader<'_> {
         DefinitionKind::ALL.get(usize::from(self.byte()?)).copied()
     }
 
+    fn role(&mut self) -> Option<Role> {
+        [Role::Code, Role::Test]
+            .get(usize::from(self.byte()?))
+            .copied()
+    }
+
     fn index(&mut self) -> Option<FileIndex> {
         let scopes = self.scopes()?;
         let definitions = self.definitions(scopes.len())?;
-        let count = self.items(weight::MACRO_PART)?;
-        let mut macros = Vec::with_capacity(count);
-        for _ in 0..count {
-            macros.push(self.type_macro()?);
-        }
-        let count = self.items(weight::INVOCATION)?;
-        let mut invocations = Vec::with_capacity(count);
-        for _ in 0..count {
-            invocations.push(self.invocation(scopes.len())?);
-        }
-        let count = self.items(weight::MODULE_FILE)?;
+        let count = self.items::<ModuleFile>()?;
         let mut module_files = Vec::with_capacity(count);
         for _ in 0..count {
             module_files.push(self.module_file(scopes.len())?);
@@ -149,18 +146,15 @@ impl Reader<'_> {
             scopes,
             definitions,
             rust: RustFacts {
-                macros,
-                invocations,
                 module_files,
+                invoked: self.invoked()?,
             },
         })
     }
 
     fn module_file(&mut self, scopes: usize) -> Option<ModuleFile> {
         let scope = ScopeId::of(self.number()?).filter(|id| id.at() < scopes)?;
-        let role = [Role::Code, Role::Test]
-            .get(usize::from(self.byte()?))
-            .copied()?;
+        let role = self.role()?;
         let path = match self.byte()? {
             0 => None,
             1 => Some(self.text()?),
@@ -169,17 +163,32 @@ impl Reader<'_> {
         Some(ModuleFile { scope, role, path })
     }
 
+    /// The invoked names, each after the one before it.
+    fn invoked(&mut self) -> Option<Vec<String>> {
+        let count = self.items::<String>()?;
+        let mut names: Vec<String> = Vec::with_capacity(count);
+        for _ in 0..count {
+            let name = self.text()?;
+            if names.last().is_some_and(|last| *last >= name) {
+                return None;
+            }
+            names.push(name);
+        }
+        Some(names)
+    }
+
     /// The scopes, each parent below its child, of one segment at least,
     /// each path within [`MAX_NESTING`].
     fn scopes(&mut self) -> Option<Vec<Scope>> {
-        let count = self.items(weight::SCOPE)?;
+        let count = self.items::<Scope>()?;
+        self.own(count.checked_mul(DEPTH_BYTES)?)?;
         let mut scopes = Vec::with_capacity(count);
         let mut depths: Vec<usize> = Vec::with_capacity(count);
         for own in 0..count {
             let parent = self.scope(own)?;
             // Every scope adds a segment: a forged entry cannot make
             // scopes of no bytes.
-            let segments = self.items(weight::SEGMENT).filter(|count| *count > 0)?;
+            let segments = self.items::<Segment>().filter(|count| *count > 0)?;
             let mut name = Vec::with_capacity(segments);
             for _ in 0..segments {
                 name.push(self.segment()?);
@@ -196,7 +205,7 @@ impl Reader<'_> {
     }
 
     fn definitions(&mut self, scopes: usize) -> Option<Vec<Definition>> {
-        let count = self.items(weight::DEFINITION)?;
+        let count = self.items::<Definition>()?;
         let mut definitions: Vec<Definition> = Vec::with_capacity(count);
         for _ in 0..count {
             let scope = ScopeId::of(self.number()?).filter(|id| id.at() < scopes)?;
@@ -239,190 +248,6 @@ impl Reader<'_> {
                 Segment::Impl { name, arguments }
             }
             _ => return None,
-        })
-    }
-
-    fn type_macro(&mut self) -> Option<TypeMacro> {
-        let name = self.text()?;
-        let exported = self.flag()?;
-        let count = self.items(weight::MACRO_PART)?;
-        let mut rules = Vec::with_capacity(count);
-        for _ in 0..count {
-            rules.push(self.rule()?);
-        }
-        Some(TypeMacro {
-            name,
-            exported,
-            rules,
-        })
-    }
-
-    /// A rule, each place that receives a name a binding of an `ident` or
-    /// a `tt` of its opening, each place an argument forwards a binding of
-    /// it.
-    fn rule(&mut self) -> Option<Rule> {
-        let opening = self.elements()?;
-        let whole = self.flag()?;
-        let binds = |place: usize| matches!(opening.get(place), Some(Element::Binding(_)));
-        let count = self.items(weight::MACRO_PART)?;
-        let mut receives = Vec::with_capacity(count);
-        for _ in 0..count {
-            let place = self.number()?;
-            let takes_a_name = matches!(
-                opening.get(place),
-                Some(Element::Binding(Fragment::Ident | Fragment::Tree))
-            );
-            if !takes_a_name {
-                return None;
-            }
-            receives.push((place, self.receives()?));
-        }
-        let count = self.items(weight::MACRO_PART)?;
-        let mut hand_offs = Vec::with_capacity(count);
-        for _ in 0..count {
-            let hand_off = self.hand_off()?;
-            let bound = hand_off.arguments.iter().all(
-                |argument| !matches!(argument, Element::Forwarded(Some(at), _) if !binds(*at)),
-            );
-            if !bound {
-                return None;
-            }
-            hand_offs.push(hand_off);
-        }
-        Some(Rule {
-            opening,
-            whole,
-            receives,
-            hand_offs,
-            items: self.named()?,
-        })
-    }
-
-    fn receives(&mut self) -> Option<Receives> {
-        let kind = match self.byte()? {
-            0 => None,
-            1 => Some(self.kind()?),
-            _ => return None,
-        };
-        let count = self.items(weight::MACRO_PART)?;
-        let mut impls = Vec::with_capacity(count);
-        for _ in 0..count {
-            impls.push(self.type_impl()?);
-        }
-        Some(Receives { kind, impls })
-    }
-
-    fn hand_off(&mut self) -> Option<HandOff> {
-        Some(HandOff {
-            macro_name: self.text()?,
-            from_crate: self.flag()?,
-            arguments: self.elements()?,
-            whole: self.flag()?,
-        })
-    }
-
-    fn flag(&mut self) -> Option<bool> {
-        match self.byte()? {
-            0 => Some(false),
-            1 => Some(true),
-            _ => None,
-        }
-    }
-
-    fn fragment(&mut self) -> Option<Fragment> {
-        Fragment::ALL.get(usize::from(self.byte()?)).copied()
-    }
-
-    /// At most [`MAX_OPENING`] elements, a group's tokens at most
-    /// [`MAX_GROUP_TOKENS`].
-    fn elements(&mut self) -> Option<Vec<Element>> {
-        let count = self
-            .items(weight::ELEMENT)
-            .filter(|count| *count <= MAX_OPENING)?;
-        let mut elements = Vec::with_capacity(count);
-        for _ in 0..count {
-            elements.push(match self.byte()? {
-                0 => Element::Word(self.text()?),
-                1 => Element::Token(self.text()?),
-                2 => {
-                    let open = char::from_u32(u32::try_from(self.number()?).ok()?)?;
-                    let tokens = match self.flag()? {
-                        false => None,
-                        true => {
-                            let count = self
-                                .items(weight::ELEMENT)
-                                .filter(|count| *count <= MAX_GROUP_TOKENS)?;
-                            let mut tokens = Vec::with_capacity(count);
-                            for _ in 0..count {
-                                tokens.push(self.text()?);
-                            }
-                            Some(tokens)
-                        }
-                    };
-                    Element::Group(open, tokens)
-                }
-                3 => Element::Binding(self.fragment()?),
-                4 => {
-                    let place = self.number()?.checked_sub(1);
-                    Element::Forwarded(place, self.fragment()?)
-                }
-                5 => Element::Many,
-                _ => return None,
-            });
-        }
-        Some(elements)
-    }
-
-    fn type_impl(&mut self) -> Option<TypeImpl> {
-        let trait_tokens = match self.byte()? {
-            0 => None,
-            1 => {
-                let count = self.items(weight::MACRO_PART)?;
-                let mut tokens = Vec::with_capacity(count);
-                for _ in 0..count {
-                    tokens.push(match self.byte()? {
-                        0 => TraitToken::Text(self.text()?),
-                        1 => TraitToken::Name,
-                        _ => return None,
-                    });
-                }
-                Some(tokens)
-            }
-            _ => return None,
-        };
-        Some(TypeImpl {
-            trait_tokens,
-            members: self.named()?,
-        })
-    }
-
-    /// Names a macro gives, each with its kind.
-    fn named(&mut self) -> Option<Vec<(Arc<Segment>, DefinitionKind)>> {
-        let count = self.items(weight::MACRO_PART)?;
-        let mut named = Vec::with_capacity(count);
-        for _ in 0..count {
-            named.push((Arc::new(self.segment()?), self.kind()?));
-        }
-        Some(named)
-    }
-
-    fn invocation(&mut self, scopes: usize) -> Option<Invocation> {
-        let macro_name = self.text()?;
-        let container = self.scope(scopes)?;
-        let (span, hash) = self.span()?;
-        let arguments = self.elements()?;
-        let whole = self.flag()?;
-        let role = [Role::Code, Role::Test]
-            .get(usize::from(self.byte()?))
-            .copied()?;
-        Some(Invocation {
-            macro_name,
-            container,
-            span,
-            hash,
-            arguments,
-            whole,
-            role,
         })
     }
 }

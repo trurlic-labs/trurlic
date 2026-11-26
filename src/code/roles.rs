@@ -4,8 +4,8 @@
 //! language's row names (`tests/`, `test_*.py`, `conftest.py`,
 //! `*.test.ts`, `__tests__/`). A Rust
 //! file is test code under its crate's `tests/` directory, or as a module
-//! file that only test code declares, a step over the crates like the
-//! macro expansion.
+//! file that only test code declares: a step over the crates, after each
+//! file's own index.
 //!
 //! The walk goes forward from each crate's targets as cargo finds them
 //! without a manifest table: `src/lib.rs`, `src/main.rs`, `build.rs`, and
@@ -28,8 +28,7 @@
 
 use std::collections::BTreeSet;
 
-use super::crates::{Crates, file_name, parent};
-use super::expand::Files;
+use super::crates::{Crates, Files, file_name, parent};
 use super::index::{FileIndex, FileKind, ModuleFile};
 use super::kinds::{DefinitionKind, Role};
 use super::scope::ScopeId;

@@ -23,10 +23,7 @@ pub(crate) fn on_parse_stack<R: Send>(work: impl FnOnce() -> R + Send) -> R {
 /// `::` and the text of its span, in the index's order.
 pub(crate) fn defined(kind: FileKind, text: &str) -> Vec<(String, &str)> {
     let index = index(kind, text.as_bytes(), &crate::code::BlankMacros::default()).unwrap();
-    let scopes = Scopes {
-        file: &index.scopes,
-        added: &[],
-    };
+    let scopes = Scopes(&index.scopes);
     index
         .definitions
         .iter()
@@ -49,10 +46,7 @@ pub(crate) fn path(scopes: Scopes<'_>, scope: ScopeId) -> String {
 pub(crate) fn named<'t>(kind: FileKind, text: &'t str, symbol: &str) -> Vec<&'t str> {
     let symbol = Symbol::parse(symbol, kind.syntax()).unwrap();
     let index = index(kind, text.as_bytes(), &crate::code::BlankMacros::default()).unwrap();
-    let scopes = Scopes {
-        file: &index.scopes,
-        added: &[],
-    };
+    let scopes = Scopes(&index.scopes);
     index
         .definitions
         .iter()

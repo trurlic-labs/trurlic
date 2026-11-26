@@ -46,8 +46,12 @@ use super::work::{SCAN_WORK_PER_BYTE, Work};
 /// more is refused, not read in part.
 pub(super) const MATCH_LIMIT: u32 = 256;
 
-/// The index of `text`, a file of `language`.
-pub(super) fn index(language: &Language, text: &str) -> Result<FileIndex, IndexFault> {
+/// The index of `text`, a file of `language`, built into `scopes`.
+pub(super) fn index(
+    language: &Language,
+    text: &str,
+    mut scopes: ScopeTree,
+) -> Result<FileIndex, IndexFault> {
     for bound in language.before_parse {
         bound(text)?;
     }
@@ -59,7 +63,6 @@ pub(super) fn index(language: &Language, text: &str) -> Result<FileIndex, IndexF
     };
     let tree = syntax::parse(text, &rules.grammar)?;
     let found = collect(rules, &tree, text)?;
-    let mut scopes = ScopeTree::for_file(text.len());
     let placed = place::place(&found, &mut scopes)?;
     let mut marks = found.marks;
     for definition in &placed {
