@@ -1,4 +1,4 @@
-//! What a tool call answers on every surface: a payload, or a refusal in
+//! What a tool call returns on every surface: a payload, or a refusal in
 //! one typed shape, each fitted to [`MAX_TOOL_RESULT_BYTES`] as JSON text.
 //!
 //! A [`ToolResult`] is built only by its constructors, which fit it, so no

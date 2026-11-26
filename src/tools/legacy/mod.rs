@@ -94,7 +94,7 @@ impl Read {
 
     /// Call the read with `arguments` on the graph of the store found from
     /// `cwd`, loaded under the shared lock; a failed load is a refusal.
-    pub(crate) fn call(self, cwd: &Path, arguments: &Map<String, Value>) -> ToolResult {
+    pub(super) fn call(self, cwd: &Path, arguments: &Map<String, Value>) -> ToolResult {
         let state = match discover(cwd).and_then(|store| store.load_state()) {
             Ok(state) => state,
             Err(e) => return ToolResult::refusal(&e.into()),

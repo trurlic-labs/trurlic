@@ -14,5 +14,6 @@ created = "2026-11-23T23:15:11.209076078Z"
 anchors = [
     { file = "src/commands/serve.rs", symbol = "serve" },
     { file = "src/mcp/mod.rs", symbol = "call_tool" },
+    { file = "src/tools/spec/tool.rs", symbol = "ToolSpec::run" },
     { file = "tests/integration/stdio.rs" },
 ]
