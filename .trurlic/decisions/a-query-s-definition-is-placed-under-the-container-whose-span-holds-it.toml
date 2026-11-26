@@ -15,16 +15,16 @@ status = "proposed"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
-    { file = "src/code/parse/general/mod.rs", symbol = "Walk::complete_span" },
     { file = "src/code/parse/general/place.rs", symbol = "place" },
     { file = "src/code/parse/general/tests.rs", symbol = "a_label_states_the_visibility_of_what_follows_it" },
     { file = "src/code/parse/general/tests.rs", symbol = "a_node_captured_as_no_scope_holds_what_it_holds_where_it_stands" },
     { file = "src/code/parse/general/tests.rs", symbol = "a_span_takes_in_the_decorators_beside_it" },
     { file = "src/code/parse/general/tests.rs", symbol = "each_declarator_of_a_statement_holds_what_its_own_node_holds" },
     { file = "src/code/parse/general/tests.rs", symbol = "what_an_unnamed_function_holds_is_under_the_definition_around_it_or_nothing" },
-    { file = "src/code/parse/query.rs", symbol = "Definer" },
-    { file = "src/code/parse/query.rs", symbol = "Definer::admits" },
-    { file = "src/code/parse/query.rs", symbol = "Definer::kind_in()" },
+    { file = "src/code/parse/general/walk.rs", symbol = "Walk::complete_span" },
+    { file = "src/code/parse/query/mod.rs", symbol = "Definer" },
+    { file = "src/code/parse/query/mod.rs", symbol = "Definer::admits" },
+    { file = "src/code/parse/query/mod.rs", symbol = "Definer::kind_in()" },
 ]
 depends_on = [
     "a-query-file-is-held-to-the-general-resolver-s-contract",

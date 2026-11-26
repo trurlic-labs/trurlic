@@ -32,7 +32,8 @@ mod silent;
 
 use tree_sitter::Node;
 
-use super::syntax::{self, Lexicon, text_of};
+use super::syntax::{self, text_of};
+use super::tokens::Lexicon;
 use super::tree_index::TreeIndex;
 use super::units::Leaves;
 use crate::code::index::{

@@ -1,16 +1,17 @@
 //! How a file of a language is read with tree-sitter, the one place for
-//! it: the parse within its budgets and the tokens of its tree
-//! (`syntax.rs`), the units its span hashes are over (`units/`), the
+//! it: the parse within its budgets (`syntax.rs`), the tokens of its tree
+//! (`tokens.rs`), the units its span hashes are over (`units/`), the
 //! builder every tree-sitter resolver adds its definitions to
 //! (`tree_index.rs`), Rust's resolver (`rust/`), and the general resolver
 //! (`general/`), which reads every other language by its row
-//! (`language/`) under the contract of its query file (`query.rs`).
+//! (`language/`) under the contract of its query file (`query/`).
 
 pub(in crate::code) mod general;
 mod language;
 mod query;
 pub(in crate::code) mod rust;
 mod syntax;
+mod tokens;
 mod tree_index;
 mod units;
 
@@ -26,4 +27,6 @@ pub(in crate::code) use language::{
 pub(in crate::code) use rust::LEXICON as RUST_LEXICON;
 pub(in crate::code) use syntax::{CHUNK_BYTES, OPERATIONS_PER_PROGRESS};
 #[cfg(test)]
-pub(in crate::code) use syntax::{Token, is_comment, parse, text_of, tokens};
+pub(in crate::code) use syntax::{parse, text_of};
+#[cfg(test)]
+pub(in crate::code) use tokens::{Token, is_comment, tokens};

@@ -4,13 +4,13 @@
 //! [`IndexFault::TooComplex`], rather than found by its time.
 //!
 //! There are four budgets, each counted in its own unit. The parse has
-//! two (`syntax.rs`): the bytes its lexer is served, and the runtime's
+//! two (`parse/syntax.rs`): the bytes its lexer is served, and the runtime's
 //! progress operations, which count the parser's actions, every step of a
 //! walk of its stack and every 64 bytes it allocates. The scan's counts
 //! the nodes the general resolver enters and the bytes its predicates read
 //! after the parse, the lexical one bytes a lexical resolver hashes. A
 //! tree-sitter span hash is no part of any: each token is hashed once by
-//! construction (`syntax.rs`).
+//! construction (`parse/units/`).
 
 use super::file::IndexFault;
 use super::scope::MAX_NESTING;

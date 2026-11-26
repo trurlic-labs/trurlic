@@ -14,7 +14,8 @@ use std::ops::ControlFlow;
 use tree_sitter::Node;
 
 use crate::code::index::{Role, Visibility};
-use crate::code::parse::syntax::{self, Token, text_of};
+use crate::code::parse::syntax::text_of;
+use crate::code::parse::tokens::{self, Token};
 
 use super::LEXICON;
 
@@ -169,10 +170,10 @@ pub(super) fn inner_role(node: Node<'_>, role: Role, text: &str) -> Role {
 }
 
 /// The nodes of the tokens of `node`, in order: its leaves, a literal as
-/// one token, comments left out (`syntax::tokens`).
+/// one token, comments left out (`tokens::tokens`).
 fn tokens_of<'n>(node: Node<'n>, text: &str) -> Vec<Node<'n>> {
     let mut found = Vec::new();
-    syntax::tokens(node, text, &LEXICON, |token| {
+    tokens::tokens(node, text, &LEXICON, |token| {
         if let Token::Node(node) = token {
             found.push(node);
         }

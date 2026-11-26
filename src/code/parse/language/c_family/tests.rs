@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::*;
 
 /// The sets of a tree whose headers are `headers`, each its path and its

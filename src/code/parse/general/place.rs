@@ -11,7 +11,8 @@
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
-use super::{Extent, Found, NameNode, Site, SpanNode};
+use super::walk::Found;
+use super::{Extent, NameNode, Site, SpanNode};
 use crate::code::index::{IndexFault, ScopeId, ScopeTree, Visibility, What, name_segments};
 use crate::code::parse::query::{Container, Definer};
 

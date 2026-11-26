@@ -8,7 +8,7 @@
 //! shares, `parse/tree_index.rs`), since its attributes, impls, re-exports
 //! and module files need code. Every other language is a grammar and a
 //! query file, a row of `parse/language/` read by the general resolver
-//! (`parse/general/`, under the contract of `parse/query.rs`). TOML, JSON,
+//! (`parse/general/`, under the contract of `parse/query/`). TOML, JSON,
 //! Makefiles and Markdown have lexical resolvers of their own (over
 //! `lexical/`). A file's index is a function of its kind and bytes
 //! ([`index`]): its paths a tree of scopes (`index/scope_tree.rs`), which

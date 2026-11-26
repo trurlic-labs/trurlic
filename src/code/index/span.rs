@@ -4,7 +4,7 @@
 //! scheme ([`HASH_SCHEME`]), fixed from its first release. A change of
 //! the normalization is a new scheme, so two hashes of different schemes
 //! are never compared as equal. Under `t1` a tree-sitter span hashes its
-//! tokens (`syntax.rs`), each with its length, and in a language whose
+//! tokens (`parse/tokens.rs`), each with its length, and in a language whose
 //! layout is syntax the marks that open and close each group its query
 //! names (a statement, a block), each definition nested in it by its own
 //! hash instead. So reformatting the span or editing a comment in it

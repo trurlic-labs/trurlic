@@ -14,7 +14,8 @@ mod python;
 use std::sync::{LazyLock, OnceLock};
 
 use super::query::{QueryFault, Rules};
-use super::syntax::{Lexicon, grammar_identity};
+use super::syntax::grammar_identity;
+use super::tokens::Lexicon;
 use crate::code::index::{FileKind, IndexFault, Syntax};
 
 pub(crate) use c_family::{

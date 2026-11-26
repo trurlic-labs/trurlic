@@ -9,7 +9,7 @@
 use tree_sitter::Node;
 
 use crate::code::index::{IndexFault, Work};
-use crate::code::parse::syntax;
+use crate::code::parse::{syntax, tokens};
 
 /// The quotes a string literal opens and closes with.
 const QUOTES: [char; 3] = ['"', '\'', '`'];
@@ -31,7 +31,7 @@ pub(super) fn parts(
     let mut cursor = node.walk();
     loop {
         let current = cursor.node();
-        let left_out = syntax::is_comment(current) || skipped.contains(&current.kind_id());
+        let left_out = tokens::is_comment(current) || skipped.contains(&current.kind_id());
         if !left_out && cursor.goto_first_child() {
             continue;
         }

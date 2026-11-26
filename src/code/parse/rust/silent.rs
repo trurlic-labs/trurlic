@@ -13,7 +13,7 @@
 
 use tree_sitter::Node;
 
-use crate::code::parse::syntax::is_comment;
+use crate::code::parse::tokens::is_comment;
 
 /// The kinds of the nodes whose last `,`, before their closing delimiter
 /// or at their end, carries no meaning.

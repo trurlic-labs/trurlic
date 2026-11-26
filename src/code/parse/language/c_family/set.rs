@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Body, Define, Defines, Lexed, MAX_MACRO_BODY_TOKENS};
+use super::define::{Body, Define, Defines, Lexed, MAX_MACRO_BODY_TOKENS};
 use crate::code::index::FileKind;
 
 /// What the `#define`s of one name are, read together: their forms, the

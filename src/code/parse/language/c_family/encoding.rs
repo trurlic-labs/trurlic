@@ -6,7 +6,7 @@
 
 use crate::code::index::{Reader, Writer};
 
-use super::{Body, Define, Defines, Lexed};
+use super::define::{Body, Define, Defines, Lexed};
 
 /// The room a lexical entry may take per byte of its file, its bytes and
 /// the heap blocks its values take once read together: a one-letter name

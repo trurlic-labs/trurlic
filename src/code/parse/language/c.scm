@@ -1,6 +1,6 @@
-; C, read by the general resolver (src/code/general.rs) under the contract
-; of src/code/query.rs, after the tree's attribute macros are blanked
-; (src/code/language/c_family.rs).
+; C, read by the general resolver (src/code/parse/general/) under the
+; contract of src/code/parse/query/, after the tree's attribute macros are
+; blanked (src/code/parse/language/c_family/).
 ;
 ; A declarator nests (pointers, arrays, parentheses, function
 ; declarators). A function's span is its definition or its declaration

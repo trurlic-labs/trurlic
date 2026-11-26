@@ -16,8 +16,8 @@ status = "proposed"
 origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"
 anchors = [
-    { file = "src/code/parse/language/c_family/mod.rs", symbol = "MAX_MACRO_BODY_TOKENS" },
-    { file = "src/code/parse/language/c_family/mod.rs", symbol = "is_header" },
+    { file = "src/code/parse/language/c_family/define.rs", symbol = "MAX_MACRO_BODY_TOKENS" },
+    { file = "src/code/parse/language/c_family/define.rs", symbol = "is_header" },
     { file = "src/code/parse/language/c_family/set.rs", symbol = "BlankMacros::of" },
     { file = "src/code/parse/language/c_family/set.rs", symbol = "BlankMacros::of_file" },
     { file = "src/code/parse/language/c_family/tests.rs", symbol = "a_files_own_defines_are_judged_in_work_its_own_bound" },

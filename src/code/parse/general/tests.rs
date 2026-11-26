@@ -2,6 +2,8 @@ use super::*;
 use crate::code::BlankMacros;
 use crate::code::index::{FileKind, ScopeTree, Scopes, Span, SpanHash};
 use crate::code::parse::MAX_INDENTATIONS;
+use crate::code::parse::query::Rules;
+use crate::code::parse::tokens;
 use crate::code::testing::{defined, index_in, named, path};
 
 /// Each definition of `text`, a Python file, as `path kind role
@@ -684,13 +686,13 @@ fn every_byte_but_comments_and_whitespace_is_in_one_token() {
         let rules = language.rules().unwrap();
         let tree = syntax::parse(&text, &rules.grammar).unwrap();
         let mut covered = vec![false; text.len()];
-        syntax::tokens(tree.root_node(), &text, &language.lexicon, |token| {
+        tokens::tokens(tree.root_node(), &text, &language.lexicon, |token| {
             let (from, to) = match token {
-                syntax::Token::Node(node) => (node.start_byte(), node.end_byte()),
-                syntax::Token::Gap { start, end } | syntax::Token::Run { start, end } => {
+                tokens::Token::Node(node) => (node.start_byte(), node.end_byte()),
+                tokens::Token::Gap { start, end } | tokens::Token::Run { start, end } => {
                     (start, end)
                 }
-                syntax::Token::Hole { .. } | syntax::Token::Enter(_) | syntax::Token::Leave(_) => {
+                tokens::Token::Hole { .. } | tokens::Token::Enter(_) | tokens::Token::Leave(_) => {
                     (0, 0)
                 }
             };
@@ -704,7 +706,7 @@ fn every_byte_but_comments_and_whitespace_is_in_one_token() {
         let mut cursor = tree.walk();
         'walk: loop {
             let node = cursor.node();
-            if syntax::is_comment(node) {
+            if tokens::is_comment(node) {
                 assert!(
                     matches!(
                         node.kind(),

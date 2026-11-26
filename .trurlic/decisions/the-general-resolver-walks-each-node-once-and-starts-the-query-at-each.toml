@@ -14,14 +14,14 @@ status = "accepted"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
-    { file = "src/code/parse/general/mod.rs", symbol = "MATCH_LIMIT" },
-    { file = "src/code/parse/general/mod.rs", symbol = "Matches::record_at" },
-    { file = "src/code/parse/general/mod.rs", symbol = "Walk::enter" },
-    { file = "src/code/parse/general/mod.rs", symbol = "Walk::push_reach" },
-    { file = "src/code/parse/general/mod.rs", symbol = "collect" },
     { file = "src/code/parse/general/tests.rs", symbol = "a_match_limit_that_is_hit_is_a_fault_not_a_dropped_match" },
     { file = "src/code/parse/general/tests.rs", symbol = "hostile_python_is_refused_or_read_in_linear_work" },
     { file = "src/code/parse/general/tests.rs", symbol = "the_text_a_predicate_reads_is_held_to_16_bytes_a_byte_of_the_file" },
+    { file = "src/code/parse/general/walk.rs", symbol = "MATCH_LIMIT" },
+    { file = "src/code/parse/general/walk.rs", symbol = "Matches::record_at" },
+    { file = "src/code/parse/general/walk.rs", symbol = "Walk::enter" },
+    { file = "src/code/parse/general/walk.rs", symbol = "Walk::push_reach" },
+    { file = "src/code/parse/general/walk.rs", symbol = "collect" },
 ]
 depends_on = [
     "a-language-beyond-rust-is-a-grammar-and-a-query-file",
