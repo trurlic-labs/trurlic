@@ -62,6 +62,7 @@ mod layer;
 mod path;
 mod pure;
 mod read;
+mod test_code;
 #[cfg(test)]
 mod tests;
 

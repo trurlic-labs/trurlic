@@ -1,8 +1,7 @@
-//! What the checks read of a crate: every Rust file under `src`, each
-//! with its tokens outside test code and the module each token stands
-//! in, the files that are test code whole, the dependencies its manifest
-//! states, and each form of its non-test code the reading cannot follow,
-//! which every check refuses.
+//! What the checks read of a crate ([`Crate`]): its non-test code as
+//! tokens, each in the module it stands in; the forms that code takes
+//! which the reading cannot follow, refused by every check; the
+//! dependencies its manifest states.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{ControlFlow, Range};
@@ -11,7 +10,9 @@ use std::path::Path;
 use tree_sitter::Node;
 
 use crate::code::FileKind;
-use crate::code::testing::{RUST_LEXICON, Scopes, Token as Event, is_comment, parse, text_of};
+use crate::code::testing::{RUST_LEXICON, Scopes, Token as Event, parse, text_of};
+
+use super::test_code::{FileMarks, Held, held_by, test_files};
 
 /// A crate as the checks read it.
 pub(crate) struct Crate {
@@ -30,14 +31,11 @@ pub(super) struct Read {
     /// The path from the crate root of the file's module, then of each
     /// inline module in it, in the order the tokens enter them.
     pub(super) modules: Vec<Vec<String>>,
-    /// Each `mod name;` it declares, and whether a test mark holds it.
-    declared: Vec<(String, bool)>,
     /// Each form outside test items the check cannot read through: its
     /// line and what it is.
     refused: Vec<(usize, &'static str)>,
-    /// Whether an inner `#![cfg(test)]` at its root makes it test code
-    /// whole.
-    test: bool,
+    /// What decides whether it is test code whole.
+    marks: FileMarks,
 }
 
 /// One token of a file's non-test code.
@@ -60,7 +58,11 @@ impl Crate {
             .filter(|(path, _)| path.ends_with(".rs"))
             .map(|(path, text)| (path.clone(), read(path, text)))
             .collect();
-        let tests: BTreeSet<String> = test_files(&read).into_iter().map(str::to_owned).collect();
+        let marks: BTreeMap<&str, &FileMarks> = read
+            .iter()
+            .map(|(path, file)| (path.as_str(), &file.marks))
+            .collect();
+        let tests: BTreeSet<String> = test_files(&marks).into_iter().map(str::to_owned).collect();
         let files = read
             .into_iter()
             .filter(|(path, _)| !tests.contains(path))
@@ -153,13 +155,15 @@ fn read(path: &str, text: &str) -> Read {
     Read {
         tokens: walked.tokens,
         modules: walked.modules,
-        declared: marks
-            .declared
-            .into_iter()
-            .map(|(name, at)| (name, held(at)))
-            .collect(),
         refused,
-        test: marks.test,
+        marks: FileMarks {
+            declared: marks
+                .declared
+                .into_iter()
+                .map(|(name, at)| (name, held(at)))
+                .collect(),
+            test: marks.test,
+        },
     }
 }
 
@@ -196,14 +200,12 @@ fn marks(root: Node<'_>, text: &str) -> Marks {
         let mut cursor = node.walk();
         pending.extend(node.children(&mut cursor));
         let line = node.start_position().row + 1;
+        match held_by(node, text) {
+            Some(Held::Item(bytes)) => marks.held.push(bytes),
+            Some(Held::File) => marks.test = true,
+            None => {}
+        }
         match node.kind() {
-            "inner_attribute_item" if compact(node, text) == "#![cfg(test)]" => {
-                match node.parent().filter(|body| body.kind() != "source_file") {
-                    Some(body) => marks.held.push(body.parent().unwrap_or(body).byte_range()),
-                    None => marks.test = true,
-                }
-            }
-            "attribute_item" if is_test_mark(node, text) => marks.held.extend(marked_item(node)),
             "token_tree" => marks.refused.extend(
                 declared_modules(node, text)
                     .into_iter()
@@ -465,93 +467,6 @@ fn declared_modules(tree: Node<'_>, text: &str) -> Vec<(usize, usize)> {
             _ => None,
         })
         .collect()
-}
-
-/// `node`'s text without whitespace.
-fn compact(node: Node<'_>, text: &str) -> String {
-    text_of(node, text)
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect()
-}
-
-/// Whether the attribute `node` is exactly `#[test]` or `#[cfg(test)]`.
-fn is_test_mark(node: Node<'_>, text: &str) -> bool {
-    matches!(compact(node, text).as_str(), "#[test]" | "#[cfg(test)]")
-}
-
-/// The bytes from the attribute `node` to the end of the item it marks.
-fn marked_item(node: Node<'_>) -> Option<Range<usize>> {
-    let mut next = node.next_sibling();
-    while let Some(sibling) =
-        next.filter(|sibling| sibling.kind() == "attribute_item" || is_comment(*sibling))
-    {
-        next = sibling.next_sibling();
-    }
-    next.map(|item| node.start_byte()..item.end_byte())
-}
-
-/// The files of `read` that are test code whole: under an inner
-/// `#![cfg(test)]`, declared only by marked `mod` items, or in a test
-/// file's modules.
-fn test_files(read: &BTreeMap<String, Read>) -> BTreeSet<&str> {
-    // Each file's declarations: whether one ships it.
-    let mut shipped: BTreeMap<String, bool> = BTreeMap::new();
-    for (path, file) in read {
-        for (name, marked) in &file.declared {
-            let dir = modules_dir(path);
-            for child in [format!("{dir}/{name}.rs"), format!("{dir}/{name}/mod.rs")] {
-                *shipped.entry(child).or_default() |= !marked;
-            }
-        }
-    }
-    let parent = |path: &str| {
-        read.keys()
-            .map(String::as_str)
-            .find(|parent| *parent != path && modules_dir(parent) == parent_dir(path))
-    };
-    let mut tests: BTreeSet<&str> = read
-        .iter()
-        .filter(|(path, file)| file.test || shipped.get(path.as_str()) == Some(&false))
-        .map(|(path, _)| path.as_str())
-        .collect();
-    loop {
-        let more: Vec<&str> = read
-            .keys()
-            .map(String::as_str)
-            .filter(|path| !tests.contains(path))
-            .filter(|path| parent(path).is_some_and(|parent| tests.contains(parent)))
-            .collect();
-        if more.is_empty() {
-            break;
-        }
-        tests.extend(more);
-    }
-    tests
-}
-
-/// The directory of the files the `mod name;` items of the file at `path`
-/// declare: `a/b` for `a/b.rs`, `a/b/mod.rs` and `a/b/lib.rs`.
-fn modules_dir(path: &str) -> String {
-    let stem = path.trim_end_matches(".rs");
-    match stem.rsplit_once('/') {
-        Some((dir, "mod" | "lib" | "main")) => dir.to_owned(),
-        Some(_) | None => stem.to_owned(),
-    }
-}
-
-/// The directory the module file at `path` is declared from: `a` for
-/// `a/b.rs`, and for `a/b/mod.rs`.
-fn parent_dir(path: &str) -> String {
-    let dir = modules_dir(path);
-    let module = match path.ends_with("/mod.rs") {
-        true => dir.as_str(),
-        false => path,
-    };
-    module
-        .rsplit_once('/')
-        .map_or("", |(dir, _)| dir)
-        .to_owned()
 }
 
 /// Every Rust file under `root/src`, and `root/Cargo.toml`, by path.
