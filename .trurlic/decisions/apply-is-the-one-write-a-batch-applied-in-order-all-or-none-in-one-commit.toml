@@ -14,7 +14,7 @@ anchors = [
     { file = "src/store/apply/edit.rs", symbol = "Edit" },
     { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
     { file = "src/store/apply/ops.rs", symbol = "Batch" },
-    { file = "src/tools/apply/mod.rs", symbol = "APPLY" },
+    { file = "src/tools/apply/tool.rs", symbol = "APPLY" },
     { file = "tests/integration/apply.rs", symbol = "one_batch_writes_the_same_bytes_over_mcp_and_from_a_file" },
 ]
 depends_on = [

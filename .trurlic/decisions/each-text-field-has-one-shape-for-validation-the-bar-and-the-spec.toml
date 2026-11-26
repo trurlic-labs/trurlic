@@ -12,7 +12,7 @@ anchors = [
     { file = "src/store/model/limits.rs", symbol = "MAX_ALTERNATIVE_BYTES" },
     { file = "src/store/model/limits.rs", symbol = "MAX_TAG_BYTES" },
     { file = "src/store/model/text.rs", symbol = "TextField" },
-    { file = "src/tools/apply/mod.rs", symbol = "ALTERNATIVES" },
+    { file = "src/tools/apply/ops.rs", symbol = "ALTERNATIVES" },
 ]
 depends_on = [
     "validation-holds-every-text-a-node-file-holds-to-the-text-rules",
