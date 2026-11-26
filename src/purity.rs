@@ -12,9 +12,10 @@
 //! holds an inner `#![cfg(test)]`. A path's first segment says where it
 //! goes, a `use` list read whole. `std`, `core` and `alloc` go only to
 //! the modules of [`STD_MODULES`] and the items of the list. The crate
-//! (`crate`, `$crate`, or as many `super`s as reach its root) goes only to
-//! the list's modules and store items. A dependency is named only when the
-//! list holds it or the item named. Refused outright: the names of
+//! (`crate`, `$crate`, or `super`s, read from the file's own module) goes
+//! only to the list's modules, each a path from the crate root a path may
+//! start with (`code`, `code::index`), and to its store items. A
+//! dependency is named only when the list holds it or the item named. Refused outright: the names of
 //! [`REFUSED_NAMES`] wherever they stand, a glob or an alias of such a
 //! root, an alias of any path of `std`, `core` or `alloc`, `extern crate`,
 //! a `macro_rules!` definition, an attribute that names a `path`
@@ -77,7 +78,8 @@ const REFUSED_NAMES: [&str; 5] = ["HashMap", "HashSet", "RandomState", "hash_map
 /// What a pure module's non-test code may name beyond the modules of
 /// [`STD_MODULES`].
 pub(crate) struct AllowList {
-    /// The crate's modules: the checked one and the pure ones it reads.
+    /// The crate's modules, each a path from its root (`code`,
+    /// `code::index`): the checked one and the pure ones it reads.
     pub(crate) modules: &'static [&'static str],
     /// The store's items: its value types.
     pub(crate) store_items: &'static [&'static str],
@@ -125,7 +127,7 @@ pub(crate) fn faults(root: &Path, dir: &str, allowed: &AllowList) -> Vec<String>
         found.extend(
             file_faults(
                 &file.tokens,
-                module_depth(path),
+                &module_path(path),
                 &dependencies,
                 place,
                 allowed,
@@ -380,15 +382,16 @@ fn dependencies(texts: &[(String, String)]) -> Vec<String> {
         .collect()
 }
 
-/// How many modules down from the crate root the file at `path` is:
-/// `src/code/mod.rs` one, `src/code/parse/rust/marks.rs` four.
-fn module_depth(path: &str) -> usize {
-    let inside = path.trim_start_matches("src/");
-    let segments = inside.split('/').count();
-    match inside.rsplit('/').next() {
-        Some("mod.rs" | "lib.rs" | "main.rs") => segments - 1,
-        _ => segments,
+/// The path from the crate root of the module the file at `path` is:
+/// `code` for `src/code/mod.rs`, `code::parse::rust::marks` for
+/// `src/code/parse/rust/marks.rs`, none for `src/lib.rs`.
+fn module_path(path: &str) -> Vec<&str> {
+    let inside = path.trim_start_matches("src/").trim_end_matches(".rs");
+    let mut segments: Vec<&str> = inside.split('/').collect();
+    if matches!(segments.last(), Some(&("mod" | "lib" | "main"))) {
+        segments.pop();
     }
+    segments
 }
 
 /// Where a checked file is: its path from the crate's directory, and the
@@ -399,12 +402,11 @@ struct Place<'a> {
     dir: &'a str,
 }
 
-/// The faults of one file's `tokens`, a file `depth` modules below the
-/// crate root at `place`, whose dependencies are `dependencies`, against
-/// `allowed`.
+/// The faults of one file's `tokens`, a file of the module `module` at
+/// `place`, whose dependencies are `dependencies`, against `allowed`.
 fn file_faults(
     tokens: &[(usize, String)],
-    depth: usize,
+    module: &[&str],
     dependencies: &[String],
     place: Place<'_>,
     allowed: &AllowList,
@@ -433,7 +435,7 @@ fn file_faults(
         }
         let mut next = at;
         for path in read_path(tokens, &mut next, Vec::new()) {
-            if let Some(fault) = path_fault(&path, depth, dependencies, allowed) {
+            if let Some(fault) = path_fault(&path, module, dependencies, allowed) {
                 found.push((line, fault));
             }
         }
@@ -563,11 +565,12 @@ fn read_path(tokens: &[(usize, String)], at: &mut usize, prefix: Vec<String>) ->
     }
 }
 
-/// Why `path`, in a file `depth` modules below the crate root, reaches
-/// outside what `allowed` holds; `None` when it does not.
+/// Why `path`, in a file of the module `module`, reaches outside what
+/// `allowed` holds; `None` when it does not. A path of `super`s is read
+/// from the crate root, as the module it names.
 fn path_fault(
     path: &[String],
-    depth: usize,
+    module: &[&str],
     dependencies: &[String],
     allowed: &AllowList,
 ) -> Option<String> {
@@ -580,10 +583,17 @@ fn path_fault(
         .iter()
         .take_while(|segment| **segment == "super")
         .count();
+    let above = module
+        .get(..module.len().saturating_sub(supers))
+        .unwrap_or_default();
+    let from_root: Vec<&str> = above
+        .iter()
+        .chain(segments.get(supers..)?)
+        .copied()
+        .collect();
     let (root, rest): (&str, &[&str]) = match segments.as_slice() {
         [] => return None,
-        [_, ..] if supers > 0 && supers >= depth => ("crate", segments.get(supers..)?),
-        [_, ..] if supers > 0 => return None,
+        [_, ..] if supers > 0 => ("crate", &from_root),
         [first, rest @ ..] => (first, rest),
     };
     let spelled = path.join("::");
@@ -596,7 +606,7 @@ fn path_fault(
             _ => refuse(),
         },
         "crate" | "$crate" => match rest {
-            [module, ..] if allowed.modules.contains(module) => None,
+            _ if allowed.modules.iter().any(|module| is_within(rest, module)) => None,
             ["store", item, ..] if allowed.store_items.contains(item) => None,
             _ => refuse(),
         },
@@ -610,6 +620,13 @@ fn path_fault(
         name if dependencies.iter().any(|dependency| dependency == name) => refuse(),
         _ => None,
     }
+}
+
+/// Whether `path`, segments from the crate root, is in `module`, a module
+/// path such as `code::index`.
+fn is_within(path: &[&str], module: &str) -> bool {
+    let module: Vec<&str> = module.split("::").collect();
+    path.starts_with(&module)
 }
 
 #[cfg(test)]
@@ -752,6 +769,28 @@ mod tests {
             "#[cfg(test)]\nmod twin;\n#[cfg(not(test))]\nmod twin {\n    mod leak;\n}\n",
         ),
     ];
+
+    #[test]
+    fn a_path_of_supers_is_read_from_the_files_own_module() {
+        let below = AllowList {
+            modules: &["code::index"],
+            store_items: &[],
+            std_items: &[],
+            crates: &[],
+            crate_items: &[],
+        };
+        let path = |text: &str| -> Vec<String> { text.split("::").map(str::to_owned).collect() };
+        let module = ["code", "index", "scope"];
+
+        assert_eq!(
+            path_fault(&path("super::span::Span"), &module, &[], &below),
+            None
+        );
+        assert_eq!(
+            path_fault(&path("super::super::parse::Token"), &module, &[], &below),
+            Some("names `super::super::parse::Token`".to_owned())
+        );
+    }
 
     #[test]
     fn each_path_to_the_outside_is_found_however_it_is_spelled() {

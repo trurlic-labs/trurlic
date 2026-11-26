@@ -1,9 +1,9 @@
 //! What a definition is, beside where: its kind, whether it is test code,
 //! and its visibility. A resolver states each from the file's bytes; the
-//! second step adds what the tree says of a whole file (`roles.rs`). The
-//! kinds and visibilities are every language's: a query file names them
-//! by [`DefinitionKind::name`] and [`Visibility::name`], and a language
-//! uses those its source can state.
+//! second step adds what the tree says of a whole file
+//! (`tree/roles.rs`). The kinds and visibilities are every language's: a
+//! query file names them by [`DefinitionKind::name`] and
+//! [`Visibility::name`], and a language uses those its source can state.
 
 /// The kind of a definition. A kind is a different thing in the source,
 /// never a guess: a `static` is no constant, a `union` no struct, a

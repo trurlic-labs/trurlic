@@ -1,4 +1,4 @@
-description = "The code index, pure: each source file's definitions with their spans and span hashes (tree-sitter for Rust, lexical resolvers for TOML, JSON, Makefiles and Markdown), the symbol grammar, macro expansion over a crate, and what an anchor names in a tree"
+description = "The code index, pure: what an index is (index/), the resolvers that build one with tree-sitter or lexically (parse/, lexical/), the dispatch by kind, and the facts over a whole tree, what an anchor names among them (tree/)"
 connects_to = [
     "store",
 ]

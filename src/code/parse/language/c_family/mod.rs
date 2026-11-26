@@ -14,12 +14,13 @@
 //! blankable object-like macro whose every body but an empty one holds
 //! `static` (`#define local static`) makes what it marks private: the
 //! blank states, beside the text, where the code after each such name
-//! starts ([`Blanked::private`](blank::Blanked::private)), and the resolver reads a mark there as it
-//! reads `static`. A name is blanked only where it stands outside every
-//! directive, comment and literal, so the `#define` that made it blankable
-//! and an `#ifdef` that tests it keep it; and a `#define` of a word either
-//! grammar reads itself (`const`, `inline`, `__attribute__`) names no macro
-//! the blank reads, since the parse already reads the word.
+//! starts ([`Blanked::private`](blank::Blanked::private)), and the
+//! resolver reads a mark there as it reads `static`. A name is blanked
+//! only where it stands outside every directive, comment and literal, so
+//! the `#define` that made it blankable and an `#ifdef` that tests it keep
+//! it; and a `#define` of a word either grammar reads itself (`const`,
+//! `inline`, `__attribute__`) names no macro the blank reads, since the
+//! parse already reads the word.
 //!
 //! Which names are blankable (`set.rs`) is a fact of the tree's headers
 //! and of the file itself. The lexical pass of a file ([`lexed`]) gives

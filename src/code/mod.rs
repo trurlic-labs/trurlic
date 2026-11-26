@@ -3,20 +3,18 @@
 //! and bytes, or the facts a shell gathered (`sources`), and its output is
 //! values; at run time it reads no file and no clock.
 //!
-//! Rust is read with tree-sitter by a module of its own (`parse/rust/`,
-//! over `parse/syntax.rs` and the builder every tree-sitter resolver
-//! shares, `parse/tree_index.rs`), since its attributes, impls, re-exports
-//! and module files need code. Every other language is a grammar and a
-//! query file, a row of `parse/language/` read by the general resolver
-//! (`parse/general/`, under the contract of `parse/query/`). TOML, JSON,
-//! Makefiles and Markdown have lexical resolvers of their own (over
-//! `lexical/`). A file's index is a function of its kind and bytes
-//! ([`index`]): its paths a tree of scopes (`index/scope_tree.rs`), which
-//! charges all an index holds to the file's room, its work under budgets
-//! per byte (`index/work.rs`), its cache entry a compact encoding
-//! (`index/encoding/`). What needs the whole tree is a second step over
-//! the indexes: the files that are test code whole (`tree/`). A macro
-//! invocation defines nothing (`parse/rust/`).
+//! Its sub-modules depend one way. `index/` is what an index is: the
+//! values every resolver builds and every reader reads, the bounds they
+//! are built within, the scope tree that charges all an index holds to
+//! its file's room, and its cache entry. The resolvers stand on it:
+//! `parse/` reads a file with tree-sitter, Rust by a module of its own and
+//! every other language by its row and query file through the general
+//! resolver, and `lexical/` reads TOML, JSON, Makefiles and Markdown.
+//! `resolver.rs` dispatches a file to its kind's resolver
+//! ([`index`](fn@index)), so a file's index is a function of its kind and
+//! bytes. `tree/` is the second step over a tree's indexes: what no one
+//! file's index states, and what an anchor names. A macro invocation
+//! defines nothing (`parse/rust/`).
 
 mod index;
 mod lexical;
@@ -94,5 +92,29 @@ mod tests {
         let found = faults(Path::new(env!("CARGO_MANIFEST_DIR")), "src/code", &CODE);
 
         assert_eq!(found, Vec::<String>::new());
+    }
+
+    /// Each sub-module of the index and the modules of the index it may
+    /// name: the values below every resolver, the resolvers on them, and
+    /// the facts over a tree on the values and the language rows. The
+    /// dispatch and the surface, at the root, name them all.
+    const LAYERS: [(&str, &[&str]); 4] = [
+        ("src/code/index", &["code::index"]),
+        ("src/code/lexical", &["code::index", "code::lexical"]),
+        ("src/code/parse", &["code::index", "code::parse"]),
+        (
+            "src/code/tree",
+            &["code::index", "code::parse", "code::tree"],
+        ),
+    ];
+
+    #[test]
+    fn each_sub_module_names_no_module_above_it() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for (dir, modules) in LAYERS {
+            let found = faults(root, dir, &AllowList { modules, ..CODE });
+
+            assert_eq!(found, Vec::<String>::new(), "{dir}");
+        }
     }
 }
