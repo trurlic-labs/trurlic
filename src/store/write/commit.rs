@@ -20,7 +20,7 @@ use crate::store::model::limits::MAX_NODE_FILE_BYTES;
 /// A file write staged for batch commit.
 /// Created via [`Store::prepare_write`], executed via [`Store::commit_batch`].
 #[must_use = "a pending write must be passed to commit_batch"]
-pub(crate) struct PendingWrite {
+pub(in crate::store) struct PendingWrite {
     pub(super) target: PathBuf,
     pub(super) content: String,
 }

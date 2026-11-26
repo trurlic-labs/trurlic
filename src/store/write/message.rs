@@ -35,7 +35,7 @@ impl Tool {
 /// The journal carries it, checked again when it is read back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "MessageFields")]
-pub(crate) struct CommitMessage {
+pub(in crate::store) struct CommitMessage {
     tool: Tool,
     #[serde(skip_serializing_if = "Option::is_none")]
     origin: Option<String>,

@@ -23,8 +23,10 @@ mod pattern;
 mod verdict;
 
 pub(crate) use audit::Shortfall;
-pub(crate) use bar::{Bar, PreparedBar, element, texts};
+pub(crate) use bar::{Bar, PreparedBar};
+pub(in crate::store) use bar::{element, texts};
 pub(crate) use pattern::Scan;
 #[cfg(test)]
 pub(crate) use verdict::PatternMatch;
-pub(crate) use verdict::{Breach, Broken, Hit, Place, QualityFault};
+pub(crate) use verdict::QualityFault;
+pub(in crate::store) use verdict::{Breach, Broken, Hit, Place};

@@ -239,7 +239,10 @@ impl Bar {
 
 /// The texts of `field` a pattern reads, each with its place: an anchor
 /// as `file::symbol`. None of the origin, which is the batch's.
-pub(crate) fn texts(decision: &Decision, field: DecisionField) -> Vec<(Place, Cow<'_, str>)> {
+pub(in crate::store) fn texts(
+    decision: &Decision,
+    field: DecisionField,
+) -> Vec<(Place, Cow<'_, str>)> {
     let each = |(index, text)| (Place::element(field, index), text);
     match field {
         DecisionField::Choice => vec![(Place::whole(field), Cow::Borrowed(&*decision.choice))],
@@ -272,7 +275,7 @@ pub(crate) fn texts(decision: &Decision, field: DecisionField) -> Vec<(Place, Co
 
 /// The element of `decision` that `place` names, as the bar reads it:
 /// `None` for a whole field.
-pub(crate) fn element(decision: &Decision, place: Place) -> Option<Cow<'_, str>> {
+pub(in crate::store) fn element(decision: &Decision, place: Place) -> Option<Cow<'_, str>> {
     let index = place.index?;
     texts(decision, place.field)
         .into_iter()

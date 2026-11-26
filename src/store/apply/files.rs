@@ -91,7 +91,7 @@ impl Writer<'_> {
 }
 
 /// The op that last changed a node, by the node's name.
-pub(super) type ChangedBy<'f, 'n> = &'f dyn Fn(&str) -> Option<&'n OpAt>;
+type ChangedBy<'f, 'n> = &'f dyn Fn(&str) -> Option<&'n OpAt>;
 
 /// The files a batch commits, gathered one node kind at a time.
 struct Files<'f, 'n> {

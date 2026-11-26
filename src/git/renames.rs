@@ -26,7 +26,7 @@ use super::process::{MAX_OUTPUT_BYTES, command, run, shown};
 /// order: what a repair is judged by. A file whose code moved before them
 /// gets no repair, and a walk this long stays well within
 /// [`MAX_OUTPUT_BYTES`] at fifty files a commit.
-pub(crate) const MAX_WALKED_COMMITS: usize = 10_000;
+const MAX_WALKED_COMMITS: usize = 10_000;
 
 /// The settings every history read runs with, each one a user's
 /// configuration may set otherwise: a signature check prints its lines

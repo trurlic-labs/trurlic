@@ -101,7 +101,7 @@ fn vector(mut terms: Vec<(usize, u64)>, inverse: &[u64]) -> Vector {
 /// The inverse frequency, in Q32, of a term `holding` of `decisions`
 /// decisions hold: ln((1 + decisions) / (1 + holding)) + 1, rounded half
 /// up, within 2^-32 of the exact value.
-pub(super) fn inverse_frequency(decisions: u64, holding: u64) -> u64 {
+fn inverse_frequency(decisions: u64, holding: u64) -> u64 {
     let ln = |count: u64| fixed::ln(count.saturating_add(1));
     let ratio = ln(decisions).saturating_sub(ln(holding));
     // ratio < 45 * 2^64, so the Q32 value stays below 2^38.

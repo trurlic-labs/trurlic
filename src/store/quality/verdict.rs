@@ -180,7 +180,7 @@ impl fmt::Display for PatternMatch {
 /// in the decision's list: the op that judged the decision names the
 /// argument that brought it (`apply::check`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Place {
+pub(in crate::store) struct Place {
     pub(in crate::store) field: DecisionField,
     pub(super) index: Option<usize>,
 }
@@ -201,7 +201,7 @@ impl Place {
 /// What stops a write's judgement: a text rule or a rule of the bar the
 /// decision breaks, or the bytes its patterns may read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Broken {
+pub(in crate::store) enum Broken {
     Text {
         field: TextField,
         fault: TextFault,
@@ -214,7 +214,7 @@ pub(crate) enum Broken {
 
 /// The first rule a judged decision breaks, and where.
 #[derive(Debug)]
-pub(crate) struct Breach {
+pub(in crate::store) struct Breach {
     pub(in crate::store) place: Place,
     pub(in crate::store) broken: Broken,
 }
@@ -222,7 +222,7 @@ pub(crate) struct Breach {
 /// A `warn` pattern's first match: the pattern's index in `[quality]
 /// patterns` and the byte offset of the match in its text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Hit {
+pub(in crate::store) struct Hit {
     pub(in crate::store) pattern: usize,
     pub(in crate::store) at: usize,
 }
