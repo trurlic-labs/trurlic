@@ -29,7 +29,7 @@ pub struct Store {
 
 impl Store {
     /// The graph at `root`, read for the directory that holds it.
-    pub fn at(root: PathBuf) -> Self {
+    pub(crate) fn at(root: PathBuf) -> Self {
         let code_root = root.parent().unwrap_or(&root).to_path_buf();
         Self { root, code_root }
     }
@@ -45,13 +45,13 @@ impl Store {
     }
 
     /// The tree the graph is read for, which anchors are relative to.
-    pub fn code_root(&self) -> &Path {
+    pub(crate) fn code_root(&self) -> &Path {
         &self.code_root
     }
 
     /// Whether the graph directory is the code root's own `.trurlic/`, as
     /// opposed to one reached through a symlink or a linked worktree.
-    pub fn is_local(&self) -> bool {
+    pub(crate) fn is_local(&self) -> bool {
         self.root == self.code_root.join(STORE_DIR)
     }
 
@@ -75,7 +75,7 @@ impl Store {
         self.root.join(COMPONENTS_DIR).join(format!("{name}.toml"))
     }
 
-    pub fn decision_path(&self, name: &str) -> PathBuf {
+    pub(crate) fn decision_path(&self, name: &str) -> PathBuf {
         self.root.join(DECISIONS_DIR).join(format!("{name}.toml"))
     }
 

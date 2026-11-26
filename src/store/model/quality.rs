@@ -16,52 +16,52 @@ use super::text::{TextFault, TextField, fault};
 /// absent table, adds nothing to them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "QualityFields")]
-pub struct Quality {
+pub(crate) struct Quality {
     /// Words of a reason, at least and at most.
-    pub reason_words: WordRange,
-    pub alternatives_max: Option<usize>,
+    pub(crate) reason_words: WordRange,
+    pub(crate) alternatives_max: Option<usize>,
     /// Words of each alternative, at most.
-    pub alternative_words_max: Option<usize>,
-    pub anchors_max: Option<usize>,
+    pub(crate) alternative_words_max: Option<usize>,
+    pub(crate) anchors_max: Option<usize>,
     /// A batch that records a decision gives an `origin`.
-    pub require_origin: bool,
+    pub(crate) require_origin: bool,
     /// The project's own rules, in the order a refusal numbers them.
-    pub patterns: Vec<Pattern>,
+    pub(crate) patterns: Vec<Pattern>,
 }
 
 impl Quality {
     /// Whether the table adds nothing to the built-in rules, so the
     /// canonical form leaves it out.
     #[must_use]
-    pub fn is_default(&self) -> bool {
+    pub(crate) fn is_default(&self) -> bool {
         *self == Self::default()
     }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WordRange {
-    pub min: Option<usize>,
-    pub max: Option<usize>,
+pub(crate) struct WordRange {
+    pub(crate) min: Option<usize>,
+    pub(crate) max: Option<usize>,
 }
 
 /// A rule of the project's: text in `fields` that `pattern` matches is
 /// refused, or warned of, with `message`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Pattern {
+pub(crate) struct Pattern {
     /// A regular expression in the syntax of the `regex` crate, which
     /// runs on a lazy DFA: no Unicode word boundary (`Bar::compile`).
-    pub pattern: String,
-    pub fields: BTreeSet<DecisionField>,
-    pub level: Level,
-    pub message: String,
+    pub(crate) pattern: String,
+    pub(crate) fields: BTreeSet<DecisionField>,
+    pub(crate) level: Level,
+    pub(crate) message: String,
 }
 
 /// What a pattern's match does to the write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Level {
+pub(crate) enum Level {
     Refuse,
     /// The write goes through with a warning in its result.
     Warn,
@@ -69,7 +69,7 @@ pub enum Level {
 
 impl Level {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Refuse => "refuse",
             Self::Warn => "warn",
@@ -81,7 +81,7 @@ impl Level {
 /// `fields` gives them. `origin` is the batch's, read once per batch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DecisionField {
+pub(crate) enum DecisionField {
     Alternatives,
     Anchors,
     Choice,
@@ -93,7 +93,7 @@ pub enum DecisionField {
 impl DecisionField {
     /// The fields of a decision file, in the order of its keys: the order
     /// the bar reads them in.
-    pub const IN_FILE_ORDER: [Self; 6] = [
+    pub(crate) const IN_FILE_ORDER: [Self; 6] = [
         Self::Choice,
         Self::Reason,
         Self::Alternatives,
@@ -103,7 +103,7 @@ impl DecisionField {
     ];
 
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Alternatives => "alternatives",
             Self::Anchors => "anchors",
@@ -132,7 +132,7 @@ struct QualityFields {
 
 /// A `[quality]` table no write could meet, or one out of bounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConfigFault {
+pub(crate) enum ConfigFault {
     /// A maximum of 0, which every decision breaks: each holds a reason,
     /// an alternative and an anchor.
     ZeroMax {

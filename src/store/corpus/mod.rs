@@ -100,13 +100,13 @@ const HOUR: Duration = Duration::from_secs(60 * 60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Corpus {
     /// Decisions in the store, project-wide ones included.
-    pub decisions: usize,
+    pub(crate) decisions: usize,
     /// Share of the source files that anchors name, in percent, rounded
     /// down per component. It holds exactly while each component's
     /// anchors outnumber its anchored files, as they do at [`Corpus::SIZES`].
-    pub anchored_files_percent: u8,
+    pub(crate) anchored_files_percent: u8,
     /// Seeds every draw; two seeds give two corpora of the same shape.
-    pub seed: u64,
+    pub(crate) seed: u64,
 }
 
 impl Corpus {
@@ -114,7 +114,7 @@ impl Corpus {
     pub const SIZES: [usize; 3] = [50, 600, 2000];
 
     /// About three quarters of a production project's files carry anchors.
-    pub const PRODUCTION_ANCHORED_PERCENT: u8 = 75;
+    const PRODUCTION_ANCHORED_PERCENT: u8 = 75;
 
     /// A production-shaped corpus of `decisions` decisions.
     #[must_use]

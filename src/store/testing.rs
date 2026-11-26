@@ -17,13 +17,13 @@ use crate::store::model::{
 };
 use crate::{Error, Result};
 
-pub fn setup_store(dir: &Path) -> Store {
+pub(crate) fn setup_store(dir: &Path) -> Store {
     setup_store_with_version(dir, &FORMAT_VERSION.to_string())
 }
 
 /// An empty store whose `project.toml` states `version` as its
 /// `format_version`, whatever the text, beside the fields of format 0.5.
-pub fn setup_store_with_version(dir: &Path, version: &str) -> Store {
+pub(crate) fn setup_store_with_version(dir: &Path, version: &str) -> Store {
     let root = dir.join(STORE_DIR);
     fs::create_dir_all(root.join(COMPONENTS_DIR)).unwrap();
     fs::create_dir_all(root.join(DECISIONS_DIR)).unwrap();
@@ -37,13 +37,13 @@ pub fn setup_store_with_version(dir: &Path, version: &str) -> Store {
 }
 
 /// An empty `shared` store, whose repository holds the `init` commit.
-pub fn shared_store(dir: &Path) -> Store {
+pub(crate) fn shared_store(dir: &Path) -> Store {
     Store::create(dir, "test-project", Placement::Shared).unwrap()
 }
 
 /// `git <args>` in the graph directory of `store`, as a person with no
 /// user or system configuration; it must succeed.
-pub fn graph_git(store: &Store, args: &[&str]) -> String {
+pub(crate) fn graph_git(store: &Store, args: &[&str]) -> String {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(store.root())
@@ -64,7 +64,7 @@ pub fn graph_git(store: &Store, args: &[&str]) -> String {
 
 /// The messages of the graph's history, newest first, each trimmed of
 /// the line breaks around it.
-pub fn graph_log(store: &Store) -> Vec<String> {
+pub(crate) fn graph_log(store: &Store) -> Vec<String> {
     graph_git(store, &["log", "--format=%B%x00"])
         .split('\0')
         .map(|message| message.trim_matches('\n').to_owned())
@@ -73,7 +73,7 @@ pub fn graph_log(store: &Store) -> Vec<String> {
 }
 
 /// The files the commit `rev` changed, sorted.
-pub fn changed_in(store: &Store, rev: &str) -> Vec<String> {
+pub(crate) fn changed_in(store: &Store, rev: &str) -> Vec<String> {
     let names = graph_git(
         store,
         &["show", "--name-only", "--format=", "--no-renames", rev],
@@ -84,15 +84,15 @@ pub fn changed_in(store: &Store, rev: &str) -> Vec<String> {
 }
 
 /// `value` written to `file` in its canonical form, outside any commit.
-pub fn write_node<T: Canonical>(store: &Store, file: &NodeFile, value: &T) {
+pub(crate) fn write_node<T: Canonical>(store: &Store, file: &NodeFile, value: &T) {
     fs::write(store.path_of(file), canonical(value)).unwrap();
 }
 
-pub fn ts() -> Timestamp {
+pub(crate) fn ts() -> Timestamp {
     "2025-06-01T10:00:00Z".parse().unwrap()
 }
 
-pub fn sample_component() -> Component {
+pub(crate) fn sample_component() -> Component {
     Component {
         description: "A sample component".into(),
         connects_to: std::collections::BTreeSet::new(),
@@ -100,7 +100,7 @@ pub fn sample_component() -> Component {
 }
 
 /// An accepted decision of `component` with no sets and no origin.
-pub fn sample_decision(component: &str) -> Decision {
+pub(crate) fn sample_decision(component: &str) -> Decision {
     Decision {
         component: component.into(),
         choice: "Choice of the sample".into(),
@@ -117,11 +117,11 @@ pub fn sample_decision(component: &str) -> Decision {
 
 /// A `[quality]` pattern no cache holds over [`coin_flips`]: its lazy
 /// DFA tracks where the last twenty-one letters hold an `a`.
-pub const OUTGROWS_ITS_CACHE: &str = "(?:a|b)*a(?:a|b){20}$";
+pub(crate) const OUTGROWS_ITS_CACHE: &str = "(?:a|b)*a(?:a|b){20}$";
 
 /// `len` letters `a` and `b` in an order fixed by `seed`, with no
 /// pattern to them a short window repeats.
-pub fn coin_flips(len: usize, seed: u64) -> String {
+pub(crate) fn coin_flips(len: usize, seed: u64) -> String {
     let mut state = seed;
     (0..len)
         .map(|_| {
@@ -134,7 +134,7 @@ pub fn coin_flips(len: usize, seed: u64) -> String {
 }
 
 /// [`sample_decision`] anchored at each of `files`.
-pub fn anchored(component: &str, files: &[&str]) -> Decision {
+pub(crate) fn anchored(component: &str, files: &[&str]) -> Decision {
     let mut decision = sample_decision(component);
     decision.anchors = files
         .iter()
@@ -144,7 +144,7 @@ pub fn anchored(component: &str, files: &[&str]) -> Decision {
 }
 
 /// A state with no node.
-pub fn empty_state() -> ProjectState {
+pub(crate) fn empty_state() -> ProjectState {
     ProjectState {
         project: Project {
             format_version: FORMAT_VERSION,
@@ -162,7 +162,7 @@ pub fn empty_state() -> ProjectState {
 
 /// Project-wide decisions joined by `depends_on` edges in the given
 /// order: a graph whose only issues are the ones the edges make.
-pub fn depends_on_state(edges: &[(&str, &str)]) -> ProjectState {
+pub(crate) fn depends_on_state(edges: &[(&str, &str)]) -> ProjectState {
     let mut state = empty_state();
     for &(from, to) in edges {
         for name in [from, to] {
@@ -182,7 +182,7 @@ pub fn depends_on_state(edges: &[(&str, &str)]) -> ProjectState {
 
 /// `auth` and `billing`; `sign` and `rotate` of `auth`, `rotate`
 /// depending on `sign`; `audit`, project-wide, depending on `rotate`.
-pub fn graph(dir: &Path) -> Store {
+pub(crate) fn graph(dir: &Path) -> Store {
     let store = setup_store(dir);
     for name in ["auth", "billing"] {
         write_node(
@@ -205,7 +205,7 @@ pub fn graph(dir: &Path) -> Store {
     store
 }
 
-pub fn batch(ops: Vec<Op>) -> Batch {
+pub(crate) fn batch(ops: Vec<Op>) -> Batch {
     Batch {
         ops,
         origin: Some("row 7".into()),
@@ -213,19 +213,19 @@ pub fn batch(ops: Vec<Op>) -> Batch {
     }
 }
 
-pub fn apply(store: &Store, ops: Vec<Op>) -> Result<Applied> {
+pub(crate) fn apply(store: &Store, ops: Vec<Op>) -> Result<Applied> {
     apply_batch(store, batch(ops))
 }
 
 /// `batch` written as the `apply` tool writes it: the bar compiled before
 /// the lock.
-pub fn apply_batch(store: &Store, batch: Batch) -> Result<Applied> {
+pub(crate) fn apply_batch(store: &Store, batch: Batch) -> Result<Applied> {
     let bar = store.prepare_bar()?;
     store.begin_write()?.apply(batch, &bar)
 }
 
 /// The refusal of `ops`, after checking that it wrote nothing.
-pub fn refused(store: &Store, ops: Vec<Op>) -> Refusal {
+pub(crate) fn refused(store: &Store, ops: Vec<Op>) -> Refusal {
     let before = files(store);
     let err = apply(store, ops).unwrap_err();
     assert_eq!(files(store), before, "a refused batch wrote");
@@ -236,7 +236,7 @@ pub fn refused(store: &Store, ops: Vec<Op>) -> Refusal {
 }
 
 /// Every graph file below the store, by path.
-pub fn files(store: &Store) -> BTreeMap<String, String> {
+pub(crate) fn files(store: &Store) -> BTreeMap<String, String> {
     let mut files = BTreeMap::new();
     for dir in ["components", "decisions"] {
         for entry in fs::read_dir(store.root().join(dir)).unwrap() {
@@ -248,11 +248,11 @@ pub fn files(store: &Store) -> BTreeMap<String, String> {
     files
 }
 
-pub fn decision(store: &Store, name: &str) -> Decision {
+pub(crate) fn decision(store: &Store, name: &str) -> Decision {
     store.load_state().unwrap().decisions.remove(name).unwrap()
 }
 
-pub fn record(name: &str, component: &str) -> Record {
+pub(crate) fn record(name: &str, component: &str) -> Record {
     Record {
         name: name.into(),
         component: component.into(),
@@ -265,14 +265,14 @@ pub fn record(name: &str, component: &str) -> Record {
     }
 }
 
-pub fn anchor(file: &str, symbol: Option<&str>) -> AnchorInput {
+pub(crate) fn anchor(file: &str, symbol: Option<&str>) -> AnchorInput {
     AnchorInput {
         file: file.into(),
         symbol: symbol.map(str::to_owned),
     }
 }
 
-pub fn revise(name: &str) -> Revise {
+pub(crate) fn revise(name: &str) -> Revise {
     Revise {
         name: name.into(),
         component: None,
@@ -285,14 +285,14 @@ pub fn revise(name: &str) -> Revise {
     }
 }
 
-pub fn add(elements: &[&str]) -> ListEdit<String> {
+pub(crate) fn add(elements: &[&str]) -> ListEdit<String> {
     ListEdit {
         add: Some(elements.iter().map(|&e| e.to_owned()).collect()),
         ..ListEdit::keep()
     }
 }
 
-pub fn rename(name: &str, to: &str) -> Rename {
+pub(crate) fn rename(name: &str, to: &str) -> Rename {
     Rename {
         name: name.into(),
         to: to.into(),
@@ -300,6 +300,6 @@ pub fn rename(name: &str, to: &str) -> Rename {
 }
 
 /// The rule name, the path and the message of `refusal`.
-pub fn named(refusal: &Refusal) -> (&'static str, String, String) {
+pub(crate) fn named(refusal: &Refusal) -> (&'static str, String, String) {
     (refusal.rule.as_str(), refusal.path(), refusal.to_string())
 }

@@ -10,8 +10,8 @@ mod query;
 mod validate;
 
 pub(in crate::store) use cycles::cycles;
-pub use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
+pub(crate) use placement::{LinkedGraph, MainWorktree, PlacementFacts, WorkTreeFacts};
 pub(in crate::store) use placement::{listed, partition};
-pub use query::{Named, anchors_in, normalize_path};
-pub use validate::{Issue, IssueKind};
+pub(crate) use query::{Named, anchors_in, normalize_path};
+pub(crate) use validate::{Issue, IssueKind};
 pub(in crate::store) use validate::{carry_members, introduced};

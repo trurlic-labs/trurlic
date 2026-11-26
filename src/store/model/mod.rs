@@ -14,16 +14,17 @@ mod text;
 mod time;
 mod version;
 
-pub use name::NameFault;
+pub(crate) use name::NameFault;
 pub(in crate::store) use name::name_fault;
-pub use quality::{DecisionField, Level, Pattern, Quality, WordRange};
-pub use schema::{
+pub(crate) use quality::{DecisionField, Level, Pattern, Quality, WordRange};
+pub(crate) use schema::{
     AcceptedText, AcceptedVia, Anchor, AnchorFault, COMPONENTS_DIR, Component, DECISIONS_DIR,
-    Decision, FORMAT_VERSION, PROJECT_COMPONENT, PROJECT_FILE, Placement, Project, STATE_DIR,
-    STORE_DIR, Status, StatusName,
+    Decision, PROJECT_COMPONENT, PROJECT_FILE, Project, STATE_DIR, STORE_DIR, Status, StatusName,
 };
-pub use state::{NodeFile, ProjectState};
+pub use schema::{FORMAT_VERSION, Placement};
+pub(crate) use state::NodeFile;
+pub use state::ProjectState;
 pub(in crate::store) use text::fault;
-pub use text::{TextFault, TextField};
-pub use time::{Timestamp, TimestampError};
-pub use version::FormatVersion;
+pub(crate) use text::{TextFault, TextField};
+pub(crate) use time::{Timestamp, TimestampError};
+pub(crate) use version::FormatVersion;

@@ -9,7 +9,7 @@ use super::schema::PROJECT_COMPONENT;
 
 /// Why a stem is no node name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NameFault {
+pub(crate) enum NameFault {
     NotKebab,
     TooLong {
         len: usize,

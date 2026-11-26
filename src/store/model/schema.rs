@@ -22,14 +22,14 @@ use super::version::FormatVersion;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Project {
-    pub format_version: FormatVersion,
-    pub name: String,
-    pub description: String,
-    pub placement: Placement,
+pub(crate) struct Project {
+    pub(crate) format_version: FormatVersion,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) placement: Placement,
     /// The write rules beyond the built-in ones; absent means none.
     #[serde(default)]
-    pub quality: Quality,
+    pub(crate) quality: Quality,
 }
 
 /// Where the graph is versioned: in the project's git, or out of it.
@@ -43,10 +43,10 @@ pub enum Placement {
 }
 
 impl Placement {
-    pub const ALL: [Self; 2] = [Self::Tracked, Self::Shared];
+    pub(crate) const ALL: [Self; 2] = [Self::Tracked, Self::Shared];
 
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Tracked => "tracked",
             Self::Shared => "shared",
@@ -59,9 +59,9 @@ impl Placement {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Component {
-    pub description: String,
+    pub(crate) description: String,
     #[serde(default)]
-    pub connects_to: BTreeSet<String>,
+    pub(crate) connects_to: BTreeSet<String>,
 }
 
 // -- decisions/<name>.toml ---------------------------------------------------
@@ -70,22 +70,22 @@ pub struct Component {
 #[serde(try_from = "DecisionFields")]
 pub struct Decision {
     /// A component's name, or [`PROJECT_COMPONENT`] for a project-wide rule.
-    pub component: String,
-    pub choice: String,
-    pub reason: String,
-    pub alternatives: Vec<String>,
-    pub tags: BTreeSet<String>,
-    pub status: Status,
+    pub(crate) component: String,
+    pub(crate) choice: String,
+    pub(crate) reason: String,
+    pub(crate) alternatives: Vec<String>,
+    pub(crate) tags: BTreeSet<String>,
+    pub(crate) status: Status,
     /// The task or plan row that recorded the decision, as its writer named it.
-    pub origin: Option<String>,
-    pub created: Timestamp,
+    pub(crate) origin: Option<String>,
+    pub(crate) created: Timestamp,
     pub anchors: BTreeSet<Anchor>,
-    pub depends_on: BTreeSet<String>,
+    pub(crate) depends_on: BTreeSet<String>,
 }
 
 /// Whether the owner has accepted a decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Status {
+pub(crate) enum Status {
     /// `accepted_text` is the text the owner accepted, kept while a
     /// revision of an accepted decision waits for the owner.
     Proposed { accepted_text: Option<AcceptedText> },
@@ -96,7 +96,7 @@ pub enum Status {
 
 impl Status {
     #[must_use]
-    pub const fn kind(&self) -> StatusName {
+    pub(crate) const fn kind(&self) -> StatusName {
         match self {
             Self::Proposed { .. } => StatusName::Proposed,
             Self::Accepted { .. } => StatusName::Accepted,
@@ -104,7 +104,7 @@ impl Status {
     }
 
     #[must_use]
-    pub const fn name(&self) -> &'static str {
+    pub(crate) const fn name(&self) -> &'static str {
         self.kind().as_str()
     }
 
@@ -113,7 +113,7 @@ impl Status {
     /// of a revision's anchors, one the revising op added included, are
     /// judged as the accepted decision's.
     #[must_use]
-    pub const fn ever_accepted(&self) -> bool {
+    pub(crate) const fn ever_accepted(&self) -> bool {
         match self {
             Self::Accepted { .. }
             | Self::Proposed {
@@ -130,16 +130,16 @@ impl Status {
 /// file names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum StatusName {
+pub(crate) enum StatusName {
     Proposed,
     Accepted,
 }
 
 impl StatusName {
-    pub const ALL: [Self; 2] = [Self::Proposed, Self::Accepted];
+    pub(crate) const ALL: [Self; 2] = [Self::Proposed, Self::Accepted];
 
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Proposed => "proposed",
             Self::Accepted => "accepted",
@@ -149,7 +149,7 @@ impl StatusName {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AcceptedVia {
+pub(crate) enum AcceptedVia {
     /// The owner answered a form the MCP client showed.
     Elicitation,
     /// The owner accepted it on a terminal.
@@ -158,7 +158,7 @@ pub enum AcceptedVia {
 
 impl AcceptedVia {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Elicitation => "elicitation",
             Self::Cli => "cli",
@@ -171,14 +171,14 @@ impl AcceptedVia {
 /// again as it was accepted.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AcceptedText {
-    pub choice: String,
-    pub reason: String,
+pub(crate) struct AcceptedText {
+    pub(crate) choice: String,
+    pub(crate) reason: String,
     #[serde(default)]
-    pub alternatives: Vec<String>,
+    pub(crate) alternatives: Vec<String>,
     /// The accepted decision's `accepted_via`.
     #[serde(rename = "accepted_via")]
-    pub via: Option<AcceptedVia>,
+    pub(crate) via: Option<AcceptedVia>,
 }
 
 /// A decision file as TOML states it, before its status is read.
@@ -205,7 +205,7 @@ struct DecisionFields {
 
 /// A status its fields contradict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusFault {
+pub(crate) enum StatusFault {
     /// `accepted_via` on a proposed decision.
     ProposedWithVia,
     /// `accepted_text` on an accepted decision.
@@ -283,7 +283,7 @@ impl TryFrom<AnchorFields> for Anchor {
 impl Anchor {
     /// `file`, `/`-separated and relative to the code root, refused when it
     /// could name a place outside the root or name one place two ways.
-    pub fn new(file: String, symbol: Option<String>) -> Result<Self, AnchorFault> {
+    pub(crate) fn new(file: String, symbol: Option<String>) -> Result<Self, AnchorFault> {
         path_fault(&file).map_or(Ok(()), Err)?;
         if let Some(symbol) = &symbol {
             symbol_fault(symbol).map_or(Ok(()), Err)?;
@@ -297,7 +297,7 @@ impl Anchor {
     }
 
     #[must_use]
-    pub fn symbol(&self) -> Option<&str> {
+    pub(crate) fn symbol(&self) -> Option<&str> {
         self.symbol.as_deref()
     }
 
@@ -305,7 +305,7 @@ impl Anchor {
     /// other as a directory: a directory holds the anchors in it, and a
     /// directory anchor applies to every file under it.
     #[must_use]
-    pub fn overlaps(&self, path: &str) -> bool {
+    pub(crate) fn overlaps(&self, path: &str) -> bool {
         let under = |inner: &str, outer: &str| {
             inner
                 .strip_prefix(outer)
@@ -431,17 +431,17 @@ pub const FORMAT_VERSION: FormatVersion = FormatVersion::new(0, 5, 0);
 
 /// The component every project has without a file: its decisions are the
 /// rules that hold everywhere.
-pub const PROJECT_COMPONENT: &str = "project";
+pub(crate) const PROJECT_COMPONENT: &str = "project";
 
-pub const STORE_DIR: &str = ".trurlic";
+pub(crate) const STORE_DIR: &str = ".trurlic";
 
-pub const PROJECT_FILE: &str = "project.toml";
+pub(crate) const PROJECT_FILE: &str = "project.toml";
 
-pub const COMPONENTS_DIR: &str = "components";
+pub(crate) const COMPONENTS_DIR: &str = "components";
 
-pub const DECISIONS_DIR: &str = "decisions";
+pub(crate) const DECISIONS_DIR: &str = "decisions";
 
-pub const STATE_DIR: &str = ".state";
+pub(crate) const STATE_DIR: &str = ".state";
 
 #[cfg(test)]
 mod tests {

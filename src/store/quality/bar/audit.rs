@@ -14,14 +14,14 @@ use crate::store::quality::QualityFault;
 /// A rule of the bar a stored decision breaks, and where: what a report
 /// shows of a graph below its own bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Shortfall {
-    pub field: DecisionField,
+pub(crate) struct Shortfall {
+    pub(crate) field: DecisionField,
     /// The element of a list field, by its position in the decision's list.
-    pub element: Option<usize>,
+    pub(crate) element: Option<usize>,
     /// `refuse` for a limit, a give-up and the total, the pattern's level
     /// for a match.
-    pub level: Level,
-    pub fault: QualityFault,
+    pub(crate) level: Level,
+    pub(crate) fault: QualityFault,
 }
 
 impl Shortfall {

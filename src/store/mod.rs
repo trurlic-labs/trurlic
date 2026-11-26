@@ -21,31 +21,33 @@ mod quality;
 pub(crate) mod testing;
 mod write;
 
-pub use apply::{
+pub(crate) use apply::{
     AddComponent, AnchorInput, Applied, Batch, Done, Field, LeftRepair, ListEdit, Merge, Op,
     OpKind, PatternNote, Record, Refusal, Remove, RemoveComponent, Rename, Repair, RepairAnchors,
     Repaired, Revise, ReviseComponent, Warning, WarningKind,
 };
-pub use cache::SymbolsKey;
+pub(crate) use cache::SymbolsKey;
 #[cfg(test)]
 pub(crate) use corpus::seeded;
+pub use format::Store;
 pub(crate) use format::{
     Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, PlacementSource,
 };
-pub use format::{PlacementDoubt, Store, StorePathFault};
-pub use graph::{
+pub(crate) use format::{PlacementDoubt, StorePathFault};
+pub(crate) use graph::{
     Issue, IssueKind, LinkedGraph, MainWorktree, Named, PlacementFacts, WorkTreeFacts, anchors_in,
     normalize_path,
 };
 pub(crate) use model::limits;
-pub use model::{
-    Anchor, AnchorFault, Component, Decision, FORMAT_VERSION, FormatVersion, Level,
-    PROJECT_COMPONENT, PROJECT_FILE, Placement, ProjectState, Quality, STORE_DIR, Status,
-    StatusName, TextFault, TextField, Timestamp, TimestampError,
+pub(crate) use model::{
+    Anchor, AnchorFault, Component, Decision, FormatVersion, Level, PROJECT_COMPONENT,
+    PROJECT_FILE, Quality, STORE_DIR, Status, StatusName, TextFault, TextField, Timestamp,
+    TimestampError,
 };
+pub use model::{FORMAT_VERSION, Placement, ProjectState};
 pub(crate) use quality::Bar;
-pub use quality::{PreparedBar, QualityFault, Shortfall};
-pub use write::{HistoryFinding, Writer};
+pub(crate) use quality::{PreparedBar, QualityFault, Shortfall};
+pub(crate) use write::{HistoryFinding, Writer};
 pub(crate) use write::{failpoint, sync_dir};
 
 #[cfg(test)]

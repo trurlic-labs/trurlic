@@ -17,7 +17,7 @@ const SHOWN_FILES: usize = 5;
 
 /// What git says about the directory that holds a graph.
 #[derive(Debug)]
-pub enum PlacementFacts {
+pub(crate) enum PlacementFacts {
     /// No git work tree holds the graph directory.
     NoWorkTree,
     WorkTree(WorkTreeFacts),
@@ -27,17 +27,17 @@ pub enum PlacementFacts {
 /// relative to the graph directory, and may name files that are not the
 /// graph's, such as those under `.state/`.
 #[derive(Debug)]
-pub struct WorkTreeFacts {
+pub(crate) struct WorkTreeFacts {
     /// The files the index holds.
-    pub tracked: BTreeSet<PathBuf>,
+    pub(crate) tracked: BTreeSet<PathBuf>,
     /// The files the index does not hold and an ignore rule matches.
-    pub ignored: BTreeSet<PathBuf>,
-    pub main: MainWorktree,
+    pub(crate) ignored: BTreeSet<PathBuf>,
+    pub(crate) main: MainWorktree,
 }
 
 /// The repository's main worktree, as it bears on a graph.
 #[derive(Debug)]
-pub enum MainWorktree {
+pub(crate) enum MainWorktree {
     /// The repository is bare and has none.
     Bare,
     /// Its `.trurlic` leads to this graph; `linked` are the other graph
@@ -53,18 +53,18 @@ pub enum MainWorktree {
 
 /// A graph directory a linked worktree carries.
 #[derive(Debug)]
-pub struct LinkedGraph {
-    pub graph: PathBuf,
-    pub worktree: PathBuf,
+pub(crate) struct LinkedGraph {
+    pub(crate) graph: PathBuf,
+    pub(crate) worktree: PathBuf,
     /// The branch checked out there; `None` on a detached HEAD.
-    pub branch: Option<String>,
+    pub(crate) branch: Option<String>,
 }
 
 impl ProjectState {
     /// Every way `facts` contradict the placement of this graph, read from
     /// the directory `graph`, sorted as [`validate`](Self::validate) sorts.
     #[must_use]
-    pub fn placement_issues(&self, graph: &Path, facts: &PlacementFacts) -> Vec<Issue> {
+    pub(crate) fn placement_issues(&self, graph: &Path, facts: &PlacementFacts) -> Vec<Issue> {
         let at = graph.display().to_string();
         let mut issues = Vec::new();
         match (self.project.placement, facts) {

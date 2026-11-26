@@ -16,7 +16,7 @@ use crate::store::model::{TextField, fault};
 
 /// What an [`Issue`] reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum IssueKind {
+pub(crate) enum IssueKind {
     /// A stem that is not kebab-case, or longer than a name may be.
     NameInvalid,
     /// A node named like the project-wide component, which has no file.
@@ -59,7 +59,7 @@ pub enum IssueKind {
 }
 
 impl IssueKind {
-    pub const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 19] = [
         Self::NameInvalid,
         Self::NameReserved,
         Self::NameShared,
@@ -83,7 +83,7 @@ impl IssueKind {
 
     /// The kind as reports name it.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::NameInvalid => "name_invalid",
             Self::NameReserved => "name_reserved",
@@ -114,13 +114,13 @@ impl IssueKind {
 /// [`ProjectState::validate`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Issue {
-    pub kind: IssueKind,
+    pub(crate) kind: IssueKind,
     /// What the issue is about: a node name, an edge as `from -> to (kind)`,
     /// or a cycle's members, sorted and comma-separated. Stable across
     /// validations of the same graph, unlike `message`.
-    pub subject: String,
+    pub(crate) subject: String,
     /// The file at fault, then what is wrong with it.
-    pub message: String,
+    pub(crate) message: String,
 }
 
 impl Issue {

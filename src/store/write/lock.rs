@@ -30,7 +30,7 @@ const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// [`Writer`](super::Writer) owns one. Dropping it releases the lock.
 #[derive(Debug)]
 #[must_use = "dropping the lock immediately releases it"]
-pub struct StoreLock {
+pub(crate) struct StoreLock {
     _held: Held,
 }
 

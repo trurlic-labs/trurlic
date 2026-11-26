@@ -21,22 +21,22 @@ const LISTED_NAMES: usize = 10;
 pub struct Refusal {
     /// The op at fault; `None` when the fault is the batch's own: an
     /// empty batch, its origin or session.
-    pub op: Option<OpAt>,
+    pub(crate) op: Option<OpAt>,
     /// The argument at fault, within the op (`add_tags[0]`) or the batch
     /// (`origin`). A rule of the quality bar on one element names the
     /// argument that brought it, by its index there; a rule on what no one
     /// argument holds (a count of a whole list, a merge's union, an element
     /// the decision held already) names the decision's field without an
     /// index. `None` when the op as a whole breaks the rule.
-    pub field: Option<String>,
-    pub rule: Rule,
+    pub(crate) field: Option<String>,
+    pub(crate) rule: Rule,
 }
 
 impl Refusal {
     /// Where the fault is in the batch's arguments: `ops[3].add_tags[0]`,
     /// `ops[3]`, `origin`.
     #[must_use]
-    pub fn path(&self) -> String {
+    pub(crate) fn path(&self) -> String {
         let op = self.op.as_ref().map(|op| op.index);
         argument_path(op, self.field.as_deref())
     }
@@ -56,15 +56,15 @@ pub(super) fn argument_path(op: Option<usize>, field: Option<&str>) -> String {
 
 /// An op of a batch: its index, kind and the node it names first.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpAt {
-    pub index: usize,
-    pub kind: OpKind,
-    pub target: String,
+pub(crate) struct OpAt {
+    pub(crate) index: usize,
+    pub(crate) kind: OpKind,
+    pub(crate) target: String,
 }
 
 /// The kind of node a rule names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeKind {
+pub(crate) enum NodeKind {
     Component,
     Decision,
 }
@@ -80,7 +80,7 @@ impl NodeKind {
 
 /// The rule a refused op breaks.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Rule {
+pub(crate) enum Rule {
     /// The batch holds no op.
     EmptyBatch,
     Text {
@@ -168,7 +168,7 @@ impl From<Broken> for Rule {
 impl Rule {
     /// The rule as a refusal names it.
     #[must_use]
-    pub const fn as_str(&self) -> &'static str {
+    pub(crate) const fn as_str(&self) -> &'static str {
         match self {
             Self::EmptyBatch => "empty_batch",
             Self::Text { .. } => "invalid_text",

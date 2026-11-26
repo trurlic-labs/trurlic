@@ -29,7 +29,7 @@ use crate::{Error, Result};
 use super::check::{read_table, version_key};
 use super::load::list_toml_stems;
 
-pub use placement::PlacementDoubt;
+pub(crate) use placement::PlacementDoubt;
 pub(crate) use placement::PlacementSource;
 pub(crate) use report::{
     Fact, Loss, MigrationReport, PatternRecord, PlacementBasis, RefText, StepReport,

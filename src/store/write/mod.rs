@@ -18,11 +18,11 @@ mod message;
 mod migrate;
 mod recovery;
 
-pub use access::Writer;
+pub(crate) use access::Writer;
 pub(in crate::store) use commit::PendingWrite;
 pub(crate) use durable::sync_dir;
 #[cfg(any(test, feature = "bench"))]
 pub(in crate::store) use history::History;
-pub use history::HistoryFinding;
-pub use lock::StoreLock;
+pub(crate) use history::HistoryFinding;
+pub(crate) use lock::StoreLock;
 pub(in crate::store) use message::{CommitMessage, Tool};

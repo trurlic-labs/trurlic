@@ -153,7 +153,7 @@ enum Found<'s> {
 
 /// What `status` and `check` report of a shared graph's history.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HistoryFinding {
+pub(crate) enum HistoryFinding {
     /// No repository holds the history; the next write makes one.
     Missing { repository: PathBuf },
     /// A lock git left on the index, which refuses every write until it is
@@ -168,7 +168,7 @@ impl HistoryFinding {
     /// Whether `check` fails on it: an index lock refuses every write, and
     /// the next write mends the others.
     #[must_use]
-    pub const fn is_error(&self) -> bool {
+    pub(crate) const fn is_error(&self) -> bool {
         match self {
             Self::IndexLocked { .. } => true,
             Self::Missing { .. } | Self::Uncommitted { .. } => false,
@@ -431,7 +431,7 @@ impl Store {
     /// What `status` and `check` report of the graph's history: nothing
     /// under `tracked`. Under `shared` it asks git without writing to the
     /// repository, and under the shared lock, so no write is halfway.
-    pub fn history_findings(&self, placement: Placement) -> Result<Vec<HistoryFinding>> {
+    pub(crate) fn history_findings(&self, placement: Placement) -> Result<Vec<HistoryFinding>> {
         if placement == Placement::Tracked {
             return Ok(Vec::new());
         }

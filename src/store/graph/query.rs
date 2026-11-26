@@ -23,13 +23,13 @@ impl ProjectState {
 
     /// The project-wide decisions, by name.
     #[must_use]
-    pub fn project_decisions(&self) -> Vec<Named<'_>> {
+    pub(crate) fn project_decisions(&self) -> Vec<Named<'_>> {
         self.decisions_of(PROJECT_COMPONENT)
     }
 
     /// The components that connect to `component`, by name.
     #[must_use]
-    pub fn connects_from(&self, component: &str) -> Vec<&str> {
+    pub(crate) fn connects_from(&self, component: &str) -> Vec<&str> {
         self.components
             .iter()
             .filter(|(_, from)| from.connects_to.contains(component))
@@ -40,7 +40,7 @@ impl ProjectState {
     /// The decisions of the components `component` connects to or from,
     /// by component, then by name.
     #[must_use]
-    pub fn related_decisions(&self, component: &str) -> Vec<Named<'_>> {
+    pub(crate) fn related_decisions(&self, component: &str) -> Vec<Named<'_>> {
         let mut connected: BTreeSet<&str> = self.connects_from(component).into_iter().collect();
         if let Some(own) = self.components.get(component) {
             connected.extend(own.connects_to.iter().map(String::as_str));
@@ -55,7 +55,7 @@ impl ProjectState {
     /// `max_depth` links, nearest first; the seeds themselves are left out,
     /// and a cycle is walked once.
     #[must_use]
-    pub fn dependencies(&self, seeds: &[&str], max_depth: usize) -> Vec<Named<'_>> {
+    pub(crate) fn dependencies(&self, seeds: &[&str], max_depth: usize) -> Vec<Named<'_>> {
         let mut visited: BTreeSet<&str> = seeds.iter().copied().collect();
         let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
         let targets = |name: &str| {
@@ -92,7 +92,7 @@ impl ProjectState {
     /// directory as [`normalize_path`] returns it (see [`Anchor::overlaps`]),
     /// by component, then by name.
     #[must_use]
-    pub fn decisions_in(&self, path: &str) -> Vec<Named<'_>> {
+    pub(crate) fn decisions_in(&self, path: &str) -> Vec<Named<'_>> {
         let mut found: Vec<Named<'_>> = self
             .decisions
             .iter()
@@ -105,7 +105,7 @@ impl ProjectState {
 }
 
 /// The anchors of `decision` that overlap `path`.
-pub fn anchors_in<'a>(decision: &'a Decision, path: &str) -> Vec<&'a Anchor> {
+pub(crate) fn anchors_in<'a>(decision: &'a Decision, path: &str) -> Vec<&'a Anchor> {
     decision
         .anchors
         .iter()
@@ -116,7 +116,7 @@ pub fn anchors_in<'a>(decision: &'a Decision, path: &str) -> Vec<&'a Anchor> {
 /// `path` in the one spelling an anchor holds: a leading `./`, runs of `/`
 /// and a trailing `/` dropped. Refused like an anchor's file when it could
 /// name a place outside the code root.
-pub fn normalize_path(path: &str) -> Result<String, AnchorFault> {
+pub(crate) fn normalize_path(path: &str) -> Result<String, AnchorFault> {
     let trimmed = path.strip_prefix("./").unwrap_or(path);
     let normalized = trimmed
         .split('/')

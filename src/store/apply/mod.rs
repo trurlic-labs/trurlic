@@ -43,84 +43,84 @@ use check::Fault;
 use decision::Context;
 use edit::{Before, Edit};
 
-pub use ops::{
+pub(crate) use ops::{
     AddComponent, AnchorInput, Batch, Field, ListEdit, Merge, Op, OpKind, Record, Remove,
     RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent,
 };
 #[cfg(test)]
 pub(crate) use refusal::NodeKind;
-pub use refusal::{OpAt, Refusal, Rule};
-pub use warning::{PatternNote, Warning, WarningKind};
+pub(crate) use refusal::{OpAt, Refusal, Rule};
+pub(crate) use warning::{PatternNote, Warning, WarningKind};
 
 /// What a batch wrote: each op's outcome, in order, its warnings, and the
 /// files.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Applied {
-    pub ops: Vec<Done>,
+pub(crate) struct Applied {
+    pub(crate) ops: Vec<Done>,
     /// The warnings listed: each `warn` pattern warns at its first match
     /// per op, and the first [`MAX_WARNINGS_PER_OP`] of the origin's and of
     /// each op's are listed, in the order of the ops and the patterns.
     ///
     /// [`MAX_WARNINGS_PER_OP`]: crate::store::limits::MAX_WARNINGS_PER_OP
-    pub warnings: Vec<Warning>,
+    pub(crate) warnings: Vec<Warning>,
     /// The origin's warnings not listed.
-    pub more_origin_warnings: usize,
+    pub(crate) more_origin_warnings: usize,
     /// The message of each pattern a listed warning names.
-    pub patterns: Vec<PatternNote>,
+    pub(crate) patterns: Vec<PatternNote>,
     /// Files written, a rename's new file included.
-    pub written: usize,
+    pub(crate) written: usize,
     /// Files removed, a rename's old file included.
-    pub removed: usize,
+    pub(crate) removed: usize,
     /// Each anchor the `repair_anchors` ops replaced, in the order they
     /// replaced them.
-    pub repaired: Vec<Repaired>,
+    pub(crate) repaired: Vec<Repaired>,
     /// Each repair of an op with no `repairs` that the bar did not admit,
     /// in the order they were judged.
-    pub left: Vec<LeftRepair>,
+    pub(crate) left: Vec<LeftRepair>,
 }
 
 /// An anchor a `repair_anchors` op replaced in a decision: `from` was held
 /// and `to` is, `from` dropped when the decision held `to` already.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Repaired {
-    pub decision: String,
-    pub from: Anchor,
-    pub to: Anchor,
+pub(crate) struct Repaired {
+    pub(crate) decision: String,
+    pub(crate) from: Anchor,
+    pub(crate) to: Anchor,
 }
 
 /// A repair of an op with no `repairs` the store did not write, since the
 /// bar refused it or could not judge it: the decision holds `from` still.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LeftRepair {
-    pub repaired: Repaired,
-    pub rule: Rule,
+pub(crate) struct LeftRepair {
+    pub(crate) repaired: Repaired,
+    pub(crate) rule: Rule,
 }
 
 /// What one op did, named, never echoed: the node, the nodes it names
 /// besides, the fields it changed, and how many other files it rewrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Done {
-    pub op: OpKind,
+pub(crate) struct Done {
+    pub(crate) op: OpKind,
     /// The node the op names first; a merge's survivor; the first decision
     /// a repair changed, empty when it changed none.
-    pub name: String,
+    pub(crate) name: String,
     /// A rename's new name.
-    pub to: Option<String>,
+    pub(crate) to: Option<String>,
     /// A merge's absorbed decision.
-    pub absorbed: Option<String>,
+    pub(crate) absorbed: Option<String>,
     /// Where a remove pointed the edges that pointed at its decision.
-    pub repoint_to: Option<String>,
+    pub(crate) repoint_to: Option<String>,
     /// A revise's fields whose values changed, in the order of the file's
     /// keys.
-    pub changed: Vec<Field>,
+    pub(crate) changed: Vec<Field>,
     /// The decision's status, when the op changed it.
-    pub status: Option<StatusName>,
+    pub(crate) status: Option<StatusName>,
     /// Files of other nodes the op rewrote: dependents repointed, a
     /// component's decisions and connections renamed, the decisions a
     /// repair changed after its first.
-    pub rewrote: usize,
+    pub(crate) rewrote: usize,
     /// The op's warnings not listed in [`Applied::warnings`].
-    pub more_warnings: usize,
+    pub(crate) more_warnings: usize,
 }
 
 impl Done {
@@ -150,7 +150,7 @@ impl Writer<'_> {
     /// else, the table edited in between, to that table compiled here. A
     /// `[quality]` pattern that does not compile refuses every batch with
     /// [`Error::QualityPattern`].
-    pub fn apply(&mut self, batch: Batch, prepared: &PreparedBar) -> Result<Applied> {
+    pub(crate) fn apply(&mut self, batch: Batch, prepared: &PreparedBar) -> Result<Applied> {
         let message = commit_message(&batch)?;
         let compiled;
         let bar = match prepared.of(&self.state.project.quality) {

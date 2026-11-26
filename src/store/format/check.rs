@@ -122,7 +122,7 @@ impl Store {
     /// The placement `project.toml` states, read as the current format.
     /// No lock is taken: a commit replaces `project.toml` by a rename, so
     /// the file is read whole, before or after it.
-    pub fn stated_placement(&self) -> Result<Placement> {
+    pub(crate) fn stated_placement(&self) -> Result<Placement> {
         Ok(self.read_current_project()?.0.placement)
     }
 

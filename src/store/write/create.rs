@@ -17,7 +17,7 @@ impl Store {
     /// with [`Error::StoreExists`] when `.trurlic/` is there, and leaves no
     /// `.trurlic/` behind when it fails otherwise, as it does when a
     /// `shared` graph finds no `git` to make its repository with.
-    pub fn create(project_dir: &Path, name: &str, placement: Placement) -> Result<Self> {
+    pub(crate) fn create(project_dir: &Path, name: &str, placement: Placement) -> Result<Self> {
         let root = project_dir.join(STORE_DIR);
         fs::create_dir_all(project_dir).map_err(Error::io(project_dir))?;
         match fs::create_dir(&root) {

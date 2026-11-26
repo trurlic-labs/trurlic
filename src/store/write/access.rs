@@ -112,20 +112,20 @@ pub struct Writer<'s> {
 impl Writer<'_> {
     /// The graph as the last commit, or the load, left it on disk.
     #[must_use]
-    pub fn state(&self) -> &ProjectState {
+    pub(crate) fn state(&self) -> &ProjectState {
         &self.state
     }
 
     /// The store it writes, for what a write reads beside the graph.
     #[must_use]
-    pub const fn store(&self) -> &Store {
+    pub(crate) const fn store(&self) -> &Store {
         self.store
     }
 
     /// The graph as the last commit left it on disk, the lock released: a
     /// read of it that holds no other reader or writer up.
     #[must_use]
-    pub fn into_state(self) -> ProjectState {
+    pub(crate) fn into_state(self) -> ProjectState {
         self.state
     }
 

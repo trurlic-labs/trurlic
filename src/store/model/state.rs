@@ -13,12 +13,12 @@ use super::schema::{COMPONENTS_DIR, Component, DECISIONS_DIR, Decision, PROJECT_
 /// index is kept beside the node maps.
 #[derive(Debug, Clone)]
 pub struct ProjectState {
-    pub project: Project,
+    pub(crate) project: Project,
     pub components: BTreeMap<String, Component>,
     pub decisions: BTreeMap<String, Decision>,
     /// The files whose bytes are not the canonical form of what they hold,
     /// sorted: hand edits that `trurlic fmt` rewrites.
-    pub non_canonical: Vec<NodeFile>,
+    pub(crate) non_canonical: Vec<NodeFile>,
     /// The tree the graph was read for, which anchors are relative to:
     /// the store's code root. Empty in a state a test builds, whose anchors
     /// then resolve against the working directory.

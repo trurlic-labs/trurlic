@@ -25,12 +25,12 @@ use crate::store::model::Quality;
 use crate::store::model::limits::{MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_CACHE_TOTAL_BYTES};
 use crate::{Error, Result};
 
-pub use bar::Shortfall;
+pub(crate) use bar::Shortfall;
 pub(crate) use bar::{Bar, Breach, Broken, Hit, Place, Scan, element, texts};
 
 /// A count the bar bounds: built in, or a key of `[quality]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Limit {
+pub(crate) enum Limit {
     /// At least one alternative, built in: a choice with no rejected
     /// option was no decision.
     AlternativeRequired,
@@ -46,7 +46,7 @@ pub enum Limit {
 impl Limit {
     /// The rule as a refusal names it.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::AlternativeRequired => "alternative_required",
             Self::AnchorRequired => "anchor_required",
@@ -60,7 +60,7 @@ impl Limit {
 
     /// What the limit counts.
     #[must_use]
-    pub const fn unit(self) -> &'static str {
+    pub(crate) const fn unit(self) -> &'static str {
         match self {
             Self::AlternativeRequired | Self::AlternativesMax => "alternatives",
             Self::AnchorRequired | Self::AnchorsMax => "anchors",
@@ -93,7 +93,7 @@ impl Limit {
 
 /// A rule of the bar a write breaks, with what it measured.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QualityFault {
+pub(crate) enum QualityFault {
     /// `measured` in the limit's unit, against `bound`.
     Limit {
         limit: Limit,
@@ -117,7 +117,7 @@ pub enum QualityFault {
 impl QualityFault {
     /// The rule as a refusal names it.
     #[must_use]
-    pub const fn as_str(&self) -> &'static str {
+    pub(crate) const fn as_str(&self) -> &'static str {
         match self {
             Self::Limit { limit, .. } => limit.as_str(),
             Self::Pattern(_) => "pattern",
@@ -175,15 +175,15 @@ impl fmt::Display for QualityFault {
 
 /// Where a pattern matched, and what it says.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatternMatch {
+pub(crate) struct PatternMatch {
     /// The pattern's index in `[quality] patterns`.
-    pub index: usize,
+    pub(crate) index: usize,
     /// The byte offset of the match in the text.
-    pub at: usize,
+    pub(crate) at: usize,
     /// The matched text, cut at a character boundary past
     /// `MAX_QUOTED_MATCH_BYTES`.
-    pub found: String,
-    pub message: String,
+    pub(crate) found: String,
+    pub(crate) message: String,
 }
 
 impl fmt::Display for PatternMatch {
@@ -207,7 +207,7 @@ fn words(text: &str) -> usize {
 /// write takes the lock: compiling holds no other caller back, and the
 /// write uses it when the table it loads under the lock is this one.
 #[derive(Debug)]
-pub struct PreparedBar {
+pub(crate) struct PreparedBar {
     quality: Quality,
     bar: Bar,
 }
@@ -246,7 +246,7 @@ impl Store {
     /// The bar of the `[quality]` the store holds now, compiled holding no
     /// lock for the write that follows ([`Writer::apply`](crate::store::Writer::apply)).
     /// A pattern that does not compile is [`Error::QualityPattern`].
-    pub fn prepare_bar(&self) -> Result<PreparedBar> {
+    pub(crate) fn prepare_bar(&self) -> Result<PreparedBar> {
         let quality = self.load_project()?.quality;
         let bar = self.bar(&quality)?;
         Ok(PreparedBar { quality, bar })

@@ -37,7 +37,7 @@ const MAX_SECS: i64 = 253_402_300_799;
 /// order is time order and a value means the same on every platform, which
 /// `SystemTime` does not promise (it resolves to 100 ns on Windows).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Timestamp {
+pub(crate) struct Timestamp {
     /// Negative before 1970, within `MIN_SECS..=MAX_SECS`.
     secs: i64,
     /// Below `NANOS_PER_SECOND`.
@@ -80,12 +80,12 @@ pub enum TimestampError {
 
 impl Timestamp {
     /// 1970-01-01T00:00:00Z.
-    pub const UNIX_EPOCH: Self = Self { secs: 0, nanos: 0 };
+    pub(crate) const UNIX_EPOCH: Self = Self { secs: 0, nanos: 0 };
 
     /// The system clock's reading: the one place the crate reads it, as the
     /// `disallowed-methods` lint on `SystemTime::now` enforces. Fails when
     /// the clock reads a time outside the years 0000 to 9999.
-    pub fn now() -> crate::Result<Self> {
+    pub(crate) fn now() -> crate::Result<Self> {
         #[expect(clippy::disallowed_methods, reason = "the crate's one clock read")]
         let reading = SystemTime::now();
         Self::try_from(reading).map_err(|source| Error::Clock { source })
@@ -93,7 +93,7 @@ impl Timestamp {
 
     /// `None` past 9999-12-31T23:59:59.999999999Z.
     #[must_use]
-    pub fn checked_add(self, duration: Duration) -> Option<Self> {
+    pub(crate) fn checked_add(self, duration: Duration) -> Option<Self> {
         let mut secs = self
             .secs
             .checked_add(i64::try_from(duration.as_secs()).ok()?)?;
@@ -107,7 +107,7 @@ impl Timestamp {
 
     /// `None` before 0000-01-01T00:00:00Z.
     #[must_use]
-    pub fn checked_sub(self, duration: Duration) -> Option<Self> {
+    pub(crate) fn checked_sub(self, duration: Duration) -> Option<Self> {
         let mut secs = self
             .secs
             .checked_sub(i64::try_from(duration.as_secs()).ok()?)?;

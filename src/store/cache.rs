@@ -37,14 +37,14 @@ const PRUNE_SLACK: usize = 256;
 /// The name of an entry: a 32-byte hash, written as 64 lowercase hex
 /// digits, so no key can name a path outside the directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SymbolsKey([u8; 32]);
+pub(crate) struct SymbolsKey([u8; 32]);
 
 impl SymbolsKey {
-    pub fn new(bytes: [u8; 32]) -> Self {
+    pub(crate) fn new(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    pub fn as_bytes(&self) -> &[u8; 32] {
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 

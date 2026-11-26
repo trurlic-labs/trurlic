@@ -24,7 +24,7 @@ mod audit;
 mod folding;
 mod pattern;
 
-pub use audit::Shortfall;
+pub(crate) use audit::Shortfall;
 pub(crate) use pattern::Scan;
 use pattern::{Compiled, searched};
 
@@ -41,9 +41,9 @@ pub(crate) struct Bar {
 
 /// A pattern the lazy DFA does not run: its index and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatternFault {
-    pub index: usize,
-    pub message: String,
+pub(crate) struct PatternFault {
+    pub(crate) index: usize,
+    pub(crate) message: String,
 }
 
 /// A field of a decision, and the element of a list field by its position
