@@ -17,7 +17,7 @@
 
 use crate::code::{
     BOUNDS, FileKind, FileMacros, HASH_SCHEME, INDEX_FORMAT, Indexed, Lexed, decode_index,
-    decode_lexed, encode_index, encode_lexed, grammar_identity_of,
+    decode_lexed, encode_index, encode_lexed, grammar_identity_of, lexed_grammars,
     max_entry_bytes as max_index_bytes, max_lexed_bytes, name_of,
 };
 use crate::store::SymbolsKey;
@@ -62,11 +62,10 @@ pub(super) fn key(kind: FileKind, content: Content, macros: &FileMacros) -> Symb
 }
 
 /// The key of the lexical pass of a C or C++ file whose bytes are
-/// `content`: the pass reads both grammars' words.
+/// `content`: the pass reads both grammars' words and no query.
 pub(super) fn lexed_key(content: Content) -> SymbolsKey {
     let mut hasher = rules(LEXED);
-    hasher.update(&grammar_identity_of(FileKind::C));
-    hasher.update(&grammar_identity_of(FileKind::Cpp));
+    hasher.update(lexed_grammars());
     hasher.update(&content.0);
     SymbolsKey::new(*hasher.finalize().as_bytes())
 }

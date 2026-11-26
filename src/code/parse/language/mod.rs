@@ -19,7 +19,7 @@ mod row;
 
 pub(crate) use c_family::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
-    max_lexed_bytes,
+    lexed_grammars, max_lexed_bytes,
 };
 pub(in crate::code) use c_family::{MAX_BLANK_ARGUMENT_BYTES, MAX_MACRO_BODY_TOKENS, blank};
 pub(crate) use kind::{grammar_identity_of, name_of};

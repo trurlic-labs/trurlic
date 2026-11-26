@@ -224,12 +224,18 @@ impl Language {
         Rules::compile((self.grammar)(), &self.queries.concat())
     }
 
+    /// The identity of its grammar alone, its query apart: what a pass
+    /// that reads the grammar and no query depends on.
+    pub(super) fn grammar_identity(&self) -> [u8; 32] {
+        grammar_identity(&(self.grammar)(), self.node_types)
+    }
+
     /// The identity of its grammar and its query, in a cache key: a
     /// pattern of the query is a rule of the index.
     pub(super) fn identity(&self) -> [u8; 32] {
         *self.identity.get_or_init(|| {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(&grammar_identity(&(self.grammar)(), self.node_types));
+            hasher.update(&self.grammar_identity());
             for query in self.queries {
                 hasher.update(&(query.len() as u64).to_le_bytes());
                 hasher.update(query.as_bytes());
@@ -248,6 +254,21 @@ impl Language {
                 Some(dir) => dirs.split('/').any(|segment| segment == dir),
                 None => matches_name(place, name),
             })
+    }
+}
+
+#[cfg(test)]
+impl Language {
+    /// This row with `queries` for its query files, nothing of it
+    /// computed yet.
+    pub(super) fn with_queries(&self, queries: &'static [&'static str]) -> Self {
+        Self {
+            queries,
+            lexicon: Lexicon { ..self.lexicon },
+            rules: OnceLock::new(),
+            identity: OnceLock::new(),
+            ..*self
+        }
     }
 }
 

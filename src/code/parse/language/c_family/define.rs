@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use crate::code::parse::language::c_lexer::{Item, lex, tokens};
-use crate::code::parse::language::{C, CPP};
+use crate::code::parse::language::{C, CPP, Language};
 
 /// The tokens of a `#define`'s body read to classify it; a longer body is
 /// no attribute.
@@ -181,6 +181,23 @@ fn grammar_words() -> &'static BTreeSet<String> {
     })
 }
 
+/// The identity of what the lexical pass reads beside a file's bytes and
+/// the index's rules, in its cache key: the words of both C grammars and
+/// no query, so an edit of a query file lexes no file again. Computed
+/// once.
+pub(crate) fn lexed_grammars() -> &'static [u8; 32] {
+    static IDENTITY: OnceLock<[u8; 32]> = OnceLock::new();
+    IDENTITY.get_or_init(|| grammars_identity(&C, &CPP))
+}
+
+/// The identity of the grammars of `c` and `cpp`, each without its query.
+fn grammars_identity(c: &Language, cpp: &Language) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&c.grammar_identity());
+    hasher.update(&cpp.grammar_identity());
+    *hasher.finalize().as_bytes()
+}
+
 /// The `#define` the directive `text` is, when it is one.
 pub(super) fn define_of(text: &str) -> Option<Define> {
     let rest = text.strip_prefix('#')?.trim_start_matches([' ', '\t']);
@@ -335,6 +352,19 @@ mod tests {
     use super::*;
     use crate::code::parse::language::c_family::BlankMacros;
     use crate::code::parse::language::c_family::testing::{file, names, tree};
+
+    #[test]
+    fn an_edit_of_a_query_file_leaves_the_lexical_pass_its_identity() {
+        let (c, cpp) = (C.with_queries(&["; edited\n"]), CPP.with_queries(&[]));
+
+        assert_ne!(c.identity(), C.identity(), "the edit is one an index reads");
+        assert_eq!(grammars_identity(&c, &cpp), grammars_identity(&C, &CPP));
+    }
+
+    #[test]
+    fn another_grammar_moves_the_lexical_pass_its_identity() {
+        assert_ne!(grammars_identity(&CPP, &CPP), grammars_identity(&C, &CPP));
+    }
 
     #[test]
     fn a_body_is_read_up_to_its_bound_of_tokens() {

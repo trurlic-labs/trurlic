@@ -36,7 +36,7 @@ pub(crate) use index::{
 };
 pub(crate) use parse::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, grammar_identity_of,
-    is_header, lexed, max_lexed_bytes, name_of,
+    is_header, lexed, lexed_grammars, max_lexed_bytes, name_of,
 };
 
 /// Whether the query of the language named `name` (`c`, `cpp`, `python`,

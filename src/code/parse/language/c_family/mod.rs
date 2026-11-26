@@ -46,7 +46,7 @@ mod set;
 
 pub(in crate::code) use blank::{MAX_BLANK_ARGUMENT_BYTES, blank};
 pub(in crate::code) use define::MAX_MACRO_BODY_TOKENS;
-pub(crate) use define::{Defines, Lexed, is_header, lexed};
+pub(crate) use define::{Defines, Lexed, is_header, lexed, lexed_grammars};
 pub(crate) use encoding::{decode_lexed, encode_lexed, max_lexed_bytes};
 pub(crate) use set::{BlankMacros, FileMacros};
 
