@@ -11,6 +11,14 @@
 #endif
 #define SHELF_PRINTF(f, a) __attribute__((format(printf, f, a)))
 
+/* A specifier the tree defines: written `static` before the parse, as
+ * every build but the tests' expands it. */
+#ifdef SHELF_TESTING
+#define SHELF_STATIC
+#else
+#define SHELF_STATIC static
+#endif
+
 /* A macro that writes a member: the member is no definition. */
 #define SHELF_FLAG(name) unsigned name : 1
 
@@ -26,7 +34,7 @@ typedef struct { int pages; } book;
 typedef struct named_book { int pages; } named_book_t;
 typedef int (*shelf_visit)(const book *b, void *data);
 
-enum shelf_state { SHELF_OPEN, SHELF_CLOSED = 2 };
+enum shelf_state { SHELF_OPEN, SHELF_CLOSED = 2, SHELF_DONE };
 
 struct shelf {
   book *books;
@@ -40,6 +48,9 @@ struct shelf {
 SHELF_API shelf *shelf_open(const char *path);
 SHELF_API void shelf_close(shelf *s);
 SHELF_API int shelf_log(shelf *s, const char *format, ...) SHELF_PRINTF(2, 3);
+SHELF_API void (*shelf_on_close(shelf *s, void (*hook)(shelf *)))(shelf *);
+int (shelf_max)(int a, int b);
+SHELF_API const char *(shelf_title)(const shelf *s);
 extern unsigned shelf_opened;
 
 #ifdef __cplusplus

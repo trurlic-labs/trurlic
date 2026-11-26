@@ -33,9 +33,10 @@ use super::kinds::{DefinitionKind, Role, Visibility};
 use super::scope::Scope;
 use super::symbol::Segment;
 
+pub(in crate::code) use read::Reader;
 pub(crate) use read::decode;
-pub(in crate::code) use write::Measure;
 pub(crate) use write::encode;
+pub(in crate::code) use write::{Measure, Writer};
 
 /// The smallest heap block the allocator takes.
 const MIN_BLOCK_BYTES: usize = 32;

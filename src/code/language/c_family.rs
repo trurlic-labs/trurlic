@@ -4,40 +4,45 @@
 //! (`LEVELDB_EXPORT`, `FMT_CONSTEXPR`, `CURL_PRINTF(2, 3)`) or as a
 //! namespace's opening and closing (`FMT_BEGIN_NAMESPACE`) are blanked,
 //! so `class LEVELDB_EXPORT DB {` parses as the class it is; and the
-//! comments of a `#define` continued over lines are blanked, which
-//! tree-sitter's C grammars read as the directive's end.
+//! comments of a `#define` continued over lines are blanked, line breaks
+//! and all, since tree-sitter's C grammars read a break or a blank run
+//! there as the directive's end.
 //!
 //! A blank is spaces in place of the bytes, so every offset holds, and
 //! the parse and the hash read the blanked text: a blanked name is no
-//! token. A name is blanked only where it stands outside every
-//! directive, comment and literal, so the `#define` that made it blankable
-//! and an `#ifdef` that tests it keep it.
+//! token. A blankable object-like macro whose every body but an empty one
+//! holds `static` (`#define STATIC static`) is written `static` instead,
+//! when its name is long enough to hold it, so the definition it stands
+//! before stays private. A name is blanked only where it stands outside
+//! every directive, comment and literal, so the `#define` that made it
+//! blankable and an `#ifdef` that tests it keep it.
 //!
-//! Which names are blankable is a fact of the whole tree: `CURL_EXTERN` is
-//! defined in one header and written in many files. Each file's
-//! `#define`s are read alone ([`defines`]), and the shell takes the
-//! fixpoint over the tree's ([`BlankMacros::of`]) and hands the set to
-//! every index of a C or C++ file, whose cache key holds it. A name is
-//! blankable when every `#define` of it in the tree is empty or only
-//! specifiers, attribute forms and other blankable names, a function-like
-//! one with at least one such body not empty (an empty one alone is a
-//! function's stand-in in another arm); or when every `#define` of it is
-//! only `namespace x {` openings or only closing braces, and the tree
-//! defines such an opening. Each `#define`'s body is read up to
+//! Which names are blankable (`set.rs`) is a fact of the tree's headers
+//! and of the file itself. The lexical pass of a file ([`lexed`]) gives
+//! its `#define`s and the names it writes, and is cached by content; the
+//! shell takes the tree's set from its headers' `#define`s, and each file
+//! is indexed against the part of it that the file writes, its own
+//! `#define`s judged with it. Each `#define`'s body is read up to
 //! [`MAX_MACRO_BODY_TOKENS`] tokens, and a blanked call's arguments up to
-//! [`MAX_BLANK_ARGUMENT_BYTES`], so both passes are linear in the bytes.
+//! [`MAX_BLANK_ARGUMENT_BYTES`], so every pass is linear in the bytes.
 //!
 //! What no rule sees: the members, enumerators and functions a
 //! function-like macro generates (`BIT(flag);` in a struct), a macro
-//! defined outside the tree (a system or generated header), and the
-//! segments of a namespace a macro opens, which its definitions lack.
+//! defined outside the tree (a system or generated header) or only in a
+//! source file another file includes, and the segments of a namespace a
+//! macro opens, which its definitions lack.
 
+mod encoding;
 mod lex;
+mod set;
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
-use lex::{Item, comment_end, lex, literal_end};
+use lex::{Item, lex};
+
+pub(crate) use encoding::{decode_lexed, encode_lexed, max_lexed_bytes};
+pub(crate) use set::{BlankMacros, FileMacros};
 
 /// The tokens of a `#define`'s body read to classify it; a longer body is
 /// no attribute.
@@ -50,7 +55,7 @@ pub(in crate::code) const MAX_BLANK_ARGUMENT_BYTES: usize = 256;
 /// The words a declaration may hold that state no name: a body of them
 /// alone is an attribute.
 const SPECIFIERS: [&str; 31] = [
-    "static",
+    STATIC,
     "inline",
     "extern",
     "const",
@@ -83,6 +88,10 @@ const SPECIFIERS: [&str; 31] = [
     "__extension__",
 ];
 
+/// The specifier that makes a definition private, which a blanked macro
+/// that holds it is written as.
+const STATIC: &str = "static";
+
 /// The attribute forms a compiler knows, each a word and its parenthesized
 /// arguments.
 const ATTRIBUTES: [&str; 9] = [
@@ -97,21 +106,28 @@ const ATTRIBUTES: [&str; 9] = [
     "__pragma",
 ];
 
+/// The extensions of a C or C++ header, whose `#define`s reach the files
+/// that include it; a source file's reach no other file.
+const HEADER_EXTENSIONS: [&str; 3] = [".h", ".hh", ".hpp"];
+
 /// What a `#define`'s body is, as the blank rule reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Body {
     /// Specifiers and attribute forms, and these names: written alone, or
-    /// called with arguments.
+    /// called with arguments; whether it is empty, and whether it holds
+    /// `static`.
     Attribute {
         names: Vec<String>,
         calls: Vec<String>,
         empty: bool,
+        holds_static: bool,
     },
     /// Only `namespace x {` and `extern "C" {` openings.
     Opens,
     /// Only closing braces.
     Closes,
-    Other,
+    /// Anything else, which no rule blanks.
+    Code,
 }
 
 /// One `#define` of a file.
@@ -122,182 +138,62 @@ struct Define {
     body: Body,
 }
 
-/// The `#define`s of one C or C++ file, as the tree's blank set is made
-/// from them.
+/// The `#define`s of one C or C++ file, as the blank sets are made from
+/// them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Defines(Vec<Define>);
 
-/// The names a C or C++ file's index blanks: written alone, or called
-/// with their arguments; and their identity, in the cache key of every C
-/// and C++ file of the tree.
+/// What the lexical pass of one C or C++ file gives: its `#define`s, and
+/// the names it writes outside every directive, comment and literal,
+/// which are all its blank can touch: sorted, each once, a line break
+/// after each, one text so that a cache read allocates it once.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct BlankMacros {
-    names: BTreeSet<String>,
-    calls: BTreeSet<String>,
-    identity: [u8; 32],
+pub(crate) struct Lexed {
+    defines: Defines,
+    spelled: String,
 }
 
-/// The `#define`s of `bytes`, a C or C++ file; none of bytes that are not
-/// UTF-8, which no index reads either.
-pub(crate) fn defines(bytes: &[u8]) -> Defines {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return Defines::default();
-    };
-    let mut found = Vec::new();
-    lex(text, true, |item| {
-        if let Item::Directive { start, end, .. } = item {
-            found.extend(text.get(start..end).and_then(define_of));
-        }
-    });
-    Defines(found)
-}
-
-impl BlankMacros {
-    /// The blankable names of a tree whose files' `#define`s are `files`,
-    /// by the fixpoint the module states, in work linear in them.
-    pub(crate) fn of(files: impl IntoIterator<Item = Defines>) -> Self {
-        let mut by_name: BTreeMap<String, Vec<(bool, Body)>> = BTreeMap::new();
-        for define in files.into_iter().flat_map(|file| file.0) {
-            by_name
-                .entry(define.name)
-                .or_default()
-                .push((define.function_like, define.body));
-        }
-        let mut names = namespaces(&by_name);
-        let calls = attributes(&by_name, &mut names);
-        let mut hasher = blake3::Hasher::new();
-        for (set, mark) in [(&names, b'n'), (&calls, b'c')] {
-            for name in set {
-                hasher.update(&[mark]);
-                hasher.update(&(name.len() as u64).to_le_bytes());
-                hasher.update(name.as_bytes());
-            }
-        }
-        Self {
-            names,
-            calls,
-            identity: *hasher.finalize().as_bytes(),
-        }
+impl Lexed {
+    /// Its `#define`s, which a header gives the tree's set.
+    pub(crate) fn into_defines(self) -> Defines {
+        self.defines
     }
 
-    /// Its identity, in a cache key.
-    pub(crate) const fn identity(&self) -> &[u8; 32] {
-        &self.identity
+    /// The names it writes.
+    fn spelled(&self) -> impl Iterator<Item = &str> {
+        self.spelled.lines()
     }
 }
 
-/// The names every `#define` of which opens or closes a namespace, when
-/// one of them opens one; an empty arm beside them is allowed.
-fn namespaces(by_name: &BTreeMap<String, Vec<(bool, Body)>>) -> BTreeSet<String> {
-    let opens = shaped(by_name, &Body::Opens);
-    if opens.is_empty() {
-        return opens;
-    }
-    opens
-        .into_iter()
-        .chain(shaped(by_name, &Body::Closes))
-        .collect()
-}
-
-/// The names every `#define` of which is object-like and `wanted` or
-/// empty, one at least `wanted`.
-fn shaped(by_name: &BTreeMap<String, Vec<(bool, Body)>>, wanted: &Body) -> BTreeSet<String> {
-    by_name
+/// Whether the file at `path` is a C or C++ header, whose `#define`s
+/// reach every file of its tree.
+pub(crate) fn is_header(path: &str) -> bool {
+    HEADER_EXTENSIONS
         .iter()
-        .filter(|(_, bodies)| {
-            bodies
-                .iter()
-                .all(|(function_like, body)| !function_like && (body == wanted || is_empty(body)))
-                && bodies.iter().any(|(_, body)| body == wanted)
-        })
-        // clone: the set owns the names apart from the map of bodies.
-        .map(|(name, _)| name.clone())
-        .collect()
+        .any(|extension| path.ends_with(extension))
 }
 
-fn is_empty(body: &Body) -> bool {
-    matches!(body, Body::Attribute { empty: true, .. })
-}
-
-/// What a candidate name needs to be blanked: whether it is function-like,
-/// and the names its bodies write, each blankable in the form it is
-/// written in (`true` for called with arguments).
-type Needs<'n> = (bool, BTreeSet<(&'n str, bool)>);
-
-/// The attribute names of `by_name` added to `names` (written alone), and
-/// those called with arguments returned: a least fixpoint over a worklist,
-/// so a cycle blanks nothing and each name is settled once.
-fn attributes(
-    by_name: &BTreeMap<String, Vec<(bool, Body)>>,
-    names: &mut BTreeSet<String>,
-) -> BTreeSet<String> {
-    // Each candidate's form and what it needs: (name, called) pairs.
-    let mut needs: BTreeMap<&str, Needs<'_>> = BTreeMap::new();
-    for (name, bodies) in by_name {
-        if let Some(candidate) = candidate(bodies) {
-            needs.insert(name.as_str(), candidate);
+/// The lexical pass over `bytes`, a C or C++ file; nothing of bytes that
+/// are not UTF-8, which no index reads either.
+pub(crate) fn lexed(bytes: &[u8]) -> Lexed {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Lexed::default();
+    };
+    let mut defines = Vec::new();
+    let mut spelled = Vec::new();
+    lex(text, true, |item| match item {
+        Item::Directive { start, end, .. } => {
+            defines.extend(text.get(start..end).and_then(define_of));
         }
+        Item::Identifier { start, end } => spelled.extend(text.get(start..end)),
+        Item::Comment { .. } | Item::Token { .. } => {}
+    });
+    spelled.sort_unstable();
+    spelled.dedup();
+    Lexed {
+        defines: Defines(defines),
+        spelled: spelled.into_iter().flat_map(|name| [name, "\n"]).collect(),
     }
-    let mut needed_by: BTreeMap<(&str, bool), Vec<&str>> = BTreeMap::new();
-    let mut left: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut ready = Vec::new();
-    for (name, (_, wants)) in &needs {
-        for want in wants {
-            needed_by.entry(*want).or_default().push(name);
-        }
-        left.insert(name, wants.len());
-        if wants.is_empty() {
-            ready.push(*name);
-        }
-    }
-    let mut calls = BTreeSet::new();
-    while let Some(name) = ready.pop() {
-        let Some((function_like, _)) = needs.get(name) else {
-            continue;
-        };
-        match function_like {
-            true => calls.insert(name.to_owned()),
-            false => names.insert(name.to_owned()),
-        };
-        for waiting in needed_by
-            .remove(&(name, *function_like))
-            .unwrap_or_default()
-        {
-            if let Some(count) = left.get_mut(waiting) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    ready.push(waiting);
-                }
-            }
-        }
-    }
-    calls
-}
-
-/// Whether the `#define`s `bodies` of one name make a candidate: its form
-/// (function-like) and the names it needs blankable, each with the form
-/// it is written in; `None` when no body or mix of them can be blanked.
-fn candidate(bodies: &[(bool, Body)]) -> Option<Needs<'_>> {
-    let function_like = bodies.first()?.0;
-    let mut wants = BTreeSet::new();
-    let mut written = false;
-    for (form, body) in bodies {
-        let Body::Attribute {
-            names,
-            calls,
-            empty,
-        } = body
-        else {
-            return None;
-        };
-        if *form != function_like {
-            return None;
-        }
-        written |= !empty;
-        wants.extend(names.iter().map(|name| (name.as_str(), false)));
-        wants.extend(calls.iter().map(|name| (name.as_str(), true)));
-    }
-    (!function_like || written).then_some((function_like, wants))
 }
 
 /// The `#define` the directive `text` is, when it is one.
@@ -311,8 +207,10 @@ fn define_of(text: &str) -> Option<Define> {
     let name_end = rest
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(rest.len());
+    // A name that starts with a digit is no identifier any file writes,
+    // so it blanks nothing.
     let (name, rest) = rest.split_at(name_end);
-    if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) {
+    if name.is_empty() {
         return None;
     }
     let (function_like, parameters, body) = match rest.strip_prefix('(') {
@@ -332,21 +230,29 @@ fn define_of(text: &str) -> Option<Define> {
 /// The tokens of a `#define`'s body, comments and continuations left out;
 /// one more than [`MAX_MACRO_BODY_TOKENS`] at most.
 fn body_tokens(body: &str) -> Vec<&str> {
-    let mut tokens = Vec::new();
-    lex(body, false, |item| {
-        if let Item::Token { start, end } | Item::Identifier { start, end } = item
-            && tokens.len() <= MAX_MACRO_BODY_TOKENS
-        {
-            tokens.extend(body.get(start..end));
+    let mut found = Vec::new();
+    tokens(body, &mut |range| {
+        if found.len() <= MAX_MACRO_BODY_TOKENS {
+            found.extend(body.get(range));
         }
     });
-    tokens
+    found
+}
+
+/// Hand `each` the range of each token of `text`, a C or C++ text read
+/// with no directive in it (a macro's body): each identifier, literal,
+/// number and punctuation mark, comments and continuations left out.
+pub(in crate::code) fn tokens(text: &str, each: &mut dyn FnMut(Range<usize>)) {
+    lex(text, false, |item| match item {
+        Item::Token { start, end } | Item::Identifier { start, end } => each(start..end),
+        Item::Directive { .. } | Item::Comment { .. } => {}
+    });
 }
 
 /// What a body of `tokens` is, in a macro of `parameters`.
 fn classify(tokens: &[&str], parameters: &[&str]) -> Body {
     if tokens.len() > MAX_MACRO_BODY_TOKENS {
-        return Body::Other;
+        return Body::Code;
     }
     if !tokens.is_empty() && tokens.iter().all(|token| *token == "}") {
         return Body::Closes;
@@ -370,13 +276,14 @@ fn classify(tokens: &[&str], parameters: &[&str]) -> Body {
                 }
                 false => names.push(word.to_owned()),
             },
-            _ => return Body::Other,
+            _ => return Body::Code,
         }
     }
     Body::Attribute {
         names,
         calls,
         empty: tokens.is_empty(),
+        holds_static: tokens.contains(&STATIC),
     }
 }
 
@@ -443,48 +350,187 @@ fn skip_attribute(tokens: &[&str], at: usize) -> usize {
     next
 }
 
-fn is_identifier(token: &str) -> bool {
-    token.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+/// Whether `word` is a C identifier: a letter or `_` first.
+fn is_identifier(word: &str) -> bool {
+    word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+}
+
+/// What a blanked range of a file is written as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fill {
+    /// Spaces, its line breaks kept.
+    Spaces,
+    /// Spaces, its line breaks too: a comment of a continued `#define`.
+    Joined,
+    /// `static`, then spaces.
+    Static,
 }
 
 /// `text`, a C or C++ file, with the names of `macros` (and a blanked
 /// call's arguments) and the comments of a continued `#define` blanked;
 /// borrowed when nothing is.
-pub(in crate::code) fn blank<'t>(text: &'t str, macros: &BlankMacros) -> Cow<'t, str> {
-    let mut out: Option<Vec<u8>> = None;
-    let mut blank_range = |start: usize, end: usize| {
-        let out = out.get_or_insert_with(|| text.as_bytes().to_vec());
-        for byte in out.get_mut(start..end).into_iter().flatten() {
-            if !matches!(*byte, b'\n' | b'\r') {
-                *byte = b' ';
-            }
-        }
+pub(in crate::code) fn blank<'t>(text: &'t str, macros: &FileMacros) -> Cow<'t, str> {
+    let mut blanks = Blanks {
+        text,
+        macros,
+        found: Vec::new(),
+        call: None,
     };
-    lex(text, true, |item| match item {
-        Item::Directive {
-            start,
-            end,
-            continued_comments: true,
-        } => {
-            for (from, to) in continued_comments(text.get(start..end).unwrap_or_default()) {
-                blank_range(start + from, start + to);
+    lex(text, true, |item| blanks.take(item));
+    blanks.abandon();
+    if blanks.found.is_empty() {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    for (range, fill) in blanks.found {
+        out.push_str(text.get(at..range.start).unwrap_or_default());
+        let written = text.get(range.start..range.end).unwrap_or_default();
+        if fill == Fill::Static {
+            out.push_str(STATIC);
+        }
+        let kept = written.char_indices().skip(match fill {
+            Fill::Static => STATIC.len(),
+            Fill::Spaces | Fill::Joined => 0,
+        });
+        for (_, c) in kept {
+            match (c, fill) {
+                ('\n', Fill::Spaces | Fill::Static) => out.push('\n'),
+                // Any other character, and a comment's line break.
+                _ => out.extend(std::iter::repeat_n(' ', c.len_utf8())),
             }
         }
-        Item::Identifier { start, end } => {
-            let name = text.get(start..end).unwrap_or_default();
-            if macros.names.contains(name) {
-                blank_range(start, end);
-            } else if macros.calls.contains(name)
-                && let Some(close) = arguments_end(text, end)
+        at = range.end;
+    }
+    out.push_str(text.get(at..).unwrap_or_default());
+    Cow::Owned(out)
+}
+
+/// The ranges a blank finds, in order, as the lexer hands it the items of
+/// its text.
+struct Blanks<'t, 'm> {
+    text: &'t str,
+    macros: &'m FileMacros,
+    found: Vec<(Range<usize>, Fill)>,
+    call: Option<Call>,
+}
+
+/// A blankable macro's call whose arguments the blank is reading: where
+/// its name starts and ends, where its `(` is once met, how deep its
+/// parentheses are open, and the names it would blank in them were the
+/// call never closed.
+struct Call {
+    start: usize,
+    name_end: usize,
+    open: Option<usize>,
+    depth: usize,
+    names: Vec<(Range<usize>, Fill)>,
+}
+
+impl Blanks<'_, '_> {
+    /// Take `item`, the next of the text: into the call being read, or else
+    /// as one that may start a blank.
+    fn take(&mut self, item: Item) {
+        if let Some(call) = self.call.as_mut() {
+            match call.read(item, self.text, self.macros) {
+                Step::Reading => return,
+                Step::Closed(end) => {
+                    self.found.push((call.start..end, Fill::Spaces));
+                    self.call = None;
+                    return;
+                }
+                Step::Abandoned => self.abandon(),
+            }
+        }
+        match item {
+            Item::Directive {
+                start,
+                end,
+                continued_comments: true,
+            } => {
+                for comment in continued_comments(self.text.get(start..end).unwrap_or_default()) {
+                    let range = start + comment.start..start + comment.end;
+                    self.found.push((range, Fill::Joined));
+                }
+            }
+            Item::Identifier { start, end } => {
+                let name = self.text.get(start..end).unwrap_or_default();
+                if let Some(fill) = macros_fill(self.macros, name) {
+                    self.found.push((start..end, fill));
+                } else if self.macros.calls.contains(name) {
+                    self.call = Some(Call {
+                        start,
+                        name_end: end,
+                        open: None,
+                        depth: 0,
+                        names: Vec::new(),
+                    });
+                }
+            }
+            Item::Directive { .. } | Item::Token { .. } | Item::Comment { .. } => {}
+        }
+    }
+
+    /// Give up the call being read: the names in its arguments are blanked
+    /// alone.
+    fn abandon(&mut self) {
+        if let Some(call) = self.call.take() {
+            self.found.extend(call.names);
+        }
+    }
+}
+
+/// How `name`, written alone, is blanked by `macros`; `None` when it is
+/// not.
+fn macros_fill(macros: &FileMacros, name: &str) -> Option<Fill> {
+    match (macros.names.contains(name), macros.statics.contains(name)) {
+        (true, true) => Some(Fill::Static),
+        (true, false) => Some(Fill::Spaces),
+        (false, _) => None,
+    }
+}
+
+/// What reading one more item did to a call.
+enum Step {
+    Reading,
+    /// Its `)` ends here.
+    Closed(usize),
+    /// It is no call to blank: no `(` right after its name, a `;`, brace or
+    /// directive before its `)`, or arguments past their bound.
+    Abandoned,
+}
+
+impl Call {
+    fn read(&mut self, item: Item, text: &str, macros: &FileMacros) -> Step {
+        let (start, end) = match item {
+            Item::Token { start, end } | Item::Identifier { start, end } => (start, end),
+            Item::Comment { .. } if self.open.is_some() => return Step::Reading,
+            Item::Comment { .. } | Item::Directive { .. } => return Step::Abandoned,
+        };
+        let Some(open) = self.open else {
+            let gap = text.get(self.name_end..start).unwrap_or_default();
+            if text.get(start..end) != Some("(") || !gap.bytes().all(|b| matches!(b, b' ' | b'\t'))
             {
-                blank_range(start, close);
+                return Step::Abandoned;
             }
+            self.open = Some(start);
+            self.depth = 1;
+            return Step::Reading;
+        };
+        if end - open > MAX_BLANK_ARGUMENT_BYTES {
+            return Step::Abandoned;
         }
-        Item::Directive { .. } | Item::Token { .. } | Item::Comment { .. } => {}
-    });
-    match out.and_then(|bytes| String::from_utf8(bytes).ok()) {
-        Some(blanked) => Cow::Owned(blanked),
-        None => Cow::Borrowed(text),
+        let token = text.get(start..end).unwrap_or_default();
+        match token {
+            "(" => self.depth += 1,
+            ")" if self.depth == 1 => return Step::Closed(end),
+            ")" => self.depth -= 1,
+            ";" | "{" | "}" => return Step::Abandoned,
+            name => self
+                .names
+                .extend(macros_fill(macros, name).map(|fill| (start..end, fill))),
+        }
+        Step::Reading
     }
 }
 
@@ -492,7 +538,7 @@ pub(in crate::code) fn blank<'t>(text: &'t str, macros: &BlankMacros) -> Cow<'t,
 /// over lines: each before its last continuation. One after it is left,
 /// since blanked it would leave the blanks tree-sitter-c reads a body's
 /// end at.
-fn continued_comments(directive: &str) -> Vec<(usize, usize)> {
+fn continued_comments(directive: &str) -> Vec<Range<usize>> {
     let mut found = Vec::new();
     if define_of(directive).is_none() {
         return found;
@@ -502,48 +548,10 @@ fn continued_comments(directive: &str) -> Vec<(usize, usize)> {
         if let Item::Comment { start, end } = item
             && end <= last
         {
-            found.push((start, end));
+            found.push(start..end);
         }
     });
     found
-}
-
-/// The end of the parenthesized arguments that open after blanks at
-/// `from`, within [`MAX_BLANK_ARGUMENT_BYTES`]; `None` when none do.
-fn arguments_end(text: &str, from: usize) -> Option<usize> {
-    let bytes = text.as_bytes();
-    let open = from
-        + bytes
-            .get(from..)?
-            .iter()
-            .position(|b| !matches!(b, b' ' | b'\t'))?;
-    if bytes.get(open) != Some(&b'(') {
-        return None;
-    }
-    let end = open
-        .saturating_add(MAX_BLANK_ARGUMENT_BYTES)
-        .min(bytes.len());
-    let mut depth = 0_usize;
-    let mut next = open;
-    while next < end {
-        match bytes.get(next) {
-            Some(b'(') => depth += 1,
-            Some(b')') => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(next + 1);
-                }
-            }
-            Some(b'"' | b'\'') => next = literal_end(bytes, next).saturating_sub(1),
-            Some(b'/') if matches!(bytes.get(next + 1), Some(b'/' | b'*')) => {
-                next = comment_end(bytes, next).saturating_sub(1);
-            }
-            Some(b';' | b'{' | b'}' | b'#') => return None,
-            _ => {}
-        }
-        next += 1;
-    }
-    None
 }
 
 #[cfg(test)]

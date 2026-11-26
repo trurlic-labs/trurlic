@@ -77,6 +77,30 @@ inline auto by_pages = [](const Book& a, const Book& b) { return a.pages() < b.p
 
 namespace edition { inline namespace v2 { int number(); } }
 
+int (*pick(int which))(int);
+int (larger)(int a, int b);
+
+class Reader {
+ public:
+  template <typename It> Reader(It first, It last) {}
+
+ private:
+  union { int raw; float real; };
+  void scan() { struct Cursor { int at; }; }
+#ifdef SHELF_TESTING
+ public:
+#else
+ protected:
+#endif
+  void check();
+};
+
+struct Library { struct Index; };
+
+template <typename T> concept Small = sizeof(T) < 8;
+
+auto [first_shelf, last_shelf] = std::pair<int, int>{1, 2};
+
 }  // namespace shelf::model
 
 namespace {

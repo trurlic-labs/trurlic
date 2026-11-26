@@ -11,7 +11,9 @@
 //!
 //! A file is read in one bounded read, refused past
 //! [`MAX_SOURCE_FILE_BYTES`] and when it is no regular file, and indexed
-//! from the cache when an entry holds its key. Indexing runs in parallel,
+//! from the cache when an entry holds its key; a C or C++ file's key holds
+//! the part of the tree's blank set it writes, which its lexical pass,
+//! cached by content, says (`lexical.rs`). Indexing runs in parallel,
 //! each index on a thread of its own (`indexer.rs`) whose stack holds a
 //! parse at the size cap; a file that vanishes between the walk and the
 //! read is absent. The misses of every tree a call reads are written to
@@ -22,6 +24,7 @@
 mod blobs;
 mod cache;
 mod indexer;
+mod lexical;
 mod renames;
 mod repair;
 mod walk;
@@ -34,13 +37,17 @@ use std::fs::{self, File};
 use std::io::{ErrorKind, Read};
 use std::path::Path;
 
-use crate::code::{self, CodeFacts, Entry, FileFault, FileKind, Indexed, ReadFault, Resolution};
+use crate::code::{
+    self, CodeFacts, Entry, FileFault, FileKind, FileMacros, Indexed, ReadFault, Resolution,
+};
 use crate::console::diag;
 use crate::lint::anchors::{self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Unasked};
 use crate::store::{Anchor, Decision, Store, SymbolsKey};
 
 use blobs::Blobs;
+use cache::Content;
 use indexer::{Indexer, Worker};
+use lexical::{Cached, Header};
 use walk::Probe;
 
 /// The largest source file the shell reads: the largest of any kind the
@@ -150,7 +157,7 @@ fn read_alone(code_root: &Path, paths: BTreeSet<&str>) -> CodeFacts {
             Err(Gone) => return None,
             Err(Faulty(fault)) => return Some(Err(FileFault::Read(fault))),
         };
-        Some(match worker.index(*kind, &bytes) {
+        Some(match worker.index_alone(*kind, &bytes) {
             Ok(indexed) => indexed.map_err(FileFault::Index),
             Err(fault) => Err(FileFault::Read(fault)),
         })
@@ -198,7 +205,8 @@ fn calling_tree(store: &Store, decisions: &Decisions<'_>, reads: &mut Reads) -> 
 /// anchors no earlier one holds at the paths its work tree changed since
 /// the fork, and no further worktree is read once every one is held. Those
 /// files alone are read, never a walk of the tree, against the calling
-/// tree's crates and module declarations, there and as the fork held them.
+/// tree's crates and module declarations, there and as the fork held them,
+/// and its blank set.
 fn elsewhere(
     store: &Store,
     here: &CodeFacts,
@@ -298,13 +306,14 @@ fn read_tree<'a>(
     anchored: impl Iterator<Item = &'a str>,
     reads: &mut Reads,
 ) -> (BTreeMap<String, Entry>, BTreeSet<String>) {
-    let walked: BTreeMap<String, FileKind> = match scope {
-        Scope::Tree => walk::tree_sources(root).into_iter().collect(),
-        Scope::Anchored => BTreeMap::new(),
+    let (walked, headers) = match scope {
+        Scope::Tree => {
+            let walked: BTreeMap<String, FileKind> = walk::tree_sources(root).into_iter().collect();
+            let headers = lexical::read_headers(store, reads, root, &walked);
+            (walked, headers)
+        }
+        Scope::Anchored => (BTreeMap::new(), BTreeMap::new()),
     };
-    if scope == Scope::Tree {
-        read_macros(&mut reads.indexer, root, &walked);
-    }
     let (mut entries, anchored) = probe_anchored(root, anchored, &walked, scope);
     // clone: the facts tell the files the walk took from those an anchor
     // brought in.
@@ -312,8 +321,13 @@ fn read_tree<'a>(
     let mut to_read = walked;
     to_read.extend(anchored);
     let to_read: Vec<(String, FileKind)> = to_read.into_iter().collect();
+    let cached = Cached {
+        store,
+        misses: &reads.misses,
+    };
     let read = reads.indexer.map(&to_read, |worker, (path, kind)| {
-        read_and_index(store, worker, &root.join(path), *kind)
+        let header = headers.get(path).copied();
+        read_and_index(&cached, worker, (&root.join(path), *kind), header)
     });
     let read = read.unwrap_or_else(|fault| {
         to_read
@@ -322,37 +336,11 @@ fn read_tree<'a>(
             .collect()
     });
     for ((path, kind), read) in to_read.into_iter().zip(read) {
-        let index = match read {
-            None => continue,
-            Some(Sourced::Fault(fault)) => Err(FileFault::Read(fault)),
-            Some(Sourced::Indexed { key, indexed, miss }) => {
-                reads.note(key, miss);
-                indexed.map_err(FileFault::Index)
-            }
-        };
-        entries.insert(path, Entry::File { kind, index });
+        if let Some(entry) = reads.take(kind, read) {
+            entries.insert(path, entry);
+        }
     }
     (entries, walked_paths)
-}
-
-/// Have `indexer` blank the macros the C and C++ files of `walked`, the
-/// tree at `root`, define, each read in a bounded read and within its
-/// kind's size. A file that cannot be read gives none, as one that
-/// vanished; a system that starts no thread leaves the set empty, and the
-/// files' own reads then fail alike.
-fn read_macros(indexer: &mut Indexer, root: &Path, walked: &BTreeMap<String, FileKind>) {
-    let c_family: Vec<(&String, FileKind)> = walked
-        .iter()
-        .filter(|(_, kind)| matches!(kind, FileKind::C | FileKind::Cpp))
-        .map(|(path, kind)| (path, *kind))
-        .collect();
-    let read = |(path, kind): &(&String, FileKind)| {
-        let bytes = read_source(&root.join(path)).ok()?;
-        (bytes.len() <= kind.max_bytes()).then_some(bytes)
-    };
-    if indexer.read_macros(&c_family, read).is_err() {
-        diag!("warning: the C and C++ macros to blank were not read: no thread started");
-    }
 }
 
 /// What is at each of `anchored` under `root`: the entries of the
@@ -391,46 +379,93 @@ fn probe_anchored<'a>(
 /// What reading a file gave.
 enum Sourced {
     Fault(ReadFault),
-    /// Its index under `key`, with the cache entry to write when the cache
-    /// held none.
+    /// Its index, and the cache entries it used: the index's and, for a C
+    /// or C++ file, its lexical pass's.
     Indexed {
-        key: SymbolsKey,
-        indexed: Indexed,
-        miss: Option<Vec<u8>>,
+        indexed: Box<Indexed>,
+        index: Used,
+        lexed: Option<Used>,
     },
 }
 
-/// Read the file at `path` and index it, from the cache when it holds the
-/// index; `None` when the file is gone.
+/// A cache entry a read used: its key, and its bytes to write when the
+/// cache held none.
+struct Used {
+    key: SymbolsKey,
+    miss: Option<Vec<u8>>,
+}
+
+/// Read the file at `path`, of `kind`, and index it, from the cache when
+/// it holds the index; `None` when the file is gone. A header the first
+/// step read (`header`) is read again only when the cache lacks its index.
 fn read_and_index(
-    store: &Store,
+    cached: &Cached<'_>,
     worker: &Worker<'_>,
-    path: &Path,
-    kind: FileKind,
+    (path, kind): (&Path, FileKind),
+    header: Option<Header>,
 ) -> Option<Sourced> {
-    let bytes = match read_source(path) {
-        Ok(bytes) => bytes,
-        Err(Gone) => return None,
-        Err(Faulty(fault)) => return Some(Sourced::Fault(fault)),
-    };
-    let key = cache::key(kind, &bytes, worker.macros());
-    let cached = store
-        .read_symbols(key, cache::max_entry_bytes(kind, bytes.len()))
-        .and_then(|entry| cache::decode(key, &entry, kind, bytes.len()));
-    Some(match cached {
-        Some(indexed) => Sourced::Indexed {
-            key,
-            indexed,
+    if let Some(sourced) = header.and_then(|header| cached_header(cached, worker, kind, header)) {
+        return Some(sourced);
+    }
+    match read_source(path) {
+        Ok(bytes) => Some(index_bytes(cached, worker, kind, &bytes)),
+        Err(Gone) => None,
+        Err(Faulty(fault)) => Some(Sourced::Fault(fault)),
+    }
+}
+
+/// The index of `header`, a header of `kind` the first step read, from
+/// the cache alone; `None` when it lacks the header's lexical pass or its
+/// index.
+fn cached_header(
+    cached: &Cached<'_>,
+    worker: &Worker<'_>,
+    kind: FileKind,
+    header: Header,
+) -> Option<Sourced> {
+    let lexed = cached.lexed(header.content, header.bytes)?;
+    let key = cache::key(kind, header.content, &worker.tree().of_file(&lexed));
+    let indexed = cached.index(key, kind, header.bytes)?;
+    Some(Sourced::Indexed {
+        indexed: Box::new(indexed),
+        index: Used { key, miss: None },
+        lexed: Some(Used {
+            key: cache::lexed_key(header.content),
             miss: None,
-        },
-        None => match worker.index(kind, &bytes) {
+        }),
+    })
+}
+
+/// The index of `bytes`, a file of `kind`: the cache's, else built.
+fn index_bytes(cached: &Cached<'_>, worker: &Worker<'_>, kind: FileKind, bytes: &[u8]) -> Sourced {
+    let content = Content::of(bytes);
+    let (macros, lexed) = match kind.blanks_macros() {
+        true => {
+            let found = cached.lexed_or_lex(content, bytes);
+            let lexed = Used {
+                key: found.key,
+                miss: found.miss,
+            };
+            (worker.tree().of_file(&found.lexed), Some(lexed))
+        }
+        false => (FileMacros::default(), None),
+    };
+    let key = cache::key(kind, content, &macros);
+    let (indexed, miss) = match cached.index(key, kind, bytes.len()) {
+        Some(indexed) => (indexed, None),
+        None => match worker.index(kind, bytes, &macros) {
             Ok(indexed) => {
                 let miss = Some(cache::encode(key, &indexed));
-                Sourced::Indexed { key, indexed, miss }
+                (indexed, miss)
             }
-            Err(fault) => Sourced::Fault(fault),
+            Err(fault) => return Sourced::Fault(fault),
         },
-    })
+    };
+    Sourced::Indexed {
+        indexed: Box::new(indexed),
+        index: Used { key, miss },
+        lexed,
+    }
 }
 
 /// Why a source file gave no bytes.
@@ -493,6 +528,25 @@ impl Reads {
             misses: BTreeMap::new(),
             live: BTreeSet::new(),
         }
+    }
+
+    /// The entry of a file of `kind` that `read` gave, the cache entries
+    /// it used noted; `None` for a file gone.
+    fn take(&mut self, kind: FileKind, read: Option<Sourced>) -> Option<Entry> {
+        let index = match read? {
+            Sourced::Fault(fault) => Err(FileFault::Read(fault)),
+            Sourced::Indexed {
+                indexed,
+                index,
+                lexed,
+            } => {
+                for used in std::iter::once(index).chain(lexed) {
+                    self.note(used.key, used.miss);
+                }
+                (*indexed).map_err(FileFault::Index)
+            }
+        };
+        Some(Entry::File { kind, index })
     }
 
     fn note(&mut self, key: SymbolsKey, miss: Option<Vec<u8>>) {

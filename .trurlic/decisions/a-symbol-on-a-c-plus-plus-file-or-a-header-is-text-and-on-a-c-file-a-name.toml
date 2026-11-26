@@ -1,0 +1,20 @@
+component = "code"
+choice = "A symbol on a file the C++ grammar reads, a header among them, is text, so operator() and ~Box are spelled as written; on a .c file it is a name"
+reason = "C++ names an operator, a conversion and a destructor with punctuation (operator(), operator<, ~Box), which the grammar of names refuses, so a symbol on a file the C++ grammar reads is text, matched against the names as the index spells them. C names nothing so, and a symbol on a .c file is a name, which refuses a malformed one at once. A .h file is read by the C++ grammar, so a symbol on a C header is text too: there f(x) names nothing, where on a .c file it is refused as malformed."
+alternatives = [
+    "Names on every C and C++ file: rejected because operator() and ~Box could then not be named",
+    "Text on every C and C++ file: rejected because a malformed symbol on a .c file would then name nothing instead of being refused",
+]
+tags = [
+    "anchors",
+]
+status = "proposed"
+origin = "c and c++ review: macro scope, shapes and visibility"
+created = "2026-11-26T07:59:22.658737393Z"
+anchors = [
+    { file = "src/code/language.rs", symbol = "C" },
+    { file = "src/code/language.rs", symbol = "CPP" },
+]
+depends_on = [
+    "c-and-c-plus-plus-are-read-by-tree-sitter-c-and-tree-sitter-cpp",
+]

@@ -310,7 +310,7 @@ impl Scanner<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::index::{FileKind, index};
+    use crate::code::index::FileKind;
     use crate::code::testing;
 
     const DOCUMENT: &str = r#"{
@@ -358,11 +358,7 @@ mod tests {
             ("tru", 0),
         ] {
             assert_eq!(
-                index(
-                    FileKind::Json,
-                    text.as_bytes(),
-                    &crate::code::BlankMacros::default()
-                ),
+                crate::code::testing::index(FileKind::Json, text.as_bytes()),
                 Err(IndexFault::Syntax { at }),
                 "{text:?}"
             );
@@ -374,12 +370,8 @@ mod tests {
         let nested = |depth: usize| format!("{}1{}", "{\"a\":".repeat(depth), "}".repeat(depth));
 
         let indexed = |text: String| {
-            index(
-                FileKind::Json,
-                text.as_bytes(),
-                &crate::code::BlankMacros::default(),
-            )
-            .map(|i| i.definitions.len())
+            crate::code::testing::index(FileKind::Json, text.as_bytes())
+                .map(|i| i.definitions.len())
         };
 
         assert_eq!(indexed(nested(MAX_NESTING)), Ok(MAX_NESTING));

@@ -1,0 +1,29 @@
+component = "code"
+choice = "A C or C++ definition is at the path its source writes: members under their type, X::f out of class a function at X::f, a friend under its class, a constructor only in the class it names"
+reason = "An anchor names a definition as a reader of the file finds it. An enumerator is under its enum (color::RED), a nested type under its outer one, a member of an anonymous struct or union under the outer type, and a struct no tag names under the typedef that names it; a template's arguments are no part of a name, so a specialization shares its template's path, and an anonymous namespace adds no segment. A definition out of its class (void a::Foo::f() {}) is a function at a::Foo::f, since no syntax says whether a::Foo is a class. A friend is a function under the class that declares it. A declaration with no type is a constructor only in the class it names, a template one and one of a class defined by a qualified name (struct A::B {) among them; elsewhere it is a macro's call (BIT(flag);) and defines nothing. A function that returns a function pointer and one whose name stands in parentheses (int (max)(int, int)) are functions. A lambda a namespace binds is a function, any other a scope of its own. A concept is an interface, a named set of requirements a type meets by its shape. Each name a structured binding at a namespace's top binds is a variable. A body no definition captures, a misparse's, is a scope whose locals define nothing, so a class a macro hides yields no variables at the top."
+alternatives = [
+    "Enumerators and nested types at the file's top, as the language scopes them: rejected because a symbol is a suffix and the nesting as written costs nothing",
+    "A method's kind for X::f when the file defines a class X: rejected because it guesses",
+    "Specializations named with their arguments: rejected because a symbol could then not name the template and its specializations together",
+    "A concept as a type alias: rejected because it names no type, only a requirement on one",
+    "A misparsed body's locals at the top: rejected because the members of a class a macro hides then read as variables of the file",
+]
+tags = [
+    "anchors",
+    "parsing",
+]
+status = "proposed"
+origin = "c and c++ review: macro scope, shapes and visibility"
+created = "2026-11-26T07:59:22.658737393Z"
+anchors = [
+    { file = "src/code/language/c.scm" },
+    { file = "src/code/language/cpp.scm" },
+    { file = "src/sources/tests.rs", symbol = "C_FAMILY_CASES" },
+    { file = "src/sources/tests.rs", symbol = "STATEMENTS" },
+    { file = "tests/fixtures/code/c/shelf.h" },
+    { file = "tests/fixtures/code/cpp/shelf.cc" },
+    { file = "tests/fixtures/code/cpp/shelf.hpp" },
+]
+depends_on = [
+    "what-a-c-or-c-plus-plus-file-defines",
+]

@@ -36,6 +36,11 @@ Book Box<Book>::get() const { return Book(); }
 
 template <> Book heavier<Book>(Book a, Book b) { return a.pages() < b.pages() ? b : a; }
 
+struct Library::Index {
+  explicit Index(int size);
+  int size;
+};
+
 int weigh(const Book& b) { return b.pages(); }
 int weigh(const Box<Book>& b) { return b.get().pages(); }
 

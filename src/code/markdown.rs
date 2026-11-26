@@ -126,7 +126,7 @@ impl Fence {
 
 #[cfg(test)]
 mod tests {
-    use crate::code::index::{FileKind, IndexFault, index};
+    use crate::code::index::{FileKind, IndexFault};
     use crate::code::scope::MAX_NESTING;
     use crate::code::testing;
 
@@ -188,19 +188,11 @@ Build it.
         let heading = |segments: usize| format!("# {}\n## b\n", vec!["a"; segments].join("::"));
 
         assert!(
-            index(
-                FileKind::Markdown,
-                heading(MAX_NESTING - 1).as_bytes(),
-                &crate::code::BlankMacros::default()
-            )
-            .is_ok()
+            crate::code::testing::index(FileKind::Markdown, heading(MAX_NESTING - 1).as_bytes())
+                .is_ok()
         );
         assert_eq!(
-            index(
-                FileKind::Markdown,
-                heading(MAX_NESTING).as_bytes(),
-                &crate::code::BlankMacros::default()
-            ),
+            crate::code::testing::index(FileKind::Markdown, heading(MAX_NESTING).as_bytes()),
             Err(IndexFault::TooDeep)
         );
     }

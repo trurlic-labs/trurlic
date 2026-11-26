@@ -163,7 +163,8 @@ pub(super) fn literal_end(bytes: &[u8], at: usize) -> usize {
 }
 
 /// The place of the `"` of the raw string literal that opens at `at`
-/// (`R"`, `u8R"`, `LR"`, ...), when one does.
+/// (`R"`, `u8R"`, `LR"`, ...), when one does. An item starts at `at`, so
+/// no identifier's character stands right before it.
 fn raw_string_start(bytes: &[u8], at: usize) -> Option<usize> {
     let prefix = match bytes.get(at..)? {
         [b'R', b'"', ..] => 1,
@@ -171,11 +172,7 @@ fn raw_string_start(bytes: &[u8], at: usize) -> Option<usize> {
         [b'u' | b'U' | b'L', b'R', b'"', ..] => 2,
         _ => return None,
     };
-    let before = at.checked_sub(1).and_then(|before| bytes.get(before));
-    match before {
-        Some(b) if b.is_ascii_alphanumeric() || *b == b'_' => None,
-        _ => Some(at + prefix),
-    }
+    Some(at + prefix)
 }
 
 /// The end of the raw string literal at `at`: past `)delimiter"`, the
@@ -204,22 +201,43 @@ fn raw_string_end(bytes: &[u8], at: usize) -> usize {
     bytes.len()
 }
 
+/// The end of the identifier at `at`; a line continuation between two of
+/// its characters is in it, as the preprocessor splices it.
 fn word_end(bytes: &[u8], at: usize) -> usize {
     let mut next = at;
-    while bytes
-        .get(next)
-        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
-    {
-        next += 1;
+    loop {
+        match bytes.get(next) {
+            Some(byte) if is_word(*byte) => next += 1,
+            Some(b'\\') if spliced(bytes, next).is_some_and(is_word) => {
+                next += continuation(bytes, next);
+            }
+            _ => return next,
+        }
     }
-    next
+}
+
+const fn is_word(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// The byte after the line continuation at `at`, when one is there.
+fn spliced(bytes: &[u8], at: usize) -> Option<u8> {
+    match continuation(bytes, at) {
+        0 => None,
+        length => bytes.get(at + length).copied(),
+    }
 }
 
 /// The end of the number at `at`, its digit separators (`1'000`) and
-/// exponents' signs in it.
+/// exponents' signs in it, and a line continuation between two of its
+/// characters.
 fn number_end(bytes: &[u8], at: usize) -> usize {
     let mut next = at;
     while let Some(&byte) = bytes.get(next) {
+        if byte == b'\\' && spliced(bytes, next).is_some_and(is_word) {
+            next += continuation(bytes, next);
+            continue;
+        }
         let separator = byte == b'\''
             && bytes
                 .get(next + 1)
@@ -235,4 +253,134 @@ fn number_end(bytes: &[u8], at: usize) -> usize {
         next += 1;
     }
     next
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each item of `text`, by its kind and text.
+    fn items(text: &str) -> Vec<(&'static str, &str)> {
+        let mut found = Vec::new();
+        lex(text, true, |item| {
+            let (kind, start, end) = match item {
+                Item::Directive { start, end, .. } => ("directive", start, end),
+                Item::Comment { start, end } => ("comment", start, end),
+                Item::Identifier { start, end } => ("identifier", start, end),
+                Item::Token { start, end } => ("token", start, end),
+            };
+            found.push((kind, &text[start..end]));
+        });
+        found
+    }
+
+    #[test]
+    fn a_digit_separator_is_part_of_its_number() {
+        assert_eq!(
+            items("n = 1'000; c = 'a';"),
+            [
+                ("identifier", "n"),
+                ("token", "="),
+                ("token", "1'000"),
+                ("token", ";"),
+                ("identifier", "c"),
+                ("token", "="),
+                ("token", "'a'"),
+                ("token", ";"),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_escaped_quote_does_not_end_its_literal() {
+        assert_eq!(
+            items(r#"s = "\"" x"#),
+            [
+                ("identifier", "s"),
+                ("token", "="),
+                ("token", r#""\"""#),
+                ("identifier", "x"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_raw_string_ends_at_its_delimiter() {
+        assert_eq!(
+            items(r#"s = R"x(a)y" b)x" t"#),
+            [
+                ("identifier", "s"),
+                ("token", "="),
+                ("token", r#"R"x(a)y" b)x""#),
+                ("identifier", "t"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_comment_opener_in_a_directives_literal_opens_no_comment() {
+        assert_eq!(
+            items("#define Q \"/*\"\nint x; /* */\n"),
+            [
+                ("directive", "#define Q \"/*\""),
+                ("identifier", "int"),
+                ("identifier", "x"),
+                ("token", ";"),
+                ("comment", "/* */"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_directive_may_be_indented() {
+        assert_eq!(
+            items("  #  define X 1\nX"),
+            [("directive", "#  define X 1"), ("identifier", "X")]
+        );
+        assert_eq!(
+            items("a #define X\n"),
+            [
+                ("identifier", "a"),
+                ("token", "#"),
+                ("identifier", "define"),
+                ("identifier", "X"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_line_continuation_continues_a_line_comment_and_a_directive() {
+        for line_break in ["\n", "\r\n"] {
+            let text = format!("// a \\{line_break} b\n#define A \\{line_break} c\nx");
+            let comment_end = text.find("\n#").unwrap();
+            let directive_end = text.rfind('\n').unwrap();
+
+            assert_eq!(
+                items(&text),
+                [
+                    ("comment", &text[..comment_end]),
+                    ("directive", &text[comment_end + 1..directive_end]),
+                    ("identifier", "x"),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn a_line_continuation_inside_a_word_or_a_number_joins_its_halves() {
+        assert_eq!(
+            items("ab\\\ncd 12\\\n34 e \\\nf"),
+            [
+                ("identifier", "ab\\\ncd"),
+                ("token", "12\\\n34"),
+                ("identifier", "e"),
+                ("identifier", "f"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_block_comment_left_open_runs_to_the_end() {
+        assert_eq!(items("a /* b"), [("identifier", "a"), ("comment", "/* b")]);
+    }
 }

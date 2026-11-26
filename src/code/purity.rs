@@ -42,7 +42,7 @@ use std::ops::Range;
 
 use tree_sitter::Node;
 
-use super::index::{FileKind, index};
+use super::index::FileKind;
 use super::syntax::{self, Token, text_of};
 
 /// The modules of `std`, `core` and `alloc` a pure module may name: none
@@ -376,12 +376,7 @@ fn dependencies(texts: &[(String, String)]) -> Vec<String> {
     let Some((_, manifest)) = texts.iter().find(|(path, _)| path == "Cargo.toml") else {
         return Vec::new();
     };
-    let manifest = index(
-        FileKind::Toml,
-        manifest.as_bytes(),
-        &crate::code::BlankMacros::default(),
-    )
-    .unwrap();
+    let manifest = crate::code::testing::index(FileKind::Toml, manifest.as_bytes()).unwrap();
     let scopes = super::scope::Scopes(&manifest.scopes);
     manifest
         .definitions

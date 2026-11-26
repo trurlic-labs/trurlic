@@ -1,0 +1,24 @@
+component = "code"
+choice = "An access label in a #if arm holds past the arm, a function body starts public, an anonymous union's members are under the outer label, and a blanked macro that holds static is written static"
+reason = "Every arm of #if is read as written, so a label in one arm and one in the next both stand before what follows #endif: the query marks each arm @visibility.through, so a label in it holds past it, and the last in source order holds, the one a reader meets last and the one an #ifdef ... #else takes when its macro is undefined. A label states the access of its class's members, not of what a member function's body defines, so a body's brace starts public, as a free function's is. The members of an anonymous union or struct with no member name are the outer class's own, so the label in force there holds for them; an unnamed type with a member name, a typedef or a declaration is a type of its own, public within. A macro the tree defines as static, alone or beside other specifiers, in every arm but an empty one (curl's UNITTEST, FreeRTOS's STATIC) makes what it marks private in every build but that arm's, so the blank writes static in its place when its name is at least as long as the word, and the definition stays private; a shorter name is blanked, the limit c_family.rs states."
+alternatives = [
+    "A label that ends at #endif: rejected because what follows then takes the class's default, which no arm says",
+    "A static macro blanked as any specifier: rejected because what curl and FreeRTOS keep private then reads as public",
+]
+tags = [
+    "anchors",
+    "visibility",
+]
+status = "proposed"
+origin = "c and c++ review: macro scope, shapes and visibility"
+created = "2026-11-26T07:59:22.658737393Z"
+anchors = [
+    { file = "src/code/general/frame.rs", symbol = "set_label" },
+    { file = "src/code/general/tests.rs", symbol = "a_label_in_a_preprocessor_arm_holds_past_it_and_none_holds_in_a_body" },
+    { file = "src/code/language/c_family.rs", symbol = "blank" },
+    { file = "src/code/language/c_family/tests.rs", symbol = "a_static_macro_is_written_static_where_its_name_holds_it" },
+    { file = "src/code/language/cpp.scm" },
+]
+depends_on = [
+    "a-c-or-c-plus-plus-definition-is-public-unless-static-an-anonymous-namespace-or-a-label-says-otherwise",
+]

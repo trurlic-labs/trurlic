@@ -13,9 +13,12 @@
 ; macro states none.
 
 ; Functions with a return type: defined, a pointer or a function pointer
-; returned among them, and declared (a prototype) at the file's top.
+; returned among them, and declared (a prototype) at the file's top; a
+; name in parentheses (`int (max)(int, int)`) is the function's.
 ((function_definition type: (_)
    declarator: [(function_declarator declarator: (identifier) @name)
+                (function_declarator declarator: (parenthesized_declarator (identifier) @name))
+                (_ declarator: (function_declarator declarator: (parenthesized_declarator (identifier) @name)))
                 (_ declarator: (function_declarator declarator: (identifier) @name))
                 (_ declarator: (_ declarator: (function_declarator declarator: (identifier) @name)))
                 (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (identifier) @name))))]) @definition
@@ -24,19 +27,24 @@
 
 ((declaration type: (_)
    declarator: [(function_declarator declarator: (identifier) @name)
-                (_ declarator: (function_declarator declarator: (identifier) @name))]) @definition
+                (function_declarator declarator: (parenthesized_declarator (identifier) @name))
+                (_ declarator: (function_declarator declarator: (parenthesized_declarator (identifier) @name)))
+                (_ declarator: (function_declarator declarator: (identifier) @name))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (identifier) @name))))]) @definition
   (#set! kind "function")
   (#set! container "false")
   (#set! within "top")
   (#set! visibility "public"))
 
 ; Variables at the file's top, a function pointer among them; a
-; parameter's or a local's name is none.
+; parameter's or a local's name is none, and a body no definition
+; captures (a misparse's) is a scope whose locals define nothing.
+(compound_statement) @scope.unnamed
+
 ([(declaration declarator: (identifier) @name)
   (init_declarator declarator: (identifier) @name)
   (pointer_declarator declarator: (identifier) @name)
-  (array_declarator declarator: (identifier) @name)
-  (parenthesized_declarator (identifier) @name)] @definition
+  (array_declarator declarator: (identifier) @name)] @definition
   (#set! kind "variable")
   (#set! container "false")
   (#set! within "top")
@@ -126,8 +134,8 @@
   (#eq? @_static "static"))
 
 ; The hash: a literal is one token, its spaces kept; a macro's body one
-; token per word, so its spaces and the line breaks it continues over
-; move nothing.
+; unit a token of the C lexer, so its spaces and the line breaks it
+; continues over move nothing.
 [(string_literal) (char_literal) (system_lib_string)] @hash.unit
 
-(preproc_arg) @hash.words
+(preproc_arg) @hash.tokens

@@ -2,8 +2,12 @@
 #include <stdio.h>
 #include "shelf.h"
 
+/* A flag of this file alone: the header's enumerator of its name stays. */
+#define SHELF_DONE
+
 #define SWAP(a, b) do { \
-    book t = (a); /* the first */ \
+    book t = (a); /* the first,
+                     kept */ \
     (a) = (b); (b) = t; \
   } while (0)
 
@@ -26,6 +30,8 @@ static int sort_books(shelf *s)
 {
   return s->count > 1;
 }
+
+SHELF_STATIC int shelf_scan(shelf *s) { return (int)s->count; }
 
 #if defined(_WIN32)
 static long weigh(shelf *s) { return (long)s->count; }

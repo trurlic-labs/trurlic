@@ -1,7 +1,6 @@
 use super::*;
 
-use crate::code::BlankMacros;
-use crate::code::index::{FileKind, index};
+use crate::code::index::FileKind;
 
 #[test]
 fn every_kind_is_coded_by_its_place() {
@@ -136,7 +135,7 @@ fn densest_files(bytes: usize) -> Vec<(FileKind, String)> {
 #[test]
 fn the_densest_file_of_each_kind_is_indexed_within_its_room() {
     for (kind, text) in densest_files(64 * 1024) {
-        let indexed = index(kind, text.as_bytes(), &BlankMacros::default());
+        let indexed = crate::code::testing::index(kind, text.as_bytes());
 
         assert!(indexed.is_ok(), "{kind:?}: {indexed:?}");
         assert!(encode(&indexed).len() <= max_entry_bytes(kind, text.len()));
@@ -152,7 +151,7 @@ fn every_entry_a_write_makes_reads_back() {
         ("names".to_owned(), FileKind::Python, names.into_bytes()),
     ];
     for (name, kind, bytes) in &cases {
-        let indexed = index(*kind, bytes, &BlankMacros::default());
+        let indexed = crate::code::testing::index(*kind, bytes);
         assert!(indexed.is_ok(), "{name}: {indexed:?}");
     }
     let densest = densest_files(16 * 1024)
@@ -164,7 +163,7 @@ fn every_entry_a_write_makes_reads_back() {
         .chain(corpus())
         .chain(generated())
     {
-        let indexed = index(kind, &bytes, &BlankMacros::default());
+        let indexed = crate::code::testing::index(kind, &bytes);
         assert_eq!(
             decode(&encode(&indexed), kind, bytes.len()),
             Some(indexed),
@@ -193,12 +192,8 @@ fn every_entry_a_write_makes_reads_back() {
 
 #[test]
 fn bytes_that_break_the_form_are_no_index() {
-    let indexed = index(
-        FileKind::Rust,
-        b"mod a { fn b() {} }\nm!(y x);",
-        &BlankMacros::default(),
-    )
-    .unwrap();
+    let indexed =
+        crate::code::testing::index(FileKind::Rust, b"mod a { fn b() {} }\nm!(y x);").unwrap();
     let bytes = encode(&Ok(indexed));
 
     let source = 28;
@@ -320,7 +315,7 @@ fn measured(index: &FileIndex) -> usize {
 #[test]
 fn an_entry_takes_no_more_than_its_parts_were_charged() {
     for (name, kind, bytes) in corpus() {
-        let Ok(indexed) = index(kind, &bytes, &BlankMacros::default()) else {
+        let Ok(indexed) = crate::code::testing::index(kind, &bytes) else {
             continue;
         };
         let entry = encode(&Ok(indexed.clone())).len();
@@ -360,7 +355,7 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
         (FileKind::Python, lines.as_str()),
         (FileKind::Rust, ""),
     ] {
-        let indexed = index(kind, text.as_bytes(), &BlankMacros::default());
+        let indexed = crate::code::testing::index(kind, text.as_bytes());
         assert!(indexed.is_ok(), "{kind:?} of {} bytes", text.len());
         let bytes = encode(&indexed);
         let bound = max_entry_bytes(kind, text.len());

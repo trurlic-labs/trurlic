@@ -60,6 +60,8 @@ pub(super) const LEXICON: Lexicon = Lexicon {
     nested_blocks: true,
     glued: &[("metavariable", 1)],
     continuations: false,
+    splices: false,
+    tokens: None,
 };
 
 /// The index of `text`, a Rust file. Its hashes leave out the tokens of

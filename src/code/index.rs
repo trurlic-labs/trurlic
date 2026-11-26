@@ -8,7 +8,7 @@ use std::fmt;
 use std::sync::LazyLock;
 
 use super::kinds::{DefinitionKind, Role, Visibility};
-use super::language::c_family::{self, BlankMacros};
+use super::language::c_family::{self, FileMacros};
 use super::language::python;
 use super::language::{C, CPP, Language, PYTHON, TSX, TYPESCRIPT};
 use super::scope::{MAX_NESTING, Scope, ScopeId, ScopeTree};
@@ -19,7 +19,7 @@ use super::{encoding, general, json, make, markdown, rust, syntax, toml, work};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 15;
+pub(crate) const INDEX_FORMAT: u32 = 16;
 
 /// The largest file a tree-sitter grammar indexes. tree-sitter's error
 /// recovery takes a few microseconds a byte on hostile input, past what
@@ -203,6 +203,22 @@ impl FileKind {
         }
     }
 
+    /// Whether its files blank the macros their tree defines as
+    /// attributes, which a C or C++ file does.
+    pub(crate) const fn blanks_macros(self) -> bool {
+        match self {
+            Self::C | Self::Cpp => true,
+            Self::Rust
+            | Self::Python
+            | Self::TypeScript
+            | Self::Tsx
+            | Self::Toml
+            | Self::Json
+            | Self::Make
+            | Self::Markdown => false,
+        }
+    }
+
     /// How a symbol on a file of this kind is spelled: a language's by
     /// its row.
     pub(crate) const fn syntax(self) -> Syntax {
@@ -360,13 +376,14 @@ impl fmt::Display for IndexFault {
     }
 }
 
-/// The index of `bytes`, a file of `kind`, in a tree whose C and C++
-/// files blank `macros`. Each resolver builds it into the scope tree of
-/// the file's kind and size, which holds it to the file's room.
+/// The index of `bytes`, a file of `kind`; a C or C++ file blanks
+/// `macros`, the part of its tree's set it writes. Each resolver builds
+/// it into the scope tree of the file's kind and size, which holds it to
+/// the file's room.
 pub(crate) fn index(
     kind: FileKind,
     bytes: &[u8],
-    macros: &BlankMacros,
+    macros: &FileMacros,
 ) -> Result<FileIndex, IndexFault> {
     let max = kind.max_bytes();
     if bytes.len() > max {
@@ -437,7 +454,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 15] = [
+    const FINGERPRINTS: [(u32, &str); 16] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -498,6 +515,10 @@ mod tests {
             15,
             "36bdf51f6a436873ff2b9d5bff71ae04ee7822328b07ede46f67660458faa5c0",
         ),
+        (
+            16,
+            "89b2cb1fdbc929505587e581dfaff355f5aae12ea5f9f6bef9be278cb4319629",
+        ),
     ];
 
     #[test]
@@ -522,15 +543,18 @@ mod tests {
                 Some((path, FileKind::of(name)?))
             })
             .collect();
-        let macros = BlankMacros::of(
-            kinds
-                .iter()
-                .filter(|(_, kind)| matches!(kind, FileKind::C | FileKind::Cpp))
-                .map(|(path, _)| c_family::defines(&std::fs::read(path).unwrap())),
-        );
+        let headers: Vec<c_family::Defines> = kinds
+            .iter()
+            .filter(|(path, kind)| {
+                kind.blanks_macros() && c_family::is_header(path.to_str().unwrap())
+            })
+            .map(|(path, _)| c_family::lexed(&std::fs::read(path).unwrap()).into_defines())
+            .collect();
+        let tree = c_family::BlankMacros::of(&headers);
         let mut hasher = blake3::Hasher::new();
         for (path, kind) in kinds {
-            let indexed = index(kind, &std::fs::read(path).unwrap(), &macros);
+            let indexed =
+                crate::code::testing::index_in(kind, &std::fs::read(path).unwrap(), &tree);
             hasher.update(&crate::code::encoding::encode(&indexed));
         }
         let fingerprint = hasher.finalize().to_hex().to_string();
@@ -549,7 +573,7 @@ mod tests {
         let over = vec![b'\n'; 1_048_577];
 
         assert_eq!(
-            index(FileKind::Rust, &over, &crate::code::BlankMacros::default()),
+            crate::code::testing::index(FileKind::Rust, &over),
             Err(IndexFault::TooLarge {
                 bytes: 1_048_577,
                 max: 1_048_576,
@@ -557,40 +581,22 @@ mod tests {
         );
         for kind in [FileKind::Python, FileKind::TypeScript, FileKind::Tsx] {
             assert_eq!(
-                index(kind, &over, &crate::code::BlankMacros::default()).err(),
-                index(FileKind::Rust, &over, &crate::code::BlankMacros::default()).err()
+                crate::code::testing::index(kind, &over).err(),
+                crate::code::testing::index(FileKind::Rust, &over).err()
             );
             assert!(
-                index(kind, &over[1..], &crate::code::BlankMacros::default()).is_ok(),
+                crate::code::testing::index(kind, &over[1..]).is_ok(),
                 "{kind:?}"
             );
         }
-        assert!(
-            index(
-                FileKind::Markdown,
-                &over,
-                &crate::code::BlankMacros::default()
-            )
-            .is_ok()
-        );
-        assert!(
-            index(
-                FileKind::Rust,
-                &over[1..],
-                &crate::code::BlankMacros::default()
-            )
-            .is_ok()
-        );
+        assert!(crate::code::testing::index(FileKind::Markdown, &over).is_ok());
+        assert!(crate::code::testing::index(FileKind::Rust, &over[1..]).is_ok());
     }
 
     #[test]
     fn bytes_that_are_not_utf8_give_no_index() {
         assert_eq!(
-            index(
-                FileKind::Markdown,
-                b"# ok\n\xff",
-                &crate::code::BlankMacros::default()
-            ),
+            crate::code::testing::index(FileKind::Markdown, b"# ok\n\xff"),
             Err(IndexFault::NotUtf8 { at: 5 })
         );
     }

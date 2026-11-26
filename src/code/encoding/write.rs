@@ -81,7 +81,7 @@ impl Measure {
 }
 
 /// Where a [`Writer`] puts its bytes: an entry, or their cost.
-trait Sink {
+pub(in crate::code) trait Sink {
     fn put(&mut self, bytes: &[u8]);
 
     /// Note a heap block of `requested` bytes the value written owns.
@@ -109,14 +109,27 @@ impl Sink for Cost {
     }
 }
 
-struct Writer<S>(S);
+/// A writer of an entry's bytes, or of their cost.
+pub(in crate::code) struct Writer<S>(S);
+
+impl Writer<Vec<u8>> {
+    /// A writer of an entry.
+    pub(in crate::code) const fn entry() -> Self {
+        Self(Vec::new())
+    }
+
+    /// The bytes written.
+    pub(in crate::code) fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
 
 impl<S: Sink> Writer<S> {
-    fn byte(&mut self, byte: u8) {
+    pub(in crate::code) fn byte(&mut self, byte: u8) {
         self.0.put(&[byte]);
     }
 
-    fn number(&mut self, mut number: usize) {
+    pub(in crate::code) fn number(&mut self, mut number: usize) {
         loop {
             let low = u8::try_from(number & 0x7f).unwrap_or(0);
             number >>= 7;
@@ -129,7 +142,7 @@ impl<S: Sink> Writer<S> {
     }
 
     /// A text: its length and its bytes, which a read holds in a block.
-    fn text(&mut self, text: &str) {
+    pub(in crate::code) fn text(&mut self, text: &str) {
         self.number(text.len());
         self.0.put(text.as_bytes());
         self.0.own(text.len());

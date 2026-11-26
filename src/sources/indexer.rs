@@ -11,10 +11,10 @@
 //! goes back when that thread ends. The files indexed at once hold at most
 //! [`code::MAX_BYTES_INDEXED_AT_ONCE`] bytes between them.
 //!
-//! A C or C++ file is indexed against the macros its tree blanks, a fact
-//! of all the tree's C and C++ files: the indexer reads their `#define`s
-//! once a call, from the calling tree, and every file the call indexes,
-//! in that tree, another worktree or git's history, is read against them.
+//! A C or C++ file is indexed against the part of its tree's blank set
+//! it writes, the set a fact of the tree's headers: the indexer holds the
+//! calling tree's, taken once a call, and every file the call indexes, in
+//! that tree, another worktree or git's history, is read against it.
 
 use std::num::NonZeroUsize;
 use std::panic;
@@ -22,13 +22,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::thread::{self, Scope, ScopedJoinHandle};
 
-use crate::code::{self, BlankMacros, FileKind, Indexed, ReadFault};
+use crate::code::{self, BlankMacros, Defines, FileKind, FileMacros, Indexed, ReadFault};
 
-/// The indexes of one call, the room their files share, and the macros
-/// the call's C and C++ files blank.
+/// The indexes of one call, the room their files share, and the calling
+/// tree's blank set.
 pub(super) struct Indexer {
     room: Room,
-    macros: BlankMacros,
+    tree: BlankMacros,
 }
 
 impl Indexer {
@@ -38,26 +38,14 @@ impl Indexer {
                 free: Mutex::new(code::MAX_BYTES_INDEXED_AT_ONCE),
                 freed: Condvar::new(),
             },
-            macros: BlankMacros::default(),
+            tree: BlankMacros::default(),
         }
     }
 
-    /// Take the macros to blank from `files`, the C and C++ files of the
-    /// calling tree, each read by `read`, whose `None` leaves it out. A
-    /// tree with none reads nothing.
-    pub(super) fn read_macros<T: Sync>(
-        &mut self,
-        files: &[T],
-        read: impl Fn(&T) -> Option<Vec<u8>> + Sync,
-    ) -> Result<(), ReadFault> {
-        if files.is_empty() {
-            return Ok(());
-        }
-        let defines = self.map(files, |_, file| {
-            read(file).map(|bytes| code::defines(&bytes))
-        })?;
-        self.macros = BlankMacros::of(defines.into_iter().flatten());
-        Ok(())
+    /// Take the tree's blank set from `headers`, the `#define`s of the
+    /// calling tree's headers.
+    pub(super) fn take_headers(&mut self, headers: &[Defines]) {
+        self.tree = BlankMacros::of(headers);
     }
 
     /// What `each` gives of each of `items`, in their order, run in
@@ -72,7 +60,7 @@ impl Indexer {
         let next = AtomicUsize::new(0);
         let worker = Worker {
             room: &self.room,
-            macros: &self.macros,
+            tree: &self.tree,
         };
         let work = || {
             let mut done = Vec::new();
@@ -124,27 +112,42 @@ fn joined<R>(started: ScopedJoinHandle<'_, R>) -> R {
 /// A worker of an [`Indexer`], which indexes.
 pub(super) struct Worker<'i> {
     room: &'i Room,
-    macros: &'i BlankMacros,
+    tree: &'i BlankMacros,
 }
 
 impl Worker<'_> {
-    /// The macros the call's C and C++ files blank.
-    pub(super) const fn macros(&self) -> &BlankMacros {
-        self.macros
+    /// The calling tree's blank set.
+    pub(super) const fn tree(&self) -> &BlankMacros {
+        self.tree
     }
 
-    /// The index of `bytes`, a file of `kind`, built once the room holds
-    /// them: by the worker itself up to
+    /// The index of `bytes`, a file of `kind`, its blank set taken from a
+    /// lexical pass over them here: a file no cache holds.
+    pub(super) fn index_alone(&self, kind: FileKind, bytes: &[u8]) -> Result<Indexed, ReadFault> {
+        let macros = match kind.blanks_macros() {
+            true => self.tree.of_file(&code::lexed(bytes)),
+            false => FileMacros::default(),
+        };
+        self.index(kind, bytes, &macros)
+    }
+
+    /// The index of `bytes`, a file of `kind` that blanks `macros`, built
+    /// once the room holds them: by the worker itself up to
     /// [`code::MAX_BYTES_INDEXED_BY_A_WORKER`], on a thread of its own past
     /// it; [`ReadFault::NoThread`] when the system refuses that thread.
-    pub(super) fn index(&self, kind: FileKind, bytes: &[u8]) -> Result<Indexed, ReadFault> {
+    pub(super) fn index(
+        &self,
+        kind: FileKind,
+        bytes: &[u8],
+        macros: &FileMacros,
+    ) -> Result<Indexed, ReadFault> {
         let _taken = self.room.take(bytes.len());
         if bytes.len() <= code::MAX_BYTES_INDEXED_BY_A_WORKER {
-            return Ok(code::index(kind, bytes, self.macros));
+            return Ok(code::index(kind, bytes, macros));
         }
         thread::scope(|scope| {
             let parse = start(scope, code::PARSE_STACK_BYTES, || {
-                code::index(kind, bytes, self.macros)
+                code::index(kind, bytes, macros)
             })?;
             Ok(joined(parse))
         })

@@ -64,13 +64,18 @@
 ; Functions with a return type: defined, or declared at a namespace's top
 ; or in a class; a method in a class. The span is the definition or the
 ; declaration itself, its name met through the declarators real code
-; writes (a pointer or a reference returned). A name in parentheses is a
-; function pointer's, and one holding a brace or a semicolon a misparse's.
+; writes (a pointer, a reference or a function pointer returned, and a
+; name in parentheses, `int (max)(int, int)`). A declarator in
+; parentheses is a function pointer's, and one holding a brace or a
+; semicolon a misparse's.
 ((function_definition type: (_)
    declarator: [(function_declarator declarator: (_) @name)
+                (function_declarator declarator: (parenthesized_declarator [(identifier) (qualified_identifier)] @name))
+                (_ declarator: (function_declarator declarator: (parenthesized_declarator [(identifier) (qualified_identifier)] @name)))
                 (_ declarator: (function_declarator declarator: (_) @name))
                 (reference_declarator (function_declarator declarator: (_) @name))
-                (_ declarator: (_ declarator: (function_declarator declarator: (_) @name)))]) @definition
+                (_ declarator: (_ declarator: (function_declarator declarator: (_) @name)))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))]) @definition
   (#not-match? @name "^[(]|[{};]")
   (#set! kind "function")
   (#set! kind.in "class:method struct:method union:method")
@@ -80,12 +85,18 @@
 
 ([(declaration type: (_)
    declarator: [(function_declarator declarator: (_) @name)
+                (function_declarator declarator: (parenthesized_declarator [(identifier) (qualified_identifier)] @name))
+                (_ declarator: (function_declarator declarator: (parenthesized_declarator [(identifier) (qualified_identifier)] @name)))
                 (_ declarator: (function_declarator declarator: (_) @name))
-                (reference_declarator (function_declarator declarator: (_) @name))])
+                (reference_declarator (function_declarator declarator: (_) @name))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))])
   (field_declaration type: (_)
    declarator: [(function_declarator declarator: (_) @name)
+                (function_declarator declarator: (parenthesized_declarator (field_identifier) @name))
+                (_ declarator: (function_declarator declarator: (parenthesized_declarator (field_identifier) @name)))
                 (_ declarator: (function_declarator declarator: (_) @name))
-                (reference_declarator (function_declarator declarator: (_) @name))])] @definition
+                (reference_declarator (function_declarator declarator: (_) @name))
+                (function_declarator declarator: (parenthesized_declarator (_ declarator: (function_declarator declarator: (_) @name))))])] @definition
   (#not-match? @name "^[(]|[{};]")
   (#set! kind "function")
   (#set! kind.in "class:method struct:method union:method")
@@ -116,16 +127,25 @@
   (#set! name.skip "abstract_function_declarator")
   (#set! visibility "public"))
 
+; A constructor in its class, a template one among them, the class
+; named alone or qualified (`struct DBImpl::Writer {`).
 ([(class_specifier
-    name: [(type_identifier) @_class (template_type name: (type_identifier) @_class)]
+    name: [(type_identifier) @_class
+           (template_type name: (type_identifier) @_class)
+           (qualified_identifier name: (type_identifier) @_class)]
     body: (field_declaration_list
-      (_ !type declarator: (function_declarator declarator: (identifier) @name)) @definition))
+      [(_ !type declarator: (function_declarator declarator: (identifier) @name)) @definition
+       (template_declaration (_ !type declarator: (function_declarator declarator: (identifier) @name)) @definition)]))
   (struct_specifier
-    name: [(type_identifier) @_class (template_type name: (type_identifier) @_class)]
+    name: [(type_identifier) @_class
+           (template_type name: (type_identifier) @_class)
+           (qualified_identifier name: (type_identifier) @_class)]
     body: (field_declaration_list
-      (_ !type declarator: (function_declarator declarator: (identifier) @name)) @definition))]
+      [(_ !type declarator: (function_declarator declarator: (identifier) @name)) @definition
+       (template_declaration (_ !type declarator: (function_declarator declarator: (identifier) @name)) @definition)]))]
   (#eq? @_class @name)
   (#set! kind "method")
+  (#set! definition.wrap "template_declaration")
   (#set! visibility "public"))
 
 ; A friend, declared or defined in its class, is a function of the
@@ -145,8 +165,11 @@
   (#set! visibility "public"))
 
 ; A lambda a namespace binds is a function; any other lambda is a scope
-; of its own, whose locals and types stay its own.
+; of its own, whose locals and types stay its own, and so is a body no
+; definition captures (a misparse's).
 (lambda_expression) @scope.unnamed
+
+(compound_statement) @scope.unnamed
 
 ((init_declarator declarator: (identifier) @name value: (lambda_expression)) @definition
   (#set! kind "function")
@@ -162,13 +185,29 @@
   (init_declarator declarator: [(identifier) (qualified_identifier)] @name)
   (pointer_declarator declarator: [(identifier) (qualified_identifier)] @name)
   (reference_declarator [(identifier) (qualified_identifier)] @name)
-  (array_declarator declarator: [(identifier) (qualified_identifier)] @name)
-  (parenthesized_declarator [(identifier) (qualified_identifier)] @name)] @definition
+  (array_declarator declarator: [(identifier) (qualified_identifier)] @name)] @definition
   (#set! kind "variable")
   (#set! container "false")
   (#set! within "top module")
   (#set! definition.via "pointer_declarator reference_declarator array_declarator parenthesized_declarator function_declarator init_declarator attributed_declarator")
   (#set! definition.to "declaration")
+  (#set! definition.wrap "template_declaration")
+  (#set! visibility "public"))
+
+; Each name a structured binding at a namespace's top binds
+; (`auto [first, second] = make();`) is a variable.
+((structured_binding_declarator (identifier) @name) @definition
+  (#set! kind "variable")
+  (#set! container "false")
+  (#set! within "top module")
+  (#set! definition.via "init_declarator")
+  (#set! definition.to "declaration")
+  (#set! visibility "public"))
+
+; A concept, a named set of requirements a type meets by its shape.
+((concept_definition name: (identifier) @name) @definition
+  (#set! kind "interface")
+  (#set! container "false")
   (#set! definition.wrap "template_declaration")
   (#set! visibility "public"))
 
@@ -206,8 +245,7 @@
 ([(field_declaration declarator: (field_identifier) @name)
   (pointer_declarator declarator: (field_identifier) @name)
   (reference_declarator (field_identifier) @name)
-  (array_declarator declarator: (field_identifier) @name)
-  (parenthesized_declarator (field_identifier) @name)] @definition
+  (array_declarator declarator: (field_identifier) @name)] @definition
   (#set! kind "field")
   (#set! container "false")
   (#set! definition.via "pointer_declarator reference_declarator array_declarator parenthesized_declarator function_declarator")
@@ -240,7 +278,9 @@
 ; Visibility. `static` is internal linkage, and an anonymous namespace
 ; makes all it holds private; a class's members are private and a
 ; struct's or a union's public, up to an access label, which wins over
-; `static` in a class.
+; `static` in a class. A label in a `#if` arm holds past the arm; one
+; before a function holds nothing in its body; the members of an
+; anonymous union or struct are the outer class's, under its label.
 ([(function_definition (storage_class_specifier) @_static)
   (declaration (storage_class_specifier) @_static)] @visibility.private
   (#eq? @_static "static"))
@@ -249,16 +289,31 @@
 
 (class_specifier body: (field_declaration_list "{" @visibility.after.private))
 
-([(struct_specifier body: (field_declaration_list "{" @visibility.after.public))
-  (union_specifier body: (field_declaration_list "{" @visibility.after.public))])
+([(struct_specifier name: (_) body: (field_declaration_list "{" @visibility.after.public))
+  (union_specifier name: (_) body: (field_declaration_list "{" @visibility.after.public))])
+
+([(field_declaration
+    type: [(struct_specifier !name body: (field_declaration_list "{" @visibility.after.public))
+           (union_specifier !name body: (field_declaration_list "{" @visibility.after.public))]
+    declarator: (_))
+  (type_definition
+    type: [(struct_specifier !name body: (field_declaration_list "{" @visibility.after.public))
+           (union_specifier !name body: (field_declaration_list "{" @visibility.after.public))])
+  (declaration
+    type: [(struct_specifier !name body: (field_declaration_list "{" @visibility.after.public))
+           (union_specifier !name body: (field_declaration_list "{" @visibility.after.public))])])
+
+(compound_statement "{" @visibility.after.public)
+
+[(preproc_if) (preproc_ifdef) (preproc_else) (preproc_elif) (preproc_elifdef)] @visibility.through
 
 ((access_specifier) @_access @visibility.after.public (#eq? @_access "public"))
 ((access_specifier) @_access @visibility.after.private (#eq? @_access "private"))
 ((access_specifier) @_access @visibility.after.protected (#eq? @_access "protected"))
 
 ; The hash: a literal is one token, its spaces kept; a macro's body one
-; token per word, so its spaces and the line breaks it continues over
-; move nothing.
+; unit a token of the C lexer, so its spaces and the line breaks it
+; continues over move nothing.
 [(string_literal) (char_literal) (raw_string_literal) (system_lib_string)] @hash.unit
 
-(preproc_arg) @hash.words
+(preproc_arg) @hash.tokens

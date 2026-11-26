@@ -16,11 +16,7 @@ use super::{DEPTH_BYTES, Indexed, block, max_entry_bytes};
 /// back, and the entry and what its decode allocates together take no
 /// more than that.
 pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Option<Indexed> {
-    let mut reader = Reader {
-        bytes,
-        at: 0,
-        left: max_entry_bytes(kind, source_bytes).checked_sub(bytes.len())?,
-    };
+    let mut reader = Reader::new(bytes, max_entry_bytes(kind, source_bytes))?;
     let indexed = match reader.byte()? {
         0 => Ok(reader.index()?),
         1 => Err(IndexFault::NotUtf8 {
@@ -44,24 +40,42 @@ pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Optio
         }),
         _ => return None,
     };
-    (reader.at == bytes.len()).then_some(indexed)
+    reader.is_done().then_some(indexed)
 }
 
-struct Reader<'b> {
+/// A reader of an entry's bytes, which charges each heap block a value
+/// it reads takes against what the entry's room leaves.
+pub(in crate::code) struct Reader<'b> {
     /// The bytes the decode may still allocate.
     left: usize,
     bytes: &'b [u8],
     at: usize,
 }
 
-impl Reader<'_> {
-    fn byte(&mut self) -> Option<u8> {
+impl<'b> Reader<'b> {
+    /// A reader of `bytes`, an entry whose room is `room`: its bytes and
+    /// the heap blocks its values take together; `None` when the bytes
+    /// alone pass it.
+    pub(in crate::code) fn new(bytes: &'b [u8], room: usize) -> Option<Self> {
+        Some(Self {
+            left: room.checked_sub(bytes.len())?,
+            bytes,
+            at: 0,
+        })
+    }
+
+    /// Whether every byte is read.
+    pub(in crate::code) const fn is_done(&self) -> bool {
+        self.at == self.bytes.len()
+    }
+
+    pub(in crate::code) fn byte(&mut self) -> Option<u8> {
         let byte = *self.bytes.get(self.at)?;
         self.at += 1;
         Some(byte)
     }
 
-    fn number(&mut self) -> Option<usize> {
+    pub(in crate::code) fn number(&mut self) -> Option<usize> {
         let mut number: u64 = 0;
         for shift in (0..64).step_by(7) {
             let byte = self.byte()?;
@@ -80,7 +94,7 @@ impl Reader<'_> {
     }
 
     /// A count of values of `T`, the block of their collection charged.
-    fn items<T>(&mut self) -> Option<usize> {
+    pub(in crate::code) fn items<T>(&mut self) -> Option<usize> {
         let count = self.count()?;
         self.own(count.checked_mul(size_of::<T>())?)?;
         Some(count)
@@ -91,7 +105,7 @@ impl Reader<'_> {
         (count <= self.bytes.len() - self.at).then_some(count)
     }
 
-    fn text(&mut self) -> Option<String> {
+    pub(in crate::code) fn text(&mut self) -> Option<String> {
         let length = self.count()?;
         self.own(length)?;
         let bytes = self.bytes.get(self.at..self.at + length)?;

@@ -1,11 +1,11 @@
 //! The units of a tree's span hashes and the hashes over them. A tree's
 //! tokens (`syntax.rs`) are its units, each glued kind of its grammar's
-//! [`Lexicon`] two, a node its query marks by its words one per run of
-//! its text between blanks (a C macro's body), and one it marks by its
-//! characters as JSX renders it (JSX text), and a string's delimiter, a
-//! number or an escape it marks one spelled by what it means
-//! ([`delimiter`], [`literal`]); a comment inside a token is no part of
-//! it. A grammar whose layout carries syntax that no byte holds (the
+//! [`Lexicon`] two, a node its query marks by its tokens one per token
+//! its lexicon's lexer finds in it (a C macro's body), and one it marks by
+//! its characters as JSX renders it (JSX text), and a string's delimiter,
+//! a number or an escape it marks one spelled by what it means
+//! ([`delimiter`], [`literal`]); a comment inside a token, and a line
+//! continuation the lexicon splices there, is no part of it. A grammar whose layout carries syntax that no byte holds (the
 //! statements and blocks of Python, whose NEWLINE, INDENT and DEDENT are
 //! tokens of no width in no node) marks the nodes whose extent is part of
 //! the hash: each such group opens and closes with a mark no token's
@@ -25,7 +25,8 @@ use super::syntax::{Lexicon, Take, Token, tokens, walk_tokens};
 
 /// The units of a tree's span hashes, in order: each token's bytes, and
 /// the marks that open and close a group of a marked tree; and the
-/// comments inside tokens, in order, whose bytes no token holds.
+/// comments and spliced line continuations inside tokens, in order, whose
+/// bytes no token holds.
 #[derive(Default)]
 pub(super) struct Leaves {
     units: Vec<Unit>,
@@ -58,8 +59,8 @@ enum Mark {
 pub(super) struct NodeMarks {
     /// One token whole.
     pub(super) whole: bool,
-    /// One token per run of its text between ASCII whitespace.
-    pub(super) words: bool,
+    /// One token per token its lexicon's lexer finds in it.
+    pub(super) tokens: bool,
     /// Its text as JSX renders it: a token a character, an empty one a
     /// run of whitespace.
     pub(super) chars: bool,
@@ -84,7 +85,7 @@ impl NodeMarks {
     const fn take(self) -> Option<Take> {
         match self {
             Self { skip: true, .. } => Some(Take::Skip),
-            Self { words: true, .. }
+            Self { tokens: true, .. }
             | Self { chars: true, .. }
             | Self {
                 delimiter: true, ..
@@ -153,7 +154,7 @@ impl Leaves {
                 | Token::Leave(_) => false,
             };
             if !is_silent {
-                leaves.push(token, lexicon);
+                leaves.push(token, (text, lexicon));
             }
             ControlFlow::Continue(())
         });
@@ -174,8 +175,8 @@ impl Leaves {
         walk_tokens(tree.root_node(), (text, lexicon), take, |token| {
             let units = &mut leaves.units;
             match token {
-                Token::Node(node) if marks_of(node).words => {
-                    push_words(units, node, (text, lexicon));
+                Token::Node(node) if marks_of(node).tokens => {
+                    leaves.push_tokens(node, (text, lexicon));
                 }
                 Token::Node(node) if marks_of(node).delimiter => {
                     units.push(Unit::spelled(node, Mark::Delimiter));
@@ -185,7 +186,7 @@ impl Leaves {
                 }
                 Token::Node(node) if marks_of(node).chars => push_chars(units, node, text),
                 Token::Node(_) | Token::Gap { .. } | Token::Run { .. } | Token::Hole { .. } => {
-                    leaves.push(token, lexicon);
+                    leaves.push(token, (text, lexicon));
                 }
                 Token::Enter(node) => {
                     let marked = marks_of(node);
@@ -211,15 +212,51 @@ impl Leaves {
         (leaves, spans)
     }
 
-    /// Push the units of `token`, a token of bytes, or the hole it is.
-    fn push(&mut self, token: Token<'_>, lexicon: &Lexicon) {
+    /// Push the units of `token`, a token of bytes of `text`, or the hole
+    /// it is.
+    fn push(&mut self, token: Token<'_>, (text, lexicon): (&str, &Lexicon)) {
         match token {
             Token::Hole { start, end } => self.holes.push(start..end),
+            Token::Node(node) if self.is_spliced(node, (text, lexicon)) => {}
             Token::Node(_) | Token::Gap { .. } | Token::Run { .. } => {
                 push_text(&mut self.units, token, lexicon);
             }
             Token::Enter(_) | Token::Leave(_) => {}
         }
+    }
+
+    /// Whether `node` is the rest of the last unit, as the preprocessor
+    /// splices it: only a line continuation `lexicon` splices parts them,
+    /// a word's character on each side. The unit then runs to the node's
+    /// end, the continuation a hole of it.
+    fn is_spliced(&mut self, node: Node<'_>, (text, lexicon): (&str, &Lexicon)) -> bool {
+        let Some(last) = self.units.last_mut() else {
+            return false;
+        };
+        if last.mark != Mark::Text || !lexicon.joins(text, last.to, node.start_byte()) {
+            return false;
+        }
+        self.holes.push(last.to..node.start_byte());
+        last.to = node.end_byte();
+        true
+    }
+
+    /// Push a unit for each token `lexicon`'s lexer finds in `node`'s
+    /// text, and a hole for each line continuation it splices inside one;
+    /// the node whole when the lexicon has no lexer.
+    fn push_tokens(&mut self, node: Node<'_>, (text, lexicon): (&str, &Lexicon)) {
+        let start = node.start_byte();
+        let Some(lex) = lexicon.tokens else {
+            self.units.push(Unit::text(start, node.end_byte()));
+            return;
+        };
+        let body = text.get(node.byte_range()).unwrap_or_default();
+        lex(body, &mut |range| {
+            let bytes = start + range.start..start + range.end;
+            self.holes
+                .extend(lexicon.spliced(text, bytes.start..bytes.end));
+            self.units.push(Unit::text(bytes.start, bytes.end));
+        });
     }
 
     /// The bytes `unit` is hashed as after its length: a token's, but
@@ -284,33 +321,6 @@ impl Leaves {
         hashing.feed_before(usize::MAX);
         hashing.close_ended(usize::MAX);
         hashing.hashes
-    }
-}
-
-/// Push a unit for each run of `node`'s text between ASCII whitespace and
-/// `lexicon`'s line continuations: none for a node of blanks alone.
-fn push_words(units: &mut Vec<Unit>, node: Node<'_>, (text, lexicon): (&str, &Lexicon)) {
-    let start = node.start_byte();
-    let bytes = text.as_bytes().get(node.byte_range()).unwrap_or_default();
-    let mut word: Option<usize> = None;
-    let mut continuation = 0;
-    for (at, byte) in bytes.iter().enumerate() {
-        if continuation == 0 {
-            continuation = lexicon.continuation(text.get(start + at..).unwrap_or_default());
-        }
-        let blank = byte.is_ascii_whitespace() || continuation > 0;
-        continuation = continuation.saturating_sub(1);
-        match (blank, word) {
-            (true, Some(from)) => {
-                units.push(Unit::text(start + from, start + at));
-                word = None;
-            }
-            (false, None) => word = Some(at),
-            (true, None) | (false, Some(_)) => {}
-        }
-    }
-    if let Some(from) = word {
-        units.push(Unit::text(start + from, start + bytes.len()));
     }
 }
 

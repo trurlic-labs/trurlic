@@ -38,14 +38,16 @@
 //!   label: a definition whose name lies in a later sibling of the node,
 //!   up to the next such label among them, has that visibility over a
 //!   mark of either other form: a C++ `public:`, or a class body's `{`
-//!   for its default), `@export.name` (a definition at
+//!   for its default), `@visibility.through` (a label among the
+//!   node's children holds for the node's later siblings too: a `#if`
+//!   arm's), `@export.name` (a definition at
 //!   the file's top named as the node's text is public when no mark holds
 //!   its name), `@scope.unnamed` (a scope no name stands for: see below),
 //!   `@scope.none` (no scope, whatever `@scope.unnamed` captures),
 //!   `@hash.unit` (one token of its text, the comments in it left out, cut
 //!   where each of its children with a hash mark of its own is taken by
-//!   it), `@hash.words` (one token per run of text between ASCII
-//!   whitespace), `@hash.chars` (its text as JSX renders it: a token a
+//!   it), `@hash.tokens` (one token per token its
+//!   grammar's lexicon lexes in it: a C macro's body), `@hash.chars` (its text as JSX renders it: a token a
 //!   character, an empty one a run of whitespace but one at an end that
 //!   holds a line break), `@hash.delimiter` (a string's delimiter, hashed as what
 //!   it means: its prefix letters in any case and order, `u` none, each
@@ -91,11 +93,13 @@ pub(super) enum Capture {
     Within(Visibility),
     /// A label: the later siblings of the node have the visibility.
     After(Visibility),
+    /// A label among the node's children holds for its later siblings.
+    Through,
     Export,
     Unnamed,
     NoScope,
     Unit,
-    Words,
+    Tokens,
     Chars,
     Delimiter,
     Literal,
@@ -565,7 +569,8 @@ fn capture_of(name: &str) -> Result<Capture, QueryFault> {
         "scope.unnamed" => Capture::Unnamed,
         "scope.none" => Capture::NoScope,
         "hash.unit" => Capture::Unit,
-        "hash.words" => Capture::Words,
+        "hash.tokens" => Capture::Tokens,
+        "visibility.through" => Capture::Through,
         "hash.chars" => Capture::Chars,
         "hash.delimiter" => Capture::Delimiter,
         "hash.literal" => Capture::Literal,
@@ -783,13 +788,14 @@ mod tests {
              ((class_definition name: (_) @name) @definition (#set! kind \"class\") \
              (#set! exclusive \"true\") (#set! name.separator \".\") \
              (#set! definition.preceding \"decorator comment\"))\n\
-             ([(identifier) @export.name (string) @hash.words])\n\
+             ([(identifier) @export.name (string) @hash.tokens])\n\
              ([(lambda) @scope.unnamed (block) @visibility.within.public (string) @hash.chars])\n\
              (lambda) @scope.none\n\
              ((call function: (identifier) @name arguments: (argument_list (identifier) @name)) \
              @definition (#set! kind \"function\") (#set! name.skip \"keyword_argument\") \
              (#set! name.text \"default\"))\n\
-             (class_definition body: (block . (_) @visibility.after.protected))\n"
+             (class_definition body: (block . (_) @visibility.after.protected))\n\
+             (if_statement) @visibility.through\n"
         );
         let rules = Rules::compile(python(), &source).unwrap();
 
@@ -813,7 +819,7 @@ mod tests {
         assert_eq!(claimed.preceding, Some(0));
         assert_eq!(rules.precedings[0].len(), 2);
         assert!(rules.captures.contains(&Capture::Export));
-        assert!(rules.captures.contains(&Capture::Words));
+        assert!(rules.captures.contains(&Capture::Tokens));
         assert!(rules.captures.contains(&Capture::Unnamed));
         assert!(
             rules
@@ -830,6 +836,7 @@ mod tests {
         assert_eq!(named_twice.text.as_deref(), Some("default"));
         assert!(rules.captures.contains(&Capture::Chars));
         assert!(rules.captures.contains(&Capture::NoScope));
+        assert!(rules.captures.contains(&Capture::Through));
         assert!(
             rules
                 .captures

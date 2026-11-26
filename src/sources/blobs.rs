@@ -41,7 +41,7 @@ impl Blobs<'_> {
             })
             .collect();
         let indexed = self.indexer.map(&blobs, |worker, (kind, _, _, bytes)| {
-            match worker.index(*kind, bytes) {
+            match worker.index_alone(*kind, bytes) {
                 Ok(indexed) => indexed.map_err(FileFault::Index),
                 Err(fault) => Err(FileFault::Read(fault)),
             }

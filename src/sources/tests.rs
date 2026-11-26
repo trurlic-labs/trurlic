@@ -805,6 +805,7 @@ const STATEMENTS: &[&str] = &[
     "Makefile install Target Code -",
     "Makefile twice Target Code -",
     "Makefile twice Target Code -",
+    "c/shelf.c SHELF_DONE Macro Code -",
     "c/shelf.c SWAP Macro Code -",
     "c/shelf.c shelf_opened Variable Code Public",
     "c/shelf.c verbose Variable Code Private",
@@ -814,6 +815,7 @@ const STATEMENTS: &[&str] = &[
     "c/shelf.c shelf_open::local::unused Field Code Public",
     "c/shelf.c shelf_close Function Code Public",
     "c/shelf.c sort_books Function Code Private",
+    "c/shelf.c shelf_scan Function Code Private",
     "c/shelf.c weigh Function Code Private",
     "c/shelf.c weigh Function Code Private",
     "c/shelf.c pick Function Code Public",
@@ -824,6 +826,8 @@ const STATEMENTS: &[&str] = &[
     "c/shelf.h SHELF_API Macro Code -",
     "c/shelf.h SHELF_API Macro Code -",
     "c/shelf.h SHELF_PRINTF Macro Code -",
+    "c/shelf.h SHELF_STATIC Macro Code -",
+    "c/shelf.h SHELF_STATIC Macro Code -",
     "c/shelf.h SHELF_FLAG Macro Code -",
     "c/shelf.h SHELF_CAPACITY Macro Code -",
     "c/shelf.h SHELF_HALF Macro Code -",
@@ -837,6 +841,7 @@ const STATEMENTS: &[&str] = &[
     "c/shelf.h shelf_state Enum Code Public",
     "c/shelf.h shelf_state::SHELF_OPEN Variant Code Public",
     "c/shelf.h shelf_state::SHELF_CLOSED Variant Code Public",
+    "c/shelf.h shelf_state::SHELF_DONE Variant Code Public",
     "c/shelf.h shelf Struct Code Public",
     "c/shelf.h shelf::books Field Code Public",
     "c/shelf.h shelf::count Field Code Public",
@@ -849,6 +854,9 @@ const STATEMENTS: &[&str] = &[
     "c/shelf.h shelf_open Function Code Public",
     "c/shelf.h shelf_close Function Code Public",
     "c/shelf.h shelf_log Function Code Public",
+    "c/shelf.h shelf_on_close Function Code Public",
+    "c/shelf.h shelf_max Function Code Public",
+    "c/shelf.h shelf_title Function Code Public",
     "c/shelf.h shelf_opened Variable Code Public",
     "c/tests/shelf_check.c check_open Function Test Private",
     "c/tests/shelf_check.c main Function Test Public",
@@ -868,6 +876,9 @@ const STATEMENTS: &[&str] = &[
     "cpp/shelf.cc shelf::model::Box::get Function Code Public",
     "cpp/shelf.cc shelf::model::Box::get Function Code Public",
     "cpp/shelf.cc shelf::model::heavier Function Code Public",
+    "cpp/shelf.cc shelf::model::Library::Index Struct Code Public",
+    "cpp/shelf.cc shelf::model::Library::Index::Index Method Code Public",
+    "cpp/shelf.cc shelf::model::Library::Index::size Field Code Public",
     "cpp/shelf.cc shelf::model::weigh Function Code Public",
     "cpp/shelf.cc shelf::model::weigh Function Code Public",
     "cpp/shelf.cc shelf::model::tidy Function Code Private",
@@ -922,9 +933,22 @@ const STATEMENTS: &[&str] = &[
     "cpp/shelf.hpp shelf::model::edition Module Code Public",
     "cpp/shelf.hpp shelf::model::edition::v2 Module Code Public",
     "cpp/shelf.hpp shelf::model::edition::v2::number Function Code Public",
+    "cpp/shelf.hpp shelf::model::pick Function Code Public",
+    "cpp/shelf.hpp shelf::model::larger Function Code Public",
+    "cpp/shelf.hpp shelf::model::Reader Class Code Public",
+    "cpp/shelf.hpp shelf::model::Reader::Reader Method Code Public",
+    "cpp/shelf.hpp shelf::model::Reader::raw Field Code Private",
+    "cpp/shelf.hpp shelf::model::Reader::real Field Code Private",
+    "cpp/shelf.hpp shelf::model::Reader::scan Method Code Private",
+    "cpp/shelf.hpp shelf::model::Reader::scan::Cursor Struct Code Public",
+    "cpp/shelf.hpp shelf::model::Reader::scan::Cursor::at Field Code Public",
+    "cpp/shelf.hpp shelf::model::Reader::check Method Code Protected",
+    "cpp/shelf.hpp shelf::model::Library Struct Code Public",
+    "cpp/shelf.hpp shelf::model::Small Interface Code Public",
+    "cpp/shelf.hpp shelf::model::first_shelf Variable Code Public",
+    "cpp/shelf.hpp shelf::model::last_shelf Variable Code Public",
     "cpp/shelf.hpp hidden_count Variable Code Private",
     "cpp/shelf.hpp shelved Variable Code Private",
-    "cpp/shelf.hpp size Variable Code Public",
     "cpp/shelf_test.cc shelf::model Module Test Public",
     "cpp/shelf_test.cc shelf::model::ShelfTest Class Test Public",
     "cpp/shelf_test.cc shelf::model::ShelfTest::opened_ Field Test Protected",
@@ -1284,4 +1308,61 @@ fn a_manifest_an_anchor_brings_governs_no_file_the_walk_took() {
         facts_of(&["sub/Cargo.toml", "sub/src/lib.rs", "sub/tests/t.rs"]),
         without
     );
+}
+/// A tree of `files`, each a path under the code root and its text, and
+/// its store.
+fn tree_of(files: &[(&str, &str)]) -> (TempDir, Store) {
+    let tmp = TempDir::new().unwrap();
+    for (path, text) in files {
+        let path = tmp.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let store = setup_store(tmp.path());
+    (tmp, store)
+}
+
+#[test]
+fn a_headers_define_blanks_every_file_and_a_source_files_that_file_alone() {
+    let (_tmp, store) = tree_of(&[
+        ("include/api.h", "#define API\n"),
+        ("lib/ftp.h", "typedef enum { PORT, DONE } ftpport;\n"),
+        ("lib/ftp.c", "API int ftp(void);\n"),
+        (
+            "lib/tool.c",
+            "#define DONE\n#define LOCAL\nLOCAL int tool(void);\n",
+        ),
+    ]);
+    let cases = [
+        ("lib/ftp.h", "ftpport::DONE", SYMBOL),
+        ("lib/ftp.c", "ftp", SYMBOL),
+        ("lib/tool.c", "tool", SYMBOL),
+    ];
+
+    assert_eq!(resolve_all(&store, &cases), expected(&cases));
+}
+
+#[test]
+fn a_define_added_to_a_header_indexes_anew_only_the_files_that_write_its_name() {
+    let (tmp, store) = tree_of(&[
+        ("include/api.h", "#define API\n"),
+        ("src/uses.c", "API NEW int uses(void);\n"),
+        ("src/other.c", "API int other(void);\n"),
+        ("src/plain.cc", "int plain();\n"),
+    ]);
+    gather(&store, std::iter::empty());
+    let before = entries(&store);
+    // Each file's index and lexical pass.
+    assert_eq!(before.len(), 8);
+    fs::write(
+        tmp.path().join("include/api.h"),
+        "#define API\n#define NEW\n",
+    )
+    .unwrap();
+
+    gather(&store, std::iter::empty());
+    let added = entries(&store).difference(&before).count();
+
+    // The header's index and lexical pass, and the index of `src/uses.c`.
+    assert_eq!(added, 3);
 }

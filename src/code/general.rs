@@ -8,9 +8,10 @@
 //! goes quadratic on the deep error trees of hostile input. A query match
 //! limit that is hit is a fault, never a dropped match, and the text its
 //! predicates and the names read is charged to a budget per byte. The
-//! walk keeps its own frame for each ancestor of the node it is at (its
-//! kind, its span, whether a test mark holds it, the innermost visibility
-//! mark of each form, the label in force for its children, how far each
+//! walk keeps its own frame for each ancestor of the node it is at
+//! (`general/frame.rs`: its kind, its span, whether a test mark holds it,
+//! the innermost visibility mark of each form, the label in force for its
+//! children; and here how far each
 //! span growth and wrap reaches from it,
 //! and the run of siblings of each preceding set right before it), so no
 //! parent or sibling is read through tree-sitter, which finds one by a
@@ -24,6 +25,7 @@
 //! scopes by the nodes they captured. A definition's path is its
 //! container's and its name's segments (`general/name.rs`).
 
+mod frame;
 mod name;
 mod place;
 
@@ -41,6 +43,8 @@ use super::syntax;
 use super::tree::TreeIndex;
 use super::units::{Leaves, NodeMarks};
 use super::work::{SCAN_WORK_PER_BYTE, Work};
+
+use frame::{Frame, VisibilityMark, Waiting};
 
 /// The matches a query may have in progress at once. A file that needs
 /// more is refused, not read in part.
@@ -123,15 +127,6 @@ impl Extent {
     }
 }
 
-/// A node a `@visibility.<name>` capture marks: its bytes and the
-/// visibility.
-#[derive(Debug, Clone, Copy)]
-struct VisibilityMark {
-    start: usize,
-    end: usize,
-    visibility: Visibility,
-}
-
 /// What the walk found of a definition's name node: the text of each of
 /// its segments, whether a test mark holds it, the innermost visibility
 /// mark that holds it, the visibility of the innermost
@@ -172,42 +167,6 @@ struct Candidate<'r> {
     name: Option<NameNode>,
     /// The name nodes the walk has yet to reach.
     names_left: usize,
-}
-
-/// What a captured node waits for the walk to reach it with.
-#[derive(Debug, Clone, Copy)]
-enum Waiting {
-    Definition(usize),
-    Name(usize),
-    Test,
-    Visibility(Visibility),
-    Within(Visibility),
-    After(Visibility),
-}
-
-impl Waiting {
-    /// The candidate a `@definition` capture waits for.
-    const fn definition(&self) -> Option<usize> {
-        match self {
-            Self::Definition(at) => Some(*at),
-            Self::Name(_) | Self::Test | Self::Visibility(_) | Self::Within(_) | Self::After(_) => {
-                None
-            }
-        }
-    }
-}
-
-/// What the walk keeps of an ancestor of the node it is at.
-#[derive(Debug, Clone, Copy)]
-struct Frame {
-    kind: u16,
-    node: SpanNode,
-    test: bool,
-    visibility: Option<VisibilityMark>,
-    within: Option<Visibility>,
-    /// The label in force for its children: the last one among them seen
-    /// so far, else the one in force for it.
-    after: Option<Visibility>,
 }
 
 /// What the walk found: the candidates, the nodes captured as unnamed
@@ -358,6 +317,7 @@ impl<'r> Walk<'r, '_> {
                 Capture::Visibility(visibility) => wait(Waiting::Visibility(visibility)),
                 Capture::Within(visibility) => wait(Waiting::Within(visibility)),
                 Capture::After(visibility) => wait(Waiting::After(visibility)),
+                Capture::Through => wait(Waiting::Through),
                 Capture::Unnamed => self.found.unnamed.push(SpanNode::of(capture.node)),
                 Capture::NoScope => {
                     self.found.no_scope.insert(id);
@@ -368,7 +328,7 @@ impl<'r> Walk<'r, '_> {
                     }
                 }
                 Capture::Unit => mark(|marks| marks.whole = true),
-                Capture::Words => mark(|marks| marks.words = true),
+                Capture::Tokens => mark(|marks| marks.tokens = true),
                 Capture::Chars => mark(|marks| marks.chars = true),
                 Capture::Delimiter => mark(|marks| marks.delimiter = true),
                 Capture::Literal => mark(|marks| marks.literal = true),
@@ -410,10 +370,10 @@ impl<'r> Walk<'r, '_> {
     fn enter(&mut self, node: Node<'_>, work: &mut Work) -> Result<(), IndexFault> {
         let waiting = self.waiting.remove(&node.id()).unwrap_or_default();
         let parent = self.frames.last().copied();
-        let frame = frame_of(node, parent, &waiting);
+        let frame = Frame::of(node, parent, &waiting);
         for waited in &waiting {
-            if let (Waiting::After(label), Some(parent)) = (waited, self.frames.last_mut()) {
-                parent.after = Some(*label);
+            if let Waiting::After(label) = waited {
+                frame::set_label(&mut self.frames, *label);
             }
         }
         self.push_reach(frame.kind, parent.map(|parent| parent.kind));
@@ -431,8 +391,11 @@ impl<'r> Walk<'r, '_> {
                     }
                 }
                 Waiting::Name(at) => self.complete_name(at, node, frame, work)?,
-                Waiting::Test | Waiting::Visibility(_) | Waiting::Within(_) | Waiting::After(_) => {
-                }
+                Waiting::Test
+                | Waiting::Visibility(_)
+                | Waiting::Within(_)
+                | Waiting::After(_)
+                | Waiting::Through => {}
             }
         }
         Ok(())
@@ -610,42 +573,6 @@ impl<'r> Walk<'r, '_> {
         self.before.truncate(depth * width);
         self.runs.truncate(depth * width);
     }
-}
-
-/// The frame of `node` under `parent`: test code when its parent is or a
-/// test mark waited for it, under its own visibility marks of each form
-/// or else its parent's innermost (of two `@visibility.within` marks of
-/// the node, the one [`Visibility`] orders first), and under the label in
-/// force for its parent's children.
-fn frame_of(node: Node<'_>, parent: Option<Frame>, waiting: &[Waiting]) -> Frame {
-    let span = SpanNode::of(node);
-    let mut frame = Frame {
-        kind: node.kind_id(),
-        node: span,
-        test: parent.is_some_and(|parent| parent.test),
-        visibility: parent.and_then(|parent| parent.visibility),
-        within: parent.and_then(|parent| parent.within),
-        after: parent.and_then(|parent| parent.after),
-    };
-    let mut within = None;
-    for waited in waiting {
-        match *waited {
-            Waiting::Test => frame.test = true,
-            Waiting::Visibility(visibility) => {
-                frame.visibility = Some(VisibilityMark {
-                    start: span.start,
-                    end: span.end,
-                    visibility,
-                });
-            }
-            Waiting::Within(visibility) => {
-                within = Some(within.map_or(visibility, |other: Visibility| other.min(visibility)));
-            }
-            Waiting::Definition(_) | Waiting::Name(_) | Waiting::After(_) => {}
-        }
-    }
-    frame.within = within.or(frame.within);
-    frame
 }
 
 #[cfg(test)]

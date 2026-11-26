@@ -1,16 +1,11 @@
 use super::*;
-use crate::code::index::{FileKind, index as index_file};
+use crate::code::index::FileKind;
 use crate::code::kinds::{DefinitionKind, Role, Visibility};
 use crate::code::scope::{MAX_NESTING, Scopes};
 use crate::code::testing;
 
 fn index(text: &str) -> FileIndex {
-    index_file(
-        FileKind::Rust,
-        text.as_bytes(),
-        &crate::code::BlankMacros::default(),
-    )
-    .unwrap()
+    crate::code::testing::index(FileKind::Rust, text.as_bytes()).unwrap()
 }
 
 /// Each definition of `text` as its path and the text of its span.
@@ -85,20 +80,9 @@ fn a_macro_rules_macro_is_a_definition_and_no_invocation_defines_anything() {
 fn a_nesting_past_the_bound_has_no_index() {
     let nested = |depth: usize| format!("{}{}", "mod m {".repeat(depth), "}".repeat(depth));
 
-    assert!(
-        index_file(
-            FileKind::Rust,
-            nested(MAX_NESTING).as_bytes(),
-            &crate::code::BlankMacros::default()
-        )
-        .is_ok()
-    );
+    assert!(crate::code::testing::index(FileKind::Rust, nested(MAX_NESTING).as_bytes()).is_ok());
     assert_eq!(
-        index_file(
-            FileKind::Rust,
-            nested(MAX_NESTING + 1).as_bytes(),
-            &crate::code::BlankMacros::default()
-        ),
+        crate::code::testing::index(FileKind::Rust, nested(MAX_NESTING + 1).as_bytes()),
         Err(IndexFault::TooDeep)
     );
 }
@@ -178,11 +162,7 @@ fn hostile_rust_is_refused_or_read_in_linear_work() {
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");
         match testing::on_parse_stack(|| {
-            index_file(
-                FileKind::Rust,
-                text.as_bytes(),
-                &crate::code::BlankMacros::default(),
-            )
+            crate::code::testing::index(FileKind::Rust, text.as_bytes())
         }) {
             Ok(_) | Err(IndexFault::TooComplex) => {}
             Err(other) => panic!("{case}: {other}"),

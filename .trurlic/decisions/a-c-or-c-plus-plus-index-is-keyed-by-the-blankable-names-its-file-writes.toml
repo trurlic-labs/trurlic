@@ -1,0 +1,26 @@
+component = "code"
+choice = "A C or C++ file's index is keyed by its content and the part of the tree's blank set it writes; its lexical pass is a cache entry of its own, keyed by its content"
+reason = "A key that holds the tree's whole set makes the tree one unit: an empty #define added anywhere indexes every C and C++ file anew. A file's blank depends only on the blankable names it writes outside directives, comments and literals, so its key holds those alone, and a #define a header adds indexes anew only that header and the files that write its name. Which names a file writes, and its #defines, come from one lexical pass, cached by the file's content as an index is, so an unchanged file is never lexed again; the call's own misses are read before the store, so a header lexed for the tree's set is not lexed again for its key. The headers are read first, for the set, and a header's digest from that read keys its entries, so a header whose index the cache holds is read once, as every source file is. A lexical entry is bounded by its file as an index is: a read charges each value its weight against the room of the file it is read for and refuses an entry past it."
+alternatives = [
+    "The tree's set in every C and C++ key: rejected because one #define added anywhere indexes the whole tree anew",
+    "The lexical pass run afresh each call: rejected because it reads and lexes every C and C++ file a second time, the largest cost of a warm check",
+    "The lexical pass inside the index's entry: rejected because two trees of one content and different sets would then overwrite each other's entry",
+]
+tags = [
+    "performance",
+    "storage",
+]
+status = "proposed"
+origin = "c and c++ review: macro scope, shapes and visibility"
+created = "2026-11-26T07:59:22.658737393Z"
+anchors = [
+    { file = "src/code/language/c_family/encoding.rs", symbol = "decode_lexed" },
+    { file = "src/sources/cache.rs", symbol = "key" },
+    { file = "src/sources/cache.rs", symbol = "lexed_key" },
+    { file = "src/sources/lexical.rs", symbol = "Cached" },
+    { file = "src/sources/mod.rs", symbol = "read_and_index" },
+    { file = "src/sources/tests.rs", symbol = "a_define_added_to_a_header_indexes_anew_only_the_files_that_write_its_name" },
+]
+depends_on = [
+    "a-header-s-defines-reach-every-c-or-c-plus-plus-file-and-a-source-file-s-only-itself",
+]

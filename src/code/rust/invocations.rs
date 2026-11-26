@@ -36,17 +36,13 @@ pub(super) fn invoked_names<'t>(
 
 #[cfg(test)]
 mod tests {
-    use crate::code::index::{FileKind, index};
+    use crate::code::index::FileKind;
 
     fn invoked(text: &str) -> Vec<String> {
-        index(
-            FileKind::Rust,
-            text.as_bytes(),
-            &crate::code::BlankMacros::default(),
-        )
-        .unwrap()
-        .rust
-        .invoked
+        crate::code::testing::index(FileKind::Rust, text.as_bytes())
+            .unwrap()
+            .rust
+            .invoked
     }
 
     #[test]

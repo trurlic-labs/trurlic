@@ -303,7 +303,6 @@ fn normalize(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::index::index;
 
     fn test_files_of(files: &[(&str, &str)]) -> Vec<String> {
         let indexes: Vec<(&str, FileKind, FileIndex)> = files
@@ -313,7 +312,7 @@ mod tests {
                 (
                     *path,
                     kind,
-                    index(kind, text.as_bytes(), &crate::code::BlankMacros::default()).unwrap(),
+                    crate::code::testing::index(kind, text.as_bytes()).unwrap(),
                 )
             })
             .collect();

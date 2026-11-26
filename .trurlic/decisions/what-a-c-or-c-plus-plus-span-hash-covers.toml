@@ -1,9 +1,9 @@
 component = "code"
-choice = "A C or C++ span hash takes a literal as one token, a macro's body one token per word, and a line continuation as blank; a comment in a one-line macro body is one of its words"
-reason = "A hash must move with the code and stay under a reformat. A string or character literal, a raw string and an include's path are one token each, their spaces kept, since they are values. tree-sitter keeps a #define's body as one leaf, so its spaces and the lines it is continued over would move its hash; the body is hashed one token per run between blanks, and a backslash before a line break is blank there and between nodes, so re-wrapping a macro or a statement moves nothing. The comments of a continued #define are blanked before the parse, which also keeps tree-sitter from ending the directive at them; a comment in a one-line body is left, since blanking it leaves trailing blanks tree-sitter-c misreads, and is the stated limit. Concatenated strings and digraphs are hashed as written."
+choice = "A C or C++ span hash takes a literal as one token and a macro's body one unit a token of the C lexer; a line continuation is blank between two tokens and spliced inside one"
+reason = "A hash must move with the code and stay under a reformat. A string or character literal, a raw string and an include's path are one token each, their spaces kept, since they are values. tree-sitter keeps a #define's body as one leaf, so the body is hashed by the tokens the blank pass's lexer reads in it, comments left out: a formatter's spacing of an operator, a re-wrap over continued lines and a comment move nothing, and ((a)+1) hashes as ((a) + 1). A backslash before a line break is blank between two tokens, in a body and between nodes; inside a token it is spliced as the preprocessor splices it, so a, a continuation and b are the one token ab, never the two that a b is. The comments of a continued #define are blanked before the parse, which keeps tree-sitter from ending the directive at them. Concatenated strings and digraphs are hashed as written."
 alternatives = [
     "A macro's body verbatim: rejected because a re-wrap would read as a change",
-    "Blank every #define's comments: rejected because trailing blanks broke curl's examples",
+    "A body hashed one unit a run between blanks: rejected because a formatter's spacing of an operator moved its hash",
 ]
 tags = [
     "anchors",
@@ -13,9 +13,12 @@ status = "proposed"
 origin = "c and c++"
 created = "2026-11-25T23:03:16.297379871Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_macros_body_is_hashed_by_its_words_over_its_continuations" },
-    { file = "src/code/syntax.rs", symbol = "Lexicon::continuation" },
-    { file = "src/code/units.rs", symbol = "push_words" },
+    { file = "src/code/general/tests.rs", symbol = "a_line_continuation_inside_a_token_joins_it_and_between_tokens_is_blank" },
+    { file = "src/code/general/tests.rs", symbol = "a_macros_body_is_hashed_by_its_tokens_whatever_their_spacing" },
+    { file = "src/code/language/c_family.rs", symbol = "tokens" },
+    { file = "src/code/syntax.rs", symbol = "Lexicon::joins" },
+    { file = "src/code/units.rs", symbol = "Leaves::is_spliced" },
+    { file = "src/code/units.rs", symbol = "Leaves::push_tokens" },
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",

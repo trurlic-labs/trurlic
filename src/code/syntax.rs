@@ -22,7 +22,7 @@
 //! comments inside, cut at each child the query marks as well
 //! ([`Take::Text`]). The span hashes over them are `units.rs`'s.
 
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Range};
 
 use tree_sitter::{Language, Node, Parser, Tree};
 
@@ -338,10 +338,17 @@ pub(super) struct Lexicon {
     /// nothing.
     pub(super) glued: &'static [(&'static str, usize)],
     /// Whether a backslash right before a line break is blank, as C's and
-    /// Python's line continuation is, in a gap and in a node hashed by its
-    /// words.
+    /// Python's line continuation is, in a gap and between two tokens.
     pub(super) continuations: bool,
+    /// Whether a line continuation inside a token is spliced out of it,
+    /// as C's preprocessor does before it reads a token, and not blank.
+    pub(super) splices: bool,
+    /// The lexer of a node hashed by its tokens.
+    pub(super) tokens: Option<TokenLexer>,
 }
+
+/// A lexer that hands its callback the range of each token of a text.
+pub(super) type TokenLexer = fn(&str, &mut dyn FnMut(Range<usize>));
 
 impl Lexicon {
     /// The bytes of the line continuation `rest` opens with; 0 when it
@@ -352,6 +359,45 @@ impl Lexicon {
             (true, [b'\\', b'\r', b'\n', ..]) => 3,
             _ => 0,
         }
+    }
+
+    /// The line continuations inside `bytes`, a token of `text`, that the
+    /// lexicon splices out of it.
+    pub(super) fn spliced(&self, text: &str, bytes: Range<usize>) -> Vec<Range<usize>> {
+        let mut found = Vec::new();
+        let mut at = bytes.start;
+        while self.splices && at < bytes.end {
+            match self.continuation(text.get(at..bytes.end).unwrap_or_default()) {
+                0 => at += 1,
+                length => {
+                    found.push(at..at + length);
+                    at += length;
+                }
+            }
+        }
+        found
+    }
+
+    /// Whether the bytes of `text` from `end` to `start`, between two
+    /// tokens, are line continuations the lexicon splices, alone and with
+    /// a word's character on each side: the two are one token.
+    pub(super) fn joins(&self, text: &str, end: usize, start: usize) -> bool {
+        let is_word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let between = text.get(end..start).filter(|_| self.splices);
+        let Some(between) = between.filter(|between| !between.is_empty()) else {
+            return false;
+        };
+        let mut at = 0;
+        while at < between.len() {
+            match self.continuation(between.get(at..).unwrap_or_default()) {
+                0 => return false,
+                length => at += length,
+            }
+        }
+        is_word(
+            text.get(..end)
+                .and_then(|before| before.chars().next_back()),
+        ) && is_word(text.get(start..).and_then(|after| after.chars().next()))
     }
 
     /// The bytes of the comment `rest` opens with; 0 when it opens with

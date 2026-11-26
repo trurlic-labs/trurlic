@@ -34,6 +34,7 @@ mod purity;
 mod query;
 mod roles;
 mod rust;
+
 mod scope;
 mod span;
 mod symbol;
@@ -57,7 +58,10 @@ pub(crate) use index::{
     MAX_SOURCE_BYTES, PARSE_STACK_BYTES, WORKER_STACK_BYTES, index,
 };
 pub(crate) use kinds::{DefinitionKind, Role};
-pub(crate) use language::c_family::{BlankMacros, defines};
+pub(crate) use language::c_family::{
+    BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, is_header, lexed,
+    max_lexed_bytes,
+};
 
 /// Whether the query of the language named `name` (`c`, `cpp`, `python`,
 /// `typescript`, `tsx`) compiles within its contract, compiled afresh:

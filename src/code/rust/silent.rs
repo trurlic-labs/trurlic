@@ -305,12 +305,8 @@ mod tests {
     #[test]
     fn rustfmt_moves_only_the_hash_of_merged_derives_and_of_a_comma_in_a_macros_tokens() {
         let hashes = |text: &str| -> std::collections::BTreeMap<String, SpanHash> {
-            let index = crate::code::index::index(
-                crate::code::FileKind::Rust,
-                text.as_bytes(),
-                &crate::code::BlankMacros::default(),
-            )
-            .unwrap();
+            let index =
+                crate::code::testing::index(crate::code::FileKind::Rust, text.as_bytes()).unwrap();
             let scopes = crate::code::scope::Scopes(&index.scopes);
             index
                 .definitions

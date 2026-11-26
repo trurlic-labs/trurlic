@@ -1,11 +1,10 @@
 component = "code"
-choice = "A C or C++ file defines its functions and prototypes, types and members, typedefs, macros, variables, namespaces and templates, each at the path where it is written"
-reason = "An anchor names a definition as a reader of the file finds it, so each is at the path its source writes: an enumerator under its enum (color::RED), a nested struct under its outer one, a macro where its #define stands, a member of an anonymous struct or union under the outer type (C11), and a struct no tag names under the typedef that names it. A prototype is a function or a method, as its definition is: kind states what a thing is, not whether it has a body, and a symbol names every definition of its path, so a prototype beside its definition, overloads, #if arms, a template and its specializations, and typedef struct foo foo each resolve as one set. A definition out of its class (void a::Foo::f() {}) is a function at a::Foo::f, since no syntax says whether a::Foo is a class. A template's arguments are no part of a name, an anonymous namespace adds no segment and an inline one adds its own. A declaration with no type is a constructor only in the class it names; elsewhere it is a macro's call (BIT(flag);) and defines nothing. A lambda a namespace binds is a function, and any other lambda a scope of its own. A friend is a function under the class that declares it."
+choice = "A C or C++ prototype is a definition of its function's kind, function or method; a macro is a definition of kind macro where its #define stands; an inline namespace adds its own segment"
+reason = "A kind states what a thing is, not whether it has a body: no reader asks whether a function is defined in the file, and a symbol names every definition of its path, so a prototype in a header and its definition in a source file, two overloads or two arms of #if resolve as one set of one kind. A macro, object-like or function-like, is a definition of the file, and a reader finds it where its #define stands, under the namespace or class that holds the directive; each #define of one name under #if is a member of one set. An inline namespace is written as a namespace, so its name is a segment of what it holds, as any namespace's is. Where every other definition stands, and what defines nothing, is the-definitions-of-a-c-or-c-plus-plus-file-are-at-the-path-their-source-writes."
 alternatives = [
     "A prototype of its own kind: rejected because no reader asks whether a function has a body, and the set already resolves both",
-    "Enumerators and macros at the file's top, as the language scopes them: rejected because a symbol is a suffix and the nesting as written costs nothing",
-    "A method's kind for X::f when the file defines a class X: rejected because it guesses",
-    "Specializations named with their arguments: rejected because a symbol could then not name the template and its specializations together",
+    "Macros at the file's top, as the preprocessor scopes them: rejected because a reader finds a #define where it is written",
+    "An inline namespace as no segment: rejected because its name is written as any namespace's",
 ]
 tags = [
     "anchors",
@@ -17,9 +16,7 @@ created = "2026-11-25T23:03:16.297379871Z"
 anchors = [
     { file = "src/code/language/c.scm" },
     { file = "src/code/language/cpp.scm" },
-    { file = "src/sources/tests.rs", symbol = "C_FAMILY_CASES" },
     { file = "src/sources/tests.rs", symbol = "STATEMENTS" },
-    { file = "tests/fixtures/code/c/shelf.c" },
     { file = "tests/fixtures/code/cpp/shelf.hpp" },
 ]
 depends_on = [

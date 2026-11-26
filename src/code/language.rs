@@ -64,6 +64,8 @@ pub(super) static PYTHON: Language = Language {
         nested_blocks: false,
         glued: &[],
         continuations: true,
+        splices: false,
+        tokens: None,
     },
     before_parse: &[python::check_indentations, python::check_continuations],
     test_places: &["tests/", "test_*.py", "*_test.py", "conftest.py"],
@@ -84,6 +86,8 @@ const TYPESCRIPT_LEXICON: Lexicon = Lexicon {
     nested_blocks: false,
     glued: &[],
     continuations: false,
+    splices: false,
+    tokens: None,
 };
 
 /// `.ts`, `.mts` and `.cts`, read by the `typescript` grammar, which
@@ -138,7 +142,8 @@ pub(super) static TSX: Language = Language {
 };
 
 /// tree-sitter-c and tree-sitter-cpp lex every comment as an extra; a
-/// line continuation is in no node, and blank where it lies.
+/// line continuation is in no node, and blank where it lies but inside
+/// a token; a macro's body is hashed by the tokens of the C lexer.
 const C_FAMILY_LEXICON: Lexicon = Lexicon {
     literals: &[],
     line_comments: &[],
@@ -146,6 +151,8 @@ const C_FAMILY_LEXICON: Lexicon = Lexicon {
     nested_blocks: false,
     glued: &[],
     continuations: true,
+    splices: true,
+    tokens: Some(c_family::tokens),
 };
 
 /// `.c`, read by the `c` grammar.
