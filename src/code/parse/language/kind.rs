@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 
 use super::{C, CPP, Language, PYTHON, TSX, TYPESCRIPT, TYPESCRIPT_DECLARATIONS};
 use crate::code::index::{FileKind, Syntax};
-use crate::code::parse::syntax::grammar_identity;
+use crate::code::parse::parser::grammar_identity;
 
 /// The identity of tree-sitter-rust, computed once.
 static RUST_GRAMMAR: LazyLock<[u8; 32]> = LazyLock::new(|| {

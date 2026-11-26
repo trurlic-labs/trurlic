@@ -15,7 +15,7 @@ status = "proposed"
 origin = "anchor repair review"
 created = "2026-11-26T07:48:25.688106240Z"
 anchors = [
-    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::writers" },
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::writers" },
     { file = "src/lint/anchors/repair.rs", symbol = "lost" },
     { file = "src/lint/anchors/repair.rs", symbol = "moved_to" },
     { file = "src/lint/anchors/repair.rs", symbol = "tests::a_move_is_the_lost_code_arriving_where_it_was_not_and_kept_there" },

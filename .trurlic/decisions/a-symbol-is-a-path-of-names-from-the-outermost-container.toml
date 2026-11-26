@@ -14,9 +14,9 @@ status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::find" },
     { file = "src/code/index/symbol.rs", symbol = "Segment" },
     { file = "src/code/index/symbol.rs", symbol = "Symbol" },
     { file = "src/code/index/symbol.rs", symbol = "Symbol::names" },
     { file = "src/code/index/symbol.rs", symbol = "name_segments" },
-    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::find" },
 ]

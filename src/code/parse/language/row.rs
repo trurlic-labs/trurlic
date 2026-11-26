@@ -8,8 +8,8 @@ use std::sync::OnceLock;
 use super::c_lexer;
 use super::python;
 use crate::code::index::{IndexFault, Syntax};
+use crate::code::parse::parser::grammar_identity;
 use crate::code::parse::query::{QueryFault, Rules};
-use crate::code::parse::syntax::grammar_identity;
 use crate::code::parse::tokens::Lexicon;
 
 /// A check of a file's bytes before its parse.
@@ -269,7 +269,7 @@ mod tests {
     use super::*;
     use crate::code::index::FileKind;
     use crate::code::parse::language::language_of;
-    use crate::code::parse::{syntax, tokens};
+    use crate::code::parse::{parser, tokens};
 
     #[test]
     fn each_query_compiles_against_its_grammar_within_the_contract() {
@@ -391,7 +391,7 @@ mod tests {
         for (file, kind, text) in general_corpus() {
             let language = language_of(kind).unwrap();
             let rules = language.rules().unwrap();
-            let tree = syntax::parse(&text, &rules.grammar).unwrap();
+            let tree = parser::parse(&text, &rules.grammar).unwrap();
             let mut covered = vec![false; text.len()];
             tokens::tokens(tree.root_node(), &text, &language.lexicon, |token| {
                 let (from, to) = match token {

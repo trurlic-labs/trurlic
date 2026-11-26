@@ -26,9 +26,8 @@ lint       → store, code                 pure findings over the graph that ref
                                          their repairs
 sources    → code, lint, store, git      code-root walk, bounded reads, index cache, other worktrees,
                                          the anchor findings of `check` and `status`
-code       → store (types)               pure code index: what an index holds (`index/`), the
-                                         tree-sitter and lexical resolvers (`parse/`, `lexical/`), facts
-                                         over a whole tree (`tree/`)
+code       → store (types)               pure code index: its values (`index/`), resolvers (`parse/`,
+                                         `lexical/`), facts over a whole tree (`facts/`)
 git        → —                           `git` as a child process; `git::graph` = the graph's own repo
 budget     → —                           a tool call's byte limits, fitting output into a byte budget
 error      → store (types)               `Error`, `Result`

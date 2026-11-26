@@ -15,11 +15,11 @@ status = "accepted"
 origin = "symbol sets"
 created = "2026-11-25T16:09:32.096681384Z"
 anchors = [
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::find" },
+    { file = "src/code/facts/code_facts.rs", symbol = "Resolution::Ambiguous" },
+    { file = "src/code/facts/definitions.rs", symbol = "Definitions" },
+    { file = "src/code/facts/definitions.rs", symbol = "Definitions::of" },
     { file = "src/code/index/span.rs", symbol = "SpanHash::of_members" },
-    { file = "src/code/tree/definitions.rs", symbol = "Definitions" },
-    { file = "src/code/tree/definitions.rs", symbol = "Definitions::of" },
-    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::find" },
-    { file = "src/code/tree/facts.rs", symbol = "Resolution::Ambiguous" },
     { file = "src/sources/tests.rs", symbol = "a_symbol_of_one_path_resolves_to_each_of_its_definitions_with_one_hash" },
     { file = "src/sources/tests.rs", symbol = "each_construct_of_the_fixture_corpus_resolves_as_stated" },
     { file = "tests/fixtures/code/crates/ledger/src/rules.rs", symbol = "flush" },

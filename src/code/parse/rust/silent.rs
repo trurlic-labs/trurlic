@@ -181,8 +181,8 @@ fn bare_block(holder: Node<'_>) -> Vec<usize> {
 mod tests {
     use super::*;
     use crate::code::index::SpanHash;
+    use crate::code::parse::parser::parse;
     use crate::code::parse::rust::LEXICON;
-    use crate::code::parse::syntax::parse;
     use crate::code::parse::units::Leaves;
 
     /// The hash of the whole of `text`, a Rust file.

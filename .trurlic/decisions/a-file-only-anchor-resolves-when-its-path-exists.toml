@@ -13,8 +13,8 @@ status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::resolve" },
-    { file = "src/code/tree/facts.rs", symbol = "Target" },
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::resolve" },
+    { file = "src/code/facts/code_facts.rs", symbol = "Target" },
     { file = "src/sources/findings.rs", symbol = "checked_findings" },
     { file = "src/sources/walk.rs", symbol = "probe" },
 ]

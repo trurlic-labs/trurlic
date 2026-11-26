@@ -13,9 +13,9 @@ status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
+    { file = "src/code/facts/code_facts.rs", symbol = "Resolution" },
+    { file = "src/code/facts/entry.rs", symbol = "FileFault" },
+    { file = "src/code/facts/entry.rs", symbol = "ReadFault" },
     { file = "src/code/index/file.rs", symbol = "IndexFault" },
     { file = "src/code/index/symbol.rs", symbol = "SymbolFault" },
-    { file = "src/code/tree/entry.rs", symbol = "FileFault" },
-    { file = "src/code/tree/entry.rs", symbol = "ReadFault" },
-    { file = "src/code/tree/facts.rs", symbol = "Resolution" },
 ]

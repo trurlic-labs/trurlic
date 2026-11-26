@@ -249,14 +249,14 @@ mod tests {
     use super::*;
     use crate::code::index::{FileKind, Scopes};
     use crate::code::parse::general::collect;
-    use crate::code::parse::syntax;
+    use crate::code::parse::parser;
     use crate::code::testing::{path, python_rules};
 
     /// The path of each definition `source`, a Python query of a test, places
     /// in `text`, in the sweep's order.
     fn placed_with(source: &str, text: &str) -> Vec<String> {
         let rules = python_rules(source);
-        let tree = syntax::parse(text, &rules.grammar).unwrap();
+        let tree = parser::parse(text, &rules.grammar).unwrap();
         let found = collect(&rules, &tree, text).unwrap();
         let mut tree_of_scopes = ScopeTree::for_file(FileKind::Python, text.len());
         let placed = place(&found, &mut tree_of_scopes).unwrap();
@@ -278,7 +278,7 @@ mod tests {
                 let source = format!("{function}\n{}\n{}", within(*one), within(*other));
                 let rules = python_rules(&source);
                 let text = "def f(): pass\n";
-                let tree = syntax::parse(text, &rules.grammar).unwrap();
+                let tree = parser::parse(text, &rules.grammar).unwrap();
                 let found = collect(&rules, &tree, text).unwrap();
                 let placed = place(
                     &found,

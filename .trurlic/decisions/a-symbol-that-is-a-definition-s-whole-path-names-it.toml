@@ -13,9 +13,9 @@ status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:48:56.156364956Z"
 anchors = [
+    { file = "src/code/facts/code_facts.rs", symbol = "CodeFacts::find" },
     { file = "src/code/index/symbol.rs", symbol = "Symbol::is_path_of" },
     { file = "src/code/index/symbol.rs", symbol = "a_symbol_is_the_whole_path_only_of_a_definition_it_leaves_nothing_of" },
-    { file = "src/code/tree/facts.rs", symbol = "CodeFacts::find" },
 ]
 depends_on = [
     "a-symbol-is-a-path-of-names-from-the-outermost-container",

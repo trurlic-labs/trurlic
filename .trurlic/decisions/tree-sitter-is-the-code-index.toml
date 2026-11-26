@@ -19,6 +19,6 @@ anchors = [
     { file = "Cargo.toml", symbol = "dependencies::tree-sitter-rust" },
     { file = "deny.toml", symbol = "licenses::allow" },
     { file = "src/code/index/file.rs", symbol = "FileKind" },
+    { file = "src/code/parse/parser.rs", symbol = "parse" },
     { file = "src/code/parse/rust/walk.rs", symbol = "index" },
-    { file = "src/code/parse/syntax.rs", symbol = "parse" },
 ]

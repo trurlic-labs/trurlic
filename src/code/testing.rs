@@ -23,7 +23,7 @@ pub(crate) fn index_in(path: &str, kind: FileKind, bytes: &[u8], tree: &BlankMac
         true => tree.of_file(path, &lexed(bytes)),
         false => FileMacros::default(),
     };
-    super::resolver::index(kind, bytes, &macros)
+    super::dispatch::index(kind, bytes, &macros)
 }
 
 /// Each definition of `text`, a file of `kind`, as its path joined by

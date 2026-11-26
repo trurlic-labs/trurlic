@@ -14,10 +14,10 @@ status = "proposed"
 origin = "module structure"
 created = "2026-11-26T14:45:30.766338253Z"
 anchors = [
+    { file = "src/code/dispatch.rs", symbol = "blanked" },
+    { file = "src/code/dispatch.rs", symbol = "index" },
     { file = "src/code/index/mod.rs" },
     { file = "src/code/mod.rs", symbol = "each_sub_module_names_no_module_above_it" },
     { file = "src/code/parse/language/kind.rs", symbol = "syntax_of" },
-    { file = "src/code/resolver.rs", symbol = "blanked" },
-    { file = "src/code/resolver.rs", symbol = "index" },
     { file = "src/purity.rs", symbol = "path_fault" },
 ]

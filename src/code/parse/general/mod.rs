@@ -15,7 +15,7 @@ mod site;
 mod walk;
 
 use super::language::Language;
-use super::syntax;
+use super::parser;
 use super::tree_index::TreeIndex;
 use super::units::Leaves;
 use crate::code::index::{FileIndex, IndexFault, Lines, ScopeTree};
@@ -61,7 +61,7 @@ pub(in crate::code) fn index(
     let Ok(rules) = language.rules() else {
         return Err(IndexFault::Grammar);
     };
-    let tree = syntax::parse(text, &rules.grammar)?;
+    let tree = parser::parse(text, &rules.grammar)?;
     let mut found = collect(rules, &tree, text)?;
     found.private = source.private;
     let placed = place::place(&found, &mut scopes)?;

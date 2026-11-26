@@ -15,7 +15,7 @@ use tree_sitter::Node;
 
 use super::marks;
 use crate::code::index::{DefinitionKind, IndexFault, Role, ScopeId, Segment, Visibility, What};
-use crate::code::parse::syntax::text_of;
+use crate::code::parse::parser::text_of;
 use crate::code::parse::tree_index::TreeIndex;
 
 /// A leaf of a `pub use`: its container, the bytes of its name, its own

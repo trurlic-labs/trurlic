@@ -2,10 +2,9 @@
 //! cached index stays a function of its bytes. A file of a language the
 //! general resolver reads is test code whole in a test place its
 //! language's row names (`tests/`, `test_*.py`, `conftest.py`,
-//! `*.test.ts`, `__tests__/`). A Rust
-//! file is test code under its crate's `tests/` directory, or as a module
-//! file that only test code declares: a step over the crates, after each
-//! file's own index.
+//! `*.test.ts`, `__tests__/`). A Rust file is test code under its crate's
+//! `tests/` directory, or as a module file that only test code declares:
+//! a step over the crates, after each file's own index.
 //!
 //! The walk goes forward from each crate's targets as cargo finds them
 //! without a manifest table: `src/lib.rs`, `src/main.rs`, `build.rs`, and
@@ -16,11 +15,11 @@
 //! to the file a relative `#[path]` names (an absolute one names no file
 //! of the tree); the module's directory takes a segment for each inline
 //! `mod` around the declaration, none for a function or any other item
-//! it stands in. A file is test code when it is under
-//! its crate's `tests/`, or when every declaration that reaches it is test
-//! code, or in a file only test code reaches; a file no target reaches
-//! keeps what its own bytes say. Each file is visited at most twice, once
-//! as code and once as test, so the walk is linear in the tree.
+//! it stands in. A file is test code when it is under its crate's
+//! `tests/`, or when every declaration that reaches it is test code, or in
+//! a file only test code reaches; a file no target reaches keeps what its
+//! own bytes say. Each file is visited at most twice, once as code and
+//! once as test, so the walk is linear in the tree.
 //!
 //! A file an anchor brings in from outside the walk is a root or a
 //! module like any other, but the walk does not follow its own

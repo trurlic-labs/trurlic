@@ -378,8 +378,8 @@ fn marks_of(marks: &BTreeMap<usize, NodeMarks>, node: Node<'_>) -> NodeMarks {
 mod tests {
     use super::*;
     use crate::code::index::SpanHash;
+    use crate::code::parse::parser::parse;
     use crate::code::parse::rust::LEXICON;
-    use crate::code::parse::syntax::parse;
 
     fn rust_tree(text: &str) -> Tree {
         parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap()

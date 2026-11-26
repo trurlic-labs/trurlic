@@ -430,8 +430,8 @@ mod tests {
     use tree_sitter::Tree;
 
     use super::*;
+    use crate::code::parse::parser::parse;
     use crate::code::parse::rust::LEXICON;
-    use crate::code::parse::syntax::parse;
 
     fn rust_tree(text: &str) -> Tree {
         parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap()

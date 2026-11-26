@@ -1,4 +1,4 @@
-//! The index of a file by the resolver of its kind: Rust's, the general
+//! A file handed to the resolver of its kind: Rust's, the general
 //! resolver over a language's row, or a lexical one, each building into
 //! the scope tree of the file's kind and size. The version of the rules
 //! ([`INDEX_FORMAT`]) and every bound an index is built within
@@ -71,9 +71,8 @@ pub(crate) const BOUNDS: [(&str, usize); 32] = [
 /// The index of `bytes`, a file of `kind`; a C or C++ file blanks
 /// `macros`, the part of its tree's set it writes, and a Python file is
 /// read with Python's line ends: each rewrite before the general
-/// resolver's parse. Each resolver builds
-/// it into the scope tree of the file's kind and size, which holds it to
-/// the file's room.
+/// resolver's parse. Each resolver builds it into the scope tree of the
+/// file's kind and size, which holds it to the file's room.
 pub(crate) fn index(
     kind: FileKind,
     bytes: &[u8],

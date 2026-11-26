@@ -10,20 +10,24 @@
 //! `parse/` reads a file with tree-sitter, Rust by a module of its own and
 //! every other language by its row and query file through the general
 //! resolver, and `lexical/` reads TOML, JSON, Makefiles and Markdown.
-//! `resolver.rs` dispatches a file to its kind's resolver
+//! `dispatch.rs` hands a file to its kind's resolver
 //! ([`index`](fn@index)), so a file's index is a function of its kind and
-//! bytes. `tree/` is the second step over a tree's indexes: what no one
-//! file's index states, and what an anchor names. A macro invocation
-//! defines nothing (`parse/rust/`).
+//! bytes. `facts/` is the second step, over a whole tree's indexes: what
+//! no one file's index states, and what an anchor names. A macro
+//! invocation defines nothing (`parse/rust/`).
 
+mod dispatch;
+mod facts;
 mod index;
 mod lexical;
 mod parse;
-mod resolver;
 #[cfg(test)]
 pub(crate) mod testing;
-mod tree;
 
+pub(crate) use dispatch::{BOUNDS, INDEX_FORMAT, index};
+#[cfg(test)]
+pub(crate) use facts::Target;
+pub(crate) use facts::{Code, CodeFacts, Entry, FileFault, MANIFEST, ReadFault, Resolution};
 #[cfg(test)]
 pub(crate) use index::SpanHash;
 pub(crate) use index::{
@@ -34,10 +38,6 @@ pub(crate) use parse::{
     BlankMacros, Defines, FileMacros, Lexed, decode_lexed, encode_lexed, grammar_identity_of,
     is_header, lexed, max_lexed_bytes, name_of,
 };
-pub(crate) use resolver::{BOUNDS, INDEX_FORMAT, index};
-#[cfg(test)]
-pub(crate) use tree::Target;
-pub(crate) use tree::{Code, CodeFacts, Entry, FileFault, MANIFEST, ReadFault, Resolution};
 
 /// Whether the query of the language named `name` (`c`, `cpp`, `python`,
 /// `typescript`, `tsx`) compiles within its contract, compiled afresh:
@@ -108,8 +108,8 @@ mod tests {
         ("src/code/lexical", &["code::index", "code::lexical"]),
         ("src/code/parse", &["code::index", "code::parse"]),
         (
-            "src/code/tree",
-            &["code::index", "code::parse", "code::tree"],
+            "src/code/facts",
+            &["code::index", "code::parse", "code::facts"],
         ),
     ];
 

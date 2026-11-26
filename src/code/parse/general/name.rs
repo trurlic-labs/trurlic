@@ -10,7 +10,7 @@ use tree_sitter::Node;
 
 use super::frame::VisibilityMark;
 use crate::code::index::{IndexFault, Role, Visibility, Work};
-use crate::code::parse::{syntax, tokens};
+use crate::code::parse::{parser, tokens};
 
 /// What the walk found of a definition's name node: where its first one
 /// starts, the text of each of its segments, whether a test mark holds
@@ -63,7 +63,7 @@ pub(super) fn parts(
         }
         let leaf = match left_out {
             true => "",
-            false => syntax::text_of(current, text),
+            false => parser::text_of(current, text),
         };
         if !left_out && Some(leaf) == separator {
             parts.push(unquoted(&part).to_owned());

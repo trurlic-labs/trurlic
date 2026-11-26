@@ -14,7 +14,7 @@ use std::ops::ControlFlow;
 use tree_sitter::Node;
 
 use crate::code::index::{Role, Visibility};
-use crate::code::parse::syntax::text_of;
+use crate::code::parse::parser::text_of;
 use crate::code::parse::tokens::{self, Token};
 
 use super::lexicon::LEXICON;

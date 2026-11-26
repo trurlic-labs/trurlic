@@ -13,14 +13,14 @@ use crate::code::index::{
     DefinitionKind, FileIndex, IndexFault, Lines, ModuleFile, Role, ScopeId, ScopeTree, Segment,
     Visibility, What,
 };
-use crate::code::parse::syntax::{self, text_of};
+use crate::code::parse::parser::{self, text_of};
 use crate::code::parse::tree_index::TreeIndex;
 use crate::code::parse::units::Leaves;
 
 /// The index of `text`, a Rust file. Its hashes leave out the tokens of
 /// no meaning (`silent.rs`).
 pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
-    let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
+    let tree = parser::parse(text, &tree_sitter_rust::LANGUAGE.into())?;
     let silent = silent::silent_tokens(tree.root_node());
     let mut walk = Walk {
         text,

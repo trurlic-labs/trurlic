@@ -463,12 +463,12 @@ impl<'r> Walk<'r, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code::parse::syntax;
+    use crate::code::parse::parser;
     use crate::code::testing::{nested_ifs, python_rules};
 
     fn collect_with(source: &str, text: &str) -> Result<usize, IndexFault> {
         let rules = python_rules(source);
-        let tree = syntax::parse(text, &rules.grammar).unwrap();
+        let tree = parser::parse(text, &rules.grammar).unwrap();
         collect(&rules, &tree, text).map(|found| found.candidates.len())
     }
 
