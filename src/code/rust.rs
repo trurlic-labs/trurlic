@@ -15,16 +15,20 @@
 //! already defines (`pub(crate) use name;` after `macro_rules! name`). An
 //! item's span takes in the attributes and doc comments before it.
 //!
-//! A `macro_rules!` macro is a definition of kind macro; a macro
-//! invocation defines nothing (`invocations.rs`).
+//! A `macro_rules!` macro is a definition of kind macro. A macro
+//! invocation defines nothing: what it produces is its macro's, which the
+//! index does not run, whether a `macro_rules!` body or the invocation's
+//! own tokens spell it.
+//!
+//! A segment is spelled as a symbol's is ([`Segment::of_rust`]): a raw
+//! identifier as its name, and a trait's arguments or a type with no name
+//! from the tokens its hash holds, so a comment or a trailing comma
+//! rustfmt adds moves no path.
 
-mod invocations;
 mod items;
 mod marks;
 mod reexports;
 mod silent;
-
-use std::collections::BTreeSet;
 
 use tree_sitter::Node;
 
@@ -73,20 +77,10 @@ pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFau
         text,
         build: TreeIndex::new(text, Leaves::of(&tree, text, &LEXICON, &silent), scopes),
         reexports: Vec::new(),
-        invoked: BTreeSet::new(),
     };
     walk.run(tree.root_node())?;
     walk.define_reexports()?;
-    for name in walk.invoked {
-        walk.build.add_invoked(name)?;
-    }
     Ok(walk.build.finish())
-}
-
-/// A run of letters, digits and underscores: an identifier or a keyword.
-#[cfg(test)]
-pub(super) fn is_word(token: &str) -> bool {
-    !token.is_empty() && token.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// One walk of a tree, which visits each node once, from an explicit
@@ -97,8 +91,6 @@ struct Walk<'t> {
     /// The leaves of the `pub use`s, defined after the walk, once the
     /// paths of the file's items are all found.
     reexports: Vec<reexports::Reexport>,
-    /// The names the invocations where an item stands spell.
-    invoked: BTreeSet<&'t str>,
 }
 
 /// Nodes whose tokens are no items: an attribute's, a macro body's, a
@@ -122,16 +114,15 @@ struct Context {
 }
 
 /// A node to visit: its context, where it starts with the attributes and
-/// doc comments before it, its parent's kind, and whether an attribute
-/// exports it as a macro. All are known from the parent's walk of its
-/// children: asking a node for its parent or its previous sibling costs a
-/// walk of its parent's children. Its role takes in its own attributes.
+/// doc comments before it, and what those attributes say. Both are known
+/// from the parent's walk of its children: asking a node for its previous
+/// sibling costs a walk of its parent's children. Its role takes in its
+/// own attributes.
 #[derive(Clone, Copy)]
 struct Visit<'n> {
     node: Node<'n>,
     context: Context,
     start: usize,
-    parent: &'n str,
     /// What its attributes say: its role is in its context.
     marks: Marks<'n>,
 }
@@ -146,7 +137,6 @@ impl Walk<'_> {
                 role: Role::Code,
             },
             start: root.start_byte(),
-            parent: "",
             marks: Marks {
                 role: Role::Code,
                 macro_export: false,
@@ -179,17 +169,6 @@ impl Walk<'_> {
                 self.hold_reexports(visit);
                 None
             }
-            "macro_invocation" => {
-                self.read_invocation(node, visit.parent);
-                None
-            }
-            "expression_statement" => match node.named_child(0) {
-                Some(invocation) if invocation.kind() == "macro_invocation" => {
-                    self.read_invocation(invocation, visit.parent);
-                    None
-                }
-                Some(_) | None => Some(context),
-            },
             "foreign_mod_item" => Some(Context {
                 within: Within::Items,
                 ..context
@@ -219,7 +198,7 @@ impl Walk<'_> {
         let scope = self
             .build
             .scopes
-            .enter(context.scope, vec![Segment::name(name)])?;
+            .enter(context.scope, vec![Segment::of_rust(name)])?;
         if name != "_" {
             let what = What {
                 kind,
@@ -252,7 +231,7 @@ impl Walk<'_> {
         let Some(name) = visit.node.child_by_field_name("name") else {
             return Ok(());
         };
-        let name = vec![Segment::name(text_of(name, self.text))];
+        let name = vec![Segment::of_rust(text_of(name, self.text))];
         let scope = self.build.scopes.enter(visit.context.scope, name)?;
         let what = What {
             kind: DefinitionKind::Macro,
@@ -264,15 +243,6 @@ impl Walk<'_> {
         };
         self.build
             .define(scope, visit.start..visit.node.end_byte(), what)
-    }
-
-    /// Keep the names `invocation`'s top-level tokens spell when it stands
-    /// where an item does, under a node of kind `parent`; one in a block
-    /// or an expression is passed over.
-    fn read_invocation(&mut self, invocation: Node<'_>, parent: &str) {
-        if matches!(parent, "source_file" | "declaration_list") {
-            invocations::invoked_names(invocation, self.text, &mut self.invoked);
-        }
     }
 
     /// An `impl`'s context: the type's segment, then the trait's for a
@@ -287,10 +257,11 @@ impl Walk<'_> {
         let Some(self_type) = node.child_by_field_name("type") else {
             return Ok(context);
         };
-        let type_segment = type_segment(self_type, self.text);
+        let type_segment = type_segment(self_type, &self.build);
         Ok(match node.child_by_field_name("trait") {
             Some(trait_node) => {
-                let trait_segment = Segment::of_trait(text_of(trait_node, self.text));
+                let trait_segment =
+                    Segment::of_trait(&self.build.spelled(&trait_node.byte_range()));
                 let scope = self
                     .build
                     .scopes
@@ -361,7 +332,6 @@ fn push_children<'n>(stack: &mut Vec<Visit<'n>>, node: Node<'n>, context: Contex
                 ..context
             },
             start,
-            parent: node.kind(),
             marks,
         });
     }
@@ -380,8 +350,9 @@ fn string_value(literal: Node<'_>, text: &str) -> String {
 
 /// The segment an `impl` gives its type: the last name of its path, its
 /// generics and references dropped; a type with no name (a tuple, an
-/// array) is its text with the spaces removed.
-fn type_segment(mut node: Node<'_>, text: &str) -> Segment {
+/// array) whole. It is spelled from the tokens its hash holds, so no
+/// comment and no trailing comma rustfmt adds is part of it.
+fn type_segment(mut node: Node<'_>, build: &TreeIndex<'_>) -> Segment {
     loop {
         let inner = match node.kind() {
             "generic_type" | "reference_type" | "pointer_type" => node.child_by_field_name("type"),
@@ -394,11 +365,7 @@ fn type_segment(mut node: Node<'_>, text: &str) -> Segment {
             None => break,
         }
     }
-    let name = text_of(node, text);
-    match node.kind() {
-        "type_identifier" | "primitive_type" | "identifier" => Segment::name(name),
-        _ => Segment::Name(name.chars().filter(|c| !c.is_whitespace()).collect()),
-    }
+    Segment::of_rust(&build.spelled(&node.byte_range()))
 }
 
 #[cfg(test)]

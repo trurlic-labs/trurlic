@@ -860,9 +860,8 @@ fn a_namesake_that_stood_beside_the_code_is_no_move() {
 /// The search gives no repair where a reader would not accept one, git's
 /// history showing the move or not: the anchor's own file still defines
 /// its last segment (a trait method spelled without its impl, while the
-/// trait declares it in another file), or spells it in a macro invocation
-/// the index cannot expand, while another file re-exports it or writes
-/// it; the one file that defines it is of another crate target (a test, a
+/// trait declares it in another file); the one file that defines it is of
+/// another crate target (a test, a
 /// binary, a crate of its own, vendored code with a manifest of its own),
 /// defines it as test code for code, as an item of another kind (a type
 /// alias for a struct), by a macro invocation, as a re-export or as a
@@ -887,8 +886,6 @@ fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
                 "mirror! { Report in \"m\" from other::Report {} }\n",
             ),
             ("src/lib.rs", "mod refusal;\npub use refusal::Report;\n"),
-            ("src/spelled.rs", "unknown! { Gadget }\n"),
-            ("src/gadget.rs", "pub struct Gadget;\n"),
             ("tests/cli.rs", "fn run(args: &[&str]) {}\n"),
             ("src/bin/tool.rs", "fn main() {}\nfn usage() {}\n"),
             ("src/fixtures.rs", "#[cfg(test)]\npub fn sample() {}\n"),
@@ -918,7 +915,6 @@ fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
         "src/fbqc.rs::Routing::route_cost",
         "src/cli.rs::run",
         "src/refusal.rs::Report",
-        "src/spelled.rs::Gadget",
         "crates/a/src/lib.rs::Config::new",
         "src/de.rs::Deserializer::deserialize_any",
         "src/cli.rs::usage",
@@ -939,7 +935,6 @@ fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
             "pub fn run() {}\nfn usage() {}\npub fn sample() {}\npub struct Widget;\npub struct Engine;\npub struct Meters;\n",
         ),
         ("src/refusal.rs", "pub struct Report;\n"),
-        ("src/spelled.rs", "pub struct Gadget;\n"),
         (
             "crates/a/src/lib.rs",
             "pub struct Config;\nimpl Config { pub fn new() {} }\n",
@@ -952,7 +947,6 @@ fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
         ("src/b/mod.rs", ""),
     ]);
     history.extend([
-        held(LOST, "src/gadget.rs", "pub struct Gadget;\n"),
         held(
             LOST,
             "src/fixtures.rs",
@@ -962,12 +956,7 @@ fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
         held(LOST, "src/units.rs", "pub type Meters = u32;\n"),
     ]);
 
-    let targets = [
-        "src/gadget.rs",
-        "src/fixtures.rs",
-        "src/b/mod.rs",
-        "src/units.rs",
-    ];
+    let targets = ["src/fixtures.rs", "src/b/mod.rs", "src/units.rs"];
     arrived(&mut history, LOST, &targets);
     let lines = repaired(&decisions, &here, Renames::none(), history);
 
@@ -1353,43 +1342,5 @@ fn a_move_not_committed_is_repaired_from_the_work_tree() {
         [
             "anchor `src/a.rs::ported` of `d` is stale: its file defines nothing its symbol names; repair: `src/b.rs::ported`"
         ]
-    );
-}
-
-/// The file a rename carried a symbol into is not searched while a macro
-/// invocation there spells the name: the code may stand in it, which no
-/// index sees, so a namesake that took the same code elsewhere is no move.
-#[test]
-fn a_renamed_file_that_spells_the_name_in_an_invocation_is_not_searched() {
-    let here = facts(
-        &[
-            MANIFEST,
-            ("src/new.rs", "wrap!(join);\npub fn other() {}\n"),
-            ("src/b.rs", "pub fn join() {}\n"),
-        ],
-        &[],
-    );
-    let renames = Renames {
-        to: BTreeMap::from([("src/old.rs".to_owned(), renamed("src/new.rs", true))]),
-        facts: facts(&[], &[]),
-    };
-    let text = "pub fn join() {}\npub fn other() {}\n";
-    let mut history = prior(&[("src/old.rs", text)]);
-    history.extend([
-        held(LOST, "src/new.rs", text),
-        held(BEFORE_LATER, "src/new.rs", text),
-        held(BEFORE_LATER, "src/b.rs", ""),
-        held(LATER, "src/b.rs", "pub fn join() {}\n"),
-    ]);
-    let commits = vec![LATER.to_owned(), LOST.to_owned()];
-    history.changed("src/new.rs".to_owned(), commits, false);
-    let decisions = [("d", decision(&["src/old.rs::join"], StatusName::Accepted))];
-
-    arrived(&mut history, LATER, &["src/b.rs"]);
-    let lines = repaired(&decisions, &here, renames, history);
-
-    assert_eq!(
-        lines,
-        ["anchor `src/old.rs::join` of `d` is stale: nothing is at its path"]
     );
 }

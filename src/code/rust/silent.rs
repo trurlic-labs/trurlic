@@ -4,10 +4,12 @@
 //! of one expression, with the `;` of a lone `return`, `break` or
 //! `continue` there; the outer pair of nested parentheses around an
 //! expression (`((a))`); and a match arm pattern's leading `|`. rustfmt's
-//! edits to these move no hash. A comma or a brace inside a macro's tokens
-//! stays a token, as only the macro gives it a meaning, so the trailing
-//! comma rustfmt adds to a `vec![..]` it breaks moves the hash, and so does
-//! its merge of two `#[derive]` attributes into one.
+//! edits to these move no hash. Three of its edits do move one: the
+//! trailing comma it adds to a `vec![..]` it breaks, as a comma or a brace
+//! inside a macro's tokens stays a token, which only the macro gives a
+//! meaning; its merge of two `#[derive]` attributes into one; and its sort
+//! of `use` declarations and of a use list's entries, which moves the hash
+//! of every item that holds them, as a hash holds its tokens in order.
 
 use tree_sitter::Node;
 
@@ -299,11 +301,11 @@ mod tests {
     }
 
     /// A file as written, and as rustfmt 1.95's defaults format it.
-    const UNFORMATTED: &str = "#[derive(Debug)]\n#[derive(Clone)]\npub struct S { a: u8 }\npub fn vecs() -> Vec<u32> { vec![1111111111, 2222222222, 3333333333, 4444444444, 5555555555, 6666666666, 7777777777] }\npub fn asserts(a: u32, b: u32) { assert_eq!(a, b, \"the values differ: {} and {} and some more text to break\", a, b); }\npub fn parens(a: u32) -> u32 { ((a)) }\npub fn pipes(a: u32) -> u32 { match a { | 1 | 2 => 0, _ => 1 } }\npub fn long_arm(a: u32) -> u32 { match a { 1 => some_function_with_a_long_name(a, a, a, a, a, a, a, a) + another_function_with_a_long_name(a, a), _ => 1 } }\nfn some_function_with_a_long_name(_: u32, _: u32, _: u32, _: u32, _: u32, _: u32, _: u32, _: u32) -> u32 { 0 }\npub fn closure() -> impl Fn(u32) -> u32 { |x| { x + 1 } }\npub fn ret(a: u32) -> u32 { match a { 0 => { return 1; } _ => 2 } }\n";
-    const FORMATTED: &str = "#[derive(Debug, Clone)]\npub struct S {\n    a: u8,\n}\npub fn vecs() -> Vec<u32> {\n    vec![\n        1111111111, 2222222222, 3333333333, 4444444444, 5555555555, 6666666666, 7777777777,\n    ]\n}\npub fn asserts(a: u32, b: u32) {\n    assert_eq!(\n        a, b,\n        \"the values differ: {} and {} and some more text to break\",\n        a, b\n    );\n}\npub fn parens(a: u32) -> u32 {\n    (a)\n}\npub fn pipes(a: u32) -> u32 {\n    match a {\n        1 | 2 => 0,\n        _ => 1,\n    }\n}\npub fn long_arm(a: u32) -> u32 {\n    match a {\n        1 => {\n            some_function_with_a_long_name(a, a, a, a, a, a, a, a)\n                + another_function_with_a_long_name(a, a)\n        }\n        _ => 1,\n    }\n}\nfn some_function_with_a_long_name(\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n) -> u32 {\n    0\n}\npub fn closure() -> impl Fn(u32) -> u32 {\n    |x| x + 1\n}\npub fn ret(a: u32) -> u32 {\n    match a {\n        0 => {\n            return 1;\n        }\n        _ => 2,\n    }\n}\n";
+    const UNFORMATTED: &str = "#[derive(Debug)]\n#[derive(Clone)]\npub struct S { a: u8 }\npub fn vecs() -> Vec<u32> { vec![1111111111, 2222222222, 3333333333, 4444444444, 5555555555, 6666666666, 7777777777] }\npub fn asserts(a: u32, b: u32) { assert_eq!(a, b, \"the values differ: {} and {} and some more text to break\", a, b); }\npub fn parens(a: u32) -> u32 { ((a)) }\npub fn pipes(a: u32) -> u32 { match a { | 1 | 2 => 0, _ => 1 } }\npub fn long_arm(a: u32) -> u32 { match a { 1 => some_function_with_a_long_name(a, a, a, a, a, a, a, a) + another_function_with_a_long_name(a, a), _ => 1 } }\nfn some_function_with_a_long_name(_: u32, _: u32, _: u32, _: u32, _: u32, _: u32, _: u32, _: u32) -> u32 { 0 }\npub fn closure() -> impl Fn(u32) -> u32 { |x| { x + 1 } }\npub fn ret(a: u32) -> u32 { match a { 0 => { return 1; } _ => 2 } }\npub fn uses() { use b::B; use a::A; }\npub mod listed { pub use super::{Zed, Alpha}; }\n";
+    const FORMATTED: &str = "#[derive(Debug, Clone)]\npub struct S {\n    a: u8,\n}\npub fn vecs() -> Vec<u32> {\n    vec![\n        1111111111, 2222222222, 3333333333, 4444444444, 5555555555, 6666666666, 7777777777,\n    ]\n}\npub fn asserts(a: u32, b: u32) {\n    assert_eq!(\n        a, b,\n        \"the values differ: {} and {} and some more text to break\",\n        a, b\n    );\n}\npub fn parens(a: u32) -> u32 {\n    (a)\n}\npub fn pipes(a: u32) -> u32 {\n    match a {\n        1 | 2 => 0,\n        _ => 1,\n    }\n}\npub fn long_arm(a: u32) -> u32 {\n    match a {\n        1 => {\n            some_function_with_a_long_name(a, a, a, a, a, a, a, a)\n                + another_function_with_a_long_name(a, a)\n        }\n        _ => 1,\n    }\n}\nfn some_function_with_a_long_name(\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n    _: u32,\n) -> u32 {\n    0\n}\npub fn closure() -> impl Fn(u32) -> u32 {\n    |x| x + 1\n}\npub fn ret(a: u32) -> u32 {\n    match a {\n        0 => {\n            return 1;\n        }\n        _ => 2,\n    }\n}\npub fn uses() {\n    use a::A;\n    use b::B;\n}\npub mod listed {\n    pub use super::{Alpha, Zed};\n}\n";
 
     #[test]
-    fn rustfmt_moves_only_the_hash_of_merged_derives_and_of_a_comma_in_a_macros_tokens() {
+    fn rustfmt_moves_only_the_hash_of_merged_derives_a_comma_in_a_macros_tokens_and_sorted_uses() {
         let hashes = |text: &str| -> std::collections::BTreeMap<String, SpanHash> {
             let index =
                 crate::code::testing::index(crate::code::FileKind::Rust, text.as_bytes()).unwrap();
@@ -321,8 +323,8 @@ mod tests {
             .map(|(path, _)| path.as_str())
             .collect();
 
-        assert_eq!(before.len(), 10);
-        assert_eq!(moved, ["S", "vecs"]);
+        assert_eq!(before.len(), 14);
+        assert_eq!(moved, ["S", "listed", "uses", "vecs"]);
     }
 
     #[test]

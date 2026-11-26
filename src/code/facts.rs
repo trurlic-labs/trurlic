@@ -104,10 +104,6 @@ pub(crate) enum Resolution {
     FileMissing,
     /// The file defines nothing the symbol names.
     SymbolMissing,
-    /// The file defines nothing the symbol names, and a macro invocation
-    /// where an item stands spells its last name among its top-level
-    /// tokens: what an invocation produces is no definition.
-    SymbolInInvocation,
     /// The symbol names definitions of this many paths, two or more,
     /// which a fuller spelling tells apart.
     Ambiguous(usize),
@@ -127,11 +123,6 @@ impl fmt::Display for Resolution {
             Self::Resolved(target) => write!(f, "resolves to {target}"),
             Self::FileMissing => f.write_str("nothing is at its path"),
             Self::SymbolMissing => f.write_str("its file defines nothing its symbol names"),
-            Self::SymbolInInvocation => f.write_str(
-                "its file defines nothing its symbol names: a macro invocation there spells \
-                 the name, and an item an invocation produces is no definition; anchor the \
-                 macro, an item written outside the invocation, or the file",
-            ),
             Self::Ambiguous(paths) => write!(f, "its symbol names definitions of {paths} paths"),
             Self::SymbolOnDirectory => f.write_str("its symbol is on a directory"),
             Self::NoResolver => f.write_str("its symbol is on a kind of file no resolver reads"),
@@ -543,7 +534,6 @@ impl CodeFacts {
         };
         let mut sets = sets_by_path(chosen, scopes).into_values();
         match (sets.next(), sets.len()) {
-            (None, _) if spells_in_invocation(index, symbol) => Resolution::SymbolInInvocation,
             (None, _) => Resolution::SymbolMissing,
             (Some((first, rest)), 0) => {
                 Resolution::Resolved(Target::Symbol(Definitions::of(first, &rest)))
@@ -563,15 +553,6 @@ pub(crate) struct Namesakes {
     /// ([`target_of`]), that write an item whose whole path the symbol is
     /// ([`CodeFacts::writes`]).
     pub(crate) elsewhere: Vec<String>,
-}
-
-/// Whether a macro invocation where an item stands in the file of `index`
-/// spells the last name of `symbol` among its top-level tokens.
-fn spells_in_invocation(index: &FileIndex, symbol: &Symbol) -> bool {
-    match symbol.segments().last() {
-        Some(Segment::Name(name)) => index.rust.invoked.binary_search(name).is_ok(),
-        Some(Segment::Impl { .. }) | None => false,
-    }
 }
 
 /// The `definitions` of each path, as `scopes` spells it: the first of the

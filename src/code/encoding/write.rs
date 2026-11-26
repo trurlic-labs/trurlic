@@ -63,10 +63,6 @@ impl Measure {
         Self::of(size_of::<ModuleFile>(), |out| out.module_file(module))
     }
 
-    pub(in crate::code) fn invoked(name: &str) -> usize {
-        Self::of(size_of::<String>(), |out| out.text(name))
-    }
-
     /// The cost of the part `write` writes, a value of `slot` bytes in its
     /// collection.
     fn of(slot: usize, write: impl FnOnce(&mut Writer<Cost>)) -> usize {
@@ -171,10 +167,6 @@ impl<S: Sink> Writer<S> {
         self.number(index.rust.module_files.len());
         for module in &index.rust.module_files {
             self.module_file(module);
-        }
-        self.number(index.rust.invoked.len());
-        for name in &index.rust.invoked {
-            self.text(name);
         }
     }
 

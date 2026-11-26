@@ -40,6 +40,12 @@ pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Optio
     reader.is_done().then_some(indexed)
 }
 
+/// The role whose code is `code`, as [`role_code`](super::role_code)
+/// writes it.
+fn role_of(code: u8) -> Option<Role> {
+    [Role::Code, Role::Test].get(usize::from(code)).copied()
+}
+
 /// A reader of an entry's bytes, which charges each heap block a value
 /// it reads takes against what the entry's room leaves.
 pub(in crate::code) struct Reader<'b> {
@@ -139,12 +145,6 @@ impl<'b> Reader<'b> {
         DefinitionKind::ALL.get(usize::from(self.byte()?)).copied()
     }
 
-    fn role(&mut self) -> Option<Role> {
-        [Role::Code, Role::Test]
-            .get(usize::from(self.byte()?))
-            .copied()
-    }
-
     fn index(&mut self) -> Option<FileIndex> {
         let scopes = self.scopes()?;
         let definitions = self.definitions(scopes.len())?;
@@ -156,36 +156,19 @@ impl<'b> Reader<'b> {
         Some(FileIndex {
             scopes,
             definitions,
-            rust: RustFacts {
-                module_files,
-                invoked: self.invoked()?,
-            },
+            rust: RustFacts { module_files },
         })
     }
 
     fn module_file(&mut self, scopes: usize) -> Option<ModuleFile> {
         let scope = ScopeId::of(self.number()?).filter(|id| id.at() < scopes)?;
-        let role = self.role()?;
+        let role = role_of(self.byte()?)?;
         let path = match self.byte()? {
             0 => None,
             1 => Some(self.text()?),
             _ => return None,
         };
         Some(ModuleFile { scope, role, path })
-    }
-
-    /// The invoked names, each after the one before it.
-    fn invoked(&mut self) -> Option<Vec<String>> {
-        let count = self.items::<String>()?;
-        let mut names: Vec<String> = Vec::with_capacity(count);
-        for _ in 0..count {
-            let name = self.text()?;
-            if names.last().is_some_and(|last| *last >= name) {
-                return None;
-            }
-            names.push(name);
-        }
-        Some(names)
     }
 
     /// The scopes, each parent below its child, of one segment at least,
@@ -222,9 +205,7 @@ impl<'b> Reader<'b> {
             let scope = ScopeId::of(self.number()?).filter(|id| id.at() < scopes)?;
             let kind = self.kind()?;
             let marks = self.byte()?;
-            let role = [Role::Code, Role::Test]
-                .get(usize::from(marks & 1))
-                .copied()?;
+            let role = role_of(marks & 1)?;
             let visibility = match marks >> 1 {
                 0 => None,
                 code => Some(*Visibility::ALL.get(usize::from(code) - 1)?),

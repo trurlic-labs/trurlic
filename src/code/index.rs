@@ -19,7 +19,7 @@ use super::{encoding, general, json, make, markdown, rust, syntax, toml, work};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 17;
+pub(crate) const INDEX_FORMAT: u32 = 18;
 
 /// The largest file a tree-sitter grammar indexes. A parse is bounded in
 /// work and memory per byte of its file (`work.rs`), so this bounds what
@@ -281,14 +281,11 @@ pub(crate) struct FileIndex {
 
 /// What a Rust file holds besides its definitions: the modules declared
 /// to be in files of their own, which the second step over its crate
-/// follows, and the names its invocations spell, which define nothing.
+/// follows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RustFacts {
     /// In the order of the file.
     pub(crate) module_files: Vec<ModuleFile>,
-    /// The distinct identifiers among the top-level tokens of the macro
-    /// invocations where an item stands, sorted.
-    pub(crate) invoked: Vec<String>,
 }
 
 /// Why a file's bytes give no index.
@@ -412,7 +409,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 17] = [
+    const FINGERPRINTS: [(u32, &str); 18] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -480,6 +477,10 @@ mod tests {
         (
             17,
             "eb68daf2f1971c228711184bee7978bd9ab0e601c9597e230359854906ac712e",
+        ),
+        (
+            18,
+            "1d7cc98fddd899e12c155f6d26dbadba9f0cbaefc3533938af62f45f153f708e",
         ),
     ];
 

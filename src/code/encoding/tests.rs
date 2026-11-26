@@ -2,16 +2,6 @@ use super::*;
 
 use crate::code::index::FileKind;
 
-#[test]
-fn every_kind_is_coded_by_its_place() {
-    for (at, kind) in DefinitionKind::ALL.iter().enumerate() {
-        assert_eq!(usize::from(kind_code(*kind)), at, "{kind:?}");
-    }
-    for (at, visibility) in Visibility::ALL.iter().enumerate() {
-        assert_eq!(usize::from(visibility_code(Some(*visibility))), at + 1);
-    }
-}
-
 /// Every file of the fixture corpus and of `src/code`, with its kind
 /// and bytes.
 fn corpus() -> Vec<(String, FileKind, Vec<u8>)> {
@@ -191,11 +181,10 @@ fn every_entry_a_write_makes_reads_back() {
 
 #[test]
 fn bytes_that_break_the_form_are_no_index() {
-    let indexed =
-        crate::code::testing::index(FileKind::Rust, b"mod a { fn b() {} }\nm!(y x);").unwrap();
+    let indexed = crate::code::testing::index(FileKind::Rust, b"mod a { fn b() {} }").unwrap();
     let bytes = encode(&Ok(indexed));
 
-    let source = 28;
+    let source = 19;
     let decoded = |bytes: &[u8]| decode(bytes, FileKind::Rust, source);
     for cut in 0..bytes.len() {
         assert_eq!(decoded(&bytes[..cut]), None, "cut at {cut}");
@@ -203,12 +192,8 @@ fn bytes_that_break_the_form_are_no_index() {
     let mut longer = bytes.clone();
     longer.push(0);
     assert_eq!(decoded(&longer), None);
-    // The invoked names `x` and `y` out of order, a scope whose parent is
-    // itself, one of no segment, and a count past the bytes.
-    let mut unsorted = bytes.clone();
-    let end = unsorted.len();
-    unsorted.swap(end - 3, end - 1);
-    assert_eq!(decoded(&unsorted), None);
+    // A scope whose parent is itself, one of no segment, and a count past
+    // the bytes.
     assert_eq!(decoded(&[0, 1, 1, 0, 0, 0, 0]), None);
     assert_eq!(decoded(&[0, 1, 0, 0, 0, 0, 0, 0]), None);
     assert_eq!(decoded(&[0, 0x80, 0x80, 0x80, 0x80, 0x01]), None);
@@ -228,7 +213,7 @@ fn forged(scopes: usize) -> Vec<u8> {
     for _ in 0..scopes {
         forged.extend([0, 1, 0, 1, b'a']);
     }
-    forged.extend([0, 0, 0]);
+    forged.extend([0, 0]);
     forged
 }
 
@@ -245,7 +230,7 @@ fn malloc(n: usize) -> usize {
 /// 48-byte segment and one of its one-byte name.
 fn resident(scopes: usize) -> usize {
     let count = (usize::BITS - scopes.leading_zeros()).div_ceil(7).max(1) as usize;
-    let entry = 1 + count + 5 * scopes + 3;
+    let entry = 1 + count + 5 * scopes + 2;
     entry + malloc(scopes * 32) + malloc(scopes * 8) + scopes * (64 + 32)
 }
 
@@ -303,12 +288,6 @@ fn measured(index: &FileIndex) -> usize {
             .iter()
             .map(Measure::module_file)
             .sum::<usize>()
-        + index
-            .rust
-            .invoked
-            .iter()
-            .map(|name| Measure::invoked(name))
-            .sum::<usize>()
 }
 
 #[test]
@@ -334,7 +313,6 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
     let nested = format!("{}{}", "mod m{".repeat(60), "}".repeat(60));
     let names = format!("{}z = 0\n", "a,".repeat(50_000));
     let lines = "x=1\n".repeat(50_000);
-    let invoked: String = (0..20_000).map(|n| format!("m!(n{n});")).collect();
     let reexported = format!(
         "pub use {}::{{{}}};",
         "a".repeat(100_000),
@@ -344,7 +322,6 @@ fn an_entry_is_bounded_by_its_file_whatever_it_holds() {
         (FileKind::Rust, variants.as_str()),
         (FileKind::Rust, fields.as_str()),
         (FileKind::Rust, nested.as_str()),
-        (FileKind::Rust, invoked.as_str()),
         (FileKind::Rust, reexported.as_str()),
         (FileKind::Make, targets.as_str()),
         (FileKind::Markdown, headings.as_str()),

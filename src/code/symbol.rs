@@ -45,19 +45,25 @@ impl Segment {
         Self::Name(normalize_spaces(text))
     }
 
+    /// The segment of `text`, a Rust name or a type with no name (a tuple,
+    /// an array), as [`rust_spelling`] spells it.
+    pub(super) fn of_rust(text: &str) -> Self {
+        Self::Name(rust_spelling(text))
+    }
+
     /// The trait segment of `text`, a trait as source writes it
     /// (`fmt::Display`, `From < Kind >`), without the angle brackets of the
-    /// segment.
+    /// segment, as [`rust_spelling`] spells it.
     pub(super) fn of_trait(text: &str) -> Self {
-        let (path, arguments) = match text.find('<') {
-            Some(at) => text.split_at(at),
-            None => (text, ""),
+        let spelled = rust_spelling(text);
+        let (path, arguments) = match spelled.find('<') {
+            Some(at) => spelled.split_at(at),
+            None => (spelled.as_str(), ""),
         };
         let name = path.rsplit("::").next().unwrap_or(path);
-        let arguments: String = arguments.chars().filter(|c| !c.is_whitespace()).collect();
         Self::Impl {
-            name: name.trim().to_owned(),
-            arguments: (!arguments.is_empty()).then_some(arguments),
+            name: name.to_owned(),
+            arguments: (!arguments.is_empty()).then(|| arguments.to_owned()),
         }
     }
 
@@ -304,8 +310,58 @@ fn segment(part: &str, syntax: Syntax) -> Result<Segment, SymbolFault> {
     Ok(match bracketed {
         Some(inner) if !inner.trim().is_empty() => Segment::of_trait(inner),
         Some(_) => return Err(SymbolFault::EmptySegment),
+        None if syntax == Syntax::Rust => Segment::of_rust(part),
         None => Segment::name(part),
     })
+}
+
+/// How a Rust path spells `text`, a name, a trait or a type as written
+/// with its tokens apart: with no whitespace, a raw identifier as its name
+/// (`r#match` is `match`), and no trailing comma before a `>`, `)` or `]`
+/// but the one of a one-element tuple, `(u8,)`. The index spells the
+/// tokens of a definition's path and a symbol's text by it, so rustfmt's
+/// trailing commas and the spaces of an anchor name what the code does.
+pub(super) fn rust_spelling(text: &str) -> String {
+    let mut spelled = String::with_capacity(text.len());
+    // The open brackets, each with the commas written in it so far.
+    let mut open: Vec<usize> = Vec::new();
+    let mut before = ' ';
+    let mut rest = text;
+    while let Some(next) = rest.chars().next() {
+        let raw = rest.strip_prefix("r#").filter(|name| {
+            !is_word(before) && name.starts_with(|c: char| is_word(c) && !c.is_ascii_digit())
+        });
+        if let Some(name) = raw {
+            rest = name;
+            continue;
+        }
+        rest = rest.get(next.len_utf8()..).unwrap_or_default();
+        before = next;
+        match next {
+            next if next.is_whitespace() => continue,
+            ',' => {
+                if let Some(commas) = open.last_mut() {
+                    *commas += 1;
+                }
+            }
+            '(' | '[' | '<' => open.push(0),
+            '>' if spelled.ends_with('-') => {}
+            ')' | ']' | '>' => {
+                let commas = open.pop().unwrap_or_default();
+                if spelled.ends_with(',') && (next != ')' || commas > 1) {
+                    spelled.pop();
+                }
+            }
+            _ => {}
+        }
+        spelled.push(next);
+    }
+    spelled
+}
+
+/// Whether `c` may stand in a Rust identifier.
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 /// `text` without its `()`, and whether it ended in one.
@@ -320,11 +376,13 @@ fn call_suffix(text: &str) -> Result<(&str, Call), SymbolFault> {
     }
 }
 
-/// `text` split at each `::` outside angle brackets; the `>` of an `->`
+/// `text` split at each `::` outside angle brackets, parentheses and
+/// square brackets (`(a::B, C)` is one segment); the `>` of an `->`
 /// closes nothing.
 fn split_outside_brackets(text: &str) -> Result<Vec<&str>, SymbolFault> {
     let bytes = text.as_bytes();
     let (mut depth, mut start, mut parts) = (0_usize, 0, Vec::new());
+    let mut grouped = 0_usize;
     let mut at = 0;
     while let Some(&byte) = bytes.get(at) {
         match byte {
@@ -334,7 +392,9 @@ fn split_outside_brackets(text: &str) -> Result<Vec<&str>, SymbolFault> {
                     .checked_sub(1)
                     .ok_or(SymbolFault::UnbalancedBrackets)?;
             }
-            b':' if depth == 0 && bytes.get(at + 1) == Some(&b':') => {
+            b'(' | b'[' => grouped += 1,
+            b')' | b']' => grouped = grouped.saturating_sub(1),
+            b':' if depth == 0 && grouped == 0 && bytes.get(at + 1) == Some(&b':') => {
                 parts.push(text.get(start..at).unwrap_or_default());
                 start = at + 2;
                 at += 1;

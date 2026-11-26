@@ -21,13 +21,11 @@
 //! Else, and for an anchor whose file defines nothing its symbol names, a
 //! symbol on a Rust file is searched for where its code may have moved
 //! ([`CodeFacts::namesakes`]), in the file the rename made when its file
-//! was renamed: never when that file still defines its last segment, or
-//! spells the name in a macro invocation where an item stands
-//! ([`Resolution::SymbolInInvocation`]), since the code is then there under
-//! another spelling or in an invocation, which defines nothing; and only
-//! as the whole path of an item written in another file of the same target
-//! by place, never a re-export or a module declaration, and never an item
-//! an invocation produces, which is no definition. A file of another
+//! was renamed: never when that file still defines its last segment,
+//! since the code is then there under another spelling; and only as the
+//! whole path of an item written in another file of the same target by
+//! place, never a re-export or a module declaration, and never an item a
+//! macro invocation produces, which is no definition. A file of another
 //! language is not searched, since no crate or target bounds where its
 //! code may go. The one such file is a [`Search`] candidate. The repair is
 //! given when the history shows the move in one step ([`Loss`]): the
@@ -84,7 +82,6 @@ impl Renames {
             Resolution::FileMissing => &self.facts,
             Resolution::Resolved(_)
             | Resolution::SymbolMissing
-            | Resolution::SymbolInInvocation
             | Resolution::Ambiguous(_)
             | Resolution::SymbolOnDirectory
             | Resolution::NoResolver
@@ -393,9 +390,6 @@ pub(crate) fn searched<'s>(
             anchor.symbol().is_some() && missing && !followed.contains_key(anchor)
         })
         .filter_map(|anchor| Some((anchor, searched_at(anchor, renames, prior)?)))
-        // A macro invocation of the searched file that spells the name may
-        // hold the code, which no index sees.
-        .filter(|(_, at)| renames.resolve(here.facts, at) != Resolution::SymbolInInvocation)
         .collect();
     let mut namesakes: BTreeMap<Anchor, Namesakes> = here
         .facts

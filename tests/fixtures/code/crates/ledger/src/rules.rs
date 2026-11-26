@@ -1,8 +1,9 @@
 //! A case for each rule a review of the index found broken. They are a
 //! negative literal, a comment between an attribute and its item, a name
 //! re-exported twice, an absolute `#[path]`, a module declared in a
-//! function, items alike but for their `cfg`, an item in a discriminant
-//! and a file mid-edit.
+//! function, items alike but for their `cfg`, an item in a discriminant,
+//! a file mid-edit, a raw identifier, and an impl's arguments with a
+//! comment and the trailing comma rustfmt adds when it breaks them.
 
 pub fn sign(x: i8) -> bool {
     match x {
@@ -57,5 +58,18 @@ mod x {
 mod y {
     pub mod a {
         pub fn spread() {}
+    }
+}
+
+pub struct r#Raw;
+
+impl
+    From<
+        // why
+        u8,
+    > for r#Raw
+{
+    fn from(_: u8) -> Self {
+        Self
     }
 }

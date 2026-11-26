@@ -1,6 +1,6 @@
 component = "code"
 choice = "A file's index holds its paths as a tree of scopes, each its own segments and its parent; the tree charges all an index holds to its file's room, and every path counts toward 64 segments"
-reason = "A path copied into every definition makes an index grow with its file times its nesting. A scope stores only the segments its own name adds and the id of its parent, created before it, so a path is walked from its last segment up and the walk ends. A container that is no definition, an inherent impl's type, is a scope too. A rule that copies text per entry can still outgrow its file, as a pub use list of twenty thousand selfs under a long module name once did. So every resolver enters its scopes and adds its definitions, module files and invoked names through the one tree, which index() hands it for its file's kind and size. The tree charges each what its cache entry costs (an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost) and refuses the file past its room as TooComplex. A path of more than MAX_NESTING segments is TooDeep."
+reason = "A path copied into every definition makes an index grow with its file times its nesting. A scope stores only the segments its own name adds and the id of its parent, created before it, so a path is walked from its last segment up and the walk ends. A container that is no definition, an inherent impl's type, is a scope too. A rule that copies text per entry can still outgrow its file, as a pub use list of twenty thousand selfs under a long module name once did. So every resolver enters its scopes and adds its definitions and module files through the one tree, which index() hands it for its file's kind and size. The tree charges each what its cache entry costs (an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost) and refuses the file past its room as TooComplex. A path of more than MAX_NESTING segments is TooDeep."
 alternatives = [
     "Keep an owned path per definition and cap the definitions: rejected because a cap that happens to hold today is no bound, and the waste stays",
     "Intern the path segments in a table: rejected because the copies of a path, not of its segments, are what grew",
@@ -11,7 +11,7 @@ tags = [
     "performance",
     "reliability",
 ]
-status = "accepted"
+status = "proposed"
 origin = "code index review"
 created = "2026-11-24T11:27:16.681896640Z"
 anchors = [
@@ -25,4 +25,13 @@ anchors = [
 ]
 depends_on = [
     "an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost",
+]
+
+[accepted_text]
+choice = "A file's index holds its paths as a tree of scopes, each its own segments and its parent; the tree charges all an index holds to its file's room, and every path counts toward 64 segments"
+reason = "A path copied into every definition makes an index grow with its file times its nesting. A scope stores only the segments its own name adds and the id of its parent, created before it, so a path is walked from its last segment up and the walk ends. A container that is no definition, an inherent impl's type, is a scope too. A rule that copies text per entry can still outgrow its file, as a pub use list of twenty thousand selfs under a long module name once did. So every resolver enters its scopes and adds its definitions, module files and invoked names through the one tree, which index() hands it for its file's kind and size. The tree charges each what its cache entry costs (an-entry-s-room-is-its-file-times-what-its-kind-s-densest-definitions-cost) and refuses the file past its room as TooComplex. A path of more than MAX_NESTING segments is TooDeep."
+alternatives = [
+    "Keep an owned path per definition and cap the definitions: rejected because a cap that happens to hold today is no bound, and the waste stays",
+    "Intern the path segments in a table: rejected because the copies of a path, not of its segments, are what grew",
+    "Bound the entry by a test over the densest inputs found: rejected because the next rule's input is not among them",
 ]

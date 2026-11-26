@@ -88,7 +88,7 @@ impl Walk<'_> {
             .into_iter()
             .map(|leaf| {
                 let name =
-                    Segment::name(text.get(leaf.name.start..leaf.name.end).unwrap_or_default());
+                    Segment::of_rust(text.get(leaf.name.start..leaf.name.end).unwrap_or_default());
                 (leaf, name)
             })
             .filter(|(leaf, name)| !defined.contains(&(leaf.container, std::slice::from_ref(name))))

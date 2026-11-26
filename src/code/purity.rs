@@ -19,9 +19,10 @@
 //! root, an alias of any path of `std`, `core` or `alloc`, `extern crate`,
 //! a `macro_rules!` definition, an attribute that names a `path`
 //! (`#[path = ..]`, `#[cfg_attr(.., path = ..)]`), a `mod name` in a
-//! macro's tokens, which declares a module the check cannot see marked,
-//! and the prelude macros of [`MACROS`], which read files or the
-//! environment or write a stream.
+//! macro's tokens, which declares a module the check cannot see marked, a
+//! `mod name;` inside an inline module, whose file the check places by
+//! its declaring file's path alone, and the prelude macros of [`MACROS`],
+//! which read files or the environment or write a stream.
 //! The one include admitted is `include_str!` of a plain string literal,
 //! a relative path that stays inside the checked directory: a language's
 //! query file, source of the index as its Rust files are.
@@ -164,9 +165,9 @@ pub(crate) fn faults(root: &Path, dir: &str, allowed: &AllowList) -> Vec<String>
             .map(|(line, what)| format!("{path}:{line}: {what}")),
         );
         found.extend(
-            file.macro_modules
+            file.unplaced
                 .iter()
-                .map(|line| format!("{path}:{line}: a module declared through a macro")),
+                .map(|(line, what)| format!("{path}:{line}: {what}")),
         );
     }
     found
@@ -174,21 +175,23 @@ pub(crate) fn faults(root: &Path, dir: &str, allowed: &AllowList) -> Vec<String>
 
 /// What the check reads of a file: its tokens outside test items, each
 /// with its line, each `mod name;` it declares and whether a test mark
-/// holds it, the line of each `mod name` a macro's tokens outside test
-/// items spell, and whether the whole file is test code.
+/// holds it, the line of each module outside test items whose file the
+/// check cannot place, and why, and whether the whole file is test code.
 struct Read {
     tokens: Vec<(usize, String)>,
     modules: Vec<(String, bool)>,
-    macro_modules: Vec<usize>,
+    unplaced: Vec<(usize, &'static str)>,
     test: bool,
 }
 
-/// What the check reads of `text`.
+/// What the check reads of `text`. A module file is placed by the file
+/// that declares it, so a `mod name;` inside an inline module, whose file
+/// is under that module's directory, is refused rather than placed.
 fn read(text: &str) -> Read {
     let tree = syntax::parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
     let mut marked: Vec<Range<usize>> = Vec::new();
     let mut modules = Vec::new();
-    let mut macro_modules = Vec::new();
+    let mut unplaced = Vec::new();
     let mut test = false;
     let mut pending = vec![tree.root_node()];
     while let Some(node) = pending.pop() {
@@ -202,12 +205,25 @@ fn read(text: &str) -> Read {
                 }
             }
             "attribute_item" if is_test_mark(node, text) => marked.extend(marked_item(node)),
-            "token_tree" => macro_modules.extend(declared_modules(node, text)),
+            "token_tree" => unplaced.extend(
+                declared_modules(node, text)
+                    .into_iter()
+                    .map(|(line, at)| (line, at, "a module declared through a macro")),
+            ),
             "mod_item" if node.child_by_field_name("body").is_none() => {
                 let name = node
                     .child_by_field_name("name")
                     .map_or("", |name| text_of(name, text));
                 modules.push((name.to_owned(), node.start_byte()));
+                let inline = node.parent().and_then(|body| body.parent());
+                if inline.is_some_and(|module| module.kind() == "mod_item") {
+                    let line = node.start_position().row + 1;
+                    unplaced.push((
+                        line,
+                        node.start_byte(),
+                        "a module file declared in an inline module",
+                    ));
+                }
             }
             _ => {}
         }
@@ -230,10 +246,10 @@ fn read(text: &str) -> Read {
             .into_iter()
             .map(|(name, at)| (name, held(at)))
             .collect(),
-        macro_modules: macro_modules
+        unplaced: unplaced
             .into_iter()
-            .filter(|&(_, at)| !held(at))
-            .map(|(line, _)| line)
+            .filter(|&(_, at, _)| !held(at))
+            .map(|(line, _, what)| (line, what))
             .collect(),
         test,
     }
@@ -521,11 +537,16 @@ fn starts_path(tokens: &[(usize, String)], at: usize) -> bool {
             .map_or("", |(_, token)| token.as_str())
     };
     let first = spelled(0);
-    let word = first == "$crate" || first == "::" || super::rust::is_word(first);
+    let word = first == "$crate" || first == "::" || is_word(first);
     let continues = matches!(spelled(1), "::" | ".");
     let visibility = (spelled(1) == "(" && spelled(2) == "pub")
         || (spelled(1) == "in" && spelled(2) == "(" && spelled(3) == "pub");
     word && !continues && !visibility
+}
+
+/// A run of letters, digits and underscores: an identifier or a keyword.
+fn is_word(token: &str) -> bool {
+    !token.is_empty() && token.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// The paths a path or `use` tree from `at` names, each prefixed by
@@ -555,7 +576,7 @@ fn read_path(tokens: &[(usize, String)], at: &mut usize, prefix: Vec<String>) ->
                 *at += 1;
                 return vec![segments];
             }
-            word if word == "$crate" || super::rust::is_word(word) => {
+            word if word == "$crate" || is_word(word) => {
                 segments.push(word.to_owned());
                 *at += 1;
                 if spelled(*at) == "as" {

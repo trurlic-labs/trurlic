@@ -15,7 +15,7 @@
 //! work under budgets per byte (`work.rs`), its cache entry a compact
 //! encoding (`encoding.rs`). What needs the whole tree is a second step
 //! over the indexes: the files that are test code whole (`roles.rs`). A
-//! macro invocation defines nothing (`rust/invocations.rs`).
+//! macro invocation defines nothing (`rust.rs`).
 
 mod crates;
 mod definitions;
@@ -214,6 +214,10 @@ mod tests {
             "macro_module",
             "macro_rules! ship { () => { mod shipped; }; }\n",
         ),
+        (
+            "nested_module",
+            "#[cfg(test)]\nmod twin;\n#[cfg(not(test))]\nmod twin {\n    mod leak;\n}\n",
+        ),
     ];
 
     #[test]
@@ -258,6 +262,8 @@ mod tests {
         );
         write("src/index/tests.rs", "use std::fs;\n");
         write("src/index/test_file_shipped/hidden.rs", "use std::fs;\n");
+        write("src/index/nested_module/twin.rs", "");
+        write("src/index/nested_module/twin/leak.rs", "use std::fs;\n");
         for (name, text) in &files {
             write(&format!("src/index/{name}.rs"), text);
         }

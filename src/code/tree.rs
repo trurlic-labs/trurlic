@@ -87,12 +87,10 @@ impl<'t> TreeIndex<'t> {
         Ok(())
     }
 
-    /// Keep `name`, a name an invocation spells, after every one kept so
-    /// far.
-    pub(super) fn add_invoked(&mut self, name: &str) -> Result<(), IndexFault> {
-        self.scopes.admit_invoked(name)?;
-        self.index.rust.invoked.push(name.to_owned());
-        Ok(())
+    /// The tokens within bytes `bytes` as their hash holds them, a space
+    /// between each two: no comment, and no token of no meaning.
+    pub(super) fn spelled(&self, bytes: &Range<usize>) -> String {
+        self.leaves.spelled(self.text, bytes)
     }
 
     /// The definitions added so far.

@@ -85,10 +85,6 @@ const TWO: &str = "2 definitions";
 const TWO_PATHS: &str = "its symbol names definitions of 2 paths";
 const DEEPER: &str = "its file nests a path deeper than 64 segments";
 const MISSING: &str = "its file defines nothing its symbol names";
-/// A symbol whose name only a macro invocation of its file spells.
-const INVOKED: &str = "its file defines nothing its symbol names: a macro invocation there spells \
-                       the name, and an item an invocation produces is no definition; anchor the \
-                       macro, an item written outside the invocation, or the file";
 const LEDGER: &str = "crates/ledger/src/lib.rs";
 const BOOKS: &str = "crates/ledger/src/books/mod.rs";
 const RULES: &str = "crates/ledger/src/rules.rs";
@@ -163,8 +159,8 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
     (LEDGER, "Shelf", MISSING),
     (LEDGER, "Imported", MISSING),
     (LEDGER, "external_total", SYMBOL),
-    (LEDGER, "LedgerView", INVOKED),
-    (LEDGER, "CURRENT", INVOKED),
+    (LEDGER, "LedgerView", MISSING),
+    (LEDGER, "CURRENT", MISSING),
     (LEDGER, "vanished", MISSING),
     (LEDGER, "Phantom", MISSING),
     (LEDGER, "LedgerView::book", MISSING),
@@ -175,7 +171,7 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
         "its symbol has an angle bracket that does not pair",
     ),
     (LEDGER, "Book::", "its symbol has an empty segment"),
-    (BOOKS, "CatalogId", INVOKED),
+    (BOOKS, "CatalogId", MISSING),
     (BOOKS, "CatalogId::new", MISSING),
     (BOOKS, "NotAType", MISSING),
     (BOOKS, "book_id", SYMBOL),
@@ -191,6 +187,8 @@ const RUST_CASES: &[(&str, &str, &str)] = &[
         "its symbol names definitions of 2 paths",
     ),
     (RULES, "x::a::spread", TWO),
+    (RULES, "r#Raw", SYMBOL),
+    (RULES, "Raw::<From<u8>>::from", SYMBOL),
 ];
 
 const SHELF: &str = "python/shelf.py";
@@ -1047,6 +1045,9 @@ const STATEMENTS: &[&str] = &[
     "crates/ledger/src/rules.rs y Module Code Private",
     "crates/ledger/src/rules.rs y::a Module Code Public",
     "crates/ledger/src/rules.rs y::a::spread Function Code Public",
+    "crates/ledger/src/rules.rs Raw Struct Code Public",
+    "crates/ledger/src/rules.rs Raw::<From<u8>> Impl Code -",
+    "crates/ledger/src/rules.rs Raw::<From<u8>>::from Method Code -",
     "crates/ledger/src/rules/in_body.rs reached_by_test Function Test Public",
     "crates/ledger/tests/flow.rs opened_book Function Test Private",
     "crates/ledger/tests/flow.rs a_book_opens Function Test Private",

@@ -1,25 +1,25 @@
 component = "code"
 choice = "A span's tokens are every byte but whitespace and comments, by the lexicon each grammar declares; a Rust hash also leaves out the commas, braces, parentheses and pipes of no meaning"
-reason = "A grammar's tree is no exact lexer of its language, and the hash must follow the language. Each leaf is a token, and each node of a lexical literal kind is one whole, so a string's prefix and delimiters are hashed and -1 and - 1 agree. A repetition's separator and what error recovery passes over lie in no node, so each run of such bytes is a token too. tree-sitter-rust lexes a comment as tokens after a repetition's separator, so a token that opens a comment by the grammar's declared syntax starts bytes no token is taken from. tree-sitter-python leaves a line continuation before a string in no node, so a grammar that declares continuations holds one in those bytes as whitespace. A metavariable $a written $ a is hashed as the two tokens Rust has. Each grammar states its literal kinds, comment delimiters, continuations and glued kinds as data in one Lexicon. Rust's hashes leave out what carries no meaning: a list's trailing comma, but the one of a one-element tuple; the braces around a closure's or a match arm's body of one expression, or of one return, break or continue, with that semicolon; the outer pair of nested parentheses around an expression; and a match arm's leading pipe. So rustfmt's edits to them move no hash. A comma or a brace inside a macro's tokens stays, as only the macro gives it a meaning, so the trailing comma rustfmt adds to a vec! it breaks moves the hash, and so does its merge of two derive attributes. Python's commas and parentheses of no meaning are its query's (what-a-python-span-hash-covers). TypeScript's hashes keep every comma, as a trailing one can carry meaning (an array's hole, TSX's <T,>)."
+reason = "A grammar's tree is no exact lexer of its language, and the hash must follow the language. Each leaf is a token, and each node of a lexical literal kind is one whole, so a string's prefix and delimiters are hashed and -1 and - 1 agree. A repetition's separator and what error recovery passes over lie in no node, so each run of such bytes is a token too. tree-sitter-rust lexes a comment as tokens after a repetition's separator, so a token that opens a comment by the grammar's declared syntax starts bytes no token is taken from. tree-sitter-python leaves a line continuation before a string in no node, so a grammar that declares continuations holds one in those bytes as whitespace. A metavariable $a written $ a is hashed as the two tokens Rust has. Each grammar states its literal kinds, comment delimiters, continuations and glued kinds as data in one Lexicon. Rust's hashes leave out what carries no meaning: a list's trailing comma, but the one of a one-element tuple; the braces around a closure's or a match arm's body of one expression, or of one return, break or continue, with that semicolon; the outer pair of nested parentheses around an expression; and a match arm's leading pipe. So rustfmt's edits to them move no hash. A comma or a brace inside a macro's tokens stays, as only the macro gives it a meaning, so the trailing comma rustfmt adds to a vec! it breaks moves the hash, as do its merge of two derives and its sort of uses and use lists. Python's commas and parentheses of no meaning are its query's (what-a-python-span-hash-covers). TypeScript's hashes keep every comma, as a trailing one can carry meaning (an array's hole, TSX's <T,>)."
 alternatives = [
     "Hash the leaves alone: rejected because a repetition's separator and an error's bytes are in no leaf, so changing them moved no hash",
-    "Hard-code Rust's comment syntax in the token walk: rejected because each grammar the index adds has its own",
     "Leave a trailing comma in a macro's tokens out too: rejected because a macro may give it meaning, as a repetition without $(,)? refuses one",
     "State that a reformat moves the hash: rejected because every rustfmt run would then touch decisions in a diff review",
     "Name the silent tokens as Lexicon data of every grammar: rejected because the rule reads each grammar's node kinds, Rust's in code and Python's in its query",
+    "Hash a run of adjacent use declarations and a use list's entries as a sorted set: rejected because rustfmt sorts them only when its configuration or style edition changes, and a hash that reorders some tokens is a second order to keep right beside the one every hash holds",
 ]
 tags = [
     "anchors",
     "hashing",
 ]
-status = "accepted"
+status = "proposed"
 origin = "code index review fixes"
 created = "2026-11-25T17:10:51.306704636Z"
 anchors = [
     { file = "src/code/rust.rs", symbol = "LEXICON" },
     { file = "src/code/rust/silent.rs", symbol = "a_trailing_comma_that_carries_no_meaning_moves_no_hash" },
     { file = "src/code/rust/silent.rs", symbol = "braces_around_a_closure_or_arm_body_of_one_expression_move_no_hash" },
-    { file = "src/code/rust/silent.rs", symbol = "rustfmt_moves_only_the_hash_of_merged_derives_and_of_a_comma_in_a_macros_tokens" },
+    { file = "src/code/rust/silent.rs", symbol = "rustfmt_moves_only_the_hash_of_merged_derives_a_comma_in_a_macros_tokens_and_sorted_uses" },
     { file = "src/code/rust/silent.rs", symbol = "silent_tokens" },
     { file = "src/code/syntax.rs", symbol = "Lexicon" },
     { file = "src/code/syntax.rs", symbol = "Lexicon::comment" },
@@ -29,4 +29,15 @@ anchors = [
 ]
 depends_on = [
     "a-span-hash-is-t1-over-the-tokens-without-comments",
+]
+
+[accepted_text]
+choice = "A span's tokens are every byte but whitespace and comments, by the lexicon each grammar declares; a Rust hash also leaves out the commas, braces, parentheses and pipes of no meaning"
+reason = "A grammar's tree is no exact lexer of its language, and the hash must follow the language. Each leaf is a token, and each node of a lexical literal kind is one whole, so a string's prefix and delimiters are hashed and -1 and - 1 agree. A repetition's separator and what error recovery passes over lie in no node, so each run of such bytes is a token too. tree-sitter-rust lexes a comment as tokens after a repetition's separator, so a token that opens a comment by the grammar's declared syntax starts bytes no token is taken from. tree-sitter-python leaves a line continuation before a string in no node, so a grammar that declares continuations holds one in those bytes as whitespace. A metavariable $a written $ a is hashed as the two tokens Rust has. Each grammar states its literal kinds, comment delimiters, continuations and glued kinds as data in one Lexicon. Rust's hashes leave out what carries no meaning: a list's trailing comma, but the one of a one-element tuple; the braces around a closure's or a match arm's body of one expression, or of one return, break or continue, with that semicolon; the outer pair of nested parentheses around an expression; and a match arm's leading pipe. So rustfmt's edits to them move no hash. A comma or a brace inside a macro's tokens stays, as only the macro gives it a meaning, so the trailing comma rustfmt adds to a vec! it breaks moves the hash, and so does its merge of two derive attributes. Python's commas and parentheses of no meaning are its query's (what-a-python-span-hash-covers). TypeScript's hashes keep every comma, as a trailing one can carry meaning (an array's hole, TSX's <T,>)."
+alternatives = [
+    "Hash the leaves alone: rejected because a repetition's separator and an error's bytes are in no leaf, so changing them moved no hash",
+    "Hard-code Rust's comment syntax in the token walk: rejected because each grammar the index adds has its own",
+    "Leave a trailing comma in a macro's tokens out too: rejected because a macro may give it meaning, as a repetition without $(,)? refuses one",
+    "State that a reformat moves the hash: rejected because every rustfmt run would then touch decisions in a diff review",
+    "Name the silent tokens as Lexicon data of every grammar: rejected because the rule reads each grammar's node kinds, Rust's in code and Python's in its query",
 ]

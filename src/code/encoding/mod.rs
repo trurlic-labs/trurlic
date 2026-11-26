@@ -21,9 +21,9 @@
 //! entry and the index it decodes to together take no more memory than
 //! that, as the allocator rounds their blocks. Every count is bounded by
 //! the bytes left, every id by what it names, every parent by its child
-//! (so a path's walk ends), a path by
-//! [`MAX_NESTING`](super::scope::MAX_NESTING), and the invoked names are
-//! sorted and distinct. Bytes that break any of it are no index.
+//! (so a path's walk ends), and a path by
+//! [`MAX_NESTING`](super::scope::MAX_NESTING). Bytes that break any of it
+//! are no index.
 
 mod read;
 mod write;
@@ -62,13 +62,11 @@ const HASH_BYTES: usize = 32;
 pub(super) const DEPTH_BYTES: usize = size_of::<usize>();
 
 /// The densest definitions a file of a kind holds: each takes `bytes` of
-/// the file, `name` of them its name, and its span is its predecessor's
-/// when `shared`.
+/// the file, `name` of them its name.
 #[derive(Clone, Copy)]
 struct Densest {
     bytes: usize,
     name: usize,
-    shared: bool,
 }
 
 /// The densest definitions of `kind`. A definition takes its name and a
@@ -77,41 +75,21 @@ struct Densest {
 /// densest.
 const fn densest(kind: FileKind) -> Densest {
     match kind {
-        // An enum variant or a name in a list, `A,`.
+        // An enum variant or a name in a list, `A,`; a Makefile target of
+        // a rule of many, `a `; a table of a dotted TOML key, `a.` of
+        // `a.b.c = 0`.
         FileKind::Rust
         | FileKind::Python
         | FileKind::TypeScript
         | FileKind::Tsx
         | FileKind::C
-        | FileKind::Cpp => Densest {
-            bytes: 2,
-            name: 1,
-            shared: false,
-        },
-        // A target of a rule of many, `a `, whose span is the rule's.
-        FileKind::Make => Densest {
-            bytes: 2,
-            name: 1,
-            shared: true,
-        },
-        // A table of a dotted key, `a.` of `a.b.c = 0`.
-        FileKind::Toml => Densest {
-            bytes: 2,
-            name: 1,
-            shared: false,
-        },
+        | FileKind::Cpp
+        | FileKind::Make
+        | FileKind::Toml => Densest { bytes: 2, name: 1 },
         // A key of an empty name, `"":0,`.
-        FileKind::Json => Densest {
-            bytes: 5,
-            name: 0,
-            shared: false,
-        },
+        FileKind::Json => Densest { bytes: 5, name: 0 },
         // A heading of an empty title, `#` and its line's end.
-        FileKind::Markdown => Densest {
-            bytes: 2,
-            name: 0,
-            shared: false,
-        },
+        FileKind::Markdown => Densest { bytes: 2, name: 0 },
     }
 }
 
@@ -140,12 +118,8 @@ const fn definition_cost(densest: Densest, max: usize) -> usize {
         + block(densest.name)
         + scope_bytes;
     // Its scope, kind, marks and span tag, then its span's four numbers
-    // and its hash unless it shares its predecessor's.
-    let span_bytes = match densest.shared {
-        true => 0,
-        false => 4 * number + HASH_BYTES,
-    };
-    scope + size_of::<Definition>() + number + 3 + span_bytes
+    // and its hash, which a span its predecessor's leaves out.
+    scope + size_of::<Definition>() + number + 3 + 4 * number + HASH_BYTES
 }
 
 /// The room of each byte of a file of `kind`: what its densest
@@ -155,14 +129,14 @@ pub(super) const fn room_per_byte(kind: FileKind) -> usize {
     definition_cost(densest, kind.max_bytes()).div_ceil(densest.bytes)
 }
 
-/// The bytes of an index's outcome tag and its four counts, each a count
+/// The bytes of an index's outcome tag and its three counts, each a count
 /// of at most `u32::MAX` items.
-const COUNTS_BYTES: usize = 1 + 4 * 5;
+const COUNTS_BYTES: usize = 1 + 3 * 5;
 
 /// The collections a decode allocates whole: the scopes, their depths,
-/// the definitions, the module files and the invoked names. Each block
-/// rounds its slots up by less than [`MIN_BLOCK_BYTES`].
-const COLLECTIONS: usize = 5;
+/// the definitions and the module files. Each block rounds its slots up
+/// by less than [`MIN_BLOCK_BYTES`].
+const COLLECTIONS: usize = 4;
 
 /// The bytes an entry and its decode take past the room of its file: the
 /// counts of an index, and what the block of each collection rounds up.
@@ -186,45 +160,25 @@ pub(crate) const fn max_entry_bytes(kind: FileKind, bytes: usize) -> usize {
 /// What indexing a file's bytes gave.
 pub(crate) type Indexed = Result<FileIndex, IndexFault>;
 
-pub(super) const fn kind_code(kind: DefinitionKind) -> u8 {
-    match kind {
-        DefinitionKind::Module => 0,
-        DefinitionKind::Struct => 1,
-        DefinitionKind::Union => 2,
-        DefinitionKind::Enum => 3,
-        DefinitionKind::Trait => 4,
-        DefinitionKind::Impl => 5,
-        DefinitionKind::Function => 6,
-        DefinitionKind::Method => 7,
-        DefinitionKind::Field => 8,
-        DefinitionKind::Variant => 9,
-        DefinitionKind::Constant => 10,
-        DefinitionKind::Static => 11,
-        DefinitionKind::TypeAlias => 12,
-        DefinitionKind::AssociatedType => 13,
-        DefinitionKind::Macro => 14,
-        DefinitionKind::Reexport => 15,
-        DefinitionKind::Key => 16,
-        DefinitionKind::Target => 17,
-        DefinitionKind::Heading => 18,
-        DefinitionKind::Class => 19,
-        DefinitionKind::Variable => 20,
-        DefinitionKind::Interface => 21,
-        DefinitionKind::Test => 22,
-    }
+/// A kind's code: its place in [`DefinitionKind::ALL`], by which a read
+/// takes it back.
+pub(super) fn kind_code(kind: DefinitionKind) -> u8 {
+    place_in(&DefinitionKind::ALL, &kind)
 }
 
-/// A visibility's code; 0 is none.
-pub(super) const fn visibility_code(visibility: Option<Visibility>) -> u8 {
-    match visibility {
-        None => 0,
-        Some(Visibility::Private) => 1,
-        Some(Visibility::Crate) => 2,
-        Some(Visibility::Super) => 3,
-        Some(Visibility::InPath) => 4,
-        Some(Visibility::Public) => 5,
-        Some(Visibility::Protected) => 6,
-    }
+/// A visibility's code: 0 for none, else one past its place in
+/// [`Visibility::ALL`].
+pub(super) fn visibility_code(visibility: Option<Visibility>) -> u8 {
+    visibility.map_or(0, |visibility| {
+        place_in(&Visibility::ALL, &visibility).saturating_add(1)
+    })
+}
+
+/// The place of `value` in `all`; past its end, a code no read takes back,
+/// when `all` misses it.
+fn place_in<T: PartialEq>(all: &[T], value: &T) -> u8 {
+    let place = all.iter().position(|each| each == value);
+    u8::try_from(place.unwrap_or(all.len())).unwrap_or(u8::MAX)
 }
 
 pub(super) const fn role_code(role: Role) -> u8 {

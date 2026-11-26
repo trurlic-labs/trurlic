@@ -1,6 +1,6 @@
 component = "lint"
 choice = "A stale Rust symbol is repaired to the one file of its target that writes it when the commit its file last lost it in gave that file the same span hash"
-reason = "Names alone do not show where code went: a function deleted for good in the commit that writes an unrelated function of its name elsewhere is no move. So the search, CodeFacts::namesakes, finds the one other walked Rust file of the same target by place (roles::target_of) that writes the symbol as a whole path, no re-export or module declaration, an item a macro invocation produces being no definition; never when the searched file still defines its last segment or an invocation there spells it (Resolution::SymbolInInvocation). The searched file is the anchor's, or the one a rename carried the symbol into. Its loss is the newest of its commits, read in rounds of the newest one, four and sixteen, whose parent wrote the item, or the work tree when HEAD wrote it; the repair is given when, across that loss, the candidate went from writing no such item to definitions of the span hash the searched file's had, and no later commit added or deleted the candidate. The hash compares tokens, comments and whitespace aside, and tolerates nothing else, not a changed visibility or attribute, not a rename of the item: an edited move is left stale rather than guessed. The reads are one walk for the searched files and their candidates and at most four blob batches, whatever the history's length."
+reason = "Names alone do not show where code went: a function deleted for good in the commit that writes an unrelated function of its name elsewhere is no move. So the search, CodeFacts::namesakes, finds the one other walked Rust file of the same target by place (roles::target_of) that writes the symbol as a whole path, no re-export or module declaration, an item a macro invocation produces being no definition; never when the searched file still defines its last segment. The searched file is the anchor's, or the one a rename carried the symbol into. Its loss is the newest of its commits, read in rounds of the newest one, four and sixteen, whose parent wrote the item, or the work tree when HEAD wrote it; the repair is given when, across that loss, the candidate went from writing no such item to definitions of the span hash the searched file's had, and no later commit added or deleted the candidate. The hash compares tokens, comments and whitespace aside, and tolerates nothing else, not a changed visibility or attribute, not a rename of the item: an edited move is left stale rather than guessed. The reads are one walk for the searched files and their candidates and at most four blob batches, whatever the history's length."
 alternatives = [
     "Follow the code through later commits and carrier files: rejected because a namesake written in the commit a carrier lost its own item was taken for the code, and one pickaxe walk per search cost minutes on a long history",
     "Accept an edited move above a text similarity: rejected because no threshold separates an edited move from a rewrite by name without an owner's call",
@@ -10,7 +10,7 @@ tags = [
     "anchors",
     "lint",
 ]
-status = "accepted"
+status = "proposed"
 origin = "anchor repair review"
 created = "2026-11-26T07:48:25.688106240Z"
 anchors = [
@@ -20,8 +20,16 @@ anchors = [
     { file = "src/lint/anchors/repair.rs", symbol = "searched" },
     { file = "src/lint/anchors/repair.rs", symbol = "shown_moved" },
     { file = "src/lint/anchors/tests.rs", symbol = "a_namesake_that_stood_beside_the_code_is_no_move" },
-    { file = "src/lint/anchors/tests.rs", symbol = "a_renamed_file_that_spells_the_name_in_an_invocation_is_not_searched" },
     { file = "src/lint/anchors/tests.rs", symbol = "a_symbol_that_moved_to_one_other_file_is_repaired_there" },
     { file = "src/sources/repair.rs", symbol = "MAX_LOSS_COMMITS" },
     { file = "tests/integration/repair.rs", symbol = "a_namesake_or_a_rename_that_carried_no_code_is_never_written" },
+]
+
+[accepted_text]
+choice = "A stale Rust symbol is repaired to the one file of its target that writes it when the commit its file last lost it in gave that file the same span hash"
+reason = "Names alone do not show where code went: a function deleted for good in the commit that writes an unrelated function of its name elsewhere is no move. So the search, CodeFacts::namesakes, finds the one other walked Rust file of the same target by place (roles::target_of) that writes the symbol as a whole path, no re-export or module declaration, an item a macro invocation produces being no definition; never when the searched file still defines its last segment or an invocation there spells it (Resolution::SymbolInInvocation). The searched file is the anchor's, or the one a rename carried the symbol into. Its loss is the newest of its commits, read in rounds of the newest one, four and sixteen, whose parent wrote the item, or the work tree when HEAD wrote it; the repair is given when, across that loss, the candidate went from writing no such item to definitions of the span hash the searched file's had, and no later commit added or deleted the candidate. The hash compares tokens, comments and whitespace aside, and tolerates nothing else, not a changed visibility or attribute, not a rename of the item: an edited move is left stale rather than guessed. The reads are one walk for the searched files and their candidates and at most four blob batches, whatever the history's length."
+alternatives = [
+    "Follow the code through later commits and carrier files: rejected because a namesake written in the commit a carrier lost its own item was taken for the code, and one pickaxe walk per search cost minutes on a long history",
+    "Accept an edited move above a text similarity: rejected because no threshold separates an edited move from a rewrite by name without an owner's call",
+    "Judge the anchor's file at the parent of its last change: rejected because any later edit of the file then turns its repairs off",
 ]

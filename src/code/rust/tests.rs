@@ -46,6 +46,86 @@ fn a_trait_impl_is_a_definition_and_an_inherent_one_is_not() {
     );
 }
 
+/// Trait impls with a comment in their arguments, and as rustfmt 1.95's
+/// defaults format them: a trailing comma added to the tuple and to the
+/// trait's arguments it breaks.
+const IMPLS: &str = "pub struct Table;\nimpl Shape for (TypeNameNumberOne, TypeNameNumberTwo, TypeNameNumberThree, TypeNameNumberFour) { fn area() {} }\nimpl Convert<TypeNameNumberOne, TypeNameNumberTwo, TypeNameNumberThree, TypeNameNumberFour, TypeNameNumberFive> for Table { fn go() {} }\nimpl Convert</* why */ u8> for Table {}\n";
+const IMPLS_FORMATTED: &str = "pub struct Table;\nimpl Shape\n    for (\n        TypeNameNumberOne,\n        TypeNameNumberTwo,\n        TypeNameNumberThree,\n        TypeNameNumberFour,\n    )\n{\n    fn area() {}\n}\nimpl\n    Convert<\n        TypeNameNumberOne,\n        TypeNameNumberTwo,\n        TypeNameNumberThree,\n        TypeNameNumberFour,\n        TypeNameNumberFive,\n    > for Table\n{\n    fn go() {}\n}\nimpl Convert</* why */ u8> for Table {}\n";
+
+#[test]
+fn an_impls_path_is_spelled_from_its_tokens_so_rustfmt_and_a_comment_move_none() {
+    let paths = |text| -> Vec<String> { defined(text).into_iter().map(|(path, _)| path).collect() };
+    let tuple = "(TypeNameNumberOne,TypeNameNumberTwo,TypeNameNumberThree,TypeNameNumberFour)";
+    let arguments = "<TypeNameNumberOne,TypeNameNumberTwo,TypeNameNumberThree,TypeNameNumberFour,TypeNameNumberFive>";
+
+    assert_eq!(paths(IMPLS_FORMATTED), paths(IMPLS));
+    assert_eq!(
+        paths(IMPLS),
+        [
+            "Table".to_owned(),
+            format!("{tuple}::<Shape>"),
+            format!("{tuple}::<Shape>::area"),
+            format!("Table::<Convert{arguments}>"),
+            format!("Table::<Convert{arguments}>::go"),
+            "Table::<Convert<u8>>".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn an_anchor_names_an_impl_whatever_its_spaces_and_trailing_commas() {
+    for symbol in [
+        "(TypeNameNumberOne, TypeNameNumberTwo, TypeNameNumberThree, TypeNameNumberFour,)::<Shape>::area",
+        "(TypeNameNumberOne,TypeNameNumberTwo,TypeNameNumberThree,TypeNameNumberFour)::area",
+        "Table::<Convert<TypeNameNumberOne, TypeNameNumberTwo, TypeNameNumberThree, TypeNameNumberFour, TypeNameNumberFive,>>::go",
+        "Table::<Convert<u8>>",
+    ] {
+        assert_eq!(
+            testing::named(FileKind::Rust, IMPLS_FORMATTED, symbol).len(),
+            1,
+            "{symbol}"
+        );
+    }
+    let tuples = "impl Shape for (u8,) {}\nimpl Shape for (u8, u16,) {}\n";
+    let named = |symbol| testing::named(FileKind::Rust, tuples, symbol);
+    assert_eq!(named("(u8,)::<Shape>"), ["impl Shape for (u8,) {}"]);
+    assert_eq!(named("(u8)::<Shape>"), Vec::<&str>::new());
+    assert_eq!(
+        named("(u8, u16)::<Shape>"),
+        ["impl Shape for (u8, u16,) {}"]
+    );
+}
+
+#[test]
+fn a_raw_identifier_is_defined_and_named_as_its_name() {
+    let text = "pub struct r#Raw;\nimpl r#Raw { pub fn r#match() {} }\nimpl Raw { pub fn plain() {} }\nimpl From<r#Raw> for (r#Raw, u8) {}\npub use inner::r#Moved;\nmod inner { pub struct Moved; }\n";
+    let paths: Vec<String> = defined(text).into_iter().map(|(path, _)| path).collect();
+
+    assert_eq!(
+        paths,
+        [
+            "Raw",
+            "Raw::match",
+            "Raw::plain",
+            "(Raw,u8)::<From<Raw>>",
+            "Moved",
+            "inner",
+            "inner::Moved"
+        ]
+    );
+    for (symbol, spelled) in [("Raw", "r#Raw"), ("Raw::match", "r#Raw::r#match")] {
+        assert_eq!(
+            testing::named(FileKind::Rust, text, spelled),
+            testing::named(FileKind::Rust, text, symbol)
+        );
+        assert_eq!(
+            testing::named(FileKind::Rust, text, symbol).len(),
+            1,
+            "{symbol}"
+        );
+    }
+}
+
 #[test]
 fn a_reexport_of_a_path_the_file_defines_is_no_second_definition() {
     let text = "macro_rules! m { () => {} }\npub(crate) use m;\npub use inner::Thing;\nmod inner { pub struct Thing; }\npub use other::{self as renamed, *};\nuse private::Name;\npub use x::y as _;\n";

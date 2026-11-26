@@ -296,6 +296,17 @@ impl Leaves {
         first..last.max(first)
     }
 
+    /// The units within bytes `bytes` of `text`, each as it is hashed, a
+    /// space between each two. Read only of a tree with no marks.
+    pub(super) fn spelled(&self, text: &str, bytes: &Range<usize>) -> String {
+        let units = self.units.get(self.within(bytes)).unwrap_or_default();
+        let tokens: Vec<String> = units
+            .iter()
+            .map(|unit| String::from_utf8_lossy(&self.bytes_of(unit, text)).into_owned())
+            .collect();
+        tokens.join(" ")
+    }
+
     /// The hash of each of `ranges`, each a definition's units: over the
     /// units within it, in order, each token after its length and each
     /// mark as a length no token has, where each range within it comes in

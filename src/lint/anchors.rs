@@ -67,7 +67,6 @@ fn holds(facts: &CodeFacts, anchor: &Anchor) -> bool {
         Resolution::Resolved(_) | Resolution::Ambiguous(_) => true,
         Resolution::FileMissing
         | Resolution::SymbolMissing
-        | Resolution::SymbolInInvocation
         | Resolution::SymbolOnDirectory
         | Resolution::NoResolver
         | Resolution::Unindexable(_)
@@ -111,9 +110,7 @@ impl Class {
         let cause = || resolution.clone();
         match resolution {
             Resolution::Resolved(_) => Self::Resolved,
-            Resolution::FileMissing
-            | Resolution::SymbolMissing
-            | Resolution::SymbolInInvocation => Self::Missing(Missing(cause())),
+            Resolution::FileMissing | Resolution::SymbolMissing => Self::Missing(Missing(cause())),
             Resolution::Malformed(_) | Resolution::SymbolOnDirectory => {
                 Self::Broken(Broken(cause()))
             }

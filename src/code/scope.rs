@@ -10,10 +10,10 @@
 //! split at `::` included.
 //!
 //! The tree is also the one way into an index: every resolver enters
-//! its scopes and admits its definitions, module files and invoked names
-//! through it, and it charges each what its entry costs against the room
-//! of the file ([`encoding::room_of`]), so no rule of any resolver can
-//! make an index outgrow its file.
+//! its scopes and admits its definitions and module files through it,
+//! and it charges each what its entry costs against the room of the file
+//! ([`encoding::room_of`]), so no rule of any resolver can make an index
+//! outgrow its file.
 
 use super::encoding::{self, Measure};
 use super::index::{Definition, FileKind, IndexFault, ModuleFile};
@@ -99,10 +99,6 @@ impl ScopeTree {
 
     pub(super) fn admit_module_file(&mut self, module: &ModuleFile) -> Result<(), IndexFault> {
         self.charge(Measure::module_file(module))
-    }
-
-    pub(super) fn admit_invoked(&mut self, name: &str) -> Result<(), IndexFault> {
-        self.charge(Measure::invoked(name))
     }
 
     fn charge(&mut self, bytes: usize) -> Result<(), IndexFault> {
