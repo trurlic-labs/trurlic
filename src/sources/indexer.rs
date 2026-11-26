@@ -2,13 +2,15 @@
 //! pool of workers and ends it as it returns, and [`Worker::index`] is the
 //! shell's one call of [`code::index`].
 //!
-//! A parse takes a fixed call stack and allocates at most 2 KiB a byte of
-//! its file (`code::work`), and a thread keeps the memory it freed until
-//! it ends. So a worker indexes a file up to
-//! [`MAX_BYTES_INDEXED_BY_A_WORKER`] itself and starts a thread for a
-//! larger one, whose memory goes back when that thread ends, and the files
-//! indexed at once hold at most [`MAX_BYTES_INDEXED_AT_ONCE`] bytes between
-//! them. Every thread has a stack of [`WORKER_STACK_BYTES`].
+//! A parse takes a fixed call stack and allocates in proportion to its
+//! file, a little over 2 KiB a byte in the costliest shapes measured,
+//! since a refused parse runs on to the runtime's next check (`code::work`);
+//! and a thread keeps the memory it freed until it ends. So a worker
+//! indexes a file up to [`MAX_BYTES_INDEXED_BY_A_WORKER`] itself and starts
+//! a thread for a larger one, whose memory goes back when that thread
+//! ends, and the files indexed at once hold at most
+//! [`MAX_BYTES_INDEXED_AT_ONCE`] bytes between them. Every thread has a
+//! stack of [`WORKER_STACK_BYTES`].
 //!
 //! A C or C++ file is indexed against the part of its tree's blank sets
 //! it writes, the sets a fact of the tree's headers: the indexer holds the
@@ -34,12 +36,13 @@ use crate::code::{self, BlankMacros, Defines, FileKind, FileMacros, Indexed, Rea
 const WORKER_STACK_BYTES: usize = 1024 * 1024;
 
 /// The largest file a worker indexes itself; a larger one is indexed on a
-/// thread of its own. A worker keeps what its largest parse allocated, up
-/// to 16 MiB at this size.
+/// thread of its own. A worker keeps what its largest parse allocated,
+/// about 16 MiB at this size in the costliest shapes measured.
 const MAX_BYTES_INDEXED_BY_A_WORKER: usize = 8 * 1024;
 
-/// The bytes of the files indexed at once, between them: the parses under
-/// way allocate 2 GiB at most. A file larger than it is indexed alone.
+/// The bytes of the files indexed at once, between them, so the parses
+/// under way allocate what that many bytes of the costliest shapes take,
+/// about 2 GiB as measured. A file larger than it is indexed alone.
 const MAX_BYTES_INDEXED_AT_ONCE: usize = 1024 * 1024;
 
 /// The indexes of one call, the room their files share, and the calling

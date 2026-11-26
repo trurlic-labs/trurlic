@@ -20,9 +20,13 @@ use super::scope::MAX_NESTING;
 pub(super) const SERVED_BYTES_PER_BYTE: usize = 64;
 
 /// The runtime's progress operations a parse may take per byte of its
-/// file. The costliest source files measured, generated tables among
-/// them, take about half of it. Since every 64 bytes allocated is one, a
-/// parse allocates at most 2 KiB a byte of its file, and so holds no more.
+/// file, every 64 bytes allocated one of them. They decide which file is
+/// read: one whose parse no progress check found past them, so it took
+/// at most 2 KiB a byte of allocation up to its last check. A refused
+/// parse stops at the first check past them; a step between two checks
+/// is not interrupted, and one step of error recovery can cost several
+/// times the whole budget. The costliest sources measured take under half
+/// of it; error-dense logs named as source can pass it.
 pub(super) const PARSE_OPERATIONS_PER_BYTE: usize = 32;
 
 /// The progress operations any parse may take, however short its file: 4

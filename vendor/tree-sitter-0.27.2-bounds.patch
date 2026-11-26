@@ -13,14 +13,16 @@ to the API or to any tree a parse gives:
    are progress operations, which the progress callback sees: the callback is called once
    per 100 operations crossed, so the count of its calls is a parse's work divided by 100.
 2. The default allocator counts the bytes it gives each thread, and every 64 of them is one
-   progress operation, so a count of operations bounds what a parse allocates.
+   progress operation, so what a parse allocates is counted with its work. The count is read
+   at the checks between steps; a step itself is not interrupted.
 3. stack_node_release and stack_node_add_link run over arrays on the heap in place of
    recursion, in the recursion's order, so a parse takes a fixed call stack whatever its
    input.
 
 To update the runtime: vendor the new release the same way, apply this patch from
 vendor/tree-sitter (`patch -p1 < ../tree-sitter-0.27.2-bounds.patch`), resolve what no longer
-applies, regenerate this patch, and raise code::INDEX_FORMAT.
+applies, regenerate this patch, raise code::INDEX_FORMAT and pin the runtime's hash again
+(code::index's tests).
 
 --- a/src/alloc.c
 +++ b/src/alloc.c

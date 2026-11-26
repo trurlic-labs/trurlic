@@ -20,10 +20,9 @@
 //! against the same sets whichever read takes it. Indexing runs in
 //! parallel, on threads the call starts and ends (`indexer.rs`); a file
 //! that vanishes between the walk and the read is absent. The misses of
-//! every tree a call reads are written to
-//! the cache once, after
-//! the call's own work, under the exclusive lock when it is free: a busy
-//! lock skips the write, since the cache is never authoritative.
+//! every tree a call reads are written to the cache once, after the
+//! call's own work, under the exclusive lock when it is free: a busy lock
+//! skips the write, since the cache is never authoritative.
 
 mod blobs;
 mod cache;

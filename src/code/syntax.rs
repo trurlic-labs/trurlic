@@ -12,10 +12,12 @@
 //! (`vendor/tree-sitter`) counts each parser action, each step of a walk
 //! of its stack and each 64 bytes it allocates as one progress operation,
 //! and a parse past [`PARSE_OPERATIONS_PER_BYTE`] of them per byte is
-//! stopped. A stopped parse leaves the file with no index. Both bounds
-//! count work, not time, so a file is refused on every machine or on none.
-//! The runtime releases and merges its stack without recursion, so a parse
-//! takes the same call stack whatever its file.
+//! stopped at the runtime's next check of the count, which comes between
+//! two of its steps, never inside one. A stopped parse leaves the file
+//! with no index. Both bounds count work, not time, so a file is refused
+//! on every machine or on none. The runtime releases and merges its stack
+//! without recursion, so a parse takes the same call stack whatever its
+//! file.
 //!
 //! A tree's tokens cover every byte of its file but comments and
 //! whitespace: each leaf, each node of the grammar's literal kinds whole
@@ -47,6 +49,9 @@ const OPERATIONS_PER_PROGRESS: usize = 100;
 /// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
 /// the parse runs past either of its budgets.
 pub(super) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault> {
+    // A parser per parse: a parser that parsed before reuses its pools and
+    // counts fewer operations, so only a fresh one makes the verdict a
+    // function of the file.
     let mut parser = Parser::new();
     // The one refusal is a grammar of an ABI this tree-sitter does not
     // read, and the grammars are pinned crates: it fails in a test or never.
@@ -626,8 +631,7 @@ mod tests {
     fn error_recovery_past_its_operations_a_byte_is_refused_in_every_grammar() {
         // Each unit is an error the next cannot recover from, so recovery
         // walks the whole stack again at each: work quadratic in the file,
-        // which the progress count sees only as the runtime counts the
-        // walks. Uncounted, each file is read after seconds to minutes.
+        // which each grammar refuses.
         let cases: [(&str, Language, String); 6] = [
             (
                 "python",

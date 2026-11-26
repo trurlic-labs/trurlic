@@ -22,9 +22,9 @@ use super::{encoding, json, make, markdown, rust, syntax, toml, work};
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
 pub(crate) const INDEX_FORMAT: u32 = 19;
 
-/// The largest file a tree-sitter grammar indexes. A parse is bounded in
-/// work and memory per byte of its file (`work.rs`), so this bounds what
-/// one parse may take.
+/// The largest file a tree-sitter grammar indexes. A parse's budget of
+/// work and allocation is per byte of its file (`work.rs`), so this bounds
+/// the budget of one parse.
 const TREE_SITTER_MAX_BYTES: usize = 1024 * 1024;
 
 /// The largest file a lexical resolver indexes.
@@ -539,6 +539,55 @@ mod tests {
             FINGERPRINTS.last(),
             Some(&(INDEX_FORMAT, fingerprint.as_str())),
             "the index of the fixture corpus changed: raise INDEX_FORMAT and append its fingerprint"
+        );
+    }
+
+    /// The BLAKE3 of the vendored tree-sitter runtime's C sources and
+    /// headers, each path then its bytes, in path order. The runtime
+    /// decides which parse is refused and what tree a parse gives, which no
+    /// fixture covers whole, so a change to it raises [`INDEX_FORMAT`].
+    const RUNTIME: &str = "90d7f42bc050cf09b4ae029083a3904b3a6fbb5734bf538669b9d87f82628345";
+
+    #[test]
+    fn the_vendored_runtime_is_the_one_the_index_format_names() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/tree-sitter");
+        let mut files = Vec::new();
+        let mut pending = vec![root.join("src"), root.join("include")];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let source = matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("c" | "h")
+                );
+                match path.is_dir() {
+                    true => pending.push(path),
+                    false if source => files.push(path),
+                    false => {}
+                }
+            }
+        }
+        files.sort();
+        let mut hasher = blake3::Hasher::new();
+        for path in &files {
+            let name = path
+                .strip_prefix(&root)
+                .unwrap()
+                .components()
+                .map(|component| component.as_os_str().to_str().unwrap())
+                .collect::<Vec<_>>()
+                .join("/");
+            let bytes = std::fs::read(path).unwrap();
+            for part in [name.as_bytes(), &bytes] {
+                hasher.update(&u64::try_from(part.len()).unwrap().to_le_bytes());
+                hasher.update(part);
+            }
+        }
+
+        assert_eq!(
+            hasher.finalize().to_hex().as_str(),
+            RUNTIME,
+            "the vendored tree-sitter runtime changed: raise INDEX_FORMAT and pin its hash again"
         );
     }
 

@@ -74,8 +74,9 @@ rayon = "1"
 # 0.27.2 vendored with a patch (vendor/tree-sitter-0.27.2-bounds.patch,
 # whose head states what it changes): its progress count sees error
 # recovery and allocation, and it releases its stack without recursion, so
-# a parse is bounded in time, stack and memory. A path dependency with no
-# version, so no build can take the unpatched runtime from crates.io.
+# a parse's work is counted against a budget and its stack is fixed. A path
+# dependency with no version, so no build can take the unpatched runtime
+# from crates.io.
 tree-sitter = { path = "vendor/tree-sitter", default-features = false }
 tree-sitter-rust = "0.24"
 # Python's grammar for the general resolver, which reads a language from
