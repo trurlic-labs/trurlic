@@ -8,7 +8,7 @@ use crate::store::model::ProjectState;
 use crate::store::model::{Anchor, AnchorFault, Decision, PROJECT_COMPONENT};
 
 /// A decision as a query answers it: its name and its file.
-pub type Named<'a> = (&'a str, &'a Decision);
+pub(crate) type Named<'a> = (&'a str, &'a Decision);
 
 impl ProjectState {
     /// The decisions of `component`, by name.
