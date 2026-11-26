@@ -10,7 +10,7 @@
 //! query file, a row of `parse/language/` read by the general resolver
 //! (`parse/general/`, under the contract of `parse/query.rs`). TOML, JSON,
 //! Makefiles and Markdown have lexical resolvers of their own (over
-//! `lexical.rs`). A file's index is a function of its kind and bytes
+//! `lexical/`). A file's index is a function of its kind and bytes
 //! ([`index`]): its paths a tree of scopes (`index/scope_tree.rs`), which
 //! charges all an index holds to the file's room, its work under budgets
 //! per byte (`index/work.rs`), its cache entry a compact encoding
@@ -22,10 +22,7 @@ mod crates;
 mod definitions;
 mod facts;
 mod index;
-mod json;
 mod lexical;
-mod make;
-mod markdown;
 mod parse;
 #[cfg(test)]
 mod purity;
@@ -33,7 +30,6 @@ mod resolver;
 mod roles;
 #[cfg(test)]
 pub(crate) mod testing;
-mod toml;
 
 pub(crate) use crates::MANIFEST;
 #[cfg(test)]

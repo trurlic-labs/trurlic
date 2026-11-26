@@ -10,13 +10,13 @@ use super::index::{
     PARSE_OPERATIONS_PER_BYTE, SCAN_WORK_PER_BYTE, SERVED_BYTES_PER_BYTE, Scope, ScopeTree,
     Segment, TREE_SITTER_MAX_BYTES, room_per_byte,
 };
+use super::lexical::{json, make, markdown, toml};
 use super::parse::general::{self, Source};
 use super::parse::{
     C, CHUNK_BYTES, CPP, FileMacros, Language, MAX_BLANK_ARGUMENT_BYTES, MAX_INDENTATIONS,
     MAX_MACRO_BODY_TOKENS, OPERATIONS_PER_PROGRESS, PYTHON, TSX, TYPESCRIPT,
     TYPESCRIPT_DECLARATIONS, blank, line_ends, rust,
 };
-use super::{json, make, markdown, toml};
 
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the

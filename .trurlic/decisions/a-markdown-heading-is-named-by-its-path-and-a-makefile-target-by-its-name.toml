@@ -12,9 +12,9 @@ status = "accepted"
 origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
-    { file = "src/code/make.rs", symbol = "index" },
-    { file = "src/code/make.rs", symbol = "targets" },
-    { file = "src/code/markdown.rs", symbol = "Fence" },
-    { file = "src/code/markdown.rs", symbol = "heading" },
-    { file = "src/code/markdown.rs", symbol = "index" },
+    { file = "src/code/lexical/make.rs", symbol = "index" },
+    { file = "src/code/lexical/make.rs", symbol = "targets" },
+    { file = "src/code/lexical/markdown.rs", symbol = "Fence" },
+    { file = "src/code/lexical/markdown.rs", symbol = "heading" },
+    { file = "src/code/lexical/markdown.rs", symbol = "index" },
 ]

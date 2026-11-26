@@ -19,11 +19,11 @@ use std::ops::Range;
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 
-use super::index::{DefinitionKind, FileIndex, IndexFault, MAX_NESTING, ScopeId, ScopeTree};
-use super::lexical::Lexical;
+use super::Lexical;
+use crate::code::index::{DefinitionKind, FileIndex, IndexFault, MAX_NESTING, ScopeId, ScopeTree};
 
 /// The index of `text`, a TOML file: its key paths.
-pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
+pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let document = DeTable::parse(text).map_err(|error| IndexFault::Syntax {
         at: error.span().map_or(0, |span| span.start),
     })?;

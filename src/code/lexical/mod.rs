@@ -1,12 +1,19 @@
-//! What a lexical resolver (TOML, JSON, Makefiles, Markdown) builds an
-//! index with: the scopes of its names, each split at `::` as a symbol
-//! is, and its definitions, each hashed from its whitespace-normalized
-//! text, every byte hashed spent from the file's budget of work, each
-//! scope and definition charged to the file's room by the scope tree.
+//! The lexical resolvers, each reading its kind without a grammar: TOML
+//! (`toml.rs`), JSON (`json.rs`), Makefiles (`make.rs`) and Markdown
+//! (`markdown.rs`). What each builds an index with ([`Lexical`]): the
+//! scopes of its names, each split at `::` as a symbol is, and its
+//! definitions, each hashed from its whitespace-normalized text, every
+//! byte hashed spent from the file's budget of work, each scope and
+//! definition charged to the file's room by the scope tree.
+
+pub(in crate::code) mod json;
+pub(in crate::code) mod make;
+pub(in crate::code) mod markdown;
+pub(in crate::code) mod toml;
 
 use std::ops::Range;
 
-use super::index::{
+use crate::code::index::{
     Definition, DefinitionKind, FileIndex, IndexFault, LEXICAL_WORK_PER_BYTE, Lines, MIN_WORK,
     Role, ScopeId, ScopeTree, SpanHash, Work, name_segments,
 };

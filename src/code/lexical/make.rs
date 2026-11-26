@@ -4,11 +4,11 @@
 //! a `define` block holds no rule, and a recipe line opens with a tab;
 //! blank and comment lines inside a recipe neither end it nor join it.
 
-use super::index::{DefinitionKind, FileIndex, IndexFault, ScopeTree};
-use super::lexical::Lexical;
+use super::Lexical;
+use crate::code::index::{DefinitionKind, FileIndex, IndexFault, ScopeTree};
 
 /// The index of `text`, a Makefile: its rule targets.
-pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
+pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let mut lexical = Lexical::of(text, scopes);
     let mut rule: Option<(Vec<&str>, usize, usize)> = None;
     let mut in_define = false;

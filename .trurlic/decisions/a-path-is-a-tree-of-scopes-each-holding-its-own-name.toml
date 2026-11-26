@@ -19,7 +19,7 @@ anchors = [
     { file = "src/code/index/encoding/tests.rs", symbol = "an_entry_takes_no_more_than_its_parts_were_charged" },
     { file = "src/code/index/scope.rs", symbol = "Scopes::path_from_end" },
     { file = "src/code/index/scope_tree.rs", symbol = "ScopeTree::enter" },
-    { file = "src/code/lexical.rs", symbol = "Lexical" },
+    { file = "src/code/lexical/mod.rs", symbol = "Lexical" },
     { file = "src/code/parse/tree_index.rs", symbol = "TreeIndex" },
     { file = "src/code/resolver.rs", symbol = "index" },
 ]

@@ -17,7 +17,7 @@ origin = "code index"
 created = "2026-11-24T09:45:08.417022803Z"
 anchors = [
     { file = "src/code/index/span.rs", symbol = "HASH_SCHEME" },
-    { file = "src/code/lexical.rs", symbol = "Lexical::hash" },
+    { file = "src/code/lexical/mod.rs", symbol = "Lexical::hash" },
     { file = "src/code/parse/general/tests.rs", symbol = "a_definitions_hash_is_its_own_whatever_follows_it_or_holds_it" },
     { file = "src/code/parse/rust/mod.rs", symbol = "LITERALS" },
     { file = "src/code/parse/syntax.rs", symbol = "walk_tokens" },

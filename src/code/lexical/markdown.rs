@@ -6,11 +6,11 @@
 //! runs of whitespace made one space; a `::` in it splits it as it splits
 //! a symbol.
 
-use super::index::{DefinitionKind, FileIndex, IndexFault, ScopeId, ScopeTree};
-use super::lexical::Lexical;
+use super::Lexical;
+use crate::code::index::{DefinitionKind, FileIndex, IndexFault, ScopeId, ScopeTree};
 
 /// The index of `text`, a Markdown file: its heading sections.
-pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
+pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let mut sections = Sections {
         text,
         open: Vec::new(),

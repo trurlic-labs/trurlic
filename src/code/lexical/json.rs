@@ -7,11 +7,11 @@
 //! [`MAX_NESTING`], and refuses anything that is not JSON (RFC 8259) at
 //! the byte it fails at.
 
-use super::index::{DefinitionKind, FileIndex, IndexFault, MAX_NESTING, ScopeId, ScopeTree};
-use super::lexical::Lexical;
+use super::Lexical;
+use crate::code::index::{DefinitionKind, FileIndex, IndexFault, MAX_NESTING, ScopeId, ScopeTree};
 
 /// The index of `text`, a JSON file: its key paths.
-pub(super) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
+pub(in crate::code) fn index(text: &str, scopes: ScopeTree) -> Result<FileIndex, IndexFault> {
     let mut scanner = Scanner {
         text,
         bytes: text.as_bytes(),
