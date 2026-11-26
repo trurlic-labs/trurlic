@@ -70,7 +70,7 @@ fn marked_item(node: Node<'_>) -> Option<Range<usize>> {
 /// The files of `files`, each by its path, that are test code whole:
 /// under an inner `#![cfg(test)]`, declared only by marked `mod` items, or
 /// in a test file's modules.
-pub(super) fn test_files<'a>(files: &BTreeMap<&'a str, &FileMarks>) -> BTreeSet<&'a str> {
+pub(super) fn test_files<'a>(files: &BTreeMap<&'a str, FileMarks>) -> BTreeSet<&'a str> {
     // Each file's declarations: whether one ships it.
     let mut shipped: BTreeMap<String, bool> = BTreeMap::new();
     for (path, file) in files {

@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 
 use crate::console::diag;
 use crate::store::Placement;
+use crate::tools::{self, ToolError};
 use crate::{Error, Result, commands};
 
 #[derive(Parser, Debug)]
@@ -118,7 +119,7 @@ enum ToolCommand {
     /// Show the graph at a glance: counts, issues, history, components.
     Status {
         /// Show this section alone, with the whole result budget.
-        #[arg(long, value_parser = PossibleValuesParser::new(commands::status_sections()))]
+        #[arg(long, value_parser = PossibleValuesParser::new(tools::section_names()))]
         section: Option<String>,
 
         /// Count only the decisions recorded under this origin.
@@ -188,7 +189,7 @@ pub fn main() -> ExitCode {
     }
 }
 
-fn run_tool(command: ToolCommand) -> std::result::Result<(), commands::ToolError> {
+fn run_tool(command: ToolCommand) -> std::result::Result<(), ToolError> {
     let cwd = std::env::current_dir().map_err(Error::system("read the working directory"))?;
     let format = |json: bool| {
         if json {

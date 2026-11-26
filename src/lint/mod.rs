@@ -9,7 +9,7 @@ pub(crate) mod duplicates;
 pub(crate) mod quality;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::fs;
     use std::path::Path;
 
@@ -27,8 +27,9 @@ mod tests {
         crate_items: &[("rayon", "prelude")],
     };
 
+    /// `crate::purity` states what the check cannot see.
     #[test]
-    fn the_lint_module_names_nothing_but_what_its_allow_list_holds() {
+    pub(crate) fn the_lint_module_names_nothing_but_what_its_allow_list_holds() {
         let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
         // Without the parallel iterators, the check faults the passes'
         // thread pool: it reads lint's files.

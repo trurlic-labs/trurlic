@@ -18,7 +18,7 @@ mcp        → tools, budget               JSON-RPC stdio server: protocol, clie
 commands   → store, tools, mcp (serve),  init, apply, status, query, check, fmt, migrate, install, serve
              sources, lint, git,
              discovery, budget
-cli        → commands, store             clap definitions and dispatch
+cli        → commands, store, tools      clap definitions and dispatch
 discovery  → store, git                  graph and code root from the calling directory
 lint       → store, code                 pure findings over the graph that refuse nothing: likely
                                          duplicate decisions, the bar a stored decision breaks,
@@ -34,8 +34,11 @@ error      → store (types)               `Error`, `Result`
 console    → —                           `out!` (stdout), `diag!` (stderr)
 failpoint  → console                     the named sites a test aborts, pauses, fails or panics at
                                          (`failpoints` feature): store, `apply`, the MCP server
+bench      → mcp, store, sources,        what `benches/` drive (`bench` feature, inline in `lib.rs`)
+             code, lint
 purity     → code (tests only)           what a module's non-test code may name: `code`'s and `lint`'s
-                                         allow lists, `store`'s parts, the arrows of `tools`, `mcp` and the rest (`lib.rs`)
+                                         allow lists, the order of `code`'s and `store`'s parts, every
+                                         module's arrow and re-exports (`lib.rs`)
 ```
 
 `error` is used by every module but `code`, `lint`, `budget` and `failpoint`; `console` by `store`, `tools`, `mcp`, `commands`, `cli`, `sources` and `failpoint`.
@@ -85,7 +88,7 @@ purity     → code (tests only)           what a module's non-test code may nam
 9. A load fails only on an unreadable file; everything else is a validation issue (`check` fails, reads still answer).
 10. Every tool result fits 24 KiB (`budget::MAX_TOOL_RESULT_BYTES`) as valid JSON; cuts are named in `truncated`. Every refusal is an `isError` result `{"error": {"kind", ...}}`; JSON-RPC errors only for malformed messages, unknown methods/tools, panics.
 11. A panic in a request is answered `-32603` and the server keeps serving (`panic = "unwind"`, one `catch_unwind` in `mcp::Server::answer`).
-12. Every module's non-test code names only what its arrow of the module map reaches, `code` and `lint` only what their allow lists hold (`purity/`, read by the tests of `lib.rs` and of each module's root). `code`'s cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
+12. Every module's non-test code names only what its arrow of the module map reaches and re-exports nothing of another module, `code` and `lint` only what their allow lists hold (`purity/`, read by the tests of `lib.rs`, `code`, `lint` and `store`; `purity/mod.rs` states what they cannot see). `code`'s cache (`.state/symbols/`) is never authoritative; a bad entry is a miss.
 13. A change to what an index holds raises `code::INDEX_FORMAT` (the fingerprint test says when).
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.

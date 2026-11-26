@@ -68,10 +68,10 @@ pub(crate) struct AllowList {
 impl Crate {
     /// Each fault of the non-test code of the module `module`, a path from
     /// the crate root (`code`, `code::index`), against `allowed`, and
-    /// each of the crate's [`refusals`](Crate::refusals), as
+    /// each of the crate's [`refused`](Crate::refused) forms, as
     /// `file:line: what`, files sorted.
     pub(crate) fn faults(&self, module: &str, allowed: &AllowList) -> Vec<String> {
-        let mut found = self.refusals();
+        let mut found = self.refused.clone();
         let dir = format!("src/{}", module.replace("::", "/"));
         for (path, file) in self.files_of(module) {
             let place = Place { path, dir: &dir };
@@ -223,6 +223,7 @@ mod tests {
             line: 1,
             segments: text.split("::").map(str::to_owned).collect(),
             module: module.to_vec(),
+            exported: false,
         };
         let file = ["code", "index", "scope"];
         let inline = ["code", "parse", "rust", "inner"];

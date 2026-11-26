@@ -11,6 +11,9 @@ pub(super) struct Named<'a> {
     /// The path from the crate root of the module its first token stands
     /// in, an inline module's included.
     pub(super) module: Vec<&'a str>,
+    /// Whether it is the tree of a `use` a visibility opens (`pub use`,
+    /// `pub(crate) use`, `pub(in ..) use`): a re-export.
+    pub(super) exported: bool,
 }
 
 /// Each path `file`'s tokens name: every path or `use` tree that starts at
@@ -29,6 +32,7 @@ pub(super) fn paths(file: &Read) -> Vec<Named<'_>> {
             .iter()
             .map(String::as_str)
             .collect();
+        let exported = is_exported(tokens, at);
         let mut next = at;
         found.extend(
             read_path(tokens, &mut next, Vec::new())
@@ -37,6 +41,7 @@ pub(super) fn paths(file: &Read) -> Vec<Named<'_>> {
                     line: token.line,
                     segments,
                     module: module.clone(),
+                    exported,
                 }),
         );
     }
@@ -58,6 +63,19 @@ fn starts_path(tokens: &[Token], at: usize) -> bool {
         && text_at(tokens, at + 1) == ")";
     let visibility = restricted || (back(1) == "in" && back(2) == "(" && back(3) == "pub");
     word && !continues && !visibility
+}
+
+/// Whether the path at `at` is the tree of a `use` that a visibility
+/// opens.
+fn is_exported(tokens: &[Token], at: usize) -> bool {
+    let back = |by: usize| at.checked_sub(by).map_or("", |n| text_at(tokens, n));
+    match (back(1), back(2)) {
+        ("use", "pub") => true,
+        ("use", ")") => (3..)
+            .find(|&by| matches!(back(by), "(" | ""))
+            .is_some_and(|by| back(by + 1) == "pub"),
+        _ => false,
+    }
 }
 
 /// The paths a path or `use` tree from `at` names, each prefixed by

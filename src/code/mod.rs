@@ -57,7 +57,7 @@ pub(crate) fn query_compiles(name: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::path::Path;
 
     use crate::purity::{AllowList, Crate};
@@ -86,8 +86,9 @@ mod tests {
         crate_items: &[],
     };
 
+    /// `crate::purity` states what the check cannot see.
     #[test]
-    fn the_index_names_nothing_but_what_its_allow_list_holds() {
+    pub(crate) fn the_index_names_nothing_but_what_its_allow_list_holds() {
         let found = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR"))).faults("code", &CODE);
 
         assert_eq!(found, Vec::<String>::new());
@@ -98,10 +99,10 @@ mod tests {
     /// values below every resolver, with their hash, the resolvers on
     /// them, the parser and its grammars in `parse` alone, and the facts
     /// over a tree on the values and the language rows. The dispatch and
-    /// the surface, at the root, name them all. A method call names no
-    /// path (`crate::purity` states what the check cannot see), so every
-    /// impl stands in its type's sub-module: what a file of a kind is read
-    /// as is a free function of `parse`, not a method of `FileKind`.
+    /// the surface, at the root, name them all. Every impl stands in its
+    /// type's sub-module, as a method call is among what the check cannot
+    /// see (`crate::purity`): what a file of a kind is read as is a free
+    /// function of `parse`, not a method of `FileKind`.
     const LAYERS: [(&str, &[&str], &[&str]); 4] = [
         ("code::index", &["code::index"], &["blake3"]),
         (
@@ -118,7 +119,7 @@ mod tests {
     ];
 
     #[test]
-    fn each_sub_module_names_no_module_above_it() {
+    pub(crate) fn each_sub_module_names_no_module_above_it() {
         let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
         for (module, modules, crates) in LAYERS {
             let allowed = AllowList {

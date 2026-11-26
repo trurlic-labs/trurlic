@@ -19,8 +19,6 @@ pub(crate) use query::query_file;
 pub(crate) use serve::serve;
 pub(crate) use status::{StatusFlags, status};
 
-pub(crate) use crate::tools::{ToolError, section_names as status_sections};
-
 use std::path::Path;
 
 use crate::Result;
@@ -28,7 +26,7 @@ use crate::console::{diag, out};
 use crate::discovery::discover;
 
 use crate::store::{ProjectState, STORE_DIR, Store};
-use crate::tools::{Output, ToolResult, to_value};
+use crate::tools::{Output, ToolError, ToolResult, to_value};
 
 /// How a tool's CLI twin prints its result: for a terminal, or as the
 /// JSON the tool's call returns.

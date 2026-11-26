@@ -3,9 +3,10 @@
 //! file system, process, environment, thread, clock, network or console
 //! ([`AllowList`], `Crate::faults`). A module names into the crate only
 //! the modules and items of a list (`Crate::places_beyond`), which holds
-//! a module to the arrows of the module map and the parts of a module to
-//! one order. A test reads the crate once ([`Crate::read`]) and judges
-//! its modules against what it read.
+//! a module to its arrow of the module map and the parts of a module to
+//! one order, and re-exports nothing of another module
+//! (`Crate::re_exports_beyond`). A test reads the crate once
+//! ([`Crate::read`]) and judges its modules against what it read.
 //!
 //! Every token of every Rust file under `src` is read, macro arguments
 //! and bodies included, a raw identifier as its name. A string inside an
@@ -16,8 +17,8 @@
 //! its `use` or its definition accounts for. Test code is left out by the
 //! rule of `test_code`. A path's first segment says where it goes, a
 //! `use` list read whole. The crate is `crate`, `$crate`, or `super`s,
-//! read from the module the path is named in, an inline module's
-//! included.
+//! read from the module the path is named in. A module is a file's or
+//! one inline in a file, the crate root's included.
 //!
 //! Every check refuses, in any file of the crate's non-test code, each
 //! form that hides code or a module from all of them: `include!`, a
@@ -46,17 +47,20 @@
 //! relative path that stays inside the module's directory: a language's
 //! query file, source of the index as its Rust files are.
 //!
-//! No check here sees what names no path in the checked module's code.
-//! That is a method call or a field access on a value of another
-//! module's type, a value or a closure a caller hands in, and a trait
-//! method called through a bound. It is an item or a macro body of a
-//! module outside the list that a listed module re-exports or holds,
-//! reached through the listed module by name or by a glob: a check sees
-//! it only where the listed module is held to a list itself. It is what
-//! an allowed crate's or item's own code does, a derive's included, with
-//! a handle the module cannot name or a value it holds, and the runtime's
-//! own messages to stderr, a panic's or a failed allocation's. Each test
-//! that holds a module to a list refers here for what it cannot see.
+//! What no check here sees is stated here alone; each test that holds a
+//! module to a list refers here for it. No check sees what names no path
+//! in the checked module's code. That is a method call or a field access
+//! on a value of another module's type, a value or a closure a caller
+//! hands in, and a trait method called through a bound. A macro is judged
+//! where it is defined, against that module's list, so what its body
+//! names, `$crate::` paths included, reaches a module that invokes it
+//! unseen. A re-export of a name a private `use` brought into scope
+//! (`use crate::x; pub(crate) use x::Item;`) is read as a path from that
+//! name, never from the crate, so the re-export check passes it. Nor does
+//! a check see what an allowed crate's or item's own code does, a
+//! derive's included, with a handle the module cannot name or a value it
+//! holds, or the runtime's own messages to stderr, a panic's or a failed
+//! allocation's.
 
 mod layer;
 mod path;

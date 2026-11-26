@@ -63,7 +63,7 @@ pub(crate) use model::{AcceptedText, DecisionField, NameFault, Pattern, STATE_DI
 pub(crate) use quality::PatternMatch;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::path::Path;
 
     use crate::purity::Crate;
@@ -79,14 +79,11 @@ mod tests {
 
     /// A part names the store's items through the parts it may name, never
     /// through the re-exports of the store's root, which hide the part an
-    /// item belongs to, and names nothing outside the store but
-    /// [`OUTSIDE`]; the root names nothing else either, so no module that
-    /// names the store reaches past it through a re-export. A method
-    /// called on a value names no path (`crate::purity` states what the
-    /// check cannot see), so a call of a method of `Store` that a later
-    /// part defines is not seen.
+    /// item belongs to; the store as a whole names nothing outside it but
+    /// [`OUTSIDE`], its arrow of the module map. `crate::purity` states
+    /// what the check cannot see.
     #[test]
-    fn each_part_of_the_store_names_only_the_parts_before_it() {
+    pub(crate) fn each_part_of_the_store_names_only_the_parts_before_it() {
         let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
         let parts: Vec<String> = PARTS.iter().map(|part| format!("store::{part}")).collect();
         for (index, part) in parts.iter().enumerate() {

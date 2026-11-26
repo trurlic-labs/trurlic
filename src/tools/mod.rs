@@ -21,35 +21,3 @@ pub(crate) use status::{
     AnchorCounts, Cut, LintItem, PAIRS_MORE, PairCounts, Part, PatternCounts, QualityCounts,
     Report, STATUS, section_names,
 };
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use crate::purity::Crate;
-
-    /// What the layer's non-test code may name in the crate: itself, the
-    /// modules its arrow of the module map reaches, the error and the
-    /// console, and the failpoints. No surface (`mcp`, `commands`, `cli`,
-    /// the crate root's `main` or `bench`) is on it.
-    const NAMED: [&str; 9] = [
-        "tools",
-        "store",
-        "lint",
-        "sources",
-        "budget",
-        "discovery",
-        "Error",
-        "console",
-        "failpoint",
-    ];
-
-    /// Every path the layer names into the crate goes into [`NAMED`],
-    /// however it is spelled (`crate::purity` states what the check
-    /// cannot see).
-    #[test]
-    fn the_tool_layer_names_no_surface() {
-        let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
-        assert_eq!(source.places_beyond("tools", &NAMED), Vec::<String>::new());
-    }
-}

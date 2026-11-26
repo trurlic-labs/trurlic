@@ -68,16 +68,51 @@ mod tests {
 
     use crate::purity::Crate;
 
-    /// The modules a test in their own root holds to a stricter list:
-    /// `code` and `lint` to their allow lists, the parts of `store` to
-    /// their order, `tools` and `mcp` to their arrows.
-    const HELD: [&str; 5] = ["code", "lint", "store", "tools", "mcp"];
+    /// Each test in a module's root that holds the module to a stricter
+    /// rule of its own, by the module's name: `code` and `lint` to their
+    /// allow lists, the parts of `code` and of `store` to one order. A
+    /// test is named by its path, so one deleted fails to compile here.
+    const HELD: [(&str, fn()); 4] = [
+        (
+            "code",
+            crate::code::tests::the_index_names_nothing_but_what_its_allow_list_holds,
+        ),
+        (
+            "code",
+            crate::code::tests::each_sub_module_names_no_module_above_it,
+        ),
+        (
+            "lint",
+            crate::lint::tests::the_lint_module_names_nothing_but_what_its_allow_list_holds,
+        ),
+        (
+            "store",
+            crate::store::tests::each_part_of_the_store_names_only_the_parts_before_it,
+        ),
+    ];
 
     /// Each other module of the module map in `CLAUDE.md`, and what its
     /// non-test code may name in the crate besides itself: the modules its
     /// arrow reaches, of `mcp` only `run_server` for `commands`, and `Error`,
     /// `Result`, `console` and `failpoint` where the map says it uses them.
-    const MAP: [(&str, &[&str]); 9] = [
+    const MAP: [(&str, &[&str]); 12] = [
+        (
+            "tools",
+            &[
+                "store",
+                "lint",
+                "sources",
+                "budget",
+                "discovery",
+                "Error",
+                "console",
+                "failpoint",
+            ],
+        ),
+        (
+            "mcp",
+            &["tools", "budget", "Result", "console", "failpoint"],
+        ),
         (
             "commands",
             &[
@@ -94,7 +129,10 @@ mod tests {
                 "console",
             ],
         ),
-        ("cli", &["commands", "store", "Error", "Result", "console"]),
+        (
+            "cli",
+            &["commands", "store", "tools", "Error", "Result", "console"],
+        ),
         ("discovery", &["store", "git", "Error", "Result"]),
         (
             "sources",
@@ -105,24 +143,24 @@ mod tests {
         ("error", &["store"]),
         ("console", &["Error", "Result"]),
         ("failpoint", &["console"]),
+        ("bench", &["mcp", "store", "sources", "code", "lint"]),
     ];
 
-    /// A module added to the crate fails here until a test of its own or a
-    /// row of [`MAP`] holds it.
+    /// A module added to the crate, in a file or inline in this one, fails
+    /// here until a row of [`HELD`] or of [`MAP`] holds it.
     #[test]
     fn every_module_is_held_by_a_test_of_its_own_or_a_row_of_the_map() {
         let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
         let rows = MAP.iter().map(|(module, _)| *module);
 
-        let held: BTreeSet<&str> = HELD.into_iter().chain(rows).collect();
+        let held: BTreeSet<&str> = HELD.iter().map(|(module, _)| *module).chain(rows).collect();
 
         assert_eq!(source.root_modules(), held);
     }
 
     /// Every path the non-test code of a module of [`MAP`] names into the
-    /// crate goes into its row, however it is spelled (`crate::purity`
-    /// states what the check cannot see). So an item of a module past its
-    /// arrow is refused where such a module re-exports it.
+    /// crate goes into its row, however it is spelled; `crate::purity`
+    /// states what the check cannot see.
     #[test]
     fn each_module_of_the_map_names_only_what_its_arrow_reaches() {
         let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
@@ -132,6 +170,24 @@ mod tests {
                 .collect();
 
             let found = source.places_beyond(module, &within);
+
+            assert_eq!(found, Vec::<String>::new(), "{module}");
+        }
+    }
+
+    /// No module re-exports an item of another, so a caller names each
+    /// item through its own module, which the caller's row must reach.
+    /// `bench` alone may: it is the crate's surface for `benches/`, and
+    /// no row reaches it. `crate::purity` states what the check cannot see.
+    #[test]
+    fn no_module_re_exports_an_item_of_another() {
+        let source = Crate::read(Path::new(env!("CARGO_MANIFEST_DIR")));
+        for module in source.root_modules() {
+            if module == "bench" {
+                continue;
+            }
+
+            let found = source.re_exports_beyond(module);
 
             assert_eq!(found, Vec::<String>::new(), "{module}");
         }

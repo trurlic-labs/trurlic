@@ -22,10 +22,11 @@ const PATH_ATTRIBUTE: &str = "#[path]";
 pub(crate) struct Crate {
     /// What is read of each Rust file that is not test code whole, by its
     /// path from the crate's directory.
-    files: BTreeMap<String, Read>,
-    /// Each form the reading cannot follow, as `file:line: what`, files
-    /// sorted ([`Crate::refusals`]).
-    refused: Vec<String>,
+    pub(super) files: BTreeMap<String, Read>,
+    /// Each form of the crate's code the reading cannot follow, as
+    /// `file:line: what`, files sorted: every check reports them, since
+    /// one hides code or a module from all of them.
+    pub(super) refused: Vec<String>,
     /// The crate names of the dependencies its manifest states, as a path
     /// spells them.
     pub(super) dependencies: Vec<String>,
@@ -41,8 +42,6 @@ pub(super) struct Read {
     /// Each form outside test items the check cannot read through, and
     /// each `#[path]`: its line and what it is.
     refused: Vec<(usize, &'static str)>,
-    /// What decides whether it is test code whole.
-    marks: FileMarks,
 }
 
 /// One token of a file's non-test code.
@@ -60,42 +59,30 @@ impl Crate {
     pub(crate) fn read(root: &Path) -> Self {
         let texts = sources(root);
         let dependencies = dependencies(&texts);
-        let read: BTreeMap<String, Read> = texts
-            .iter()
-            .filter(|(path, _)| path.ends_with(".rs"))
-            .map(|(path, text)| (path.clone(), read(path, text)))
-            .collect();
-        let marks: BTreeMap<&str, &FileMarks> = read
-            .iter()
-            .map(|(path, file)| (path.as_str(), &file.marks))
-            .collect();
-        let tests: BTreeSet<String> = test_files(&marks).into_iter().map(str::to_owned).collect();
-        let refused = read
+        let mut files = BTreeMap::new();
+        let mut marks = BTreeMap::new();
+        for (path, text) in texts.iter().filter(|(path, _)| path.ends_with(".rs")) {
+            let (file, file_marks) = read(path, text);
+            files.insert(path.clone(), file);
+            marks.insert(path.as_str(), file_marks);
+        }
+        let tests = test_files(&marks);
+        let refused = files
             .iter()
             .flat_map(|(path, file)| {
-                let test = tests.contains(path);
+                let test = tests.contains(path.as_str());
                 file.refused
                     .iter()
                     .filter(move |(_, what)| !test || *what == PATH_ATTRIBUTE)
                     .map(move |(line, what)| format!("{path}:{line}: {what}"))
             })
             .collect();
-        let files = read
-            .into_iter()
-            .filter(|(path, _)| !tests.contains(path))
-            .collect();
+        files.retain(|path, _| !tests.contains(path.as_str()));
         Self {
             files,
             refused,
             dependencies,
         }
-    }
-
-    /// Each form of the crate's non-test code the reading cannot follow,
-    /// in any file, as `file:line: what`, files sorted: every check
-    /// reports them, since one hides code or a module from all of them.
-    pub(super) fn refusals(&self) -> Vec<String> {
-        self.refused.clone()
     }
 
     /// The files of the module `module` and of the modules in it, a path
@@ -104,23 +91,26 @@ impl Crate {
         &'a self,
         module: &'a str,
     ) -> impl Iterator<Item = (&'a str, &'a Read)> {
-        self.files.iter().filter_map(move |(path, file)| {
-            let own: Vec<&str> = file
-                .modules
-                .first()
-                .map_or(&[][..], Vec::as_slice)
-                .iter()
-                .map(String::as_str)
-                .collect();
-            is_within(&own, module).then_some((path.as_str(), file))
-        })
+        self.files
+            .iter()
+            .filter(move |(_, file)| {
+                file.modules
+                    .first()
+                    .is_some_and(|own| is_within(own, module))
+            })
+            .map(|(path, file)| (path.as_str(), file))
     }
 
-    /// The modules of the crate root that hold non-test code, by name.
+    /// The modules of the crate root that hold non-test code, by name,
+    /// those inline in its root included.
     pub(crate) fn root_modules(&self) -> BTreeSet<&str> {
         self.files
             .values()
-            .filter_map(|file| file.modules.first()?.first())
+            .flat_map(|file| {
+                let modules = &file.modules;
+                let first = |token: &Token| modules.get(token.module)?.first();
+                file.tokens.iter().filter_map(first)
+            })
             .map(String::as_str)
             .collect()
     }
@@ -133,9 +123,9 @@ pub(super) fn text_at(tokens: &[Token], at: usize) -> &str {
 
 /// Whether `path`, segments from the crate root, is in `module`, a path
 /// from the crate root such as `code::index`.
-pub(super) fn is_within(path: &[&str], module: &str) -> bool {
-    let module: Vec<&str> = module.split("::").collect();
-    path.starts_with(&module)
+pub(super) fn is_within(path: &[impl AsRef<str>], module: &str) -> bool {
+    let mut segments = path.iter().map(AsRef::as_ref);
+    module.split("::").all(|part| segments.next() == Some(part))
 }
 
 /// A run of letters, digits and underscores: an identifier or a keyword.
@@ -143,8 +133,9 @@ pub(super) fn is_word(token: &str) -> bool {
     !token.is_empty() && token.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// What the check reads of `text`, the file at `path`.
-fn read(path: &str, text: &str) -> Read {
+/// What the check reads of `text`, the file at `path`, and what decides
+/// whether it is test code whole.
+fn read(path: &str, text: &str) -> (Read, FileMarks) {
     let tree = parse(text, &tree_sitter_rust::LANGUAGE.into()).unwrap();
     let marks = marks(tree.root_node(), text);
     let held = |at: usize| marks.held.iter().any(|range| range.contains(&at));
@@ -164,19 +155,17 @@ fn read(path: &str, text: &str) -> Read {
         refused.push((1, "a file the grammar does not parse whole"));
     }
     refused.sort_unstable();
-    Read {
+    let file = Read {
         tokens: walked.tokens,
         modules: walked.modules,
         refused,
-        marks: FileMarks {
-            declared: marks
-                .declared
-                .into_iter()
-                .map(|(name, at)| (name, held(at)))
-                .collect(),
-            test: marks.test,
-        },
-    }
+    };
+    let declared = marks.declared.into_iter();
+    let file_marks = FileMarks {
+        declared: declared.map(|(name, at)| (name, held(at))).collect(),
+        test: marks.test,
+    };
+    (file, file_marks)
 }
 
 /// What one pass over a file's tree finds, test items included: the
@@ -376,15 +365,12 @@ fn push_token(
 /// string literal, spells anywhere in it: segments joined by `::`, with
 /// or without whitespace around it (`"crate::x::f"`, `"Vec<super::T>"`,
 /// `"T: crate :: Bound"`). A single word names an item in scope, which a
-/// `use` or a definition the check reads accounts for. A leading `::`
-/// is left out, as a path in code is read without it.
+/// `use` or a definition the check reads accounts for; no macro puts
+/// `$crate` into a string. A leading `::` is left out, as a path in code
+/// is read without it.
 fn spelled_paths(literal: &str) -> Vec<&str> {
     let lexemes = lexemes(literal);
-    let is_segment = |at: usize| {
-        lexemes
-            .get(at)
-            .is_some_and(|lexeme| *lexeme == "$crate" || is_word(lexeme))
-    };
+    let is_segment = |at: usize| lexemes.get(at).is_some_and(|lexeme| is_word(lexeme));
     let mut tokens = Vec::new();
     let mut at = 0;
     while at < lexemes.len() {
@@ -403,22 +389,18 @@ fn spelled_paths(literal: &str) -> Vec<&str> {
     tokens
 }
 
-/// `text` cut into words (a `$` before one included), `::` and single
-/// characters, whitespace dropped.
+/// `text` cut into words, `::` and single characters, whitespace dropped.
 fn lexemes(text: &str) -> Vec<&str> {
     let mut found = Vec::new();
     let mut rest = text;
     while let Some(first) = rest.chars().next() {
-        let sigil = usize::from(first == '$');
         let word = rest
-            .get(sigil..)
-            .unwrap_or_default()
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len() - sigil);
-        let length = match (rest.starts_with("::"), word) {
-            (true, _) => 2,
-            (false, 0) => first.len_utf8(),
-            (false, word) => sigil + word,
+            .unwrap_or(rest.len());
+        let length = match word {
+            0 if rest.starts_with("::") => 2,
+            0 => first.len_utf8(),
+            word => word,
         };
         let (lexeme, after) = rest.split_at(length);
         if !lexeme.trim().is_empty() {
