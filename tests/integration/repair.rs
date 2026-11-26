@@ -352,7 +352,7 @@ fn many_repairs_fit_the_budget_and_count_the_rest() {
 
 /// A project of one package whose accepted decision `d` anchors each of
 /// `anchors`, with `before` written and committed, then `after` (a path
-/// and its text, or `None` to remove it) committed.
+/// and its text, or `None` to remove it) committed, when it holds any.
 fn changed(anchors: &[&str], before: &[(&str, &str)], after: &[(&str, Option<&str>)]) -> Project {
     let project = package();
     for (file, text) in before {
@@ -370,7 +370,9 @@ fn changed(anchors: &[&str], before: &[(&str, &str)], after: &[(&str, Option<&st
     project.run_ok(&["fmt"]);
     git(project.path(), &["add", "--all"]);
     git(project.path(), &["commit", "--quiet", "-m", "before"]);
-    commit(&project, after);
+    if !after.is_empty() {
+        commit(&project, after);
+    }
     project
 }
 
@@ -839,10 +841,10 @@ fn every_repair_paused(project: &Project, meanwhile: impl FnOnce()) -> Value {
 }
 
 /// The repairs an op with no `repairs` writes are held under the write
-/// lock to the code they named when read: one whose code came back after
-/// the read is left, and one whose candidate another definition of its
-/// name replaced, a type for the function, is left too, the anchor staying
-/// as it is.
+/// lock to what they were read from: one whose code came back after the
+/// read is left, one whose candidate another definition of its name
+/// replaced, a type for the function, is left too, and every one when a
+/// commit moved `HEAD` meanwhile, the anchor staying as it is.
 #[cfg(feature = "failpoints")]
 #[test]
 fn a_repair_whose_code_changed_after_the_read_is_not_written() {
@@ -854,7 +856,7 @@ fn a_repair_whose_code_changed_after_the_read_is_not_written() {
             &[("src/a.rs", Some("")), ("src/t.rs", Some(foo))],
         )
     };
-    let (back, replaced) = (moved(), moved());
+    let (back, replaced, committed) = (moved(), moved(), moved());
     assert!(
         back.run_refused(&["check"])
             .contains("repair: `src/t.rs::foo`")
@@ -863,8 +865,17 @@ fn a_repair_whose_code_changed_after_the_read_is_not_written() {
     let came_back = every_repair_paused(&back, || back.source("src/a.rs", foo));
     let typed = "pub struct foo {\n    pub field: String,\n}\n";
     let other = every_repair_paused(&replaced, || replaced.source("src/t.rs", typed));
+    let head = every_repair_paused(&committed, || {
+        git(
+            committed.path(),
+            &["commit", "--quiet", "--allow-empty", "-m", "moved"],
+        );
+    });
 
-    for result in [&came_back, &other] {
+    let branch = head["left"][0]["cause"].as_str().unwrap();
+    assert!(branch.contains("the branch moved"), "{head}");
+    assert!(committed.read("decisions/d.toml").contains("src/a.rs"));
+    for result in [&came_back, &other, &head] {
         assert!(result.get("repaired").is_none(), "{result}");
         assert_eq!(result["left"][0]["anchor"], "src/a.rs::foo", "{result}");
     }
@@ -1050,4 +1061,55 @@ fn a_loss_that_changed_more_candidates_than_the_bound_is_never_repaired() {
 
     assert!(within.contains("; repair: `src/b.rs::foo`"), "{within}");
     assert!(!past.contains("repair:"), "{past}");
+}
+
+/// A merge is judged by the change that lost the code, whatever the order
+/// the history lists its branches in: a side branch that copies a function
+/// into another file while its own file keeps it, merged with a main line
+/// that deletes the function and changes nothing else, is no move, merged
+/// either way; a side branch that moves the function, merged with a main
+/// line that edits its file elsewhere, is one.
+#[test]
+fn a_merge_repairs_only_a_move_one_of_its_branches_made() {
+    let foo = "pub fn foo() -> u32 { 41 + 1 }\n";
+    let kept = format!("{foo}pub fn stay() {{}}\npub fn more() {{}}\n");
+    let copied = format!("pub fn other() {{}}\n{foo}");
+    // The side branch's change, then the main line's, then the merge.
+    let merged = |side: &[(&str, Option<&str>)], main: &[(&str, Option<&str>)], into: &str| {
+        let project = changed(
+            &["src/a.rs::foo"],
+            &[
+                ("src/a.rs", &format!("{foo}pub fn stay() {{}}\n")),
+                ("src/b.rs", "pub fn other() {}\n"),
+            ],
+            &[],
+        );
+        git(project.path(), &["checkout", "--quiet", "-b", "side"]);
+        commit(&project, side);
+        git(project.path(), &["checkout", "--quiet", "main"]);
+        commit(&project, main);
+        if into == "side" {
+            git(project.path(), &["checkout", "--quiet", "side"]);
+        }
+        let other = if into == "side" { "main" } else { "side" };
+        git(project.path(), &["merge", "--quiet", "--no-edit", other]);
+        project
+    };
+    let copy = [
+        ("src/a.rs", Some(kept.as_str())),
+        ("src/b.rs", Some(copied.as_str())),
+    ];
+    let delete = [("src/a.rs", Some("pub fn stay() {}\n"))];
+    let move_away = [
+        ("src/a.rs", Some("pub fn stay() {}\n")),
+        ("src/b.rs", Some(copied.as_str())),
+    ];
+    let edit = [("src/a.rs", Some(kept.as_str()))];
+
+    for into in ["main", "side"] {
+        never_repaired(&merged(&copy, &delete, into));
+    }
+    let moved = merged(&move_away, &edit, "main").run_refused(&["check"]);
+
+    assert!(moved.contains("; repair: `src/b.rs::foo`"), "{moved}");
 }

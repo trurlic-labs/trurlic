@@ -1402,7 +1402,10 @@ fn a_repair_held_again_under_the_lock_reads_its_file_as_the_tree_read_does() {
         anchor("src/book.cc", "Book::pages"),
     );
     let read = gather(&store, std::iter::once("src/book.cc"));
-    let seen = BTreeMap::from([(stale.clone(), read.code(&repair).unwrap())]);
+    let seen = Seen {
+        code: BTreeMap::from([(stale.clone(), read.code(&repair).unwrap())]),
+        head: None,
+    };
     let mut repairs = BTreeMap::from([(stale, repair)]);
 
     let dropped = still_holding(&store, &mut repairs, &seen);

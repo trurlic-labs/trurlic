@@ -146,6 +146,18 @@ pub(crate) fn merge_base(dir: &Path, ours: &str, theirs: &str) -> Result<Option<
     }
 }
 
+/// The commit `HEAD` names in the repository holding `dir`.
+pub(crate) fn head(dir: &Path) -> Result<String> {
+    let args = ["rev-parse".as_ref(), "--verify".as_ref(), "HEAD".as_ref()];
+    let stdout = run(command(dir), dir, &args, None)?;
+    String::from_utf8(stdout)
+        .map(|id| id.trim_end().to_owned())
+        .map_err(|_| Error::GitOutput {
+            args: shown(&args),
+            detail: "a commit id that is not UTF-8",
+        })
+}
+
 /// Which of `paths`, relative to `dir`, differ in the work tree at `dir`
 /// from commit `base`: committed there since, staged or edited and not
 /// committed, or untracked and not ignored. `git diff --name-only`, no

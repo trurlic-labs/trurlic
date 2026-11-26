@@ -77,6 +77,11 @@ impl History {
         })
     }
 
+    /// The commit `HEAD` names, the walk's newest: none on an unborn branch.
+    pub(super) fn head(&self) -> Option<&str> {
+        self.commits.first().map(|commit| commit.id.as_str())
+    }
+
     /// What the work tree and the index changed at `path` against `HEAD`.
     pub(super) fn uncommitted(&self, path: &str) -> Option<&Change> {
         self.uncommitted.iter().find(|change| change.path == path)

@@ -20,12 +20,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::code::Code;
 use crate::lint::anchors::{Checked, Kind, Repair};
 use crate::mcp::result::ToolError;
 use crate::mcp::spec::output::{Count, Items, Nested, Str};
 use crate::mcp::spec::{Output, Shown as Fields};
-use crate::sources;
+use crate::sources::{self, Seen};
 
 use crate::store::{Anchor, LeftRepair, Op, ProjectState, RepairAnchors, Store};
 
@@ -34,10 +33,6 @@ use super::result::Answer;
 /// The stale anchors the tree shows no repair for, or whose repair a
 /// pattern refuses, each with why.
 pub(super) type Unrepaired = BTreeMap<Anchor, String>;
-
-/// The code each repair the tree shows named when it was read, by its
-/// stale anchor: what the write holds the repair to again under its lock.
-pub(super) type Seen = BTreeMap<Anchor, Code>;
 
 /// A repair the batch wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +69,7 @@ pub(super) fn fill(store: &Store, ops: &mut [Op]) -> Result<(Seen, Unrepaired), 
     // Every other op, a listed repair's included, is the caller's.
     let every = |op: &Op| matches!(op, Op::RepairAnchors(RepairAnchors::Every(_)));
     if !ops.iter().any(every) {
-        return Ok((Seen::new(), Unrepaired::new()));
+        return Ok((Seen::default(), Unrepaired::new()));
     }
     let state = store.load_state()?;
 
@@ -92,8 +87,12 @@ pub(super) fn fill(store: &Store, ops: &mut [Op]) -> Result<(Seen, Unrepaired), 
 /// The repair of each stale anchor `check` shows in `state` and the code it
 /// names, and the cause of each stale anchor it shows none for.
 fn shown(store: &Store, state: &ProjectState) -> (BTreeMap<Anchor, Anchor>, Seen, Unrepaired) {
-    let (mut repairs, mut seen, mut unrepaired) = (BTreeMap::new(), Seen::new(), Unrepaired::new());
+    let (mut repairs, mut unrepaired) = (BTreeMap::new(), Unrepaired::new());
     let found = sources::checked_findings(store, &state.decisions);
+    let mut seen = Seen {
+        code: BTreeMap::new(),
+        head: found.head,
+    };
     for finding in found.findings {
         let Kind::Missing(cause, Checked::Stale { repair, .. }) = finding.kind else {
             continue;
@@ -103,7 +102,7 @@ fn shown(store: &Store, state: &ProjectState) -> (BTreeMap<Anchor, Anchor>, Seen
         match repair {
             Some(Repair { to, code }) => {
                 // clone: the code is held by the anchor the map keys too.
-                seen.insert(anchor.clone(), code);
+                seen.code.insert(anchor.clone(), code);
                 repairs.insert(anchor, to);
             }
             None => {

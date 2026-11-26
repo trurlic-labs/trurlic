@@ -16,18 +16,23 @@
 //! A symbol anchor whose file is gone or defines nothing its symbol names
 //! ([`missing`]) is looked for only in the files the change that lost its
 //! code changed ([`lost`]), each followed by its blob to where it is now:
-//! the commit whose parent's file wrote the item, or the work tree. Each
-//! such file of the anchor's language that writes the symbol's whole path
-//! now is a [`Search`], and the move is the one of them that, across the
-//! loss, went from writing no item of the symbol to definitions of the
-//! span hash the anchor's file lost ([`moved_to`]): none, or two, and no
-//! repair. That evidence is the code itself in the commit it moved in, so
-//! a namesake elsewhere, in another crate, target or test module, which
-//! that change did not write, is never one, and no bound by crate or
-//! target is needed. The one that moved is the repair when it held
-//! definitions of the kinds it gained after every change since and holds
-//! them now: one a later change deleted, or replaced by another kind of
-//! item, is no move, while an edit of the moved item keeps its repair.
+//! the newest change whose file before wrote the item and after it writes
+//! none, or was deleted, in a commit or the work tree; a change whose file
+//! still writes it lost nothing, whatever a merge did later. Each such
+//! file of the anchor's file kind (`.ts`, `.d.ts` and `.tsx`, with
+//! JavaScript, are kinds apart) that writes the symbol's whole path now is
+//! a [`Search`], and the move is the one of them that, across the loss,
+//! went from writing no item of the symbol to definitions of the span hash
+//! the anchor's file lost ([`moved_to`]): none, or two, and no repair. A
+//! file git does not track is no candidate and no second one, since the
+//! history names no change of it. That evidence is the code itself in the
+//! commit it moved in, so a namesake elsewhere, in another crate, target
+//! or test module, which that change did not write, is never one, and no
+//! bound by crate or target is needed. The one that moved is the repair
+//! when it held definitions of the kinds it gained after every change
+//! since and holds them now: one a later change deleted, or replaced by
+//! another kind of item, is no move, while an edit of the moved item keeps
+//! its repair.
 //! With no git, or any git failure, no anchor is repaired.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -160,17 +165,21 @@ pub(crate) fn missing<'s, 'f>(
     here.facts.writers(missing)
 }
 
-/// Of `versions`, the anchor's file before each of its newest
-/// changes, newest first, as names of `prior`: the place of the first that
-/// wrote an item of the anchor's symbol, which the change after it lost.
+/// Of `versions`, the anchor's file before and after each of its newest
+/// changes, newest first, as names of `prior` (after, `None` where the
+/// change left no file that writes the symbol, a deletion or the work
+/// tree's): the place of the first change that lost an item of the
+/// anchor's symbol, its file writing one before and none after. A change
+/// whose file still writes it lost nothing, whatever a merge did later.
 pub(crate) fn lost<'v>(
     anchor: &Anchor,
-    versions: impl IntoIterator<Item = &'v str>,
+    versions: impl IntoIterator<Item = (&'v str, Option<&'v str>)>,
     prior: &Prior,
 ) -> Option<usize> {
+    let wrote = |version: &str| prior.wrote(version, anchor);
     versions
         .into_iter()
-        .position(|version| prior.wrote(version, anchor))
+        .position(|(before, after)| wrote(before) && !after.is_some_and(wrote))
 }
 
 /// What git's history shows of a search's candidate, as names of

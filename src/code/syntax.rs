@@ -44,7 +44,7 @@ pub(super) const CHUNK_BYTES: usize = 64;
 
 /// The progress operations between two calls of the progress callback,
 /// the runtime's own constant.
-const OPERATIONS_PER_PROGRESS: usize = 100;
+pub(super) const OPERATIONS_PER_PROGRESS: usize = 100;
 
 /// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
 /// the parse runs past either of its budgets.

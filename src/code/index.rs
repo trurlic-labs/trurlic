@@ -34,7 +34,7 @@ const LEXICAL_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// key, so an index built under other bounds is never read as one of
 /// these, whatever the fixture corpus shows of them. The sizes of the
 /// values an index holds bound it through the room of its file.
-pub(crate) const BOUNDS: [(&str, usize); 31] = [
+pub(crate) const BOUNDS: [(&str, usize); 32] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
     ("served_bytes_per_byte", work::SERVED_BYTES_PER_BYTE),
@@ -44,6 +44,7 @@ pub(crate) const BOUNDS: [(&str, usize); 31] = [
     ("lexical_work_per_byte", work::LEXICAL_WORK_PER_BYTE),
     ("min_work", work::MIN_WORK),
     ("chunk_bytes", syntax::CHUNK_BYTES),
+    ("operations_per_progress", syntax::OPERATIONS_PER_PROGRESS),
     ("max_nesting", MAX_NESTING),
     ("scope_bytes", size_of::<Scope>()),
     ("segment_bytes", size_of::<Segment>()),

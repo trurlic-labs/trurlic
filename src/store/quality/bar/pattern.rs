@@ -71,6 +71,7 @@ impl Compiled {
         // The reverse automaton as regex-automata's own builder makes it:
         // every match, no prefilter, start states unmarked.
         let backward = config
+            // clone: the forward automaton is built from the config as it is.
             .clone()
             .prefilter(None)
             .specialize_start_states(false)

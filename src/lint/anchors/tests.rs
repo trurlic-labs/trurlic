@@ -673,19 +673,26 @@ fn a_move_is_the_lost_code_arriving_where_it_was_not_and_kept_there() {
     }
 }
 
-/// Where a file lost the code is the newest of its versions, each the file
-/// before one of its changes, that wrote an item of the symbol.
+/// Where a file lost the code is the newest of its changes whose file
+/// before wrote an item of the symbol and after it writes none, or was
+/// deleted: a change that kept the item, as a side branch's edit a merge
+/// later dropped, lost nothing.
 #[test]
-fn the_loss_is_the_newest_change_whose_file_before_wrote_the_item() {
+fn the_loss_is_the_newest_change_whose_file_before_wrote_the_item_and_after_none() {
     let held = prior(&[
         ("y^", "src/a.rs", "pub fn a() {}\n"),
+        ("y", "src/a.rs", "pub fn b() {}\n"),
         ("x^", "src/a.rs", FOO),
+        ("x", "src/a.rs", &format!("{FOO}pub fn more() {{}}\n")),
         ("w^", "src/a.rs", FOO),
+        ("w", "src/a.rs", "pub fn a() {}\n"),
     ]);
     let anchor = anchor("src/a.rs::foo");
+    let versions = [("y^", Some("y")), ("x^", Some("x")), ("w^", Some("w"))];
 
-    assert_eq!(repair::lost(&anchor, ["y^", "x^", "w^"], &held), Some(1));
-    assert_eq!(repair::lost(&anchor, ["y^"], &held), None);
+    assert_eq!(repair::lost(&anchor, versions, &held), Some(2));
+    assert_eq!(repair::lost(&anchor, [("x^", None)], &held), Some(0));
+    assert_eq!(repair::lost(&anchor, [("y^", None)], &held), None);
 }
 
 /// A stale file anchor whose gone file the history shows moved unchanged

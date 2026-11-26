@@ -41,21 +41,22 @@ const MAX_LOSS_CANDIDATES: usize = 16;
 
 /// `asked` with the repair of each stale anchor git's history shows: a
 /// move of its gone file's blob, or of its symbol's code into the one file
-/// its loss changed that shows it.
+/// its loss changed that shows it; and the commit `HEAD` named when the
+/// history was read, `None` when it was not.
 pub(super) fn with_history<'s>(
     store: &Store,
     facts: &CodeFacts,
     here: &Here<'s, '_>,
     asked: Asked<'s>,
     reads: &mut Reads,
-) -> Asked<'s> {
+) -> (Asked<'s>, Option<String>) {
     let gone = asked.gone(here);
     let missing = repair::missing(&asked, here);
     if gone.is_empty() && missing.is_empty() {
-        return asked;
+        return (asked, None);
     }
     let Some(history) = History::read(store.code_root()) else {
-        return asked;
+        return (asked, None);
     };
     let to = history.renamed(&gone);
     // clone: the paths are read apart from the map that keeps them.
@@ -63,7 +64,11 @@ pub(super) fn with_history<'s>(
     let read = facts.beside(&read_paths(store, store.code_root(), paths, reads));
     let mut repairs = repair::followed(&asked, here, &Renames { to, facts: read });
     repairs.extend(moves(store, &history, facts, &missing, reads));
-    asked.with_repairs(repairs)
+    // clone: the head is named past the history read.
+    (
+        asked.with_repairs(repairs),
+        history.head().map(str::to_owned),
+    )
 }
 
 /// Where a file lost an item.
@@ -109,10 +114,15 @@ fn moves<'s>(
     let judged: Vec<(&'s Anchor, Vec<(Search<'s>, Shown)>)> = versions
         .into_iter()
         .filter_map(|(anchor, writers, versions)| {
-            let names = versions.iter().map(|(_, name)| name.as_str());
-            let at = repair::lost(anchor, names, &prior)?;
-            let (loss, lost) = versions.into_iter().nth(at)?;
-            Some((anchor, lineages.candidates((anchor, loss, &lost), writers)?))
+            let sides = versions
+                .iter()
+                .map(|v| (v.before.as_str(), v.after.as_deref()));
+            let at = repair::lost(anchor, sides, &prior)?;
+            let Version { loss, before, .. } = versions.into_iter().nth(at)?;
+            Some((
+                anchor,
+                lineages.candidates((anchor, loss, &before), writers)?,
+            ))
         })
         .collect();
     // The versions read for the losses but the losses themselves are done
@@ -131,9 +141,19 @@ fn moves<'s>(
 }
 
 /// An anchor whose code is looked for, the files that write its symbol
-/// now, and its file before each of its newest changes that may hold the
+/// now, and its file around each of its newest changes that may hold the
 /// loss.
-type Searched<'s, 'w> = (&'s Anchor, &'w BTreeSet<&'w str>, Vec<(Loss, String)>);
+type Searched<'s, 'w> = (&'s Anchor, &'w BTreeSet<&'w str>, Vec<Version>);
+
+/// A change of an anchor's file that may have lost its code: where it was
+/// made, and the file's blob before it and after it, `None` after a
+/// deletion or for the work tree's file, which writes nothing the anchor
+/// names.
+struct Version {
+    loss: Loss,
+    before: String,
+    after: Option<String>,
+}
 
 /// The history, and the lineage of each file that writes a missing
 /// anchor's symbol now ([`History::lineage`]).
@@ -157,7 +177,7 @@ impl Lineages<'_, '_> {
             let mut other = writers.iter().filter_map(|writer| self.at(writer, loss));
             other.any(|change| change.path != anchor.file())
         };
-        let last = found.iter().rposition(|&(loss, _)| reaches(loss))?;
+        let last = found.iter().rposition(|version| reaches(version.loss))?;
         found.truncate(last + 1);
         Some((anchor, writers, found))
     }
@@ -215,20 +235,24 @@ impl Lineages<'_, '_> {
     }
 }
 
-/// The file at `path` before each of its newest changes, newest first,
-/// where each may have lost an item: before the work tree's, then before
-/// each of its [`MAX_LOSS_CHANGES`] newest commits that held it.
-fn versions(history: &History, path: &str) -> Vec<(Loss, String)> {
-    let uncommitted = history
+/// The file at `path` around each of its newest changes, newest first,
+/// where each may have lost an item: the work tree's, then each of its
+/// [`MAX_LOSS_CHANGES`] newest commits that held it before.
+fn versions(history: &History, path: &str) -> Vec<Version> {
+    let version = |loss: Loss, change: &Change| {
+        Some(Version {
+            loss,
+            // clone: each version names its blobs.
+            before: change.before.clone()?,
+            // clone: as above.
+            after: change.after.clone().filter(|_| loss != Loss::WorkTree),
+        })
+    };
+    let head = history
         .uncommitted(path)
-        .and_then(|change| change.before.as_ref());
-    // clone: each version names its blob.
-    let head = uncommitted.map(|blob| (Loss::WorkTree, blob.clone()));
-    let committed = history
-        .changes(path)
-        .take(MAX_LOSS_CHANGES)
-        // clone: as above.
-        .filter_map(|(at, change)| Some((Loss::Commit(at), change.before.clone()?)));
+        .and_then(|change| version(Loss::WorkTree, change));
+    let committed = history.changes(path).take(MAX_LOSS_CHANGES);
+    let committed = committed.filter_map(|(at, change)| version(Loss::Commit(at), change));
     head.into_iter().chain(committed).collect()
 }
 
@@ -243,12 +267,14 @@ fn followed(history: &History, loss: Loss, change: &Change) -> Option<(String, V
     }
 }
 
-/// The reads of the anchors' files before their losses: each of
-/// `searched` before each of its versions.
+/// The reads of the anchors' files around their losses: each of
+/// `searched` before and after each of its versions.
 fn losses(searched: &[Searched<'_, '_>]) -> BTreeSet<(String, String)> {
     let mut reads = BTreeSet::new();
     for (anchor, _, found) in searched {
-        let named = found.iter().map(|(_, name)| name);
+        let named = found
+            .iter()
+            .flat_map(|v| std::iter::once(&v.before).chain(&v.after));
         // clone: each read names its blob and path.
         reads.extend(named.map(|name| (name.clone(), anchor.file().to_owned())));
     }

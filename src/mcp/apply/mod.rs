@@ -15,7 +15,7 @@ pub(crate) use result::Answer;
 
 use std::collections::BTreeMap;
 
-use crate::sources;
+use crate::sources::{self, Seen};
 use crate::store::failpoint::{self, Site};
 
 use crate::store::limits::{
@@ -28,7 +28,7 @@ use crate::store::{
     Remove, RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent, Store, Writer,
 };
 
-use repairs::{Seen, Unrepaired};
+use repairs::Unrepaired;
 
 use super::spec::kinds::{List, Object, Text, Union, Variant};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
@@ -103,7 +103,7 @@ impl Args for ApplyArgs {
                     max_bytes: MAX_TRAILER_BYTES,
                 },
             ),
-            seen: Seen::new(),
+            seen: Seen::default(),
             unrepaired: Unrepaired::new(),
             bar: PreparedBar::default(),
         }

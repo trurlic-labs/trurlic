@@ -44,7 +44,7 @@ use crate::code::{
     self, Code, CodeFacts, Entry, FileFault, FileKind, FileMacros, Indexed, ReadFault, Resolution,
 };
 use crate::console::diag;
-use crate::git::renames::at_revision;
+use crate::git::{self, renames::at_revision};
 use crate::lint::anchors::{self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Unasked};
 use crate::store::{Anchor, Decision, Store, SymbolsKey};
 
@@ -64,6 +64,18 @@ pub(crate) const MAX_SOURCE_FILE_BYTES: u64 = code::MAX_SOURCE_BYTES as u64;
 pub(crate) struct CheckedFindings<'s> {
     pub(crate) findings: Vec<Finding<'s, Checked>>,
     pub(crate) unread: Vec<UnreadWorktree>,
+    /// The commit `HEAD` named when git's history was read for repairs.
+    pub(crate) head: Option<String>,
+}
+
+/// What a read of the repairs saw, which the write holds them to again
+/// under its lock: the code each repair named, by its stale anchor, and
+/// the commit `HEAD` named when git's history was read, `None` when it was
+/// not.
+#[derive(Debug, Default)]
+pub(crate) struct Seen {
+    pub(crate) code: BTreeMap<Anchor, Code>,
+    pub(crate) head: Option<String>,
 }
 
 /// The anchor findings of `decisions` that `check` reports, judged in the
@@ -84,11 +96,12 @@ pub(crate) fn checked_findings<'s>(
     let here = Here::of(&decisions, &facts);
     let mut asked = Asked::new(here.unresolved(&decisions));
     let unread = elsewhere(store, &facts, &mut asked, &mut reads);
-    let asked = repair::with_history(store, &facts, &here, asked, &mut reads);
+    let (asked, head) = repair::with_history(store, &facts, &here, asked, &mut reads);
     reads.write(store);
     CheckedFindings {
         findings: anchors::findings(&decisions, &here, &asked),
         unread,
+        head,
     }
 }
 
@@ -114,15 +127,29 @@ pub(crate) fn tree_findings<'s>(
 /// read under the lock from the files the repairs name alone, as the tree
 /// read judges them, with no git: its stale anchor names nothing there and
 /// its repair names the code `seen` holds for it, what the read judged, so
-/// code replaced since is never written. Give each repair dropped, by its
-/// stale anchor, with why.
+/// code replaced since is never written; and none when `HEAD` names
+/// another commit than the read's history walk did, a branch switched or a
+/// commit made between them. Give each repair dropped, by its stale
+/// anchor, with why.
 pub(crate) fn still_holding(
     store: &Store,
     repairs: &mut BTreeMap<Anchor, Anchor>,
-    seen: &BTreeMap<Anchor, Code>,
+    seen: &Seen,
 ) -> BTreeMap<Anchor, String> {
     if repairs.is_empty() {
         return BTreeMap::new();
+    }
+    let moved = seen.head.as_ref().is_some_and(|head| {
+        // A git that cannot say counts as a move: the repairs wait.
+        !git::head(store.code_root()).is_ok_and(|now| now == *head)
+    });
+    if moved {
+        let cause = "the branch moved since the repairs were read; run `repair_anchors` again";
+        // clone: the map dropped outlives the one cleared.
+        let dropped = repairs.keys().map(|from| (from.clone(), cause.to_owned()));
+        let dropped = dropped.collect();
+        repairs.clear();
+        return dropped;
     }
     let paths: BTreeSet<&str> = repairs
         .iter()
@@ -136,6 +163,7 @@ pub(crate) fn still_holding(
             Resolution::FileMissing | Resolution::SymbolMissing
         );
         let same = seen
+            .code
             .get(from)
             .is_some_and(|seen| facts.code(to).as_ref() == Some(seen));
         let holds = stale && same;
