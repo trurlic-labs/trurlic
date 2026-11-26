@@ -11,6 +11,8 @@ origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
     { file = "src/code/facts/roles.rs", symbol = "test_files" },
+    { file = "src/code/parse/language/row.rs", symbol = "C" },
+    { file = "src/code/parse/language/row.rs", symbol = "CPP" },
     { file = "src/code/parse/language/row.rs", symbol = "Language::is_test_place" },
     { file = "src/code/parse/language/row.rs", symbol = "PYTHON" },
     { file = "src/code/parse/language/row.rs", symbol = "TSX" },

@@ -9,5 +9,4 @@ status = "accepted"
 created = "2026-10-02T09:47:31.816905883Z"
 anchors = [
     { file = ".gitignore" },
-    { file = "CLAUDE.md" },
 ]

@@ -18,5 +18,5 @@ anchors = [
     { file = "tests/integration/malformed_node.rs", symbol = "a_node_file_over_one_mib" },
 ]
 depends_on = [
-    "every-size-limit-lives-in-one-place-and-binds-the-read-the-types-and-validation",
+    "a-node-file-s-limits-live-in-one-place-and-bind-the-read-the-types-and-validation",
 ]

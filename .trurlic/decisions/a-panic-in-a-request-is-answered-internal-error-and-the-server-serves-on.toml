@@ -13,7 +13,7 @@ alternatives = [
 status = "proposed"
 created = "2026-11-23T23:15:10.990884289Z"
 anchors = [
-    { file = "Cargo.toml" },
+    { file = "Cargo.toml", symbol = "profile::release::panic" },
     { file = "src/failpoint.rs", symbol = "Site::Loaded" },
     { file = "src/mcp/mod.rs", symbol = "Server::answer" },
     { file = "src/store/write/access.rs", symbol = "Store::begin_write" },
