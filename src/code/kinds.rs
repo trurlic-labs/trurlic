@@ -169,7 +169,7 @@ pub(crate) enum Role {
 
 impl Role {
     /// Test code when either is.
-    pub(crate) const fn or(self, other: Self) -> Self {
+    pub(super) const fn or(self, other: Self) -> Self {
         match (self, other) {
             (Self::Code, Self::Code) => Self::Code,
             (Self::Test, _) | (_, Self::Test) => Self::Test,

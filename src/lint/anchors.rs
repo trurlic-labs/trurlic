@@ -33,7 +33,7 @@ use crate::store::{Anchor, Decision, Status};
 
 pub(crate) mod repair;
 
-pub(crate) use repair::{Judged, Prior, Renamed, Renames};
+pub(crate) use repair::{Prior, Renamed, Renames};
 
 /// The files of its kind that define a name, at least, for an anchor whose
 /// symbol is that name alone, resolved through a suffix, to be weak.

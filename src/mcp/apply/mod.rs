@@ -15,6 +15,9 @@ pub(crate) use result::Answer;
 
 use std::collections::BTreeMap;
 
+use crate::sources;
+use crate::store::failpoint::{self, Site};
+
 use crate::store::limits::{
     MAX_ALTERNATIVE_BYTES, MAX_ANCHOR_PATH_BYTES, MAX_ANCHOR_SYMBOL_BYTES, MAX_BATCH_OPS,
     MAX_CHOICE_BYTES, MAX_LIST_ITEMS, MAX_NAME_BYTES, MAX_TAG_BYTES, MAX_TEXT_FIELD_BYTES,
@@ -111,16 +114,25 @@ impl Args for ApplyArgs {
 fn prepare(store: &Store, mut arguments: ApplyArgs) -> Outcome<ApplyArgs> {
     arguments.bar = store.prepare_bar()?;
     arguments.unrepaired = repairs::fill(store, &mut arguments.ops)?;
+    failpoint::hit(Site::RepairsRead);
     Ok(arguments)
 }
 
 fn apply(mut writer: Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
     let ApplyArgs {
-        ops,
+        mut ops,
         origin,
-        unrepaired,
+        mut unrepaired,
         bar,
     } = arguments;
+    // The tree may have changed since the repairs were read: each one is
+    // held to it again under the lock.
+    let code_root = &writer.state().code_root;
+    for op in &mut ops {
+        if let Op::RepairAnchors(RepairAnchors::Every(map)) = op {
+            unrepaired.extend(sources::still_holding(code_root, map));
+        }
+    }
     let batch = Batch {
         ops,
         origin,

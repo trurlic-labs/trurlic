@@ -591,14 +591,14 @@ fn asked_with_repairs<'s>(
     prior: &Prior,
 ) -> Asked<'s> {
     let mut repairs = repair::followed(&asked, here, renames, prior);
-    let searches = repair::searched(&asked, here, renames, &repairs);
-    let gained = repair::gained(searches, prior);
-    repairs.extend(repair::moved(&gained, here.facts, prior));
+    let searches = repair::searched(&asked, here, renames, &repairs, prior);
+    let lost = repair::lost(searches, prior);
+    repairs.extend(repair::moved(&lost, here.facts, prior));
     asked.with_repairs(repairs)
 }
 
 /// The commit every anchored file of these tests last changed in, so lost
-/// its code in, and its parent, where each is judged.
+/// its code in, and its parent.
 const LOST: &str = "X";
 const BEFORE: &str = "X^";
 
@@ -619,32 +619,32 @@ fn held(revision: &str, path: &str, text: &str) -> (String, String, Entry) {
 }
 
 /// What git's history held at [`BEFORE`], each of `files` a path and its
-/// text, every one judged there, as a file last changed in [`LOST`].
+/// text, every one last changed in [`LOST`].
 fn prior(files: &[(&str, &str)]) -> Prior {
     let mut prior = Prior::default();
     prior.extend(files.iter().map(|(path, text)| held(BEFORE, path, text)));
     for (path, _) in files {
-        prior.judge_at((*path).to_owned(), Judged::Before(LOST.to_owned()));
+        prior.changed((*path).to_owned(), vec![LOST.to_owned()], false);
     }
     prior
 }
 
-/// `prior` with `target` gaining, in `commit`, the symbols the anchored
-/// `file` lost: `commit` is the one commit since `file` was judged that
-/// changed how often `target` spells each name it holds in `text`, which
-/// it held there, and nothing at its parent.
-fn gained_in(prior: &mut Prior, commit: &str, file: &str, target: &str, text: &str) {
-    for name in names(text) {
-        prior.spelled(file, target, name, vec![commit.to_owned()]);
+/// `prior` with each of `paths` changed by `commit` and by no commit
+/// since that added or deleted it.
+fn arrived(prior: &mut Prior, commit: &str, paths: &[&str]) {
+    for path in paths {
+        prior.target_changed((*path).to_owned(), vec![(commit.to_owned(), true)]);
     }
-    prior.extend([held(commit, target, text)]);
 }
 
-/// Each identifier `text` spells.
-fn names(text: &str) -> BTreeSet<&str> {
-    text.split(|c: char| !c.is_alphanumeric() && c != '_')
-        .filter(|word| !word.is_empty())
-        .collect()
+/// A rename into `to`, made by [`LOST`].
+fn renamed(to: &str, exact: bool) -> Renamed {
+    Renamed {
+        to: to.to_owned(),
+        exact,
+        before: BEFORE.to_owned(),
+        made: Some(LOST.to_owned()),
+    }
 }
 
 /// The manifest of a package at the root of the tree.
@@ -656,19 +656,24 @@ const BOOK: &str = "pub struct Book;\nimpl Book { fn pages() {} }\n";
 const CLOCK: &str = "pub struct Clock;\nimpl Clock { fn tick() {} }\n";
 
 /// A stale symbol anchor is repaired to the one other file of its target
-/// that defines its symbol as its whole path when git's history shows the
-/// move, the file having gained it in the commit the anchor's file lost
-/// it: a method named alone in that file before, not its whole path, is
-/// no namesake. Not when two files define it, nor when it moved and was
-/// renamed, nor on a file of another language, nor for any other cause.
+/// that writes its symbol as its whole path when git's history shows the
+/// code moving there in one step: the commit where the anchor's file last
+/// lost it, found before the file's later commits, gave the other file
+/// definitions of the same span hash, which it did not write before (a
+/// method named alone there is no namesake, and a `use` of the item gave
+/// way to it). Not when two files define it, nor on a file of another
+/// language, nor for any other cause.
 #[test]
 fn a_symbol_that_moved_to_one_other_file_is_repaired_there() {
+    let ticks = format!("{CLOCK}pub fn tick() {{}}\n");
+    let user = "pub fn t_other() -> u32 { foo() }\n";
     let here = facts(
         &[
             MANIFEST,
             ("src/lib.rs", "pub fn stay() {}\n"),
             ("src/moved.rs", BOOK),
-            ("src/clock.rs", &format!("{CLOCK}pub fn tick() {{}}\n")),
+            ("src/clock.rs", &ticks),
+            ("src/t.rs", &format!("pub fn foo() -> u32 {{ 1 }}\n{user}")),
             ("src/twice_a.rs", "pub fn twice() {}\n"),
             ("src/twice_b.rs", "pub fn twice() {}\n"),
             ("src/moved.py", "def run():\n    pass\n"),
@@ -678,6 +683,7 @@ fn a_symbol_that_moved_to_one_other_file_is_repaired_there() {
     let anchors = [
         "src/lib.rs::Book::pages",
         "src/lib.rs::tick",
+        "src/lib.rs::foo",
         "src/gone.rs::Book",
         "src/lib.rs::twice",
         "src/gone.py::run",
@@ -687,17 +693,32 @@ fn a_symbol_that_moved_to_one_other_file_is_repaired_there() {
     ];
     let decisions = [("d", decision(&anchors, StatusName::Accepted))];
     let history = || {
-        let before = format!("pub fn stay() {{}}\npub fn tick() {{}}\n{BOOK}");
+        let before =
+            format!("pub fn stay() {{}}\npub fn tick() {{}}\npub fn foo() -> u32 {{ 1 }}\n{BOOK}");
         let mut prior = prior(&[
-            ("src/lib.rs", &before),
             ("src/gone.rs", BOOK),
             ("src/gone.py", "def run():\n    pass\n"),
             ("src/clock.rs", CLOCK),
+            ("src/t.rs", &format!("use crate::lib::foo;\n{user}")),
         ]);
-        gained_in(&mut prior, LOST, "src/lib.rs", "src/moved.rs", BOOK);
-        gained_in(&mut prior, LOST, "src/gone.rs", "src/moved.rs", BOOK);
-        let ticks = format!("{CLOCK}pub fn tick() {{}}\n");
-        gained_in(&mut prior, LOST, "src/lib.rs", "src/clock.rs", &ticks);
+        prior.extend([
+            held(BEFORE, "src/lib.rs", &before),
+            held(BEFORE_LATER, "src/lib.rs", "pub fn stay() {}\n"),
+            held(LOST, "src/moved.rs", BOOK),
+            held(LOST, "src/clock.rs", &ticks),
+            held(
+                LOST,
+                "src/t.rs",
+                &format!("pub fn foo() -> u32 {{ 1 }}\n{user}"),
+            ),
+        ]);
+        let commits = vec![LATER.to_owned(), LOST.to_owned()];
+        prior.changed("src/lib.rs".to_owned(), commits, false);
+        arrived(
+            &mut prior,
+            LOST,
+            &["src/moved.rs", "src/clock.rs", "src/t.rs"],
+        );
         prior
     };
 
@@ -706,7 +727,8 @@ fn a_symbol_that_moved_to_one_other_file_is_repaired_there() {
 
     let stale = |at: &str, cause: &str| format!("anchor `{at}` of `d` is stale: {cause}");
     let missing = "its file defines nothing its symbol names";
-    let stales = |book: &str, pages: &str, tick: &str| {
+    let stales = |repairs: [&str; 4]| {
+        let [book, pages, foo, tick] = repairs;
         vec![
             stale("docs.md::Install", "nothing is at its path"),
             stale("src/gone.py::run", "nothing is at its path"),
@@ -715,34 +737,36 @@ fn a_symbol_that_moved_to_one_other_file_is_repaired_there() {
                 &format!("nothing is at its path{book}"),
             ),
             stale("src/lib.rs::Book::pages", &format!("{missing}{pages}")),
+            stale("src/lib.rs::foo", &format!("{missing}{foo}")),
             stale("src/lib.rs::renamed_too", missing),
             stale("src/lib.rs::tick", &format!("{missing}{tick}")),
             stale("src/lib.rs::twice", missing),
         ]
     };
-    let mut expected = stales(
+    let mut expected = stales([
         "; repair: `src/moved.rs::Book`",
         "; repair: `src/moved.rs::Book::pages`",
+        "; repair: `src/t.rs::foo`",
         "; repair: `src/clock.rs::tick`",
-    );
+    ]);
     let unverified = "anchor `notes.txt::line` of `d` is unverified: its symbol is on a kind of file no resolver reads, so what it names is not verified";
     expected.push(unverified.to_owned());
     assert_eq!(lines, expected);
-    let mut expected = stales("", "", "");
+    let mut expected = stales(["", "", "", ""]);
     expected.push(unverified.to_owned());
     assert_eq!(unshown, expected, "no history shows no move");
 }
 
 /// A namesake is no move: the search matches the symbol as a whole path,
 /// so a bare name never lands on a type's method or a test module's
-/// helper; it gives no repair to a file that defined the symbol where the
-/// anchor's own file last held it, the two having stood side by side; nor
-/// to one that gained it in a later commit no carrier links to the loss,
-/// a namesake written after the code was deleted (a function dropped from
-/// its file, a file deleted, a type of the library and a later one of the
-/// binary); nor to one that gained it in the loss, lost it later and holds
-/// it again, written anew; nor for a symbol the anchor's file never
-/// defined.
+/// helper; a file that wrote the symbol before the loss, beside the code,
+/// gained nothing; a different function of the same name written in the
+/// commit that deleted the code, or after it, is not its code (a function
+/// dropped from its file, a file deleted, a type of the library and one of
+/// the binary); a symbol the anchor's file never defined has no code to
+/// compare; a file the code moved into that a later commit deleted and
+/// wrote again holds another file's namesake; and in the work tree, a
+/// file that wrote the symbol at `HEAD` already gained nothing.
 #[test]
 fn a_namesake_that_stood_beside_the_code_is_no_move() {
     let here = facts(
@@ -759,13 +783,17 @@ fn a_namesake_that_stood_beside_the_code_is_no_move() {
             ),
             ("src/mail.rs", "pub fn parse_header() {}\n"),
             ("src/store.rs", "pub fn write() {}\n"),
-            ("src/net.rs", "pub fn retry_write() {}\n"),
-            ("src/http.rs", "pub fn evict() {}\n"),
+            (
+                "src/net.rs",
+                "pub fn retry_write(sock: u32) -> bool { true }\n",
+            ),
+            ("src/http.rs", "pub fn evict(idle: u8) {}\n"),
             ("src/lib.rs", "pub fn open() {}\n"),
-            ("src/main.rs", "struct Config;\nfn main() {}\n"),
+            ("src/main.rs", "struct Config { port: u16 }\nfn main() {}\n"),
             ("src/phantom.rs", "pub fn phantom() {}\n"),
-            ("src/queue.rs", "pub fn push() {}\n"),
-            ("src/pool.rs", "pub fn drain() {}\n"),
+            ("src/local.rs", "pub fn other() {}\n"),
+            ("src/shared.rs", "pub fn drafted() {}\n"),
+            ("src/new.rs", "pub fn kept() -> String { String::new() }\n"),
         ],
         &[],
     );
@@ -777,7 +805,8 @@ fn a_namesake_that_stood_beside_the_code_is_no_move() {
         "src/cache.rs::evict",
         "src/lib.rs::Config",
         "src/cli.rs::phantom",
-        "src/queue.rs::drain",
+        "src/local.rs::drafted",
+        "src/w3.rs::kept",
     ];
     let decisions = [("d", decision(&anchors, StatusName::Accepted))];
     let mut history = prior(&[
@@ -786,38 +815,45 @@ fn a_namesake_that_stood_beside_the_code_is_no_move() {
         ("src/mail.rs", "pub fn parse_header() {}\n"),
         (
             "src/store.rs",
-            "pub fn write() {}\npub fn retry_write() {}\n",
+            "pub fn write() {}\npub fn retry_write(path: &str) -> bool { false }\n",
         ),
         ("src/cache.rs", "pub fn evict() {}\n"),
+        ("src/w3.rs", "pub fn kept() {}\n"),
         ("src/lib.rs", "pub fn open() {}\npub struct Config;\n"),
-        ("src/queue.rs", "pub fn push() {}\npub fn drain() {}\n"),
     ]);
-    let later = [
-        ("src/store.rs", "src/net.rs", "pub fn retry_write() {}\n"),
-        ("src/cache.rs", "src/http.rs", "pub fn evict() {}\n"),
-        (
-            "src/lib.rs",
-            "src/main.rs",
-            "struct Config;\nfn main() {}\n",
-        ),
-    ];
-    for (file, target, text) in later {
-        gained_in(&mut history, LATER, file, target, text);
-        history.changed(LOST.to_owned(), BTreeSet::from([file.to_owned()]));
-    }
-    let added: BTreeSet<String> = later.iter().map(|(_, t, _)| (*t).to_owned()).collect();
-    history.changed(LATER.to_owned(), added);
-    let phantom = "pub fn phantom() {}\n";
-    gained_in(&mut history, LOST, "src/cli.rs", "src/phantom.rs", phantom);
-    let drain = "pub fn drain() {}\n";
-    let commits = vec![LATER.to_owned(), LOST.to_owned()];
-    history.spelled("src/queue.rs", "src/pool.rs", "drain", commits);
     history.extend([
-        held(LATER, "src/pool.rs", ""),
-        held(BEFORE_LATER, "src/pool.rs", drain),
-        held(LOST, "src/pool.rs", drain),
+        held(LOST, "src/mail.rs", "pub fn parse_header() {}\n"),
+        held(
+            LOST,
+            "src/net.rs",
+            "pub fn retry_write(sock: u32) -> bool { true }\n",
+        ),
+        held(LOST, "src/http.rs", "pub fn evict(idle: u8) {}\n"),
+        held(
+            LOST,
+            "src/main.rs",
+            "struct Config { port: u16 }\nfn main() {}\n",
+        ),
+        held(LOST, "src/phantom.rs", "pub fn phantom() {}\n"),
+        held("HEAD", "src/local.rs", "pub fn drafted() {}\n"),
+        held("HEAD", "src/shared.rs", "pub fn drafted() {}\n"),
+        held(LOST, "src/new.rs", "pub fn kept() {}\n"),
     ]);
+    history.changed("src/local.rs".to_owned(), Vec::new(), true);
+    let replaced = vec![(LATER.to_owned(), true), (LOST.to_owned(), true)];
+    history.target_changed("src/new.rs".to_owned(), replaced);
 
+    arrived(
+        &mut history,
+        LOST,
+        &[
+            "src/mail.rs",
+            "src/net.rs",
+            "src/http.rs",
+            "src/main.rs",
+            "src/phantom.rs",
+        ],
+    );
     let lines = repaired(&decisions, &here, Renames::none(), history);
 
     assert!(
@@ -825,109 +861,6 @@ fn a_namesake_that_stood_beside_the_code_is_no_move() {
         "{lines:#?}"
     );
     assert_eq!(lines.len(), anchors.len(), "{lines:#?}");
-}
-
-/// Code that moved in two steps, out of the anchor's file into another
-/// file and from there into the one that holds it now, is repaired there:
-/// the carrier gained it in the commit the anchor's file lost it and held
-/// it before the last move. A file both commits changed that held the
-/// symbol beside the code already, gained it only later, or named it in a
-/// re-export alone, carried nothing.
-#[test]
-fn a_symbol_carried_through_another_file_is_repaired_where_it_landed() {
-    let landed = "pub fn helper() {}\npub fn twin() {}\npub fn late() {}\npub fn shown() {}\n";
-    let here = facts(
-        &[
-            MANIFEST,
-            ("src/old.rs", "pub fn stay() {}\n"),
-            ("src/mid.rs", "pub fn other() {}\n"),
-            ("src/new.rs", landed),
-        ],
-        &[],
-    );
-    let anchors = [
-        "src/old.rs::helper",
-        "src/old.rs::twin",
-        "src/old.rs::late",
-        "src/old.rs::shown",
-    ];
-    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
-    let mut history = prior(&[(
-        "src/old.rs",
-        "pub fn stay() {}\npub fn helper() {}\npub fn twin() {}\npub fn late() {}\npub fn shown() {}\n",
-    )]);
-    let carried = "pub fn helper() {}\npub fn twin() {}\npub use crate::shown::shown;\n";
-    history.extend([
-        held(BEFORE, "src/mid.rs", "pub fn twin() {}\n"),
-        held(LOST, "src/mid.rs", carried),
-        held(
-            BEFORE_LATER,
-            "src/mid.rs",
-            &format!("{carried}pub fn late() {{}}\n"),
-        ),
-    ]);
-    gained_in(&mut history, LATER, "src/old.rs", "src/new.rs", landed);
-    let both = |paths: &[&str]| paths.iter().map(|path| (*path).to_owned()).collect();
-    history.changed(LOST.to_owned(), both(&["src/old.rs", "src/mid.rs"]));
-    history.changed(LATER.to_owned(), both(&["src/mid.rs", "src/new.rs"]));
-
-    let lines = repaired(&decisions, &here, Renames::none(), history);
-
-    let stale = |at: &str, repair: &str| {
-        format!("anchor `{at}` of `d` is stale: its file defines nothing its symbol names{repair}")
-    };
-    assert_eq!(
-        lines,
-        [
-            stale("src/old.rs::helper", "; repair: `src/new.rs::helper`"),
-            stale("src/old.rs::late", ""),
-            stale("src/old.rs::shown", ""),
-            stale("src/old.rs::twin", ""),
-        ]
-    );
-}
-
-/// Two symbols of one file that went to one candidate are each judged by
-/// the commits that changed the candidate's spelling of their own name:
-/// one it gained in the commit the file lost both is repaired, one it
-/// gained later from no carrier is not.
-#[test]
-fn each_name_is_judged_by_the_commits_that_changed_its_own_spelling() {
-    let both = "pub fn alpha() {}\npub fn beta() {}\n";
-    let here = facts(
-        &[
-            MANIFEST,
-            ("src/old.rs", "pub fn stay() {}\n"),
-            ("src/new.rs", both),
-        ],
-        &[],
-    );
-    let anchors = ["src/old.rs::alpha", "src/old.rs::beta"];
-    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
-    let mut history = prior(&[(
-        "src/old.rs",
-        "pub fn stay() {}\npub fn alpha() {}\npub fn beta() {}\n",
-    )]);
-    history.spelled("src/old.rs", "src/new.rs", "alpha", vec![LOST.to_owned()]);
-    history.spelled("src/old.rs", "src/new.rs", "beta", vec![LATER.to_owned()]);
-    history.extend([
-        held(LOST, "src/new.rs", "pub fn alpha() {}\n"),
-        held(BEFORE_LATER, "src/new.rs", "pub fn alpha() {}\n"),
-        held(LATER, "src/new.rs", both),
-    ]);
-
-    let lines = repaired(&decisions, &here, Renames::none(), history);
-
-    let missing = "its file defines nothing its symbol names";
-    assert_eq!(
-        lines,
-        [
-            format!(
-                "anchor `src/old.rs::alpha` of `d` is stale: {missing}; repair: `src/new.rs::alpha`"
-            ),
-            format!("anchor `src/old.rs::beta` of `d` is stale: {missing}"),
-        ]
-    );
 }
 
 /// The search gives no repair where a reader would not accept one, git's
@@ -1009,7 +942,7 @@ fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
         ),
         (
             "src/cli.rs",
-            "pub fn run() {}\nfn usage() {}\nfn sample() {}\npub struct Widget;\npub struct Engine;\npub struct Meters;\n",
+            "pub fn run() {}\nfn usage() {}\npub fn sample() {}\npub struct Widget;\npub struct Engine;\npub struct Meters;\n",
         ),
         ("src/refusal.rs", "pub struct Report;\n"),
         ("src/spelled.rs", "pub struct Gadget;\n"),
@@ -1024,20 +957,24 @@ fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
         ("src/a/scale.rs", "pub fn scale() {}\n"),
         ("src/b/mod.rs", ""),
     ]);
-    let moves = [
-        ("src/spelled.rs", "src/gadget.rs", "pub struct Gadget;\n"),
-        (
-            "src/cli.rs",
+    history.extend([
+        held(LOST, "src/gadget.rs", "pub struct Gadget;\n"),
+        held(
+            LOST,
             "src/fixtures.rs",
             "#[cfg(test)]\npub fn sample() {}\n",
         ),
-        ("src/a/scale.rs", "src/b/mod.rs", "mod scale;\n"),
-        ("src/cli.rs", "src/units.rs", "pub type Meters = u32;\n"),
-    ];
-    for (file, target, text) in moves {
-        gained_in(&mut history, LOST, file, target, text);
-    }
+        held(LOST, "src/b/mod.rs", "mod scale;\n"),
+        held(LOST, "src/units.rs", "pub type Meters = u32;\n"),
+    ]);
 
+    let targets = [
+        "src/gadget.rs",
+        "src/fixtures.rs",
+        "src/b/mod.rs",
+        "src/units.rs",
+    ];
+    arrived(&mut history, LOST, &targets);
     let lines = repaired(&decisions, &here, Renames::none(), history);
 
     assert!(
@@ -1048,7 +985,7 @@ fn the_search_stays_in_the_anchors_own_crate_target_and_test_role() {
     let unknown = facts(&[("lib/moved.rs", BOOK)], &[]);
     let lone = [("d", decision(&["lib/gone.rs::Book"], StatusName::Accepted))];
     let mut history = prior(&[("lib/gone.rs", BOOK)]);
-    gained_in(&mut history, LOST, "lib/gone.rs", "lib/moved.rs", BOOK);
+    history.extend([held(LOST, "lib/moved.rs", BOOK)]);
     assert_eq!(
         repaired(&lone, &unknown, Renames::none(), history),
         ["anchor `lib/gone.rs::Book` of `d` is stale: nothing is at its path"]
@@ -1078,251 +1015,15 @@ fn a_test_helper_follows_its_code_into_another_test_module() {
         ("src/b.rs", "pub fn b() {}\n"),
     ]);
     let landed = format!("pub fn b() {{}}\n{tests}");
-    gained_in(&mut history, LOST, "src/a.rs", "src/b.rs", &landed);
+    history.extend([held(LOST, "src/b.rs", &landed)]);
 
+    arrived(&mut history, LOST, &["src/b.rs"]);
     let lines = repaired(&decisions, &here, Renames::none(), history);
 
     assert_eq!(
         lines,
         [
             "anchor `src/a.rs::tests::fixture` of `d` is stale: its file defines nothing its symbol names; repair: `src/b.rs::tests::fixture`"
-        ]
-    );
-}
-
-/// A file git reports renamed repairs the anchors on it when the rename is
-/// shown to carry their code: a symbol anchor whose symbol's span hash at
-/// the new path equals its hash at the old path before the rename, the new
-/// path read from the renamed paths' facts when the tree's lack it; a
-/// symbol the renamed file lacks is searched for as a moved one; one the
-/// edit changed follows no inexact rename. The file anchor does not
-/// follow, since symbols that resolved there before the rename do not
-/// resolve at the new path.
-#[test]
-fn a_file_git_reports_renamed_repairs_its_anchors() {
-    let here = facts(
-        &[
-            MANIFEST,
-            ("src/new.rs", "pub fn kept() {}\npub fn edited() { 2 }\n"),
-            ("src/other.rs", "pub fn left() {}\n"),
-        ],
-        &[],
-    );
-    let renamed = |to: &str| Renamed {
-        to: to.to_owned(),
-        exact: false,
-        before: BEFORE.to_owned(),
-    };
-    let renames = Renames {
-        to: BTreeMap::from([
-            ("src/old.rs".to_owned(), renamed("src/new.rs")),
-            ("conf/old.toml".to_owned(), renamed("conf/new.toml")),
-        ]),
-        facts: facts(&[("conf/new.toml", "[profile]\npanic = 1\n")], &[]),
-    };
-    let mut history = prior(&[
-        (
-            "src/old.rs",
-            "pub fn kept() {}\npub fn edited() { 1 }\npub fn left() {}\npub fn lost() {}\n",
-        ),
-        ("conf/old.toml", "[profile]\npanic = 1\n"),
-    ]);
-    gained_in(
-        &mut history,
-        LOST,
-        "src/old.rs",
-        "src/other.rs",
-        "pub fn left() {}\n",
-    );
-    let anchors = [
-        "src/old.rs",
-        "src/old.rs::kept",
-        "src/old.rs::edited",
-        "src/old.rs::left",
-        "src/old.rs::lost",
-        "conf/old.toml::profile::panic",
-        "src/never.rs",
-    ];
-    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
-
-    let lines = repaired(&decisions, &here, renames, history);
-
-    let gone = |at: &str, repair: Option<&str>| {
-        let fix = repair.map_or(String::new(), |to| format!("; repair: `{to}`"));
-        format!("anchor `{at}` of `d` is stale: nothing is at its path{fix}")
-    };
-    assert_eq!(
-        lines,
-        [
-            gone(
-                "conf/old.toml::profile::panic",
-                Some("conf/new.toml::profile::panic")
-            ),
-            gone("src/never.rs", None),
-            gone("src/old.rs", None),
-            gone("src/old.rs::edited", None),
-            gone("src/old.rs::kept", Some("src/new.rs::kept")),
-            gone("src/old.rs::left", Some("src/other.rs::left")),
-            gone("src/old.rs::lost", None),
-        ]
-    );
-}
-
-/// An exact rename carries a symbol only to definitions of the kinds it
-/// named before: a function a later edit split out of the renamed file,
-/// leaving a `mod` declaration of its name, is repaired where it went, the
-/// renamed file having carried it there. The file anchor follows the exact
-/// rename though a later edit dropped one of its functions.
-#[test]
-fn a_function_split_out_after_an_exact_rename_is_repaired_where_it_went() {
-    let here = facts(
-        &[
-            MANIFEST,
-            ("src/new.rs", "mod join;\npub fn other() {}\n"),
-            ("src/new/join.rs", "pub fn join() {}\n"),
-        ],
-        &[],
-    );
-    let renames = Renames {
-        to: BTreeMap::from([(
-            "src/old.rs".to_owned(),
-            Renamed {
-                to: "src/new.rs".to_owned(),
-                exact: true,
-                before: BEFORE.to_owned(),
-            },
-        )]),
-        facts: facts(&[], &[]),
-    };
-    let text = "pub fn join() {}\npub fn other() {}\npub fn dropped() {}\n";
-    let mut history = prior(&[("src/old.rs", text)]);
-    history.extend([
-        held(LOST, "src/new.rs", text),
-        held(BEFORE_LATER, "src/new.rs", text),
-    ]);
-    gained_in(
-        &mut history,
-        LATER,
-        "src/old.rs",
-        "src/new/join.rs",
-        "pub fn join() {}\n",
-    );
-    let paths = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
-    history.changed(LOST.to_owned(), paths(&["src/old.rs", "src/new.rs"]));
-    history.changed(LATER.to_owned(), paths(&["src/new.rs", "src/new/join.rs"]));
-    let anchors = [
-        "src/old.rs",
-        "src/old.rs::join",
-        "src/old.rs::other",
-        "src/old.rs::dropped",
-    ];
-    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
-
-    let lines = repaired(&decisions, &here, renames, history);
-
-    let gone = |at: &str, repair: &str| {
-        format!("anchor `{at}` of `d` is stale: nothing is at its path{repair}")
-    };
-    assert_eq!(
-        lines,
-        [
-            gone("src/old.rs", "; repair: `src/new.rs`"),
-            gone("src/old.rs::dropped", ""),
-            gone("src/old.rs::join", "; repair: `src/new/join.rs::join`"),
-            gone("src/old.rs::other", "; repair: `src/new.rs::other`"),
-        ]
-    );
-}
-
-/// git pairs two files by similarity alone, so a rename carries a file
-/// anchor only when it is shown to: exact into a file that defines at least
-/// one item, or followed by a symbol anchor whose code is unchanged while
-/// no symbol that resolved there before is missing at the new path. A
-/// header-only or an empty file has no identity to carry, a `main` the
-/// rename edited is no evidence, and one boilerplate `main` carried
-/// unchanged does not carry a file whose own function the new file lacks.
-#[test]
-fn a_file_anchor_follows_only_a_verified_rename() {
-    let here = facts(
-        &[
-            MANIFEST,
-            ("src/beta.rs", "// License.\n"),
-            ("src/empty.rs", ""),
-            ("src/bin/report.rs", "fn main() { report() }\n"),
-            ("src/same.rs", "pub fn same() {}\n"),
-            (
-                "src/bin/export.rs",
-                "fn main() { run() }\nfn export_csv() {}\n",
-            ),
-            ("src/kept.rs", "pub fn kept() {}\npub fn added() {}\n"),
-        ],
-        &[],
-    );
-    let renamed = |to: &str, exact| Renamed {
-        to: to.to_owned(),
-        exact,
-        before: BEFORE.to_owned(),
-    };
-    let renames = Renames {
-        to: BTreeMap::from([
-            ("src/alpha.rs".to_owned(), renamed("src/beta.rs", true)),
-            ("src/void.rs".to_owned(), renamed("src/empty.rs", true)),
-            (
-                "src/bin/import.rs".to_owned(),
-                renamed("src/bin/report.rs", false),
-            ),
-            ("src/copy.rs".to_owned(), renamed("src/same.rs", true)),
-            (
-                "src/bin/load.rs".to_owned(),
-                renamed("src/bin/export.rs", false),
-            ),
-            ("src/keep.rs".to_owned(), renamed("src/kept.rs", false)),
-        ]),
-        facts: facts(&[], &[]),
-    };
-    let history = prior(&[
-        ("src/bin/import.rs", "fn main() { import() }\n"),
-        (
-            "src/bin/load.rs",
-            "fn main() { run() }\nfn import_csv() {}\n",
-        ),
-        ("src/keep.rs", "pub fn kept() {}\n"),
-    ]);
-    let anchors = [
-        "src/alpha.rs",
-        "src/void.rs",
-        "src/bin/import.rs",
-        "src/bin/import.rs::main",
-        "src/copy.rs",
-        "src/bin/load.rs",
-        "src/bin/load.rs::main",
-        "src/bin/load.rs::import_csv",
-        "src/keep.rs",
-        "src/keep.rs::kept",
-    ];
-    let decisions = [("cfg", decision(&anchors, StatusName::Accepted))];
-
-    let lines = repaired(&decisions, &here, renames, history);
-
-    let gone = |at: &str, repair: &str| {
-        format!("anchor `{at}` of `cfg` is stale: nothing is at its path{repair}")
-    };
-    assert_eq!(
-        lines,
-        [
-            gone("src/alpha.rs", ""),
-            gone("src/bin/import.rs", ""),
-            gone("src/bin/import.rs::main", ""),
-            gone("src/bin/load.rs", ""),
-            gone("src/bin/load.rs::import_csv", ""),
-            gone(
-                "src/bin/load.rs::main",
-                "; repair: `src/bin/export.rs::main`"
-            ),
-            gone("src/copy.rs", "; repair: `src/same.rs`"),
-            gone("src/keep.rs", "; repair: `src/kept.rs`"),
-            gone("src/keep.rs::kept", "; repair: `src/kept.rs::kept`"),
-            gone("src/void.rs", ""),
         ]
     );
 }
@@ -1379,7 +1080,8 @@ fn a_planned_or_pending_anchor_is_never_repaired() {
     }
     let mut history = prior(&[("src/lib.rs", "pub fn gone() {}\npub fn branch() {}\n")]);
     let moved = "pub fn gone() {}\n";
-    gained_in(&mut history, LOST, "src/lib.rs", "src/moved.rs", moved);
+    history.extend([held(LOST, "src/moved.rs", moved)]);
+    arrived(&mut history, LOST, &["src/moved.rs"]);
     let asked = asked_with_repairs(asked, &here, &Renames::none(), &history);
 
     let found = findings(&named, &here, &asked);
@@ -1405,5 +1107,295 @@ fn a_planned_or_pending_anchor_is_never_repaired() {
             ("pending", None),
             ("planned", None),
         ]
+    );
+}
+
+/// A file git reports renamed repairs the anchors on it when the rename
+/// carried their code: a symbol anchor whose definitions before the rename
+/// have the span hash they have in the file the rename made, however the
+/// file was edited since, the new path read from the renamed paths' facts
+/// when the tree's lack it. A symbol the rename edited follows it not; one
+/// that left the file in the rename is searched for where it went. The file
+/// anchor does not follow, since symbols that resolved in the old file are
+/// missing from the file the rename made.
+#[test]
+fn a_file_git_reports_renamed_repairs_its_anchors() {
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/new.rs", "pub fn kept() { 3 }\npub fn edited() { 2 }\n"),
+            ("src/other.rs", "pub fn left() {}\n"),
+        ],
+        &[],
+    );
+    let renames = Renames {
+        to: BTreeMap::from([
+            ("src/old.rs".to_owned(), renamed("src/new.rs", false)),
+            ("conf/old.toml".to_owned(), renamed("conf/new.toml", false)),
+        ]),
+        facts: facts(&[("conf/new.toml", "[profile]\npanic = 1\n")], &[]),
+    };
+    let mut history = prior(&[
+        (
+            "src/old.rs",
+            "pub fn kept() {}\npub fn edited() { 1 }\npub fn left() {}\npub fn lost() {}\n",
+        ),
+        ("conf/old.toml", "[profile]\npanic = 1\n"),
+    ]);
+    history.extend([
+        held(
+            LOST,
+            "src/new.rs",
+            "pub fn kept() {}\npub fn edited() { 2 }\n",
+        ),
+        held(LOST, "conf/new.toml", "[profile]\npanic = 1\n"),
+        held(LOST, "src/other.rs", "pub fn left() {}\n"),
+    ]);
+    let anchors = [
+        "src/old.rs",
+        "src/old.rs::kept",
+        "src/old.rs::edited",
+        "src/old.rs::left",
+        "src/old.rs::lost",
+        "conf/old.toml::profile::panic",
+        "src/never.rs",
+    ];
+    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
+
+    arrived(&mut history, LOST, &["src/other.rs"]);
+    let lines = repaired(&decisions, &here, renames, history);
+
+    let gone = |at: &str, repair: Option<&str>| {
+        let fix = repair.map_or(String::new(), |to| format!("; repair: `{to}`"));
+        format!("anchor `{at}` of `d` is stale: nothing is at its path{fix}")
+    };
+    assert_eq!(
+        lines,
+        [
+            gone(
+                "conf/old.toml::profile::panic",
+                Some("conf/new.toml::profile::panic")
+            ),
+            gone("src/never.rs", None),
+            gone("src/old.rs", None),
+            gone("src/old.rs::edited", None),
+            gone("src/old.rs::kept", Some("src/new.rs::kept")),
+            gone("src/old.rs::left", Some("src/other.rs::left")),
+            gone("src/old.rs::lost", None),
+        ]
+    );
+}
+
+/// A rename carries a symbol only to definitions of the kinds it named in
+/// the file the rename made: a function a later commit split out of the
+/// renamed file, leaving a `mod` declaration of its name, is searched for
+/// in the renamed file's history and repaired where it went. The file
+/// anchor follows the exact rename though a later edit dropped one of its
+/// functions.
+#[test]
+fn a_function_split_out_after_an_exact_rename_is_repaired_where_it_went() {
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/new.rs", "mod join;\npub fn other() {}\n"),
+            ("src/new/join.rs", "pub fn join() {}\n"),
+        ],
+        &[],
+    );
+    let renames = Renames {
+        to: BTreeMap::from([("src/old.rs".to_owned(), renamed("src/new.rs", true))]),
+        facts: facts(&[], &[]),
+    };
+    let text = "pub fn join() {}\npub fn other() {}\npub fn dropped() {}\n";
+    let mut history = prior(&[("src/old.rs", text)]);
+    history.extend([
+        held(LOST, "src/new.rs", text),
+        held(BEFORE_LATER, "src/new.rs", text),
+        held(LATER, "src/new/join.rs", "pub fn join() {}\n"),
+    ]);
+    let commits = vec![LATER.to_owned(), LOST.to_owned()];
+    history.changed("src/new.rs".to_owned(), commits, false);
+    let anchors = [
+        "src/old.rs",
+        "src/old.rs::join",
+        "src/old.rs::other",
+        "src/old.rs::dropped",
+    ];
+    let decisions = [("d", decision(&anchors, StatusName::Accepted))];
+
+    arrived(&mut history, LATER, &["src/new/join.rs"]);
+    let lines = repaired(&decisions, &here, renames, history);
+
+    let gone = |at: &str, repair: &str| {
+        format!("anchor `{at}` of `d` is stale: nothing is at its path{repair}")
+    };
+    assert_eq!(
+        lines,
+        [
+            gone("src/old.rs", "; repair: `src/new.rs`"),
+            gone("src/old.rs::dropped", ""),
+            gone("src/old.rs::join", "; repair: `src/new/join.rs::join`"),
+            gone("src/old.rs::other", "; repair: `src/new.rs::other`"),
+        ]
+    );
+}
+
+/// git pairs two files by similarity alone, so a rename carries a file
+/// anchor only when it is shown to: exact into a file that defines at least
+/// one item, or followed by a symbol anchor whose code the rename kept,
+/// while, for an inexact rename, no symbol that resolved there before is
+/// missing from the file it made. A header-only or an empty file has no
+/// identity to carry, a `main` the rename edited is no evidence, and one
+/// boilerplate `main` carried unchanged does not carry a file whose own
+/// function the new file lacks.
+#[test]
+fn a_file_anchor_follows_only_a_verified_rename() {
+    let files = [
+        ("src/beta.rs", "// License.\n"),
+        ("src/empty.rs", ""),
+        ("src/bin/report.rs", "fn main() { report() }\n"),
+        ("src/same.rs", "pub fn same() {}\n"),
+        (
+            "src/bin/export.rs",
+            "fn main() { run() }\nfn export_csv() {}\n",
+        ),
+        ("src/kept.rs", "pub fn kept() {}\npub fn added() {}\n"),
+    ];
+    let mut tree = vec![MANIFEST];
+    tree.extend(files);
+    let here = facts(&tree, &[]);
+    let renames = Renames {
+        to: BTreeMap::from([
+            ("src/alpha.rs".to_owned(), renamed("src/beta.rs", true)),
+            ("src/void.rs".to_owned(), renamed("src/empty.rs", true)),
+            (
+                "src/bin/import.rs".to_owned(),
+                renamed("src/bin/report.rs", false),
+            ),
+            ("src/copy.rs".to_owned(), renamed("src/same.rs", true)),
+            (
+                "src/bin/load.rs".to_owned(),
+                renamed("src/bin/export.rs", false),
+            ),
+            ("src/keep.rs".to_owned(), renamed("src/kept.rs", false)),
+        ]),
+        facts: facts(&[], &[]),
+    };
+    let mut history = prior(&[
+        ("src/bin/import.rs", "fn main() { import() }\n"),
+        (
+            "src/bin/load.rs",
+            "fn main() { run() }\nfn import_csv() {}\n",
+        ),
+        ("src/keep.rs", "pub fn kept() {}\n"),
+        ("src/copy.rs", "pub fn same() {}\n"),
+    ]);
+    history.extend(files.iter().map(|(path, text)| held(LOST, path, text)));
+    let anchors = [
+        "src/alpha.rs",
+        "src/void.rs",
+        "src/bin/import.rs",
+        "src/bin/import.rs::main",
+        "src/copy.rs",
+        "src/bin/load.rs",
+        "src/bin/load.rs::main",
+        "src/bin/load.rs::import_csv",
+        "src/keep.rs",
+        "src/keep.rs::kept",
+    ];
+    let decisions = [("cfg", decision(&anchors, StatusName::Accepted))];
+
+    let lines = repaired(&decisions, &here, renames, history);
+
+    let gone = |at: &str, repair: &str| {
+        format!("anchor `{at}` of `cfg` is stale: nothing is at its path{repair}")
+    };
+    assert_eq!(
+        lines,
+        [
+            gone("src/alpha.rs", ""),
+            gone("src/bin/import.rs", ""),
+            gone("src/bin/import.rs::main", ""),
+            gone("src/bin/load.rs", ""),
+            gone("src/bin/load.rs::import_csv", ""),
+            gone(
+                "src/bin/load.rs::main",
+                "; repair: `src/bin/export.rs::main`"
+            ),
+            gone("src/copy.rs", "; repair: `src/same.rs`"),
+            gone("src/keep.rs", "; repair: `src/kept.rs`"),
+            gone("src/keep.rs::kept", "; repair: `src/kept.rs::kept`"),
+            gone("src/void.rs", ""),
+        ]
+    );
+}
+
+/// A move not committed is judged in the work tree: the anchor's file
+/// wrote the item at `HEAD`, and a file that did not then holds it now
+/// with the same span hash.
+#[test]
+fn a_move_not_committed_is_repaired_from_the_work_tree() {
+    let ported = "pub fn ported(n: u8) -> u8 { n + 1 }\n";
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/a.rs", "pub fn a() {}\n"),
+            ("src/b.rs", &format!("pub fn b() {{}}\n{ported}")),
+        ],
+        &[],
+    );
+    let decisions = [("d", decision(&["src/a.rs::ported"], StatusName::Accepted))];
+    let mut history = Prior::default();
+    history.extend([
+        held("HEAD", "src/a.rs", &format!("pub fn a() {{}}\n{ported}")),
+        held("HEAD", "src/b.rs", "pub fn b() {}\n"),
+    ]);
+    history.changed("src/a.rs".to_owned(), vec![LOST.to_owned()], true);
+
+    let lines = repaired(&decisions, &here, Renames::none(), history);
+
+    assert_eq!(
+        lines,
+        [
+            "anchor `src/a.rs::ported` of `d` is stale: its file defines nothing its symbol names; repair: `src/b.rs::ported`"
+        ]
+    );
+}
+
+/// The file a rename carried a symbol into is not searched while a macro
+/// invocation there spells the name: the code may stand in it, which no
+/// index sees, so a namesake that took the same code elsewhere is no move.
+#[test]
+fn a_renamed_file_that_spells_the_name_in_an_invocation_is_not_searched() {
+    let here = facts(
+        &[
+            MANIFEST,
+            ("src/new.rs", "wrap!(join);\npub fn other() {}\n"),
+            ("src/b.rs", "pub fn join() {}\n"),
+        ],
+        &[],
+    );
+    let renames = Renames {
+        to: BTreeMap::from([("src/old.rs".to_owned(), renamed("src/new.rs", true))]),
+        facts: facts(&[], &[]),
+    };
+    let text = "pub fn join() {}\npub fn other() {}\n";
+    let mut history = prior(&[("src/old.rs", text)]);
+    history.extend([
+        held(LOST, "src/new.rs", text),
+        held(BEFORE_LATER, "src/new.rs", text),
+        held(BEFORE_LATER, "src/b.rs", ""),
+        held(LATER, "src/b.rs", "pub fn join() {}\n"),
+    ]);
+    let commits = vec![LATER.to_owned(), LOST.to_owned()];
+    history.changed("src/new.rs".to_owned(), commits, false);
+    let decisions = [("d", decision(&["src/old.rs::join"], StatusName::Accepted))];
+
+    arrived(&mut history, LATER, &["src/b.rs"]);
+    let lines = repaired(&decisions, &here, renames, history);
+
+    assert_eq!(
+        lines,
+        ["anchor `src/old.rs::join` of `d` is stale: nothing is at its path"]
     );
 }

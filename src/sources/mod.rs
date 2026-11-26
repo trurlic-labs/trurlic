@@ -34,7 +34,7 @@ use std::fs::{self, File};
 use std::io::{ErrorKind, Read};
 use std::path::Path;
 
-use crate::code::{self, CodeFacts, Entry, FileFault, FileKind, Indexed, ReadFault};
+use crate::code::{self, CodeFacts, Entry, FileFault, FileKind, Indexed, ReadFault, Resolution};
 use crate::console::diag;
 use crate::lint::anchors::{self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Unasked};
 use crate::store::{Anchor, Decision, Store, SymbolsKey};
@@ -96,6 +96,77 @@ pub(crate) fn tree_findings<'s>(
     let facts = calling_tree(store, &decisions, &mut reads);
     reads.write(store);
     anchors::unasked(&decisions, &Here::of(&decisions, &facts))
+}
+
+/// Keep of `repairs`, a map from stale anchor to repair read before the
+/// write lock, each that still holds in the tree at `code_root`, read under
+/// the lock from the files the repairs name alone, with no git: its stale
+/// anchor names nothing there and its repair resolves. Give each repair
+/// dropped, by its stale anchor, with why.
+pub(crate) fn still_holding(
+    code_root: &Path,
+    repairs: &mut BTreeMap<Anchor, Anchor>,
+) -> BTreeMap<Anchor, String> {
+    if repairs.is_empty() {
+        return BTreeMap::new();
+    }
+    let paths: BTreeSet<&str> = repairs
+        .iter()
+        .flat_map(|(from, to)| [from.file(), to.file()])
+        .collect();
+    let facts = read_alone(code_root, paths);
+    let mut dropped = BTreeMap::new();
+    repairs.retain(|from, to| {
+        let stale = matches!(
+            facts.resolve(from),
+            Resolution::FileMissing | Resolution::SymbolMissing
+        );
+        let holds = stale && matches!(facts.resolve(to), Resolution::Resolved(_));
+        if !holds {
+            let cause = "its code is back, or its repair names nothing, since the repairs were \
+                         read; run `repair_anchors` again";
+            // clone: the map dropped outlives the one kept.
+            dropped.insert(from.clone(), cause.to_owned());
+        }
+        holds
+    });
+    dropped
+}
+
+/// The facts of `paths` in the tree at `code_root`, each file read and
+/// indexed alone, with no cache and no other file of the tree.
+fn read_alone(code_root: &Path, paths: BTreeSet<&str>) -> CodeFacts {
+    let (mut entries, to_read) = probe_anchored(
+        code_root,
+        paths.into_iter(),
+        &BTreeMap::new(),
+        Scope::Anchored,
+    );
+    let to_read: Vec<(String, FileKind)> = to_read.into_iter().collect();
+    let indexer = Indexer::new();
+    let read = indexer.map(&to_read, |worker, (path, kind)| {
+        let bytes = match read_source(&code_root.join(path)) {
+            Ok(bytes) => bytes,
+            Err(Gone) => return None,
+            Err(Faulty(fault)) => return Some(Err(FileFault::Read(fault))),
+        };
+        Some(match worker.index(*kind, &bytes) {
+            Ok(indexed) => indexed.map_err(FileFault::Index),
+            Err(fault) => Err(FileFault::Read(fault)),
+        })
+    });
+    let read = read.unwrap_or_else(|fault| {
+        to_read
+            .iter()
+            .map(|_| Some(Err(FileFault::Read(fault))))
+            .collect()
+    });
+    for ((path, kind), index) in to_read.into_iter().zip(read) {
+        if let Some(index) = index {
+            entries.insert(path, Entry::File { kind, index });
+        }
+    }
+    CodeFacts::new(entries, BTreeSet::new())
 }
 
 /// The decisions of `decisions` that hold an anchor, by name.

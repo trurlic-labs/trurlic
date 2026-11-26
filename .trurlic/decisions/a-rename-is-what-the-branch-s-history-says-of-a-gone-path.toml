@@ -1,11 +1,11 @@
 component = "sources"
-choice = "A gone path's rename is a git mv not committed, else what the last commit changing it renamed it to, while the new path is still the file that commit added; at most 8 hops"
-reason = "git pairs files by similarity alone, between the two sides of a diff, so the question is asked of the diff that removed the path, and only for check and the repair_anchors op, for the files of stale anchors with nothing at their path: status asks the project's git nothing. What is not committed comes first: git diff HEAD with -M -C, so a git mv is seen; a file moved without git and not added is a deletion and an untracked file, which no diff pairs. Else one git log --name-status --no-renames walk over HEAD's history, limited to the asked paths as literal pathspecs, gives each its newest change, which for a path gone from HEAD deleted it, and its newest addition; git diff of that change against its first parent says what the path became, at git's default similarity: one rename is the answer, with its similarity index and the revision before it; several records from the path (a split shows as a copy beside the rename) or a plain deletion are none. A committed rename counts only while the newest commit that added its new path is the rename's own: a path deleted and written again since holds an unrelated file. A target that is gone too is followed the same way, one walk per hop, which also checks the paths the last hop reached, and one diff per commit, at most MAX_RENAME_HOPS. The answer is exact when every rename on the way has similarity 100. Every history read pins the settings that change what git prints (git::renames::PINNED), so no user configuration turns an answer off. Any git failure leaves the anchor stale without a repair. A merge's deletion is not seen."
+choice = "A gone path's rename is a git mv not committed, else what the last commit changing it renamed it to, while the next commit changing the new path neither deleted, copied nor renamed it"
+reason = "git pairs files by similarity alone, between the two sides of a diff, so the question is asked of the diff that removed the path, and only for check and the repair_anchors op, for the files of stale anchors with nothing at their path: status asks the project's git nothing. What is not committed comes first: git diff HEAD with -M -C, so a git mv is seen; a file moved without git and not added is a deletion and an untracked file, which no diff pairs. Else one git log --name-status --no-renames walk over HEAD's history, limited to the asked paths as literal pathspecs, lists the commits that changed each, newest first; the newest for a path gone from HEAD deleted it, and git diff of that commit against its first parent says what it became, at git's default similarity: one rename is the answer, with its similarity and its commit; several records (a split shows as a copy beside the rename), a copy or a plain deletion are none. The new path is then judged by the next commit that changed it: an edit ends the chain there, and so does no commit while the path exists; a rename is followed the same way, at most MAX_RENAME_HOPS, one walk per hop; a deletion, a copy or several records, or no commit and nothing at the path, and the file left it, which another may fill now: no answer. Every history read pins the settings that change what git prints (git::renames::PINNED). Any git failure leaves the anchor stale without a repair. A merge's deletion is not seen."
 alternatives = [
     "One walk per gone path: rejected because each walk costs a whole history even with changed-path filters, so many gone paths cost many times one walk",
     "git log --follow per path: rejected because it takes one path per process and follows a path forward from its history, not to where a gone file went",
     "Any similarity threshold of our own: rejected because git's default is what git status and git log show the user",
-    "Follow a rename to whatever file is at its new path now: rejected because a file deleted and written again there later is unrelated, and a repair to it is wrong",
+    "Trust the newest commit that added the new path: rejected because a commit that renames the file away and writes a new one at the path leaves the path modified, never added, to git log --no-renames",
 ]
 tags = [
     "anchors",
@@ -16,13 +16,13 @@ origin = "anchor repair"
 created = "2026-11-24T11:34:48.414739583Z"
 anchors = [
     { file = "src/git/renames.rs", symbol = "PINNED" },
-    { file = "src/git/renames.rs", symbol = "last_changes" },
+    { file = "src/git/renames.rs", symbol = "changes" },
     { file = "src/git/renames.rs", symbol = "moved" },
-    { file = "src/sources/renames.rs", symbol = "History" },
-    { file = "src/sources/renames.rs", symbol = "History::judged" },
+    { file = "src/sources/renames.rs", symbol = "History::after" },
     { file = "src/sources/renames.rs", symbol = "History::renamed" },
     { file = "src/sources/renames/tests.rs", symbol = "a_chain_past_the_hops_walks_the_history_once_per_hop" },
     { file = "src/sources/renames/tests.rs", symbol = "a_gone_path_gets_the_path_git_renamed_it_to" },
     { file = "src/sources/renames/tests.rs", symbol = "a_rename_to_a_path_an_unrelated_file_took_later_is_no_answer" },
+    { file = "src/sources/renames/tests.rs", symbol = "a_rename_to_a_path_refilled_in_one_commit_is_no_answer_and_an_edit_keeps_one" },
     { file = "src/sources/renames/tests.rs", symbol = "a_users_configuration_changes_no_answer" },
 ]

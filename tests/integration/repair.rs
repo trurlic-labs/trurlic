@@ -418,6 +418,32 @@ fn a_namesake_or_a_rename_that_carried_no_code_is_never_written() {
     let report = format!("{boilerplate}fn main() {{ report() }}\n");
     let cases = [
         changed(
+            &["src/store.rs::retry_write"],
+            &[(
+                "src/store.rs",
+                "pub fn write() {}\npub fn retry_write(path: &str) -> bool { journal(path) }\n",
+            )],
+            &[
+                ("src/store.rs", Some("pub fn write() {}\n")),
+                (
+                    "src/net.rs",
+                    Some("pub fn retry_write(sock: u32, attempts: u8) -> bool { attempts > 0 }\n"),
+                ),
+            ],
+        ),
+        later(
+            &["src/a.rs", "src/a.rs::kept"],
+            &[("src/a.rs", OLD)],
+            &[("src/a.rs", None), ("src/b.rs", Some(OLD))],
+            &[
+                (
+                    "src/b.rs",
+                    Some("pub fn kept() -> String { String::new() }\n"),
+                ),
+                ("src/c.rs", Some(OLD)),
+            ],
+        ),
+        changed(
             &["src/http.rs::parse_header"],
             &[
                 ("src/http.rs", "pub fn parse_header() {}\n"),
@@ -683,6 +709,101 @@ fn every_repair_leaves_a_repair_a_quality_pattern_refuses() {
                       (`src/legacy/`): No legacy code.",
         }])
     );
+}
+
+/// A move is repaired from the commit the anchor's file last lost the
+/// code in, however often the file changed since, and into the file that
+/// imported the item and drops its `use`; a symbol a rename carried
+/// unchanged follows it, though the new file edited it since.
+#[test]
+fn moves_are_judged_where_the_code_left_and_renames_where_they_happened() {
+    let user = "pub fn t_other() -> u32 { foo() }\n";
+    let project = later(
+        &["src/a.rs::foo", "src/expression.rs::float"],
+        &[
+            (
+                "src/a.rs",
+                "pub fn foo() -> u32 { 1 }\npub fn a_other() {}\n",
+            ),
+            ("src/t.rs", &format!("use crate::a::foo;\n{user}")),
+            (
+                "src/expression.rs",
+                &format!("pub fn float() -> f64 {{ 1.0 }}\n{OLD}"),
+            ),
+        ],
+        &[
+            ("src/a.rs", Some("pub fn a_other() {}\n")),
+            (
+                "src/t.rs",
+                Some(&format!("pub fn foo() -> u32 {{ 1 }}\n{user}")),
+            ),
+            ("src/expression.rs", None),
+            (
+                "src/value.rs",
+                Some(&format!(
+                    "pub fn float() -> f64 {{ 1.0 }}\n{OLD}pub fn e() {{}}\n"
+                )),
+            ),
+        ],
+        &[
+            ("src/a.rs", Some("pub fn a_other() { let _ = 1; }\n")),
+            (
+                "src/value.rs",
+                Some(&format!(
+                    "pub fn float() -> f64 {{ 2.0 }}\n{OLD}pub fn e() {{}}\n"
+                )),
+            ),
+        ],
+    );
+
+    let stderr = project.run_refused(&["check"]);
+
+    for repair in [
+        "; repair: `src/t.rs::foo`",
+        "; repair: `src/value.rs::float`",
+    ] {
+        assert!(stderr.contains(repair), "{repair}\n{stderr}");
+    }
+}
+
+/// The repairs an op with no `repairs` writes are held to the tree again
+/// under the write lock: one whose code came back after the read is left,
+/// and the anchor stays as it is.
+#[cfg(feature = "failpoints")]
+#[test]
+fn a_repair_whose_code_came_back_after_the_read_is_not_written() {
+    use crate::harness::Pause;
+
+    let project = changed(
+        &["src/a.rs::foo"],
+        &[("src/a.rs", "pub fn foo() -> u32 { 1 }\n")],
+        &[
+            ("src/a.rs", Some("")),
+            ("src/t.rs", Some("pub fn foo() -> u32 { 1 }\n")),
+        ],
+    );
+    let pause = Pause::arm(&project, "apply.repairs_read:1");
+    let file = project.path().join("batch.json");
+    std::fs::write(&file, every_repair().to_string()).unwrap();
+    let running = project
+        .command()
+        .arg("apply")
+        .arg(&file)
+        .arg("--json")
+        .envs(pause.env())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    pause.wait();
+    project.source("src/a.rs", "pub fn foo() -> u32 { 1 }\n");
+    pause.resume();
+
+    let output = running.wait_with_output().unwrap();
+
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(result.get("repaired").is_none(), "{result}");
+    assert_eq!(result["left"][0]["anchor"], "src/a.rs::foo", "{result}");
+    project.run_ok(&["check"]);
 }
 
 /// What an op with no `repairs` leaves is stated against the graph

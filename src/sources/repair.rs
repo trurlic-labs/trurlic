@@ -3,17 +3,30 @@
 //! the repair rules of `lint` ask for, each step's files in one bounded
 //! read, and handed to `lint` as data. With no `.git` at or above the code
 //! root, git is asked nothing and no anchor is repaired.
+//!
+//! The git processes a call runs are bounded whatever the history: one
+//! diff of what is not committed, one walk per rename hop taken, one for
+//! the searched files and their candidates, one diff per commit a rename
+//! is judged by, one
+//! diff and one listing of what the work tree changed, and two processes
+//! for each read of blobs, of which there are at most five.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::code::CodeFacts;
 use crate::lint::anchors::repair::{self, Search};
-use crate::lint::anchors::{Asked, Here, Judged, Prior, Renames};
+use crate::lint::anchors::{Asked, Here, Prior, Renames};
 use crate::store::{Anchor, Store};
 
 use super::blobs::Blobs;
 use super::renames::History;
 use super::{Reads, read_paths};
+
+/// The commits of a searched file read for its loss at most, newest
+/// first: the newest, then four, then sixteen, each read only for the
+/// files whose loss the earlier ones did not show. A file that lost the
+/// code before its sixteenth newest change gets no repair.
+const MAX_LOSS_COMMITS: usize = 16;
 
 /// `asked` with the repair of each stale anchor git's history shows: a
 /// rename of its gone file that carried its code, or a move of its symbol
@@ -30,20 +43,14 @@ pub(super) fn with_history<'s>(
         return asked;
     };
     let renames = renames(store, facts, &mut history, &asked.gone(here), reads);
-    let before: BTreeSet<(String, String)> = renames
-        .to
-        .iter()
-        // clone: the reads are keyed by revision and path apart from the map.
-        .map(|(from, renamed)| (renamed.before.clone(), from.clone()))
-        .collect();
     let blobs = Blobs {
         root,
         indexer: &reads.indexer,
     };
     let mut prior = Prior::default();
-    prior.extend(blobs.read(&before));
+    prior.extend(blobs.read(&repair::rename_reads(&renames)));
     let mut repairs = repair::followed(&asked, here, &renames, &prior);
-    let searches = repair::searched(&asked, here, &renames, &repairs);
+    let searches = repair::searched(&asked, here, &renames, &repairs, &prior);
     repairs.extend(moves(&mut history, &blobs, facts, searches, prior));
     asked.with_repairs(repairs)
 }
@@ -69,10 +76,10 @@ fn renames(
 }
 
 /// The repair of each of `searches` git's history shows moved, by the
-/// calling tree's facts `here`: where each anchor's file last held its
-/// code, the commits since that changed how often its candidate spells the
-/// symbol's name, those files there, and, for a candidate that gained it
-/// later, the files that may have carried the code between.
+/// calling tree's facts `here`: where each searched file last lost the
+/// code, read before its newest commits in up to three rounds, the
+/// candidate before and after that loss, and the commits that changed the
+/// candidate.
 fn moves<'s>(
     history: &mut History<'_>,
     blobs: &Blobs<'_>,
@@ -83,24 +90,40 @@ fn moves<'s>(
     if searches.is_empty() {
         return BTreeMap::new();
     }
-    let files: BTreeSet<&str> = searches.iter().map(|search| search.anchor.file()).collect();
-    for (file, judged) in history.judged(&files) {
-        prior.judge_at(file, judged);
+    let files: BTreeSet<&str> = searches.iter().map(|search| search.at.file()).collect();
+    // The candidates are walked with the searched files, in the one walk.
+    let walked = files
+        .iter()
+        .copied()
+        .chain(searches.iter().map(|search| search.target.as_str()))
+        .collect();
+    let commits = history.commits(&walked);
+    let uncommitted = history.uncommitted(&files);
+    let (mut wanted, mut take) = (files, 1);
+    loop {
+        for &file in &wanted {
+            let read = commits.get(file).map_or(&[][..], Vec::as_slice);
+            // clone: the history keeps each commit it has read.
+            let read = read.iter().take(take).map(|c| c.commit.clone()).collect();
+            prior.changed(file.to_owned(), read, uncommitted.contains(file));
+        }
+        prior.extend(blobs.read(&repair::loss_reads(&searches, &prior)));
+        if take >= MAX_LOSS_COMMITS {
+            break;
+        }
+        let more = |file: &&str| commits.get(*file).is_some_and(|all| all.len() > take);
+        wanted = repair::unjudged(&searches, &prior);
+        wanted.retain(more);
+        if wanted.is_empty() {
+            break;
+        }
+        take *= 4;
     }
-    for search in &searches {
-        let Some(Judged::Before(lost)) = prior.judged(search.anchor.file()) else {
-            continue;
-        };
-        let since = format!("{lost}^");
-        let commits = history.spelling_changes(&since, &search.target, &search.name);
-        prior.spelled(search.anchor.file(), &search.target, &search.name, commits);
+    let lost = repair::lost(searches, &prior);
+    prior.extend(blobs.read(&repair::gain_reads(&lost)));
+    for (target, changes) in history.commits(&repair::targets(&lost)) {
+        let changes = changes.into_iter().map(|c| (c.commit, c.replaced));
+        prior.target_changed(target, changes.collect());
     }
-    prior.extend(blobs.read(&repair::gain_reads(&searches, &prior)));
-    let gained = repair::gained(searches, &prior);
-    let changed = history.changed_by(&repair::later_commits(&gained, &prior));
-    for (commit, paths) in changed {
-        prior.changed(commit, paths);
-    }
-    prior.extend(blobs.read(&repair::carrier_reads(&gained, &prior)));
-    repair::moved(&gained, here, &prior)
+    repair::moved(&lost, here, &prior)
 }

@@ -74,15 +74,18 @@ fn a_gone_path_gets_the_path_git_renamed_it_to() {
         &asked(&["a.rs", "b.rs", "s.rs", "d.rs", "u.rs", "e.rs", "never.rs"]),
     );
 
-    // The commit `renames` made the first rename of each committed path.
-    let first = format!("{}^", head(dir, "HEAD~1"));
+    // The commit `renames` made the first rename of each committed path,
+    // and `more` the second of `b.rs`.
+    let (renames, more) = (head(dir, "HEAD~1"), head(dir, "HEAD"));
+    let mut b = to("b.rs", "src/b2.rs", true, Some(&more));
+    b.1.before = format!("{renames}^");
     assert_eq!(
         found,
         BTreeMap::from([
-            to("a.rs", "a1.rs", true, &first),
-            to("b.rs", "src/b2.rs", true, &first),
-            to("e.rs", "e1.rs", false, &first),
-            to("u.rs", "u1.rs", true, "HEAD"),
+            to("a.rs", "a1.rs", true, Some(&renames)),
+            b,
+            to("e.rs", "e1.rs", false, Some(&renames)),
+            to("u.rs", "u1.rs", true, None),
         ])
     );
 }
@@ -97,21 +100,22 @@ fn head(dir: &Path, revision: &str) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
-fn to(from: &str, to: &str, exact: bool, before: &str) -> (String, Renamed) {
+fn to(from: &str, to: &str, exact: bool, made: Option<&str>) -> (String, Renamed) {
     let renamed = Renamed {
         to: to.to_owned(),
         exact,
-        before: before.to_owned(),
+        before: made.map_or_else(|| "HEAD".to_owned(), |commit| format!("{commit}^")),
+        made: made.map(str::to_owned),
     };
     (from.to_owned(), renamed)
 }
 
-/// Where an anchored file last held its code: the work tree for one it
-/// changed or removed since `HEAD`, else before the last commit that
-/// changed it, its deletion for a file gone from `HEAD`; a file the
-/// history never held gets none.
+/// The commits that changed each anchored file, newest first, each with
+/// whether it added or deleted the file, from one walk that a rename's
+/// walk shares, and the files the work tree changed
+/// since `HEAD`; a file the history never held has no commits.
 #[test]
-fn a_file_is_judged_at_the_revision_before_it_last_changed() {
+fn an_anchored_files_commits_come_newest_first_from_the_walk_its_rename_shares() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
     repository(dir, &["kept.rs", "edited.rs", "gone.rs", "dirty.rs"]);
@@ -120,53 +124,45 @@ fn a_file_is_judged_at_the_revision_before_it_last_changed() {
     git(dir, &["commit", "--quiet", "-a", "-m", "second"]);
     fs::write(dir.join("dirty.rs"), "").unwrap();
     let (first, second) = (head(dir, "HEAD~1"), head(dir, "HEAD"));
-
-    let found = History::of(dir).unwrap().judged(&asked(&[
-        "kept.rs",
-        "edited.rs",
-        "gone.rs",
-        "dirty.rs",
-        "never.rs",
-    ]));
-
-    let at = |path: &str, judged: Judged| (path.to_owned(), judged);
-    assert_eq!(
-        found,
-        BTreeMap::from([
-            at("dirty.rs", Judged::Uncommitted),
-            at("edited.rs", Judged::Before(second.clone())),
-            at("gone.rs", Judged::Before(second)),
-            at("kept.rs", Judged::Before(first)),
-        ])
-    );
-}
-
-/// A gone file a rename's walk asked about is judged from that walk, with
-/// no other.
-#[test]
-fn a_gone_file_is_judged_by_the_walk_that_looked_for_its_rename() {
-    let tmp = TempDir::new().unwrap();
-    let dir = tmp.path();
-    repository(dir, &["gone.rs"]);
-    git(dir, &["rm", "--quiet", "gone.rs"]);
-    git(dir, &["commit", "--quiet", "-m", "gone"]);
     let mut history = History::of(dir).unwrap();
     assert!(history.renamed(&asked(&["gone.rs"])).is_empty());
     WALKS.with(|walks| walks.set(0));
 
-    let found = history.judged(&asked(&["gone.rs"]));
+    let files = asked(&["kept.rs", "edited.rs", "gone.rs", "dirty.rs", "never.rs"]);
+    let commits = history.commits(&files);
 
-    assert_eq!(WALKS.with(std::cell::Cell::get), 0);
-    let deleted = head(dir, "HEAD");
     assert_eq!(
-        found,
-        BTreeMap::from([("gone.rs".to_owned(), Judged::Before(deleted))])
+        WALKS.with(std::cell::Cell::get),
+        1,
+        "gone.rs is walked once"
+    );
+    let change = |commit: &String, replaced| Change {
+        commit: commit.clone(),
+        replaced,
+    };
+    let at = |path: &str, changes: Vec<Change>| (path.to_owned(), changes);
+    assert_eq!(
+        commits,
+        BTreeMap::from([
+            at("dirty.rs", vec![change(&first, true)]),
+            at(
+                "edited.rs",
+                vec![change(&second, false), change(&first, true)]
+            ),
+            at("gone.rs", vec![change(&second, true), change(&first, true)]),
+            at("kept.rs", vec![change(&first, true)]),
+        ])
+    );
+    assert_eq!(
+        history.uncommitted(&files),
+        BTreeSet::from(["dirty.rs".to_owned()])
     );
 }
 
-/// A rename counts only while its new path is the file it made: a path
-/// the rename reached and that a later commit deleted and wrote again, at
-/// the end of the chain or on the way, is no answer.
+/// A rename's new path is judged by the next commit that changed it: one
+/// that deleted it, or replaced it while it moved elsewhere (a copy record
+/// from it), leaves no answer whatever fills the path now; one that renamed
+/// it on is followed; one that edited it keeps the answer.
 #[test]
 fn a_rename_to_a_path_an_unrelated_file_took_later_is_no_answer() {
     let tmp = TempDir::new().unwrap();
@@ -195,7 +191,37 @@ fn a_rename_to_a_path_an_unrelated_file_took_later_is_no_answer() {
 
     let found = renamed(dir, &asked(&["old.rs", "a.rs"]));
 
-    assert!(found.is_empty(), "{found:?}");
+    let away = head(dir, "HEAD~1");
+    let mut a = to("a.rs", "c.rs", true, Some(&away));
+    a.1.before = format!("{}^", head(dir, "HEAD~2"));
+    assert_eq!(found, BTreeMap::from([a]));
+}
+
+/// A path vacated and filled again in one commit, its file moving on while
+/// a new one takes the path, gives no answer; a path edited after the
+/// rename keeps it.
+#[test]
+fn a_rename_to_a_path_refilled_in_one_commit_is_no_answer_and_an_edit_keeps_one() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    repository(dir, &["a.rs", "e.rs"]);
+    git(dir, &["mv", "a.rs", "b.rs"]);
+    fs::write(dir.join("e.rs"), format!("// e.rs\n{BODY}fn g() {{}}\n")).unwrap();
+    git(dir, &["mv", "e.rs", "v.rs"]);
+    git(dir, &["commit", "--quiet", "-a", "-m", "renames"]);
+    let renames = head(dir, "HEAD");
+    git(dir, &["mv", "b.rs", "c.rs"]);
+    fs::write(dir.join("b.rs"), "fn kept() -> String { String::new() }\n").unwrap();
+    fs::write(dir.join("v.rs"), format!("// e.rs\n{BODY}fn g() {{ 1 }}\n")).unwrap();
+    git(dir, &["add", "--all"]);
+    git(dir, &["commit", "--quiet", "-m", "refill"]);
+
+    let found = renamed(dir, &asked(&["a.rs", "e.rs"]));
+
+    assert_eq!(
+        found,
+        BTreeMap::from([to("e.rs", "v.rs", false, Some(&renames))])
+    );
 }
 
 /// What a user's configuration may set in the repository changes no
@@ -211,7 +237,7 @@ fn a_users_configuration_changes_no_answer() {
     git(dir, &["commit", "--quiet", "-m", "renames"]);
     let clean = (
         renamed(dir, &asked(&["a.rs"])),
-        History::of(dir).unwrap().judged(&asked(&["gone.rs"])),
+        History::of(dir).unwrap().commits(&asked(&["gone.rs"])),
     );
     for setting in [
         "log.showSignature=true",
@@ -228,7 +254,7 @@ fn a_users_configuration_changes_no_answer() {
 
     let hostile = (
         renamed(dir, &asked(&["a.rs"])),
-        History::of(dir).unwrap().judged(&asked(&["gone.rs"])),
+        History::of(dir).unwrap().commits(&asked(&["gone.rs"])),
     );
 
     assert_eq!(clean.0.len(), 1, "{clean:?}");
@@ -270,10 +296,10 @@ fn paths_are_relative_to_the_code_root() {
 
     let found = renamed(&dir.join("sub"), &asked(&["a.rs", "b.rs"]));
 
-    let before = format!("{}^", head(dir, "HEAD"));
+    let moves = head(dir, "HEAD");
     assert_eq!(
         found,
-        BTreeMap::from([to("a.rs", "src/a.rs", true, &before)])
+        BTreeMap::from([to("a.rs", "src/a.rs", true, Some(&moves))])
     );
 }
 
@@ -287,48 +313,4 @@ fn no_history_gives_no_answer() {
     assert!(History::of(dir).is_none());
     git(dir, &["init", "--quiet", "--initial-branch=main"]);
     assert!(renamed(dir, &asked(&["a.rs"])).is_empty());
-}
-
-/// The commits since a revision that changed how often a file spells a
-/// name, newest first, and the paths each of some commits changed.
-#[test]
-fn a_files_spelling_of_a_name_and_a_commits_paths_are_read() {
-    let tmp = TempDir::new().unwrap();
-    let dir = tmp.path();
-    repository(dir, &["a.rs", "b.rs"]);
-    fs::write(
-        dir.join("b.rs"),
-        "fn helper() {}
-",
-    )
-    .unwrap();
-    fs::write(
-        dir.join("a.rs"),
-        "fn other() {}
-",
-    )
-    .unwrap();
-    git(dir, &["commit", "--quiet", "-a", "-m", "gain"]);
-    fs::write(
-        dir.join("b.rs"),
-        "fn helper() { 1 }
-",
-    )
-    .unwrap();
-    git(dir, &["commit", "--quiet", "-a", "-m", "edit"]);
-    let (first, gain) = (head(dir, "HEAD~2"), head(dir, "HEAD~1"));
-    let history = History::of(dir).unwrap();
-
-    let spelled = history.spelling_changes(&first, "b.rs", "helper");
-    let changed = history.changed_by(&BTreeSet::from([gain.as_str(), first.as_str()]));
-
-    assert_eq!(spelled, [gain.as_str()]);
-    let paths = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
-    assert_eq!(
-        changed,
-        BTreeMap::from([
-            (gain, paths(&["a.rs", "b.rs"])),
-            (first, paths(&["a.rs", "b.rs"])),
-        ])
-    );
 }

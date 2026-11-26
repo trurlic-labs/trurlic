@@ -1,9 +1,7 @@
 //! What the history of the calling branch says of an anchored file: the
-//! commits that last changed and last added it (for a file gone from
-//! `HEAD`, the last change deleted it), what a commit, or the work tree
-//! against `HEAD`, renamed or copied it to, the commits that changed how
-//! often it spells a name, the paths a commit changed, and the bytes of a
-//! file at a revision. Every path is relative to the directory git runs in
+//! commits that changed it (for a file gone from `HEAD`, the newest
+//! deleted it), what a commit, or the work tree against `HEAD`, renamed or
+//! copied it to, and the bytes of a file at a revision. Every path is relative to the directory git runs in
 //! (`--relative`, `<rev>:./<path>`), as an anchor is to its code root, so a
 //! path outside that directory is never named; a path that is not UTF-8
 //! names no anchor and is left out.
@@ -13,7 +11,7 @@
 //! runs with the settings of [`PINNED`], so no configuration of the user's
 //! changes what it prints.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Command;
@@ -58,6 +56,8 @@ pub(crate) struct Moved {
     /// git's similarity index of a rename or a copy, 0 to 100; 0 for a
     /// deletion.
     pub(crate) similarity: u8,
+    /// A copy: the path stays where it was.
+    pub(crate) copy: bool,
 }
 
 /// What a diff compares.
@@ -69,23 +69,22 @@ pub(crate) enum Changes<'c> {
     Uncommitted,
 }
 
-/// What `HEAD`'s history says of a path it changed.
+/// A commit that changed a path.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Changed {
-    /// The newest commit that changed it: for a path gone from `HEAD`, the
-    /// one that deleted it.
-    pub(crate) last: String,
-    /// The newest commit that added it; `None` when the history holds no
-    /// such commit.
-    pub(crate) added: Option<String>,
+pub(crate) struct Change {
+    pub(crate) commit: String,
+    /// The commit added or deleted the path, as `--no-renames` lists it:
+    /// the file there is not the one before.
+    pub(crate) replaced: bool,
 }
 
-/// For each of `paths` the calling branch's history changed, its newest
-/// change and its newest addition: one walk of `HEAD`'s history, limited to
-/// those paths, each read literally. A walk of many paths costs about what
-/// one costs, which git's changed-path filters cut only for a single path,
-/// so one walk serves them all. Fails on an unborn branch.
-pub(crate) fn last_changes(dir: &Path, paths: &[&str]) -> Result<BTreeMap<String, Changed>> {
+/// For each of `paths` the calling branch's history changed, the commits
+/// that changed it, newest first: for a path gone from `HEAD`, the first
+/// deleted it. One walk of `HEAD`'s history, limited to those paths, each
+/// read literally. A walk of many paths costs about what one costs, which
+/// git's changed-path filters cut only for a single path, so one walk
+/// serves them all. Fails on an unborn branch.
+pub(crate) fn changes(dir: &Path, paths: &[&str]) -> Result<BTreeMap<String, Vec<Change>>> {
     let pathspecs = literal(paths);
     let mut args: Vec<&OsStr> = [
         "log",
@@ -102,83 +101,18 @@ pub(crate) fn last_changes(dir: &Path, paths: &[&str]) -> Result<BTreeMap<String
     .collect();
     args.extend(pathspecs.iter().map(OsStr::new));
     let commits = records(&run(history(dir), dir, &args, None)?, &args)?;
-    let mut changed: BTreeMap<String, Changed> = BTreeMap::new();
+    let mut changes: BTreeMap<String, Vec<Change>> = BTreeMap::new();
     for Record { commit, paths } in commits {
         for (status, path) in paths {
-            let found = changed.entry(path).or_insert_with(|| Changed {
-                // clone: a path's first record, its newest, names its commit.
-                last: commit.clone(),
-                added: None,
-            });
-            if status == b'A' && found.added.is_none() {
-                // clone: as above, for its newest addition.
-                found.added = Some(commit.clone());
-            }
+            let change = Change {
+                // clone: each path the commit changed lists it.
+                commit: commit.clone(),
+                replaced: matches!(status, b'A' | b'D'),
+            };
+            changes.entry(path).or_default().push(change);
         }
     }
-    Ok(changed)
-}
-
-/// The commits of `HEAD`'s history after `since`, newest first, that
-/// changed how many times `path` spells `name`: git's pickaxe (`log -S`),
-/// read literally. A commit that gives `path` a definition of `name` is
-/// among them.
-pub(crate) fn spelling_changes(
-    dir: &Path,
-    since: &str,
-    path: &str,
-    name: &str,
-) -> Result<Vec<String>> {
-    let pickaxe = format!("-S{name}");
-    let range = format!("{since}..HEAD");
-    let pathspec = format!(":(literal){path}");
-    let args = [
-        "log",
-        "--format=%H",
-        "--no-ext-diff",
-        "--no-textconv",
-        &pickaxe,
-        &range,
-        "--",
-        &pathspec,
-    ]
-    .map(OsStr::new);
-    let stdout = run(history(dir), dir, &args, None)?;
-    // Commit ids are hex: a lossy read changes none.
-    Ok(String::from_utf8_lossy(&stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect())
-}
-
-/// The paths each of `commits` changed against its first parent, none for
-/// a merge: one `git log --no-walk` for them all.
-pub(crate) fn changed_by(
-    dir: &Path,
-    commits: &BTreeSet<&str>,
-) -> Result<BTreeMap<String, BTreeSet<String>>> {
-    if commits.is_empty() {
-        return Ok(BTreeMap::new());
-    }
-    let mut args: Vec<&OsStr> = [
-        "log",
-        "--no-walk=unsorted",
-        "--name-status",
-        "--relative",
-        "--no-renames",
-        "-z",
-        "--format=commit %H",
-    ]
-    .iter()
-    .map(OsStr::new)
-    .collect();
-    args.extend(commits.iter().map(OsStr::new));
-    args.push(OsStr::new("--"));
-    let found = records(&run(history(dir), dir, &args, None)?, &args)?;
-    Ok(found
-        .into_iter()
-        .map(|Record { commit, paths }| (commit, paths.into_iter().map(|(_, path)| path).collect()))
-        .collect())
+    Ok(changes)
 }
 
 /// Each path as a literal pathspec.
@@ -277,7 +211,7 @@ fn parse_moved(stdout: &[u8]) -> Option<Vec<Moved>> {
     while let Some(status) = fields.next() {
         match status.split_first() {
             None => {}
-            Some((b'R' | b'C', score)) => {
+            Some((&letter @ (b'R' | b'C'), score)) => {
                 let similarity = std::str::from_utf8(score).ok()?.parse().ok()?;
                 let mut path = || fields.next().filter(|path| !path.is_empty());
                 let (from, to) = (path()?, path()?);
@@ -286,6 +220,7 @@ fn parse_moved(stdout: &[u8]) -> Option<Vec<Moved>> {
                         from: from.to_owned(),
                         to: Some(to.to_owned()),
                         similarity,
+                        copy: letter == b'C',
                     });
                 }
             }
@@ -296,6 +231,7 @@ fn parse_moved(stdout: &[u8]) -> Option<Vec<Moved>> {
                         from: from.to_owned(),
                         to: None,
                         similarity: 0,
+                        copy: false,
                     });
                 }
             }
@@ -412,16 +348,19 @@ mod tests {
                     from: "s.rs".into(),
                     to: Some("s1.rs".into()),
                     similarity: 100,
+                    copy: true,
                 },
                 Moved {
                     from: "a b.rs".into(),
                     to: Some("a\nc.rs".into()),
                     similarity: 87,
+                    copy: false,
                 },
                 Moved {
                     from: "gone.rs".into(),
                     to: None,
                     similarity: 0,
+                    copy: false,
                 },
             ]
         );

@@ -11,7 +11,7 @@ use super::crates::{Crates, Files};
 use super::definitions::Definitions;
 use super::index::{Definition, FileIndex, FileKind, IndexFault};
 use super::kinds::{DefinitionKind, Role};
-use super::roles::{role_of_place, target_of, test_files};
+use super::roles::{target_of, test_files};
 use super::scope::Scopes;
 use super::symbol::{Segment, Symbol, SymbolFault};
 
@@ -440,21 +440,7 @@ impl CodeFacts {
                 elsewhere.push(file.to_owned());
             }
         }
-        let name = match symbol.segments().last() {
-            // clone: the namesakes outlive the symbol parsed here.
-            Some(Segment::Name(name) | Segment::Impl { name, .. }) => name.clone(),
-            None => String::new(),
-        };
-        let file_role = match self.test_files.contains(anchor.file()) {
-            true => Role::Test,
-            false => role_of_place(anchor.file(), crates),
-        };
-        Namesakes {
-            at_home,
-            elsewhere,
-            name,
-            file_role,
-        }
+        Namesakes { at_home, elsewhere }
     }
 
     /// The files that define something whose own segment, the last of its
@@ -464,7 +450,12 @@ impl CodeFacts {
         last: &BTreeSet<&Segment>,
     ) -> BTreeMap<&'s Segment, BTreeSet<&'s str>> {
         let mut holders: BTreeMap<&Segment, BTreeSet<&str>> = BTreeMap::new();
-        for (path, scopes, definition, _) in self.definitions() {
+        let definitions = self.definitions();
+        // A module declaration holds no code of its name: the module's
+        // file or body does.
+        let held =
+            definitions.filter(|(_, _, definition, _)| definition.kind != DefinitionKind::Module);
+        for (path, scopes, definition, _) in held {
             let own = scopes.path_from_end(definition.scope).next();
             if let Some(own) = own.filter(|own| last.contains(own)) {
                 holders.entry(own).or_default().insert(path);
@@ -572,12 +563,6 @@ pub(crate) struct Namesakes {
     /// ([`target_of`]), that write an item whose whole path the symbol is
     /// ([`CodeFacts::writes`]).
     pub(crate) elsewhere: Vec<String>,
-    /// The name of the symbol's last segment, which the source of a
-    /// definition it names spells.
-    pub(crate) name: String,
-    /// The role of the anchor's file in this tree: test code whole by its
-    /// place or by the module declarations that reach it, or code.
-    pub(crate) file_role: Role,
 }
 
 /// Whether a macro invocation where an item stands in the file of `index`

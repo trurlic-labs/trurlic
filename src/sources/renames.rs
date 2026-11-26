@@ -1,31 +1,32 @@
 //! What the calling branch's history says of the files of stale anchors:
-//! where a gone file went, and where an anchored file last held its code.
+//! where a gone file went, and the commits that changed an anchored file.
 //!
 //! The history is read only for `check` and the `repair_anchors` op, and
-//! only when a `.git` is at or above the code root ([`History::of`]). What is not committed
-//! comes first: a rename between `HEAD` and the work tree or the index, as
-//! `git mv` leaves it (a file moved without git and not yet added is no
-//! rename git can see). Else the calling branch's history: the most recent
-//! commit that changed the path, which for a path gone from `HEAD` deleted
-//! it, and what that commit renamed it to. A committed rename counts only
-//! while its new path is the file it made: the newest commit that added
-//! that path is the rename's own, so a path deleted and written again since
-//! is no answer. A path renamed to one that is gone too is followed from
-//! there, at most [`MAX_RENAME_HOPS`] times; one walk of the history serves
-//! every path of a hop, and the paths a hop reached, and each commit is
-//! diffed once. A path renamed to several, or copied beside the rename, was
-//! split: no answer. The answer is exact when every rename on the way has
-//! git's similarity 100, and names the revision before the first. A
-//! failure of git leaves the paths it concerns without an answer, which
-//! leaves their anchors stale without a repair, as they are.
+//! only when a `.git` is at or above the code root ([`History::of`]). What
+//! is not committed comes first: a rename between `HEAD` and the work tree
+//! or the index, as `git mv` leaves it (a file moved without git and not
+//! yet added is no rename git can see). Else the calling branch's history:
+//! the most recent commit that changed the gone path, which deleted it,
+//! and what that commit renamed it to. The path a rename reached is then
+//! judged by the next commit that changed it: none, and the path holds the
+//! rename's file still; a rename of it, followed from there, at most
+//! [`MAX_RENAME_HOPS`] times; a deletion, a copy or several records, and
+//! the rename's file left the path, which something else may fill now: no
+//! answer. One walk of the history serves every path of a hop, and each
+//! commit is diffed once. A path renamed to several, or copied beside the
+//! rename, was split: no answer. The answer is exact when every rename on
+//! the way has git's similarity 100, and names the revision before the
+//! first rename and the commit of the last. A failure of git leaves the
+//! paths it concerns without an answer, which leaves their anchors stale
+//! without a repair, as they are.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::Result;
-use crate::git::renames::{Changed, Changes, Moved, changed_by, last_changes, moved};
+use crate::git::renames::{Change, Changes, Moved, changes, moved};
 use crate::git::{self, DotGit};
-use crate::lint::anchors::{Judged, Renamed};
+use crate::lint::anchors::Renamed;
 
 /// The renames followed from one gone path before the answer is given up.
 pub(crate) const MAX_RENAME_HOPS: usize = 8;
@@ -34,13 +35,13 @@ pub(crate) const MAX_RENAME_HOPS: usize = 8;
 const EXACT: u8 = 100;
 
 /// What git said so far of the repository holding the code root: the
-/// uncommitted renames, once asked, what the history says of each path a
-/// walk asked about, and the renames of each commit diffed.
+/// uncommitted renames, once asked, the commits that changed each path a
+/// walk asked about, newest first, and the renames of each commit diffed.
 pub(super) struct History<'r> {
     root: &'r Path,
     uncommitted: Option<Vec<Moved>>,
     walked: BTreeSet<String>,
-    changes: BTreeMap<String, Changed>,
+    changes: BTreeMap<String, Vec<Change>>,
     by_commit: BTreeMap<String, Vec<Moved>>,
 }
 
@@ -49,13 +50,6 @@ pub(super) struct History<'r> {
 struct Hop {
     to: String,
     similarity: u8,
-    commit: Option<String>,
-}
-
-/// Where a gone path's renames took it so far, and the commit of the last
-/// rename, whose new path is checked before it counts.
-struct Reached {
-    renamed: Renamed,
     commit: Option<String>,
 }
 
@@ -74,37 +68,38 @@ impl<'r> History<'r> {
     }
 
     /// For each of `gone`, paths under the code root with nothing there,
-    /// the path git renamed it to that the tree holds now, when git says
-    /// exactly one and that path is still the file the rename made.
+    /// the path git renamed it to that still holds the rename's file, when
+    /// git says exactly one.
     pub(super) fn renamed(&mut self, gone: &BTreeSet<&str>) -> BTreeMap<String, Renamed> {
         let mut found = BTreeMap::new();
-        let mut on_way: Vec<(String, Option<Reached>)> =
+        let mut on_way: Vec<(String, Option<Renamed>)> =
             gone.iter().map(|&path| (path.to_owned(), None)).collect();
         for hops in 0..=MAX_RENAME_HOPS {
             let last = hops == MAX_RENAME_HOPS;
             let at: Vec<String> = on_way
                 .iter()
-                .map(|(start, reached)| position(start, reached.as_ref()))
+                // clone: the walk is asked the paths apart from the chains.
+                .map(|(start, reached)| reached.as_ref().map_or(start, |r| &r.to).clone())
                 .filter(|path| !last || self.root.join(path).exists())
                 .collect();
             self.look_up(&at);
             let mut next = Vec::new();
             for (start, reached) in on_way {
-                let reached = match reached {
-                    Some(r) if !self.made_by(&r.renamed.to, r.commit.as_deref()) => continue,
-                    Some(r) if self.root.join(&r.renamed.to).exists() => {
-                        found.insert(start, r.renamed);
-                        continue;
-                    }
-                    reached => reached,
+                let hop = match &reached {
+                    None => self.first_hop(&start),
+                    Some(renamed) => match self.after(renamed) {
+                        After::Holds => {
+                            // clone: the answer outlives the chain it ends.
+                            found.insert(start, renamed.clone());
+                            continue;
+                        }
+                        After::Renamed(hop) => Some(hop),
+                        After::Left => None,
+                    },
                 };
-                if last {
-                    continue;
+                if let Some(hop) = hop.filter(|_| !last) {
+                    next.push((start, Some(extended(reached, hop))));
                 }
-                let Some(hop) = self.hop(&position(&start, reached.as_ref())) else {
-                    continue;
-                };
-                next.push((start, Some(extended(reached, hop))));
             }
             if next.is_empty() {
                 break;
@@ -114,44 +109,24 @@ impl<'r> History<'r> {
         found
     }
 
-    /// For each of `files`, anchored paths under the code root, where it
-    /// last held what the tree no longer does: the work tree, when it
-    /// changed the file since `HEAD`, else before the last commit that
-    /// changed it (for a file gone from `HEAD`, the one that deleted it).
-    /// A path a walk asked about already is not walked again. A file git
-    /// gives nothing of is left out.
-    pub(super) fn judged(&mut self, files: &BTreeSet<&str>) -> BTreeMap<String, Judged> {
-        let paths: Vec<&str> = files.iter().copied().collect();
-        let Ok(changed) = git::changed_since(self.root, "HEAD", &paths) else {
-            return BTreeMap::new();
-        };
-        let committed: Vec<String> = paths
+    /// For each of `files`, the commits of the calling branch that changed
+    /// it, newest first; a file the history never held is left out.
+    pub(super) fn commits(&mut self, files: &BTreeSet<&str>) -> BTreeMap<String, Vec<Change>> {
+        let paths: Vec<String> = files.iter().map(|&path| path.to_owned()).collect();
+        self.look_up(&paths);
+        paths
             .into_iter()
-            .filter(|path| !changed.contains(*path))
-            .map(str::to_owned)
-            .collect();
-        self.look_up(&committed);
-        let uncommitted = changed.into_iter().map(|path| (path, Judged::Uncommitted));
-        let before = committed.into_iter().filter_map(|path| {
             // clone: the answer outlives what the history keeps.
-            let last = self.changes.get(&path)?.last.clone();
-            Some((path, Judged::Before(last)))
-        });
-        uncommitted.chain(before).collect()
+            .filter_map(|path| Some((self.changes.get(&path)?.clone(), path)))
+            .map(|(commits, path)| (path, commits))
+            .collect()
     }
 
-    /// The commits after `since`, newest first, that changed how many
-    /// times `path` spells `name`; none when git fails.
-    pub(super) fn spelling_changes(&self, since: &str, path: &str, name: &str) -> Vec<String> {
-        git::renames::spelling_changes(self.root, since, path, name).unwrap_or_default()
-    }
-
-    /// The paths each of `commits` changed; none when git fails.
-    pub(super) fn changed_by(
-        &self,
-        commits: &BTreeSet<&str>,
-    ) -> BTreeMap<String, BTreeSet<String>> {
-        changed_by(self.root, commits).unwrap_or_default()
+    /// Which of `files` the work tree changed since `HEAD`, untracked ones
+    /// included; none when git fails.
+    pub(super) fn uncommitted(&self, files: &BTreeSet<&str>) -> BTreeSet<String> {
+        let paths: Vec<&str> = files.iter().copied().collect();
+        git::changed_since(self.root, "HEAD", &paths).unwrap_or_default()
     }
 
     /// Ask, in one walk, what the history says of each of `paths` no walk
@@ -169,26 +144,14 @@ impl<'r> History<'r> {
         WALKS.with(|walks| walks.set(walks.get() + 1));
         self.walked
             .extend(paths.iter().map(|&path| path.to_owned()));
-        if let Ok(changes) = last_changes(self.root, &paths) {
-            self.changes.extend(changes);
+        if let Ok(found) = changes(self.root, &paths) {
+            self.changes.extend(found);
         }
     }
 
-    /// Whether the file at `path` is the one `commit` made: its newest
-    /// addition is that commit. A rename not committed needs no check.
-    fn made_by(&self, path: &str, commit: Option<&str>) -> bool {
-        let Some(commit) = commit else {
-            return true;
-        };
-        let added = self.changes.get(path).and_then(|c| c.added.as_deref());
-        added == Some(commit)
-    }
-
-    /// The one path `path` was renamed to, not committed or in the commit
-    /// that last changed, so deleted, it; `None` when git names none, a
-    /// deletion, or several paths (a split shows as a copy beside the
-    /// rename).
-    fn hop(&mut self, path: &str) -> Option<Hop> {
+    /// The one path the gone `path` was renamed to, not committed or in the
+    /// commit that last changed, so deleted, it.
+    fn first_hop(&mut self, path: &str) -> Option<Hop> {
         let uncommitted = self
             .uncommitted
             .get_or_insert_with(|| moved(self.root, Changes::Uncommitted).unwrap_or_default());
@@ -200,55 +163,99 @@ impl<'r> History<'r> {
                 commit: None,
             });
         }
-        let commit = self.changes.get(path)?.last.as_str();
-        if !self.by_commit.contains_key(commit) {
-            let read: Result<Vec<Moved>> = moved(self.root, Changes::Commit(commit));
-            let read = read.unwrap_or_default();
-            self.by_commit.insert(commit.to_owned(), read);
+        // clone: the commit outlives the borrow of the history.
+        let commit = self.changes.get(path)?.first()?.commit.clone();
+        self.renamed_in(path, commit)
+    }
+
+    /// What the next commit that changed `renamed.to` after the rename
+    /// that reached it did to it.
+    fn after(&mut self, renamed: &Renamed) -> After {
+        let Some(made) = &renamed.made else {
+            return After::Holds;
+        };
+        let commits = self.changes.get(&renamed.to).map_or(&[][..], Vec::as_slice);
+        let Some(at) = commits.iter().position(|change| change.commit == *made) else {
+            return After::Left;
+        };
+        let Some(next) = at.checked_sub(1).and_then(|newer| commits.get(newer)) else {
+            return match self.root.join(&renamed.to).exists() {
+                true => After::Holds,
+                false => After::Left,
+            };
+        };
+        // clone: the commit outlives the borrow of the history.
+        let next = next.commit.clone();
+        match self
+            .diffed(&next)
+            .iter()
+            .any(|change| change.from == renamed.to)
+        {
+            false => After::Holds,
+            true => self
+                .renamed_in(&renamed.to, next)
+                .map_or(After::Left, After::Renamed),
         }
-        let (to, similarity) = only_rename(self.by_commit.get(commit)?, path).flatten()?;
+    }
+
+    /// The one path `commit` renamed `path` to; `None` for a deletion, a
+    /// copy, or several records.
+    fn renamed_in(&mut self, path: &str, commit: String) -> Option<Hop> {
+        let (to, similarity) = only_rename(self.diffed(&commit), path)??;
         Some(Hop {
             to,
             similarity,
-            commit: Some(commit.to_owned()),
+            commit: Some(commit),
         })
+    }
+
+    /// The renames, copies and deletions of `commit`, diffed once.
+    fn diffed(&mut self, commit: &str) -> &[Moved] {
+        if !self.by_commit.contains_key(commit) {
+            let read: Result<Vec<Moved>> = moved(self.root, Changes::Commit(commit));
+            self.by_commit
+                .insert(commit.to_owned(), read.unwrap_or_default());
+        }
+        self.by_commit.get(commit).map_or(&[][..], Vec::as_slice)
     }
 }
 
-/// The path a gone path `start` has reached: where its renames so far
-/// took it, or itself before the first.
-fn position(start: &str, reached: Option<&Reached>) -> String {
-    // clone: the next hop reads the path the last one reached.
-    reached.map_or_else(|| start.to_owned(), |r| r.renamed.to.clone())
+/// What the next commit that changed the path a rename reached did to it.
+enum After {
+    /// Nothing, or edited it: the path holds the rename's file.
+    Holds,
+    /// Renamed it on.
+    Renamed(Hop),
+    /// Deleted, copied or split it, or the history cannot say: the rename's
+    /// file is not known to be there.
+    Left,
 }
 
 /// `reached`, or a gone path's start, carried one `hop` further.
-fn extended(reached: Option<Reached>, hop: Hop) -> Reached {
-    let exact = reached.as_ref().is_none_or(|r| r.renamed.exact) && hop.similarity == EXACT;
+fn extended(reached: Option<Renamed>, hop: Hop) -> Renamed {
+    let exact = reached.as_ref().is_none_or(|r| r.exact) && hop.similarity == EXACT;
     let before = match reached {
-        Some(reached) => reached.renamed.before,
+        Some(reached) => reached.before,
         None => hop
             .commit
             .as_ref()
             .map_or_else(|| "HEAD".to_owned(), |commit| format!("{commit}^")),
     };
-    Reached {
-        renamed: Renamed {
-            to: hop.to,
-            exact,
-            before,
-        },
-        commit: hop.commit,
+    Renamed {
+        to: hop.to,
+        exact,
+        before,
+        made: hop.commit,
     }
 }
 
 /// What `changes` made of `path`: `None` when nothing, `Some(None)` when a
-/// deletion or several records, `Some(Some((to, similarity)))` for one
-/// rename. A split shows as two records, a copy beside the rename.
+/// deletion, a copy or several records, `Some(Some((to, similarity)))` for
+/// one rename. A split shows as two records, a copy beside the rename.
 fn only_rename(changes: &[Moved], path: &str) -> Option<Option<(String, u8)>> {
     let mut from = changes.iter().filter(|change| change.from == path);
     let first = from.next()?;
-    let one = from.next().is_none();
+    let one = from.next().is_none() && !first.copy;
     // clone: the answer outlives the diff it was read from.
     let to = first.to.clone().filter(|_| one);
     Some(to.map(|to| (to, first.similarity)))

@@ -56,6 +56,9 @@ pub(crate) enum Site {
     /// A graph loaded under the shared or the exclusive lock, before its
     /// caller uses it; a [`panic()`] site.
     Loaded,
+    /// The repairs of an op with no `repairs` read from the tree, the
+    /// write lock not taken yet.
+    RepairsRead,
     /// A tool call about to run; a [`triggers`] site, where the MCP server
     /// sends the client a request of its own instead.
     #[cfg(feature = "failpoints")]
@@ -80,6 +83,7 @@ impl Site {
         Self::Forgotten,
         Self::Finished,
         Self::Loaded,
+        Self::RepairsRead,
         #[cfg(feature = "failpoints")]
         Self::ServerRequest,
     ];
@@ -100,6 +104,7 @@ impl Site {
             Self::Forgotten => "commit.forgotten",
             Self::Finished => "commit.finished",
             Self::Loaded => "graph.loaded",
+            Self::RepairsRead => "apply.repairs_read",
             #[cfg(feature = "failpoints")]
             Self::ServerRequest => "mcp.server_request",
         }
@@ -142,7 +147,7 @@ fn reached(site: Site) -> Option<u64> {
 
 /// Abort or pause here if this is the armed hit.
 #[cfg(feature = "failpoints")]
-pub(super) fn hit(site: Site) {
+pub(crate) fn hit(site: Site) {
     let Some(n) = reached(site) else {
         return;
     };
@@ -212,7 +217,7 @@ pub(crate) fn triggers(site: Site) -> bool {
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
 #[inline]
-pub(super) fn hit(_site: Site) {}
+pub(crate) fn hit(_site: Site) {}
 
 /// No-op without the `failpoints` feature.
 #[cfg(not(feature = "failpoints"))]
