@@ -14,11 +14,11 @@ origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"
 anchors = [
     { file = "src/lint/duplicates/tests.rs", symbol = "the_pairs_touching_some_decisions_are_those_that_hold_one_of_them" },
+    { file = "src/tools/status/fit.rs", symbol = "fill" },
     { file = "src/tools/status/lint/mod.rs", symbol = "LINT_MORE" },
     { file = "src/tools/status/lint/mod.rs", symbol = "fitted" },
     { file = "src/tools/status/lint/mod.rs", symbol = "gather" },
     { file = "src/tools/status/lint/pairs.rs", symbol = "tests::past_the_bound_the_counts_say_how_many_decisions_were_compared" },
-    { file = "src/tools/status/mod.rs", symbol = "fill" },
     { file = "tests/integration/budget.rs", symbol = "status_fits_the_budget_and_counts_what_it_leaves_out" },
 ]
 depends_on = [

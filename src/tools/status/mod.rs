@@ -7,7 +7,6 @@
 //! history hold. Where the graph sits in the project's git is `check`'s:
 //! asking it costs several git processes, too many for a call made often.
 
-use crate::budget::{self, MAX_TOOL_RESULT_BYTES, Shrinkable};
 use crate::store::limits::{MAX_NAME_BYTES, MAX_TRAILER_BYTES};
 use crate::store::{
     HistoryFinding, Issue, Level, PROJECT_COMPONENT, ProjectState, Quality, Status, Store,
@@ -15,17 +14,18 @@ use crate::store::{
 
 use super::spec::kinds::{Choice, Text};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
-use super::spec::{Args, Fields, Output, to_value};
-use super::truncate::json_len;
+use super::spec::{Args, Fields};
 
 mod anchors;
+mod fit;
 mod lint;
 mod report;
 
 pub(crate) use anchors::AnchorCounts;
-use anchors::{AnchorItem, anchor_section};
+use anchors::anchor_section;
+use fit::{Items, Listed, fill, lint_frame};
 pub(crate) use lint::{Cut, LintItem, PAIRS_MORE, PairCounts, PatternCounts};
-use lint::{LINT_MORE, LintItems, LintKind, Patterns};
+use lint::{LINT_MORE, Patterns};
 use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
 pub(crate) use report::{Part, QualityCounts, Report};
 
@@ -57,11 +57,6 @@ not resolve here (unresolved: stale or pending, which `trurlic check` tells apar
 malformed, ambiguous, of a file no resolver reads (unverified), or are one name, not the \
 whole path of what it names, that ten or more files define (weak). \
 Where the graph sits in the project's git is reported by `trurlic check`.";
-
-/// The bytes a report keeps, beyond its frame, for the `truncated`
-/// notice of a cut, which no report needs unless its frame alone, its
-/// paths, fills the budget.
-const NOTICE_BYTES: usize = 64;
 
 /// A part of the report that can be asked for alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,129 +201,6 @@ fn frame(store: &Store, state: &ProjectState, counts: Counts, items: &Items<'_>)
     }
 }
 
-/// A section's items before the budget cuts them, out of `total`: every
-/// item but a ranked section's, which holds only the best a result can.
-struct Listed<T> {
-    total: usize,
-    items: Vec<T>,
-}
-
-impl<T> Listed<T> {
-    fn all(items: impl IntoIterator<Item = T>) -> Self {
-        let items: Vec<T> = items.into_iter().collect();
-        Self {
-            total: items.len(),
-            items,
-        }
-    }
-
-    /// The first `items` of `total`.
-    fn of(total: usize, items: impl IntoIterator<Item = T>) -> Self {
-        Self {
-            total,
-            items: items.into_iter().collect(),
-        }
-    }
-
-    /// The section with none of its items shown: what a report measures
-    /// before it is filled.
-    const fn frame(&self) -> Part<T> {
-        Part {
-            total: self.total,
-            items: Vec::new(),
-            omitted: 0,
-            more: None,
-        }
-    }
-}
-
-/// The `lint` section of `kinds` with none of its items shown.
-fn lint_frame(kinds: &[(LintKind, Listed<LintItem>)]) -> Part<LintItem> {
-    Part {
-        total: kinds.iter().map(|(_, listed)| listed.total).sum(),
-        items: Vec::new(),
-        omitted: 0,
-        more: None,
-    }
-}
-
-/// The items of each section asked for, before the budget cuts them; the
-/// `lint` section's by kind, each kind fitted on its own, so a long kind
-/// does not crowd out a short one.
-struct Items<'s> {
-    issues: Option<Listed<IssueItem>>,
-    history: Option<Listed<HistoryItem>>,
-    components: Option<Listed<ComponentItem>>,
-    lint: Option<LintItems<'s>>,
-    anchors: Option<Listed<AnchorItem>>,
-}
-
-/// Put into `report`, whose sections hold no item yet, each section's
-/// leading items that fit the budget beside the rest of it.
-fn fill(report: &mut Report, items: Items<'_>) {
-    let sizes = sizes(&items);
-    let Items {
-        issues,
-        history,
-        components,
-        lint,
-        anchors,
-    } = items;
-    let reserve = lint.as_ref().map_or(0, LintItems::reserve);
-    let fixed = json_len(&to_value(&*report)) + NOTICE_BYTES + reserve;
-    let level = budget::level(&sizes, fixed, MAX_TOOL_RESULT_BYTES).unwrap_or(0);
-    report.issues = issues.map(|items| Sizes::part(&sizes, Slot::Issues, items, level));
-    report.history = history.map(|items| Sizes::part(&sizes, Slot::History, items, level));
-    report.components = components.map(|items| Sizes::part(&sizes, Slot::Components, items, level));
-    report.anchors = anchors.map(|items| Sizes::part(&sizes, Slot::Anchors, items, level));
-    report.lint = lint.map(|lint| {
-        let fit = |kind, listed| Sizes::part(&sizes, Slot::Lint(kind), listed, level);
-        lint::fitted(lint, fit, report.counts.lint.as_mut())
-    });
-}
-
-/// The sizes of each section `items` holds, a kind of the `lint` section
-/// each apart.
-fn sizes(items: &Items<'_>) -> Vec<Sizes> {
-    let mut sizes: Vec<Sizes> = [
-        items.issues.as_ref().map(|l| Sizes::of(Slot::Issues, l)),
-        items.history.as_ref().map(|l| Sizes::of(Slot::History, l)),
-        items
-            .components
-            .as_ref()
-            .map(|l| Sizes::of(Slot::Components, l)),
-        items.anchors.as_ref().map(|l| Sizes::of(Slot::Anchors, l)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let kinds = items.lint.iter().flat_map(|lint| &lint.kinds);
-    sizes.extend(kinds.map(|(kind, listed)| Sizes::of(Slot::Lint(*kind), listed)));
-    sizes
-}
-
-/// What [`Sizes`] measures: a section, or one kind of the `lint` section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Slot {
-    Issues,
-    History,
-    Components,
-    Lint(LintKind),
-    Anchors,
-}
-
-impl Slot {
-    const fn section(self) -> Section {
-        match self {
-            Self::Issues => Section::Issues,
-            Self::History => Section::History,
-            Self::Components => Section::Components,
-            Self::Lint(_) => Section::Lint,
-            Self::Anchors => Section::Anchors,
-        }
-    }
-}
-
 fn counts(state: &ProjectState, origin: Option<&str>, issues: usize) -> Counts {
     let decisions: Vec<_> = state
         .decisions
@@ -438,138 +310,10 @@ fn component_items(state: &ProjectState, origin: Option<&str>) -> Vec<ComponentI
         .collect()
 }
 
-// -- Fitting -----------------------------------------------------------------
-
-/// The sizes of a section's items as JSON: what [`budget::level`] cuts.
-struct Sizes {
-    slot: Slot,
-    /// The bytes of the first `k + 1` items with the commas between them.
-    ends: Vec<usize>,
-    /// Whether the section has items beyond those given, so that even
-    /// whole it carries the note of what it leaves out.
-    beyond: bool,
-}
-
-impl Sizes {
-    fn of<T: Output>(slot: Slot, listed: &Listed<T>) -> Self {
-        let mut ends = Vec::with_capacity(listed.items.len());
-        let mut end = 0usize;
-        for (index, item) in listed.items.iter().enumerate() {
-            end = end
-                .saturating_add(usize::from(index > 0))
-                .saturating_add(json_len(&to_value(item)));
-            ends.push(end);
-        }
-        Self {
-            slot,
-            ends,
-            beyond: listed.total > listed.items.len(),
-        }
-    }
-
-    /// The items of `slot` kept at `level`, with the count of the rest.
-    fn part<T>(all: &[Self], slot: Slot, listed: Listed<T>, level: usize) -> Part<T> {
-        let Listed { total, mut items } = listed;
-        let limit = all
-            .iter()
-            .find(|sizes| sizes.slot == slot)
-            .and_then(|sizes| budget::limit(sizes, level).map(|limit| sizes.count_within(limit)));
-        if let Some(keep) = limit {
-            items.truncate(keep);
-        }
-        let omitted = total.saturating_sub(items.len());
-        Part {
-            total,
-            items,
-            omitted,
-            more: (omitted > 0).then(|| slot.section().more()),
-        }
-    }
-
-    fn count_within(&self, limit: usize) -> usize {
-        self.ends.partition_point(|&end| end <= limit)
-    }
-}
-
-impl Shrinkable for Sizes {
-    fn full(&self) -> usize {
-        let items = self.ends.last().copied().unwrap_or(0);
-        if self.beyond {
-            items.saturating_add(self.note())
-        } else {
-            items
-        }
-    }
-
-    fn note(&self) -> usize {
-        // `,"omitted":N,"more":"..."`, N at most 20 digits.
-        41 + self.slot.section().more().len()
-    }
-
-    fn kept(&self, limit: usize) -> usize {
-        self.count_within(limit)
-            .checked_sub(1)
-            .and_then(|last| self.ends.get(last))
-            .copied()
-            .unwrap_or(0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::store::testing::{empty_state, sample_component, sample_decision};
-
-    fn item(name: &str) -> ComponentItem {
-        ComponentItem {
-            name: name.into(),
-            decisions: 0,
-            proposed: 0,
-        }
-    }
-
-    /// A section keeps the prefix of its items the level allows, and
-    /// counts the rest with where to find them.
-    #[test]
-    fn a_cut_section_keeps_a_prefix_and_counts_the_rest() {
-        let items = Listed::all((0..100).map(|i| item(&format!("c{i:02}"))));
-        let sizes = [Sizes::of(Slot::Components, &items)];
-        let whole = sizes[0].full();
-        let level = budget::level(&sizes, 0, whole / 2).unwrap();
-
-        let part = Sizes::part(&sizes, Slot::Components, items, level);
-
-        assert_eq!(part.total, 100);
-        assert!(part.items.len() < 50, "{}", part.items.len());
-        assert_eq!(part.omitted, 100 - part.items.len());
-        assert_eq!(part.items[0].name, "c00");
-        assert_eq!(part.more, Some(Section::Components.more()));
-        let one = Listed::all([item("c00")]);
-        let fits = Sizes::part(&sizes, Slot::Components, one, whole);
-        assert_eq!((fits.omitted, fits.more), (0, None));
-    }
-
-    /// A ranked section given its best items out of more counts the rest
-    /// even when every given item fits, and its size holds that note.
-    #[test]
-    fn a_ranked_section_counts_what_its_selection_left_out() {
-        let best = Listed {
-            total: 1000,
-            items: vec![item("c00"), item("c01")],
-        };
-        let sizes = Sizes::of(Slot::Lint(LintKind::Duplicate), &best);
-        assert_eq!(sizes.full(), sizes.ends[1] + sizes.note());
-
-        let part = Sizes::part(
-            &[sizes],
-            Slot::Lint(LintKind::Duplicate),
-            best,
-            MAX_TOOL_RESULT_BYTES,
-        );
-
-        assert_eq!((part.total, part.items.len(), part.omitted), (1000, 2, 998));
-        assert_eq!(part.more, Some(Section::Lint.more()));
-    }
 
     /// The limits set, `require_origin` among them, and the patterns by
     /// level.

@@ -13,8 +13,8 @@ status = "accepted"
 origin = "apply and status"
 created = "2026-11-24T03:12:39.892717421Z"
 anchors = [
-    { file = "src/tools/status/mod.rs", symbol = "Sizes" },
-    { file = "src/tools/status/mod.rs", symbol = "fill" },
+    { file = "src/tools/status/fit.rs", symbol = "Sizes" },
+    { file = "src/tools/status/fit.rs", symbol = "fill" },
     { file = "src/tools/status/report.rs", symbol = "Part" },
     { file = "tests/integration/budget.rs", symbol = "status_fits_the_budget_and_counts_what_it_leaves_out" },
 ]
