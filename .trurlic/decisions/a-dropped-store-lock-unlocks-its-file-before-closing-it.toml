@@ -1,0 +1,18 @@
+component = "store"
+choice = "Dropping a StoreLock or SharedLock unlocks the lock file explicitly before its descriptor closes"
+reason = "A flock or LockFileEx lock belongs to the open file, not to one descriptor, and the open file lives until its last descriptor closes. A child that another thread of the process forks inherits a copy of every descriptor and holds it until it execs; std opens files close-on-exec, so the copy goes away at exec but not before. A holder that only closed its file would leave the lock held for that window, and a waiter or a try of the lock in the same or another process would see a lock no one holds: a side write skipped, a write delayed. An unlock through any copy of the descriptor releases the lock at once, so Held unlocks in its Drop and the close only frees the descriptor. A failed unlock is ignored: the close that follows still releases the lock once every copy is gone. Every lock type of the store wraps Held, so no holder can skip the unlock."
+alternatives = [
+    "Close the file and rely on close-on-exec: rejected, a child between fork and exec still holds the open file and with it the lock",
+    "Process-owned fcntl record locks, which a forked child does not inherit: rejected, two descriptors of one process would not contend, so a read's shared lock would not keep out a write of the same process",
+    "Retry a try of the lock until the child execs: rejected, it turns a release that should be immediate into a wait without a bound",
+]
+tags = [
+    "concurrency",
+    "reliability",
+]
+status = "proposed"
+origin = "store lock released on drop while a forked child holds its descriptor"
+created = "2026-11-26T09:13:46.735825021Z"
+anchors = [
+    { file = "src/store/lock.rs", symbol = "Held" },
+]

@@ -31,7 +31,7 @@ const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
 #[derive(Debug)]
 #[must_use = "dropping the lock immediately releases it"]
 pub struct StoreLock {
-    _file: File,
+    _held: Held,
 }
 
 impl StoreLock {
@@ -41,7 +41,7 @@ impl StoreLock {
         let _ = file.set_len(0);
         let _ = file.seek(SeekFrom::Start(0));
         let _ = write!(file, "{}", std::process::id());
-        Self { _file: file }
+        Self { _held: Held(file) }
     }
 }
 
@@ -49,7 +49,22 @@ impl StoreLock {
 /// lands while it lives. Dropping it releases the lock.
 #[must_use = "dropping the lock immediately releases it"]
 pub(super) struct SharedLock {
-    _file: File,
+    _held: Held,
+}
+
+/// The lock file whose lock this process holds; dropping it unlocks before
+/// it closes. A lock belongs to the open file, which lives on in every copy
+/// of its descriptor: a child another thread forks holds one until it execs,
+/// so a close alone can leave the lock held. An unlock through any copy
+/// releases it.
+#[derive(Debug)]
+struct Held(File);
+
+impl Drop for Held {
+    /// A failed unlock leaves the release to the close that follows.
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 impl Store {
@@ -82,7 +97,7 @@ impl Store {
     pub(super) fn lock_shared(&self) -> Result<SharedLock> {
         let mut file = self.open_lock_file()?;
         poll(&mut file, &self.lock_path(), File::try_lock_shared)?;
-        Ok(SharedLock { _file: file })
+        Ok(SharedLock { _held: Held(file) })
     }
 
     /// Read+write rather than append: Windows refuses to lock a handle
@@ -240,5 +255,24 @@ mod tests {
             .parse()
             .expect("lock file should contain PID");
         assert_eq!(pid, std::process::id());
+    }
+
+    // A copy of the descriptor stands in for a child another thread forked
+    // and that has not exec'd yet: it keeps the open file, and with it the
+    // lock, alive past the holder's close.
+    #[test]
+    fn dropping_a_lock_releases_it_while_a_copy_of_its_descriptor_lives() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+
+        let exclusive = store.lock().unwrap();
+        let _exclusive_copy = exclusive._held.0.try_clone().unwrap();
+        drop(exclusive);
+        assert!(store.try_lock().unwrap().is_some());
+
+        let shared = store.lock_shared().unwrap();
+        let _shared_copy = shared._held.0.try_clone().unwrap();
+        drop(shared);
+        assert!(store.try_lock().unwrap().is_some());
     }
 }
