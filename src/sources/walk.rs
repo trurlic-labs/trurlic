@@ -212,7 +212,10 @@ mod tests {
                 ("tools/types.pyi".to_owned(), FileKind::Python),
                 ("web/legacy.cjs".to_owned(), FileKind::Tsx),
                 ("web/src/app.tsx".to_owned(), FileKind::Tsx),
-                ("web/src/types.d.ts".to_owned(), FileKind::TypeScript),
+                (
+                    "web/src/types.d.ts".to_owned(),
+                    FileKind::TypeScriptDeclarations
+                ),
             ]
         );
     }

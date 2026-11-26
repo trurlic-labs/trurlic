@@ -11,7 +11,7 @@ use super::general::{self, Source};
 use super::kinds::{DefinitionKind, Role, Visibility};
 use super::language::c_family::{self, FileMacros};
 use super::language::python;
-use super::language::{C, CPP, Language, PYTHON, TSX, TYPESCRIPT};
+use super::language::{C, CPP, Language, PYTHON, TSX, TYPESCRIPT, TYPESCRIPT_DECLARATIONS};
 use super::scope::{MAX_NESTING, Scope, ScopeId, ScopeTree};
 use super::span::{Span, SpanHash};
 use super::symbol::{Segment, Syntax};
@@ -20,7 +20,7 @@ use super::{encoding, json, make, markdown, rust, syntax, toml, work};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 20;
+pub(crate) const INDEX_FORMAT: u32 = 21;
 
 /// The largest file a tree-sitter grammar indexes. A parse's budget of
 /// work and allocation is per byte of its file (`work.rs`), so this bounds
@@ -34,7 +34,7 @@ const LEXICAL_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// key, so an index built under other bounds is never read as one of
 /// these, whatever the fixture corpus shows of them. The sizes of the
 /// values an index holds bound it through the room of its file.
-pub(crate) const BOUNDS: [(&str, usize); 30] = [
+pub(crate) const BOUNDS: [(&str, usize); 31] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
     ("served_bytes_per_byte", work::SERVED_BYTES_PER_BYTE),
@@ -61,6 +61,10 @@ pub(crate) const BOUNDS: [(&str, usize); 30] = [
     (
         "typescript_room_per_byte",
         encoding::room_per_byte(FileKind::TypeScript),
+    ),
+    (
+        "typescript_declarations_room_per_byte",
+        encoding::room_per_byte(FileKind::TypeScriptDeclarations),
     ),
     ("tsx_room_per_byte", encoding::room_per_byte(FileKind::Tsx)),
     ("c_room_per_byte", encoding::room_per_byte(FileKind::C)),
@@ -114,6 +118,9 @@ pub(crate) enum FileKind {
     Rust,
     Python,
     TypeScript,
+    /// A TypeScript declaration file, `.d.ts`, whose top is an ambient
+    /// context.
+    TypeScriptDeclarations,
     /// TSX, and JavaScript, which the TSX grammar reads.
     Tsx,
     C,
@@ -130,11 +137,16 @@ impl FileKind {
     /// no resolver.
     pub(crate) fn of(path: &str) -> Option<Self> {
         let name = path.rsplit('/').next().unwrap_or(path);
-        let extension = name.rsplit_once('.').map(|(_, extension)| extension);
+        let (stem, extension) = name
+            .rsplit_once('.')
+            .map_or((name, None), |(stem, extension)| (stem, Some(extension)));
         match (name, extension) {
             ("Makefile" | "makefile" | "GNUmakefile", _) | (_, Some("mk")) => Some(Self::Make),
             (_, Some("rs")) => Some(Self::Rust),
             (_, Some("py" | "pyi" | "pyw")) => Some(Self::Python),
+            (_, Some("ts" | "mts" | "cts")) if stem.ends_with(".d") => {
+                Some(Self::TypeScriptDeclarations)
+            }
             (_, Some("ts" | "mts" | "cts")) => Some(Self::TypeScript),
             (_, Some("tsx" | "js" | "jsx" | "mjs" | "cjs")) => Some(Self::Tsx),
             (_, Some("c")) => Some(Self::C),
@@ -152,6 +164,7 @@ impl FileKind {
         match self {
             Self::Python => Some(&PYTHON),
             Self::TypeScript => Some(&TYPESCRIPT),
+            Self::TypeScriptDeclarations => Some(&TYPESCRIPT_DECLARATIONS),
             Self::Tsx => Some(&TSX),
             Self::C => Some(&C),
             Self::Cpp => Some(&CPP),
@@ -164,7 +177,13 @@ impl FileKind {
     /// anchor names it.
     pub(crate) const fn is_code(self) -> bool {
         match self {
-            Self::Rust | Self::Python | Self::TypeScript | Self::Tsx | Self::C | Self::Cpp => true,
+            Self::Rust
+            | Self::Python
+            | Self::TypeScript
+            | Self::TypeScriptDeclarations
+            | Self::Tsx
+            | Self::C
+            | Self::Cpp => true,
             Self::Toml | Self::Json | Self::Make | Self::Markdown => false,
         }
     }
@@ -177,6 +196,7 @@ impl FileKind {
             Self::Rust
             | Self::Python
             | Self::TypeScript
+            | Self::TypeScriptDeclarations
             | Self::Tsx
             | Self::Toml
             | Self::Json
@@ -192,6 +212,7 @@ impl FileKind {
             Self::Rust => Syntax::Rust,
             Self::Python => PYTHON.syntax,
             Self::TypeScript => TYPESCRIPT.syntax,
+            Self::TypeScriptDeclarations => TYPESCRIPT_DECLARATIONS.syntax,
             Self::Tsx => TSX.syntax,
             Self::C => C.syntax,
             Self::Cpp => CPP.syntax,
@@ -210,6 +231,7 @@ impl FileKind {
             Self::Rust => *RUST_GRAMMAR,
             Self::Python => PYTHON.identity(),
             Self::TypeScript => TYPESCRIPT.identity(),
+            Self::TypeScriptDeclarations => TYPESCRIPT_DECLARATIONS.identity(),
             Self::Tsx => TSX.identity(),
             Self::C => C.identity(),
             Self::Cpp => CPP.identity(),
@@ -220,9 +242,13 @@ impl FileKind {
     /// The largest file of the kind the index reads.
     pub(crate) const fn max_bytes(self) -> usize {
         match self {
-            Self::Rust | Self::Python | Self::TypeScript | Self::Tsx | Self::C | Self::Cpp => {
-                TREE_SITTER_MAX_BYTES
-            }
+            Self::Rust
+            | Self::Python
+            | Self::TypeScript
+            | Self::TypeScriptDeclarations
+            | Self::Tsx
+            | Self::C
+            | Self::Cpp => TREE_SITTER_MAX_BYTES,
             Self::Toml | Self::Json | Self::Make | Self::Markdown => LEXICAL_MAX_BYTES,
         }
     }
@@ -233,6 +259,7 @@ impl FileKind {
             Self::Rust => "rust",
             Self::Python => PYTHON.name,
             Self::TypeScript => TYPESCRIPT.name,
+            Self::TypeScriptDeclarations => TYPESCRIPT_DECLARATIONS.name,
             Self::Tsx => TSX.name,
             Self::C => C.name,
             Self::Cpp => CPP.name,
@@ -360,6 +387,9 @@ pub(crate) fn index(
             general::index(&PYTHON, &Source::plain(&python::line_ends(text)), scopes)?
         }
         FileKind::TypeScript => general::index(&TYPESCRIPT, &plain, scopes)?,
+        FileKind::TypeScriptDeclarations => {
+            general::index(&TYPESCRIPT_DECLARATIONS, &plain, scopes)?
+        }
         FileKind::Tsx => general::index(&TSX, &plain, scopes)?,
         FileKind::C => c_family::index(&C, text, macros, scopes)?,
         FileKind::Cpp => c_family::index(&CPP, text, macros, scopes)?,
@@ -386,7 +416,9 @@ mod tests {
             ("pkg/__init__.pyi", Some(FileKind::Python)),
             ("tools/gui.pyw", Some(FileKind::Python)),
             ("src/app.ts", Some(FileKind::TypeScript)),
-            ("types/index.d.ts", Some(FileKind::TypeScript)),
+            ("types/index.d.ts", Some(FileKind::TypeScriptDeclarations)),
+            ("types/index.d.mts", Some(FileKind::TypeScriptDeclarations)),
+            ("types/d.ts", Some(FileKind::TypeScript)),
             ("lib/a.mts", Some(FileKind::TypeScript)),
             ("lib/a.cts", Some(FileKind::TypeScript)),
             ("ui/App.tsx", Some(FileKind::Tsx)),
@@ -414,7 +446,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 20] = [
+    const FINGERPRINTS: [(u32, &str); 21] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -494,6 +526,10 @@ mod tests {
         (
             20,
             "5214c21a480d9b11eef3b3f229d4d51335dd2c11daf9f29b93bdb94e5520b060",
+        ),
+        (
+            21,
+            "d077d147d557bb5b793c881a97e15288e906f50f92f2d5be7269b78cb0db447e",
         ),
     ];
 

@@ -538,27 +538,29 @@ fn placed_with(source: &str, text: &str) -> Vec<String> {
 fn of_two_within_marks_of_one_node_the_one_visibility_orders_first_holds() {
     let function =
         "((function_definition name: (identifier) @name) @definition (#set! kind \"function\"))";
-    let public = "(module) @visibility.within.public";
-    let private = "(module) @visibility.within.private";
+    let within =
+        |visibility: Visibility| format!("(module) @visibility.within.{}", visibility.name());
 
-    for marks in [[public, private], [private, public]] {
-        let source = format!("{function}\n{}\n{}", marks[0], marks[1]);
-        let rules = rules(&source);
-        let text = "def f(): pass\n";
-        let tree = syntax::parse(text, &rules.grammar).unwrap();
-        let found = collect(&rules, &tree, text).unwrap();
-        let placed = place::place(
-            &found,
-            &mut ScopeTree::for_file(FileKind::Python, text.len()),
-        )
-        .unwrap();
+    // The order of `Visibility::ALL`, a cache entry's codes, is the order
+    // the rule reads: a private mark holds over any other.
+    for (first, one) in Visibility::ALL.iter().enumerate() {
+        for (second, other) in Visibility::ALL.iter().enumerate() {
+            let source = format!("{function}\n{}\n{}", within(*one), within(*other));
+            let rules = rules(&source);
+            let text = "def f(): pass\n";
+            let tree = syntax::parse(text, &rules.grammar).unwrap();
+            let found = collect(&rules, &tree, text).unwrap();
+            let placed = place::place(
+                &found,
+                &mut ScopeTree::for_file(FileKind::Python, text.len()),
+            )
+            .unwrap();
+            let expected = Visibility::ALL[first.min(second)];
 
-        assert_eq!(
-            placed[0].what.visibility,
-            Some(Visibility::Private),
-            "{source}"
-        );
+            assert_eq!(placed[0].what.visibility, Some(expected), "{source}");
+        }
     }
+    assert_eq!(Visibility::ALL[0], Visibility::Private);
 }
 
 #[test]
@@ -819,6 +821,27 @@ fn a_name_splits_at_its_separator_and_drops_a_string_literals_quotes() {
             "E::a b Variant Code Public",
         ]
     );
+    assert_eq!(
+        typescript("class K { [\"computed\"]() {} 'quoted name'() {} [Symbol.iterator]() {} }\n"),
+        [
+            "K Class Code Private",
+            "K::computed Method Code Public",
+            "K::quoted name Method Code Public",
+            "K::[Symbol.iterator] Method Code Public",
+        ]
+    );
+}
+
+/// The words of the `#any-of?` predicate on `capture` in TypeScript's
+/// query: the runners' names or their members.
+fn runner_words(capture: &str) -> Vec<&'static str> {
+    let query = include_str!("../language/typescript.scm");
+    let needle = format!("(#any-of? {capture} ");
+    let start = query.find(&needle).unwrap() + needle.len();
+    let line = &query[start..start + query[start..].find(')').unwrap()];
+    line.split_whitespace()
+        .map(|word| word.trim_matches('"'))
+        .collect()
 }
 
 #[test]
@@ -834,11 +857,28 @@ fn a_test_call_is_named_by_its_strings_as_written() {
             "Store::later Test Test -",
         ]
     );
+    let runners = runner_words("@_runner");
+    let members = runner_words("@_member");
+    assert!(runners.contains(&"describe") && members.contains(&"only"));
+    for runner in &runners {
+        assert_eq!(
+            typescript(&format!("{runner}('t', () => {{}});\n")),
+            ["t Test Test -"],
+            "{runner}"
+        );
+    }
+    for member in &members {
+        assert_eq!(
+            typescript(&format!("describe.{member}('t', () => {{}});\n")),
+            ["t Test Test -"],
+            "{member}"
+        );
+    }
 }
 
 #[test]
 fn a_member_chain_of_a_runner_is_a_test_when_a_function_follows_its_string() {
-    let text = "describe.for([1])('grp', () => { it('a', () => {}); });\ndescribe.runIf(x)('run', () => {});\ntest.describe.serial('ser', () => {});\nit.concurrent.only('both', async () => {}, 10);\ntest.fail('details', { tag: '@x' }, async () => {});\ntest.extend({})('fixture', function () {});\n";
+    let text = "describe.for([1])('grp', () => { it('a', () => {}); });\ndescribe.runIf(x)('run', () => {});\ntest.describe.serial('ser', () => {});\nit.concurrent.only('both', async () => {}, 10);\ntest.fail('details', { tag: '@x' }, async () => {});\ntest.extend({})('fixture', function () {});\ncontext.only('ctx', () => { it('in', () => {}); });\ntest.describe.parallel.only('deep', () => { test('in', () => {}); });\ntest.concurrent.only.each([1])('%i', () => {});\nit.only('named', testFn);\ntest('top', async (t) => { await t.test('sub', async () => {}); });\n";
 
     assert_eq!(
         typescript(text),
@@ -850,13 +890,20 @@ fn a_member_chain_of_a_runner_is_a_test_when_a_function_follows_its_string() {
             "both Test Test -",
             "details Test Test -",
             "fixture Test Test -",
+            "ctx Test Test -",
+            "ctx::in Test Test -",
+            "deep Test Test -",
+            "deep::in Test Test -",
+            "%i Test Test -",
+            "named Test Test -",
+            "top Test Test -",
         ]
     );
 }
 
 #[test]
-fn a_call_of_another_member_of_a_test_runners_name_is_no_test() {
-    let text = "function draw(context, test) {\n  context.clip('evenodd');\n  test.set('Content-Type', 'text/plain');\n  context.waitForEvent('page');\n  context.request.get('/a', { headers });\n  context.route('/b', async (route) => {});\n}\n";
+fn a_call_of_a_runners_name_without_a_function_after_its_string_or_of_another_member_is_no_test() {
+    let text = "function draw(context, test, suite) {\n  context.clip('evenodd');\n  test.set('Content-Type', 'text/plain');\n  context.waitForEvent('page');\n  context.request.get('/a', { headers });\n  context.route('/b', async (route) => {});\n  suite.add('RegExp#test', function () {});\n  suite.on('cycle', function (event) {});\n  describe.bind(null)('w', () => {});\n  test('abc');\n  const ok = test('value');\n  if (test('x')) {}\n  it('pending');\n  test('x', {});\n  rows.only('x', () => {});\n  rows.each(table)('x', () => {});\n  rows.describe.only('x', () => {});\n  rows.only.skip.each(t)('x', () => {});\n}\n";
 
     assert_eq!(typescript(text), ["draw Function Code Private"]);
 }
@@ -926,13 +973,14 @@ fn an_ambient_module_or_namespace_exports_what_it_holds_at_any_depth() {
 
 #[test]
 fn an_ambient_module_with_an_export_form_exports_only_what_it_marks() {
-    let text = "declare module \"*.svg\" { const content: string; export default content; }\ndeclare module \"lib\" { function f(): void; export function g(): void; export {}; }\ndeclare module \"m\" { class C { private p: number; q: number } }\n";
+    let text = "declare module \"*.svg\" { const content: string; function helper(): void; export default content; }\ndeclare module \"lib\" { function f(): void; export function g(): void; export {}; }\ndeclare module \"m\" { class C { private p: number; q: number } }\n";
 
     assert_eq!(
         typescript(text),
         [
             "*.svg Module Code Public",
-            "*.svg::content Variable Code Private",
+            "*.svg::content Variable Code Public",
+            "*.svg::helper Function Code Private",
             "lib Module Code Public",
             "lib::f Function Code Private",
             "lib::g Function Code Public",
@@ -941,6 +989,104 @@ fn an_ambient_module_with_an_export_form_exports_only_what_it_marks() {
             "m::C::p Field Code Private",
             "m::C::q Field Code Public",
         ]
+    );
+    // Each checked against tsc: an export declaration or assignment makes
+    // the rest private, `export default class {}` and `export as
+    // namespace` do not, and a name an export list or `export =` names is
+    // exported.
+    for (body, expected) in [
+        (
+            "export default class {}",
+            &["m::f Function Code Public", "m::default Class Code Public"][..],
+        ),
+        ("export * from \"n\";", &["m::f Function Code Private"][..]),
+        (
+            "export * as ns from \"n\";",
+            &["m::f Function Code Private"][..],
+        ),
+        ("export = g;", &["m::f Function Code Private"][..]),
+        ("export = f;", &["m::f Function Code Public"][..]),
+        (
+            "export default N.g;",
+            &[
+                "m::f Function Code Private",
+                "m::default Variable Code Public",
+            ][..],
+        ),
+        ("export { f };", &["m::f Function Code Public"][..]),
+        ("export { g };", &["m::f Function Code Private"][..]),
+    ] {
+        let text = format!("declare module \"m\" {{ function f(): void; {body} }}\n");
+        assert_eq!(&typescript(&text)[1..], expected, "{body}");
+    }
+    assert_eq!(
+        typescript(
+            "declare namespace N { function f(): void; function g(): void; export { f }; }\n"
+        ),
+        [
+            "N Module Code Private",
+            "N::f Function Code Public",
+            "N::g Function Code Private",
+        ]
+    );
+}
+
+#[test]
+fn a_declaration_files_top_exports_what_typescript_reads_as_exported() {
+    let declarations = |text: &str| {
+        statements_of(FileKind::TypeScriptDeclarations, text)
+            .into_iter()
+            .map(|(statement, _)| statement)
+            .collect::<Vec<_>>()
+    };
+    // Each checked against tsc: a script's declarations are global, a
+    // module's exported unless it holds an export declaration or
+    // assignment.
+    assert_eq!(
+        declarations("declare function f(): void;\ninterface I { a: string }\n"),
+        [
+            "f Function Code Public",
+            "I Interface Code Public",
+            "I::a Field Code Public"
+        ]
+    );
+    assert_eq!(
+        declarations(
+            "import { X } from \"./x\";\ndeclare function f(): void;\nexport declare function g(): void;\nexport default class {}\n"
+        ),
+        [
+            "f Function Code Public",
+            "g Function Code Public",
+            "default Class Code Public"
+        ]
+    );
+    assert_eq!(
+        declarations(
+            "declare function f(): void;\ndeclare function g(): void;\nexport declare function h(): void;\nexport { f };\n"
+        ),
+        [
+            "f Function Code Public",
+            "g Function Code Private",
+            "h Function Code Public"
+        ]
+    );
+    for form in [
+        "export {};",
+        "export * from \"./x\";",
+        "export * as x from \"./x\";",
+        "export = g;",
+        "export default g;",
+        "export default N.g;",
+    ] {
+        assert_eq!(
+            declarations(&format!("declare function f(): void;\n{form}\n"))[0],
+            "f Function Code Private",
+            "{form}"
+        );
+    }
+    assert_eq!(
+        typescript("declare function f(): void;\nexport declare function g(): void;\n"),
+        ["f Function Code Private", "g Function Code Public"]
     );
 }
 
@@ -976,6 +1122,21 @@ fn an_unnamed_default_export_is_named_default() {
             &["default Variable Code Public"][..],
         ),
         ("export default 42;\n", &[][..]),
+        (
+            "module.exports = function createApp() { function inner() {} };\n",
+            &[
+                "createApp Function Code Public",
+                "createApp::inner Function Code Private",
+            ][..],
+        ),
+        (
+            "module.exports = function* () {};\n",
+            &["default Function Code Public"][..],
+        ),
+        (
+            "module.exports = function* made() {};\n",
+            &["made Function Code Public"][..],
+        ),
     ] {
         assert_eq!(typescript(text), expected, "{text}");
     }
@@ -1038,41 +1199,84 @@ fn what_an_unnamed_function_holds_is_under_the_definition_around_it_or_nothing()
 
 #[test]
 fn a_wrapper_of_the_whole_file_is_the_module() {
-    for (text, expected) in [
-        (
-            "(function () { function api() {} var x = 1; })();\n",
-            &["api Function Code Private", "x Variable Code Private"][..],
-        ),
-        (
-            "!function () { function api() {} }();\n",
-            &["api Function Code Private"][..],
-        ),
-        (
-            "(function () { function api() {} }).call(this);\n",
-            &["api Function Code Private"][..],
-        ),
-        (
-            "(function (root, factory) { factory(root); })(this, function (exports) { function lib() {} });\n",
-            &["lib Function Code Private"][..],
-        ),
-        (
-            "define(['a'], function (a) { function m() {} return m; });\n",
-            &["m Function Code Private"][..],
-        ),
-        (
-            "module.exports = function () { const local = 1; function helper() {} };\n",
-            &[
-                "default Function Code Public",
-                "default::helper Function Code Private",
-            ][..],
-        ),
-        (
-            "function f() { (function () { function deep() {} })(); }\n",
-            &["f Function Code Private", "f::deep Function Code Private"][..],
-        ),
+    let wrapped = |shape: &str| {
+        let text = shape
+            .replace('F', "function () { function api() {} var x = 1; }")
+            .replace('A', "() => { function api() {} var x = 1; }");
+        typescript(&format!("{text}\n"))
+    };
+    // Each shape a statement of the file's top calls a wrapper in, F a
+    // function and A an arrow function; then each that passes a factory.
+    for shape in [
+        "(F)();",
+        "(A)();",
+        "(F).call(this);",
+        "(A).apply(this);",
+        "(F());",
+        "((A)());",
+        "(F.call(this));",
+        "((A).call(this));",
+        "!F();",
+        "void F();",
+        "!(A)();",
+        "!F.call(this);",
+        "!(F).apply(this);",
+        "(function (r, f) {})(this, F);",
+        "(function (r, f) {}).call(this, this, A);",
+        "(function (r, f) {})(this, (F));",
+        "(function (r, f) {}(this, (A)));",
+        "((function (r, f) {})(this, F));",
+        "(function (r, f) {}.call(this, this, F));",
+        "!function (r, f) {}(this, F);",
+        "!(function (r, f) {})(this, A);",
+        "!function (r, f) {}.call(this, this, (F));",
+        "define(['a'], F);",
+        "define(A);",
     ] {
-        assert_eq!(typescript(text), expected, "{text}");
+        assert_eq!(
+            wrapped(shape),
+            ["api Function Code Private", "x Variable Code Private"],
+            "{shape}"
+        );
     }
+    for shape in [
+        "module.exports = (F)();",
+        "module.exports = (A).call(this);",
+        "module.exports = (F());",
+        "module.exports = (F.call(this));",
+        "exports = module.exports = (F)();",
+    ] {
+        assert_eq!(
+            wrapped(shape),
+            [
+                "default Variable Code Public",
+                "default::api Function Code Private"
+            ],
+            "{shape}"
+        );
+    }
+    for shape in ["module.exports = F;", "exports = module.exports = A;"] {
+        assert_eq!(
+            wrapped(shape),
+            [
+                "default Function Code Public",
+                "default::api Function Code Private"
+            ],
+            "{shape}"
+        );
+    }
+    for shape in [
+        "(F).toString();",
+        "x = (F)();",
+        "(F)() + 1;",
+        "if (x) (F)();",
+    ] {
+        assert_eq!(wrapped(shape), Vec::<String>::new(), "{shape}");
+    }
+    assert_eq!(
+        typescript("function f() { (function () { function deep() {} })(); }\n"),
+        ["f Function Code Private", "f::deep Function Code Private"]
+    );
 }
 
 #[test]
@@ -1100,9 +1304,13 @@ fn a_class_expression_is_a_class_where_a_name_holds_it() {
             "module.exports = class { n() {} };\n",
             &["default Class Code Public", "default::n Method Code Public"][..],
         ),
+        (
+            "exports = module.exports = class { n() {} };\n",
+            &["default Class Code Public", "default::n Method Code Public"][..],
+        ),
         ("register(class Local { n() {} });\n", &[][..]),
         (
-            "function o() { return class V { m() {} }; }\n",
+            "function o() { return class V { m() {} f = 1; }; }\n",
             &["o Function Code Private"][..],
         ),
         (
@@ -1125,11 +1333,12 @@ fn a_class_expression_is_a_class_where_a_name_holds_it() {
 
 /// The hash of `f`, a TypeScript function whose body is `body`.
 fn typescript_body(body: &str) -> SpanHash {
-    hash_in(
-        FileKind::TypeScript,
-        &format!("function f() {{\n{body}}}\n"),
-        "f",
-    )
+    body_in(FileKind::TypeScript, body)
+}
+
+/// The hash of `f`, a function of a file of `kind` whose body is `body`.
+fn body_in(kind: FileKind, body: &str) -> SpanHash {
+    hash_in(kind, &format!("function f() {{\n{body}}}\n"), "f")
 }
 
 #[test]
@@ -1137,6 +1346,14 @@ fn a_statement_split_by_a_line_break_moves_a_typescript_hash() {
     for (one, other) in [
         ("  return\n  x\n", "  return x\n"),
         ("  a\n  ++b\n", "  a++\n  b\n"),
+        (
+            "  switch (a) {\n    case 1: b()\n      return\n      c\n  }\n",
+            "  switch (a) {\n    case 1: b()\n      return c\n  }\n",
+        ),
+        (
+            "  switch (a) {\n    default: b()\n      return\n      c\n  }\n",
+            "  switch (a) {\n    default: b()\n      return c\n  }\n",
+        ),
     ] {
         assert_ne!(typescript_body(one), typescript_body(other), "{one:?}");
     }
@@ -1172,6 +1389,205 @@ fn a_reformat_a_comment_or_a_semicolon_leaves_a_typescript_hash() {
     assert_ne!(jsx("<p>{a}</p>"), jsx("<p>a</p>"));
     assert_eq!(jsx("<div>{}</div>"), jsx("<div></div>"));
     assert_eq!(jsx("<p>a{/* c */}b</p>"), jsx("<p>ab</p>"));
+    // Semicolon-free code guards a statement that starts with `[`, `(` or
+    // a template with a `;`, an empty statement of its own after a `}`.
+    assert_eq!(
+        block("  switch (a) {\n    case 1: ;[b] = c\n    default: ;(d)()\n  }\n"),
+        block("  switch (a) {\n    case 1: [b] = c;\n    default: (d)();\n  }\n")
+    );
+    for (guarded, ended) in [
+        (
+            "  if (a) {}\n  ;[1].map(g)\n",
+            "  if (a) {}\n  [1].map(g);\n",
+        ),
+        ("  ;({ a } = b)\n", "  ({ a } = b);\n"),
+        ("  ;`a`.at(0)\n", "  `a`.at(0);\n"),
+    ] {
+        assert_eq!(block(guarded), block(ended), "{guarded:?}");
+    }
+}
+
+/// Pairs of a body as prettier writes it under two values of one option,
+/// each pair from its output.
+const PRETTIER_OPTIONS: [(&str, &str); 18] = [
+    ("  a = \"x\" + 'y'\n", "  a = 'x' + \"y\"\n"),
+    ("  import(\"m\")\n", "  import('m')\n"),
+    ("  a = \"it's \\\"x\\\"\"\n", "  a = 'it\\'s \"x\"'\n"),
+    ("  a = \"\\\\'\"\n", "  a = '\\\\\\''\n"),
+    (
+        "  let t: [...A[], B]\n",
+        "  let t: [\n    ...A[],\n    B,\n  ]\n",
+    ),
+    (
+        "  let t: [a: A, b?: B]\n",
+        "  let t: [\n    a: A,\n    b?: B,\n  ]\n",
+    ),
+    ("  f(a, b)\n", "  f(\n    a,\n    b,\n  )\n"),
+    (
+        "  const o = { a, b }\n",
+        "  const o = {\n    a,\n    b,\n  }\n",
+    ),
+    (
+        "  const l = [a, b]\n",
+        "  const l = [\n    a,\n    b,\n  ]\n",
+    ),
+    (
+        "  const [a, b] = l\n",
+        "  const [\n    a,\n    b,\n  ] = l\n",
+    ),
+    (
+        "  const { a, b } = o\n",
+        "  const {\n    a,\n    b,\n  } = o\n",
+    ),
+    ("  g = (a, b) => a\n", "  g = (\n    a,\n    b,\n  ) => a\n"),
+    (
+        "  g = new M<A, B>()\n",
+        "  g = new M<\n    A,\n    B,\n  >()\n",
+    ),
+    ("  let t: [A, B]\n", "  let t: [\n    A,\n    B,\n  ]\n"),
+    ("  enum E { A, B }\n", "  enum E {\n    A,\n    B,\n  }\n"),
+    ("  g = (x) => x\n", "  g = x => x\n"),
+    ("  g = async (x) => x\n", "  g = async x => x\n"),
+    ("  h((x) => x)\n", "  h(x => x)\n"),
+];
+
+#[test]
+fn prettiers_quotes_trailing_commas_and_arrow_parentheses_leave_a_typescript_hash() {
+    for (one, other) in PRETTIER_OPTIONS {
+        assert_eq!(typescript_body(one), typescript_body(other), "{one:?}");
+    }
+    // An import or an export list is a statement of a module's body,
+    // which an ambient module's hash holds.
+    let module = |text: &str| hash_in(FileKind::TypeScript, text, "m");
+    assert_eq!(
+        module("declare module \"m\" {\n  import { a, b } from \"n\";\n  export { a, b };\n}\n"),
+        module(
+            "declare module 'm' {\n  import {\n    a,\n    b,\n  } from 'n';\n  export {\n    a,\n    b,\n  };\n}\n"
+        )
+    );
+    assert_eq!(jsx("<a b=\"c\" />"), jsx("<a b='c' />"));
+    for element in ["a", "{ a }", "[a]", "a?", "this: T", "a: T = 1"] {
+        let parameters =
+            |comma: &str| typescript_body(&format!("  g = function (b, {element}{comma}) {{}}\n"));
+        assert_eq!(parameters(""), parameters(","), "{element}");
+    }
+    for element in ["a: b", "a", "a = 1"] {
+        let pattern =
+            |comma: &str| typescript_body(&format!("  ({{ c, {element}{comma} }} = o)\n"));
+        assert_eq!(pattern(""), pattern(","), "{element}");
+    }
+    for element in [
+        "a",
+        "a.b",
+        "a[0]",
+        "a!",
+        "{ a }",
+        "[a]",
+        "a = 1",
+        "undefined",
+    ] {
+        let pattern = |comma: &str| typescript_body(&format!("  [c, {element}{comma}] = l\n"));
+        assert_eq!(pattern(""), pattern(","), "{element}");
+    }
+}
+
+/// Pairs of a body as prettier writes it at two line widths.
+const PRETTIER_WIDTHS: [(&str, &str); 10] = [
+    (
+        "  let t: [A | B, C]\n",
+        "  let t: [\n    (\n      | A\n      | B\n    ),\n    C,\n  ]\n",
+    ),
+    (
+        "  type R<T, U> = T extends U ? 0 : (U extends T ? 1 : 0)\n",
+        "  type R<T, U> = T extends U\n    ? 0\n    : U extends T\n      ? 1\n      : 0\n",
+    ),
+    (
+        "  type S<T, U> = T extends U ? (U extends T ? 1 : 0) : 0\n",
+        "  type S<T, U> = T extends U\n    ? U extends T\n      ? 1\n      : 0\n    : 0\n",
+    ),
+    ("  return a && b\n", "  return (\n    a &&\n    b\n  )\n"),
+    ("  throw a || b\n", "  throw (\n    a ||\n    b\n  )\n"),
+    (
+        "  g = (x) => (x ? a : b)\n",
+        "  g = (x) =>\n    x ? a : b\n",
+    ),
+    ("  g = c ? d : e\n", "  g = c\n    ? (d)\n    : (e)\n"),
+    (
+        "  type V = \"a\" | \"b\"\n",
+        "  type V =\n    | \"a\"\n    | \"b\"\n",
+    ),
+    ("  type W = A & B\n", "  type W =\n    & A\n    & B\n"),
+    (
+        "  let u: A | undefined\n",
+        "  let u:\n    | A\n    | undefined\n",
+    ),
+];
+
+#[test]
+fn the_parentheses_and_operators_a_line_width_adds_leave_a_typescript_hash() {
+    for (one, other) in PRETTIER_WIDTHS {
+        assert_eq!(typescript_body(one), typescript_body(other), "{one:?}");
+    }
+    let tsx = |body: &str| body_in(FileKind::Tsx, body);
+    for (one, other) in [
+        (
+            "  return <div>a</div>\n",
+            "  return (\n    <div>a</div>\n  )\n",
+        ),
+        ("  const v = <p />\n", "  const v = (\n    <p />\n  )\n"),
+        (
+            "  const v = <p>a</p>\n",
+            "  const v = (\n    <p>a</p>\n  )\n",
+        ),
+        ("  g = () => <p />\n", "  g = () => (\n    <p />\n  )\n"),
+        ("  g = c && <p />\n", "  g = c && (\n    <p />\n  )\n"),
+        (
+            "  g = c ? <p /> : <q />\n",
+            "  g = c ? (\n    <p />\n  ) : (\n    <q />\n  )\n",
+        ),
+    ] {
+        assert_eq!(tsx(one), tsx(other), "{one:?}");
+    }
+}
+
+/// Pairs of bodies that a token left out of the hash elsewhere tells
+/// apart: each means something else, or one of them is no program.
+const MEANINGS: [(&str, &str); 23] = [
+    ("  let t: (A | B)[]\n", "  let t: A | B[]\n"),
+    ("  let t: [(A | B)?]\n", "  let t: [A | B?]\n"),
+    ("  a = \"a\\\\'\"\n", "  a = \"a'\"\n"),
+    ("  g = () => ({})\n", "  g = () => {}\n"),
+    ("  g = c ? d : (a, b)\n", "  g = c ? d : a, b\n"),
+    ("  return (\n    a\n  )\n", "  return\n  a\n"),
+    ("  a\n  ;(b)\n", "  a\n  (b)\n"),
+    ("  a\n  ;[b]\n", "  a\n  [b]\n"),
+    ("  if (a);\n  b\n", "  if (a)\n  b\n"),
+    ("  g = (a + b) * c\n", "  g = a + b * c\n"),
+    ("  g = (c ? d : e).f\n", "  g = c ? d : e.f\n"),
+    ("  s = '\\\\\\''\n", "  s = \"'\"\n"),
+    ("  s = `a`\n", "  s = \"a\"\n"),
+    ("  l = [a, , ]\n", "  l = [a, ]\n"),
+    ("  l = [,]\n", "  l = []\n"),
+    ("  l = [a, /* c */ ,]\n", "  l = [a,]\n"),
+    ("  const [a, , ] = l\n", "  const [a, ] = l\n"),
+    ("  const [...a, ] = l\n", "  const [...a] = l\n"),
+    ("  const { ...a, } = o\n", "  const { ...a } = o\n"),
+    ("  g = (...a, ) => a\n", "  g = (...a) => a\n"),
+    ("  (x: T) => x\n", "  x: T => x\n"),
+    ("  (x): T => x\n", "  x: T => x\n"),
+    ("  g = (x = y) => 1\n", "  g = x = y => 1\n"),
+];
+
+#[test]
+fn a_token_the_hash_leaves_out_elsewhere_moves_it_where_it_means_something() {
+    for (one, other) in MEANINGS {
+        assert_ne!(typescript_body(one), typescript_body(other), "{one:?}");
+    }
+    let tsx = |body: &str| body_in(FileKind::Tsx, body);
+    assert_ne!(
+        tsx("  g = <p>\n    {\" \"}\n  </p>\n"),
+        tsx("  g = <p>\n     \n  </p>\n")
+    );
 }
 
 #[test]
@@ -1208,12 +1624,37 @@ fn jsx(element: &str) -> SpanHash {
 
 #[test]
 fn jsx_text_is_hashed_as_jsx_renders_it() {
-    assert_eq!(jsx("<p>a   b</p>"), jsx("<p>a b</p>"));
-    assert_eq!(jsx("<p>\n    a b\n  </p>"), jsx("<p>a b</p>"));
-    assert_eq!(jsx("<p>a\n    b</p>"), jsx("<p>a b</p>"));
-    assert_ne!(jsx("<p>a b</p>"), jsx("<p>a c</p>"));
-    assert_ne!(jsx("<p>a b</p>"), jsx("<p>ab</p>"));
-    assert_ne!(jsx("<p><b>Hi</b> there</p>"), jsx("<p><b>Hi</b>there</p>"));
+    for (one, other) in [
+        ("<p>\n    a b\n  </p>", "<p>a b</p>"),
+        ("<p>a  \n    b</p>", "<p>a b</p>"),
+        (
+            "<p><b>Hi</b>{\" \"}\n  there friend</p>",
+            "<p><b>Hi</b> there friend</p>",
+        ),
+        ("<p>a{' '}b</p>", "<p>a b</p>"),
+        ("<p>a{\"  \"}b</p>", "<p>a  b</p>"),
+        (
+            "<p>Copyright &copy;\n  2024</p>",
+            "<p>Copyright &copy; 2024</p>",
+        ),
+        ("<p>&amp;\n  &amp;</p>", "<p>&amp; &amp;</p>"),
+        ("<p>&amp;  \n&amp;</p>", "<p>&amp; &amp;</p>"),
+        ("<p>  \n&amp;</p>", "<p>&amp;</p>"),
+    ] {
+        assert_eq!(jsx(one), jsx(other), "{one:?}");
+    }
+    for (one, other) in [
+        ("<p>a   b</p>", "<p>a b</p>"),
+        ("<p>a\tb</p>", "<p>a b</p>"),
+        ("<pre>  a</pre>", "<pre> a</pre>"),
+        ("<p>a b</p>", "<p>a c</p>"),
+        ("<p>a b</p>", "<p>ab</p>"),
+        ("<p><b>Hi</b> there</p>", "<p><b>Hi</b>there</p>"),
+        ("<p>&amp;\n&amp;</p>", "<p>&amp;&amp;</p>"),
+        ("<p>a\n{/* c */}b</p>", "<p>a b</p>"),
+    ] {
+        assert_ne!(jsx(one), jsx(other), "{one:?}");
+    }
 }
 
 #[test]

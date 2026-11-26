@@ -198,15 +198,16 @@ struct Candidate<'r> {
 
 /// What the walk found: the candidates, the nodes captured as unnamed
 /// scopes and, by id, those captured as no scope, how the hash takes each
-/// marked node, by its id, and the names an `@export.name` capture
-/// spells; and the places the source marks private.
+/// marked node, by its id, and each node an `@export.name` capture
+/// captured with the name it spells; and the places the source marks
+/// private.
 #[derive(Default)]
 struct Found<'r, 't> {
     candidates: Vec<Candidate<'r>>,
     unnamed: Vec<SpanNode>,
     no_scope: BTreeSet<usize>,
     marks: BTreeMap<usize, NodeMarks>,
-    exported: BTreeSet<&'t str>,
+    exported: Vec<(SpanNode, &'t str)>,
     private: &'t [usize],
 }
 
@@ -221,15 +222,6 @@ impl<'r> Found<'r, '_> {
                 .filter(|_| candidate.names_left == 0)?;
             Some((candidate.site?, name, candidate.definer))
         })
-    }
-
-    /// Whether an `@export.name` capture spells the name of one segment
-    /// `parts` is.
-    fn is_exported(&self, parts: &[String]) -> bool {
-        let [one] = parts else {
-            return false;
-        };
-        self.exported.contains(one.as_str())
     }
 
     /// Whether a place the source marks private is at `start` or after it,
@@ -358,11 +350,7 @@ impl<'r> Walk<'r, '_> {
                 Capture::NoScope => {
                     self.found.no_scope.insert(id);
                 }
-                Capture::Export => {
-                    if let Some(spelled) = self.text.get(capture.node.byte_range()) {
-                        self.found.exported.insert(spelled);
-                    }
-                }
+                Capture::Export => self.export(capture.node),
                 Capture::Unit => mark(|marks| marks.whole = true),
                 Capture::Tokens => mark(|marks| marks.tokens = true),
                 Capture::Chars => mark(|marks| marks.chars = true),
@@ -379,6 +367,13 @@ impl<'r> Walk<'r, '_> {
         let definer = self.rules.patterns.get(pattern).and_then(Option::as_ref);
         if let (Some(definition), Some(definer)) = (definition, definer) {
             self.candidate(definer, definition, &names);
+        }
+    }
+
+    /// Record `node`, an `@export.name` capture, with the name it spells.
+    fn export(&mut self, node: Node<'_>) {
+        if let Some(spelled) = self.text.get(node.byte_range()) {
+            self.found.exported.push((SpanNode::of(node), spelled));
         }
     }
 

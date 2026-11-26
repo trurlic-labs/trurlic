@@ -309,6 +309,11 @@ const TYPESCRIPT_CASES: &[(&str, &str, &str)] = &[
     ("typescript/legacy.js", "Store::count", SYMBOL),
     ("typescript/legacy.js", "extra", MISSING),
     ("typescript/view.jsx", "default::render", SYMBOL),
+    ("typescript/shelf.d.ts", "openShelf", SYMBOL),
+    // tree-sitter-typescript reads the `<` that starts a call signature on
+    // a line of its own as type arguments, where TypeScript reads a new
+    // member: the parse fails, and the file defines nothing.
+    ("typescript/signatures.ts", "after", MISSING),
     (
         "typescript/__tests__/helpers.js",
         "helpers::makes a shelf",
@@ -1163,6 +1168,9 @@ const STATEMENTS: &[&str] = &[
     "typescript/legacy.js Store::#count Field Code Private",
     "typescript/legacy.js Store::constructor Method Code Public",
     "typescript/legacy.js Store::count Method Code Public",
+    "typescript/shelf.d.ts openShelf Function Code Public",
+    "typescript/shelf.d.ts closeShelf Function Code Private",
+    "typescript/shelf.d.ts VERSION Variable Code Public",
     "typescript/shelf.test.ts Shelf Test Test -",
     "typescript/shelf.test.ts Shelf::made Function Test Private",
     "typescript/shelf.test.ts Shelf::opens a path Test Test -",

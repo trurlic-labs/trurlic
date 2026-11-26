@@ -79,12 +79,43 @@ fn next_leaf(cursor: &mut tree_sitter::TreeCursor<'_>, top: Node<'_>) -> bool {
 }
 
 /// `part` without the quotes around it when it is a string literal, one
-/// quote character opening and closing it.
+/// quote character opening and closing it, and without the brackets of a
+/// computed name whose one part is a string literal (`["x"]` is `x`, as
+/// `"x"` and `x` are; `[Symbol.iterator]` is as written). A query cannot
+/// capture the string inside a computed name instead of the name itself
+/// without two matches of one member.
 fn unquoted(part: &str) -> &str {
+    let literal = part
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .filter(|inner| is_one_string(inner))
+        .unwrap_or(part);
     QUOTES
         .iter()
-        .find_map(|quote| part.strip_prefix(*quote)?.strip_suffix(*quote))
-        .unwrap_or(part)
+        .find_map(|quote| literal.strip_prefix(*quote)?.strip_suffix(*quote))
+        .unwrap_or(literal)
+}
+
+/// Whether `text` is one string literal: a `'` or `"` that only the same
+/// quote closes, at its end, and that no unescaped one closes before.
+fn is_one_string(text: &str) -> bool {
+    let Some(quote) = text.chars().next().filter(|c| matches!(c, '\'' | '"')) else {
+        return false;
+    };
+    let mut escaped = false;
+    let mut closed = None;
+    for (at, c) in text.char_indices().skip(1) {
+        match (escaped, c) {
+            (true, _) => escaped = false,
+            (false, '\\') => escaped = true,
+            (false, c) if c == quote => {
+                closed = Some(at);
+                break;
+            }
+            (false, _) => {}
+        }
+    }
+    closed == Some(text.len() - 1)
 }
 
 #[cfg(test)]
@@ -102,6 +133,13 @@ mod tests {
             ("\"", "\""),
             ("\"a'", "\"a'"),
             ("plain", "plain"),
+            ("[\"computed\"]", "computed"),
+            ("['a\\'b']", "a\\'b"),
+            ("[\"a\" + \"b\"]", "[\"a\" + \"b\"]"),
+            ("[\"a\"]+[\"b\"]", "[\"a\"]+[\"b\"]"),
+            ("[Symbol.iterator]", "[Symbol.iterator]"),
+            ("[`x`]", "[`x`]"),
+            ("[]", "[]"),
         ] {
             assert_eq!(unquoted(part), name, "{part}");
         }

@@ -113,6 +113,23 @@ pub(super) static TYPESCRIPT: Language = Language {
     identity: OnceLock::new(),
 };
 
+/// `.d.ts`, `.d.mts` and `.d.cts`, TypeScript's declaration files: the
+/// `typescript` grammar and TypeScript's query, with the rules of a
+/// declaration file's top beside them, which TypeScript reads as an
+/// ambient module's body.
+pub(super) static TYPESCRIPT_DECLARATIONS: Language = Language {
+    name: "typescript-declarations",
+    grammar: || tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+    node_types: tree_sitter_typescript::TYPESCRIPT_NODE_TYPES,
+    queries: &[TYPESCRIPT_QUERY, include_str!("language/declarations.scm")],
+    syntax: Syntax::Strings,
+    lexicon: TYPESCRIPT_LEXICON,
+    before_parse: &[],
+    test_places: &["__tests__/"],
+    rules: OnceLock::new(),
+    identity: OnceLock::new(),
+};
+
 /// `.tsx`, and JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`): the `tsx`
 /// grammar reads JavaScript with its JSX, and TypeScript's query finds in
 /// it what JavaScript has of TypeScript's definitions.
@@ -259,7 +276,14 @@ mod tests {
 
     #[test]
     fn each_query_compiles_against_its_grammar_within_the_contract() {
-        for language in [&PYTHON, &TYPESCRIPT, &TSX, &C, &CPP] {
+        for language in [
+            &PYTHON,
+            &TYPESCRIPT,
+            &TYPESCRIPT_DECLARATIONS,
+            &TSX,
+            &C,
+            &CPP,
+        ] {
             if let Err(fault) = language.rules() {
                 panic!("{}: {fault}", language.name);
             }

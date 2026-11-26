@@ -36,6 +36,9 @@ pub(super) struct Leaves {
     units: Vec<Unit>,
     holes: Vec<Range<usize>>,
     escapes: Vec<Range<usize>>,
+    /// The JSX text the last node taken by its characters ended, while
+    /// the units are built.
+    jsx: Option<JsxText>,
 }
 
 /// One unit of a span hash: a token over bytes `from..to`, or a group's
@@ -70,7 +73,7 @@ pub(super) struct NodeMarks {
     /// One token per token its lexicon's lexer finds in it.
     pub(super) tokens: bool,
     /// Its text as JSX renders it: a token a character, an empty one a
-    /// run of whitespace.
+    /// space.
     pub(super) chars: bool,
     /// One token, a string's delimiter, hashed by what it means.
     pub(super) delimiter: bool,
@@ -226,6 +229,7 @@ impl Leaves {
     ) {
         match marks_of(marks, node) {
             NodeMarks { tokens: true, .. } => self.push_tokens(node, (text, lexicon)),
+            NodeMarks { chars: true, .. } => push_chars(&mut self.units, node, text, &mut self.jsx),
             NodeMarks { string: true, .. } => self.push_string(node, marks),
             NodeMarks {
                 delimiter: true,
@@ -233,17 +237,18 @@ impl Leaves {
                 ..
             } => self.push_delimiter(node, join, text),
             NodeMarks { literal: true, .. } => self.units.push(Unit::spelled(node, Mark::Literal)),
-            NodeMarks { chars: true, .. } => push_chars(&mut self.units, node, text),
             NodeMarks { .. } => self.push(Token::Node(node), (text, lexicon)),
         }
     }
 
-    /// Push the unit of `node`, a string's text, and each escape among its
-    /// children that `marks` marks.
+    /// Push the unit of `node`, a string's text, and each escape that
+    /// `marks` marks among its children, or the node itself: a string's
+    /// text and escapes may be siblings (TypeScript's).
     fn push_string(&mut self, node: Node<'_>, marks: &BTreeMap<usize, NodeMarks>) {
         let mut cursor = node.walk();
         let escapes = node
             .children(&mut cursor)
+            .chain(std::iter::once(node))
             .filter(|child| marks_of(marks, *child).escape);
         self.escapes.extend(escapes.map(|child| child.byte_range()));
         self.push_string_text(node.start_byte(), node.end_byte());
@@ -462,37 +467,82 @@ impl Leaves {
     }
 }
 
-/// Push the units of `node`'s text as JSX renders it: a unit for each
-/// character but ASCII whitespace, and an empty one for each run of
-/// whitespace, but a run at an end of the text that holds a line break,
-/// which JSX drops. A character is a unit of its own, so text that a node
-/// left out of the hash splits (`a{/* c */}b`) hashes as the text joined.
-fn push_chars(units: &mut Vec<Unit>, node: Node<'_>, text: &str) {
+/// The JSX text a node marked by its characters ended: where it ended,
+/// whether a character but whitespace came before, and the run of
+/// whitespace at its end that holds a line break, from its first byte.
+#[derive(Debug, Clone, Copy)]
+struct JsxText {
+    end: usize,
+    seen: bool,
+    broken: Option<usize>,
+}
+
+/// The whitespace JSX trims around a line break: a space, a tab and the
+/// two line-break characters both TypeScript's and Babel's transforms
+/// trim. Any other character is text.
+const fn is_jsx_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r')
+}
+
+/// Push the units of `node`'s text as JSX renders it, after the JSX text
+/// `last` the previous such node ended, which it continues when only
+/// whitespace lies between (a character reference among the text). A
+/// character is a unit of its own, a space an empty one, so text that a
+/// node left out of the hash splits (`a{/* c */}b`) hashes as the text
+/// joined. A run of whitespace that holds a line break is one space
+/// between text and is dropped at an end of the text; any other run is
+/// kept as written. A run a node ends with no line break in it is kept
+/// whatever follows, so it is pushed with the node.
+fn push_chars(units: &mut Vec<Unit>, node: Node<'_>, text: &str, last: &mut Option<JsxText>) {
     let start = node.start_byte();
-    let Some(run) = text.get(node.byte_range()) else {
+    let (Some(chars), gap) = (
+        text.get(node.byte_range()),
+        last.and_then(|last| text.get(last.end..start)),
+    ) else {
         return;
     };
-    let breaks = |gap: &str| gap.contains(['\n', '\r']);
-    let mut space: Option<usize> = None;
-    let mut seen = false;
-    for (at, c) in run.char_indices() {
-        if c.is_ascii_whitespace() {
-            space = space.or(Some(at));
+    let continued = last
+        .take()
+        .filter(|_| gap.is_some_and(|gap| gap.chars().all(is_jsx_space)));
+    let mut seen = continued.is_some_and(|last| last.seen);
+    let mut run = continued.and_then(|last| last.broken.or((start > last.end).then_some(last.end)));
+    for (at, c) in chars.char_indices().map(|(at, c)| (start + at, c)) {
+        if is_jsx_space(c) {
+            run = run.or(Some(at));
             continue;
         }
-        if let Some(from) = space.take()
-            && (seen || !run.get(from..at).is_some_and(breaks))
-        {
-            units.push(Unit::text(start + at, start + at));
+        if let Some(from) = run.take() {
+            push_space(units, text, from..at, seen);
         }
         seen = true;
-        units.push(Unit::text(start + at, start + at + c.len_utf8()));
+        units.push(Unit::text(at, at + c.len_utf8()));
     }
-    if space
-        .and_then(|from| run.get(from..))
-        .is_some_and(|gap| !breaks(gap))
-    {
-        units.push(Unit::text(start + run.len(), start + run.len()));
+    let end = node.end_byte();
+    let broken = run.filter(|from| {
+        text.get(*from..end)
+            .is_some_and(|run| run.contains(['\n', '\r']))
+    });
+    if let (Some(from), None) = (run, broken) {
+        push_space(units, text, from..end, seen);
+    }
+    *last = Some(JsxText { end, seen, broken });
+}
+
+/// Push the units of the run of JSX whitespace over `bytes` of `text`:
+/// one empty unit, a space, when it holds a line break and text came
+/// before it (`seen`), none when it holds one and none came; else an
+/// empty unit for each space and a unit for each tab, as written.
+fn push_space(units: &mut Vec<Unit>, text: &str, bytes: Range<usize>, seen: bool) {
+    let Some(run) = text.get(bytes.start..bytes.end) else {
+        return;
+    };
+    match run.contains(['\n', '\r']) {
+        true if seen => units.push(Unit::text(bytes.end, bytes.end)),
+        true => {}
+        false => units.extend(run.char_indices().map(|(at, c)| match c {
+            ' ' => Unit::text(bytes.start + at, bytes.start + at),
+            _ => Unit::text(bytes.start + at, bytes.start + at + c.len_utf8()),
+        })),
     }
 }
 

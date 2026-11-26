@@ -1,16 +1,17 @@
 component = "code"
-choice = "A definition's name is the text of its name nodes' leaves, comments and skipped kinds left out, a space only between two words, split at its separator and each ::, quotes dropped"
-reason = "A name node may be more than one token: namespace A.B is a nested identifier, a test's name a string, an operator operator == with a space or none. Its text is its leaves' texts, a space where bytes lie between a leaf a word character ends and one a word character starts, so a comment inside moves nothing, operator == and operator== are one name, and operator bool keeps its space. A pattern may capture @name on several nodes, whose segments follow in the file's order, so TEST(Suite, Name) is Suite::Name. Its name.skip leaves out the subtrees of node kinds, so a template's arguments (Box<T>::get is Box::get) and a conversion's parameters are no part of a name. A pattern's name.separator splits at each leaf of that text, so A.B is two segments. A part written as a string literal is named by the text between its quotes. A :: in a part splits it as it splits a symbol, so a symbol can name any segment a reader sees. A part of no text defines nothing."
+choice = "A name is its nodes' leaves' text, comments and skipped kinds out, a space only between two words, split at its separator and each ::, quotes and a computed name's brackets around a string dropped"
+reason = "A name node may be more than one token: namespace A.B is a nested identifier, a test's name a string, an operator operator == with a space or none. Its text is its leaves' texts, a space where bytes lie between a leaf a word character ends and one a word character starts, so a comment inside moves nothing, operator == and operator== are one name, and operator bool keeps its space. A pattern may capture @name on several nodes, whose segments follow in the file's order, so TEST(Suite, Name) is Suite::Name. Its name.skip leaves out the subtrees of node kinds, so a template's arguments (Box<T>::get is Box::get) and a conversion's parameters are no part of a name. A pattern's name.separator splits at each leaf of that text, so A.B is two segments. A part written as a string literal is named by the text between its quotes, and a computed name whose one part is a string literal by that string, so [\"x\"]() and \"x\"() name the member x() names; [Symbol.iterator] is named as written. A query cannot capture the string inside the brackets instead of the brackets without matching one member twice. A :: in a part splits it as it splits a symbol, so a symbol can name any segment a reader sees. A part of no text defines nothing."
 alternatives = [
     "A name node's text verbatim: rejected because a comment inside a dotted name would become part of a segment",
     "A property per pattern to drop quotes: rejected because a quoted name is the same thing in every language, and no identifier opens with a quote",
     "Split a name at its structure's fields: rejected because a leaf of the separator's text states the split in every grammar alike",
+    "A computed name as written: rejected because [\"x\"]() and x() declare one member under two spellings, and an anchor of one would miss the other",
 ]
 tags = [
     "anchors",
     "parsing",
 ]
-status = "accepted"
+status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
@@ -23,4 +24,13 @@ anchors = [
 ]
 depends_on = [
     "a-query-file-is-held-to-the-general-resolver-s-contract",
+]
+
+[accepted_text]
+choice = "A definition's name is the text of its name nodes' leaves, comments and skipped kinds left out, a space only between two words, split at its separator and each ::, quotes dropped"
+reason = "A name node may be more than one token: namespace A.B is a nested identifier, a test's name a string, an operator operator == with a space or none. Its text is its leaves' texts, a space where bytes lie between a leaf a word character ends and one a word character starts, so a comment inside moves nothing, operator == and operator== are one name, and operator bool keeps its space. A pattern may capture @name on several nodes, whose segments follow in the file's order, so TEST(Suite, Name) is Suite::Name. Its name.skip leaves out the subtrees of node kinds, so a template's arguments (Box<T>::get is Box::get) and a conversion's parameters are no part of a name. A pattern's name.separator splits at each leaf of that text, so A.B is two segments. A part written as a string literal is named by the text between its quotes. A :: in a part splits it as it splits a symbol, so a symbol can name any segment a reader sees. A part of no text defines nothing."
+alternatives = [
+    "A name node's text verbatim: rejected because a comment inside a dotted name would become part of a segment",
+    "A property per pattern to drop quotes: rejected because a quoted name is the same thing in every language, and no identifier opens with a quote",
+    "Split a name at its structure's fields: rejected because a leaf of the separator's text states the split in every grammar alike",
 ]

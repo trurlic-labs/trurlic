@@ -33,23 +33,25 @@
 //!   span holds the node, and the node its name, has that visibility; the
 //!   innermost such mark wins), `@visibility.within.<name>` (a definition
 //!   whose name lies inside has that visibility when no mark of the first
-//!   form states one; the innermost wins, and of two on one node the one
-//!   `Visibility` orders first), `@visibility.after.<name>` (a
+//!   form or export states one; the innermost wins, and of two on one node
+//!   the one `Visibility` orders first), `@visibility.after.<name>` (a
 //!   label: a definition whose name lies in a later sibling of the node,
 //!   up to the next such label among them, has that visibility over a
 //!   mark of either other form: a C++ `public:`, or a class body's `{`
 //!   for its default), `@visibility.through` (a label among the
 //!   node's children holds for the node's later siblings too: a `#if`
-//!   arm's), `@export.name` (a definition at
-//!   the file's top named as the node's text is public when no mark holds
-//!   its name), `@scope.unnamed` (a scope no name stands for: see below),
+//!   arm's), `@export.name` (a definition named as the node's text,
+//!   directly in the container that holds the node, is public when no
+//!   mark of the first form or label states its visibility),
+//!   `@scope.unnamed` (a scope no name stands for: see below),
 //!   `@scope.none` (no scope, whatever `@scope.unnamed` captures),
 //!   `@hash.unit` (one token of its text, the comments in it left out, cut
 //!   where each of its children with a hash mark of its own is taken by
 //!   it), `@hash.tokens` (one token per token its
-//!   grammar's lexicon lexes in it: a C macro's body), `@hash.chars` (its text as JSX renders it: a token a
-//!   character, an empty one a run of whitespace but one at an end that
-//!   holds a line break), `@hash.delimiter` (a string's delimiter, hashed as what
+//!   grammar's lexicon lexes in it: a C macro's body), `@hash.chars` (its text as JSX renders it, with the text
+//!   of such nodes only whitespace parts from it: a token a character, an
+//!   empty one a space, a run of whitespace that holds a line break one
+//!   space between text and none at an end), `@hash.delimiter` (a string's delimiter, hashed as what
 //!   it means: its prefix letters in any case and order, `u` none, each
 //!   quote `'` or `"` alike; the escapes a raw string's end holds are its
 //!   text), `@hash.join` (a delimiter that starts a string the one before

@@ -15,7 +15,7 @@ origin = "c and c++ review: macro scope, shapes and visibility"
 created = "2026-11-26T07:59:22.658737393Z"
 anchors = [
     { file = "src/code/general/frame.rs", symbol = "set_label" },
-    { file = "src/code/general/place.rs", symbol = "visibility_of" },
+    { file = "src/code/general/place.rs", symbol = "stated" },
     { file = "src/code/general/tests.rs", symbol = "a_blanked_static_macro_makes_what_it_marks_private_as_static_does" },
     { file = "src/code/general/tests.rs", symbol = "a_label_in_a_preprocessor_arm_holds_past_it_and_none_holds_in_a_body" },
     { file = "src/code/language/c_family.rs", symbol = "Blanked" },

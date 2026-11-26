@@ -1,10 +1,11 @@
 component = "code"
-choice = "A call of describe, it, test or their kin is a test named by its first string; so is a call of a chain of one or two members from such a name, but context, when a function follows the string"
-reason = "A JavaScript test is a call, not a named function, and a proof names the test it ran by the strings of the calls that hold it. A call of describe, context, suite, it, test, specify, bench or their jasmine forms whose first argument is a string or template literal is a definition of kind test, named by that text without its quotes, interpolations and .each placeholders kept. So is a call of a chain of one or two members from such a name, called directly or through a call (it.only, test.describe.serial, it.concurrent.only, describe.each(table), describe.runIf(x), test.extend({})), when a function literal follows the string, right after it or after one argument between (Playwright's details, Vitest's options). The shape tells a runner's call from a call on a variable of a runner's name: test.set(\"Content-Type\", \"text\") passes no function. context roots no chain, since it is the usual name of a Playwright browser context or a canvas context, whose route(\"x\", handler) has the shape. No list of modifiers is kept, which each runner release would outgrow. Over react-hook-form, webpack, react, vite, excalidraw, eslint, express, mocha, jest and Playwright's own tests the rule takes no call that is not a test or a Playwright step, and misses calls whose function is computed (it.concurrent(\"x\", testFn(\"x\"))) or absent (it.todo(\"x\")). A test nested in another's callback is under it. A name that is no string literal defines nothing, nor does an empty one. A test and everything its callback defines are test code; the call has no visibility."
+choice = "A call is a test named by its first string when its callee is a runner's name or up to three listed members from it, and a function or a function's name follows the string"
+reason = "A JavaScript test is a call, not a named function, and a proof names the test it ran by the strings of the calls that hold it. One rule holds for every callee: describe, context, suite, it, test, specify, bench or a jasmine form, alone or followed by up to three members from the list the query holds (only, skip, each, for, concurrent, describe, serial, step and the others the runners document), called directly or through a call (describe.each(table), test.extend({})). Its first argument is a string or a template literal, named by its text without quotes, interpolations and placeholders kept; a function literal or a function's name follows, right after it or after an options object (Playwright's details, Vitest's and node:test's options). So a project's own test(\"abc\"), const ok = test(\"value\"), a pending it(\"x\"), Benchmark's suite.add(\"x\", fn) and describe.bind(null)(\"x\", fn) are no tests, and mocha's context.only is one while Playwright's context.route is not. A member a runner adds is one word in the list; until it is there, its call is no test and the tests its callback holds are lost with it. Not read: a function a call computes (it(\"x\", run(1))), QUnit's suite(\"x\") with no callback, and node:test's t.test(\"sub\", fn), a member call on a parameter no rule tells from a project's own object. A test nested in another's callback is under it. A name that is no string literal defines nothing, nor does an empty one. A test and everything its callback defines are test code; the call has no visibility."
 alternatives = [
     "Test calls as no definitions: rejected because a proof could then name no test of a JavaScript project",
-    "A list of the runners' modifiers: rejected because Vitest and Playwright add group forms each release (runIf, for, serial), and a list that lacks one drops every test under it",
-    "Any member call whose first argument is a string: rejected because Playwright's context.waitForEvent(\"page\") and express's test.set(\"a\", \"b\") would become tests",
+    "Any member chain after a runner's name: rejected because Benchmark's suite.add, express's test.set and describe.bind have a runner's name and a function after a string, and are no tests",
+    "A bare runner call whatever follows its string: rejected because a project's own test(\"abc\") and a pending it(\"x\") would be tests, while it.todo(\"x\") is none",
+    "Any member named test with a function after a string: rejected because it cannot tell node:test's subtest from a project's own method named test",
     "The template literal with its interpolations evaluated: rejected because the index reads no value a program computes",
 ]
 tags = [
@@ -12,11 +13,11 @@ tags = [
     "testing",
     "typescript",
 ]
-status = "accepted"
+status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
-    { file = "src/code/general/tests.rs", symbol = "a_call_of_another_member_of_a_test_runners_name_is_no_test" },
+    { file = "src/code/general/tests.rs", symbol = "a_call_of_a_runners_name_without_a_function_after_its_string_or_of_another_member_is_no_test" },
     { file = "src/code/general/tests.rs", symbol = "a_member_chain_of_a_runner_is_a_test_when_a_function_follows_its_string" },
     { file = "src/code/general/tests.rs", symbol = "a_test_call_is_named_by_its_strings_as_written" },
     { file = "src/code/kinds.rs", symbol = "DefinitionKind::Test" },
@@ -24,4 +25,14 @@ anchors = [
 ]
 depends_on = [
     "what-a-typescript-file-defines",
+]
+
+[accepted_text]
+choice = "A call of describe, it, test or their kin is a test named by its first string; so is a call of a chain of one or two members from such a name, but context, when a function follows the string"
+reason = "A JavaScript test is a call, not a named function, and a proof names the test it ran by the strings of the calls that hold it. A call of describe, context, suite, it, test, specify, bench or their jasmine forms whose first argument is a string or template literal is a definition of kind test, named by that text without its quotes, interpolations and .each placeholders kept. So is a call of a chain of one or two members from such a name, called directly or through a call (it.only, test.describe.serial, it.concurrent.only, describe.each(table), describe.runIf(x), test.extend({})), when a function literal follows the string, right after it or after one argument between (Playwright's details, Vitest's options). The shape tells a runner's call from a call on a variable of a runner's name: test.set(\"Content-Type\", \"text\") passes no function. context roots no chain, since it is the usual name of a Playwright browser context or a canvas context, whose route(\"x\", handler) has the shape. No list of modifiers is kept, which each runner release would outgrow. Over react-hook-form, webpack, react, vite, excalidraw, eslint, express, mocha, jest and Playwright's own tests the rule takes no call that is not a test or a Playwright step, and misses calls whose function is computed (it.concurrent(\"x\", testFn(\"x\"))) or absent (it.todo(\"x\")). A test nested in another's callback is under it. A name that is no string literal defines nothing, nor does an empty one. A test and everything its callback defines are test code; the call has no visibility."
+alternatives = [
+    "Test calls as no definitions: rejected because a proof could then name no test of a JavaScript project",
+    "A list of the runners' modifiers: rejected because Vitest and Playwright add group forms each release (runIf, for, serial), and a list that lacks one drops every test under it",
+    "Any member call whose first argument is a string: rejected because Playwright's context.waitForEvent(\"page\") and express's test.set(\"a\", \"b\") would become tests",
+    "The template literal with its interpolations evaluated: rejected because the index reads no value a program computes",
 ]

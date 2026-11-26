@@ -1,6 +1,6 @@
 component = "code"
 choice = "A TypeScript or JavaScript declaration, a class's members, a function or class bound to a name and a name a module binds are definitions; an import and a local define nothing"
-reason = "An anchor names what a reader looks for in a TypeScript or JavaScript file. A function, a generator, an overload's or an ambient declaration's signature, and an arrow function, function expression or class expression a const, let or var binds are functions or classes at any depth, as a nested def is in Python; so is a named class expression an assignment binds (module.exports = class A {}, X ??= class A {}). A class, interface, type alias, enum and namespace are definitions; namespace A.B is two segments and declare module \"x\" is named x. A class's methods, accessors and constructor are methods and its properties fields, of a class alone: an unnamed class's members (return class { m() {} }) are no one's. An interface's members are fields and methods, an enum's variants. Any other name a const, let or var binds, each of a destructuring's names included, is a variable at a module's or a namespace's top, whatever its keyword, and a function's locals are no definitions. A file a wrapper holds whole (an IIFE, a UMD or AMD factory) is read as its module, and an unnamed module.exports function or class is default, as export default is. An import names what another file defines. Definitions of one path resolve together: overloads with their implementation, a getter and its setter, merged interfaces. A constructor's parameter property, an exports.x or X.prototype.y assignment define nothing."
+reason = "An anchor names what a reader looks for in a TypeScript or JavaScript file. A function, a generator, an overload's or an ambient declaration's signature, and an arrow function, function expression or class expression a const, let or var binds are functions or classes at any depth, as a nested def is in Python; so is a named class expression an assignment binds (module.exports = class A {}, X ??= class A {}). A class, interface, type alias, enum and namespace are definitions; namespace A.B is two segments and declare module \"x\" is named x. A class's methods, accessors and constructor are methods and its properties fields, of a class alone: an unnamed class's members are no one's. An interface's members are fields and methods, an enum's variants. Any other name a const, let or var binds, a destructuring's included, is a variable at a module's or a namespace's top, and a function's locals are no definitions. A file a wrapper holds whole is read as its module: an unnamed function a statement of the file's top calls, the call alone, in parentheses or after a unary operator, as the function, in parentheses unless the call is, or its call or apply; each function such a call passes (a UMD factory); and the factory of a top-level define (AMD). A bundle's other shapes are no wrapper, and their functions define nothing. What module.exports is follows an-unnamed-default-export-is-a-definition-named-default. An import names what another file defines. Definitions of one path resolve together: overloads with their implementation, a getter and its setter, merged interfaces. A constructor's parameter property, an exports.x or X.prototype.y assignment define nothing."
 alternatives = [
     "Constant for a const at a module's top: rejected because a const binds any runtime value, and let and var would then name the same thing two ways",
     "A kind of their own for getters, setters and constructors: rejected because each is a method the class holds, as a Python property is",
@@ -11,7 +11,7 @@ tags = [
     "anchors",
     "typescript",
 ]
-status = "accepted"
+status = "proposed"
 origin = "typescript and javascript"
 created = "2026-11-25T18:18:55.579282906Z"
 anchors = [
@@ -25,4 +25,14 @@ anchors = [
 ]
 depends_on = [
     "a-query-s-definition-is-placed-under-the-container-whose-span-holds-it",
+]
+
+[accepted_text]
+choice = "A TypeScript or JavaScript declaration, a class's members, a function or class bound to a name and a name a module binds are definitions; an import and a local define nothing"
+reason = "An anchor names what a reader looks for in a TypeScript or JavaScript file. A function, a generator, an overload's or an ambient declaration's signature, and an arrow function, function expression or class expression a const, let or var binds are functions or classes at any depth, as a nested def is in Python; so is a named class expression an assignment binds (module.exports = class A {}, X ??= class A {}). A class, interface, type alias, enum and namespace are definitions; namespace A.B is two segments and declare module \"x\" is named x. A class's methods, accessors and constructor are methods and its properties fields, of a class alone: an unnamed class's members (return class { m() {} }) are no one's. An interface's members are fields and methods, an enum's variants. Any other name a const, let or var binds, each of a destructuring's names included, is a variable at a module's or a namespace's top, whatever its keyword, and a function's locals are no definitions. A file a wrapper holds whole (an IIFE, a UMD or AMD factory) is read as its module, and an unnamed module.exports function or class is default, as export default is. An import names what another file defines. Definitions of one path resolve together: overloads with their implementation, a getter and its setter, merged interfaces. A constructor's parameter property, an exports.x or X.prototype.y assignment define nothing."
+alternatives = [
+    "Constant for a const at a module's top: rejected because a const binds any runtime value, and let and var would then name the same thing two ways",
+    "A kind of their own for getters, setters and constructors: rejected because each is a method the class holds, as a Python property is",
+    "Variables at any depth: rejected because a function's locals are no part of what a module offers",
+    "An unnamed class's members under the function around it: rejected because outer::m names a path the source does not have",
 ]

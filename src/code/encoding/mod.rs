@@ -81,6 +81,7 @@ const fn densest(kind: FileKind) -> Densest {
         FileKind::Rust
         | FileKind::Python
         | FileKind::TypeScript
+        | FileKind::TypeScriptDeclarations
         | FileKind::Tsx
         | FileKind::C
         | FileKind::Cpp
