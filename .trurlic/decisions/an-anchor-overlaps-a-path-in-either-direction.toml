@@ -17,7 +17,7 @@ anchors = [
     { file = "src/store/graph/query.rs", symbol = "ProjectState::decisions_in" },
     { file = "src/store/graph/query.rs", symbol = "anchors_in" },
     { file = "src/store/model/schema.rs", symbol = "Anchor::overlaps" },
-    { file = "src/tools/legacy/context.rs", symbol = "get_decisions_for_file" },
+    { file = "src/tools/reads/context.rs", symbol = "get_decisions_for_file" },
 ]
 depends_on = [
     "an-anchor-path-has-one-spelling",

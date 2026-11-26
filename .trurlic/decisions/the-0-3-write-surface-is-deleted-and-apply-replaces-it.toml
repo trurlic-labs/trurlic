@@ -17,7 +17,7 @@ created = "2026-11-24T01:00:00Z"
 anchors = [
     { file = "src/cli.rs", symbol = "ToolCommand" },
     { file = "src/store/apply/mod.rs", symbol = "Writer::apply" },
-    { file = "src/tools/legacy/mod.rs", symbol = "Read" },
+    { file = "src/tools/reads/mod.rs", symbol = "Read" },
     { file = "src/tools/registry.rs", symbol = "TOOLS" },
     { file = "tests/integration/golden/tools_list.json" },
 ]

@@ -13,7 +13,7 @@ store      → git                         graph files: schema, canonical form, 
                                          quality rules, apply, commit/journal/recovery, lock,
                                          migrations, a shared graph's history
 tools      → store, lint, sources,       the tools, known to no surface: specs (schema = parser),
-             budget, discovery           `apply`, `status`, the pre-spec reads, registry, result cap
+             budget, discovery           `apply`, `status`, the hand-written reads, registry, result cap
 mcp        → tools, store, budget        JSON-RPC stdio server: protocol, client, envelope, `tools/list`
 commands   → store, tools, mcp (serve),  init, apply, status, query, check, fmt, migrate, install, serve
              sources, lint, git,
@@ -53,7 +53,7 @@ purity     → code (tests only)           the check that `code` and `lint` name
 | Tool specs (schema = parser) | `tools/spec/` |
 | Refusal JSON, result fitting | `tools/result.rs`, `tools/truncate.rs` |
 | Tool registry / its MCP listing and result envelope | `tools/registry.rs` / `mcp/listing.rs`, `mcp/envelope.rs` |
-| Pre-spec reads (`get_context`, `get_decisions_for_file`) | `tools/legacy/` |
+| Reads written by hand (`get_context`, `get_decisions_for_file`) | `tools/reads/` |
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/index/work.rs` / `code/index/encoding/` |
 | Rust tokens no span hash holds (rustfmt's commas and braces) | `code/parse/rust/silent.rs` |

@@ -15,7 +15,7 @@ status = "proposed"
 created = "2026-06-15T09:44:59.411657570Z"
 anchors = [
     { file = "src/tools/apply/mod.rs", symbol = "apply" },
-    { file = "src/tools/legacy/mod.rs", symbol = "Read::call" },
+    { file = "src/tools/reads/mod.rs", symbol = "Read::call" },
     { file = "src/tools/spec/tool.rs", symbol = "Access" },
     { file = "src/tools/spec/tool.rs", symbol = "SpecTool::call" },
 ]

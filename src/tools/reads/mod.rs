@@ -1,6 +1,6 @@
-//! The reads that predate specs, until `brief` replaces them: their
-//! schemas written out by hand, and the parsing of their arguments.
-//! [`context`] assembles what they answer.
+//! The reads whose listing and arguments are written by hand, without a
+//! spec: their schemas, and the parsing of their arguments. [`context`]
+//! assembles what they answer.
 
 use std::path::Path;
 
@@ -11,7 +11,7 @@ use crate::discovery::discover;
 use crate::store::ProjectState;
 use crate::tools::result::{ToolError, ToolResult};
 
-/// A read that predates specs.
+/// A read whose listing and arguments are written by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Read {
     /// `get_context`: a component's context and its brief.

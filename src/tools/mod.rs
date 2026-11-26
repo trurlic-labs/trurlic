@@ -2,11 +2,11 @@
 //! surface. A surface, the MCP server or a CLI command, finds a tool here
 //! and calls it with the directory it serves; it gets back the tool's
 //! typed result, or a [`ToolResult`] already fitted to the result budget,
-//! and carries it in its own envelope. Nothing here speaks JSON-RPC, reads
-//! or writes stdio, or builds MCP's result envelope or tool listing.
+//! and carries it in its own envelope. The layer speaks no JSON-RPC and
+//! builds neither MCP's result envelope nor its tool listing.
 
 mod apply;
-mod legacy;
+mod reads;
 mod registry;
 mod result;
 mod spec;

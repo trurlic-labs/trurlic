@@ -1,6 +1,6 @@
 //! The `tools/list` result: every tool of the registry as MCP lists it,
 //! built once on first access and returned by reference. A tool built on
-//! a spec lists the schemas its spec walks; a read that predates specs,
+//! a spec lists the schemas its spec walks; a read written by hand,
 //! the schema it writes out by hand.
 
 use std::sync::LazyLock;
@@ -29,7 +29,7 @@ fn entry(tool: Tool) -> Value {
             "inputSchema": spec.input_schema(),
             "outputSchema": spec.output_schema(),
         }),
-        Tool::Legacy(read) => json!({
+        Tool::Read(read) => json!({
             "name": read.name(),
             "description": read.description(),
             "annotations": annotations(read.title(), true, Destructive::No),
@@ -59,8 +59,8 @@ mod tests {
     }
 
     /// `tools/list` is the registry in its order, each spec-built tool
-    /// with the facts and schemas its spec gives, each read that predates
-    /// specs a read.
+    /// with the facts and schemas its spec gives, each read written by
+    /// hand a read.
     #[test]
     fn tool_list_is_the_registry_as_each_tool_declares_itself() {
         assert_eq!(listed().len(), TOOLS.len());
@@ -77,7 +77,7 @@ mod tests {
                     assert_eq!(entry["inputSchema"], Value::Object(spec.input_schema()));
                     assert_eq!(entry["outputSchema"], Value::Object(spec.output_schema()));
                 }
-                Tool::Legacy(read) => {
+                Tool::Read(read) => {
                     assert_eq!(hints["readOnlyHint"], true, "{entry}");
                     assert_eq!(entry["inputSchema"], read.input_schema());
                 }

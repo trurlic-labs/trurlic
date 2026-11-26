@@ -1,4 +1,4 @@
-//! What the reads that predate specs assemble: a component's context
+//! What the reads written by hand assemble: a component's context
 //! and the decisions anchored in a file.
 
 use std::collections::BTreeSet;

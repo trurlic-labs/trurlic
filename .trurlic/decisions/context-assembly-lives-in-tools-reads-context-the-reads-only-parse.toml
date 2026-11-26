@@ -1,8 +1,6 @@
 component = "tools"
-choice = "Context assembly of the reads that predate specs lives in tools::legacy::context; tools::legacy only parses arguments and dispatches"
-reason = """
-get_context assembles a component's context: its decisions, the project-wide rules, the decisions of connected components and of what its decisions depend on, decision health (how many decisions, how many proposed, how many anchor only files that are gone) and an authoritative brief that marks each proposed decision; get_decisions_for_file is built beside it. Keeping the assembly in tools::legacy::context leaves tools::legacy a thin layer of hand-written schemas, argument parsing and dispatch, so a read's schema and its result builder change independently and the builders are tested against a ProjectState without a surface. The module is named legacy because brief replaces both reads, and the two go with it. The graph walks they use (decisions_of, related_decisions, dependencies, decisions_in) live in store::graph::query, so the builders hold no traversal of their own.
-"""
+choice = "Context assembly of the reads written by hand lives in tools::reads::context; tools::reads only holds their schemas, parses arguments and dispatches"
+reason = "get_context assembles a component's context: its decisions, the project-wide rules, the decisions of connected components and of what its decisions depend on, decision health (how many decisions, how many proposed, how many anchor only files that are gone) and an authoritative brief that marks each proposed decision; get_decisions_for_file is built beside it. Keeping the assembly in tools::reads::context leaves tools::reads a thin layer of hand-written schemas, argument parsing and dispatch, so a read's schema and its result builder change independently and the builders are tested against a ProjectState without a surface. The graph walks they use (decisions_of, related_decisions, dependencies, decisions_in) live in store::query, so the builders hold no traversal of their own."
 alternatives = [
     "Inline context assembly in the tool dispatch functions: rejected because graph walks, brief generation and health reporting are enough to warrant their own module",
     "Move context assembly into store: rejected because the brief is agent-facing prose and JSON, and store stays free of MCP concerns",
@@ -14,10 +12,10 @@ status = "proposed"
 created = "2026-11-23T20:06:33.224278718Z"
 anchors = [
     { file = "src/store/graph/query.rs" },
-    { file = "src/tools/legacy/context.rs", symbol = "get_context" },
-    { file = "src/tools/legacy/context.rs", symbol = "get_decisions_for_file" },
-    { file = "src/tools/legacy/context.rs", symbol = "health" },
-    { file = "src/tools/legacy/mod.rs", symbol = "Read::answer" },
+    { file = "src/tools/reads/context.rs", symbol = "get_context" },
+    { file = "src/tools/reads/context.rs", symbol = "get_decisions_for_file" },
+    { file = "src/tools/reads/context.rs", symbol = "health" },
+    { file = "src/tools/reads/mod.rs", symbol = "Read::answer" },
 ]
 
 [accepted_text]

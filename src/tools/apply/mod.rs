@@ -138,8 +138,8 @@ fn apply(mut writer: Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
     let batch = Batch {
         ops,
         origin,
-        // No request names the agent's session: MCP over stdio carries
-        // none, and `clientInfo` names the client program.
+        // No call names the agent's session: the arguments hold none, and
+        // what a surface holds of its caller names at most the program.
         session: None,
     };
     let applied = writer.apply(batch, &bar)?;
