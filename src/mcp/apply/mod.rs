@@ -28,7 +28,7 @@ use crate::store::{
     Remove, RemoveComponent, Rename, Repair, RepairAnchors, Revise, ReviseComponent, Store, Writer,
 };
 
-use repairs::Unrepaired;
+use repairs::{Seen, Unrepaired};
 
 use super::spec::kinds::{List, Object, Text, Union, Variant};
 use super::spec::tool::{Access, Destructive, Outcome, ToolSpec};
@@ -72,13 +72,14 @@ the result.\n\
 The result names each op's node and what it changed, never the texts.";
 
 /// The arguments of `apply`: what a batch file holds too, each op with no
-/// `repairs` given the map the tree shows before the write, the stale
-/// anchors that read left without a repair, and the bar compiled before
-/// the write.
+/// `repairs` given the map the tree shows before the write, the code each
+/// of those repairs named then, the stale anchors that read left without a
+/// repair, and the bar compiled before the write.
 #[derive(Debug)]
 pub(super) struct ApplyArgs {
     ops: Vec<Op>,
     origin: Option<String>,
+    seen: Seen,
     unrepaired: Unrepaired,
     bar: PreparedBar,
 }
@@ -102,6 +103,7 @@ impl Args for ApplyArgs {
                     max_bytes: MAX_TRAILER_BYTES,
                 },
             ),
+            seen: Seen::new(),
             unrepaired: Unrepaired::new(),
             bar: PreparedBar::default(),
         }
@@ -113,7 +115,7 @@ impl Args for ApplyArgs {
 /// the tree walk and git run before the write lock is taken.
 fn prepare(store: &Store, mut arguments: ApplyArgs) -> Outcome<ApplyArgs> {
     arguments.bar = store.prepare_bar()?;
-    arguments.unrepaired = repairs::fill(store, &mut arguments.ops)?;
+    (arguments.seen, arguments.unrepaired) = repairs::fill(store, &mut arguments.ops)?;
     failpoint::hit(Site::RepairsRead);
     Ok(arguments)
 }
@@ -122,14 +124,15 @@ fn apply(mut writer: Writer<'_>, arguments: ApplyArgs) -> Outcome<Answer> {
     let ApplyArgs {
         mut ops,
         origin,
+        seen,
         mut unrepaired,
         bar,
     } = arguments;
     // The tree may have changed since the repairs were read: each one is
-    // held to it again under the lock.
+    // held again under the lock to the code it named then.
     for op in &mut ops {
         if let Op::RepairAnchors(RepairAnchors::Every(map)) = op {
-            unrepaired.extend(sources::still_holding(writer.store(), map));
+            unrepaired.extend(sources::still_holding(writer.store(), map, &seen));
         }
     }
     let batch = Batch {

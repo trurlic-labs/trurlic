@@ -13,6 +13,7 @@ use super::index::{Definition, FileIndex, FileKind, IndexFault};
 use super::kinds::{DefinitionKind, Role};
 use super::roles::{target_of, test_files};
 use super::scope::Scopes;
+use super::span::SpanHash;
 use super::symbol::{Segment, Symbol, SymbolFault};
 
 /// Why the shell has no bytes of a file it found, or no index of them.
@@ -130,6 +131,15 @@ impl fmt::Display for Resolution {
             Self::Malformed(fault) => write!(f, "its symbol {fault}"),
         }
     }
+}
+
+/// The code an anchor names, which a repair is held to between its read and
+/// its write: the set hash of the definitions its symbol names and their
+/// kinds; for a file anchor, of every definition its file holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Code {
+    hash: SpanHash,
+    kinds: BTreeSet<DefinitionKind>,
 }
 
 impl Resolution {
@@ -424,6 +434,7 @@ impl CodeFacts {
             if file == anchor.file() {
                 at_home = true;
             } else if self.walked.contains(file)
+                && FileKind::of(file) == Some(FileKind::Rust)
                 && place.is_some()
                 && target_of(file, crates) == place
                 && self.writes(file, symbol)
@@ -482,6 +493,40 @@ impl CodeFacts {
             );
             code && symbol.is_path_of(definition.kind, scopes.path_from_end(definition.scope))
         })
+    }
+
+    /// The kinds of the definitions whose whole path `anchor`'s symbol is.
+    pub(crate) fn kinds(&self, anchor: &Anchor) -> BTreeSet<DefinitionKind> {
+        let whole = self.whole(anchor).into_iter();
+        whole.map(|(kind, _)| kind).collect()
+    }
+
+    /// The code `anchor` names here: `None` when it resolves to no
+    /// definitions, or to a file with no index.
+    pub(crate) fn code(&self, anchor: &Anchor) -> Option<Code> {
+        match self.resolve(anchor) {
+            Resolution::Resolved(Target::Symbol(definitions)) => Some(Code {
+                hash: definitions.hash(),
+                kinds: self.kinds(anchor),
+            }),
+            Resolution::Resolved(Target::File) => {
+                let (_, index) = self.entries.get(anchor.file()).and_then(indexed)?;
+                let mut hashes: Vec<SpanHash> = index.definitions.iter().map(|d| d.hash).collect();
+                hashes.sort_unstable();
+                Some(Code {
+                    hash: SpanHash::of_members(&hashes),
+                    kinds: index.definitions.iter().map(|d| d.kind).collect(),
+                })
+            }
+            Resolution::Resolved(Target::Directory)
+            | Resolution::FileMissing
+            | Resolution::SymbolMissing
+            | Resolution::Ambiguous(_)
+            | Resolution::SymbolOnDirectory
+            | Resolution::NoResolver
+            | Resolution::Unindexable(_)
+            | Resolution::Malformed(_) => None,
+        }
     }
 
     /// What `anchor` names in this tree.
@@ -549,7 +594,7 @@ pub(crate) struct Namesakes {
     /// Whether the anchor's own file defines the symbol's last segment
     /// under any path: the code may be there under another spelling.
     pub(crate) at_home: bool,
-    /// The other walked files of the anchor's crate target, by place
+    /// The other walked Rust files of the anchor's crate target, by place
     /// ([`target_of`]), that write an item whose whole path the symbol is
     /// ([`CodeFacts::writes`]).
     pub(crate) elsewhere: Vec<String>,

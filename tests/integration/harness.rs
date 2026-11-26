@@ -242,6 +242,28 @@ pub fn isolated_git(dir: &Path) -> Command {
     command
 }
 
+/// A `git` in `dir`/bin that runs `script`, the body of a shell script in
+/// which `$REAL` is the git `PATH` finds; and the `PATH` that finds it
+/// first.
+#[cfg(unix)]
+pub fn fake_git(dir: &Path, script: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = std::env::var_os("PATH").unwrap();
+    let real = std::env::split_paths(&path)
+        .map(|dir| dir.join("git"))
+        .find(|git| git.is_file())
+        .unwrap();
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let git = bin.join("git");
+    let text = format!("#!/bin/sh\nREAL='{}'\n{script}\n", real.display());
+    std::fs::write(&git, text).unwrap();
+    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let dirs = std::iter::once(bin).chain(std::env::split_paths(&path));
+    std::env::join_paths(dirs).unwrap().into_string().unwrap()
+}
+
 /// `git <args>` in the graph directory `graph`, which holds a shared
 /// graph's repository: [`git`] there, with stdout as text.
 pub fn graph_git(graph: &Path, args: &[&str]) -> String {

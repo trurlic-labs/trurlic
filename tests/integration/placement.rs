@@ -395,10 +395,11 @@ fn a_worktree_that_edited_the_file_elsewhere_hides_no_deletion() {
 }
 
 /// A submodule's main worktree, which git lists by its git directory, is
-/// the calling tree's own when `check` runs there, so its linked worktree
-/// is read: a symbol written there is pending.
+/// the one that directory's configuration names: from it, its linked
+/// worktree is read, so a symbol written there is pending; and from the
+/// linked worktree, it is read, so a symbol written in it is pending.
 #[test]
-fn a_linked_worktree_of_a_submodule_is_read_from_its_main_worktree() {
+fn a_submodule_s_main_and_linked_worktrees_read_each_other() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     anchored_repository(&root.join("lib"));
@@ -419,7 +420,8 @@ fn a_linked_worktree_of_a_submodule_is_read_from_its_main_worktree() {
     );
     git(&sup, &["commit", "--quiet", "-m", "submodule"]);
     let lib = sup.join("lib");
-    let anchor = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"newfn\" },\n]\n";
+    let anchor = "anchors = [\n    { file = \"src/lib.rs\", symbol = \"newfn\" },\n    \
+                  { file = \"src/lib.rs\", symbol = \"inmain\" },\n]\n";
     fs::write(
         lib.join(".trurlic/decisions/later.toml"),
         decision("project", "A later rule", anchor),
@@ -438,18 +440,33 @@ fn a_linked_worktree_of_a_submodule_is_read_from_its_main_worktree() {
         "pub fn foo() {}\npub fn newfn() {}\n",
     )
     .unwrap();
+    fs::write(
+        lib.join("src/lib.rs"),
+        "pub fn foo() {}\npub fn inmain() {}\n",
+    )
+    .unwrap();
 
-    let (code, _, stderr) = checked(&lib);
+    let (main_code, _, from_main) = checked(&lib);
+    let (linked_code, _, from_linked) = checked(&linked);
 
-    assert_eq!(code, Some(0), "{stderr}");
+    let pending = |symbol: &str, at: &Path| {
+        format!(
+            "`src/lib.rs::{symbol}` of `later` is pending: its file defines nothing its symbol \
+             names here; it resolves in the worktree at {}",
+            at.display()
+        )
+    };
+    assert_eq!(main_code, Some(0), "{from_main}");
     assert!(
-        stderr.contains(&format!(
-            "`src/lib.rs::newfn` of `later` is pending: its file defines nothing its symbol names \
-             here; it resolves in the worktree at {} on branch `s2`",
-            linked.display()
-        )),
-        "{stderr}"
+        from_main.contains(&pending("newfn", &linked)),
+        "{from_main}"
     );
+    assert_eq!(linked_code, Some(0), "{from_linked}");
+    assert!(
+        from_linked.contains(&pending("inmain", &lib)),
+        "{from_linked}"
+    );
+    assert!(!from_linked.contains("warning"), "{from_linked}");
 }
 
 /// Code another worktree holds and has not committed counts by the one

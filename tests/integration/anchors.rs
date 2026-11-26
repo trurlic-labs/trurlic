@@ -400,6 +400,37 @@ fn a_worktree_git_cannot_say_enough_of_is_a_check_warning() {
     assert!(stderr.contains(&unread), "{stderr}");
 }
 
+/// A git that prints without end is killed past the bytes a git command's
+/// output is read to, and the call fails naming them: `check`, which lists
+/// the worktrees, fails with that error rather than hang or fill memory.
+#[cfg(unix)]
+#[test]
+fn a_git_that_prints_without_end_is_cut_off_at_the_stated_bytes() {
+    let project = project();
+    anchored(&project, "d", &["src/gone.rs"], "accepted");
+    git(project.path(), &["add", "--all"]);
+    git(project.path(), &["commit", "--quiet", "-m", "anchored"]);
+    let tools = tempfile::TempDir::new().unwrap();
+    let script = "case \" $* \" in *\" worktree list \"*) exec cat /dev/zero ;; esac\n\
+                  exec \"$REAL\" \"$@\"";
+    let path = crate::harness::fake_git(tools.path(), script);
+
+    let check = project
+        .command()
+        .arg("check")
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8(check.stderr).unwrap();
+    assert_eq!(check.status.code(), Some(1), "{stderr}");
+    let cut = format!(
+        "`git worktree list --porcelain -z` printed more than {} bytes",
+        256 * 1024 * 1024
+    );
+    assert!(stderr.contains(&cut), "{stderr}");
+}
+
 /// `origin` narrows which decisions are judged, never the verdict on an
 /// anchor: a file only another origin's decision anchors, which the walk
 /// passes over, is not counted for weak with or without it.

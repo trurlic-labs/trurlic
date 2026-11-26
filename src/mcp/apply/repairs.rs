@@ -20,7 +20,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::lint::anchors::{Checked, Kind};
+use crate::code::Code;
+use crate::lint::anchors::{Checked, Kind, Repair};
 use crate::mcp::result::ToolError;
 use crate::mcp::spec::output::{Count, Items, Nested, Str};
 use crate::mcp::spec::{Output, Shown as Fields};
@@ -33,6 +34,10 @@ use super::result::Answer;
 /// The stale anchors the tree shows no repair for, or whose repair a
 /// pattern refuses, each with why.
 pub(super) type Unrepaired = BTreeMap<Anchor, String>;
+
+/// The code each repair the tree shows named when it was read, by its
+/// stale anchor: what the write holds the repair to again under its lock.
+pub(super) type Seen = BTreeMap<Anchor, Code>;
 
 /// A repair the batch wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,17 +67,18 @@ pub(crate) struct Left {
 }
 
 /// Fill each op of `ops` with no `repairs` with the repairs the tree
-/// shows, read as `check` reads them; give the stale anchors it shows no
-/// repair for, with why. Nothing is read when no op is such.
-pub(super) fn fill(store: &Store, ops: &mut [Op]) -> Result<Unrepaired, ToolError> {
+/// shows, read as `check` reads them; give the code each named, and the
+/// stale anchors it shows no repair for, with why. Nothing is read when no
+/// op is such.
+pub(super) fn fill(store: &Store, ops: &mut [Op]) -> Result<(Seen, Unrepaired), ToolError> {
     // Every other op, a listed repair's included, is the caller's.
     let every = |op: &Op| matches!(op, Op::RepairAnchors(RepairAnchors::Every(_)));
     if !ops.iter().any(every) {
-        return Ok(Unrepaired::new());
+        return Ok((Seen::new(), Unrepaired::new()));
     }
     let state = store.load_state()?;
 
-    let (repairs, unrepaired) = shown(store, &state);
+    let (repairs, seen, unrepaired) = shown(store, &state);
 
     for op in ops {
         if let Op::RepairAnchors(RepairAnchors::Every(map)) = op {
@@ -80,13 +86,13 @@ pub(super) fn fill(store: &Store, ops: &mut [Op]) -> Result<Unrepaired, ToolErro
             map.clone_from(&repairs);
         }
     }
-    Ok(unrepaired)
+    Ok((seen, unrepaired))
 }
 
-/// The repair of each stale anchor `check` shows in `state`, and the cause
-/// of each stale anchor it shows none for.
-fn shown(store: &Store, state: &ProjectState) -> (BTreeMap<Anchor, Anchor>, Unrepaired) {
-    let (mut repairs, mut unrepaired) = (BTreeMap::new(), Unrepaired::new());
+/// The repair of each stale anchor `check` shows in `state` and the code it
+/// names, and the cause of each stale anchor it shows none for.
+fn shown(store: &Store, state: &ProjectState) -> (BTreeMap<Anchor, Anchor>, Seen, Unrepaired) {
+    let (mut repairs, mut seen, mut unrepaired) = (BTreeMap::new(), Seen::new(), Unrepaired::new());
     let found = sources::checked_findings(store, &state.decisions);
     for finding in found.findings {
         let Kind::Missing(cause, Checked::Stale { repair, .. }) = finding.kind else {
@@ -95,15 +101,17 @@ fn shown(store: &Store, state: &ProjectState) -> (BTreeMap<Anchor, Anchor>, Unre
         // clone: the map outlives the graph the finding borrows.
         let anchor = finding.anchor.clone();
         match repair {
-            Some(repair) => {
-                repairs.insert(anchor, repair);
+            Some(Repair { to, code }) => {
+                // clone: the code is held by the anchor the map keys too.
+                seen.insert(anchor.clone(), code);
+                repairs.insert(anchor, to);
             }
             None => {
                 unrepaired.insert(anchor, cause.to_string());
             }
         }
     }
-    (repairs, unrepaired)
+    (repairs, seen, unrepaired)
 }
 
 /// The stale anchors left, stated against `state`, the graph the write left

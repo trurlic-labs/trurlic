@@ -12,7 +12,7 @@ use std::fs;
 
 use serde_json::{Value, json};
 
-use crate::harness::{McpClient, Project, decision, git};
+use crate::harness::{McpClient, Project, decision, fake_git, git};
 
 const MAX_TOOL_RESULT_BYTES: usize = 24 * 1024;
 
@@ -395,9 +395,34 @@ fn later(
     after: &[(&str, Option<&str>)],
     later: &[(&str, Option<&str>)],
 ) -> Project {
-    let project = changed(anchors, before, after);
-    commit(&project, later);
+    story(anchors, before, &[after, later])
+}
+
+/// [`changed`] with the first of `commits`, then each of the others
+/// committed in turn.
+fn story(
+    anchors: &[&str],
+    before: &[(&str, &str)],
+    commits: &[&[(&str, Option<&str>)]],
+) -> Project {
+    let project = changed(anchors, before, commits.first().copied().unwrap_or(&[]));
+    for changes in commits.iter().skip(1) {
+        commit(&project, changes);
+    }
     project
+}
+
+/// `check` shows no repair of `project`'s stale anchors, and an op with no
+/// `repairs` writes none.
+fn never_repaired(project: &Project) {
+    let stderr = project.run_refused(&["check"]);
+    let output = project.apply(&every_repair(), &["--json"]);
+
+    assert!(stderr.contains("is stale"), "{stderr}");
+    assert!(!stderr.contains("repair:"), "{stderr}");
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(result.get("repaired").is_none(), "{result}");
+    assert_eq!(result["written"], 0, "{result}");
 }
 
 /// A wrong repair is worse than none: a namesake that stood beside the
@@ -429,18 +454,6 @@ fn a_namesake_or_a_rename_that_carried_no_code_is_never_written() {
                     "src/net.rs",
                     Some("pub fn retry_write(sock: u32, attempts: u8) -> bool { attempts > 0 }\n"),
                 ),
-            ],
-        ),
-        later(
-            &["src/a.rs", "src/a.rs::kept"],
-            &[("src/a.rs", OLD)],
-            &[("src/a.rs", None), ("src/b.rs", Some(OLD))],
-            &[
-                (
-                    "src/b.rs",
-                    Some("pub fn kept() -> String { String::new() }\n"),
-                ),
-                ("src/c.rs", Some(OLD)),
             ],
         ),
         changed(
@@ -586,77 +599,87 @@ mod scale;
         ),
     ];
     for project in cases {
-        let stderr = project.run_refused(&["check"]);
-        let output = project.apply(&every_repair(), &["--json"]);
-
-        assert!(stderr.contains("is stale"), "{stderr}");
-        assert!(!stderr.contains("repair:"), "{stderr}");
-        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert!(result.get("repaired").is_none(), "{result}");
-        assert_eq!(result["written"], 0, "{result}");
+        never_repaired(&project);
     }
 }
 
-/// A file renamed unchanged, whose function a later commit split into a
-/// module of its own, leaving a `mod` declaration of its name: the anchor
-/// is repaired where the function went, never onto the declaration.
+/// Code that left the file it moved into is no move, whatever takes its
+/// name there afterwards: a function moved to another file, dropped from
+/// it, and then a type of its name or an unrelated function of its name
+/// written there, judged by every change of that file since the move; and
+/// a file moved unchanged, edited, deleted and written again with an
+/// unrelated function of the name, its file and its function judged by
+/// every later change of its path.
 #[test]
-fn a_function_split_out_after_an_exact_rename_is_repaired_where_it_went() {
-    let filler: String = (0..8).map(|n| format!("pub fn f{n}() {{}}\n")).collect();
-    let text = format!("pub fn join() {{}}\n{filler}");
-    let project = later(
-        &["src/a/corridor.rs::join"],
-        &[("src/a/corridor.rs", &text)],
-        &[
-            ("src/a/corridor.rs", None),
-            ("src/b/corridor.rs", Some(&text)),
-        ],
-        &[
-            ("src/b/corridor.rs", Some(&format!("mod join;\n{filler}"))),
-            ("src/b/corridor/join.rs", Some("pub fn join() {}\n")),
-        ],
-    );
-
-    let stderr = project.run_refused(&["check"]);
-
-    assert!(
-        stderr.contains("; repair: `src/b/corridor/join.rs::join`"),
-        "{stderr}"
-    );
+fn code_that_left_the_file_it_moved_into_is_never_repaired_there() {
+    let foo = "pub fn foo() -> u32 {\n    1 + 2 + 3\n}\n";
+    let filler = "pub fn a() {}\npub fn b() {}\npub fn c() {}\n";
+    let file = format!("{foo}{filler}");
+    let keep = "pub fn keep() {}\n";
+    let unrelated = "pub fn foo() -> String {\n    String::from(\"unrelated\")\n}\n";
+    let moved = format!("{foo}{keep}");
+    let typed = format!("{keep}pub struct foo {{\n    pub unrelated: String,\n}}\n");
+    let other = format!("{keep}{unrelated}");
+    let edited = format!("{file}pub fn extra() {{}}\n");
+    let cases = [
+        story(
+            &["src/a.rs::foo"],
+            &[("src/a.rs", &file)],
+            &[
+                &[("src/a.rs", Some(filler)), ("src/b.rs", Some(&moved))],
+                &[("src/b.rs", Some(keep))],
+                &[("src/b.rs", Some(&typed))],
+            ],
+        ),
+        story(
+            &["src/a.rs::foo"],
+            &[("src/a.rs", &file)],
+            &[
+                &[("src/a.rs", Some(filler)), ("src/b.rs", Some(&moved))],
+                &[("src/b.rs", Some(keep))],
+                &[("src/b.rs", Some(&other))],
+            ],
+        ),
+        story(
+            &["src/a.rs::foo", "src/a.rs"],
+            &[("src/a.rs", &file)],
+            &[
+                &[("src/a.rs", None), ("src/b.rs", Some(&file))],
+                &[("src/b.rs", Some(&edited))],
+                &[("src/b.rs", None)],
+                &[("src/b.rs", Some(unrelated))],
+            ],
+        ),
+    ];
+    for project in cases {
+        never_repaired(&project);
+    }
 }
 
-/// git pairs two binaries that share their boilerplate and an identical
-/// `main`: `main` follows the rename, its code unchanged, but the file
-/// anchor does not, since the import function, which resolved in the old
-/// file, is not in the new one.
+/// A file is followed by its bytes, not its path: one moved unchanged and
+/// then moved on while a new file takes its path has its file anchor and
+/// its function repaired where its bytes went.
 #[test]
-fn a_file_whose_function_a_rename_left_behind_does_not_follow() {
-    let boilerplate: String = (0..12)
-        .map(|n| format!("use std::io::Line{n};\n"))
-        .collect();
-    let import = format!("{boilerplate}fn main() {{ run() }}\nfn import_csv() {{}}\n");
-    let report = format!("{boilerplate}fn main() {{ run() }}\nfn report_csv() {{}}\n");
-    let anchors = [
-        "src/bin/import.rs",
-        "src/bin/import.rs::main",
-        "src/bin/import.rs::import_csv",
-    ];
-    let project = changed(
-        &anchors,
-        &[("src/bin/import.rs", &import)],
+fn a_file_moved_on_while_another_takes_its_path_is_repaired_where_it_went() {
+    let project = later(
+        &["src/a.rs", "src/a.rs::kept"],
+        &[("src/a.rs", OLD)],
+        &[("src/a.rs", None), ("src/b.rs", Some(OLD))],
         &[
-            ("src/bin/import.rs", None),
-            ("src/bin/report.rs", Some(&report)),
+            (
+                "src/b.rs",
+                Some("pub fn kept() -> String { String::new() }\n"),
+            ),
+            ("src/c.rs", Some(OLD)),
         ],
     );
 
     let stderr = project.run_refused(&["check"]);
 
-    let gone = "is stale: nothing is at its path";
+    let gone = "of `d` is stale: nothing is at its path; repair:";
     for line in [
-        format!("`src/bin/import.rs` of `d` {gone}\n"),
-        format!("`src/bin/import.rs::import_csv` of `d` {gone}\n"),
-        format!("`src/bin/import.rs::main` of `d` {gone}; repair: `src/bin/report.rs::main`\n"),
+        format!("`src/a.rs` {gone} `src/c.rs`\n"),
+        format!("`src/a.rs::kept` {gone} `src/c.rs::kept`\n"),
     ] {
         assert!(stderr.contains(&line), "{line}\n{stderr}");
     }
@@ -713,10 +736,11 @@ fn every_repair_leaves_a_repair_a_quality_pattern_refuses() {
 
 /// A move is repaired from the commit the anchor's file last lost the
 /// code in, however often the file changed since, and into the file that
-/// imported the item and drops its `use`; a symbol a rename carried
-/// unchanged follows it, though the new file edited it since.
+/// imported the item and drops its `use`; and kept, though the file it
+/// moved into, which git pairs with the anchor's by similarity, edited it
+/// since.
 #[test]
-fn moves_are_judged_where_the_code_left_and_renames_where_they_happened() {
+fn a_move_is_judged_where_the_code_left_and_kept_however_edited_since() {
     let user = "pub fn t_other() -> u32 { foo() }\n";
     let project = later(
         &["src/a.rs::foo", "src/expression.rs::float"],
@@ -766,23 +790,13 @@ fn moves_are_judged_where_the_code_left_and_renames_where_they_happened() {
     }
 }
 
-/// The repairs an op with no `repairs` writes are held to the tree again
-/// under the write lock: one whose code came back after the read is left,
-/// and the anchor stays as it is.
+/// The result of an op with no `repairs` run in `project`, `meanwhile`
+/// run after it read the repairs and before it takes the write lock.
 #[cfg(feature = "failpoints")]
-#[test]
-fn a_repair_whose_code_came_back_after_the_read_is_not_written() {
+fn every_repair_paused(project: &Project, meanwhile: impl FnOnce()) -> Value {
     use crate::harness::Pause;
 
-    let project = changed(
-        &["src/a.rs::foo"],
-        &[("src/a.rs", "pub fn foo() -> u32 { 1 }\n")],
-        &[
-            ("src/a.rs", Some("")),
-            ("src/t.rs", Some("pub fn foo() -> u32 { 1 }\n")),
-        ],
-    );
-    let pause = Pause::arm(&project, "apply.repairs_read:1");
+    let pause = Pause::arm(project, "apply.repairs_read:1");
     let file = project.path().join("batch.json");
     std::fs::write(&file, every_repair().to_string()).unwrap();
     let running = project
@@ -795,15 +809,46 @@ fn a_repair_whose_code_came_back_after_the_read_is_not_written() {
         .spawn()
         .unwrap();
     pause.wait();
-    project.source("src/a.rs", "pub fn foo() -> u32 { 1 }\n");
+    meanwhile();
     pause.resume();
-
     let output = running.wait_with_output().unwrap();
+    serde_json::from_slice(&output.stdout).unwrap()
+}
 
-    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(result.get("repaired").is_none(), "{result}");
-    assert_eq!(result["left"][0]["anchor"], "src/a.rs::foo", "{result}");
-    project.run_ok(&["check"]);
+/// The repairs an op with no `repairs` writes are held under the write
+/// lock to the code they named when read: one whose code came back after
+/// the read is left, and one whose candidate another definition of its
+/// name replaced, a type for the function, is left too, the anchor staying
+/// as it is.
+#[cfg(feature = "failpoints")]
+#[test]
+fn a_repair_whose_code_changed_after_the_read_is_not_written() {
+    let foo = "pub fn foo() -> u32 { 1 }\n";
+    let moved = || {
+        changed(
+            &["src/a.rs::foo"],
+            &[("src/a.rs", foo)],
+            &[("src/a.rs", Some("")), ("src/t.rs", Some(foo))],
+        )
+    };
+    let (back, replaced) = (moved(), moved());
+    assert!(
+        back.run_refused(&["check"])
+            .contains("repair: `src/t.rs::foo`")
+    );
+
+    let came_back = every_repair_paused(&back, || back.source("src/a.rs", foo));
+    let typed = "pub struct foo {\n    pub field: String,\n}\n";
+    let other = every_repair_paused(&replaced, || replaced.source("src/t.rs", typed));
+
+    for result in [&came_back, &other] {
+        assert!(result.get("repaired").is_none(), "{result}");
+        assert_eq!(result["left"][0]["anchor"], "src/a.rs::foo", "{result}");
+    }
+    let cause = other["left"][0]["cause"].as_str().unwrap();
+    assert!(cause.contains("since the repairs were read"), "{cause}");
+    assert!(replaced.read("decisions/d.toml").contains("src/a.rs"));
+    back.run_ok(&["check"]);
 }
 
 /// What an op with no `repairs` leaves is stated against the graph
@@ -839,4 +884,78 @@ fn what_every_repair_leaves_is_stated_against_the_written_graph() {
         result["left"],
         json!([{ "decision": "d2", "anchor": "src/gone.rs", "cause": "nothing is at its path" }])
     );
+}
+
+/// The git processes `check` runs for repairs are bounded whatever the
+/// history: with no stale anchor it runs none of them; with thirty
+/// functions moved out of one file in thirty commits and two files renamed
+/// unchanged it runs one walk, one diff of what is not committed and two
+/// reads of blobs, of two processes each. Each move is found from the
+/// sixteen newest changes of the anchor's file, so the sixteen newest
+/// moves are repaired, and both renames.
+#[cfg(unix)]
+#[test]
+fn the_history_is_read_by_a_bounded_number_of_git_processes() {
+    const MOVES: usize = 30;
+    let project = package();
+    let functions: Vec<String> = (0..MOVES)
+        .map(|n| format!("pub fn moved_{n:02}() -> u32 {{ {n} }}\n"))
+        .collect();
+    project.source("src/lib.rs", &functions.concat());
+    project.source("src/old_a.rs", OLD);
+    project.source("src/old_b.rs", &OLD.replace("kept", "held"));
+    let mut anchors: Vec<String> = (0..MOVES)
+        .map(|n| format!("{{ file = \"src/lib.rs\", symbol = \"moved_{n:02}\" }}"))
+        .collect();
+    anchors.push("{ file = \"src/old_a.rs\" }".to_owned());
+    anchors.push("{ file = \"src/old_b.rs\", symbol = \"held\" }".to_owned());
+    let extra = format!("anchors = [{}]\n", anchors.join(", "));
+    project.write("decisions/d.toml", &decision("project", "Rule d", &extra));
+    project.run_ok(&["fmt"]);
+    git(project.path(), &["add", "--all"]);
+    git(project.path(), &["commit", "--quiet", "-m", "before"]);
+    let tools = tempfile::TempDir::new().unwrap();
+    let calls = tools.path().join("calls");
+    let script = format!(
+        "echo \"$*\" >> '{}'\nexec \"$REAL\" \"$@\"",
+        calls.display()
+    );
+    let path = fake_git(tools.path(), &script);
+    let history = || {
+        let calls = fs::read_to_string(&calls).unwrap_or_default();
+        let _ = fs::remove_file(&calls);
+        ["log", "diff", "cat-file"].map(|command| {
+            let named = format!(" {command} ");
+            calls.lines().filter(|call| call.contains(&named)).count()
+        })
+    };
+    let check = || {
+        let mut command = project.command();
+        command.arg("check").env("PATH", &path).output().unwrap()
+    };
+
+    let clean = check();
+    let none = history();
+    for (n, function) in functions.iter().enumerate() {
+        let kept: String = functions.iter().skip(n + 1).cloned().collect();
+        project.source("src/lib.rs", &kept);
+        project.source(&format!("src/f{n:02}.rs"), function);
+        git(project.path(), &["add", "--all"]);
+        git(project.path(), &["commit", "--quiet", "-m", "move"]);
+    }
+    git(project.path(), &["mv", "src/old_a.rs", "src/new_a.rs"]);
+    git(project.path(), &["mv", "src/old_b.rs", "src/new_b.rs"]);
+    git(project.path(), &["commit", "--quiet", "-m", "renames"]);
+    let stale = check();
+    let read = history();
+
+    assert!(clean.status.success(), "{clean:?}");
+    assert_eq!(none, [0, 0, 0]);
+    assert_eq!(stale.status.code(), Some(1));
+    assert_eq!(read, [1, 1, 4]);
+    let stderr = String::from_utf8(stale.stderr).unwrap();
+    assert_eq!(stderr.matches("; repair: ").count(), 18, "{stderr}");
+    for repair in ["src/f29.rs::moved_29", "src/new_a.rs", "src/new_b.rs::held"] {
+        assert!(stderr.contains(&format!("repair: `{repair}`")), "{stderr}");
+    }
 }

@@ -11,10 +11,13 @@
 //!
 //! The questions about the project's repository: which files the index
 //! tracks, which an ignore rule matches, the top of a directory's work
-//! tree, the common dir, and the worktree list. "No work tree" is an
+//! tree and of the one a git directory serves, the common dir, the
+//! worktree list, and its history ([`renames`]). "No work tree" is an
 //! answer, `None`, never a parsed message; a missing binary is
-//! [`Error::GitMissing`]. None of them runs inside a graph directory: the
-//! graph's own repository is [`graph`]'s alone.
+//! [`Error::GitMissing`]. Every child's stdout is read to a stated bound
+//! ([`MAX_OUTPUT_BYTES`]), and none reads the caller's stdin. None of them
+//! runs inside a graph directory: the graph's own repository is
+//! [`graph`]'s alone.
 
 pub(crate) mod graph;
 pub(crate) mod renames;
@@ -22,11 +25,25 @@ pub(crate) mod renames;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Output, Stdio};
 
 use crate::{Error, Result};
+
+/// The most bytes of a git command's stdout that are read: past them the
+/// command is killed and its call fails with [`Error::GitOutputTooLarge`].
+/// The largest output read is the code root's history walk, of
+/// at most [`renames::MAX_WALKED_COMMITS`] commits at about 140 bytes for
+/// each file a commit changes, or one batch of blobs, which
+/// [`renames::blobs`] sizes within this bound; a git that prints without
+/// end is cut off here rather than filling memory.
+pub(crate) const MAX_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The bytes of a git command's stderr kept for its error message; the
+/// rest is read and dropped, so a command that warns at length neither
+/// fills memory nor blocks on a full pipe.
+const MAX_STDERR_BYTES: u64 = 64 * 1024;
 
 /// The variables cleared for every invocation, each one a way for an
 /// enclosing process to redirect git. The repository, its parts and its
@@ -255,6 +272,23 @@ pub(crate) fn git_dir(dir: &Path) -> Result<PathBuf> {
     rev_parse_path(dir, "--git-dir")
 }
 
+/// The top of the work tree the git directory `git_dir` serves, as its
+/// `core.worktree` states it, which is how git lists a submodule's main
+/// worktree by its git directory: `git --git-dir=. rev-parse
+/// --show-toplevel` run in that directory. `None` when the configuration
+/// states none, so git takes the directory itself for the top.
+pub(crate) fn work_tree_of(git_dir: &Path) -> Result<Option<PathBuf>> {
+    let args = [
+        "--git-dir=.".as_ref(),
+        "rev-parse".as_ref(),
+        "--show-toplevel".as_ref(),
+    ];
+    let top = line_path(run(command(git_dir), git_dir, &args, None)?);
+    let own = git_dir.canonicalize().map_err(Error::io(git_dir))?;
+    let top = top.canonicalize().map_err(Error::io(&top))?;
+    Ok((top != own).then_some(top))
+}
+
 /// The path `git rev-parse <flag>` prints in `dir`, joined to `dir` when
 /// git prints it relative.
 fn rev_parse_path(dir: &Path, flag: &str) -> Result<PathBuf> {
@@ -365,7 +399,12 @@ fn command(dir: &Path) -> Command {
 }
 
 /// `command` with `args` appended, run to its end, whatever its status,
-/// with `input` on its stdin, or with stdin closed when there is none.
+/// with `input` on its stdin, or with stdin null when there is none, so no
+/// child reads the caller's own stdin. Its stdout is read to at most
+/// [`MAX_OUTPUT_BYTES`]: past them the child is killed and the call fails.
+/// No deadline bounds the wait: a git that never returns is the user's
+/// environment, as a file system that never returns is, and a deadline
+/// would make what a call returns depend on the machine's load.
 fn finish(mut command: Command, args: &[&OsStr], input: Option<&[u8]>) -> Result<Output> {
     command
         .args(args)
@@ -384,19 +423,68 @@ fn finish(mut command: Command, args: &[&OsStr], input: Option<&[u8]>) -> Result
         },
     };
     let mut child = command.spawn().map_err(not_started)?;
-    let Some((bytes, stdin)) = input.zip(child.stdin.take()) else {
-        return child.wait_with_output().map_err(not_started);
-    };
-    // Written from a thread of its own while this one reads the output, so
-    // neither pipe can fill while the other waits. A write git cuts short
-    // by exiting is git's failure, which its status reports.
+    let (status, stdout, stderr) = collect(&mut child, input).map_err(not_started)?;
+    match stdout {
+        Some(stdout) => Ok(Output {
+            status,
+            stdout,
+            stderr,
+        }),
+        None => Err(Error::GitOutputTooLarge {
+            args: shown(args),
+            max: MAX_OUTPUT_BYTES,
+        }),
+    }
+}
+
+/// The status of `child` once it ends, its stdout, `None` past
+/// [`MAX_OUTPUT_BYTES`], when it is killed, and the stderr [`kept`] of it,
+/// with `input` written to its stdin. The input is written, and the stderr
+/// read, each from a thread of its own while this one reads the stdout, so
+/// no pipe can fill while another waits. A write git cuts short by exiting
+/// is git's failure, which its status reports.
+fn collect(
+    child: &mut Child,
+    input: Option<&[u8]>,
+) -> std::io::Result<(ExitStatus, Option<Vec<u8>>, Vec<u8>)> {
+    let (stdin, stdout, stderr) = (child.stdin.take(), child.stdout.take(), child.stderr.take());
     std::thread::scope(|scope| {
-        scope.spawn(move || {
-            let mut stdin = stdin;
-            let _ = stdin.write_all(bytes);
-        });
-        child.wait_with_output().map_err(not_started)
+        if let Some((bytes, mut stdin)) = input.zip(stdin) {
+            scope.spawn(move || {
+                let _ = stdin.write_all(bytes);
+            });
+        }
+        let stderr = scope.spawn(move || kept(stderr));
+        let stdout = bounded(stdout);
+        if !matches!(stdout, Ok(Some(_))) {
+            // A child that already exited cannot be killed, and needs not be.
+            let _ = child.kill();
+        }
+        let status = child.wait()?;
+        let stderr = stderr.join().unwrap_or_default();
+        Ok((status, stdout?, stderr))
     })
+}
+
+/// What `pipe` gives to its end, `None` past [`MAX_OUTPUT_BYTES`].
+fn bounded(pipe: Option<ChildStdout>) -> std::io::Result<Option<Vec<u8>>> {
+    let mut bytes = Vec::new();
+    if let Some(pipe) = pipe {
+        pipe.take(MAX_OUTPUT_BYTES + 1).read_to_end(&mut bytes)?;
+    }
+    let within = u64::try_from(bytes.len()).is_ok_and(|read| read <= MAX_OUTPUT_BYTES);
+    Ok(within.then_some(bytes))
+}
+
+/// The first [`MAX_STDERR_BYTES`] of `pipe`, the rest read and dropped: a
+/// failure to read leaves what was read.
+fn kept(pipe: Option<ChildStderr>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        let _ = (&mut pipe).take(MAX_STDERR_BYTES).read_to_end(&mut bytes);
+        let _ = std::io::copy(&mut pipe, &mut std::io::sink());
+    }
+    bytes
 }
 
 fn failed(dir: &Path, args: &[&OsStr], output: &Output) -> Error {

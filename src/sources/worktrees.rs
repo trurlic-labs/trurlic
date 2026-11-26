@@ -9,9 +9,11 @@
 //! above the code root; the code root's place in it, its prefix, is where
 //! every other worktree is read, so a graph in a subdirectory is read
 //! against the same subdirectory there. Git lists the main worktree of a
-//! submodule by its git directory: when the calling tree is that worktree,
-//! its top is the code root's own, and seen from a linked worktree it is
-//! left out with a warning that says why.
+//! submodule, or of a repository made with `--separate-git-dir`, by its git
+//! directory: its top is the work tree that directory's configuration
+//! states (`core.worktree`, which a submodule's holds), else the code
+//! root's own when the calling tree is that worktree; seen from a linked
+//! worktree with neither, it is left out with a warning that says why.
 //!
 //! One rule says at which paths another worktree may hold an anchor: those
 //! its work tree differs in from the commit where its line forked from the
@@ -97,11 +99,11 @@ pub(crate) enum UnreadCause {
         here.display()
     )]
     NotListed { here: PathBuf },
-    /// Git lists the worktree by its git directory, as it lists the main
-    /// worktree of a submodule, so where its work tree is is not known.
+    /// Git lists the worktree by its git directory, whose configuration
+    /// states no work tree, so where its work tree is is not known.
     #[error(
-        "git lists it by its git directory, as it lists a submodule's main worktree, so its work \
-         tree is not known here; run `trurlic check` in that work tree"
+        "git lists it by its git directory, whose configuration states no work tree, so its \
+         work tree is not known here; run `trurlic check` in that work tree"
     )]
     GitDirectory,
 }
@@ -149,8 +151,8 @@ fn listed(code_root: &Path) -> std::result::Result<Others, UnreadCause> {
     let prefix = here.strip_prefix(&own.top).unwrap_or(Path::new(""));
     for tree in live.iter().filter(|tree| tree.top != own.top) {
         let path = match prefix.as_os_str().is_empty() {
-            // clone: the worktree found outlives the listing; `join` of an
-            // empty prefix would end the path with a separator.
+            // `join` of an empty prefix would end the path with a separator.
+            // clone: the worktree found outlives the listing.
             true => tree.top.clone(),
             false => tree.top.join(prefix),
         };
@@ -176,11 +178,13 @@ fn listed(code_root: &Path) -> std::result::Result<Others, UnreadCause> {
     Ok(others)
 }
 
-/// `live` with the main worktree of a submodule, which git lists by its git
-/// directory, the common dir, given the work tree that directory serves as
-/// its top: the calling tree's own top when the calling tree is that
-/// worktree. Seen from a linked worktree of the submodule that work tree is
-/// not known, so the entry is left out, and `others` says so.
+/// `live` with the main worktree git lists by its git directory, the common
+/// dir, given the work tree that directory serves as its top: the one its
+/// configuration states, as a submodule's does, else the calling tree's
+/// own top when the calling tree is that worktree. Seen from a linked
+/// worktree of a repository whose configuration states none, as one made
+/// with `--separate-git-dir`, that work tree is not known, so the entry is
+/// left out, and `others` says so.
 fn submodule_main(
     code_root: &Path,
     live: &mut Vec<Listed>,
@@ -193,9 +197,10 @@ fn submodule_main(
     };
     let own = git::git_dir(code_root)?;
     let own = own.canonicalize().map_err(Error::io(&own))?;
-    let top = match own == common {
-        true => git::toplevel(code_root)?,
-        false => None,
+    let top = match git::work_tree_of(&common)? {
+        Some(top) => Some(top),
+        None if own == common => git::toplevel(code_root)?,
+        None => None,
     };
     match (top, live.get_mut(at)) {
         (Some(top), Some(main)) => main.top = top.canonicalize().map_err(Error::io(&top))?,

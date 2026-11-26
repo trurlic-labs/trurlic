@@ -33,7 +33,7 @@ use crate::store::{Anchor, Decision, Status};
 
 pub(crate) mod repair;
 
-pub(crate) use repair::{Prior, Renamed, Renames};
+pub(crate) use repair::{Prior, Renames, Repair};
 
 /// The files of its kind that define a name, at least, for an anchor whose
 /// symbol is that name alone, resolved through a suffix, to be weak.
@@ -161,9 +161,8 @@ pub(crate) enum Kind<V> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Checked {
     /// No other worktree holds it, on a decision ever accepted. `repair` is
-    /// the anchor it is repaired as, when the tree and git's history show
-    /// one.
-    Stale { repair: Option<Anchor> },
+    /// what it is repaired as, when the tree and git's history show one.
+    Stale { repair: Option<Repair> },
     /// It names what `0` holds, on a decision ever accepted.
     Pending(Worktree),
     /// It is on a decision never accepted.
@@ -245,7 +244,7 @@ impl Verdict for Checked {
             Self::Stale { repair } => {
                 fmt::Display::fmt(cause, f)?;
                 match repair {
-                    Some(repair) => write!(f, "; repair: `{repair}`"),
+                    Some(repair) => write!(f, "; repair: `{}`", repair.to),
                     None => Ok(()),
                 }
             }
@@ -386,7 +385,7 @@ pub(crate) struct Asked<'s> {
     /// The place in `read` of the worktree that holds each anchor held.
     holders: BTreeMap<&'s Anchor, usize>,
     stale: BTreeSet<&'s Anchor>,
-    repairs: BTreeMap<&'s Anchor, Anchor>,
+    repairs: BTreeMap<&'s Anchor, Repair>,
 }
 
 impl<'s> Asked<'s> {
@@ -432,7 +431,7 @@ impl<'s> Asked<'s> {
     }
 
     /// The files of the stale anchors with nothing at their path here:
-    /// those git is asked where they went.
+    /// those git's history is asked where they went.
     pub(crate) fn gone(&self, here: &Here<'s, '_>) -> BTreeSet<&'s str> {
         self.stale
             .iter()
@@ -443,7 +442,7 @@ impl<'s> Asked<'s> {
 
     /// These findings with `repairs`, what git's history shows of the
     /// stale anchors.
-    pub(crate) fn with_repairs(self, repairs: BTreeMap<&'s Anchor, Anchor>) -> Self {
+    pub(crate) fn with_repairs(self, repairs: BTreeMap<&'s Anchor, Repair>) -> Self {
         Self { repairs, ..self }
     }
 }

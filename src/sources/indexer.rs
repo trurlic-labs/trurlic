@@ -135,21 +135,6 @@ impl Worker<'_> {
         self.tree
     }
 
-    /// The index of `bytes`, the file at `path` of `kind`, its blank set
-    /// taken from a lexical pass over them here: a file no cache holds.
-    pub(super) fn index_alone(
-        &self,
-        path: &str,
-        kind: FileKind,
-        bytes: &[u8],
-    ) -> Result<Indexed, ReadFault> {
-        let macros = match kind.blanks_macros() {
-            true => self.tree.of_file(path, &code::lexed(bytes)),
-            false => FileMacros::default(),
-        };
-        self.index(kind, bytes, &macros)
-    }
-
     /// The index of `bytes`, a file of `kind` that blanks `macros`, built
     /// once the room holds them: by the worker itself up to
     /// [`MAX_BYTES_INDEXED_BY_A_WORKER`], on a thread of its own past it;

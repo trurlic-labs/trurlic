@@ -179,6 +179,11 @@ pub enum Error {
     #[error("`git {args}` printed {detail}")]
     GitOutput { args: String, detail: &'static str },
 
+    /// Git printed more than `max` bytes on its stdout, so it was killed
+    /// unread.
+    #[error("`git {args}` printed more than {max} bytes, the most a git command's output is read")]
+    GitOutputTooLarge { args: String, max: u64 },
+
     /// A symlink named `.trurlic` that leads to nothing: its target is
     /// gone, or the links loop.
     #[error(

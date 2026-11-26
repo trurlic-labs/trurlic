@@ -41,9 +41,10 @@ use std::io::{ErrorKind, Read};
 use std::path::Path;
 
 use crate::code::{
-    self, CodeFacts, Entry, FileFault, FileKind, FileMacros, Indexed, ReadFault, Resolution,
+    self, Code, CodeFacts, Entry, FileFault, FileKind, FileMacros, Indexed, ReadFault, Resolution,
 };
 use crate::console::diag;
+use crate::git::renames::at_revision;
 use crate::lint::anchors::{self, Asked, Checked, Decisions, Elsewhere, Finding, Here, Unasked};
 use crate::store::{Anchor, Decision, Store, SymbolsKey};
 
@@ -112,11 +113,13 @@ pub(crate) fn tree_findings<'s>(
 /// write lock, each that still holds in the tree at `store`'s code root,
 /// read under the lock from the files the repairs name alone, as the tree
 /// read judges them, with no git: its stale anchor names nothing there and
-/// its repair resolves. Give each repair dropped, by its stale anchor,
-/// with why.
+/// its repair names the code `seen` holds for it, what the read judged, so
+/// code replaced since is never written. Give each repair dropped, by its
+/// stale anchor, with why.
 pub(crate) fn still_holding(
     store: &Store,
     repairs: &mut BTreeMap<Anchor, Anchor>,
+    seen: &BTreeMap<Anchor, Code>,
 ) -> BTreeMap<Anchor, String> {
     if repairs.is_empty() {
         return BTreeMap::new();
@@ -132,10 +135,13 @@ pub(crate) fn still_holding(
             facts.resolve(from),
             Resolution::FileMissing | Resolution::SymbolMissing
         );
-        let holds = stale && matches!(facts.resolve(to), Resolution::Resolved(_));
+        let same = seen
+            .get(from)
+            .is_some_and(|seen| facts.code(to).as_ref() == Some(seen));
+        let holds = stale && same;
         if !holds {
-            let cause = "its code is back, or its repair names nothing, since the repairs were \
-                         read; run `repair_anchors` again";
+            let cause = "its code is back, or the code its repair names changed, since the \
+                         repairs were read; run `repair_anchors` again";
             // clone: the map dropped outlives the one kept.
             dropped.insert(from.clone(), cause.to_owned());
         }
@@ -216,9 +222,9 @@ fn elsewhere(
         let fork = forked.base().map(|base| {
             let blobs = Blobs {
                 root: &forked.top,
-                indexer: &reads.indexer,
+                store,
             };
-            at_fork(here, &blobs, base, &changed)
+            at_fork(here, &blobs, reads, base, &changed)
         });
         let facts = here.beside(&read_paths(store, &forked.top, changed, reads));
         asked.read(Elsewhere {
@@ -232,15 +238,26 @@ fn elsewhere(
 
 /// The facts of `paths` at commit `base`, read from git beside `here`, the
 /// calling tree's.
-fn at_fork(here: &CodeFacts, blobs: &Blobs<'_>, base: &str, paths: &BTreeSet<String>) -> CodeFacts {
-    // clone: each read names its revision and path.
+fn at_fork(
+    here: &CodeFacts,
+    blobs: &Blobs<'_>,
+    reads: &mut Reads,
+    base: &str,
+    paths: &BTreeSet<String>,
+) -> CodeFacts {
     let asked = paths
         .iter()
-        .map(|path| (base.to_owned(), path.clone()))
+        // clone: each read names its blob and path.
+        .map(|path| (at_revision(base, path), path.clone()))
         .collect();
-    let mut read: BTreeMap<String, Option<Entry>> =
-        paths.iter().map(|path| (path.clone(), None)).collect();
-    for (_, path, entry) in blobs.read(&asked) {
+    // Every path holds nothing at the fork until git gives its blob, so the
+    // calling tree's file there is masked either way.
+    let mut read: BTreeMap<String, Option<Entry>> = paths
+        .iter()
+        // clone: the facts at the fork key each path the calling tree's do.
+        .map(|path| (path.clone(), None))
+        .collect();
+    for (_, path, entry) in blobs.read(reads, &asked) {
         read.insert(path, Some(entry));
     }
     here.beside(&read)
