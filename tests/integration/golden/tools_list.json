@@ -629,32 +629,6 @@
             },
             "type": "array"
           },
-          "duplicates_unsought": {
-            "additionalProperties": false,
-            "description": "When no likely duplicate was looked for: the work the lookup would do, past the most one call does, in units.",
-            "properties": {
-              "bound": {
-                "description": "The most one call does.",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "measured": {
-                "description": "The work over every decision from the page's first on.",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "unit": {
-                "description": "What both count: `bytes`, or `units`.",
-                "type": "string"
-              }
-            },
-            "required": [
-              "measured",
-              "bound",
-              "unit"
-            ],
-            "type": "object"
-          },
           "left": {
             "description": "For a `repair_anchors` op with no `repairs`: each stale anchor the tree shows no repair for, or whose repair a `[quality]` pattern refuses, left as it was.",
             "items": {
@@ -683,7 +657,7 @@
             "type": "array"
           },
           "more_duplicates": {
-            "description": "Decisions with likely duplicates not listed in `duplicates`. `status` lists the pairs under `lint` a page at a time, best first within it.",
+            "description": "Decisions with likely duplicates not listed in `duplicates`. `status` with `section: \"lint\"` ranks the pairs: the section lists the best pairs; the ones left out rank at or below the last listed, and come into view as the listed ones are settled (merged, or revised apart).",
             "minimum": 0,
             "type": "integer"
           },
@@ -906,12 +880,12 @@
         "readOnlyHint": true,
         "title": "Status"
       },
-      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason of 0.5 or more, compared within a work limit: past it `counts.lint.uncompared` says so), each rule of the quality bar a stored decision breaks, and the decisions whose anchors all name a file and no symbol, counted by kind. The call judges the bar's limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over the decisions by name within a bound on the bytes they read: `counts.lint.patterns` says how many decisions they read and names in `next` the first left unread, and the same call with `from` set to it reads on from there. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts and the findings to the decisions recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are malformed, ambiguous, of a file no resolver reads (unverified), or are one name, not the whole path of what it names, that ten or more files define (weak). Where the graph sits in the project's git is reported by `trurlic check`.",
+      "description": "The decision graph at a glance: its counts, the write rules `[quality]` in project.toml adds to the built-in ones (counted), the validation issues it holds, what a shared graph's history lacks, the decisions of each component, and `lint`: each rule of the quality bar a stored decision breaks, the decisions whose anchors all name a file and no symbol, and the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason of 0.5 or more), counted by kind. The call judges the bar's limits and compares no pair. `section: \"lint\"` compares the pairs too, by decision name within a bound on the work: past it `counts.lint.pairs` says how many decisions it compared, and `origin` narrows it. It also judges the bar's patterns, a `warn` pattern's included, over the decisions by name within a bound on the bytes they read: `counts.lint.patterns` says how many decisions they read and names in `next` the first left unread, and the same call with `from` set to it reads the quality findings on from there, comparing no pair. Each section fits the result budget; one that leaves items out gives `omitted` and `more`, which says where the rest is. `section` returns one section with the whole budget. `origin` narrows the counts and the findings to the decisions recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do not resolve here (unresolved: stale or pending, which `trurlic check` tells apart), are malformed, ambiguous, of a file no resolver reads (unverified), or are one name, not the whole path of what it names, that ten or more files define (weak). Where the graph sits in the project's git is reported by `trurlic check`.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "from": {
-            "description": "With `section: \"lint\"`: the quality findings of the decisions named this or after, the `[quality]` patterns reading on from here: a previous call's `counts.lint.patterns.next`.",
+            "description": "With `section: \"lint\"`: the quality findings of the decisions named this or after, the `[quality]` patterns reading on from here: a previous call's `counts.lint.patterns.next`. A call with it compares no likely duplicate pair.",
             "maxLength": 128,
             "type": "string"
           },
@@ -1128,7 +1102,7 @@
                 "description": "The `lint` findings of each kind, when the section is asked for.",
                 "properties": {
                   "duplicates": {
-                    "description": "Likely duplicate pairs of the page.",
+                    "description": "Likely duplicate pairs the pass found, every one among the decisions it compared; absent when the call compares none.",
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -1139,61 +1113,33 @@
                   },
                   "pairs": {
                     "additionalProperties": false,
-                    "description": "How far the pairs' probes read, when not to the last decision: `next`, where `section: \"lint\"` with `from` reads on.",
+                    "description": "When the pairs' pass left decisions uncompared: how many it compared, why no more, and how to compare them.",
                     "properties": {
-                      "judged": {
-                        "description": "Decisions this page read, by name: the patterns', or the pairs' probes.",
+                      "compared": {
+                        "description": "Decisions the pass compared, the first by name: each with those before it, or under `origin` each recorded there with every other decision.",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "more": {
-                        "description": "How the decisions left unjudged come to be judged.",
+                        "description": "How the decisions left uncompared come to be compared.",
                         "type": "string"
                       },
-                      "next": {
-                        "description": "The first decision whose findings this page did not list wholly: `from` set to it reads on.",
-                        "type": "string"
-                      },
-                      "uncompiled": {
-                        "additionalProperties": false,
-                        "description": "The pattern that does not compile; `trurlic check` reports it.",
-                        "properties": {
-                          "index": {
-                            "description": "Its index in `[quality] patterns`.",
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "message": {
-                            "description": "Why it does not compile.",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "index",
-                          "message"
-                        ],
-                        "type": "object"
-                      },
-                      "unjudged": {
-                        "description": "Decisions it did not read.",
+                      "uncompared": {
+                        "description": "Decisions it did not compare.",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "why": {
-                        "description": "Why some went unread: `not_asked`, the call judged the limits alone; `work_limit`, the work reached the bound; `gave_up`, a pattern's cache, or the caches together, filled over the page before `next`; `page`, the result's room, or another kind's page, ended the listing; `uncompiled`, a pattern does not compile; `unbuilt`, the decisions' texts alone pass the pairs' bound.",
+                        "description": "Why: `not_asked`, only `section: \"lint\"` without `from` compares the pairs; `work_limit`, the next decision's probe would take the work past the bound.",
                         "enum": [
                           "not_asked",
-                          "work_limit",
-                          "gave_up",
-                          "page",
-                          "uncompiled",
-                          "unbuilt"
+                          "work_limit"
                         ],
                         "type": "string"
                       },
                       "work": {
                         "additionalProperties": false,
-                        "description": "The work over every decision from the page's first on and the bound: for the patterns the bytes of each text each reads, one more per text; for the pairs the units their pass charges.",
+                        "description": "Past the bound: the work of the whole pass and the bound, in units, the posting entries the probes read and 16 for each pair they may test.",
                         "properties": {
                           "bound": {
                             "description": "The most one call does.",
@@ -1201,26 +1147,23 @@
                             "type": "integer"
                           },
                           "measured": {
-                            "description": "The work over every decision from the page's first on.",
+                            "description": "The work over every decision the pass wants.",
                             "minimum": 0,
                             "type": "integer"
-                          },
-                          "unit": {
-                            "description": "What both count: `bytes`, or `units`.",
-                            "type": "string"
                           }
                         },
                         "required": [
                           "measured",
-                          "bound",
-                          "unit"
+                          "bound"
                         ],
                         "type": "object"
                       }
                     },
                     "required": [
-                      "judged",
-                      "unjudged"
+                      "compared",
+                      "uncompared",
+                      "why",
+                      "more"
                     ],
                     "type": "object"
                   },
@@ -1229,7 +1172,7 @@
                     "description": "How far the `[quality]` patterns were judged, when it has any.",
                     "properties": {
                       "judged": {
-                        "description": "Decisions this page read, by name: the patterns', or the pairs' probes.",
+                        "description": "Decisions the patterns read on this page, by name.",
                         "minimum": 0,
                         "type": "integer"
                       },
@@ -1262,25 +1205,24 @@
                         "type": "object"
                       },
                       "unjudged": {
-                        "description": "Decisions it did not read.",
+                        "description": "Decisions they did not read on it.",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "why": {
-                        "description": "Why some went unread: `not_asked`, the call judged the limits alone; `work_limit`, the work reached the bound; `gave_up`, a pattern's cache, or the caches together, filled over the page before `next`; `page`, the result's room, or another kind's page, ended the listing; `uncompiled`, a pattern does not compile; `unbuilt`, the decisions' texts alone pass the pairs' bound.",
+                        "description": "Why some went unjudged: `not_asked`, the call judged the limits alone; `work_limit`, the bytes the patterns read reached the bound; `gave_up`, a pattern's cache, or the caches together, filled over the page before `next`; `page`, the result's room ended the listing; `uncompiled`, a pattern does not compile.",
                         "enum": [
                           "not_asked",
                           "work_limit",
                           "gave_up",
                           "page",
-                          "uncompiled",
-                          "unbuilt"
+                          "uncompiled"
                         ],
                         "type": "string"
                       },
                       "work": {
                         "additionalProperties": false,
-                        "description": "The work over every decision from the page's first on and the bound: for the patterns the bytes of each text each reads, one more per text; for the pairs the units their pass charges.",
+                        "description": "The bytes the patterns would read over every decision and the bound: each pattern the texts of the fields it reads, one more per text.",
                         "properties": {
                           "bound": {
                             "description": "The most one call does.",
@@ -1288,19 +1230,14 @@
                             "type": "integer"
                           },
                           "measured": {
-                            "description": "The work over every decision from the page's first on.",
+                            "description": "The work over every decision the pass wants.",
                             "minimum": 0,
                             "type": "integer"
-                          },
-                          "unit": {
-                            "description": "What both count: `bytes`, or `units`.",
-                            "type": "string"
                           }
                         },
                         "required": [
                           "measured",
-                          "bound",
-                          "unit"
+                          "bound"
                         ],
                         "type": "object"
                       }
@@ -1318,7 +1255,6 @@
                   }
                 },
                 "required": [
-                  "duplicates",
                   "quality",
                   "file_anchors_only"
                 ],

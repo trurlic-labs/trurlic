@@ -1,24 +1,33 @@
 component = "lint"
-choice = "A page of the duplicates pass keeps its probes' pairs by a bounded selection over a total order, probe first, and ends before a probe whose pairs pass what a result holds"
-reason = "A graph whose decisions share one text has a pair for every two of them, half a million at a thousand decisions, while a status result holds a few hundred. So each probe offers its pairs to a bounded selection, a heap that keeps one more than the limit of the smallest keys of the order probe, score descending, other decision, and counts each probe's pairs. The kept pairs are then those of the earliest probes: the page ends before the probe of the first pair past the limit, but for a first probe whose own pairs pass it, of which it keeps the best and moves on. The key order is total, so the kept pairs are the same whichever order the pairs come in, which lets the probes run on the thread pool, each task with its own selection, merged after; a walk at one thread and eight gives the same pages. status asks for the budget over the smallest duplicate finding, apply's nearest for three."
+choice = "The duplicates pass counts every pair it finds and keeps only the best a result can hold, by a bounded selection over a total order, on any number of threads"
+reason = "A graph whose decisions share one text has a pair for every two of them, half a million at a thousand decisions, while a status result holds a few hundred. So the pass offers each pair to a bounded selection, a heap that keeps the smallest keys of the order score descending, then the two decisions by name, and counts every offer; status requests the budget over the smallest duplicate finding there can be, and apply's nearest for three. The key order is total, so the kept pairs are the same whichever order the pairs come in, which lets the probes run on the thread pool, each task with its own selection, merged after. The section's total and omitted come from the count, every pair among the decisions the pass compared. Tests hold the kept pairs to the exact test's best on a graph whose every decision shares every term, and the result to the same one on one thread and eight with the bound stopping the probes."
 alternatives = [
     "Collect every pair, then fit: rejected because memory and time grow with the pairs, not with the result",
     "A fixed count of pairs: rejected because the count a result holds follows from the budget and the size of a finding",
+    "Keep the pairs of the earliest probes and page by probe: rejected because the first page then lists the decisions that sort first, not the strongest pairs, and its count is the page's alone",
 ]
 tags = [
     "budget",
     "performance",
 ]
-status = "accepted"
+status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T10:58:17.033994352Z"
 anchors = [
     { file = "src/lint/duplicates/best.rs", symbol = "Best" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::page" },
-    { file = "src/lint/duplicates/tests.rs", symbol = "a_walk_by_next_lists_every_pair_once_a_page_within_its_limit" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::selection" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "on_a_dense_graph_the_best_pairs_are_kept_and_every_pair_counted" },
     { file = "src/lint/duplicates/tests.rs", symbol = "the_pairs_are_the_same_on_any_number_of_threads" },
     { file = "src/mcp/status/lint.rs", symbol = "lint_limit" },
 ]
 depends_on = [
     "duplicate-pairs-come-from-an-inverted-index-over-every-term",
+]
+
+[accepted_text]
+choice = "A page of the duplicates pass keeps its probes' pairs by a bounded selection over a total order, probe first, and ends before a probe whose pairs pass what a result holds"
+reason = "A graph whose decisions share one text has a pair for every two of them, half a million at a thousand decisions, while a status result holds a few hundred. So each probe offers its pairs to a bounded selection, a heap that keeps one more than the limit of the smallest keys of the order probe, score descending, other decision, and counts each probe's pairs. The kept pairs are then those of the earliest probes: the page ends before the probe of the first pair past the limit, but for a first probe whose own pairs pass it, of which it keeps the best and moves on. The key order is total, so the kept pairs are the same whichever order the pairs come in, which lets the probes run on the thread pool, each task with its own selection, merged after; a walk at one thread and eight gives the same pages. status asks for the budget over the smallest duplicate finding, apply's nearest for three."
+alternatives = [
+    "Collect every pair, then fit: rejected because memory and time grow with the pairs, not with the result",
+    "A fixed count of pairs: rejected because the count a result holds follows from the budget and the size of a finding",
 ]

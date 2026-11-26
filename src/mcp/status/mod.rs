@@ -24,7 +24,7 @@ mod report;
 
 pub(crate) use anchors::AnchorCounts;
 use anchors::{AnchorItem, anchor_section};
-pub(crate) use lint::{Cut, LintItem, PAIRS_MORE, PatternCounts, Work};
+pub(crate) use lint::{Cut, LintItem, PAIRS_MORE, PairCounts, PatternCounts};
 use lint::{LINT_MORE, LintItems, LintKind, Patterns};
 use report::{ComponentItem, Counts, HistoryItem, HistoryKind, IssueItem};
 pub(crate) use report::{Part, QualityCounts, Report};
@@ -40,15 +40,16 @@ pub(super) static STATUS: ToolSpec<StatusArgs, Report> = ToolSpec {
 const DESCRIPTION: &str = "The decision graph at a glance: its counts, the write rules \
 `[quality]` in project.toml adds to the built-in ones (counted), the validation issues \
 it holds, what a shared graph's history lacks, the decisions of each component, and \
-`lint`: the best pairs of likely duplicate decisions (a TF-IDF cosine of choice and reason \
-of 0.5 or more, compared within a work limit: past it `counts.lint.uncompared` says so), \
-each rule of the quality bar a stored decision breaks, and the decisions \
-whose anchors all name a file and no symbol, counted by kind. The call judges the bar's \
-limits; `section: \"lint\"` also judges its patterns, a `warn` pattern's included, over \
-the decisions by name within a bound on the bytes they read: `counts.lint.patterns` says how many decisions \
-they read and names in `next` the first left unread, and the same call with `from` set to \
-it reads on from there. Each section fits the \
-result budget; one that leaves items out gives \
+`lint`: each rule of the quality bar a stored decision breaks, the decisions whose anchors \
+all name a file and no symbol, and the best pairs of likely duplicate decisions (a TF-IDF \
+cosine of choice and reason of 0.5 or more), counted by kind. The call judges the bar's \
+limits and compares no pair. `section: \"lint\"` compares the pairs too, by decision name \
+within a bound on the work: past it `counts.lint.pairs` says how many decisions it \
+compared, and `origin` narrows it. It also judges the bar's patterns, a `warn` pattern's \
+included, over the decisions by name within a bound on the bytes they read: \
+`counts.lint.patterns` says how many decisions they read and names in `next` the first \
+left unread, and the same call with `from` set to it reads the quality findings on from \
+there, comparing no pair. Each section fits the result budget; one that leaves items out gives \
 `omitted` and `more`, which says where the rest is. `section` returns one section \
 with the whole budget. `origin` narrows the counts and the findings to the decisions \
 recorded under it. `section: \"anchors\"` alone reads the code tree: the anchors that do \
@@ -134,7 +135,7 @@ impl Args for StatusArgs {
                 "from",
                 "With `section: \"lint\"`: the quality findings of the decisions named this \
                  or after, the `[quality]` patterns reading on from here: a previous call's \
-                 `counts.lint.patterns.next`.",
+                 `counts.lint.patterns.next`. A call with it compares no likely duplicate pair.",
                 &Text {
                     max_bytes: MAX_NAME_BYTES,
                 },

@@ -1,4 +1,34 @@
 component = "lint"
+choice = "Duplicate pairs come from an inverted index over every term, the decisions probed by name while each probe's work, counted from the postings before it runs, fits MAX_DUPLICATE_WORK"
+reason = "The postings list, per term, the decisions that hold it in order, with the term's weight there. Each decision probed reads the postings of its terms, adds the products of the weights into a scratch row sized to the graph, and puts each decision it touched to the exact threshold test with that sum, their exact dot product. A pair that shares no term is never visited, and no pair allocates. A term most decisions hold, the usual case in prose, makes the pass visit and test nearly every pair, so its cost grows with the square of the decisions. Each probe's work is known before it runs: the posting entries it reads and PAIR_WORK for each pair it may test, at most one per entry and one per decision it reaches. The pass probes the decisions by name while the sum fits the bound and never refuses: Ranked counts the decisions compared and those left, and the work of the whole pass, so a caller names what the bound cut. Over every pair a decision probes those before it, so the pairs found are those among the decisions compared; under an origin only the decisions recorded there are probed, each against every other. The index's build and nearest charge no bound: each costs at most a fixed multiple of the bytes the load read, while only the pairs pass grows with the square. Tests hold the pairs to the exact test over every pair, the charge to hand-counted work, and the stop to the bound."
+alternatives = [
+    "A dot product for every pair: rejected because it merges the term lists of pairs that share nothing, many times the work of the index on the seeded corpus",
+    "Pages of probes read on from a decision: rejected because a page ended inside one decision's pairs lost the rest of them, every page paid the whole bound, and no graph that exists reaches it",
+    "Refuse the whole pass past the bound: rejected because a graph past it would list no pair, while the decisions within the bound still give theirs",
+    "Locality-sensitive hashing: rejected because it can miss a pair, and the list must be the exact one",
+    "A cache under .state: rejected because a read would then depend on state beside the files",
+]
+tags = [
+    "performance",
+]
+status = "proposed"
+origin = "likely duplicates"
+created = "2026-11-24T09:53:20.687376285Z"
+anchors = [
+    { file = "benches/corpus.rs", symbol = "bench_duplicates" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "PAIR_WORK" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::of" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::pairs" },
+    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::works" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "the_index_finds_every_pair_the_exact_test_over_all_pairs_finds" },
+    { file = "src/lint/duplicates/tests.rs", symbol = "the_probes_run_by_name_while_their_work_is_within_the_bound" },
+    { file = "src/store/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
+]
+depends_on = [
+    "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
+]
+
+[accepted_text]
 choice = "Duplicate pairs come from an inverted index over every term, a page of probes by name at a time while their work, counted before each step, fits MAX_DUPLICATE_WORK"
 reason = "The postings list, per term, the decisions that hold it in order, with the term's weight there. Each decision probed reads the postings of its terms, adds the products of the weights into a scratch row sized to the graph, and puts each decision it touched to the exact threshold test with that sum, their exact dot product. A pair that shares no term is never visited, and no pair allocates. A term most decisions hold, the usual case in prose, makes the pass visit and test nearly every pair, so its cost grows with the square of the decisions, and the work of every step is counted before it runs: the build by the bytes of the texts, a probe by the posting entries it reads and PAIR_WORK for each pair it may test. A call builds nothing when the texts alone pass the bound. Otherwise it probes the decisions from from on by name, the first whatever its work, while the build's work and theirs fit, and names the first it left out in next, as the patterns page. A pair is on the page of the later-named of its decisions the pass probes, so a walk lists each pair once. Under an origin either the whole pass, its pairs filtered, or the origin's decisions each against every other runs, whichever costs less. Tests hold the pairs to the exact test over every pair, a walk to every pair once, and the charge to hand-counted work."
 alternatives = [
@@ -7,24 +37,4 @@ alternatives = [
     "Refuse the whole pass past the bound: rejected because a graph past it would list no pair at all, while pages list every pair in about its work over the bound calls",
     "Locality-sensitive hashing: rejected because it can miss a pair, and the list must be the exact one",
     "A cache under .state: rejected because a read would then depend on state beside the files",
-]
-tags = [
-    "performance",
-]
-status = "accepted"
-origin = "likely duplicates"
-created = "2026-11-24T09:53:20.687376285Z"
-anchors = [
-    { file = "benches/corpus.rs", symbol = "bench_duplicates" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "PAIR_WORK" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::of" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::page" },
-    { file = "src/lint/duplicates/mod.rs", symbol = "Similarity::works" },
-    { file = "src/lint/duplicates/tests.rs", symbol = "a_walk_by_next_lists_every_pair_once_a_page_within_its_limit" },
-    { file = "src/lint/duplicates/tests.rs", symbol = "each_step_runs_only_while_its_work_is_within_the_bound" },
-    { file = "src/lint/duplicates/tests.rs", symbol = "the_index_finds_every_pair_the_exact_test_over_all_pairs_finds" },
-    { file = "src/store/limits.rs", symbol = "MAX_DUPLICATE_WORK" },
-]
-depends_on = [
-    "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
 ]

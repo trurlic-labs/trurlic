@@ -1,6 +1,6 @@
 component = "mcp"
-choice = "status has a lint section whose items are a LintItem enum tagged by kind: a duplicate names its two decisions, first by name, and its score; a page's pairs best first, then by names"
-reason = "Findings of other kinds will join the section, the code index's anchor findings and the quality checks over the graph, each with fields of its own. So an item is an enum whose kind tag names the variant and whose fields are declared once in its Output, a new kind being one more variant. The decision field is common to every kind; a duplicate adds other and score, a string of six decimals so every machine prints the same text. Pairs come a page at a time, best first then by their names within the page, so the ones most worth reading lead it. The budget cuts a page's pairs while they are listed by probe, so the page ends at a probe and the next page lists the rest. The quality and file-anchor findings are further variants."
+choice = "status has a lint section whose items are a LintItem enum tagged by kind: a duplicate names its two decisions, first by name, and its score; pairs best first, then by names"
+reason = "Findings of other kinds will join the section, the code index's anchor findings and the quality checks over the graph, each with fields of its own. So an item is an enum whose kind tag names the variant and whose fields are declared once in its Output, a new kind being one more variant. The decision field is common to every kind; a duplicate adds other and score, a string of six decimals so every machine prints the same text. Pairs come best first, then by their names, so the ones most worth reading lead and a cut drops the weakest. The section is fitted like every other, from a total that counts every pair found and the best pairs a result can hold; the pairs that a cut leaves out rank at or below the last listed, which stays true when scores tie at the cut. The quality and file-anchor findings are further variants."
 alternatives = [
     "An item of kind and message, as issues have: rejected because a caller merging a pair would parse names out of prose",
     "The score as a JSON number: rejected because a float's text is the printer's, and six fixed decimals are the same bytes everywhere",
@@ -8,7 +8,7 @@ alternatives = [
 tags = [
     "api",
 ]
-status = "accepted"
+status = "proposed"
 origin = "likely duplicates"
 created = "2026-11-24T09:53:20.687376285Z"
 anchors = [
@@ -21,4 +21,12 @@ anchors = [
 ]
 depends_on = [
     "likely-duplicates-are-pairs-at-a-tf-idf-cosine-of-one-half",
+]
+
+[accepted_text]
+choice = "status has a lint section whose items are a LintItem enum tagged by kind: a duplicate names its two decisions, first by name, and its score; a page's pairs best first, then by names"
+reason = "Findings of other kinds will join the section, the code index's anchor findings and the quality checks over the graph, each with fields of its own. So an item is an enum whose kind tag names the variant and whose fields are declared once in its Output, a new kind being one more variant. The decision field is common to every kind; a duplicate adds other and score, a string of six decimals so every machine prints the same text. Pairs come a page at a time, best first then by their names within the page, so the ones most worth reading lead it. The budget cuts a page's pairs while they are listed by probe, so the page ends at a probe and the next page lists the rest. The quality and file-anchor findings are further variants."
+alternatives = [
+    "An item of kind and message, as issues have: rejected because a caller merging a pair would parse names out of prose",
+    "The score as a JSON number: rejected because a float's text is the printer's, and six fixed decimals are the same bytes everywhere",
 ]

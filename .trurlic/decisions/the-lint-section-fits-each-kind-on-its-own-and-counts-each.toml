@@ -1,6 +1,6 @@
 component = "mcp"
 choice = "The lint section lists duplicates, then quality findings, then file-anchor-only decisions, each kind fitted to the budget on its own and counted in counts.lint"
-reason = "Duplicate pairs grow with the square of the decisions and quality findings with the decisions times the rules, so in one list cut by its prefix the first kind would crowd out the others. Each kind is a part of the level search on its own, so a short kind stays whole and the long ones share the rest; the section is their kept items in kind order, its total and omitted their sums. Each kind is gathered to lint_limit of its kind, the budget over its own smallest finding, and counted in counts.lint. A lint call alone reads a page of the decisions from from on by name for the pairs' probes and the patterns alike: each kind ends at its own bound or room, the page at the earlier of the two, and counts.lint.pairs and counts.lint.patterns name it in next, so a walk from next to next lists each pair and each finding once. Another call reads the first page of pairs and judges the limits alone. The decisions with only file anchors left out follow the last listed by name. origin narrows the findings to the decisions recorded under it, a pair when either decision is."
+reason = "Duplicate pairs grow with the square of the decisions and quality findings with the decisions times the rules, so in one list cut by its prefix the first kind would crowd out the others. Each kind is a part of the level search on its own, so a short kind stays whole and the long ones share the rest; the section is their kept items in kind order, its total and omitted their sums. Each kind is gathered to lint_limit of its kind, the budget over its own smallest finding, and counted in counts.lint, beside how far the pairs' pass and the patterns read the decisions: counts.lint.pairs names the decisions the pass left uncompared, why, and how to compare them. Its more is true of every kind: the duplicate pairs left out rank at or below the last listed; the quality findings and the decisions with only file anchors left out follow the last listed by decision name, and the section with from lists the quality findings from a decision on; they come into view as the listed ones are settled. origin narrows the findings to the decisions recorded under it, a pair when either decision is."
 alternatives = [
     "One list cut by its prefix: rejected because thousands of pairs would hide every quality finding",
     "A section per kind: rejected because the section argument would grow a value per kind, and the kinds share one budget anyway",
@@ -9,7 +9,7 @@ tags = [
     "api",
     "budget",
 ]
-status = "accepted"
+status = "proposed"
 origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"
 anchors = [
@@ -17,10 +17,18 @@ anchors = [
     { file = "src/mcp/status/lint.rs", symbol = "LINT_MORE" },
     { file = "src/mcp/status/lint.rs", symbol = "fitted" },
     { file = "src/mcp/status/lint.rs", symbol = "gather" },
-    { file = "src/mcp/status/lint.rs", symbol = "tests::a_walk_of_lint_pages_lists_each_pair_once" },
+    { file = "src/mcp/status/lint/pairs.rs", symbol = "tests::past_the_bound_the_counts_say_how_many_decisions_were_compared" },
     { file = "src/mcp/status/mod.rs", symbol = "fill" },
     { file = "tests/integration/budget.rs", symbol = "status_fits_the_budget_and_counts_what_it_leaves_out" },
 ]
 depends_on = [
     "status-lists-lint-findings-as-typed-items-best-first",
+]
+
+[accepted_text]
+choice = "The lint section lists duplicates, then quality findings, then file-anchor-only decisions, each kind fitted to the budget on its own and counted in counts.lint"
+reason = "Duplicate pairs grow with the square of the decisions and quality findings with the decisions times the rules, so in one list cut by its prefix the first kind would crowd out the others. Each kind is a part of the level search on its own, so a short kind stays whole and the long ones share the rest; the section is their kept items in kind order, its total and omitted their sums. Each kind is gathered to lint_limit of its kind, the budget over its own smallest finding, and counted in counts.lint. A lint call alone reads a page of the decisions from from on by name for the pairs' probes and the patterns alike: each kind ends at its own bound or room, the page at the earlier of the two, and counts.lint.pairs and counts.lint.patterns name it in next, so a walk from next to next lists each pair and each finding once. Another call reads the first page of pairs and judges the limits alone. The decisions with only file anchors left out follow the last listed by name. origin narrows the findings to the decisions recorded under it, a pair when either decision is."
+alternatives = [
+    "One list cut by its prefix: rejected because thousands of pairs would hide every quality finding",
+    "A section per kind: rejected because the section argument would grow a value per kind, and the kinds share one budget anyway",
 ]

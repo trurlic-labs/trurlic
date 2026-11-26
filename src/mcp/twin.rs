@@ -19,8 +19,8 @@ pub(crate) use super::protocol::MAX_MESSAGE_BYTES as MAX_DOCUMENT_BYTES;
 pub(crate) use super::result::{ToolError, refusal_text};
 pub(crate) use super::spec::Output;
 pub(crate) use super::status::{
-    AnchorCounts, Cut, LintItem, PAIRS_MORE, Part, PatternCounts, QualityCounts, Report,
-    section_names,
+    AnchorCounts, Cut, LintItem, PAIRS_MORE, PairCounts, Part, PatternCounts, QualityCounts,
+    Report, section_names,
 };
 
 /// The arguments `document` holds: a JSON object, as a batch file holds

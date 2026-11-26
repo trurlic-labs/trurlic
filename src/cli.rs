@@ -127,7 +127,7 @@ pub enum ToolCommand {
 
         /// With `--section lint`: the quality findings of the decisions
         /// named this or after, where a call whose page ended said to read
-        /// on.
+        /// on; such a call compares no likely duplicate pair.
         #[arg(long)]
         from: Option<String>,
 

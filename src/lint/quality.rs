@@ -7,9 +7,11 @@
 //! passes `check` and stays revisable; these findings are that graph made
 //! visible, never an error.
 
+use std::collections::BTreeMap;
+
 use rayon::prelude::*;
 
-use crate::store::{Bar, Decision, ProjectState, Shortfall};
+use crate::store::{Bar, Decision, Shortfall};
 
 /// The findings of one kind: how many there are, and the first of them, by
 /// decision name, as many as asked for.
@@ -102,7 +104,8 @@ enum Rank {
 /// A finding with its decision's position among those wanted.
 type Placed = (usize, Rank, Shortfall);
 
-/// Every limit of `bar` each decision `wanted` admits by name breaks, and
+/// Every limit of `bar` each decision of `decisions` that `wanted` admits
+/// by name breaks, and
 /// every match of its patterns in the decisions they read. They read
 /// those by name while their bytes stay within `max_bytes`
 /// ([`Bar::pattern_bytes`]), the first whatever its bytes, and no further
@@ -117,14 +120,13 @@ type Placed = (usize, Rank, Shortfall);
 /// on the threads. The patterns judge one decision after another over one
 /// scan for the page, as a write judges its ops.
 pub(crate) fn shortfalls<'s>(
-    state: &'s ProjectState,
+    decisions: &'s BTreeMap<String, Decision>,
     bar: &Bar,
     limit: usize,
     max_bytes: usize,
     wanted: impl Fn(&str, &Decision) -> bool,
 ) -> Shortfalls<'s> {
-    let decisions: Vec<(&'s str, &'s Decision)> = state
-        .decisions
+    let decisions: Vec<(&'s str, &'s Decision)> = decisions
         .iter()
         .map(|(name, decision)| (name.as_str(), decision))
         .filter(|&(name, decision)| wanted(name, decision))
@@ -266,12 +268,12 @@ fn merged(limits: Found<Placed>, patterns: Found<Placed>, limit: usize) -> Found
 /// file and no symbol, by name: the count, and the first `limit`. One with
 /// no anchor at all breaks the bar instead (`anchor_required`).
 pub(crate) fn file_anchors_only(
-    state: &ProjectState,
+    decisions: &BTreeMap<String, Decision>,
     limit: usize,
     wanted: impl Fn(&Decision) -> bool,
 ) -> Found<&str> {
     let mut found = Found::new();
-    for (name, decision) in &state.decisions {
+    for (name, decision) in decisions {
         let anchors = &decision.anchors;
         let files_only = !anchors.is_empty() && anchors.iter().all(|a| a.symbol().is_none());
         if files_only && wanted(decision) {
@@ -285,7 +287,9 @@ pub(crate) fn file_anchors_only(
 mod tests {
     use super::*;
     use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, empty_state, sample_decision};
-    use crate::store::{Anchor, DecisionField, Level, Pattern, Quality, QualityFault};
+    use crate::store::{
+        Anchor, DecisionField, Level, Pattern, ProjectState, Quality, QualityFault,
+    };
 
     /// Six hundred decisions, each lacking an alternative and an anchor
     /// but every tenth, which names a file alone and a reason with `zz`.
@@ -338,7 +342,7 @@ mod tests {
         let (bar, _) = Bar::for_report(&table());
         let run = |threads: usize| {
             on(threads, || {
-                let found = shortfalls(&state, &bar, 5, usize::MAX, |_, _| true);
+                let found = shortfalls(&state.decisions, &bar, 5, usize::MAX, |_, _| true);
                 (found.found, found.reach)
             })
         };
@@ -363,9 +367,9 @@ mod tests {
         assert_eq!(reach.wanted.len(), 600);
         assert_eq!(run(8), (one, reach));
 
-        let files = file_anchors_only(&state, 2, |_| true);
+        let files = file_anchors_only(&state.decisions, 2, |_| true);
         assert_eq!((files.total, files.first), (60, vec!["d000", "d010"]));
-        let none = file_anchors_only(&state, 2, |decision| decision.origin.is_some());
+        let none = file_anchors_only(&state.decisions, 2, |decision| decision.origin.is_some());
         assert_eq!(none.total, 0);
     }
 
@@ -396,7 +400,7 @@ mod tests {
             (ten + 1, 10, "d010"),
             (ten - 1, 9, "d009"),
         ] {
-            let found = shortfalls(&state, &bar, usize::MAX, max_bytes, |_, _| true);
+            let found = shortfalls(&state.decisions, &bar, usize::MAX, max_bytes, |_, _| true);
             let reach = &found.reach;
             let read = (reach.read.len(), reach.wanted.len(), reach.bytes);
             assert_eq!(read, (judged, 600, whole), "{max_bytes}");
@@ -410,9 +414,9 @@ mod tests {
             assert!(listed.clone().all(|&(name, _)| name < next), "{max_bytes}");
             assert_eq!(listed.count(), 1 + (judged - 1) * 2, "{max_bytes}");
         }
-        let all = shortfalls(&state, &bar, usize::MAX, whole, |_, _| true);
+        let all = shortfalls(&state.decisions, &bar, usize::MAX, whole, |_, _| true);
         assert_eq!((all.reach.read.len(), all.reach.next), (600, None));
-        let first = shortfalls(&state, &bar, usize::MAX, 0, |_, _| true);
+        let first = shortfalls(&state.decisions, &bar, usize::MAX, 0, |_, _| true);
         assert_eq!(first.reach.read, ["d000"]);
     }
 
@@ -425,7 +429,7 @@ mod tests {
     ) -> (usize, Vec<(String, Shortfall)>, Vec<Stop>) {
         let (mut at, mut judged, mut listed, mut whys) = (None, 0, Vec::new(), Vec::new());
         loop {
-            let found = shortfalls(state, bar, usize::MAX, max_bytes, from(at));
+            let found = shortfalls(&state.decisions, bar, usize::MAX, max_bytes, from(at));
             judged += found.reach.read.len();
             let each = found.found.first.into_iter();
             listed.extend(each.map(|(name, shortfall)| (name.to_owned(), shortfall)));
@@ -447,7 +451,7 @@ mod tests {
         let state = graph();
         let (bar, _) = Bar::for_report(&table());
         let cheap = bar.pattern_bytes(&state.decisions["d000"]);
-        let whole = shortfalls(&state, &bar, usize::MAX, usize::MAX, |_, _| true);
+        let whole = shortfalls(&state.decisions, &bar, usize::MAX, usize::MAX, |_, _| true);
         let whole: Vec<(String, Shortfall)> = whole
             .found
             .first
@@ -469,8 +473,8 @@ mod tests {
         let state = graph();
         let (bar, _) = Bar::for_report(&table());
 
-        let cut = shortfalls(&state, &bar, 4, usize::MAX, |_, _| true);
-        let whole = shortfalls(&state, &bar, usize::MAX, usize::MAX, |_, _| true);
+        let cut = shortfalls(&state.decisions, &bar, 4, usize::MAX, |_, _| true);
+        let whole = shortfalls(&state.decisions, &bar, usize::MAX, usize::MAX, |_, _| true);
 
         // d000's pattern, then two findings each of d001, d002: d002's
         // second is the fifth, past the four kept.
@@ -487,8 +491,8 @@ mod tests {
         let state = graph();
         let (bar, _) = Bar::for_report(&table());
 
-        let page = shortfalls(&state, &bar, 5, usize::MAX, |_, _| true);
-        let whole = shortfalls(&state, &bar, usize::MAX, usize::MAX, |_, _| true);
+        let page = shortfalls(&state.decisions, &bar, 5, usize::MAX, |_, _| true);
+        let whole = shortfalls(&state.decisions, &bar, usize::MAX, usize::MAX, |_, _| true);
 
         assert_eq!(page.beyond, Some("d003"));
         assert!(page.reach.read.len() < 600, "{}", page.reach.read.len());
@@ -534,7 +538,9 @@ mod tests {
             .decisions
             .keys()
             .flat_map(|name| {
-                let found = shortfalls(&state, &bar, usize::MAX, usize::MAX, |n, _| n == name);
+                let found = shortfalls(&state.decisions, &bar, usize::MAX, usize::MAX, |n, _| {
+                    n == name
+                });
                 let each = found.found.first.into_iter();
                 each.map(|(name, shortfall)| (name.to_owned(), shortfall))
                     .collect::<Vec<_>>()
@@ -558,7 +564,7 @@ mod tests {
         }
         let (bar, _) = Bar::for_report(&table());
 
-        let page = shortfalls(&state, &bar, 2, usize::MAX, |_, _| true);
+        let page = shortfalls(&state.decisions, &bar, 2, usize::MAX, |_, _| true);
 
         assert_eq!(page.reach.read, ["d000", "d001", "d002"]);
         let next = page.reach.next.map(|next| (next.decision, next.why));
@@ -583,7 +589,7 @@ mod tests {
         };
         let (bar, _) = Bar::for_report(&table);
 
-        let page = shortfalls(&state, &bar, usize::MAX, usize::MAX, |_, _| true);
+        let page = shortfalls(&state.decisions, &bar, usize::MAX, usize::MAX, |_, _| true);
 
         assert_eq!(page.reach.read, ["d000"]);
         let next = page.reach.next.map(|next| (next.decision, next.why));
@@ -616,7 +622,7 @@ mod tests {
         };
         let (bar, _) = Bar::for_report(&table);
 
-        let page = shortfalls(&state, &bar, usize::MAX, usize::MAX, |_, _| true);
+        let page = shortfalls(&state.decisions, &bar, usize::MAX, usize::MAX, |_, _| true);
 
         let found = page.found.first.iter().map(|(_, s)| &s.fault);
         let last = found.clone().find(|fault| match fault {

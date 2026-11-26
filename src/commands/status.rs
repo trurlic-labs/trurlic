@@ -5,7 +5,8 @@ use serde_json::{Map, Value};
 use crate::Result;
 use crate::console::out;
 use crate::mcp::twin::{
-    self, AnchorCounts, Cut, LintItem, Part, PatternCounts, QualityCounts, Report, ToolError,
+    self, AnchorCounts, Cut, LintItem, PairCounts, Part, PatternCounts, QualityCounts, Report,
+    ToolError,
 };
 
 use super::{Format, answer};
@@ -120,11 +121,13 @@ fn lint(report: &Report) -> Result<()> {
     if lint.total == 0 {
         return Ok(());
     }
+    let duplicates = counts.duplicates.map_or_else(
+        || "likely duplicates not compared".to_owned(),
+        |count| format!("{count} likely duplicate pair(s)"),
+    );
     out!(
-        "lint: {} ({} likely duplicate pair(s), {} quality finding(s), {} decision(s) with only \
-         file anchors)",
+        "lint: {} ({duplicates}, {} quality finding(s), {} decision(s) with only file anchors)",
         lint.total,
-        counts.duplicates,
         counts.quality,
         counts.file_anchors_only
     )?;
@@ -171,7 +174,7 @@ fn finding(item: &LintItem) -> String {
 /// Why the `[quality]` patterns left decisions unjudged, if they did.
 fn unjudged(patterns: &PatternCounts, quality: &QualityCounts) -> Result<()> {
     match &patterns.cut {
-        None | Some(Cut::Unbuilt(_)) => Ok(()),
+        None => Ok(()),
         Some(Cut::NotAsked) => out!(
             "lint: the limits alone; `trurlic status --section lint` judges the {} [quality] \
              pattern(s) too",
@@ -212,33 +215,21 @@ fn unjudged(patterns: &PatternCounts, quality: &QualityCounts) -> Result<()> {
     }
 }
 
-/// How far the likely duplicates' probes read, when not to the last.
-fn paired(pairs: &PatternCounts) -> Result<()> {
-    match &pairs.cut {
-        Some(Cut::Unbuilt(work)) => out!(
-            "lint: no likely duplicate compared: the decisions' texts alone take {} units of \
-             work, past the {} one call does",
-            work.measured,
-            work.bound
+/// Why the likely duplicates' pass left decisions uncompared.
+fn paired(pairs: &PairCounts) -> Result<()> {
+    match &pairs.work {
+        Some(work) => out!(
+            "lint: the likely duplicates of {} of {} decision(s), by name, within {} units of the \
+             {} their pass would do; `--origin` compares only the pairs of its decisions",
+            pairs.compared,
+            pairs.compared + pairs.uncompared,
+            work.bound,
+            work.measured
         ),
-        Some(Cut::WorkLimit(work)) => {
-            out!(
-                "lint: the likely duplicates of {} of {} decision(s), by name, within {} units \
-                 of the {} their pass would do",
-                pairs.judged,
-                pairs.judged + pairs.unjudged,
-                work.bound,
-                work.measured
-            )?;
-            next_page(pairs)
-        }
-        Some(Cut::Page | Cut::NotAsked | Cut::GaveUp | Cut::Uncompiled(_)) | None => {
-            out!(
-                "lint: this page lists the likely duplicates of {} decision(s), by name",
-                pairs.judged
-            )?;
-            next_page(pairs)
-        }
+        None => out!(
+            "lint: likely duplicates not compared; `trurlic status --section lint` without \
+             `--from` compares them"
+        ),
     }
 }
 

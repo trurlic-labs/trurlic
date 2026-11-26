@@ -45,8 +45,8 @@ pub mod bench {
     #[must_use]
     pub fn likely_duplicates(state: &ProjectState) -> usize {
         use crate::lint::duplicates::{Among, Similarity};
-        Similarity::of(state, usize::MAX).map_or(0, |similarity| {
-            similarity.page(Among::Every, None, usize::MAX).total
-        })
+        Similarity::of(&state.decisions)
+            .pairs(Among::Every, usize::MAX, usize::MAX)
+            .total
     }
 }

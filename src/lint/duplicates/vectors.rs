@@ -7,7 +7,7 @@ use std::ops::Range;
 use super::{ONE_Q32, PER_TASK, fixed, terms};
 use rayon::prelude::*;
 
-use crate::store::{Decision, ProjectState};
+use crate::store::Decision;
 
 /// A decision's terms and weights.
 pub(super) struct Vector {
@@ -19,13 +19,13 @@ pub(super) struct Vector {
     pub(super) norm: u128,
 }
 
-/// The vector of each decision of `state`, in name order, and the count of
-/// terms the graph holds: the ids run below it.
-pub(super) fn of(state: &ProjectState) -> (Vec<Vector>, usize) {
+/// The vector of each decision of `decisions`, in name order, and the
+/// count of terms the graph holds: the ids run below it.
+pub(super) fn of(decisions: &BTreeMap<String, Decision>) -> (Vec<Vector>, usize) {
     // Each decision's terms are found and counted on the thread pool; the
     // ids are given after, in one pass in the order of the decisions, so no
     // id depends on the threads.
-    let decisions: Vec<&Decision> = state.decisions.values().collect();
+    let decisions: Vec<&Decision> = decisions.values().collect();
     let found: Vec<Found> = decisions
         .par_iter()
         .with_min_len(PER_TASK)

@@ -14,9 +14,8 @@ use crate::store::{Bar, Decision, ProjectState, Shortfall};
 use crate::mcp::result::ToolError;
 use crate::mcp::status::Section;
 
-/// How far a page read the decisions, the `[quality]` patterns' or the
-/// likely duplicates' probes: why it read no more, and where the next
-/// page starts.
+/// The decisions the `[quality]` patterns read, why they read no more, and
+/// where the next page starts.
 pub(crate) struct PatternCounts {
     pub(crate) judged: usize,
     pub(crate) unjudged: usize,
@@ -42,19 +41,14 @@ pub(crate) enum Cut {
     Page,
     /// A pattern does not compile, so none is judged.
     Uncompiled(Uncompiled),
-    /// The decisions' texts alone take the pairs' work past the bound, so
-    /// no pair is compared.
-    Unbuilt(Work),
 }
 
-/// The work a pass would do over every decision wanted from the page's
-/// first on, the most one call does, and what both count.
-#[derive(Debug)]
+/// The work a pass would do over every decision it wants, and the most
+/// one call does: the bytes the patterns read, or the units of the pairs'
+/// probes.
 pub(crate) struct Work {
     pub(crate) measured: usize,
     pub(crate) bound: usize,
-    /// `bytes` the patterns read, or `units` of the pairs' work.
-    pub(crate) unit: &'static str,
 }
 
 /// A `[quality]` pattern that does not compile: no pattern is judged, the
@@ -65,10 +59,9 @@ pub(crate) struct Uncompiled {
     pub(crate) message: String,
 }
 
-/// How a caller reads the rest of the section when a page ends.
-pub(super) const PAGE_MORE: &str = "the page lists the findings of the decisions before `next`, \
-     a pair on the page of the later-named of its decisions the pass probed: call again with \
-     `section: \"lint\"` and `from` set to `next` until no `next` is left";
+/// How a caller reads the rest of the quality findings when a page ends.
+pub(super) const PAGE_MORE: &str = "the page lists the quality findings of the decisions before \
+     `next`: call again with `from` set to `next` until no `next` is left";
 
 /// The kind of a [`Cut`], one per variant.
 #[derive(Debug, Clone, Copy)]
@@ -78,17 +71,15 @@ enum CutKind {
     GaveUp,
     Page,
     Uncompiled,
-    Unbuilt,
 }
 
 impl CutKind {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 5] = [
         Self::NotAsked,
         Self::WorkLimit,
         Self::GaveUp,
         Self::Page,
         Self::Uncompiled,
-        Self::Unbuilt,
     ];
 
     const fn as_str(self) -> &'static str {
@@ -98,7 +89,6 @@ impl CutKind {
             Self::GaveUp => "gave_up",
             Self::Page => "page",
             Self::Uncompiled => "uncompiled",
-            Self::Unbuilt => "unbuilt",
         }
     }
 }
@@ -111,7 +101,6 @@ impl Cut {
             Self::GaveUp => &CutKind::GaveUp,
             Self::Page => &CutKind::Page,
             Self::Uncompiled(_) => &CutKind::Uncompiled,
-            Self::Unbuilt(_) => &CutKind::Unbuilt,
         }
     }
 
@@ -124,9 +113,6 @@ impl Cut {
             }
             Self::WorkLimit(_) | Self::GaveUp | Self::Page => PAGE_MORE,
             Self::Uncompiled(_) => "no pattern is judged while one does not compile",
-            Self::Unbuilt(_) => {
-                "no call compares the pairs while the decisions' texts alone pass the bound"
-            }
         }
     }
 }
@@ -179,22 +165,6 @@ impl<'a> Patterns<'a> {
             Self::NotAsked => true,
         }
     }
-
-    /// Whether the call reads a page of the decisions, from `from` on.
-    pub(super) const fn pages(self) -> bool {
-        match self {
-            Self::Judged { .. } => true,
-            Self::NotAsked => false,
-        }
-    }
-
-    /// The decision a page starts at, when the call reads one from it.
-    pub(super) const fn from(self) -> Option<&'a str> {
-        match self {
-            Self::Judged { from } => from,
-            Self::NotAsked => None,
-        }
-    }
 }
 
 /// The quality findings of the decisions `wanted` admits by name, the
@@ -212,7 +182,13 @@ pub(super) fn shortfalls<'s>(
         Patterns::Judged { .. } => Bar::for_report(table),
         Patterns::NotAsked => (Bar::limits_only(table), None),
     };
-    let found = quality::shortfalls(state, &bar, limit, MAX_REPORT_PATTERN_BYTES, wanted);
+    let found = quality::shortfalls(
+        &state.decisions,
+        &bar,
+        limit,
+        MAX_REPORT_PATTERN_BYTES,
+        wanted,
+    );
     let verdict = match (patterns, uncompiled) {
         (Patterns::NotAsked, _) => Verdict::NotAsked,
         (Patterns::Judged { .. }, Some(fault)) => Verdict::Uncompiled(Uncompiled {
@@ -285,7 +261,6 @@ impl<'s> Reading<'s> {
             (Verdict::Read, Some((_, Stop::Bytes))) => Some(Cut::WorkLimit(Work {
                 measured: reach.bytes,
                 bound: MAX_REPORT_PATTERN_BYTES,
-                unit: "bytes",
             })),
             (Verdict::Read, Some((_, Stop::GaveUp))) => Some(Cut::GaveUp),
             (Verdict::Read, Some((_, Stop::Listing))) => Some(Cut::Page),
@@ -313,34 +288,32 @@ const fn cut(counts: &PatternCounts) -> Option<&Cut> {
     counts.cut.as_ref()
 }
 
-/// The work bound's cut of `counts`, if it cut.
+/// The bytes bound's cut of `counts`, if it cut.
 const fn work(counts: &PatternCounts) -> Option<&Work> {
     match cut(counts) {
-        Some(Cut::WorkLimit(work) | Cut::Unbuilt(work)) => Some(work),
+        Some(Cut::WorkLimit(work)) => Some(work),
         Some(Cut::NotAsked | Cut::GaveUp | Cut::Page | Cut::Uncompiled(_)) | None => None,
     }
 }
 
 impl Output for PatternCounts {
     fn declare(fields: &mut Shown<'_, Self>) {
-        let judged = "Decisions this page read, by name: the patterns', or the pairs' probes.";
+        let judged = "Decisions the patterns read on this page, by name.";
         fields.required("judged", judged, &Count, |p| &p.judged);
-        let unjudged = "Decisions it did not read.";
+        let unjudged = "Decisions they did not read on it.";
         fields.required("unjudged", unjudged, &Count, |p| &p.unjudged);
         let kind = Tag {
             all: &CutKind::ALL,
             name: CutKind::as_str,
         };
-        let why = "Why some went unread: `not_asked`, the call judged the limits alone; \
-                   `work_limit`, the work reached the bound; `gave_up`, a pattern's cache, or \
-                   the caches together, filled over the page before `next`; `page`, the \
-                   result's room, or another kind's page, ended the listing; `uncompiled`, a \
-                   pattern does not compile; `unbuilt`, the decisions' texts alone pass the \
-                   pairs' bound.";
+        let why = "Why some went unjudged: `not_asked`, the call judged the limits alone; \
+                   `work_limit`, the bytes the patterns read reached the bound; `gave_up`, a \
+                   pattern's cache, or the caches together, filled over the page before `next`; \
+                   `page`, the result's \
+                   room ended the listing; `uncompiled`, a pattern does not compile.";
         fields.optional("why", why, &kind, |p| cut(p).map(Cut::kind));
-        let about = "The work over every decision from the page's first on and the bound: \
-                     for the patterns the bytes of each text each reads, one more per text; \
-                     for the pairs the units their pass charges.";
+        let about = "The bytes the patterns would read over every decision and the bound: \
+                     each pattern the texts of the fields it reads, one more per text.";
         fields.optional("work", about, &Nested::<Work>::new(), work);
         let next = "The first decision whose findings this page did not list wholly: \
                     `from` set to it reads on.";
@@ -349,8 +322,7 @@ impl Output for PatternCounts {
         let kind = Nested::<Uncompiled>::new();
         fields.optional("uncompiled", uncompiled, &kind, |p| match cut(p) {
             Some(Cut::Uncompiled(uncompiled)) => Some(uncompiled),
-            Some(Cut::NotAsked | Cut::WorkLimit(_) | Cut::GaveUp | Cut::Page | Cut::Unbuilt(_))
-            | None => None,
+            Some(Cut::NotAsked | Cut::WorkLimit(_) | Cut::GaveUp | Cut::Page) | None => None,
         });
         let more = "How the decisions left unjudged come to be judged.";
         fields.optional("more", more, &Str, |p| cut(p).map(Cut::more));
@@ -359,11 +331,9 @@ impl Output for PatternCounts {
 
 impl Output for Work {
     fn declare(fields: &mut Shown<'_, Self>) {
-        let measured = "The work over every decision from the page's first on.";
+        let measured = "The work over every decision the pass wants.";
         fields.required("measured", measured, &Count, |w| &w.measured);
         fields.required("bound", "The most one call does.", &Count, |w| &w.bound);
-        let unit = "What both count: `bytes`, or `units`.";
-        fields.required("unit", unit, &Str, |w| w.unit);
     }
 }
 
@@ -486,11 +456,9 @@ mod tests {
                 reading: reading(Verdict::Read, None, Stop::Bytes),
                 decisions,
             }),
-            pairs: None,
-            paged: true,
         };
         let mut counts = LintCounts {
-            duplicates: 0,
+            duplicates: None,
             pairs: None,
             quality: total,
             file_anchors_only: 0,
