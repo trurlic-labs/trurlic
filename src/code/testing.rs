@@ -1,9 +1,9 @@
 //! What the resolvers' tests read an index through: a file's index, alone
-//! or in a tree of C and C++ headers; each definition's path and the text
-//! of its span; and the stack they parse a file at the size cap on.
+//! or in a tree of C and C++ headers, and each definition's path and the
+//! text of its span.
 
 use super::encoding::Indexed;
-use super::index::{FileKind, PARSE_STACK_BYTES};
+use super::index::FileKind;
 use super::language::c_family::{BlankMacros, FileMacros, lexed};
 use super::scope::{ScopeId, Scopes};
 use super::symbol::Symbol;
@@ -22,19 +22,6 @@ pub(crate) fn index_in(kind: FileKind, bytes: &[u8], tree: &BlankMacros) -> Inde
         false => FileMacros::default(),
     };
     super::index::index(kind, bytes, &macros)
-}
-
-/// What `work` gives, run on a thread of the stack the shell indexes
-/// files on, where a parse of a file at the size cap fits.
-pub(crate) fn on_parse_stack<R: Send>(work: impl FnOnce() -> R + Send) -> R {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(PARSE_STACK_BYTES)
-            .spawn_scoped(scope, work)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
 }
 
 /// Each definition of `text`, a file of `kind`, as its path joined by

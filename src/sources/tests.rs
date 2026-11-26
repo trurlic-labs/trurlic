@@ -248,12 +248,6 @@ const PYTHON_CASES: &[(&str, &str, &str)] = &[
         "x",
         "its file starts its lines at more than 256 indentation widths",
     ),
-    ("bounds/long.py", "x", SYMBOL),
-    (
-        "bounds/longer.py",
-        "x",
-        "its file continues one line more than 256 times",
-    ),
 ];
 
 const SHELF_TS: &str = "typescript/shelf.ts";
@@ -719,14 +713,16 @@ fn a_read_of_another_tree_prunes_no_entry_of_the_calling_tree() {
 }
 
 #[test]
-fn a_file_at_the_cap_whose_parse_recurses_deep_is_indexed_on_a_stack_it_fits() {
+fn a_file_at_the_cap_whose_parse_stack_runs_deep_is_indexed_on_the_worker_stack() {
     let tmp = TempDir::new().unwrap();
     let store = setup_store(tmp.path());
-    // Past 200 KB, this aborted the process on a 2 MiB stack.
+    // Each `(a|` keeps one more ambiguous link on the parse stack, within
+    // the operations a byte: released by recursion, as the runtime once
+    // did, this overflowed a 32 MiB stack and aborted the process.
     let cap = FileKind::TypeScript.max_bytes();
     let text = format!(
-        "export const x = 1;\ny={}",
-        "a?(b):c=>".repeat((cap - 22) / 9)
+        "export const x = 1;\nlet y:{}",
+        "(a|".repeat((cap - 26) / 3)
     );
     fs::write(tmp.path().join("deep.ts"), &text).unwrap();
 

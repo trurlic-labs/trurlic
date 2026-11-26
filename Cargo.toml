@@ -10,6 +10,9 @@ readme = "README.md"
 description = "Structured architectural decisions that constrain AI code generation"
 keywords = ["architecture", "decisions", "mcp", "ai", "code-generation"]
 categories = ["command-line-utilities", "development-tools"]
+# The tree-sitter runtime is a path dependency (below), which crates.io
+# refuses: trurlic installs from its repository or a release binary.
+publish = false
 
 # The lib and bin carry no benches: `bench = false` keeps `cargo bench` from
 # running their libtest harnesses, which refuse criterion's arguments
@@ -67,8 +70,13 @@ rayon = "1"
 # which cannot tell an item from a word in a string or a comment. The
 # grammars are C, compiled by the crate's build script. Without default
 # features: `std` adds only debug-graph output and the regex crate's
-# literal optimizations, which no query of ours needs.
-tree-sitter = { version = "0.27", default-features = false }
+# literal optimizations, which no query of ours needs. The runtime is
+# 0.27.2 vendored with a patch (vendor/tree-sitter-0.27.2-bounds.patch,
+# whose head states what it changes): its progress count sees error
+# recovery and allocation, and it releases its stack without recursion, so
+# a parse is bounded in time, stack and memory. A path dependency with no
+# version, so no build can take the unpatched runtime from crates.io.
+tree-sitter = { path = "vendor/tree-sitter", default-features = false }
 tree-sitter-rust = "0.24"
 # Python's grammar for the general resolver, which reads a language from
 # its grammar and a query file (src/code/language/python.scm): no Rust

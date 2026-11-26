@@ -19,6 +19,10 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# The vendored tree-sitter runtime is a path dependency with no version, so
+# that no build takes the unpatched one from crates.io; trurlic is not
+# published, which is when cargo-deny admits it.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

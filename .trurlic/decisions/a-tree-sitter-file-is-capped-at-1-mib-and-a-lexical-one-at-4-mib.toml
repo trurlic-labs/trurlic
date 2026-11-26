@@ -1,8 +1,8 @@
 component = "code"
 choice = "A file of a tree-sitter kind is refused past 1 MiB and one of a lexical kind past 4 MiB, each as TooLarge naming its size and its kind's cap"
-reason = "tree-sitter's error recovery costs work its progress count of steps does not show: on generated error-dense input a parse takes microseconds a byte whatever the budget of steps, so no budget stops it, and the bound on its time is a bound on the file's size. At 1 MiB the worst seen takes seconds, once, since the index is then cached; at 4 MiB it would take a minute or more. A lexical resolver's work is the index's own and counted per byte, so data and prose files keep 4 MiB. The cap is FileKind::max_bytes, checked by the pure index, and the shell reads at most the largest cap and one byte more, so every surface reports the one refusal."
+reason = "A parse is held to a count of work and allocation per byte of its file, so the cap bounds what one parse may take: 32 Mi progress operations and 2 GiB allocated at 1 MiB, seconds, once, since the index is then cached. At 4 MiB one parse could allocate 8 GiB, past what a call may hold. A lexical resolver's work is the index's own and counted per byte, so data and prose files keep 4 MiB. The cap is FileKind::max_bytes, checked by the pure index, and the shell reads at most the largest cap and one byte more, so every surface reports the one refusal."
 alternatives = [
-    "One cap of 4 MiB for every kind: rejected because an error-dense file that size takes a minute or more to parse cold",
+    "One cap of 4 MiB for every kind: rejected because one parse of that size may allocate 8 GiB and run four times as long",
     "A wall-clock timeout on the parse: rejected because code reads no clock, and a file would be refused on a slow machine and not a fast one",
     "A check of the bytes' density before the parse: rejected because no measure of the bytes predicts the parser's error recovery",
 ]
@@ -10,11 +10,20 @@ tags = [
     "reliability",
     "security",
 ]
-status = "accepted"
+status = "proposed"
 origin = "languages as query files"
 created = "2026-11-25T16:53:23.387185487Z"
 anchors = [
     { file = "src/code/index.rs", symbol = "FileKind::max_bytes" },
     { file = "src/code/index.rs", symbol = "TREE_SITTER_MAX_BYTES" },
     { file = "src/code/index.rs", symbol = "a_file_past_its_kinds_size_is_refused_naming_the_bound" },
+]
+
+[accepted_text]
+choice = "A file of a tree-sitter kind is refused past 1 MiB and one of a lexical kind past 4 MiB, each as TooLarge naming its size and its kind's cap"
+reason = "tree-sitter's error recovery costs work its progress count of steps does not show: on generated error-dense input a parse takes microseconds a byte whatever the budget of steps, so no budget stops it, and the bound on its time is a bound on the file's size. At 1 MiB the worst seen takes seconds, once, since the index is then cached; at 4 MiB it would take a minute or more. A lexical resolver's work is the index's own and counted per byte, so data and prose files keep 4 MiB. The cap is FileKind::max_bytes, checked by the pure index, and the shell reads at most the largest cap and one byte more, so every surface reports the one refusal."
+alternatives = [
+    "One cap of 4 MiB for every kind: rejected because an error-dense file that size takes a minute or more to parse cold",
+    "A wall-clock timeout on the parse: rejected because code reads no clock, and a file would be refused on a slow machine and not a fast one",
+    "A check of the bytes' density before the parse: rejected because no measure of the bytes predicts the parser's error recovery",
 ]

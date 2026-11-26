@@ -1,17 +1,21 @@
-//! Parsing a file with a tree-sitter grammar, within a budget of work,
-//! and the tokens of its tree. Every
-//! tree-sitter resolver (`rust.rs`, `general.rs`) stands on these.
+//! Parsing a file with a tree-sitter grammar, within two budgets of work,
+//! and the tokens of its tree. Every tree-sitter resolver (`rust.rs`,
+//! `general.rs`) stands on these.
 //!
-//! A tree-sitter parse recovers from any input, and on hostile input its
-//! lexer can scan the rest of the file again from each byte (an unclosed
-//! raw string repeated). The lexer reads the text in chunks of
+//! A tree-sitter parse recovers from any input, at a cost the input
+//! chooses. Its lexer can scan the rest of the file again from each byte
+//! (an unclosed raw string repeated); it reads the text in chunks of
 //! [`CHUNK_BYTES`] through a callback, so the bytes it scans are the bytes
-//! the callback serves. A parse past [`PARSE_WORK_PER_BYTE`] bytes served
-//! per byte of the file is stopped and the file has no index. The bound
-//! counts work, not time, so a file is refused on every machine or on
-//! none. The parser's own steps are not counted: tree-sitter keeps a
-//! bounded number of stack versions, so its steps grow with the tokens,
-//! and the time its error recovery takes is bounded by the size cap.
+//! the callback serves, and a parse past [`SERVED_BYTES_PER_BYTE`] of them
+//! per byte is stopped. Its error recovery and its ambiguities can take
+//! work quadratic in the file, and memory with it; the runtime
+//! (`vendor/tree-sitter`) counts each parser action, each step of a walk
+//! of its stack and each 64 bytes it allocates as one progress operation,
+//! and a parse past [`PARSE_OPERATIONS_PER_BYTE`] of them per byte is
+//! stopped. A stopped parse leaves the file with no index. Both bounds
+//! count work, not time, so a file is refused on every machine or on none.
+//! The runtime releases and merges its stack without recursion, so a parse
+//! takes the same call stack whatever its file.
 //!
 //! A tree's tokens cover every byte of its file but comments and
 //! whitespace: each leaf, each node of the grammar's literal kinds whole
@@ -24,24 +28,25 @@
 
 use std::ops::{ControlFlow, Range};
 
-use tree_sitter::{Language, Node, Parser, Tree};
+use tree_sitter::{Language, Node, ParseOptions, Parser, Tree};
 
 use super::index::IndexFault;
-use super::work::{PARSE_WORK_PER_BYTE, Work};
+use super::work::{
+    MIN_PARSE_OPERATIONS, MIN_WORK, PARSE_OPERATIONS_PER_BYTE, SERVED_BYTES_PER_BYTE, Work,
+};
 
 /// The bytes the lexer is handed at a time. The lexer reads again within
 /// the chunk it holds without asking for it, so a rescan inside one chunk
 /// is uncounted: a small chunk keeps that uncounted rescan short.
 pub(super) const CHUNK_BYTES: usize = 64;
 
-/// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
-/// the parse runs past its budget.
-pub(super) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault> {
-    parse_within(text, language, Work::of(text.len(), PARSE_WORK_PER_BYTE))
-}
+/// The progress operations between two calls of the progress callback,
+/// the runtime's own constant.
+const OPERATIONS_PER_PROGRESS: usize = 100;
 
-/// The tree of `text`, within the bytes its lexer is served of `scanned`.
-fn parse_within(text: &str, language: &Language, mut scanned: Work) -> Result<Tree, IndexFault> {
+/// The tree of `text` under `language`, or [`IndexFault::TooComplex`] when
+/// the parse runs past either of its budgets.
+pub(super) fn parse(text: &str, language: &Language) -> Result<Tree, IndexFault> {
     let mut parser = Parser::new();
     // The one refusal is a grammar of an ABI this tree-sitter does not
     // read, and the grammars are pinned crates: it fails in a test or never.
@@ -49,16 +54,24 @@ fn parse_within(text: &str, language: &Language, mut scanned: Work) -> Result<Tr
         return Err(IndexFault::Grammar);
     }
     let bytes = text.as_bytes();
+    let mut served = Work::of(text.len(), SERVED_BYTES_PER_BYTE, MIN_WORK);
     let mut within = true;
     // Past the budget the lexer is told the file has ended, so the parse
     // ends at once; the tree it gives is then discarded.
     let mut read = |offset: usize, _| {
         let rest = bytes.get(offset..).unwrap_or_default();
         let chunk = rest.get(..CHUNK_BYTES).unwrap_or(rest);
-        within &= scanned.spend(chunk.len()).is_ok();
+        within &= served.spend(chunk.len()).is_ok();
         if within { chunk } else { &[] }
     };
-    let tree = parser.parse_with_options(&mut read, None, None);
+    let mut operations = Work::of(text.len(), PARSE_OPERATIONS_PER_BYTE, MIN_PARSE_OPERATIONS);
+    // Past the budget the parse is cancelled and gives no tree.
+    let mut progress = |_: &_| match operations.spend(OPERATIONS_PER_PROGRESS) {
+        Ok(()) => ControlFlow::Continue(()),
+        Err(_) => ControlFlow::Break(()),
+    };
+    let options = ParseOptions::new().progress_callback(&mut progress);
+    let tree = parser.parse_with_options(&mut read, None, Some(options));
     match tree {
         Some(tree) if within => Ok(tree),
         Some(_) | None => Err(IndexFault::TooComplex),
@@ -597,6 +610,88 @@ mod tests {
         assert!(parse(&text(12_743), &python).is_ok());
         assert_eq!(
             parse(&text(12_742), &python).err(),
+            Some(IndexFault::TooComplex)
+        );
+    }
+
+    /// `unit` repeated after `open` to 16 KiB.
+    fn repeated(open: &str, unit: &str) -> String {
+        format!(
+            "{open}{}",
+            unit.repeat((16 * 1024 - open.len()) / unit.len())
+        )
+    }
+
+    #[test]
+    fn error_recovery_past_its_operations_a_byte_is_refused_in_every_grammar() {
+        // Each unit is an error the next cannot recover from, so recovery
+        // walks the whole stack again at each: work quadratic in the file,
+        // which the progress count sees only as the runtime counts the
+        // walks. Uncounted, each file is read after seconds to minutes.
+        let cases: [(&str, Language, String); 6] = [
+            (
+                "python",
+                tree_sitter_python::LANGUAGE.into(),
+                repeated("", " if ~"),
+            ),
+            (
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                repeated("x=", "|-"),
+            ),
+            (
+                "tsx",
+                tree_sitter_typescript::LANGUAGE_TSX.into(),
+                repeated("x=", "|-"),
+            ),
+            (
+                "rust",
+                tree_sitter_rust::LANGUAGE.into(),
+                repeated("fn f() { ", " ! ]"),
+            ),
+            (
+                "c",
+                tree_sitter_c::LANGUAGE.into(),
+                repeated("void f() { ", " & }"),
+            ),
+            (
+                "cpp",
+                tree_sitter_cpp::LANGUAGE.into(),
+                repeated("void f() { ", " - )"),
+            ),
+        ];
+        for (grammar, language, text) in cases {
+            assert_eq!(
+                parse(&text, &language).err(),
+                Some(IndexFault::TooComplex),
+                "{grammar}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_parse_whose_stack_walks_pass_the_budget_is_refused() {
+        // A run of line continuations in an error: recovery walks the run
+        // at each one. Its actions and allocation take less than half the
+        // budget, so it is refused only as each step of a walk is counted.
+        let hostile = repeated("", "\\\nx");
+
+        assert_eq!(
+            parse(&hostile, &tree_sitter_python::LANGUAGE.into()).err(),
+            Some(IndexFault::TooComplex)
+        );
+    }
+
+    #[test]
+    fn a_parse_whose_allocation_passes_the_budget_is_refused() {
+        // Unclosed template arguments keep ambiguous readings alive, which
+        // copy the stack as they fork. Its actions and walks take nearly
+        // all of the budget and not more, so it is refused only as every
+        // 64 bytes allocated are counted.
+        let hostile = repeated("", "a<b>(");
+
+        assert_eq!(
+            parse(&hostile, &tree_sitter_cpp::LANGUAGE.into()).err(),
             Some(IndexFault::TooComplex)
         );
     }

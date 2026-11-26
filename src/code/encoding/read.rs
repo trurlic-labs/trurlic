@@ -35,9 +35,6 @@ pub(crate) fn decode(bytes: &[u8], kind: FileKind, source_bytes: usize) -> Optio
         7 => Err(IndexFault::TooManyIndentations {
             max: reader.number()?,
         }),
-        8 => Err(IndexFault::TooManyContinuations {
-            max: reader.number()?,
-        }),
         _ => return None,
     };
     reader.is_done().then_some(indexed)

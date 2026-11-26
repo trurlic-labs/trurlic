@@ -13,10 +13,9 @@
 //! [`MAX_SOURCE_FILE_BYTES`] and when it is no regular file, and indexed
 //! from the cache when an entry holds its key; a C or C++ file's key holds
 //! the part of the tree's blank set it writes, which its lexical pass,
-//! cached by content, says (`lexical.rs`). Indexing runs in parallel,
-//! each index on a thread of its own (`indexer.rs`) whose stack holds a
-//! parse at the size cap; a file that vanishes between the walk and the
-//! read is absent. The misses of every tree a call reads are written to
+//! cached by content, says (`lexical.rs`). Indexing runs in parallel, on
+//! threads the call starts and ends (`indexer.rs`); a file that vanishes
+//! between the walk and the read is absent. The misses of every tree a call reads are written to
 //! the cache once, after
 //! the call's own work, under the exclusive lock when it is free: a busy
 //! lock skips the write, since the cache is never authoritative.

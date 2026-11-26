@@ -1,28 +1,45 @@
-//! The threads the shell indexes files on. A call starts its workers and
-//! ends them as it returns, and [`Worker::index`] is the shell's one call
-//! of [`code::index`].
+//! The threads the shell indexes files on. Each [`Indexer::map`] starts a
+//! pool of workers and ends it as it returns, and [`Worker::index`] is the
+//! shell's one call of [`code::index`].
 //!
-//! tree-sitter releases the stack of an ambiguous parse recursively, as
-//! deep as the file runs, so a parse needs stack in proportion to its
-//! file, and a thread keeps the memory its parses freed until it ends. A
-//! worker indexes a file up to [`code::MAX_BYTES_INDEXED_BY_A_WORKER`]
-//! itself, on its stack of [`code::WORKER_STACK_BYTES`], and starts a
-//! thread of [`code::PARSE_STACK_BYTES`] for a larger one, whose memory
-//! goes back when that thread ends. The files indexed at once hold at most
-//! [`code::MAX_BYTES_INDEXED_AT_ONCE`] bytes between them.
+//! A parse takes a fixed call stack and allocates at most 2 KiB a byte of
+//! its file (`code::work`), and a thread keeps the memory it freed until
+//! it ends. So a worker indexes a file up to
+//! [`MAX_BYTES_INDEXED_BY_A_WORKER`] itself and starts a thread for a
+//! larger one, whose memory goes back when that thread ends, and the files
+//! indexed at once hold at most [`MAX_BYTES_INDEXED_AT_ONCE`] bytes between
+//! them. Every thread has a stack of [`WORKER_STACK_BYTES`].
 //!
 //! A C or C++ file is indexed against the part of its tree's blank set
 //! it writes, the set a fact of the tree's headers: the indexer holds the
 //! calling tree's, taken once a call, and every file the call indexes, in
 //! that tree, another worktree or git's history, is read against it.
 
-use std::num::NonZeroUsize;
+use std::error::Error;
+use std::io::{self, ErrorKind};
 use std::panic;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::thread::{self, Scope, ScopedJoinHandle};
 
+use rayon::ThreadPool;
+use rayon::prelude::*;
+
 use crate::code::{self, BlankMacros, Defines, FileKind, FileMacros, Indexed, ReadFault};
+
+/// The stack of every thread a file is indexed on: a parse takes a fixed
+/// stack whatever its file, and the index's own walks keep theirs on the
+/// heap, so this is a margin over what the index of a file at the cap
+/// takes, measured in a test build.
+const WORKER_STACK_BYTES: usize = 1024 * 1024;
+
+/// The largest file a worker indexes itself; a larger one is indexed on a
+/// thread of its own. A worker keeps what its largest parse allocated, up
+/// to 16 MiB at this size.
+const MAX_BYTES_INDEXED_BY_A_WORKER: usize = 8 * 1024;
+
+/// The bytes of the files indexed at once, between them: the parses under
+/// way allocate 2 GiB at most. A file larger than it is indexed alone.
+const MAX_BYTES_INDEXED_AT_ONCE: usize = 1024 * 1024;
 
 /// The indexes of one call, the room their files share, and the calling
 /// tree's blank set.
@@ -35,7 +52,7 @@ impl Indexer {
     pub(super) fn new() -> Self {
         Self {
             room: Room {
-                free: Mutex::new(code::MAX_BYTES_INDEXED_AT_ONCE),
+                free: Mutex::new(MAX_BYTES_INDEXED_AT_ONCE),
                 freed: Condvar::new(),
             },
             tree: BlankMacros::default(),
@@ -49,43 +66,40 @@ impl Indexer {
     }
 
     /// What `each` gives of each of `items`, in their order, run in
-    /// parallel on workers started for the call, one a core;
-    /// [`ReadFault::NoThread`] when the system starts none. A panic of
+    /// parallel on a pool started for the call: as many workers as rayon's
+    /// own pool has (`RAYON_NUM_THREADS`), and no more than `items`.
+    /// [`ReadFault::NoThread`] when the system refuses a worker; a panic of
     /// `each` is the caller's.
     pub(super) fn map<T: Sync, R: Send>(
         &self,
         items: &[T],
         each: impl Fn(&Worker<'_>, &T) -> R + Sync,
     ) -> Result<Vec<R>, ReadFault> {
-        let next = AtomicUsize::new(0);
+        if items.is_empty() {
+            return Ok(Vec::new());
+        }
         let worker = Worker {
             room: &self.room,
             tree: &self.tree,
         };
-        let work = || {
-            let mut done = Vec::new();
-            loop {
-                let at = next.fetch_add(1, Ordering::Relaxed);
-                let Some(item) = items.get(at) else {
-                    return done;
-                };
-                done.push((at, each(&worker, item)));
-            }
-        };
-        let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
-        thread::scope(|scope| {
-            let first = start(scope, code::WORKER_STACK_BYTES, work)?;
-            // A worker the system refuses leaves its share to the others.
-            let others = (1..cores.min(items.len()))
-                .map_while(|_| start(scope, code::WORKER_STACK_BYTES, work).ok());
-            let mut done: Vec<(usize, R)> = Vec::with_capacity(items.len());
-            for started in std::iter::once(first).chain(others.collect::<Vec<_>>()) {
-                done.extend(joined(started));
-            }
-            done.sort_unstable_by_key(|(at, _)| *at);
-            Ok(done.into_iter().map(|(_, value)| value).collect())
-        })
+        let threads = rayon::current_num_threads().min(items.len());
+        let pool = pool(threads, WORKER_STACK_BYTES)?;
+        Ok(pool.install(|| items.par_iter().map(|item| each(&worker, item)).collect()))
     }
+}
+
+/// A pool of `threads` workers of `stack` bytes each;
+/// [`ReadFault::NoThread`] when the system refuses one.
+fn pool(threads: usize, stack: usize) -> Result<ThreadPool, ReadFault> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .stack_size(stack)
+        .build()
+        .map_err(|error| {
+            // A pool's build fails only where the spawn of a thread does.
+            let spawn = error.source().and_then(|e| e.downcast_ref::<io::Error>());
+            ReadFault::NoThread(spawn.map_or(ErrorKind::Other, io::Error::kind))
+        })
 }
 
 /// A thread of `stack` bytes in `scope` that runs `work`;
@@ -99,14 +113,6 @@ fn start<'s, 'e, R: Send + 'e>(
         .stack_size(stack)
         .spawn_scoped(scope, work)
         .map_err(|error| ReadFault::NoThread(error.kind()))
-}
-
-/// What the thread `started` gave; its panic, the caller's.
-fn joined<R>(started: ScopedJoinHandle<'_, R>) -> R {
-    match started.join() {
-        Ok(value) => value,
-        Err(payload) => panic::resume_unwind(payload),
-    }
 }
 
 /// A worker of an [`Indexer`], which indexes.
@@ -133,8 +139,8 @@ impl Worker<'_> {
 
     /// The index of `bytes`, a file of `kind` that blanks `macros`, built
     /// once the room holds them: by the worker itself up to
-    /// [`code::MAX_BYTES_INDEXED_BY_A_WORKER`], on a thread of its own past
-    /// it; [`ReadFault::NoThread`] when the system refuses that thread.
+    /// [`MAX_BYTES_INDEXED_BY_A_WORKER`], on a thread of its own past it;
+    /// [`ReadFault::NoThread`] when the system refuses that thread.
     pub(super) fn index(
         &self,
         kind: FileKind,
@@ -142,19 +148,24 @@ impl Worker<'_> {
         macros: &FileMacros,
     ) -> Result<Indexed, ReadFault> {
         let _taken = self.room.take(bytes.len());
-        if bytes.len() <= code::MAX_BYTES_INDEXED_BY_A_WORKER {
+        if bytes.len() <= MAX_BYTES_INDEXED_BY_A_WORKER {
             return Ok(code::index(kind, bytes, macros));
         }
         thread::scope(|scope| {
-            let parse = start(scope, code::PARSE_STACK_BYTES, || {
+            let parse = start(scope, WORKER_STACK_BYTES, || {
                 code::index(kind, bytes, macros)
             })?;
-            Ok(joined(parse))
+            match parse.join() {
+                Ok(indexed) => Ok(indexed),
+                Err(payload) => panic::resume_unwind(payload),
+            }
         })
     }
 }
 
-/// The bytes the files being indexed may still take.
+/// The bytes the files being indexed may still take. Whoever holds bytes
+/// of it only indexes, and waits on no other thread but one it started,
+/// so a take always ends.
 struct Room {
     free: Mutex<usize>,
     freed: Condvar,
@@ -164,7 +175,7 @@ impl Room {
     /// `bytes` of the room, the whole room at most, once they are free;
     /// given back when the guard drops.
     fn take(&self, bytes: usize) -> Taken<'_> {
-        let bytes = bytes.min(code::MAX_BYTES_INDEXED_AT_ONCE);
+        let bytes = bytes.min(MAX_BYTES_INDEXED_AT_ONCE);
         // Nothing panics while it holds the lock, so a poisoned lock still
         // holds a true count.
         let free = self.free.lock().unwrap_or_else(PoisonError::into_inner);
@@ -202,42 +213,41 @@ mod tests {
 
     use super::*;
 
-    const ROOM: usize = code::MAX_BYTES_INDEXED_AT_ONCE;
+    #[test]
+    fn a_take_past_the_free_room_waits_until_it_is_given_back() {
+        let indexer = Indexer::new();
+        let room = &indexer.room;
+        let held = room.take(MAX_BYTES_INDEXED_AT_ONCE);
+        let (sent, taken) = mpsc::channel();
 
-    /// Whether a take of `bytes` from `room` returns within a second,
-    /// tried on a thread of its own; the take is given back at once, and
-    /// one still waiting then is let through, the room left as it was.
-    fn takes(room: &Room, bytes: usize) -> bool {
-        let (sent, received) = mpsc::channel();
-        let returned = thread::scope(|scope| {
+        thread::scope(|scope| {
+            // Past the room, a take waits for all of it.
             scope.spawn(move || {
-                drop(room.take(bytes));
+                drop(room.take(4 * MAX_BYTES_INDEXED_AT_ONCE));
                 sent.send(()).unwrap();
             });
-            let returned = received.recv_timeout(Duration::from_secs(1)).is_ok();
+            let waited = taken.recv_timeout(Duration::from_millis(200)).is_err();
+            drop(held);
+            let returned = taken.recv_timeout(Duration::from_secs(10)).is_ok();
             if !returned {
-                *room.free.lock().unwrap() += ROOM;
+                // Free the take still waiting, so the scope ends and the
+                // test fails rather than hangs.
+                *room.free.lock().unwrap() = usize::MAX;
                 room.freed.notify_all();
             }
-            returned
+
+            assert!(waited);
+            assert!(returned);
         });
-        if !returned {
-            *room.free.lock().unwrap() -= ROOM;
-        }
-        returned
     }
 
     #[test]
-    fn bytes_the_room_lacks_wait_and_a_file_past_the_room_takes_all_of_it() {
-        let indexer = Indexer::new();
-        let room = &indexer.room;
-        let half = room.take(ROOM / 2);
-        let other = room.take(ROOM / 2);
+    fn a_thread_the_system_refuses_is_no_thread() {
+        // No address space holds a stack of 4 EiB.
+        let stack = 1 << 62;
 
-        assert!(!takes(room, 1));
-        drop(half);
-        assert!(takes(room, ROOM / 2));
-        drop(other);
-        assert!(takes(room, 4 * ROOM));
+        assert!(matches!(pool(1, stack), Err(ReadFault::NoThread(_))));
+        let started = thread::scope(|scope| start(scope, stack, || ()).map(|_| ()));
+        assert!(matches!(started, Err(ReadFault::NoThread(_))));
     }
 }

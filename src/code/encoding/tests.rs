@@ -177,7 +177,6 @@ fn every_entry_a_write_makes_reads_back() {
         IndexFault::TooDeep,
         IndexFault::Grammar,
         IndexFault::TooManyIndentations { max: 256 },
-        IndexFault::TooManyContinuations { max: 64 },
         IndexFault::TooLarge {
             bytes: 5_000_000,
             max: 1 << 20,

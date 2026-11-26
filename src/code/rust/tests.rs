@@ -161,9 +161,7 @@ fn hostile_rust_is_refused_or_read_in_linear_work() {
     ];
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");
-        match testing::on_parse_stack(|| {
-            crate::code::testing::index(FileKind::Rust, text.as_bytes())
-        }) {
+        match crate::code::testing::index(FileKind::Rust, text.as_bytes()) {
             Ok(_) | Err(IndexFault::TooComplex) => {}
             Err(other) => panic!("{case}: {other}"),
         }

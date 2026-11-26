@@ -1,10 +1,8 @@
-//! What tree-sitter-python's scanner and parser need checked before a
-//! parse, since no budget stops them during it: the indentation widths,
-//! past which the scanner aborts the process, and the line continuations
-//! of one logical line, whose run inside a parse error costs the square
-//! of its length. They are the only rules of a language the general
-//! resolver reads that are code, not its query: no query runs before the
-//! parse.
+//! What tree-sitter-python's scanner needs checked before a parse: the
+//! indentation widths, past which the scanner aborts the process, which
+//! no budget of the parse can stop. It is the only rule of a language the
+//! general resolver reads that is code, not its query: no query runs
+//! before the parse.
 //!
 //! The scanner keeps the indentations of the open blocks on a stack and,
 //! after each token it makes, writes them two bytes each after the open
@@ -17,10 +15,6 @@
 //! distinct widths the file's lines start at, counted as the scanner
 //! counts them. A file with more than [`MAX_INDENTATIONS`] is refused:
 //! that many entries and every delimiter fit the buffer with room.
-//!
-//! Error recovery summarizes the stack of `line_continuation` extras of
-//! the logical line it is in, at a cost no budget of the parse counts. A
-//! file with a run of more than [`MAX_CONTINUATIONS`] is refused.
 
 use std::collections::BTreeSet;
 
@@ -28,9 +22,6 @@ use crate::code::index::IndexFault;
 
 /// The distinct widths a Python file's lines may start at.
 pub(in crate::code) const MAX_INDENTATIONS: usize = 256;
-
-/// The line continuations one logical line may hold.
-pub(in crate::code) const MAX_CONTINUATIONS: usize = 256;
 
 /// Refuse `text` when its lines start at more than [`MAX_INDENTATIONS`]
 /// widths. A width is what the scanner measures: from a line feed,
@@ -73,25 +64,6 @@ pub(in crate::code) fn check_indentations(text: &str) -> Result<(), IndexFault> 
                 }
                 width = (line_break || byte == b'\0').then_some(0);
             }
-        }
-    }
-    Ok(())
-}
-
-/// Refuse `text` when more than [`MAX_CONTINUATIONS`] lines in a row end
-/// in a backslash right before their line feed, or carriage return and
-/// line feed. Every such backslash counts, one that ends a comment or
-/// stands in a string too.
-pub(in crate::code) fn check_continuations(text: &str) -> Result<(), IndexFault> {
-    let mut run = 0;
-    // Each piece but the last is a line a line feed ends.
-    for line in text.split('\n').rev().skip(1) {
-        let continued = line.strip_suffix('\r').unwrap_or(line).ends_with('\\');
-        run = if continued { run + 1 } else { 0 };
-        if run > MAX_CONTINUATIONS {
-            return Err(IndexFault::TooManyContinuations {
-                max: MAX_CONTINUATIONS,
-            });
         }
     }
     Ok(())
@@ -143,28 +115,5 @@ mod tests {
         assert_eq!(one(&format!("# c\0{}x\n", spaces(301))), PAST);
         // A width is 16 bits that wrap.
         assert_eq!(one(&format!("{}x\n", spaces(300 + 65_536))), Ok(()));
-    }
-
-    #[test]
-    fn a_run_of_continuations_past_the_bound_is_refused() {
-        let run = |count: usize, line_break: &str| {
-            format!("x = {}1\n", format!("1 + \\{line_break}").repeat(count))
-        };
-        let past = Err(IndexFault::TooManyContinuations {
-            max: MAX_CONTINUATIONS,
-        });
-
-        for line_break in ["\n", "\r\n"] {
-            assert_eq!(
-                check_continuations(&run(MAX_CONTINUATIONS, line_break)),
-                Ok(())
-            );
-            assert_eq!(
-                check_continuations(&run(MAX_CONTINUATIONS + 1, line_break)),
-                past
-            );
-        }
-        let separate = run(MAX_CONTINUATIONS, "\n").repeat(10);
-        assert_eq!(check_continuations(&separate), Ok(()));
     }
 }

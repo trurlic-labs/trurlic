@@ -150,7 +150,7 @@ git -C .trurlic log --stat
 curl -fsSL https://raw.githubusercontent.com/trurlic-labs/trurlic/master/install.sh | bash
 ```
 
-Or with Rust: `cargo install trurlic` (requires Rust 1.90+).
+Or with Rust, from the repository, which holds the patched tree-sitter runtime the index is built on: `cargo install --locked --git https://github.com/trurlic-labs/trurlic` (requires Rust 1.90+).
 
 Pre-built binaries for Linux, macOS, and Windows are on the [Releases](https://github.com/trurlic-labs/trurlic/releases) page.
 

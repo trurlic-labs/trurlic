@@ -67,7 +67,7 @@ pub(super) static PYTHON: Language = Language {
         splices: false,
         tokens: None,
     },
-    before_parse: &[python::check_indentations, python::check_continuations],
+    before_parse: &[python::check_indentations],
     test_places: &["tests/", "test_*.py", "*_test.py", "conftest.py"],
     rules: OnceLock::new(),
     identity: OnceLock::new(),

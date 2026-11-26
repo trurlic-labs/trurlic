@@ -11,7 +11,7 @@ use super::kinds::{DefinitionKind, Role};
 use super::scope::{ScopeId, ScopeTree};
 use super::span::{Lines, SpanHash};
 use super::symbol::name_segments;
-use super::work::{LEXICAL_WORK_PER_BYTE, Work};
+use super::work::{LEXICAL_WORK_PER_BYTE, MIN_WORK, Work};
 
 pub(super) struct Lexical<'t> {
     text: &'t str,
@@ -29,7 +29,7 @@ impl<'t> Lexical<'t> {
             lines: Lines::of(text.as_bytes()),
             scopes,
             definitions: Vec::new(),
-            work: Work::of(text.len(), LEXICAL_WORK_PER_BYTE),
+            work: Work::of(text.len(), LEXICAL_WORK_PER_BYTE, MIN_WORK),
         }
     }
 

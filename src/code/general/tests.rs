@@ -1,10 +1,10 @@
 use super::*;
 use crate::code::BlankMacros;
 use crate::code::index::FileKind;
-use crate::code::language::python::{MAX_CONTINUATIONS, MAX_INDENTATIONS};
+use crate::code::language::python::MAX_INDENTATIONS;
 use crate::code::scope::{ScopeTree, Scopes};
 use crate::code::span::SpanHash;
-use crate::code::testing::{defined, index_in, named, on_parse_stack, path};
+use crate::code::testing::{defined, index_in, named, path};
 
 /// Each definition of `text`, a Python file, as `path kind role
 /// visibility` and the text of its span.
@@ -356,43 +356,18 @@ fn hostile_python_is_refused_or_read_in_linear_work() {
             format!("x = {}", "[".repeat(mib / 2) + &"]".repeat(mib / 2 - 8)),
         ),
         ("chained assignments", "a = ".repeat(mib / 4 - 1) + "1\n"),
-        (
-            "continued lines in an error",
-            continued(MAX_CONTINUATIONS).repeat(mib / continued(MAX_CONTINUATIONS).len()),
-        ),
+        ("continued lines in an error", "\\\nx".repeat(mib / 3)),
         ("unclosed strings", "\"x\n".repeat(mib / 3)),
     ];
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");
-        match on_parse_stack(|| crate::code::testing::index(FileKind::Python, text.as_bytes())) {
+        match crate::code::testing::index(FileKind::Python, text.as_bytes()) {
             Ok(_) | Err(IndexFault::TooComplex) => {}
             Err(other) => panic!("{case}: {other}"),
         }
     }
     let chain = "a = ".repeat(10_000) + "1\n";
     assert_eq!(defined(FileKind::Python, &chain).len(), 10_000);
-}
-
-/// A logical line of `count` line continuations, each followed by a name
-/// the line before it does not expect: a run of them in a parse error.
-fn continued(count: usize) -> String {
-    format!("{}\n", "\\\nx".repeat(count))
-}
-
-#[test]
-fn a_run_of_continuations_past_the_bound_is_refused_before_the_parse() {
-    let refused = Err(IndexFault::TooManyContinuations {
-        max: MAX_CONTINUATIONS,
-    });
-    // Unbounded, one run of a MiB takes an hour, in work no budget of the
-    // parse counts.
-    let run = continued(MAX_CONTINUATIONS + 1);
-    let hostile = run.repeat((1 << 20) / run.len());
-
-    assert_eq!(
-        crate::code::testing::index(FileKind::Python, hostile.as_bytes()),
-        refused
-    );
 }
 
 #[test]
@@ -1117,9 +1092,7 @@ fn jsx_text_is_hashed_as_jsx_renders_it() {
 fn hostile_typescript_is_refused_or_read_in_linear_work() {
     let mib = 1024 * 1024;
     let cases: [(&str, String); 9] = [
-        // Each keeps an arrow's and a conditional's readings alive, whose
-        // stack the parser releases recursively: past 200 KB this aborted
-        // the process on a 2 MiB stack.
+        // Each keeps an arrow's and a conditional's readings alive.
         (
             "conditional arrows",
             format!("x={}", "a?(b):c=>".repeat((mib - 2) / 9)),
@@ -1148,7 +1121,7 @@ fn hostile_typescript_is_refused_or_read_in_linear_work() {
     for (case, text) in cases {
         assert!(text.len() <= mib, "{case}");
         for kind in [FileKind::TypeScript, FileKind::Tsx] {
-            match on_parse_stack(|| crate::code::testing::index(kind, text.as_bytes())) {
+            match crate::code::testing::index(kind, text.as_bytes()) {
                 Ok(_) | Err(IndexFault::TooComplex) => {}
                 Err(other) => panic!("{case}: {other}"),
             }

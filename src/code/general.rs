@@ -42,7 +42,7 @@ use super::scope::ScopeTree;
 use super::syntax;
 use super::tree::TreeIndex;
 use super::units::{Leaves, NodeMarks};
-use super::work::{SCAN_WORK_PER_BYTE, Work};
+use super::work::{MIN_WORK, SCAN_WORK_PER_BYTE, Work};
 
 use frame::{Frame, VisibilityMark, Waiting};
 
@@ -239,7 +239,7 @@ fn collect<'r, 't>(
     };
     let mut matches = Matches {
         cursor: QueryCursor::new(),
-        work: Work::of(text.len(), SCAN_WORK_PER_BYTE),
+        work: Work::of(text.len(), SCAN_WORK_PER_BYTE, MIN_WORK),
         text,
     };
     matches.cursor.set_max_start_depth(Some(0));

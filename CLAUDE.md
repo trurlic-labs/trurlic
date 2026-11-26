@@ -51,7 +51,8 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 | Placement vs git (`check`) | `commands/placement.rs` |
 | Index work budgets / cache encoding | `code/work.rs` / `code/encoding/` |
 | Rust tokens no span hash holds (rustfmt's commas and braces) | `code/rust/silent.rs` |
-| A file's index on a thread of its own (stack, bytes at once) | `sources/indexer.rs` |
+| The threads files are indexed on (pool, stack, bytes at once) | `sources/indexer.rs` |
+| The tree-sitter runtime and the patch that bounds a parse | `vendor/tree-sitter/`, `vendor/tree-sitter-0.27.2-bounds.patch` |
 | Likely duplicates (scoring, pair index) | `lint/duplicates/` |
 | Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors.rs` / `sources/mod.rs`, `sources/worktrees.rs` / `mcp/status/anchors.rs` |
 | Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair.rs`, `sources/renames.rs`, `git/renames.rs` / `store/apply/repair.rs` / `mcp/apply/repairs.rs` |
@@ -81,6 +82,7 @@ console    → —                           `out!` (stdout), `diag!` (stderr)
 14. The store asks git nothing about the project's repository; `commands` gathers those facts and passes them as data.
 15. Every dependency justified; no runtime proc macros.
 16. A `[quality]` pattern compiles within `MAX_PATTERN_FOLDED_CODE_POINTS` and `MAX_PATTERN_COMPILED_BYTES`, before a write takes its lock, and runs on the lazy DFA alone, charging its bytes against `MAX_WRITE_PATTERN_BYTES` or `MAX_REPORT_PATTERN_BYTES` before it reads them, its cache giving up rather than outgrow `MAX_PATTERN_CACHE_BYTES`, and the caches of a call growing against `MAX_PATTERN_CACHE_TOTAL_BYTES` together (`store/limits.rs`). Past any of them a write is refused and a report reads no further.
+17. `vendor/tree-sitter/` is upstream's crate but for `vendor/tree-sitter-0.27.2-bounds.patch`: a change to the runtime is a change to that patch, regenerated, and raises `code::INDEX_FORMAT`.
 
 ### Working with the graph
 

@@ -1,0 +1,31 @@
+component = "code"
+choice = "A tree-sitter parse is held to 32 progress operations a byte, its allocation and error recovery included, on a stack it does not grow; past them the file is TooComplex"
+reason = "In every grammar the index reads, error recovery walks the parse stack again at each error and an unresolved ambiguity keeps versions alive, so a parse's work can grow with the square of its file and its memory with its work. The released runtime's progress count sees neither the walks nor the allocation, and it releases its stack by recursion as deep as an ambiguity runs: a file of kilobytes held a call for minutes, and one at the cap aborted the process. The vendored runtime counts each parser action, each step of a stack walk, each round of the reductions error recovery tries and each 64 bytes its default allocator gives the thread as one progress operation, and it releases and merges its stack over arrays on the heap. syntax::parse spends 100 operations at each call of the progress callback against PARSE_OPERATIONS_PER_BYTE times the file's bytes, MIN_PARSE_OPERATIONS at least, and cancels the parse past them. So a parse allocates at most 2 KiB a byte, takes a fixed call stack, and is refused on every machine or on none. The budget is about twice what the costliest real source takes, generated tables among it. The lexer's bytes served stay a budget of their own, since a rescan of the lexer is no operation. The budget and its minimum are in BOUNDS, since they decide refusals. No bound of one shape before the parse is kept: Python's on runs of line continuations capped one shape of a cost every grammar has."
+alternatives = [
+    "The released progress callback alone: rejected because the stack walks of error recovery never reach it, so the work between two of its calls grows with the file",
+    "A scan before the parse per shape, as Python's bound on runs of line continuations was: rejected because the cost is errors times stack depth, which no lexer sees, and each scan caps one shape of many",
+    "A wall-clock deadline: rejected because code reads no clock, and two calls on one tree could then report a file read and refused",
+    "Parsing each top-level item alone: rejected because one large item costs what its file did, and TypeScript, C and C++ cannot be cut lexically",
+    "32 bytes to an operation, 1 KiB a byte: rejected because it halves the headroom of generated tables, while the room already bounds what the parses in flight hold",
+]
+tags = [
+    "parsing",
+    "reliability",
+    "security",
+]
+status = "accepted"
+origin = "every tree-sitter parse bounded by one count of work"
+created = "2026-11-26T09:47:30.725930774Z"
+anchors = [
+    { file = "src/code/syntax.rs", symbol = "parse" },
+    { file = "src/code/work.rs", symbol = "MIN_PARSE_OPERATIONS" },
+    { file = "src/code/work.rs", symbol = "PARSE_OPERATIONS_PER_BYTE" },
+    { file = "vendor/tree-sitter/src/alloc.c", symbol = "ts_take_allocated_bytes" },
+    { file = "vendor/tree-sitter/src/parser.c", symbol = "ts_parser__check_progress" },
+    { file = "vendor/tree-sitter/src/stack.c", symbol = "stack_node_add_link" },
+    { file = "vendor/tree-sitter/src/stack.c", symbol = "stack_node_release" },
+]
+depends_on = [
+    "a-tree-sitter-file-is-capped-at-1-mib-and-a-lexical-one-at-4-mib",
+    "the-tree-sitter-runtime-is-vendored-with-the-patch-that-bounds-a-parse",
+]

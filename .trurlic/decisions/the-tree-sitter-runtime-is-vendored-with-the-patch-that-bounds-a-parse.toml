@@ -1,0 +1,23 @@
+component = "code"
+choice = "The tree-sitter runtime is 0.27.2 vendored in vendor/tree-sitter as a path dependency, its files upstream's but for the patch kept beside it"
+reason = "The bound of a parse needs a change to the runtime that no release carries. A path dependency with no version builds the patched runtime from any checkout and never the released one, and cargo deny's policy on sources holds: no git source, no registry but crates.io. The vendored crate is the published one, the Rust binding and the C runtime it compiles with its licence, less the files a native build reads nothing of. vendor/tree-sitter-0.27.2-bounds.patch states that provenance and what the patch changes, and it is applied again to each new release, which raises INDEX_FORMAT. The vendored code is upstream's and not held to this crate's lints; this crate gains no unsafe code, since it reads the bound through the safe progress callback. crates.io refuses a path dependency, so trurlic is publish = false, which is when cargo deny admits a path dependency with no version. It installs from its repository, install.sh or a release binary until upstream releases the change; proposing the change upstream is the owner's."
+alternatives = [
+    "A fork published to crates.io and renamed in Cargo.toml: rejected because it is a second crate to release under another name, for a change upstream may take",
+    "A git dependency on a fork: rejected because crates.io refuses it, cargo deny's sources policy allows no git source, and every build then needs the fork's host",
+    "A [patch.crates-io] entry over the released crate: rejected because cargo install ignores a package's patches, so an installed trurlic would parse on the unbounded runtime",
+    "The upstream repository whole, as a submodule: rejected because it brings the CLI, the documentation and the wasm runtime for a library a fraction of its size",
+]
+tags = [
+    "dependencies",
+    "parsing",
+]
+status = "accepted"
+origin = "every tree-sitter parse bounded by one count of work"
+created = "2026-11-26T09:47:30.725930774Z"
+anchors = [
+    { file = "Cargo.toml", symbol = "dependencies::tree-sitter" },
+    { file = "Cargo.toml", symbol = "package::publish" },
+    { file = "deny.toml", symbol = "bans::allow-wildcard-paths" },
+    { file = "vendor/tree-sitter" },
+    { file = "vendor/tree-sitter-0.27.2-bounds.patch" },
+]

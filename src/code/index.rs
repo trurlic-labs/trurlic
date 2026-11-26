@@ -19,60 +19,26 @@ use super::{encoding, general, json, make, markdown, rust, syntax, toml, work};
 /// The version of an index's shape and of the rules that build it. A
 /// change to either is a new version, so no cached index built under the
 /// old rules is read as one of the new (`tests::the_index_format_names_its_rules`).
-pub(crate) const INDEX_FORMAT: u32 = 16;
+pub(crate) const INDEX_FORMAT: u32 = 17;
 
-/// The largest file a tree-sitter grammar indexes. tree-sitter's error
-/// recovery takes a few microseconds a byte on hostile input, past what
-/// its own count of steps shows, so the bound on its time is the bound
-/// on the file's size.
+/// The largest file a tree-sitter grammar indexes. A parse is bounded in
+/// work and memory per byte of its file (`work.rs`), so this bounds what
+/// one parse may take.
 const TREE_SITTER_MAX_BYTES: usize = 1024 * 1024;
 
 /// The largest file a lexical resolver indexes.
 const LEXICAL_MAX_BYTES: usize = 4 * 1024 * 1024;
 
-/// The stack a parse may take per byte of its file. tree-sitter releases
-/// the stack of an ambiguous parse recursively, as deep as the ambiguity
-/// runs: a chain of `a?(b):c=>` takes about 11 bytes a byte, which this
-/// covers about three times.
-const STACK_BYTES_PER_SOURCE_BYTE: usize = 32;
-
-/// The stack of a thread that indexes a file of any size: a parse of a
-/// file at the tree-sitter cap fits in it.
-pub(crate) const PARSE_STACK_BYTES: usize = TREE_SITTER_MAX_BYTES * STACK_BYTES_PER_SOURCE_BYTE;
-
-/// The largest file a worker that indexes many files indexes itself; a
-/// larger one is indexed on a thread of its own. A thread keeps the memory
-/// its parses freed until it ends, up to about 900 bytes per byte of its
-/// largest file, so this bounds what each worker keeps to about 30 MB.
-pub(crate) const MAX_BYTES_INDEXED_BY_A_WORKER: usize = 32 * 1024;
-
-/// The stack of a worker: a parse of a file of
-/// [`MAX_BYTES_INDEXED_BY_A_WORKER`] takes a quarter of it, and the index's
-/// own frames the rest.
-pub(crate) const WORKER_STACK_BYTES: usize =
-    4 * MAX_BYTES_INDEXED_BY_A_WORKER * STACK_BYTES_PER_SOURCE_BYTE;
-
-/// The bytes of the files indexed at once, between them. A parse holds
-/// memory in proportion to its file, up to about 900 bytes a byte on
-/// error-dense input, so this bounds what the parses under way hold to
-/// about 2 GB; a file larger than it is indexed alone.
-pub(crate) const MAX_BYTES_INDEXED_AT_ONCE: usize = 2 * TREE_SITTER_MAX_BYTES;
-
 /// Every bound an index is built within, by name and value: in a cache
 /// key, so an index built under other bounds is never read as one of
 /// these, whatever the fixture corpus shows of them. The sizes of the
 /// values an index holds bound it through the room of its file.
-pub(crate) const BOUNDS: [(&str, usize); 33] = [
+pub(crate) const BOUNDS: [(&str, usize); 30] = [
     ("tree_sitter_max_bytes", TREE_SITTER_MAX_BYTES),
     ("lexical_max_bytes", LEXICAL_MAX_BYTES),
-    ("parse_stack_bytes", PARSE_STACK_BYTES),
-    (
-        "max_bytes_indexed_by_a_worker",
-        MAX_BYTES_INDEXED_BY_A_WORKER,
-    ),
-    ("worker_stack_bytes", WORKER_STACK_BYTES),
-    ("max_bytes_indexed_at_once", MAX_BYTES_INDEXED_AT_ONCE),
-    ("parse_work_per_byte", work::PARSE_WORK_PER_BYTE),
+    ("served_bytes_per_byte", work::SERVED_BYTES_PER_BYTE),
+    ("parse_operations_per_byte", work::PARSE_OPERATIONS_PER_BYTE),
+    ("min_parse_operations", work::MIN_PARSE_OPERATIONS),
     ("scan_work_per_byte", work::SCAN_WORK_PER_BYTE),
     ("lexical_work_per_byte", work::LEXICAL_WORK_PER_BYTE),
     ("min_work", work::MIN_WORK),
@@ -116,7 +82,6 @@ pub(crate) const BOUNDS: [(&str, usize); 33] = [
     ),
     ("entry_overhead_bytes", encoding::ENTRY_OVERHEAD_BYTES),
     ("max_indentations", python::MAX_INDENTATIONS),
-    ("max_continuations", python::MAX_CONTINUATIONS),
     ("match_limit", general::MATCH_LIMIT as usize),
     ("max_macro_body_tokens", c_family::MAX_MACRO_BODY_TOKENS),
     (
@@ -346,10 +311,6 @@ pub(crate) enum IndexFault {
     /// A Python file whose lines start at more than `max` widths, past
     /// which its grammar's scanner aborts the process.
     TooManyIndentations { max: usize },
-    /// A Python file with a run of more than `max` line continuations in
-    /// one logical line, past which its grammar's error recovery runs
-    /// quadratic.
-    TooManyContinuations { max: usize },
 }
 
 impl fmt::Display for IndexFault {
@@ -368,9 +329,6 @@ impl fmt::Display for IndexFault {
             Self::Grammar => f.write_str("has a grammar or query the parser does not load"),
             Self::TooManyIndentations { max } => {
                 write!(f, "starts its lines at more than {max} indentation widths")
-            }
-            Self::TooManyContinuations { max } => {
-                write!(f, "continues one line more than {max} times")
             }
         }
     }
@@ -454,7 +412,7 @@ mod tests {
     /// moves it, and a cached index of the old rules would then be read as
     /// one of the new: such a change raises the format and appends its
     /// fingerprint. A change to the corpus alone pins the last one again.
-    const FINGERPRINTS: [(u32, &str); 16] = [
+    const FINGERPRINTS: [(u32, &str); 17] = [
         (
             1,
             "1f2e5879839d9fe325832833197cf195d6326671d14d3c2582784605fa310bc6",
@@ -518,6 +476,10 @@ mod tests {
         (
             16,
             "89b2cb1fdbc929505587e581dfaff355f5aae12ea5f9f6bef9be278cb4319629",
+        ),
+        (
+            17,
+            "eb68daf2f1971c228711184bee7978bd9ab0e601c9597e230359854906ac712e",
         ),
     ];
 
