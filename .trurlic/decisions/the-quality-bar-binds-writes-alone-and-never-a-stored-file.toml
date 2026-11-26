@@ -9,7 +9,7 @@ status = "proposed"
 origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
-    { file = "src/store/quality/bar/mod.rs", symbol = "Bar::judge" },
+    { file = "src/store/quality/bar.rs", symbol = "Bar::judge" },
     { file = "src/store/quality/mod.rs" },
 ]
 depends_on = [

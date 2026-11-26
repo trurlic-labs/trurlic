@@ -18,8 +18,8 @@ anchors = [
     { file = "src/lint/quality.rs", symbol = "tests::a_give_up_ends_the_page_and_a_walk_lists_each_finding_once" },
     { file = "src/lint/quality.rs", symbol = "tests::a_page_runs_no_pattern_after_the_search_that_passes_the_total" },
     { file = "src/store/model/limits.rs", symbol = "MAX_REPORT_PATTERN_BYTES" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::pattern_bytes" },
-    { file = "src/store/quality/bar/mod.rs", symbol = "Bar::page_scan" },
+    { file = "src/store/quality/audit.rs", symbol = "Bar::pattern_bytes" },
+    { file = "src/store/quality/bar.rs", symbol = "Bar::page_scan" },
     { file = "src/tools/status/lint/patterns.rs", symbol = "Reading::counts" },
     { file = "tests/integration/lint.rs", symbol = "a_walk_from_next_to_next_lists_every_finding_once" },
 ]

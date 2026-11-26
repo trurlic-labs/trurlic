@@ -13,10 +13,10 @@ created = "2026-11-25T16:18:06.233347736Z"
 anchors = [
     { file = "Cargo.toml", symbol = "dependencies::regex-automata" },
     { file = "src/store/model/limits.rs", symbol = "MAX_PATTERN_CACHE_BYTES" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "tests::a_full_batch_of_prose_fits_the_caches_and_the_total_of_an_ordinary_table" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "tests::each_ordinary_pattern_judges_a_whole_graph_of_prose_within_its_cache" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "tests::the_rewritten_tables_find_what_their_first_forms_found" },
-    { file = "src/store/quality/bar/pattern.rs", symbol = "Compiled::new" },
+    { file = "src/store/quality/audit.rs", symbol = "tests::a_full_batch_of_prose_fits_the_caches_and_the_total_of_an_ordinary_table" },
+    { file = "src/store/quality/audit.rs", symbol = "tests::each_ordinary_pattern_judges_a_whole_graph_of_prose_within_its_cache" },
+    { file = "src/store/quality/audit.rs", symbol = "tests::the_rewritten_tables_find_what_their_first_forms_found" },
+    { file = "src/store/quality/pattern.rs", symbol = "Compiled::new" },
 ]
 depends_on = [
     "quality-patterns-are-regexes-compiled-by-a-write-by-check-and-by-the-lint-section",

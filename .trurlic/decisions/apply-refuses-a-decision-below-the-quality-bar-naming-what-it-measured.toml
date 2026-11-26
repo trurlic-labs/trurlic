@@ -12,8 +12,8 @@ anchors = [
     { file = "src/store/apply/check.rs", symbol = "each_built_in_rule_refuses_naming_the_field_the_rule_and_the_measure" },
     { file = "src/store/apply/check.rs", symbol = "each_quality_key_moves_its_limit" },
     { file = "src/store/apply/refusal.rs", symbol = "Rule" },
-    { file = "src/store/quality/mod.rs", symbol = "Limit" },
-    { file = "src/store/quality/mod.rs", symbol = "QualityFault" },
+    { file = "src/store/quality/verdict.rs", symbol = "Limit" },
+    { file = "src/store/quality/verdict.rs", symbol = "QualityFault" },
 ]
 depends_on = [
     "apply-is-the-one-write-a-batch-applied-in-order-all-or-none-in-one-commit",

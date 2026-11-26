@@ -6,10 +6,10 @@
 
 use std::borrow::Cow;
 
-use super::{Bar, Breach, Broken, PatternFault, Place, Scan, searched, texts};
-use crate::store::model::Decision;
-use crate::store::model::{DecisionField, Level, Quality};
-use crate::store::quality::QualityFault;
+use super::bar::{Bar, PatternFault, texts};
+use super::pattern::{Compiled, Scan, searched};
+use super::verdict::{Breach, Broken, Place, QualityFault};
+use crate::store::model::{Decision, DecisionField, Level, Quality};
 
 /// A rule of the bar a stored decision breaks, and where: what a report
 /// shows of a graph below its own bar.
@@ -61,9 +61,8 @@ impl Bar {
     /// origin included, as a write charges them.
     pub(crate) fn pattern_bytes(&self, decision: &Decision) -> usize {
         let texts = audited(decision);
-        let read = |pattern: &super::Compiled| {
-            searched(pattern.read(&texts).into_iter().map(|(_, text)| text))
-        };
+        let read =
+            |pattern: &Compiled| searched(pattern.read(&texts).into_iter().map(|(_, text)| text));
         self.patterns
             .iter()
             .map(read)
@@ -338,7 +337,7 @@ mod tests {
             quality: Quality,
         }
         let shipped: Table =
-            toml::from_str(include_str!("../../../../examples/quality.toml")).unwrap();
+            toml::from_str(include_str!("../../../examples/quality.toml")).unwrap();
         shipped.quality
     }
 
@@ -465,7 +464,7 @@ mod tests {
             quality: Quality,
         }
         let project: Project =
-            toml::from_str(include_str!("../../../../.trurlic/project.toml")).unwrap();
+            toml::from_str(include_str!("../../../.trurlic/project.toml")).unwrap();
         project.quality
     }
 
@@ -664,7 +663,7 @@ mod tests {
             alternatives: Vec<String>,
             origin: Option<String>,
         }
-        let lines = include_str!("../../../../tests/fixtures/prose/decisions.jsonl").lines();
+        let lines = include_str!("../../../tests/fixtures/prose/decisions.jsonl").lines();
         lines
             .map(|line| {
                 let prose: Prose = serde_json::from_str(line).unwrap();

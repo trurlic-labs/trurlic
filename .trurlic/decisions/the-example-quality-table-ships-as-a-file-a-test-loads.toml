@@ -10,7 +10,7 @@ origin = "quality rules"
 created = "2026-11-24T04:09:05.642017587Z"
 anchors = [
     { file = "examples/quality.toml" },
-    { file = "src/store/quality/mod.rs", symbol = "the_shipped_example_loads_compiles_and_holds_its_bar" },
+    { file = "src/store/quality/bar.rs", symbol = "the_shipped_example_loads_compiles_and_holds_its_bar" },
 ]
 depends_on = [
     "quality-in-project-toml-is-typed-optional-and-written-canonical",

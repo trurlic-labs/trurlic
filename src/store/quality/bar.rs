@@ -8,25 +8,17 @@
 //! rule broken refuses the decision. A `warn` pattern gives one warning at
 //! its first match and never refuses. The patterns of one write share one
 //! [`Scan`]: a bound on the bytes they read, a cache per pattern and a
-//! total of their growth.
+//! total of their growth. A bar compiled before a write takes its lock is
+//! a [`PreparedBar`].
 
 use std::borrow::Cow;
 
-use super::{Limit, QualityFault, words};
-use crate::store::model::Decision;
-use crate::store::model::limits::{
-    MAX_PATTERN_CACHE_TOTAL_BYTES, MAX_QUOTED_MATCH_BYTES, MAX_WRITE_PATTERN_BYTES,
-};
-use crate::store::model::{DecisionField, Quality, WordRange};
-use crate::store::model::{TextFault, TextField, fault};
-
-mod audit;
-mod folding;
-mod pattern;
-
-pub(crate) use audit::Shortfall;
-pub(crate) use pattern::Scan;
-use pattern::{Compiled, searched};
+use super::pattern::{Compiled, Scan};
+use super::verdict::{Breach, Broken, Hit, Limit, Place, QualityFault};
+use crate::Error;
+use crate::store::format::Store;
+use crate::store::model::limits::{MAX_PATTERN_CACHE_TOTAL_BYTES, MAX_WRITE_PATTERN_BYTES};
+use crate::store::model::{Decision, DecisionField, Quality, TextField, WordRange, fault};
 
 /// The rules of one `[quality]` table, its patterns compiled.
 #[derive(Debug)]
@@ -36,7 +28,7 @@ pub(crate) struct Bar {
     alternative_words_max: Option<usize>,
     anchors_max: Option<usize>,
     require_origin: bool,
-    patterns: Vec<Compiled>,
+    pub(super) patterns: Vec<Compiled>,
 }
 
 /// A pattern the lazy DFA does not run: its index and why.
@@ -44,57 +36,6 @@ pub(crate) struct Bar {
 pub(crate) struct PatternFault {
     pub(crate) index: usize,
     pub(crate) message: String,
-}
-
-/// A field of a decision, and the element of a list field by its position
-/// in the decision's list: the op that judged the decision names the
-/// argument that brought it (`apply::check`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Place {
-    pub(in crate::store) field: DecisionField,
-    index: Option<usize>,
-}
-
-impl Place {
-    const fn whole(field: DecisionField) -> Self {
-        Self { field, index: None }
-    }
-
-    const fn element(field: DecisionField, index: usize) -> Self {
-        Self {
-            field,
-            index: Some(index),
-        }
-    }
-}
-
-/// What stops a write's judgement: a text rule or a rule of the bar the
-/// decision breaks, or the bytes its patterns may read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Broken {
-    Text {
-        field: TextField,
-        fault: TextFault,
-    },
-    Quality(QualityFault),
-    /// The patterns would read past `MAX_WRITE_PATTERN_BYTES` over the
-    /// write.
-    Work,
-}
-
-/// The first rule a judged decision breaks, and where.
-#[derive(Debug)]
-pub(crate) struct Breach {
-    pub(in crate::store) place: Place,
-    pub(in crate::store) broken: Broken,
-}
-
-/// A `warn` pattern's first match: the pattern's index in `[quality]
-/// patterns` and the byte offset of the match in its text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Hit {
-    pub(in crate::store) pattern: usize,
-    pub(in crate::store) at: usize,
 }
 
 impl Bar {
@@ -235,7 +176,11 @@ impl Bar {
     /// The text rules and the limits of `field` held to `decision`, in the
     /// order a write reads them: a breach of each it breaks. An
     /// alternative's text rule comes before its word count.
-    fn checks(&self, decision: &Decision, field: DecisionField) -> Vec<Result<(), Breach>> {
+    pub(super) fn checks(
+        &self,
+        decision: &Decision,
+        field: DecisionField,
+    ) -> Vec<Result<(), Breach>> {
         let place = Place::whole(field);
         match field {
             DecisionField::Choice => vec![text(place, TextField::Choice, &decision.choice)],
@@ -380,26 +325,74 @@ const fn exceeded(place: Place, limit: Limit, measured: usize, bound: usize) -> 
     }
 }
 
-/// `found`, cut past [`MAX_QUOTED_MATCH_BYTES`] at a character boundary.
-fn quoted(found: &str) -> String {
-    if found.len() <= MAX_QUOTED_MATCH_BYTES {
-        return found.to_owned();
+/// The words of `text`: its runs of non-whitespace, split at every Unicode
+/// whitespace character. A hyphenated or slashed run is one word.
+#[must_use]
+fn words(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+/// The bar of a store's `[quality]` as a read found it, compiled before a
+/// write takes the lock: compiling holds no other caller back, and the
+/// write uses it when the table it loads under the lock is this one.
+#[derive(Debug)]
+pub(crate) struct PreparedBar {
+    quality: Quality,
+    bar: Bar,
+}
+
+/// The bar of an absent `[quality]`, which compiles no pattern: a write
+/// whose graph holds a table compiles that one under the lock.
+impl Default for PreparedBar {
+    fn default() -> Self {
+        let quality = Quality::default();
+        Self {
+            bar: Bar::limits_only(&quality),
+            quality,
+        }
     }
-    let end = (0..=MAX_QUOTED_MATCH_BYTES)
-        .rev()
-        .find(|&end| found.is_char_boundary(end))
-        .unwrap_or(0);
-    format!("{}...", found.get(..end).unwrap_or_default())
+}
+
+impl PreparedBar {
+    /// `quality` compiled for the write that follows. A pattern that does
+    /// not compile is [`Error::QualityPattern`].
+    pub(in crate::store) fn compile(store: &Store, quality: Quality) -> crate::Result<Self> {
+        let bar = store.bar(&quality)?;
+        Ok(Self { quality, bar })
+    }
+
+    /// The bar, when it was compiled from `quality`.
+    pub(in crate::store) fn of(&self, quality: &Quality) -> Option<&Bar> {
+        (self.quality == *quality).then_some(&self.bar)
+    }
+}
+
+impl Store {
+    /// The rules of `quality` compiled for a write: every pattern, once per
+    /// batch. A pattern the lazy DFA does not run is
+    /// [`Error::QualityPattern`].
+    pub(crate) fn bar(&self, quality: &Quality) -> crate::Result<Bar> {
+        Bar::compile(quality).map_err(|fault| Error::QualityPattern {
+            path: self.project_path(),
+            index: fault.index,
+            message: fault.message,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
     use super::*;
+    use crate::store::format::{canonical, is_canonical};
     use crate::store::limits::{
         MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_COMPILED_BYTES, MAX_PATTERN_FOLDED_CODE_POINTS,
     };
-    use crate::store::model::{Level, Pattern};
-    use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision};
+    use crate::store::model::{Anchor, Level, Pattern};
+    use crate::store::testing::{OUTGROWS_ITS_CACHE, coin_flips, sample_decision, setup_store};
 
     fn quality(patterns: &[&str]) -> Quality {
         Quality {
@@ -580,14 +573,81 @@ mod tests {
         assert!(scan.cache_left < spent, "{spent}");
     }
 
+    /// The example config the repository ships.
+    const EXAMPLE: &str = include_str!("../../../examples/quality.toml");
+
+    /// A decision that meets the example's bar in every field.
+    fn at_the_bar() -> Decision {
+        let mut decision = sample_decision("project");
+        decision.choice = "Every write takes the file lock and validates the graph it loads".into();
+        decision.reason = "Validating a graph loaded before the lock lets a commit of another \
+                           process vanish. Loading under the lock makes the validated graph \
+                           the one the commit replaces."
+            .into();
+        decision.alternatives = vec!["Validate the cached graph - rejected: loses a commit".into()];
+        decision.anchors = [Anchor::new("src/store/access.rs".into(), None).unwrap()].into();
+        decision
+    }
+
+    /// The example loads through the reader of every `project.toml`,
+    /// compiles, lets a decision at its bar through without a warning,
+    /// and refuses one that breaks it; `fmt` writes it canonical, and the
+    /// canonical text reads back as the same table.
     #[test]
-    fn a_long_match_is_quoted_cut_at_a_character_boundary() {
-        let long = format!("{}\u{17c}tail", "a".repeat(MAX_QUOTED_MATCH_BYTES - 1));
-        let shown = quoted(&long);
-        assert_eq!(
-            shown,
-            format!("{}...", "a".repeat(MAX_QUOTED_MATCH_BYTES - 1))
+    fn the_shipped_example_loads_compiles_and_holds_its_bar() {
+        let tmp = TempDir::new().unwrap();
+        let store = setup_store(tmp.path());
+        let path = store.project_path();
+        let header = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("{header}\n{EXAMPLE}")).unwrap();
+
+        let state = store.load_state().unwrap();
+        let quality = &state.project.quality;
+        assert_eq!(quality.patterns.len(), 11);
+        assert!(quality.require_origin);
+        let bar = store.bar(quality).unwrap();
+        let all = DecisionField::IN_FILE_ORDER;
+        let judged = |decision: &Decision| {
+            let mut scan = bar.scan();
+            bar.judge(decision, &all, &mut scan).map_err(|b| b.broken)
+        };
+        assert_eq!(judged(&at_the_bar()), Ok(vec![]));
+        let mut we = at_the_bar();
+        we.choice = "We take the file lock".into();
+        let refused = judged(&we).unwrap_err();
+        assert!(
+            matches!(&refused, Broken::Quality(QualityFault::Pattern(found)) if found.index == 0),
+            "{refused:?}"
         );
-        assert_eq!(quoted("short"), "short");
+
+        let written = canonical(&state.project);
+        assert!(!is_canonical(&state.project, header.as_bytes()));
+        store.begin_write().unwrap().format().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), written);
+        assert_eq!(store.load_state().unwrap().project, state.project);
+        assert!(
+            written.contains("pattern = '(?i)(?:^|\\W)(?:we|our)(?:\\W|$)'\n"),
+            "{written}"
+        );
+    }
+
+    #[test]
+    fn words_are_runs_between_unicode_whitespace() {
+        for (text, count) in [
+            ("", 0),
+            (" \t\n ", 0),
+            ("one", 1),
+            ("  one  two  ", 2),
+            ("one-line a/b x::y", 3),
+            ("tab\tand\nline", 3),
+            // NO-BREAK SPACE and IDEOGRAPHIC SPACE are Unicode whitespace.
+            ("a\u{a0}b\u{3000}c", 3),
+            // ZERO WIDTH SPACE is not: it joins.
+            ("a\u{200b}b", 1),
+            ("za\u{17c}\u{f3}\u{142}\u{107} g\u{119}\u{15b}l\u{105}", 2),
+            ("end.", 1),
+        ] {
+            assert_eq!(words(text), count, "{text:?}");
+        }
     }
 }

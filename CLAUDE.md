@@ -64,8 +64,8 @@ purity     → code (tests only)           what a module's non-test code may nam
 | Likely duplicates (scoring, pair index) / which `status` call compares them | `lint/duplicates/` / `tools/status/lint/pairs.rs` |
 | Anchor findings: kinds and verdicts / gathering / `status` section | `lint/anchors/finding.rs`, `lint/anchors/judge.rs`, `lint/anchors/trees.rs` / `sources/findings.rs`, `sources/worktrees.rs` / `tools/status/anchors.rs` |
 | Anchor repairs: rules / git's renames and history / the op / `apply`'s read | `lint/anchors/repair.rs` / `sources/repair/`, `git/renames.rs` / `store/apply/repair.rs` / `tools/apply/repairs.rs` |
-| Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/bar/audit.rs`, `tools/status/lint/` |
-| A `[quality]` pattern's engine, its caches, the bytes it charges / what compiling it folds | `store/quality/bar/pattern.rs` / `store/quality/bar/folding.rs` |
+| Quality findings, the `status` lint section | `lint/quality.rs`, `store/quality/audit.rs`, `tools/status/lint/` |
+| A `[quality]` pattern's engine, its caches, the bytes it charges / what compiling it folds | `store/quality/pattern.rs` / `store/quality/folding.rs` |
 | A language beyond Rust: grammar, query, test places, pre-parse bounds | `code/parse/language/row.rs`, `code/parse/language/<name>.scm`, `code/parse/language/<name>.rs` |
 | C and C++ macros blanked before the parse: the per-file pass / the sets / the headers gathered and the passes cached | `code/parse/language/c_family/define.rs`, `blank.rs` / `c_family/set.rs` / `sources/reads.rs`, `sources/lexical.rs` |
 | Span-hash units and hashing | `code/parse/units/` |

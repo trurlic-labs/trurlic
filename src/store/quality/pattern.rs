@@ -23,12 +23,12 @@ use regex_syntax::hir::Hir;
 use regex_syntax::hir::translate::Translator;
 
 use super::folding::folded_code_points;
-use super::{Breach, Broken, Hit, Place};
+use super::verdict::{Breach, Broken, Hit, PatternMatch, Place, QualityFault};
 use crate::store::model::limits::{
     MAX_PATTERN_CACHE_BYTES, MAX_PATTERN_COMPILED_BYTES, MAX_PATTERN_FOLDED_CODE_POINTS,
+    MAX_QUOTED_MATCH_BYTES,
 };
 use crate::store::model::{DecisionField, Level, Pattern};
-use crate::store::quality::{PatternMatch, QualityFault};
 
 /// The refusal of a pattern that holds a Unicode word boundary, which the
 /// lazy DFA runs only over ASCII text, with the rewrites that run on it.
@@ -139,7 +139,7 @@ impl Compiled {
         PatternMatch {
             index,
             at: found.at,
-            found: super::quoted(found.text),
+            found: quoted(found.text),
             // clone: the fault carries the message it reports.
             message: self.message.clone(),
         }
@@ -308,5 +308,33 @@ impl Scan {
             (cache.memory_usage().saturating_sub(fresh), Reverse(index))
         });
         ranked.max().map_or(0, |(_, Reverse(index))| index)
+    }
+}
+
+/// `found`, cut past [`MAX_QUOTED_MATCH_BYTES`] at a character boundary.
+fn quoted(found: &str) -> String {
+    if found.len() <= MAX_QUOTED_MATCH_BYTES {
+        return found.to_owned();
+    }
+    let end = (0..=MAX_QUOTED_MATCH_BYTES)
+        .rev()
+        .find(|&end| found.is_char_boundary(end))
+        .unwrap_or(0);
+    format!("{}...", found.get(..end).unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_long_match_is_quoted_cut_at_a_character_boundary() {
+        let long = format!("{}\u{17c}tail", "a".repeat(MAX_QUOTED_MATCH_BYTES - 1));
+        let shown = quoted(&long);
+        assert_eq!(
+            shown,
+            format!("{}...", "a".repeat(MAX_QUOTED_MATCH_BYTES - 1))
+        );
+        assert_eq!(quoted("short"), "short");
     }
 }

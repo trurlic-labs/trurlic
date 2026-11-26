@@ -12,10 +12,10 @@ origin = "quality findings"
 created = "2026-11-24T11:30:37.585834133Z"
 anchors = [
     { file = "src/lint/quality.rs", symbol = "shortfalls" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::audit_limits" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Bar::audit_patterns" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "Shortfall" },
-    { file = "src/store/quality/bar/audit.rs", symbol = "tests::an_audit_reports_what_a_write_reports_over_the_seeded_corpus" },
+    { file = "src/store/quality/audit.rs", symbol = "Bar::audit_limits" },
+    { file = "src/store/quality/audit.rs", symbol = "Bar::audit_patterns" },
+    { file = "src/store/quality/audit.rs", symbol = "Shortfall" },
+    { file = "src/store/quality/audit.rs", symbol = "tests::an_audit_reports_what_a_write_reports_over_the_seeded_corpus" },
     { file = "tests/integration/lint.rs", symbol = "the_section_shows_every_rule_a_stored_decision_breaks" },
 ]
 depends_on = [
