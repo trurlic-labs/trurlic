@@ -12,7 +12,7 @@ created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/git/graph/index.rs", symbol = "Repository::set_index" },
     { file = "src/git/graph/index.rs", symbol = "Repository::write_blobs" },
-    { file = "src/git/graph/mod.rs", symbol = "Repository::first_after" },
+    { file = "src/git/graph/repository.rs", symbol = "Repository::first_after" },
     { file = "src/store/write/history.rs", symbol = "HistoryStep" },
     { file = "src/store/write/history.rs", symbol = "Store::commit_history" },
     { file = "src/store/write/history.rs", symbol = "Store::look_for_commit" },

@@ -13,12 +13,12 @@ created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/git/graph/index.rs", symbol = "Repository::stage" },
     { file = "src/git/graph/index.rs", symbol = "Repository::unset_conversions" },
-    { file = "src/git/graph/mod.rs", symbol = "ATTRIBUTES" },
-    { file = "src/git/graph/mod.rs", symbol = "ENVIRONMENT" },
-    { file = "src/git/graph/mod.rs", symbol = "OVERRIDES" },
-    { file = "src/git/graph/mod.rs", symbol = "Repository::commit" },
-    { file = "src/git/graph/mod.rs", symbol = "Repository::create" },
-    { file = "src/git/graph/mod.rs", symbol = "isolated" },
+    { file = "src/git/graph/isolation.rs", symbol = "ATTRIBUTES" },
+    { file = "src/git/graph/isolation.rs", symbol = "ENVIRONMENT" },
+    { file = "src/git/graph/isolation.rs", symbol = "OVERRIDES" },
+    { file = "src/git/graph/isolation.rs", symbol = "isolated" },
+    { file = "src/git/graph/repository.rs", symbol = "Repository::commit" },
+    { file = "src/git/graph/repository.rs", symbol = "Repository::create" },
     { file = "tests/integration/history.rs", symbol = "a_write_with_git_dir_set_to_another_repository_commits_only_to_the_graph" },
     { file = "tests/integration/history.rs", symbol = "no_configuration_or_environment_breaks_or_redirects_a_commit" },
 ]

@@ -14,7 +14,7 @@ anchors = [
     { file = "src/error.rs", symbol = "Error::GitFailed" },
     { file = "src/git/encoding.rs", symbol = "paths" },
     { file = "src/git/files.rs", symbol = "tracked" },
-    { file = "src/git/graph/mod.rs", symbol = "Repository" },
+    { file = "src/git/graph/repository.rs", symbol = "Repository" },
     { file = "src/git/layout.rs", symbol = "toplevel" },
     { file = "src/git/layout.rs", symbol = "worktrees" },
     { file = "src/git/process.rs", symbol = "run" },

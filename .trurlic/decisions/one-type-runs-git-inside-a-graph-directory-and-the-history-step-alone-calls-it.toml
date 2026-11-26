@@ -9,9 +9,9 @@ status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
     { file = "src/git/graph/index.rs" },
-    { file = "src/git/graph/mod.rs", symbol = "Oid" },
-    { file = "src/git/graph/mod.rs", symbol = "Repository" },
-    { file = "src/git/graph/mod.rs", symbol = "parse_status" },
+    { file = "src/git/graph/oid.rs", symbol = "Oid" },
+    { file = "src/git/graph/repository.rs", symbol = "Repository" },
+    { file = "src/git/graph/repository.rs", symbol = "parse_status" },
     { file = "src/git/mod.rs" },
     { file = "src/store/write/history.rs", symbol = "Store::repository" },
 ]

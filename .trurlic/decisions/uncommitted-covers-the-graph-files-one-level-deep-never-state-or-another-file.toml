@@ -11,8 +11,8 @@ alternatives = [
 status = "accepted"
 created = "2026-11-24T12:00:00Z"
 anchors = [
-    { file = "src/git/graph/mod.rs", symbol = "Repository::status" },
-    { file = "src/git/graph/mod.rs", symbol = "parse_status" },
+    { file = "src/git/graph/repository.rs", symbol = "Repository::status" },
+    { file = "src/git/graph/repository.rs", symbol = "parse_status" },
     { file = "src/store/write/history.rs", symbol = "graph_files" },
 ]
 depends_on = [

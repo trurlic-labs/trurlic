@@ -15,7 +15,9 @@ use crate::{Error, Result};
 
 use super::super::encoding::{path, path_bytes};
 use super::super::process::{run, shown};
-use super::{ATTRIBUTES, Oid, Repository};
+use super::isolation::ATTRIBUTES;
+use super::oid::Oid;
+use super::repository::Repository;
 
 impl Repository {
     /// Put `paths`, relative to the work tree, in the index as they are on
@@ -93,7 +95,7 @@ impl Repository {
         let mut info = Vec::new();
         for (path, oid) in entries {
             info.extend_from_slice(if oid.is_null() { b"0 " } else { b"100644 " });
-            info.extend_from_slice(oid.0.as_bytes());
+            info.extend_from_slice(oid.as_bytes());
             info.push(b'\t');
             info.extend(path_bytes(path));
             info.push(0);
